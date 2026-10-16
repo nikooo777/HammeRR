@@ -117,7 +117,7 @@ the emitted float scale for SDK lighting and checks its full extent: rotated
 corners for fixed cards and a conservative sphere for full billboards. Native
 half truncation can make the rendered card slightly smaller.
 
-Static procedural shapes reuse the same atlas rectangle and size:
+Procedural shapes reuse the same atlas rectangle and size:
 
 ```text
 sprite "0 0 128 128 512"
@@ -139,13 +139,28 @@ angle and size, since the client ignores those parameters. Cross geometry
 centers its horizontal branches regardless of the horizontal anchor; vertical
 anchors still apply.
 
-Shapes require fixed `detailOrientation 0` and omitted or zero `sway`. They
+Shapes require fixed `detailOrientation 0`. They
 accept the same `spriterandomscale` distribution, with raw scales below 2⁻²⁴
 rejected for the native half-precision path. Their checked bounds cover every
 static quad using the raw scale, stored angles and decoded shape parameters.
-The compiler does not author sway or player
-avoidance controls. Client-wide avoidance settings can move native shape
-vertices at runtime; those movements are outside these static bounds.
+These bounds cover the shape at rest. Runtime sway and client-wide player
+avoidance can move vertices beyond them; compilation does not produce an
+animated bounds envelope or collision.
+
+To enable sway for generated cross/tri shapes:
+
+1. Add `sway 0.5` to the dictionary shape entry. `sway` accepts finite values
+   from 0 to 1 and defaults to 0. The SDK byte encoding truncates after converting
+   to float: `0` stores `0`, `0.5` stores `127`, and `1` stores `255`.
+2. Rebuild the map, then click **Run Map**.
+3. In the CS:S console, enter `cl_detail_max_sway 8` to enable visible motion.
+   The client default is `0`, which disables it. Enter `cl_detail_max_sway 0` to
+   disable motion again. This is a global client control, not a saved map or
+   compiler setting.
+
+Nonzero sway is supported only for generated cross/tri shapes at orientation 0.
+Plain sprites, dictionary models and explicit detail entities require zero
+sway. Lighting and checked rest geometry retain their existing rules.
 
 Sprites share one atlas: **World settings…** → **Detail material file**
 (`detailmaterial`), or installed `detail/detailsprites` when left empty. A custom
@@ -177,7 +192,7 @@ assignment stay unchanged across these lighting modes.
 
 Limits: model and sprite detail types on world and `func_detail` surfaces. Terrain
 requires a parallelogram base quad, including rectangles and sheared or sloped
-parallelograms; skewed base quads reject. Nonzero sway,
+parallelograms; skewed base quads reject. Sway on unsupported detail types,
 runtime brush models, non-integer or unsupported sprite orientations
 and fluid surfaces reject. Selected groups must contain supported
 entries and finite values; an unsupported selected group rejects the

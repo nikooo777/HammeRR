@@ -74,6 +74,7 @@ fn record(entity: &Entity) -> Result<DetailProp, String> {
         ("renderfx", 0.0),
         ("spawnflags", 0.0),
         ("solid", 0.0),
+        ("sway", 0.0),
         ("disableshadows", 0.0),
         ("fademindist", -1.0),
         ("fademaxdist", 0.0),
@@ -398,7 +399,7 @@ pub(crate) fn bake(
     if !builder.props.props.is_empty() {
         bsp.set_detail_props(&builder.props)
             .map_err(|error| error.to_string())?;
-        report.diagnostics.push(Diagnostic::warning("Detail props are non-colliding client-only models, plain sprites and static cross/tri shapes; Fullbright uses unbaked white lighting, while lit builds bake direct, ambient and style colors; authored sway is unsupported", None, None));
+        report.diagnostics.push(Diagnostic::warning("Detail props are non-colliding client-only models, plain sprites and cross/tri shapes; Fullbright uses unbaked white lighting, while lit builds bake direct, ambient and style colors; bounds cover rest geometry, while shape sway and avoidance depend on client settings", None, None));
     }
     let mut model_centers = vec![DVec3::ZERO; builder.props.models.len()];
     for &(index, bounds) in builder.models.values() {

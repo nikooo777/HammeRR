@@ -70,7 +70,7 @@ def require(condition, message):
         raise AssertionError(message)
 
 
-def detail_records(data, allow_sprites=False, allow_baked=False, sprite_orientation=2, allow_styles=False, allow_shapes=False):
+def detail_records(data, allow_sprites=False, allow_baked=False, sprite_orientation=2, allow_styles=False, allow_shapes=False, allow_shape_sway=False):
     offset, size = struct.unpack_from("<2i", data, 8 + 35 * 16)
     require(0 <= offset <= offset + size <= len(data) and size >= 4, "Invalid game-lump directory")
     count = struct.unpack_from("<i", data, offset)[0]
@@ -117,7 +117,7 @@ def detail_records(data, allow_sprites=False, allow_baked=False, sprite_orientat
             record["model"] = names[row[6]]
         else:
             require((allow_sprites or allow_shapes) and (row[21] == 1 or allow_shapes and row[21] in [2, 3]) and row[6] < len(sprite_records), "Invalid detail sprite type or dictionary index")
-            require(row[14] == 0 and (row[21] != 1 or row[15:17] == (0, 0)) and row[17] == sprite_orientation and row[18:21] == (0,) * 3 and row[22:25] == (0,) * 3, "Unexpected sprite sway, shape, orientation or padding")
+            require((row[14] == 0 or allow_shape_sway and row[21] in [2, 3]) and (row[21] != 1 or row[15:17] == (0, 0)) and row[17] == sprite_orientation and row[18:21] == (0,) * 3 and row[22:25] == (0,) * 3, "Unexpected sprite sway, shape, orientation or padding")
             require(0 < row[25] <= 6, "Invalid detail sprite scale")
             record.update({"kind": row[21], "sprite": row[6], "scale": row[25], "orientation": row[17]})
             if row[21] in [2, 3]:
@@ -306,7 +306,7 @@ def worker(args):
     require(not os.environ.get("LD_PRELOAD"), "Native validation must not inherit LD_PRELOAD")
     require(os.environ.get("WAYLAND_DISPLAY") and os.environ.get("XDG_RUNTIME_DIR") == str(output / "wayland"), "Native view requires its private compositor")
     original = probe.read_bounded(args.bsp, probe.MAX_BSP_BYTES)
-    parsed = detail_records(original, allow_sprites=args.expected_sprites > 0, allow_baked=args.baked_lighting, sprite_orientation=args.sprite_orientation, allow_styles=args.allow_detail_styles, allow_shapes=args.allow_shapes)
+    parsed = detail_records(original, allow_sprites=args.expected_sprites > 0, allow_baked=args.baked_lighting, sprite_orientation=args.sprite_orientation, allow_styles=args.allow_detail_styles, allow_shapes=args.allow_shapes, allow_shape_sway=args.shape_sway_amplitude > 0)
     require(len(parsed["props"]) == args.expected_count, "Native input has an unexpected detail count")
     require(sum(row.get("kind", 0) in ([1, 2, 3] if args.allow_shapes else [1]) for row in parsed["props"]) == args.expected_sprites, "Native input has an unexpected sprite count")
     game = runtime.private_game(args.game_dir, output)
@@ -325,7 +325,9 @@ def worker(args):
 '''
         observer = observer.replace('        ready_at = Time() + 4.0;\n        stage = 2;', statement + '        ready_at = Time() + 4.0;\n        stage = 2;')
     if args.allow_shapes and not args.default_shape_avoidance:
-        observer = observer.replace('toggle r_drawdetailprops 1; help r_drawdetailprops', 'toggle r_drawdetailprops 1; help r_drawdetailprops; cl_detail_avoid_force 0; cl_detail_avoid_radius 0; cl_detail_max_sway 0; help cl_detail_avoid_force; help cl_detail_avoid_radius; help cl_detail_max_sway')
+        observer = observer.replace('toggle r_drawdetailprops 1; help r_drawdetailprops', f'toggle r_drawdetailprops 1; help r_drawdetailprops; cl_detail_avoid_force 0; cl_detail_avoid_radius 0; cl_detail_max_sway {args.shape_sway_amplitude}; help cl_detail_avoid_force; help cl_detail_avoid_radius; help cl_detail_max_sway')
+    if args.shape_sway_amplitude:
+        observer = observer.replace('    if (stage == 3 || stage == 5)', '    if (stage == 8) {\n        SendToConsole("cl_detail_max_sway 0; help cl_detail_max_sway");\n        ready_at = Time() + 1.5;\n        stage = 9;\n    }\n    if ((stage == 6 || stage == 9 || stage == 12) && Time() > ready_at) {\n        printl("HAMMERR_DETAIL_SWAY_PHASE " + stage);\n        stage += 1;\n    }\n    if (stage == 3 || stage == 5 || stage == 7 || stage == 10 || stage == 13)')
     if args.view == "elevated":
         observer = observer.replace("0 -192 64", "0 -144 176").replace("10 90 0", "44 90 0").replace("Vector(0, -192, 64)", "Vector(0, -144, 176)")
     (game / "scripts/vscripts/hammerr_detail_observer.nut").write_text(private_observer(observer))
@@ -350,6 +352,7 @@ def worker(args):
             process = subprocess.Popen(command, cwd=args.game_dir, env=environment, stdin=subprocess.DEVNULL, stdout=stream, stderr=stream)
             started = time.monotonic()
             on = off = False
+            sway_phase = 0
             while time.monotonic() - started < 80:
                 text = probe.read_bounded(console, 2 * 1024**2).decode(errors="replace") if console.exists() else ""
                 if not on and ON_READY in text:
@@ -358,8 +361,19 @@ def worker(args):
                     for extension in ["png", "ppm"]:
                         subprocess.run(["grim", *(["-t", "ppm"] if extension == "ppm" else []), str(output / f"details-on.{extension}")], check=True, timeout=5)
                     ppm(output / "details-on.ppm")
-                    probe.write_cfg(cfg, 'toggle r_drawdetailprops 0\nhelp r_drawdetailprops\nent_fire hammerr_detail_observer RunScriptCode "stage = 4; ready_at = Time() + 4"\n')
+                    if args.shape_sway_amplitude:
+                        probe.write_cfg(cfg, 'ent_fire hammerr_detail_observer RunScriptCode "stage = 6; ready_at = Time() + 1.5"\n')
+                    else:
+                        probe.write_cfg(cfg, 'toggle r_drawdetailprops 0\nhelp r_drawdetailprops\nent_fire hammerr_detail_observer RunScriptCode "stage = 4; ready_at = Time() + 4"\n')
                     on = True
+                if args.shape_sway_amplitude and on and sway_phase < 3:
+                    stage, name, following = [(6, "details-sway", 'stage = 8'), (9, "details-zero", 'stage = 12; ready_at = Time() + 1.5'), (12, "details-zero-repeat", 'stage = 4; ready_at = Time() + 4')][sway_phase]
+                    if f"HAMMERR_DETAIL_SWAY_PHASE {stage}" in text:
+                        for extension in ["png", "ppm"]:
+                            subprocess.run(["grim", *(["-t", "ppm"] if extension == "ppm" else []), str(output / f"{name}.{extension}")], check=True, timeout=5)
+                        controls = 'toggle r_drawdetailprops 0\nhelp r_drawdetailprops\n' if sway_phase == 2 else ''
+                        probe.write_cfg(cfg, controls + f'ent_fire hammerr_detail_observer RunScriptCode "{following}"\n')
+                        sway_phase += 1
                 if on and not off and OFF_READY in text:
                     require(re.search(r'"r_drawdetailprops" = "0"', text, re.IGNORECASE), "Engine did not confirm detail rendering OFF")
                     for extension in ["png", "ppm"]:
@@ -374,6 +388,12 @@ def worker(args):
             text = probe.read_bounded(console, 2 * 1024**2).decode(errors="replace")
             require(process.returncode == 0 and on and off and FINISHED in text, f"Native detail validation failed; inspect {console}")
             require(text.index(ON_READY) < text.index(OFF_READY) < text.index(FINISHED), "Frames were captured outside the ordered handshake")
+            if args.shape_sway_amplitude:
+                require(sway_phase == 3, "Native shape sway phases were not captured")
+                require(text.index(ON_READY) < text.index("HAMMERR_DETAIL_SWAY_PHASE 6") < text.index("HAMMERR_DETAIL_SWAY_PHASE 9") < text.index("HAMMERR_DETAIL_SWAY_PHASE 12") < text.index(OFF_READY), "Native sway phases were out of order")
+                values = re.findall(r'"cl_detail_max_sway" = "([^"\n]+)"', text)
+                require(values and float(values[0]) == args.shape_sway_amplitude and float(values[-1]) == 0, f"Native sway amplitude control differs: {values}")
+                report["shape_sway_phases"] = {"amplitude": args.shape_sway_amplitude, "same_process": True, "phase_interval_seconds": 1.5}
             report["private_launch"] = verify_private_launch(game, text)
             for name, expected in {"sv_lan": 1, "mat_hdr_level": 0, "mat_fullbright": 0, "r_drawdetailprops": 0}.items():
                 values = re.findall(r'"' + re.escape(name) + r'" = "([^"\n]+)"', text, re.IGNORECASE)
@@ -428,6 +448,7 @@ def main():
     parser.add_argument("--detail-style-state", choices=["on", "off"])
     parser.add_argument("--allow-shapes", action="store_true")
     parser.add_argument("--default-shape-avoidance", action="store_true")
+    parser.add_argument("--shape-sway-amplitude", type=int, choices=[0, 8], default=0)
     parser.add_argument("--port", type=int, default=27689)
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--bsp", type=Path, help=argparse.SUPPRESS)
@@ -439,6 +460,7 @@ def main():
     require(1 <= args.expected_count <= 16384, "Invalid expected detail count")
     require(0 <= args.expected_sprites <= args.expected_count, "Invalid expected sprite count")
     require(args.detail_style_state is None or args.allow_detail_styles, "Style inputs require --allow-detail-styles")
+    require(not args.shape_sway_amplitude or args.allow_shapes and not args.default_shape_avoidance, "Sway phases require --allow-shapes and zeroed player avoidance")
     if args.worker:
         require(args.bsp is not None, "Private worker requires the compiled BSP")
         worker(args)
@@ -453,7 +475,7 @@ def main():
         require(args.runtime, "--runtime-bsp requires --runtime")
         bsp = args.runtime_bsp.resolve(strict=True)
         data = probe.read_bounded(bsp, probe.MAX_BSP_BYTES)
-        parsed = detail_records(data, allow_sprites=args.expected_sprites > 0, allow_baked=args.baked_lighting, sprite_orientation=args.sprite_orientation, allow_styles=args.allow_detail_styles, allow_shapes=args.allow_shapes)
+        parsed = detail_records(data, allow_sprites=args.expected_sprites > 0, allow_baked=args.baked_lighting, sprite_orientation=args.sprite_orientation, allow_styles=args.allow_detail_styles, allow_shapes=args.allow_shapes, allow_shape_sway=args.shape_sway_amplitude > 0)
         require(len(parsed["props"]) == args.expected_count, "Existing detail BSP count differs")
         require(sum(row.get("kind", 0) in ([1, 2, 3] if args.allow_shapes else [1]) for row in parsed["props"]) == args.expected_sprites, "Existing detail BSP sprite count differs")
         report = {"success": True, "native_exercised": False, "records": parsed, "bsp": str(bsp), "bsp_sha256": probe.digest(data), "source_validation": "external BSP; authored source checks are not performed in this mode"}
@@ -469,6 +491,8 @@ def main():
             command += ["--detail-style-state", args.detail_style_state]
         if args.allow_shapes:
             command.append("--allow-shapes")
+        if args.shape_sway_amplitude:
+            command += ["--shape-sway-amplitude", str(args.shape_sway_amplitude)]
         if args.default_shape_avoidance:
             command.append("--default-shape-avoidance")
         if args.fixture_game is not None:

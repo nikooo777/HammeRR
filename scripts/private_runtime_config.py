@@ -614,6 +614,18 @@ def private_launch_options(
     return ["-default", "-insecure"]
 
 
+def private_readonly_launch(command, output, environment):
+    output = output.resolve(strict=True)
+    temporary = output / "tmp"
+    temporary.mkdir(mode=0o700)
+    arguments = [
+        "/usr/bin/bwrap", "--die-with-parent", "--ro-bind", "/", "/",
+        "--dev-bind", "/dev", "/dev", "--proc", "/proc",
+        "--bind", str(output), str(output), "--", *command,
+    ]
+    return arguments, {**environment, "TMPDIR": str(temporary)}
+
+
 def verify_private_launch(game, text):
     marker = "HAMMERR_PRIVATE_PREMAP_READY"
     if (

@@ -17,6 +17,7 @@ from private_runtime_config import (
     finish_private_launch,
     private_launch_options,
     private_observer,
+    private_readonly_launch,
     verify_private_launch,
 )
 from validate_bump_lighting import texture
@@ -360,18 +361,15 @@ def worker(args):
     settings = output / "settings"
     for name in ["config", "cache", "data"]:
         (settings / name).mkdir(parents=True)
-    temporary = output / "tmp"
-    temporary.mkdir(mode=0o700)
     environment = {
         **os.environ, "LD_LIBRARY_PATH": str(args.game_dir / "bin/linux64"),
         "SteamAppId": "240", "SteamGameId": "240", "SDL_VIDEODRIVER": "x11",
         "XDG_CONFIG_HOME": str(settings / "config"), "XDG_CACHE_HOME": str(settings / "cache"),
         "XDG_DATA_HOME": str(settings / "data"),
-        "TMPDIR": str(temporary),
     }
     flags = private_launch_options(args.game_dir, game, hdr_level=0, map_name=args.map_name, log_name="hammerr-reflections.log", controls={"servercfgfile": "hammerr_reflection_postmap.cfg", "mat_fullbright": 0})
     native = [str(args.game_dir / "cstrike_linux64"), "-game", str(game), "-windowed", "-w", str(probe.WIDTH), "-h", str(probe.HEIGHT), "-novid", *flags, "-nomaster", "-nojoy", "-console", "-port", str(args.port)]
-    command = ["/usr/bin/bwrap", "--die-with-parent", "--ro-bind", "/", "/", "--dev-bind", "/dev", "/dev", "--proc", "/proc", "--bind", str(output), str(output), "--", *native]
+    command, environment = private_readonly_launch(native, output, environment)
     report = {"command": command, "map": args.map_name, "bsp_sha256": probe.digest(data), "private_entity_adapter_only": True, "filesystem_isolation": {"external_paths": "read_only", "writable_directory": str(output)}, "desktop_input": False, "success": False}
     console = game / "hammerr-reflections.log"
     process = None

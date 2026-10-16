@@ -1,6 +1,7 @@
 use std::fs;
 
 use super::*;
+use crate::sky_assets::SUFFIXES;
 use crate::sky_assets::tests::{Fixture, vtf};
 
 fn vmf() -> Vmf {
@@ -173,9 +174,16 @@ fn raw_include_paths_fail_before_normalized_recursive_reads() {
             existing_bytes: 0,
             sources: BTreeMap::new(),
             stamps: BTreeMap::new(),
-            raw: BTreeMap::new(),
         };
-        assert!(collector.resolve("materials/skybox/testrt.vmt").is_err());
+        assert!(
+            verify_closure(
+                "test",
+                PakLimits::default(),
+                &control,
+                &mut |path, material| collector.read(path, material)
+            )
+            .is_err()
+        );
         assert!(
             !collector
                 .reader

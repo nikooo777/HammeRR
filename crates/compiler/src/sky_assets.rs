@@ -8,8 +8,15 @@ use source_formats::vmf::Vmf;
 use source_formats::vmt::{self, Material};
 use source_formats::vtf::{ImageFormat, Vtf};
 
+mod closure;
 mod collection;
-pub use collection::{SkyAssetPlan, SkyAssetSourceSnapshot, collect_sky_asset_plan};
+mod manifest;
+pub use collection::{
+    SkyAssetPlan, SkyAssetSourceGuard, SkyAssetSourceSnapshot, collect_sky_asset_plan,
+};
+pub use manifest::{
+    PACKED_SKY_MANIFEST_PATH, SkyAssetManifest, SkyPackedAsset, read_packed_sky, verify_packed_sky,
+};
 
 const MAX_ASSETS: usize = 128;
 const MAX_TOTAL_BYTES: usize = 64 * 1024 * 1024;
@@ -288,31 +295,7 @@ impl<'a> Reader<'a> {
         };
         report.size = Some([texture.width, texture.height]);
         report.format = Some(format!("{:?}", texture.format));
-        if texture.width > MAX_TEXTURE_SIZE || texture.height > MAX_TEXTURE_SIZE {
-            report.issues.push(format!(
-                "Texture exceeds {MAX_TEXTURE_SIZE} pixels per axis"
-            ));
-        }
-        if texture.frames != 1 || texture.faces != 1 || texture.depth != 1 {
-            report
-                .issues
-                .push("Animated, cubemap and volume sky textures are unsupported".into());
-        }
-        if hdr && parameter == "$hdrbasetexture" {
-            if !matches!(
-                texture.format,
-                ImageFormat::Rgba16161616F | ImageFormat::Rgba16161616
-            ) {
-                report.issues.push(
-                    "This inspection supports HDR base textures only in RGBA16F or RGBA16 format"
-                        .into(),
-                );
-            }
-        } else if !hdr && texture.format == ImageFormat::Rgba16161616F {
-            report
-                .issues
-                .push("This inspection does not support RGBA16F as an LDR base texture".into());
-        }
+        report.issues = texture_issues(&texture, parameter, hdr);
         report.ready = report.issues.is_empty();
         report
     }
@@ -404,6 +387,32 @@ impl<'a> Reader<'a> {
             && report.hdr.textures.iter().all(|texture| texture.ready);
         report
     }
+}
+
+fn texture_issues(texture: &Vtf, parameter: &str, hdr: bool) -> Vec<String> {
+    let mut issues = Vec::new();
+    if texture.width > MAX_TEXTURE_SIZE || texture.height > MAX_TEXTURE_SIZE {
+        issues.push(format!(
+            "Texture exceeds {MAX_TEXTURE_SIZE} pixels per axis"
+        ));
+    }
+    if texture.frames != 1 || texture.faces != 1 || texture.depth != 1 {
+        issues.push("Animated, cubemap and volume sky textures are unsupported".into());
+    }
+    if hdr && parameter == "$hdrbasetexture" {
+        if !matches!(
+            texture.format,
+            ImageFormat::Rgba16161616F | ImageFormat::Rgba16161616
+        ) {
+            issues.push(
+                "This inspection supports HDR base textures only in RGBA16F or RGBA16 format"
+                    .into(),
+            );
+        }
+    } else if !hdr && texture.format == ImageFormat::Rgba16161616F {
+        issues.push("This inspection does not support RGBA16F as an LDR base texture".into());
+    }
+    issues
 }
 
 fn supported_parameter(key: &str) -> bool {

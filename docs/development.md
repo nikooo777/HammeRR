@@ -1262,6 +1262,8 @@ python3 -B scripts/validate_detail_shapes.py --binary target/debug/hammerr-headl
 python3 -B scripts/validate_detail_shapes.py --binary target/debug/hammerr-headless --output /tmp/hammerr-detail-sway-native --sway --runtime
 python3 -B scripts/validate_detail_lighting.py --binary target/debug/hammerr-headless --output /tmp/hammerr-detail-lighting-check
 python3 -B scripts/validate_detail_lighting.py --binary target/debug/hammerr-headless --output /tmp/hammerr-detail-lighting-native --runtime
+python3 -B scripts/validate_detail_lighting.py --binary target/debug/hammerr-headless --output /tmp/hammerr-detail-tint-check --tint
+python3 -B scripts/validate_detail_lighting.py --binary target/debug/hammerr-headless --output /tmp/hammerr-detail-tint-native --tint --runtime --probe-library target/debug/hammerr_hdr_probe.so
 python3 -B scripts/validate_detail_light_styles.py --binary target/debug/hammerr-headless --output /tmp/hammerr-detail-light-styles-check
 python3 -B scripts/validate_detail_light_styles.py --binary target/debug/hammerr-headless --output /tmp/hammerr-detail-light-styles-native --runtime
 ```
@@ -1315,6 +1317,20 @@ base under Direct LDR + HDR, and exact foreground/background builds.
 `--runtime` additionally checks separate model and sprite foreground color masks
 against detail-disabled backgrounds.
 
+`validate_detail_lighting --tint` reuses that room, model assets, sprite atlas and
+native observer for explicit `_detail_lighting_tint`. It checks omitted/white
+BSP identity in Fullbright, LDR and dual modes, exact Fullbright tint bytes,
+linear attenuation within RGBExp32 quantization, actual fixed/vertical/tri
+records, black style membership, unchanged unrelated lumps, save/reopen and
+atomic foreground/background malformed-channel failures. `--runtime` compares
+white and asymmetric tint using separate model and sprite ON-minus-OFF masks;
+detail-disabled ROI backgrounds must remain exactly identical. It covers fast
+vertical and slow fixed sprites, actual named-light TurnOn/TurnOff on the same
+white/tinted BSPs, plus dual-channel style colors with measured HDR hardware.
+The supplied existing `hdr_runtime_probe.c` observer must be built first; no new
+native observer is introduced. Gamma conversion means screen pixels are not
+expected to equal the authored linear bytes.
+
 `validate_detail_light_styles` checks named-light extras, unchanged placement,
 sorted matching LDR/HDR style layouts, authored channel colors, Fullbright
 without style arrays, strict reader opt-ins and source/history preservation.
@@ -1323,13 +1339,15 @@ separate model and sprite masks subtract detail-disabled backgrounds. These
 controls check native response, without assuming SDK half-color extras restore
 static-base intensity. Compiler and source-format tests cover record caps,
 missing-channel zero fill, malformed ranges/layouts and atomic rejection.
-Detail shadows and sway on model entries or explicit detail entities remain
-unsupported.
+Detail shadows and sway on model entries remain unsupported.
 
 All four validators need fresh output directories and installed CS:S/FGD assets.
 Native modes retain the shared private-launch, source/configuration preservation
 and cleanup policy, including `-insecure` and pre/post-map `sv_lan 1`.
-The existing detail observer also accepts `--sprite-orientation 0|1|2` and
+The existing detail observer accepts optional `--hdr-level 0|2` with
+`--probe-library` for verified hardware selection; level 2 requires the existing
+HDR observer. Without these options it retains the original LDR controls.
+It also accepts `--sprite-orientation 0|1|2` and
 `--view level|elevated` for prepared private sprite fixtures. `--allow-shapes`
 admits fixed cross/tri records; `--allow-detail-styles` and
 `--detail-style-state on|off` admit and control styled fixtures. Default readers

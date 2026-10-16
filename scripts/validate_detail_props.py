@@ -307,6 +307,16 @@ def worker(args):
     output = args.output
     require(not os.environ.get("LD_PRELOAD"), "Native validation must not inherit LD_PRELOAD")
     require(os.environ.get("WAYLAND_DISPLAY") and os.environ.get("XDG_RUNTIME_DIR") == str(output / "wayland"), "Native view requires its private compositor")
+    hardware = None
+    hardware_log = output / "hardware.jsonl"
+    ready = output / "probe-ready"
+    hdr_controls = {}
+    if args.probe_library is not None:
+        from validate_hdr_lighting import ENGINE_SHA256, read_probe
+        from validate_hdr_reflections import HDR_CONTROLS, verify_hardware
+
+        require(probe.digest((args.game_dir / "bin/linux64/engine.so").read_bytes()) == ENGINE_SHA256, "Playable engine changed; re-verify the HDR hardware interface")
+        hdr_controls = HDR_CONTROLS
     original = probe.read_bounded(args.bsp, probe.MAX_BSP_BYTES)
     parsed = detail_records(original, allow_sprites=args.expected_sprites > 0, allow_baked=args.baked_lighting, sprite_orientation=args.sprite_orientation, allow_styles=args.allow_detail_styles, allow_shapes=args.allow_shapes, allow_sway=args.sway_amplitude > 0)
     require(len(parsed["props"]) == args.expected_count, "Native input has an unexpected detail count")
@@ -335,7 +345,7 @@ def worker(args):
     (game / "scripts/vscripts/hammerr_detail_observer.nut").write_text(private_observer(observer))
     cfg = game / "cfg/hammerr_detail_once.cfg"
     probe.write_cfg(cfg, "echo HAMMERR_DETAIL_WAIT\n")
-    post_map = "toggle sv_lan 1\ntoggle mat_fullbright 0\nhelp sv_lan\nhelp mat_hdr_level\nhelp mat_fullbright\n"
+    post_map = "toggle sv_lan 1\ntoggle mat_fullbright 0\nhelp sv_lan\nhelp mat_hdr_level\nhelp mat_fullbright\n" + "".join(f"help {name}\n" for name in hdr_controls)
     for name in ["server.cfg", "listenserver.cfg", "hammerr_detail_postmap.cfg"]:
         (game / "cfg" / name).write_text(post_map)
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
@@ -343,7 +353,9 @@ def worker(args):
     for name in ["config", "cache", "data"]:
         (settings / name).mkdir(parents=True)
     environment = {**os.environ, "LD_LIBRARY_PATH": str(args.game_dir / "bin/linux64"), "SteamAppId": "240", "SteamGameId": "240", "SDL_VIDEODRIVER": "x11", "XDG_CONFIG_HOME": str(settings / "config"), "XDG_CACHE_HOME": str(settings / "cache"), "XDG_DATA_HOME": str(settings / "data")}
-    flags = private_launch_options(args.game_dir, game, hdr_level=0, map_name="hammerr_detail_props", log_name="hammerr-detail.log", controls={"servercfgfile": "hammerr_detail_postmap.cfg", "mat_fullbright": 0})
+    if args.probe_library is not None:
+        environment.update({"LD_PRELOAD": str(args.probe_library), "HAMMERR_HDR_EXPECTED_EXE": str((args.game_dir / "cstrike_linux64").resolve(strict=True)), "HAMMERR_HDR_LIBRARY_DIR": str((args.game_dir / "bin/linux64").resolve(strict=True)), "HAMMERR_HDR_PRIVATE_GAME": str(game), "HAMMERR_HDR_READY": str(ready), "HAMMERR_HDR_REPORT": str(hardware_log)})
+    flags = private_launch_options(args.game_dir, game, hdr_level=args.hdr_level, map_name="hammerr_detail_props", log_name="hammerr-detail.log", controls={"servercfgfile": "hammerr_detail_postmap.cfg", "mat_fullbright": 0, **hdr_controls})
     native = [str(args.game_dir / "cstrike_linux64"), "-game", str(game), "-windowed", "-w", str(probe.WIDTH), "-h", str(probe.HEIGHT), "-novid", *flags, "-nomaster", "-nojoy", "-console", "-port", str(args.port)]
     command, environment = private_readonly_launch(native, output, environment)
     report = {"success": False, "command": command, "bsp_sha256": probe.digest(original), "exact_compiled_bsp": True, "sprite_orientation": args.sprite_orientation, "view": args.view, "module_fingerprints": probe.module_fingerprints(args.game_dir), "filesystem_isolation": {"external_paths": "read_only", "writable_directory": str(output)}, "desktop_input": False}
@@ -357,7 +369,11 @@ def worker(args):
             sway_phase = 0
             while time.monotonic() - started < 80:
                 text = probe.read_bounded(console, 2 * 1024**2).decode(errors="replace") if console.exists() else ""
-                if not on and ON_READY in text:
+                if args.probe_library is not None:
+                    if not ready.exists() and ON_READY in text:
+                        ready.write_text("post-map detail observer ready\n")
+                    hardware = verify_hardware(read_probe(hardware_log), args.hdr_level)
+                if not on and ON_READY in text and (args.probe_library is None or hardware is not None):
                     report["private_launch"] = verify_private_launch(game, text)
                     require(re.search(r'"r_drawdetailprops" = "1"', text, re.IGNORECASE), "Engine did not confirm detail rendering ON")
                     for extension in ["png", "ppm"]:
@@ -397,7 +413,7 @@ def worker(args):
                 require(values and float(values[0]) == args.sway_amplitude and float(values[-1]) == 0, f"Native sway amplitude control differs: {values}")
                 report["sway_phases"] = {"amplitude": args.sway_amplitude, "same_process": True, "minimum_phase_delay_seconds": 1.5, "player_avoidance_zeroed": True}
             report["private_launch"] = verify_private_launch(game, text)
-            for name, expected in {"sv_lan": 1, "mat_hdr_level": 0, "mat_fullbright": 0, "r_drawdetailprops": 0}.items():
+            for name, expected in {"sv_lan": 1, "mat_hdr_level": args.hdr_level, "mat_fullbright": 0, "r_drawdetailprops": 0, **hdr_controls}.items():
                 values = re.findall(r'"' + re.escape(name) + r'" = "([^"\n]+)"', text, re.IGNORECASE)
                 require(values and float(values[-1]) == expected, f"Native {name} control differs: {values}")
             if args.detail_style_state is not None:
@@ -410,7 +426,7 @@ def worker(args):
             delta = frame_difference(ppm(output / "details-on.ppm"), ppm(output / "details-off.ppm"))
             require(delta["mean_component_difference"] > 0.5 and delta["changed_fraction"] > 0.002, f"No measurable detail model rendering: {delta}")
             require(staged.read_bytes() == original and args.bsp.read_bytes() == original, "Native validation changed the compiled BSP")
-            report.update({"success": True, "detail_pixels": delta, "unbaked_white_lighting": not args.baked_lighting, "detail_style_state": args.detail_style_state, "shape_avoidance_zeroed": args.allow_shapes and not args.default_shape_avoidance, "elapsed_seconds": time.monotonic() - started})
+            report.update({"success": True, "hardware": hardware, "hdr_level": args.hdr_level, "detail_pixels": delta, "unbaked_white_lighting": not args.baked_lighting, "detail_style_state": args.detail_style_state, "shape_avoidance_zeroed": args.allow_shapes and not args.default_shape_avoidance, "elapsed_seconds": time.monotonic() - started})
     except BaseException as error:
         report["error"] = str(error)
         raise
@@ -445,6 +461,8 @@ def main():
     parser.add_argument("--expected-sprites", type=int, default=0)
     parser.add_argument("--baked-lighting", action="store_true", help="Permit actual compiler-baked detail base colors; the default requires white records")
     parser.add_argument("--sprite-orientation", type=int, choices=[0, 1, 2], default=2)
+    parser.add_argument("--hdr-level", type=int, choices=[0, 2], default=0)
+    parser.add_argument("--probe-library", type=Path, help="Existing native HDR hardware observer; required to verify --hdr-level 2")
     parser.add_argument("--view", choices=["level", "elevated"], default="level")
     parser.add_argument("--allow-detail-styles", action="store_true")
     parser.add_argument("--detail-style-state", choices=["on", "off"])
@@ -458,6 +476,9 @@ def main():
     args.output = args.output.resolve()
     args.binary = args.binary.resolve(strict=True)
     args.game_dir = args.game_dir.resolve(strict=True)
+    if args.probe_library is not None:
+        args.probe_library = args.probe_library.resolve(strict=True)
+    require(args.hdr_level == 0 or args.probe_library is not None, "HDR detail validation requires the existing native hardware observer")
     require(1024 <= args.port <= 65533, "Invalid native port")
     require(1 <= args.expected_count <= 16384, "Invalid expected detail count")
     require(0 <= args.expected_sprites <= args.expected_count, "Invalid expected sprite count")
@@ -484,7 +505,9 @@ def main():
         (args.output / "results.json").write_text(json.dumps(report, indent=2) + "\n")
     if args.runtime:
         output = args.output / "runtime"
-        command = [sys.executable, "-B", str(Path(__file__).resolve()), "--worker", "--binary", str(args.binary), "--output", str(output), "--game-dir", str(args.game_dir), "--bsp", str(bsp), "--port", str(args.port), "--expected-count", str(args.expected_count), "--expected-sprites", str(args.expected_sprites), "--sprite-orientation", str(args.sprite_orientation), "--view", args.view]
+        command = [sys.executable, "-B", str(Path(__file__).resolve()), "--worker", "--binary", str(args.binary), "--output", str(output), "--game-dir", str(args.game_dir), "--bsp", str(bsp), "--port", str(args.port), "--expected-count", str(args.expected_count), "--expected-sprites", str(args.expected_sprites), "--sprite-orientation", str(args.sprite_orientation), "--view", args.view, "--hdr-level", str(args.hdr_level)]
+        if args.probe_library is not None:
+            command += ["--probe-library", str(args.probe_library)]
         if args.baked_lighting:
             command.append("--baked-lighting")
         if args.allow_detail_styles:

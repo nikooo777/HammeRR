@@ -85,6 +85,7 @@ struct Ui {
     fog: Option<fog_ui::Controller>,
     working_region: Option<working_region_ui::Controller>,
     overlay: Option<overlay_ui::Controller>,
+    cubemap: Option<cubemap_ui::Controller>,
     prefabs: Option<prefabs_ui::Controller>,
     color_target: Option<(u32, String, u64)>,
     material_window: Option<MaterialWindow>,
@@ -184,6 +185,7 @@ fn refresh_panel(app: &AppWindow, session: &mut Session) {
     app.set_selection_title(title.into());
     app.set_selection_detail(detail.into());
     app.set_entity_selected(properties.is_some());
+    app.set_can_cubemap_faces(session.selected_cubemap_helper().is_some());
     app.set_can_inspect_model(
         single_selected_entity(session)
             .and_then(|id| doc.entity(id))
@@ -319,6 +321,7 @@ pub(super) fn run(
         fog: None,
         working_region: None,
         overlay: None,
+        cubemap: None,
         prefabs: None,
         color_target: None,
         material_window: None,
@@ -904,6 +907,24 @@ pub(super) fn run(
     app.on_edit_face_textures({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || show_surface_window(&app.unwrap(), &ui)
+    });
+    app.on_cubemap_faces({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let shared = session_of(&ui);
+            if ui.borrow().cubemap.is_none() {
+                match cubemap_ui::Controller::new(&shared) {
+                    Ok(controller) => ui.borrow_mut().cubemap = Some(controller),
+                    Err(error) => {
+                        app.unwrap().set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            if let Err(error) = ui.borrow().cubemap.as_ref().unwrap().show(&lock(&shared)) {
+                app.unwrap().set_message(error.to_string().into());
+            }
+        }
     });
     app.on_create_overlay({
         let (app, ui) = (app.as_weak(), ui.clone());
@@ -2681,6 +2702,11 @@ pub(super) fn run(
                     controller.refresh(&lock(&ui.session));
                 }
                 if let Some(controller) = &ui.overlay
+                    && controller.window.window().is_visible()
+                {
+                    controller.refresh(&lock(&ui.session));
+                }
+                if let Some(controller) = &ui.cubemap
                     && controller.window.window().is_visible()
                 {
                     controller.refresh(&lock(&ui.session));

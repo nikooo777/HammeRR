@@ -4,6 +4,7 @@ mod checks;
 mod clipboard;
 mod components;
 mod context;
+mod cubemap_bindings;
 mod entities;
 mod files;
 mod geometry;

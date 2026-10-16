@@ -30,6 +30,7 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | [2D sky preview](sky.md) | Previewing the selected mounted sky through authored sky surfaces |
 | [Terrain](terrain.md) | Creating, sculpting, blending, sewing, shading and selecting terrain triangles |
 | [Overlays](overlays.md) | Compiling imported surface projections, material, render order and distance fading |
+| [Cubemap faces](cubemap-faces.md) | Inspecting sample choices and previewing manual reflection bindings |
 | [Models](models.md) | Static mesh previews, skin materials, bounds, picking and model inspection |
 | [Particle effects](particles.md) | Active manifest definitions, metadata and guarded effect-name choices |
 | [Sounds](sounds.md) | Sound files and script names, audition, volume and entity assignment |

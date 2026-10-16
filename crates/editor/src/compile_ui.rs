@@ -7,10 +7,13 @@ use crate::CompileWindow;
 use crate::runtime::{SharedSession, lock};
 use crate::session::{Actor, Session};
 
+mod capture;
+
 pub struct Controller {
     pub window: CompileWindow,
     token: Rc<Cell<Option<u64>>>,
     recipes: Rc<RefCell<RecipeForm>>,
+    capture: capture::Form,
 }
 
 #[derive(Default)]
@@ -224,6 +227,7 @@ impl Controller {
         let window = CompileWindow::new()?;
         let token = Rc::new(Cell::new(None));
         let recipes = Rc::new(RefCell::new(RecipeForm::default()));
+        let capture = capture::bind(&window, shared);
         window.on_choose_recipe({
             let (shared, window, recipes) = (shared.clone(), window.as_weak(), recipes.clone());
             move |index| choose_recipe(&window.unwrap(), &lock(&shared), &recipes, index)
@@ -492,15 +496,25 @@ impl Controller {
             window,
             token,
             recipes,
+            capture,
         })
     }
 
     pub fn refresh(&self, session: &Session) {
         refresh_recipes(&self.window, session, &self.recipes);
+        self.capture.refresh(&self.window, session);
         self.token.set(session.compile_token());
         self.window.set_cancellable(session.compile_cancellable());
         let status = session.compile_status();
         let settings = &status["settings"];
+        self.window
+            .set_generate_reflections(settings["generate_reflections"] == true);
+        self.window.set_reflection_description(
+            settings["reflection_description"]
+                .as_str()
+                .unwrap_or_default()
+                .into(),
+        );
         let choices = settings["choices"].as_array().cloned().unwrap_or_default();
         let choice = choices
             .iter()

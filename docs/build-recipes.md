@@ -22,13 +22,15 @@ Build recipes recall a complete set of native compiler settings. Use the built-i
 
 ## Save or change a custom recipe
 
-1. Set **Build lighting**, **Physics bodies**, **Visibility quality**, **Indirect light**, **Brush smoothing angle**, and **Sampling quality** as needed. A changed value clears the applied recipe label to **Custom settings**.
-2. Enter a unique **Recipe name**, then click **Save current as new**. The new recipe stores all six current values.
+1. Set **Build lighting**, **Generate LDR reflections**, **Physics bodies**, **Visibility quality**, **Indirect light**, **Brush smoothing angle**, and **Sampling quality** as needed. Reflection generation requires **Direct LDR**. A changed value clears the applied recipe label to **Custom settings**.
+2. Enter a unique **Recipe name**, then click **Save current as new**. The new recipe stores all seven current values. Capture runtime paths remain separate machine settings; see [Generated LDR reflections](reflections.md).
 3. To update an existing custom recipe, choose it under **Build recipe**, adjust the individual settings, and click **Replace with current**. **Recipe name** also becomes the replacement's name.
 4. To change only its name, choose the recipe, edit **Recipe name**, then click **Rename recipe**. To remove it, click **Delete recipe**; current compiler settings remain available.
 5. Click **Cancel recipe edit** to discard the pending name and selection edits. Settings already applied or changed with the individual controls remain in effect.
 
 Custom recipes save on this computer separately from VMF files and map undo. The status text reports session-only storage or storage failures. Restart to reload recipes after another editor changes their storage file. A failed write keeps the previous registry and file intact; correct a write error and retry. Writes preserve existing file permissions and follow valid file symlinks. A load error blocks custom changes until storage is corrected and the editor restarts. Built-in recipes remain available.
+
+Both built-in recipes disable reflection generation. Older custom recipes that lack this setting also load with generation disabled.
 
 ## Builds and cancellation
 

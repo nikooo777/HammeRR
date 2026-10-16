@@ -71,13 +71,18 @@ pub fn refresh(window: &RecentMapsWindow, session: &Session) {
                 .as_str()
                 .unwrap_or("No mounted game");
             selected_detail = Some(format!(
-                "{path}\nGame: {game}\nBuild: {} lighting · {} physics · {} sky · {} visibility · {} bounces · {}° smoothing\n{}",
+                "{path}\nGame: {game}\nBuild: {} lighting · {} physics · {} sky · {} visibility · {} bounces · {}° smoothing · LDR reflections {}\n{}",
                 settings["lighting"].as_str().unwrap_or_default(),
                 settings["physics"].as_str().unwrap_or_default(),
                 settings["sky_quality"].as_str().unwrap_or_default(),
                 settings["visibility"].as_str().unwrap_or_default(),
                 settings["bounces"],
                 settings["smoothing_angle"],
+                if settings["generate_reflections"] == true {
+                    "on"
+                } else {
+                    "off"
+                },
                 if compatible {
                     "Opening restores these build settings."
                 } else {

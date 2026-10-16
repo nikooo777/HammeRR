@@ -93,6 +93,7 @@ fn label(key: &str, property: Option<&Property>) -> String {
         "_ambient" => "Ambient color".into(),
         "_cone" => "Outer cone angle".into(),
         "_inner_cone" => "Inner cone angle".into(),
+        "_detail_lighting_tint" => "Baked lighting tint · linear RGB".into(),
         "style" => "Light pattern".into(),
         "spawnflags" => "Options".into(),
         _ => property
@@ -104,15 +105,25 @@ fn label(key: &str, property: Option<&Property>) -> String {
 fn field(entity: &Entity, class: Option<&Class>, key: String) -> Field {
     let property = class.and_then(|class| class.property(&key));
     let lower = key.to_ascii_lowercase();
-    let kind = property.map_or_else(
-        || match lower.as_str() {
-            "origin" => "origin",
-            "angles" => "vector",
-            "_light" | "_ambient" => "color255",
-            _ => "string",
-        },
-        |property| property.kind.as_str(),
-    );
+    let detail_tint = lower == "_detail_lighting_tint"
+        && entity.classname().is_some_and(|class| {
+            ["prop_detail", "detail_prop", "prop_detail_sprite"]
+                .iter()
+                .any(|name| class.eq_ignore_ascii_case(name))
+        });
+    let kind = if detail_tint {
+        "string"
+    } else {
+        property.map_or_else(
+            || match lower.as_str() {
+                "origin" => "origin",
+                "angles" => "vector",
+                "_light" | "_ambient" => "color255",
+                _ => "string",
+            },
+            |property| property.kind.as_str(),
+        )
+    };
     let value = entity
         .properties
         .get(&key)
@@ -151,6 +162,9 @@ fn field(entity: &Entity, class: Option<&Class>, key: String) -> Field {
         key,
         value,
     };
+    if detail_tint {
+        result.description = "Three integer linear RGB channels from 0 to 255 attenuate compiled detail lighting. White keeps its original intensity; 128 approximately halves a linear channel. Compiler Fullbright starts from tinted white. Dynamic lights and the client's mat_fullbright override keep their engine behavior.".into();
+    }
     match kind {
         "choices" => {
             result.control = Control::Choices;
@@ -399,6 +413,38 @@ mod tests {
                 .unwrap();
             assert_eq!(field.value, value);
             assert_eq!(field.control, Control::Text);
+        }
+    }
+
+    #[test]
+    fn detail_lighting_tint_keeps_its_linear_label_and_advanced_text_control() {
+        for classname in ["prop_detail", "detail_prop", "prop_detail_sprite"] {
+            let catalog = Catalog::parse(&format!(
+                "@PointClass = {classname} [ _detail_lighting_tint(color255) : \"Tint\" ]"
+            ))
+            .unwrap();
+            for value in ["128 64 0", "invalid imported tint"] {
+                let mut entity = Entity::new(1, classname);
+                entity.properties.set("_DETAIL_LIGHTING_TINT", value);
+                let before = entity.clone();
+                for class in [None, catalog.class(classname)] {
+                    let inspector = inspect(&entity, class);
+                    let field = inspector
+                        .properties
+                        .iter()
+                        .find(|field| field.key.eq_ignore_ascii_case("_detail_lighting_tint"))
+                        .unwrap();
+                    assert_eq!(field.label, "Baked lighting tint · linear RGB");
+                    assert_eq!(field.value, value);
+                    assert_eq!(field.control, Control::Text);
+                    assert_eq!(field.kind, "string");
+                    assert!(field.advanced);
+                    assert!(field.color.is_none() && field.intensity.is_none());
+                    assert!(field.description.contains("linear RGB channels"));
+                    assert!(field.description.contains("Dynamic lights"));
+                }
+                assert_eq!(entity, before);
+            }
         }
     }
 }

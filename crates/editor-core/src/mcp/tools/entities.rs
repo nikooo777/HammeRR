@@ -534,3 +534,6 @@ impl EditorServer {
         })
     }
 }
+
+#[cfg(test)]
+mod tests;

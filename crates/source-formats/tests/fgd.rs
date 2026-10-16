@@ -58,3 +58,46 @@ fn includes_resolve_relative_paths_and_reject_cycles() {
     std::fs::write(&base, "@include \"root.fgd\"").unwrap();
     assert!(Catalog::load(&root).unwrap_err().contains("cycle"));
 }
+
+#[test]
+fn extensions_apply_after_includes_and_repeated_sources_are_not_replayed() {
+    let directory = tempfile::tempdir().unwrap();
+    let base = directory.path().join("base.fgd");
+    let extension = directory.path().join("extension.fgd");
+    let root = directory.path().join("root.fgd");
+    std::fs::write(
+        &base,
+        r#"
+        @BaseClass = Common [ value(integer) : "Value" : 1 ]
+        @PointClass base(Common) = point [ output OnReady(void) : "Ready" ]
+        "#,
+    )
+    .unwrap();
+    std::fs::write(
+        &extension,
+        r#"
+        @ExtendClass = Common [ inherited(string) : "Inherited" : "Extended base" ]
+        @ExtendClass = point [ value(integer) : "Value" : 2 input Enable(void) ]
+        @ExtendClass = missing [ ignored(string) ]
+        "#,
+    )
+    .unwrap();
+    std::fs::write(
+        &root,
+        r#"
+        @include "extension.fgd"
+        @ExtendClass = point [ value(integer) : "Value" : 3 ]
+        @include "base.fgd"
+        @include "extension.fgd"
+        "#,
+    )
+    .unwrap();
+    let catalog = Catalog::load(&root).unwrap();
+    assert_eq!(catalog.sources.len(), 3);
+    assert_eq!(catalog.classes().count(), 1);
+    let class = catalog.class("point").unwrap();
+    assert_eq!(class.defaults()["value"], "3");
+    assert_eq!(class.defaults()["inherited"], "Extended base");
+    assert_eq!(class.inputs[0].name, "Enable");
+    assert_eq!(class.outputs[0].name, "OnReady");
+}

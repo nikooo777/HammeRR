@@ -155,30 +155,28 @@ pub struct Catalog {
 impl Catalog {
     pub fn parse(text: &str) -> Result<Self, String> {
         let declarations = Parser::new(text)?.parse()?;
-        let mut raw = BTreeMap::new();
+        let mut raw = RawCatalog::default();
         for declaration in declarations {
             match declaration {
-                Declaration::Class(class) => {
-                    raw.insert(class.name.clone(), class);
-                }
                 Declaration::Include(_) => {
                     return Err("use Catalog::load to resolve FGD includes".into());
                 }
+                declaration => raw.insert(declaration),
             }
         }
         Self::resolve(raw, Vec::new())
     }
 
     pub fn load(path: &Path) -> Result<Self, String> {
-        let mut raw = BTreeMap::new();
+        let mut raw = RawCatalog::default();
         let mut sources = Vec::new();
         load(path, &mut raw, &mut sources, &mut Vec::new())?;
         Self::resolve(raw, sources)
     }
 
-    fn resolve(raw: BTreeMap<String, Class>, sources: Vec<PathBuf>) -> Result<Self, String> {
+    fn resolve(raw: RawCatalog, sources: Vec<PathBuf>) -> Result<Self, String> {
         let mut classes = BTreeMap::new();
-        for name in raw.keys() {
+        for name in raw.classes.keys() {
             resolve(name, &raw, &mut classes, &mut Vec::new())?;
         }
         Ok(Self { classes, sources })
@@ -196,9 +194,32 @@ impl Catalog {
     }
 }
 
+#[derive(Default)]
+struct RawCatalog {
+    classes: BTreeMap<String, Class>,
+    extensions: BTreeMap<String, Vec<Class>>,
+}
+
+impl RawCatalog {
+    fn insert(&mut self, declaration: Declaration) {
+        match declaration {
+            Declaration::Class(class) => {
+                self.classes.insert(class.name.clone(), class);
+            }
+            Declaration::Extend(class) => {
+                self.extensions
+                    .entry(class.name.clone())
+                    .or_default()
+                    .push(class);
+            }
+            Declaration::Include(_) => unreachable!(),
+        }
+    }
+}
+
 fn load(
     path: &Path,
-    raw: &mut BTreeMap<String, Class>,
+    raw: &mut RawCatalog,
     sources: &mut Vec<PathBuf>,
     active: &mut Vec<PathBuf>,
 ) -> Result<(), String> {
@@ -222,9 +243,6 @@ fn load(
     active.push(path.clone());
     for declaration in declarations {
         match declaration {
-            Declaration::Class(class) => {
-                raw.insert(class.name.clone(), class);
-            }
             Declaration::Include(include) => load(
                 &path
                     .parent()
@@ -234,6 +252,7 @@ fn load(
                 sources,
                 active,
             )?,
+            declaration => raw.insert(declaration),
         }
     }
     active.pop();
@@ -243,7 +262,7 @@ fn load(
 
 fn resolve(
     name: &str,
-    raw: &BTreeMap<String, Class>,
+    raw: &RawCatalog,
     resolved: &mut BTreeMap<String, Class>,
     active: &mut Vec<String>,
 ) -> Result<Class, String> {
@@ -256,6 +275,7 @@ fn resolve(
         ));
     }
     let own = raw
+        .classes
         .get(name)
         .ok_or_else(|| format!("unknown FGD base class {name}"))?;
     let mut class = own.clone();
@@ -266,19 +286,26 @@ fn resolve(
     active.push(name.into());
     for base in &own.bases {
         let parent = resolve(base, raw, resolved, active)?;
-        merge(&mut class, &parent);
+        merge(&mut class, &parent, true);
     }
-    merge(&mut class, own);
+    merge(&mut class, own, true);
+    if let Some(extensions) = raw.extensions.get(name) {
+        for extension in extensions {
+            merge(&mut class, extension, false);
+        }
+    }
     active.pop();
     resolved.insert(name.into(), class.clone());
     Ok(class)
 }
 
-fn merge(class: &mut Class, other: &Class) {
+fn merge(class: &mut Class, other: &Class, inherit_flags: bool) {
     for property in &other.properties {
         let mut property = property.clone();
-        if property.kind == "flags"
+        if inherit_flags
+            && property.kind == "flags"
             && let Some(previous) = class.property(&property.name)
+            && previous.kind == "flags"
         {
             let mut choices = previous.choices.clone();
             for choice in &property.choices {
@@ -294,8 +321,18 @@ fn merge(class: &mut Class, other: &Class) {
     for output in &other.outputs {
         upsert(&mut class.outputs, output.clone(), |item| &item.name);
     }
-    for helper in &other.helpers {
-        upsert(&mut class.helpers, helper.clone(), |item| &item.name);
+    for (index, helper) in other.helpers.iter().enumerate() {
+        if !other.helpers[..index]
+            .iter()
+            .any(|previous| previous.name.eq_ignore_ascii_case(&helper.name))
+        {
+            class
+                .helpers
+                .retain(|previous| !previous.name.eq_ignore_ascii_case(&helper.name));
+        }
+        if !class.helpers.contains(helper) {
+            class.helpers.push(helper.clone());
+        }
     }
 }
 
@@ -313,6 +350,7 @@ fn upsert<T>(items: &mut Vec<T>, value: T, name: impl Fn(&T) -> &str) {
 enum Declaration {
     Include(String),
     Class(Class),
+    Extend(Class),
 }
 
 struct Token {
@@ -486,6 +524,13 @@ impl<'a> Parser<'a> {
             self.index += 1;
             match directive.as_str() {
                 "@include" => declarations.push(Declaration::Include(self.text()?)),
+                "@extendclass" => {
+                    let class = self.class(ClassKind::Base)?;
+                    if !class.bases.is_empty() {
+                        return Err(self.error("base(...) on @ExtendClass is not supported"));
+                    }
+                    declarations.push(Declaration::Extend(class));
+                }
                 "@baseclass" | "@pointclass" | "@solidclass" | "@npcclass" | "@filterclass"
                 | "@keyframeclass" | "@moveclass" => {
                     let kind = match directive.as_str() {
@@ -678,6 +723,134 @@ mod tests {
         assert_eq!(light.inputs[0].name, "Enable");
         assert_eq!(light.outputs[0].name, "OnReady");
         assert_eq!(light.helpers[0].name, "size");
+    }
+
+    #[test]
+    fn extensions_are_deferred_and_replace_only_declared_members() {
+        let catalog = Catalog::parse(
+            r#"
+            @ExtendClass = absent [ ignored(string) ]
+            @ExtendClass = Common [ inherited(integer) : "Inherited" : 7 ]
+            @ExtendClass size(-4 -4 -4, 4 4 4) = relay : "Ignored description" [
+                mode(choices) : "New mode" : 2 = [ 2 : "New choice" ]
+                spawnflags(flags) = [ 4 : "Extension flag" : 1 ]
+                input Trigger(integer) : "New input signature"
+                output OnExtension(void) : "New output"
+            ]
+            @BaseClass = Common [
+                inherited(integer) : "Inherited" : 1
+                custom(string) : "Custom" : "Keep me"
+                input Enable(void) : "Inherited input"
+            ]
+            @SolidClass = brush []
+            @PointClass base(Common) size(-8 -8 -8, 8 8 8) = relay : "Original" [
+                mode(choices) : "Old mode" : 0 = [ 0 : "Old choice" 1 : "Other choice" ]
+                untouched(choices) : "Untouched" : 1 = [ 0 : "Zero" 1 : "One" ]
+                spawnflags(flags) = [ 1 : "Original flag" : 1 ]
+                input Trigger(void) : "Old input signature"
+                output OnTrigger(void) : "Original output"
+            ]
+            @ExtendClass = relay [ input trigger(float) : "Last input signature" ]
+            "#,
+        )
+        .unwrap();
+        assert_eq!(catalog.classes().count(), 2);
+        assert!(catalog.class("absent").is_none());
+        assert!(catalog.class("Common").is_none());
+        assert_eq!(catalog.class("brush").unwrap().kind, ClassKind::Solid);
+        let relay = catalog.class("RELAY").unwrap();
+        assert_eq!(relay.name, "relay");
+        assert_eq!(relay.kind, ClassKind::Point);
+        assert_eq!(relay.description, "Original");
+        assert_eq!(relay.bases, ["Common"]);
+        assert_eq!(relay.defaults()["inherited"], "7");
+        assert_eq!(relay.defaults()["custom"], "Keep me");
+        assert_eq!(relay.defaults()["spawnflags"], "4");
+        let mode = relay.property("mode").unwrap();
+        assert_eq!(mode.label, "New mode");
+        assert_eq!(mode.default_value().as_deref(), Some("2"));
+        assert_eq!(mode.choices.len(), 1);
+        assert!(mode.validate("2").is_ok());
+        assert!(mode.validate("0").is_err());
+        assert_eq!(relay.property("untouched").unwrap().choices.len(), 2);
+        assert_eq!(relay.property("spawnflags").unwrap().choices.len(), 1);
+        assert_eq!(relay.inputs.len(), 2);
+        assert_eq!(relay.inputs[0].name, "Enable");
+        assert_eq!(relay.inputs[1].kind, "float");
+        assert_eq!(relay.inputs[1].description, "Last input signature");
+        assert_eq!(relay.outputs.len(), 2);
+        assert_eq!(relay.outputs[0].name, "OnTrigger");
+        assert_eq!(relay.outputs[1].name, "OnExtension");
+        assert_eq!(relay.helpers.len(), 1);
+        assert_eq!(relay.helpers[0].arguments[0], "-4");
+    }
+
+    #[test]
+    fn extension_helpers_keep_distinct_arguments_and_remove_exact_duplicates() {
+        let catalog = Catalog::parse(
+            r#"
+            @BaseClass size(-8 -8 -8, 8 8 8) = Common []
+            @PointClass base(Common) light(point) = light_environment []
+            @PointClass base(light_environment) = derived []
+            @ExtendClass light(sun, global) light(ambient, global)
+                light(sun, global) direction(angles) = light_environment []
+            @ExtendClass direction(angles) = light_environment []
+            "#,
+        )
+        .unwrap();
+        for name in ["light_environment", "derived"] {
+            let helpers = &catalog.class(name).unwrap().helpers;
+            assert_eq!(helpers.len(), 4);
+            assert_eq!(helpers[0].name, "size");
+            assert_eq!(helpers[1].arguments, ["sun", "global"]);
+            assert_eq!(helpers[2].arguments, ["ambient", "global"]);
+            assert_eq!(helpers[3].name, "direction");
+        }
+    }
+
+    #[test]
+    fn duplicate_classes_replace_before_extensions_and_case_distinct_bases_survive() {
+        let catalog = Catalog::parse(
+            r#"
+            @ExtendClass = target [ extra(string) : "Extension" ]
+            @ExtendClass = Target [ base_extra(string) : "Base extension" : "Base" ]
+            @BaseClass = Target [ inherited(integer) : "Inherited" : 7 ]
+            @PointClass = target [ removed(string) ]
+            @SolidClass base(Target) = target [ retained(integer) : "Retained" : 3 ]
+            "#,
+        )
+        .unwrap();
+        assert_eq!(catalog.classes().count(), 1);
+        let class = catalog.class("target").unwrap();
+        assert_eq!(class.name, "target");
+        assert_eq!(class.kind, ClassKind::Solid);
+        assert!(class.property("removed").is_none());
+        assert_eq!(class.defaults()["retained"], "3");
+        assert_eq!(class.defaults()["inherited"], "7");
+        assert_eq!(class.defaults()["base_extra"], "Base");
+        assert!(class.property("extra").is_some());
+    }
+
+    #[test]
+    fn extensions_do_not_hide_malformed_classes_or_inheritance_limits() {
+        for source in [
+            "@ExtendClass = target [ value(integer)",
+            "@ExtendClass base(Common) = target []",
+            "@BaseClass base(A) = A [] @ExtendClass = A []",
+        ] {
+            assert!(Catalog::parse(source).is_err(), "{source}");
+        }
+        let mut source = "@BaseClass = Base0 []".to_owned();
+        for index in 1..=MAX_DEPTH {
+            source.push_str(&format!(
+                " @BaseClass base(Base{}) = Base{index} []",
+                index - 1
+            ));
+        }
+        source.push_str(&format!(
+            " @PointClass base(Base{MAX_DEPTH}) = 000point [] @ExtendClass = 000point []"
+        ));
+        assert!(Catalog::parse(&source).unwrap_err().contains("depth"));
     }
 
     #[test]

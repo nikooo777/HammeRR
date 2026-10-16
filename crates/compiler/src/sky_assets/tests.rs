@@ -6,13 +6,13 @@ use source_formats::vpk::Vpk;
 
 use super::*;
 
-struct Fixture {
-    directory: tempfile::TempDir,
-    game: GameFs,
+pub(super) struct Fixture {
+    pub(super) directory: tempfile::TempDir,
+    pub(super) game: GameFs,
 }
 
 impl Fixture {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let directory = tempfile::tempdir().unwrap();
         fs::create_dir_all(directory.path().join("materials/skybox")).unwrap();
         let game = GameFs {
@@ -26,13 +26,13 @@ impl Fixture {
         Self { directory, game }
     }
 
-    fn write(&self, path: &str, data: impl AsRef<[u8]>) {
+    pub(super) fn write(&self, path: &str, data: impl AsRef<[u8]>) {
         let path = self.directory.path().join(path);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, data).unwrap();
     }
 
-    fn family(&self, name: &str, extra: &str) {
+    pub(super) fn family(&self, name: &str, extra: &str) {
         for suffix in SUFFIXES {
             self.write(
                 &format!("materials/skybox/{name}{suffix}.vmt"),
@@ -44,7 +44,7 @@ impl Fixture {
     }
 }
 
-fn vtf(format: u32, width: u16, height: u16, mips: u8) -> Vec<u8> {
+pub(super) fn vtf(format: u32, width: u16, height: u16, mips: u8) -> Vec<u8> {
     let mut bytes = vec![0; 80];
     bytes[..4].copy_from_slice(b"VTF\0");
     bytes[4..8].copy_from_slice(&7u32.to_le_bytes());
@@ -238,7 +238,7 @@ fn malformed_higher_priority_assets_never_fall_back_to_valid_lower_mounts() {
     assert!(fresh.ldr_ready && fresh.hdr_ready);
 }
 
-fn vpk_material(root: &Path) -> PathBuf {
+pub(super) fn vpk_material(root: &Path) -> PathBuf {
     let body = b"Sky { $basetexture skybox/shared_ldr $hdrbasetexture skybox/shared_hdr }";
     let mut tree = b"vmt\0materials/skybox\0testrt\0".to_vec();
     tree.extend(0u32.to_le_bytes());

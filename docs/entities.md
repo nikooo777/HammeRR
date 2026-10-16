@@ -265,7 +265,7 @@ These links are editor guides; they do not simulate beams, parenting, attachment
 or entity I/O. Only unique, exact-case literal target names are displayed.
 Case-insensitive name collisions are ambiguous, and case-only matches report an
 unsupported state rather than guessing native matching behavior. Wildcards,
-`!tokens`, `nodeid` lookup and brush endpoints are unavailable. Reference values
+`!tokens` and brush endpoints are unavailable. Reference values
 use authored properties before labeled FGD defaults. Targets need one authored
 `targetname` and one finite authored origin within ±65536 units. Missing,
 duplicate, invalid and coincident endpoints add no replacement geometry.
@@ -277,9 +277,34 @@ hidden or excluded duplicate names still count toward ambiguity. Lines never
 change object bounds, picking, framing, placement or volume selection. The shared
 inspector and `get_entity_inspector.helpers.lines` report resolution separately
 from selection/visibility suppression. Limits are sixteen declarations per
-entity, 128 displayed lines, 65536 lookup entities/name values, and 128/256 bytes
+entity, 128 displayed lines, 65536 lookup entities/raw name plus eligible node-ID values, and 128/256 bytes
 for property/value previews. Oversized inputs are rejected before clipped text
 can be resolved.
+
+Imported node links can use `line(R G B, nodeid, property)` or its two-pair form.
+The reference property must be declared `node_dest`; each endpoint must be a
+point class with a declared read-only integer `nodeid` and one stored ID.
+
+1. Open a VMF containing authored node IDs and load its FGD through **Entity…**
+   → **Load FGD…**. The editor preserves the stored IDs; it does not allocate them.
+2. Select an `info_node_link`. Set **Start node ID** and **End node ID** to the
+   stored endpoint IDs. A unique pair draws between the authored node origins.
+3. Read the helper summary for missing, ambiguous, invalid or suppressed
+   endpoints. Agents receive the same states and `lookup_property: "nodeid"`
+   through `get_entity_inspector.helpers.lines` and the same guide in `render_view`.
+4. Move an endpoint in a transform preview to inspect the guide's new position.
+   **Working region…** and authored visibility still control both endpoints.
+
+IDs use canonical decimal integers from `0` through `2147483647`; `0` is valid.
+A reference of `-1` means no association. Missing IDs never fall back to VMF
+object IDs, entity order, FGD endpoint defaults or runtime node indexes.
+Whitespace, signs, leading zeroes and other noncanonical IDs are unavailable;
+bounded parseable numeric aliases still count toward ambiguity, even if hidden
+or excluded. Duplicate node-ID keys and duplicate endpoint IDs are explicit
+diagnostics. Node IDs remain read-only. This slice does not create a node graph,
+validate AI connectivity or simulate ground nodes dropping to the floor.
+Existing model-source exclusions still suppress the single-pair guide on
+`info_node_air_hint`; the generic `info_node_link` two-pair guide is supported.
 
 How lights, spotlights and the sun are baked, including falloff distances and sky ambient, is covered in [Compile and play](compile-and-play.md#lighting).
 

@@ -1577,6 +1577,37 @@ hash. Outputs include `model-helper-perspective.png`,
 `model-helper-top.png`, `model-helper-front.png`, `model-helper-side.png` and
 paired controls. The script launches no game or desktop input.
 
+### Entity resource visibility
+
+```sh
+cargo test -p editor-core --features mcp --lib entity_images_off_defers_admission_and_retains_cached_failures_until_reload
+cargo test -p editor-core --features mcp --lib entity_model_guides_off_defers_geometry_reads_and_preserves_authored_models
+cargo test -p editor-core --features mcp --lib resource_visibility_parameters_default_on_and_key_each_temporary_scene_variant
+cargo test -p editor --bin editor resource_visibility_controls_share_defaults_and_preserve_pending_source_reviews
+python3 -B scripts/validate_entity_resource_visibility.py --binary target/debug/hammerr-headless --output /tmp/hammerr-entity-resource-visibility-check
+```
+
+Use a fresh output directory and a graphics adapter. The stdio validator creates
+its own private gameinfo, Sprite/VTF and real static MDL/VVD/DX90 VTX fixtures;
+it accepts `--binary` and required `--output`, without mounted installed assets
+or a game launch. Top and perspective PNG controls compare all four independent
+flag combinations against the same scene with the corresponding FGD declarations
+removed. Default omission and explicit true require identical pixels. Repeated
+temporary overrides use one persistent renderer and preserve the shared view.
+Authored models, specialized lights and a real rope span remain in the controls.
+
+Missing assets are repaired while disabled, then become ready without reload;
+previously cached failures remain unavailable through off/on toggles until
+explicit material/model reload. Shared inspection reports deferred admission
+truthfully. Pending model-choice and reviewed placement tokens, full current
+history, source bytes, object bounds/hits and camera survive flag changes and
+atomic mixed-request rejection. `results.json` records reports, PNG hashes,
+cameras and a source hash. MCP does not expose scene revisions or GPU cache
+counters: Session/software fixtures cover unchanged source scene revisions and
+cache-key separation, while the script checks live tokens and actual pixels.
+No filesystem syscall trace, runtime sprite or native model-rendering parity
+is claimed.
+
 ### Terrain detail scattering and displayed model bounds
 
 ```sh

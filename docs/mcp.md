@@ -375,6 +375,36 @@ outlines retains selection tints, geometry, picking, diagnostic lines and tool
 guides. Temporary render overrides do not change the shared view. See
 [Selection outlines](basics.md#selection-outlines).
 
+`set_view` and `render_view` also accept optional booleans `entity_images` and
+`entity_model_guides`, both default true. Shared `get_map_info.view` and render
+metadata expose the effective flags. The human controls are **Entity images**
+and **Entity model guides**. They independently control literal FGD
+`iconsprite(material)` images and `studio`/`studioprop` editor meshes. Disabling
+either retains the ordinary editable FGD box, including bounds, picking,
+contact, selection and framing. Authored model entities, specialized lights,
+ropes and other guides retain their existing behavior.
+
+```json
+{"entity_images": false, "entity_model_guides": true}
+```
+
+A temporary `render_view` override returns its effective flags without changing
+the shared view, camera, source or history. Pure changes to these two shared
+flags preserve pending model-choice, placement and review tokens. Both onscreen
+and offscreen scene cache keys include the flags; resource visibility changes
+the view revision without invalidating the source scene revision.
+
+Otherwise eligible disabled helpers report `suppression_reason:"view_disabled"`
+and defer asset reads and cache admission. Icon status is `suppressed`, with no
+source/texture provenance or dimensions and an explicit deferred-admission
+message. Model state is `not_loaded`, with `declaration_supported:true`, null
+visual bounds/pose/skin/body and no asset error. Structural, hidden and
+working-region suppression retains precedence; unsupported declarations still
+report their pure declaration errors. Disabled reports do not establish asset
+readiness. Toggling visibility never clears an existing successful or failed
+asset cache entry. After external repairs, use `reload_material_assets` for
+icons or `reload_model_assets` for model guides.
+
 ### Material source and FGD preferences
 
 `get_material_source {"material":"path/to/material"}` returns raw VMT text,
@@ -623,8 +653,9 @@ preview projected textures, lighting, shadows, parenting or runtime state.
 `iconsprite(material)` through the same Session inspection and scene operations
 as the property panel, viewport and `render_view`. A class without this helper
 returns null. Exactly one declaration with one literal material argument is
-supported; `helpers.icon_limits` describes admission and display limits. No new
-tool or setting is added. `load_entity_definitions` loads or reloads declarations.
+supported; `helpers.icon_limits` describes admission and display limits.
+`entity_images` controls their visibility; `load_entity_definitions` loads or
+reloads declarations. No new tool is added.
 
 The report contains `status`, `material`, optional material `source`,
 `texture`, `texture_source`, pixel `width`/`height`, `world_size`, `error`,
@@ -673,7 +704,8 @@ native Sprite rendering modes remain outside this feature.
 `studio("models/*.mdl")` or `studioprop("models/*.mdl")` declaration from the
 loaded FGD catalog. A class without either declaration returns null. Existing
 `load_entity_definitions`, inspector and `render_view` calls share the property
-panel and viewport's Session operations; no new tool or setting is added.
+panel and viewport's Session operations. `entity_model_guides` controls their
+visibility; no new tool is added.
 
 The report contains `source:"fgd_literal"`, `helper`, exact `literal`,
 `literal_truncated`, canonical optional `path`, `declaration_supported`, `state`,

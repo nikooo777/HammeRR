@@ -5,6 +5,7 @@ use source_formats::vmf::Entity;
 use crate::ObjectId;
 use crate::query::{Hit, Ray};
 
+pub mod frustums;
 pub mod lines;
 pub mod projectors;
 pub mod spheres;
@@ -74,6 +75,7 @@ impl Appearance {
                 !["size", "color"].contains(&helper.name.as_str())
                     && !spheres::supported(class, helper)
                     && !lines::supported(class, helper)
+                    && helper.name != "frustum"
                     && !(helper.name == "iconsprite"
                         && helper.arguments.len() == 1
                         && !helper.arguments[0].is_empty()

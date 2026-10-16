@@ -7,6 +7,7 @@ use serde::Serialize;
 
 use super::{Session, models::Models, working_region::Evaluation};
 
+mod frustums;
 mod icons;
 mod lines;
 mod models;
@@ -32,6 +33,9 @@ pub struct Report {
     pub sphere_limits: &'static str,
     pub lines: Vec<lines::Report>,
     pub line_limits: &'static str,
+    pub frustums: Vec<frustums::Report>,
+    pub omitted_frustum_declarations: usize,
+    pub frustum_limits: &'static str,
     pub source_projector: Option<projectors::Report>,
     pub projector_limits: &'static str,
     pub limits: &'static str,
@@ -195,6 +199,7 @@ impl Session {
         }
         let spheres = self.inspected_spheres(id);
         let lines = self.inspected_lines(id);
+        let (frustums, omitted_frustum_declarations) = self.inspected_frustums(id);
         let source_projector = self.inspected_projector(id);
         if let Some(projector) = &source_projector {
             let state = if projector.displayed {
@@ -226,6 +231,38 @@ impl Session {
             .is_some_and(|class| class.eq_ignore_ascii_case("env_projectedtexture"))
         {
             status += ". Source projector guide unavailable: loaded FGD definition required";
+        }
+        for frustum in &frustums {
+            status += &format!(
+                ". FGD frustum guide: {}; pitch_scale={} ({})",
+                if frustum.displayed {
+                    frustum.presentation
+                } else {
+                    frustum.suppression_reason.unwrap_or(frustum.state)
+                },
+                frustum
+                    .pitch_scale
+                    .map_or_else(|| "unavailable".into(), |v| v.to_string()),
+                frustum.pitch_scale_source
+            );
+            let defaults = frustum
+                .inputs
+                .iter()
+                .filter(|v| v.value_source == "fgd_default")
+                .map(|v| v.property.as_str())
+                .take(6)
+                .collect::<Vec<_>>();
+            if !defaults.is_empty() {
+                status += &format!("; FGD defaults: {}", defaults.join(", "));
+            }
+            if let Some(error) = &frustum.error {
+                status += &format!(" ({error})");
+            }
+        }
+        if omitted_frustum_declarations > 0 {
+            status += &format!(
+                ". {omitted_frustum_declarations} further FGD frustum declarations omitted"
+            );
         }
         if !spheres.is_empty() {
             let displayed = spheres.iter().filter(|sphere| sphere.displayed).count();
@@ -283,6 +320,9 @@ impl Session {
             model_guide_limits: models::LIMITS,
             lines,
             line_limits: lines::LIMITS,
+            frustums,
+            omitted_frustum_declarations,
+            frustum_limits: frustums::LIMITS,
             source_projector,
             projector_limits: projectors::LIMITS,
             bounds_source,

@@ -312,15 +312,62 @@ Existing model-source exclusions still suppress the single-pair guide on
 
 How lights, spotlights and the sun are baked, including falloff distances and sky ambient, is covered in [Compile and play](compile-and-play.md#lighting).
 
+### Inspect an FGD frustum guide
+
+Selected generic point entities with `frustum()` declarations show square near
+and far planes as twelve edges. UI and MCP use the same displayed-document
+corners, including transform previews. The helper follows the proven installed
+Hammer2009 editor policy: yaw around +Z, scaled pitch around −Y, then roll
+around +X. The fifth argument is a literal pitch multiplier; omitted means +1.
+The shipped `env_projectedtexture` declaration uses −1, which agrees with its
+independent Source projector guide.
+
+1. Load the FGD through **Entity…** → **Load FGD…**, then select a point entity
+   whose definition declares `frustum(fov,near,far,color,pitch_scale)`.
+2. Enable **Advanced properties**. Edit the bound FOV, near/far, color and
+   **Pitch Yaw Roll (Y Z X)** properties using their labels in that FGD. The
+   first four arguments name properties; they are not literal numeric values.
+3. Read **FGD frustum guide** in the helper summary. It reports the evaluated
+   pitch scale, fields using FGD defaults and any error or suppression. Agents
+   read the same values and exact corners in `get_entity_inspector.helpers.frustums`.
+4. Use the viewport or `render_view` in top, front, side or perspective.
+   Deselect, hide or exclude the ordinary point box with **Working region…**
+   to suppress its guide.
+
+The independent Source guide keeps precedence on `env_projectedtexture`. When
+all eight corners and RGB match its displayed geometry, the FGD report says
+`shared_with_source_projector` and the edges draw once. A different FGD guide
+remains evaluated with explicit `source_projector_precedence` suppression; it
+cannot bypass an unsupported Source target or camera-space branch. The Source
+report's unevaluated-helper flag applies only to that independent guide.
+
+Limits: zero to five arguments, with omitted property bindings `_fov`,
+`_NearPlane`, `_FarPlane`, `_light`; no literal scalar/RGB extension. Bindings
+must be distinct, use 1–79 UTF-8 bytes and avoid reserved origin/angles names.
+FOV/near/far require declared float or integer properties; color requires
+color255. Authored values precede labeled FGD defaults; missing values never
+receive fabricated Hammer constructor defaults. Origin must be authored. Scale
+and its product with raw pitch must remain finite at native precision, before
+angle reduction. Nominal FOV must be 0.02–178 degrees and
+0 < near < far ≤ 65536; native FOV clamp branches are rejected. The shared
+finite-corner, nonzero-area and ±65536 relative-offset checks apply. Optional
+fourth color intensity is retained separately, never used as opacity. Values
+cap at 256 bytes, declarations at 16 per entity and displayed guides at 128;
+omitted declarations and suppression are reported. Models and specialized
+light/rope/sprite helpers retain precedence. Bounds, picking, selection,
+placement, framing and history remain unchanged. This is an editor authoring
+guide, with no projected texture, illumination, shadow, parent/runtime-state
+preview or universal Hammer++ compatibility claim.
+
 ### Inspect a Source projector guide
 
 Selected `env_projectedtexture` entities show an authored square projector guide
 with eight corners and twelve edges. The viewport and agent renders use the
 same displayed origin and **Pitch Yaw Roll (Y Z X)**, including transform previews.
 Zero angles face +X; positive pitch points downward. This independent guide
-does not evaluate FGD `frustum()` or its fifth `pitch_scale` argument. The
-inspector states this distinction and agents read the declared argument in
-`get_entity_inspector.helpers.source_projector`.
+uses Source angles without applying the FGD `frustum()` pitch scale. Its
+`get_entity_inspector.helpers.source_projector` report retains that distinction;
+the separate FGD frustum report evaluates the helper contract described above.
 
 1. Load the game's FGD through **Entity…** → **Load FGD…**, then place and select
    `env_projectedtexture`.

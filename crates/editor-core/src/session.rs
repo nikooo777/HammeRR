@@ -2106,6 +2106,7 @@ impl Session {
         self.append_fgd_sphere_guides(&mut mesh);
         self.append_fgd_line_guides(&mut mesh);
         self.append_source_projector_guides(&mut mesh);
+        self.append_fgd_frustum_guides(&mut mesh);
         self.append_context_guides(&mut mesh);
         self.append_measurement_guides(&mut mesh);
         self.append_model_attachment_guide(&mut mesh);

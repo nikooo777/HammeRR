@@ -135,7 +135,7 @@ impl Report {
 }
 
 impl Session {
-    fn projector_reports(
+    pub(super) fn projector_reports(
         &self,
         document: &Document,
         evaluation: &Evaluation,

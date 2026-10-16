@@ -155,7 +155,7 @@ def validate(client, output):
     check(client.call("get_object_hit_candidates", body_ray) == body_hits and detail(client, [source])[0]["bounds"] == bounds, "All rendering controls retain ordinary picking and bounds")
     check(render("restored-lines", camera)[0] == shown, "Restored source and endpoint state reproduce identical actual pixels")
     unsupported = client.call("create_entity", {"classname": "line_unsupported", "origin": [300, 0, 16]})["id"]
-    check(inspect(unsupported)["lines"][0]["state"] == "unsupported" and not inspect(unsupported)["lines"][0]["displayed"], "Numeric nodeid helper declarations remain explicitly unsupported")
+    check(inspect(unsupported)["lines"][0]["state"] == "unsupported" and not inspect(unsupported)["lines"][0]["displayed"], "A nodeid pair bound to an untyped string property remains unsupported")
     client.call("undo")
     (output / "results.json").write_text(json.dumps({"passed": len(checks), "checks": checks, "helpers": first, "ambiguous": ambiguous, "hidden": hidden, "desktop_input": False}, indent=2) + "\n")
     print(json.dumps({"passed": len(checks), "output": str(output)}))

@@ -236,6 +236,44 @@ def verify(output, release_mode):
             rows = by_sample.setdefault(row["sample"], {})
             assert row["name"] not in rows
             rows[row["name"]] = row
+        brace_solidity = grouped.get("brace_solid", [])
+        expected_brace_rows = [
+            row for row in entities if row["name"] in BRACES and row["present"]
+        ]
+        assert len(brace_solidity) == len(expected_brace_rows)
+        solidity_by_sample = {}
+        for row in brace_solidity:
+            assert row["name"] in BRACES and 0 <= row["sample"] < len(samples)
+            rows = solidity_by_sample.setdefault(row["sample"], {})
+            assert row["name"] not in rows
+            rows[row["name"]] = row
+            identity = by_sample[row["sample"]][row["name"]]
+            assert identity["present"]
+            assert (row["owner"], row["edict"], row["index"]) == (
+                identity["entity"],
+                identity["edict"],
+                identity["index"],
+            )
+            assert pointer(row["entity_handle"]) == row["owner"]
+            pointer(row["collideable"])
+            assert 0 <= row["solid_type"] < 7 and 0 <= row["solid_flags"] <= 65535
+            assert row["not_solid"] is bool(row["solid_flags"] & 4)
+            assert row["is_solid"] is (row["solid_type"] != 0 and not row["not_solid"])
+        for sample in samples:
+            assert solidity_by_sample.get(sample["sample"], {}).keys() == {
+                name for name in BRACES if by_sample[sample["sample"]][name]["present"]
+            }
+        for name in BRACES:
+            assert (
+                len(
+                    {
+                        row["collideable"]
+                        for row in brace_solidity
+                        if row["name"] == name
+                    }
+                )
+                == 1
+            )
         for row in contacts:
             assert 0 <= row["sample"] < len(samples)
             contacts_by_sample.setdefault(row["sample"], []).append(row)
@@ -305,6 +343,9 @@ def verify(output, release_mode):
         freed = grouped.get("edict_freed", [])
         assert not any(row["name"] in STABLE for row in freed)
         if release_mode == "kill":
+            assert all(
+                row["is_solid"] and not row["not_solid"] for row in brace_solidity
+            )
             assert len(freed) == 4 and {row["name"] for row in freed} == BRACES
             for row in freed:
                 first = by_sample[0][row["name"]]
@@ -364,7 +405,93 @@ def verify(output, release_mode):
             report["post_removal_samples"] = len(absent_samples)
         else:
             assert not freed and all(row["present"] for row in entities)
-            report["clock_correlation"] = None
+            solid_samples = [
+                row
+                for row in samples
+                if all(
+                    solidity_by_sample[row["sample"]][name]["is_solid"]
+                    for name in BRACES
+                )
+            ]
+            disabled_samples = [
+                row
+                for row in samples
+                if all(
+                    solidity_by_sample[row["sample"]][name]["not_solid"]
+                    and not solidity_by_sample[row["sample"]][name]["is_solid"]
+                    for name in BRACES
+                )
+            ]
+            assert solid_samples and len(disabled_samples) >= 20
+            last_solid, first_disabled = solid_samples[-1], disabled_samples[0]
+            assert last_solid["sample"] + 1 == first_disabled["sample"]
+            assert solid_samples[0]["sample"] == 0
+            assert disabled_samples[-1]["sample"] == samples[-1]["sample"]
+            assert len(solid_samples) + len(disabled_samples) == len(samples)
+            for name in BRACES:
+                rows = [row for row in brace_solidity if row["name"] == name]
+                assert all(
+                    not row["not_solid"] for row in rows[: first_disabled["sample"]]
+                )
+                assert all(row["not_solid"] for row in rows[first_disabled["sample"] :])
+            release = [
+                row["time"]
+                for row in observations["events"]
+                if row["name"] == "release_braces" and row["output"] == "OnTrigger"
+            ]
+            assert len(release) == 1
+            offset = [
+                last_solid["simulation_time"] - release[0] - 0.03,
+                first_disabled["simulation_time"] - release[0] + 0.03,
+            ]
+            assert 0 < offset[1] - offset[0] <= 0.3
+            phase1 = next(time for time, phase in observations["phases"] if phase == 1)
+            definite = [
+                row
+                for row in contacts
+                if row["name"] in {"blocked_door_side_brace", "blocked_door_back_brace"}
+                and phase1 < samples[row["sample"]]["simulation_time"] - offset[1]
+                and samples[row["sample"]]["simulation_time"] - offset[0] < release[0]
+            ]
+            assert definite, (
+                "No native crate/brace contact resolved during genuine obstruction"
+            )
+            script_end = max(row["time"] for row in observations["samples"])
+            native_end = samples[-1]["simulation_time"]
+            assert (
+                native_end - offset[1] - 0.5
+                <= script_end
+                <= native_end - offset[0] + 0.5
+            )
+            retry = next(time for time, phase in observations["phases"] if phase == 3)
+            before_retry = [
+                row
+                for row in disabled_samples
+                if release[0] < row["simulation_time"] - offset[1]
+                and row["simulation_time"] - offset[0] < retry
+            ]
+            assert len(before_retry) >= 10
+            released_ids = {row["sample"] for row in before_retry}
+            retained = [
+                row
+                for row in contacts
+                if row["sample"] in released_ids
+                and row["name"]
+                in {"blocked_door_side_brace", "blocked_door_back_brace"}
+            ]
+            report["clock_correlation"] = {
+                "anchor": "same authored Disable and all-four native FSOLID_NOT_SOLID transition",
+                "native_minus_script_elapsed_interval": offset,
+                "uncertainty_includes_two_physics_ticks": True,
+            }
+            report["post_disable_before_retry"] = {
+                "samples": len(before_retry),
+                "brace_contacts": len(retained),
+                "brace_partners": sorted({row["name"] for row in retained}),
+                "asleep_samples": sum(not row["awake"] for row in before_retry),
+                "awake_samples": sum(row["awake"] for row in before_retry),
+            }
+            report["obstruction_brace_contacts"] = len(definite)
         report.update(
             {
                 "success": True,
@@ -374,6 +501,7 @@ def verify(output, release_mode):
                 "same_entity_object_collide_observed": True,
                 "sleeping_and_awake_directly_observed": True,
                 "snapshot_lifetime_checked": True,
+                "native_brace_solid_type_flags_and_handle_checked": True,
                 "fixture_physics_debug_name": expected_name,
                 "limits": "Sampled pointer continuity does not exclude physics allocator reuse within a step or establish unchanged hull bytes. A valid observer does not establish recovery or a contact-cache cause.",
             }

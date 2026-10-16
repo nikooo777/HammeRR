@@ -197,7 +197,7 @@ fn ambiguous_authored_face_ids_and_hidden_helpers_never_silently_retarget() {
 
 #[test]
 fn invalid_manual_ownership_visibility_and_filtered_targets_fail_atomically() {
-    let (_assets, mut session, near, far, face) = test_support::fixture();
+    let (assets, mut session, near, far, face) = test_support::fixture();
     let first = preview(&mut session, Actor::User, near, face, Operation::Bind);
     session
         .apply_cubemap_bindings(Actor::User, first["draft"]["token"].as_u64().unwrap())
@@ -280,6 +280,12 @@ fn invalid_manual_ownership_visibility_and_filtered_targets_fail_atomically() {
     );
     assert_eq!(session.document.vmf(), &before);
     session.undo(Actor::Agent).unwrap();
+    std::fs::create_dir_all(assets.path().join("materials/tools")).unwrap();
+    std::fs::write(
+        assets.path().join("materials/tools/toolsblack.vmt"),
+        "UnlitGeneric { }",
+    )
+    .unwrap();
     session
         .edit(Actor::Agent, "exclude bound brush", |tx| {
             map_core::compile_region::apply(
@@ -295,19 +301,20 @@ fn invalid_manual_ownership_visibility_and_filtered_targets_fail_atomically() {
         })
         .unwrap();
     let before = session.document.vmf().clone();
+    let error = session
+        .preview_cubemap_bindings(
+            Actor::User,
+            Request {
+                helper: near,
+                faces: vec![face],
+                operation: Operation::Remove,
+            },
+            &session.cubemap_bindings_stamp(),
+        )
+        .unwrap_err();
     assert!(
-        session
-            .preview_cubemap_bindings(
-                Actor::User,
-                Request {
-                    helper: near,
-                    faces: vec![face],
-                    operation: Operation::Remove
-                },
-                &session.cubemap_bindings_stamp()
-            )
-            .unwrap_err()
-            .contains("compile region")
+        error.contains("Requested cubemap face") && error.contains("compile region"),
+        "{error}"
     );
     assert_eq!(session.document.vmf(), &before);
 }

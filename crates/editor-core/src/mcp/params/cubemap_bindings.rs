@@ -11,6 +11,7 @@ pub struct CubemapBindingsArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(extend("type" = "object"))]
 pub enum SetCubemapBindingsArgs {
     Preview {
         helper: u32,
@@ -42,6 +43,12 @@ mod tests {
 
     #[test]
     fn binding_requests_require_explicit_faces_and_separate_preview_from_owned_commit() {
+        let schema = schemars::schema_for!(SetCubemapBindingsArgs);
+        assert_eq!(schema.get("type"), Some(&json!("object")));
+        assert_eq!(
+            schema.get("oneOf").and_then(Value::as_array).map(Vec::len),
+            Some(4)
+        );
         let valid = json!({"action":"preview","helper":12,"faces":[{"solid":1,"side":2}],"operation":"bind","snapshot":"current"});
         assert!(serde_json::from_value::<SetCubemapBindingsArgs>(valid.clone()).is_ok());
         for key in ["helper", "faces", "operation", "snapshot"] {

@@ -135,22 +135,24 @@ def skew_terrain_base(client, parent, far_y):
     solid = int(parent.split(":")[1])
     components = client.call("get_brush_components", {"solids": [solid]})
     shape = components["brushes"][0]
-    far = next(face for face in shape["faces"] if all(shape["vertices"][index]["position"][1] == far_y for index in face["vertices"]))
+    far = next(face for face in shape["faces"] if all(abs(shape["vertices"][index]["position"][1] - far_y) < 1e-6 for index in face["vertices"]))
     client.call("select_brush_components", {"components": [{"solid": solid, "sides": [far["side"]]}], "snapshot": components["snapshot"]})
     authored = detail(client, [parent])
-    history = client.call("get_map_info")["undo"]
+    history = client.call("get_history")
     draft = client.call("preview_component_scale", {"factors": [0.5, 1, 1], "texture_lock": False, "snapshot": client.call("get_brush_components", {"solids": [solid]})["snapshot"]})
-    require(detail(client, [parent]) == authored and client.call("get_map_info")["undo"] == history, "Skew preview changed source or history")
+    preview_history = client.call("get_history")
+    require(detail(client, [parent]) == authored and all(preview_history[key] == history[key] for key in ["undo_count", "redo_count", "current_state"]), "Skew preview changed source or history")
     client.call("commit_component_edit", {"token": draft["preview"]["token"]})
     skewed = detail(client, [parent])
-    require(skewed != authored and len(client.call("get_map_info")["undo"]) == len(history) + 1, "Skewed base did not commit once")
+    committed = client.call("get_history")
+    require(skewed != authored and committed["undo_count"] == history["undo_count"] + 1 and committed["redo_count"] == 0, "Skewed base did not commit once")
     corners = client.call("get_brush_components", {"solids": [solid]})["brushes"][0]["vertices"]
-    far_x = [vertex["position"][0] for vertex in corners if vertex["position"][1] == far_y]
-    require(max(far_x) - min(far_x) == 72, "Skewed base must retain a half-width far edge")
+    far_x = [vertex["position"][0] for vertex in corners if abs(vertex["position"][1] - far_y) < 1e-6]
+    require(len(far_x) == 4 and abs(max(far_x) - min(far_x) - 72) < 1e-6, f"Skewed base must retain a 72-unit far edge: {far_x}")
     client.call("undo")
-    require(detail(client, [parent]) == authored, "Undo did not restore the unskewed base")
+    require(detail(client, [parent]) == authored and client.call("get_history")["current_state"] == history["current_state"], "Undo did not restore the unskewed base")
     client.call("redo")
-    require(detail(client, [parent]) == skewed, "Redo did not restore the skewed base")
+    require(detail(client, [parent]) == skewed and client.call("get_history")["current_state"] == committed["current_state"], "Redo did not restore the skewed base")
 
 
 def validate_terrain(args):

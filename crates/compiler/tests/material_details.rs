@@ -3,8 +3,8 @@ mod common;
 mod detail_model;
 
 use glam::DVec3;
-use map_core::{Document, ObjectId, Plane, edit, surface::FaceId};
-use source_formats::bsp::{self, Bsp, Leaf};
+use map_core::{Document, ObjectId, Plane, compile_region, edit, surface::FaceId};
+use source_formats::bsp::{self, Bsp, Leaf, Model as BspModel};
 use source_formats::gamefs::{GameFs, Mount, MountedPath};
 use source_formats::vmf::{Entity, Vmf};
 
@@ -400,6 +400,144 @@ fn func_detail_surfaces_work_hidden_helpers_vanish_and_terrain_or_runtime_models
                 baseline
             );
         }
+    }
+}
+
+#[test]
+fn compile_regions_scatter_only_inside_open_clipped_world_and_detail_surfaces() {
+    let bounds = compile_region::Bounds {
+        mins: DVec3::new(-128.0, -128.0, -8.0),
+        maxs: DVec3::new(128.0, 128.0, 160.0),
+    };
+    for detail in [false, true] {
+        let fixture = fixture();
+        std::fs::create_dir_all(fixture.directory.path().join("materials/tools")).unwrap();
+        std::fs::write(
+            fixture
+                .directory
+                .path()
+                .join("materials/tools/toolsblack.vmt"),
+            "UnlitGeneric { }",
+        )
+        .unwrap();
+        dictionary(
+            &fixture,
+            if detail { 4096 } else { 512 },
+            "model models/props/test.mdl upright 1 minAngle 0 maxAngle 0",
+        );
+        let mut source = fixture.source.clone();
+        if detail {
+            source.world.solids[0]
+                .sides
+                .iter_mut()
+                .find(|side| side.id == fixture.floor_side)
+                .unwrap()
+                .material = "dev/dev_measuregeneric01".into();
+        }
+        let mut document = Document::new(source);
+        if detail {
+            document
+                .edit("crossing detail surface", |tx| {
+                    let ObjectId::Solid(solid) = edit::create_block(
+                        tx,
+                        DVec3::new(-192.0, 32.0, 0.0),
+                        DVec3::new(192.0, 96.0, 24.0),
+                        "dev/dev_measuregeneric01",
+                    )?
+                    else {
+                        unreachable!()
+                    };
+                    tx.solid_mut(solid)?
+                        .sides
+                        .iter_mut()
+                        .find(|side| Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+                        .unwrap()
+                        .material = MATERIAL.into();
+                    edit::tie_to_entity(tx, &[solid], "func_detail", &[])?;
+                    Ok(())
+                })
+                .unwrap();
+        }
+        let full = compiled(document.vmf(), &fixture.game).bsp.unwrap();
+        let full_details = full.detail_props().unwrap().unwrap();
+        assert!(
+            full_details
+                .props
+                .iter()
+                .any(|prop| !bounds.contains(DVec3::from_array(prop.origin.map(f64::from))))
+        );
+        document
+            .edit("active scatter compile region", |tx| {
+                compile_region::apply(
+                    tx,
+                    Some(compile_region::Definition {
+                        enabled: true,
+                        bounds,
+                    }),
+                )
+            })
+            .unwrap();
+        let source_before = document.vmf().write(&Default::default());
+        let revision_before = document.revision();
+        let undo_before = document
+            .undo_labels()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        let redo_before = document
+            .redo_labels()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        let output = compiled(document.vmf(), &fixture.game);
+        let summary = output.stats.compile_region.as_ref().unwrap();
+        assert_eq!(summary.mins, bounds.mins.to_array());
+        assert_eq!(summary.maxs, bounds.maxs.to_array());
+        let bsp = output.bsp.unwrap();
+        let details = bsp.detail_props().unwrap().unwrap();
+        assert!(!details.props.is_empty() && details.props.len() < full_details.props.len());
+        let world = bsp.records::<BspModel>().unwrap()[0];
+        let world_bounds = compile_region::Bounds {
+            mins: DVec3::from_array(world.mins.map(f64::from)),
+            maxs: DVec3::from_array(world.maxs.map(f64::from)),
+        };
+        let leaves = bsp.records::<Leaf>().unwrap();
+        for prop in &details.props {
+            let point = DVec3::from_array(prop.origin.map(f64::from));
+            assert!(bounds.contains(point) && world_bounds.contains(point));
+            assert_eq!(point.z, if detail { 24.0 } else { 0.0 });
+            let leaf = leaves[usize::from(prop.leaf)];
+            assert_eq!(leaf.contents & bsp::contents::SOLID, 0);
+            assert!(leaf.cluster >= 0);
+            let leaf_bounds = compile_region::Bounds {
+                mins: DVec3::from_array(leaf.mins.map(f64::from)),
+                maxs: DVec3::from_array(leaf.maxs.map(f64::from)),
+            };
+            assert!(leaf_bounds.contains(point));
+        }
+        let repeated = compiler::compile_controlled(
+            document.vmf(),
+            &fixture.game,
+            &compiler::Control::default(),
+        );
+        assert!(!repeated.report.has_errors(), "{:?}", repeated.report);
+        assert_eq!(repeated.bsp.unwrap().to_bytes(), bsp.to_bytes());
+        assert_eq!(document.vmf().write(&Default::default()), source_before);
+        assert_eq!(document.revision(), revision_before);
+        assert_eq!(
+            document
+                .undo_labels()
+                .map(str::to_owned)
+                .collect::<Vec<_>>(),
+            undo_before
+        );
+        assert_eq!(
+            document
+                .redo_labels()
+                .map(str::to_owned)
+                .collect::<Vec<_>>(),
+            redo_before
+        );
+        assert!(document.undo().is_some());
+        assert_eq!(compile_region::active(document.vmf()).unwrap(), None);
     }
 }
 

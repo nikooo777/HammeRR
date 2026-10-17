@@ -243,6 +243,24 @@ fn actual_plain_bsp_and_lin_claims_survive_later_failure_and_cancellation() {
     drop(result);
     let pointfile = leaking.with_extension("lin");
     let pointfile_bytes = fs::read(&pointfile).unwrap();
+    let status = owner.compile_status();
+    assert!(owner.begin_compile(Actor::User, Some(&pointfile)).is_err());
+    let paired = root.path().join("paired.bsp");
+    fs::write(&paired, b"unclaimed output").unwrap();
+    fs::hard_link(&paired, paired.with_extension("lin")).unwrap();
+    assert!(owner.begin_compile(Actor::User, Some(&paired)).is_err());
+    let lin_on_bsp = root.path().join("lin-on-bsp.bsp");
+    fs::hard_link(&bsp, lin_on_bsp.with_extension("lin")).unwrap();
+    assert!(owner.begin_compile(Actor::User, Some(&lin_on_bsp)).is_err());
+    let bsp_on_lin = root.path().join("bsp-on-lin.bsp");
+    fs::hard_link(&pointfile, &bsp_on_lin).unwrap();
+    assert!(owner.begin_compile(Actor::User, Some(&bsp_on_lin)).is_err());
+    assert_eq!(owner.compile_status(), status);
+    assert_eq!(fs::read(&bsp).unwrap(), bsp_bytes);
+    assert_eq!(fs::read(&pointfile).unwrap(), pointfile_bytes);
+    let same_role = owner.begin_compile(Actor::User, Some(&bsp)).unwrap();
+    drop(same_role);
+    owner.finish_compile(Actor::User, &Err("abandoned same-role rebuild".into()));
     let cancelled = root.path().join("cancelled.bsp");
     let request = owner.begin_compile(Actor::User, Some(&cancelled)).unwrap();
     owner

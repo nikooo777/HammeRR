@@ -7,7 +7,8 @@ static NEXT_OWNER: AtomicU64 = AtomicU64::new(1);
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
     Source,
-    Output,
+    Bsp,
+    Pointfile,
 }
 
 struct Record {
@@ -51,7 +52,7 @@ impl Binding {
     pub fn source(&self, destination: BoundDestination) -> Result<Claim, String> {
         let mut claims = self
             .authority
-            .reserve(self.owner, Kind::Source, vec![destination])?;
+            .reserve(self.owner, vec![(Kind::Source, destination)])?;
         Ok(claims.remove(0))
     }
 
@@ -60,9 +61,10 @@ impl Binding {
         bsp: BoundDestination,
         pointfile: BoundDestination,
     ) -> Result<OutputClaims, String> {
-        let mut claims = self
-            .authority
-            .reserve(self.owner, Kind::Output, vec![bsp, pointfile])?;
+        let mut claims = self.authority.reserve(
+            self.owner,
+            vec![(Kind::Bsp, bsp), (Kind::Pointfile, pointfile)],
+        )?;
         let pointfile = claims.pop().expect("pointfile reservation exists");
         let bsp = claims.pop().expect("BSP reservation exists");
         Ok(OutputClaims { bsp, pointfile })
@@ -73,14 +75,13 @@ impl Authority {
     fn reserve(
         &self,
         owner: u64,
-        kind: Kind,
-        destinations: Vec<BoundDestination>,
+        destinations: Vec<(Kind, BoundDestination)>,
     ) -> Result<Vec<Claim>, String> {
         let mut state = self.0.lock().unwrap_or_else(PoisonError::into_inner);
-        for (index, destination) in destinations.iter().enumerate() {
+        for (index, (kind, destination)) in destinations.iter().enumerate() {
             if destinations[..index]
                 .iter()
-                .any(|other| overlaps(destination, other))
+                .any(|(_, other)| overlaps(destination, other))
             {
                 return Err(format!(
                     "Output destinations alias each other: {}",
@@ -88,7 +89,7 @@ impl Authority {
                 ));
             }
             for record in &state.records {
-                if record.owner == owner && record.kind == kind {
+                if record.owner == owner && record.kind == *kind {
                     continue;
                 }
                 if overlaps(destination, &record.destination) {
@@ -106,7 +107,7 @@ impl Authority {
             }
         }
         let mut claims = Vec::with_capacity(destinations.len());
-        for destination in destinations {
+        for (kind, destination) in destinations {
             state.serial += 1;
             let id = state.serial;
             state.records.push(Record {

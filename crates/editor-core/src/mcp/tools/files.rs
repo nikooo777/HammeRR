@@ -21,7 +21,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Summary of the open map: file, unsaved state, object counts, bounds, selection, undo history, camera, the last material_reload report and recent activity by the user and agents.",
+        description = "Summary of the open map: file, unsaved state, object counts, bounds, selection, undo history, camera, the last material_reload report and recent activity by the user and agents. Includes generation and an opaque Session-scoped replacement_review for guarded New/Open/Recent/Recovery calls.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_map_info(&self) -> ToolResult {

@@ -9,6 +9,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(Err(message)) = &application.open_message {
         eprintln!("{message}");
     }
-    mcp::serve_stdio(EditorServer::new(application.session.clone(), None))?;
-    Ok(())
+    let result = mcp::serve_stdio(EditorServer::new(application.session.clone(), None))
+        .map_err(Box::<dyn std::error::Error>::from);
+    application.finish(result)
 }

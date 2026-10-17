@@ -263,12 +263,7 @@ fn start_snapshot(session: &SharedSession) -> Result<(), String> {
     let spawned = std::thread::Builder::new()
         .name("map-snapshot".into())
         .spawn(move || {
-            let result = worker_request.run();
-            let _ = lock(&worker_session).finish_recovery_snapshot(
-                Actor::User,
-                &worker_request,
-                result,
-            );
+            let _ = recovery::complete_capture(&worker_session, Actor::User, &worker_request);
         });
     if let Err(error) = spawned {
         return lock(session)

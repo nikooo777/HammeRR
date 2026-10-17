@@ -114,6 +114,12 @@ impl Session {
         self.recovery.serial += 1;
     }
 
+    pub(crate) fn report_recovery_worker_error(&mut self, error: String) {
+        self.recovery.error = Some(error.clone());
+        self.recovery.serial += 1;
+        self.log(Actor::System, format!("Recovery shutdown failed: {error}"));
+    }
+
     pub fn recovery_serial(&self) -> u64 {
         self.recovery.serial
     }

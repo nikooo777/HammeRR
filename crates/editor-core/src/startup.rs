@@ -20,14 +20,20 @@ usage: editor | hammerr-headless [map.vmf] [--game <gameinfo.txt>] [--fgd <file.
 const DEFAULT_MCP_PORT: u16 = 7377;
 const SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
-struct ShutdownGuard(SharedSession);
+struct ShutdownGuard {
+    session: SharedSession,
+    drained: bool,
+}
 
-impl Drop for ShutdownGuard {
-    fn drop(&mut self) {
-        lock(&self.0).shutdown();
+impl ShutdownGuard {
+    fn drain(&mut self) {
+        if self.drained {
+            return;
+        }
+        lock(&self.session).shutdown();
         loop {
             let busy = {
-                let session = lock(&self.0);
+                let session = lock(&self.session);
                 session.launching() || session.recovery_busy() || session.compiling()
             };
             if !busy {
@@ -35,6 +41,13 @@ impl Drop for ShutdownGuard {
             }
             std::thread::sleep(SHUTDOWN_POLL_INTERVAL);
         }
+        self.drained = true;
+    }
+}
+
+impl Drop for ShutdownGuard {
+    fn drop(&mut self) {
+        self.drain();
     }
 }
 
@@ -99,6 +112,7 @@ pub struct Application {
     _recovery_worker: recovery::Worker,
     pub session: SharedSession,
     pub open_message: Option<Result<String, String>>,
+    finished: Option<Result<(), String>>,
 }
 
 impl Application {
@@ -113,7 +127,10 @@ impl Application {
         }
         lock(&session).configure_recovery(recovery::default_directory());
         let worker = recovery::Worker::start(&session)?;
-        let shutdown = ShutdownGuard(session.clone());
+        let shutdown = ShutdownGuard {
+            session: session.clone(),
+            drained: false,
+        };
         let fgd = args
             .fgd
             .clone()
@@ -136,6 +153,46 @@ impl Application {
             _recovery_worker: worker,
             session,
             open_message,
+            finished: None,
         })
     }
 }
+
+impl Application {
+    pub fn shutdown(&mut self) -> Result<(), String> {
+        if let Some(result) = &self.finished {
+            return result.clone();
+        }
+        self._shutdown.drain();
+        let result = self._recovery_worker.drain().map(|_| ());
+        self.finished = Some(result.clone());
+        result
+    }
+
+    pub fn finish(
+        mut self,
+        primary: Result<(), Box<dyn std::error::Error>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        match (primary, self.shutdown()) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(error), Ok(())) => Err(error),
+            (Ok(()), Err(error)) => Err(error.into()),
+            (Err(primary), Err(shutdown)) => {
+                Err(format!("{primary}; shutdown failed: {shutdown}").into())
+            }
+        }
+    }
+}
+
+impl Drop for Application {
+    fn drop(&mut self) {
+        if self.finished.is_none()
+            && let Err(error) = self.shutdown()
+        {
+            eprintln!("Application shutdown failed: {error}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests;

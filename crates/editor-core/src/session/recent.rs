@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
-use crate::recent_maps::{self, BuildSettings, Entry, Store};
+use crate::recent_maps::{self, BuildSettings, Entry, ObservedSource, Store};
 
 use super::{Actor, Session};
 
@@ -13,24 +13,27 @@ pub(super) struct State {
     load_failed: bool,
     error: Option<String>,
     serial: u64,
+    source: Option<ObservedSource>,
 }
 
 impl Session {
     pub fn configure_recent_maps(&mut self, directory: Result<PathBuf, String>) {
         let store = directory.map(|directory| Store { directory });
         let loaded = match &store {
-            Ok(store) => store.load(),
+            Ok(store) => store.load_snapshot(),
             Err(error) => Err(error.clone()),
         };
         self.recent_maps.store = store.ok();
         match loaded {
-            Ok(entries) => {
+            Ok((entries, source)) => {
                 self.recent_maps.entries = entries;
+                self.recent_maps.source = Some(source);
                 self.recent_maps.load_failed = false;
                 self.recent_maps.error = None;
                 self.recent_maps.serial += 1;
             }
             Err(error) => {
+                self.recent_maps.source = None;
                 self.recent_maps.load_failed = true;
                 self.recent_map_error(format!("Recent maps could not load: {error}"));
             }
@@ -39,6 +42,29 @@ impl Session {
 
     pub fn recent_maps_serial(&self) -> u64 {
         self.recent_maps.serial
+    }
+
+    pub fn reload_recent_maps(&mut self) -> Result<Value, String> {
+        let loaded = self
+            .recent_maps
+            .store
+            .as_ref()
+            .ok_or_else(|| "Recent maps storage is unavailable".to_string())
+            .and_then(Store::load_snapshot);
+        match loaded {
+            Ok((entries, source)) => {
+                self.recent_maps.entries = entries;
+                self.recent_maps.source = Some(source);
+                self.recent_maps.load_failed = false;
+                self.recent_maps.error = None;
+                self.recent_maps.serial += 1;
+                Ok(self.recent_maps())
+            }
+            Err(error) => {
+                self.recent_maps.load_failed = true;
+                Err(self.recent_map_error(format!("Recent maps could not reload: {error}")))
+            }
+        }
     }
 
     fn recent_game_directory(&self) -> Option<PathBuf> {
@@ -59,6 +85,7 @@ impl Session {
             "persistence": if self.recent_maps.load_failed { "blocked" } else if self.recent_maps.store.is_some() { "persistent" } else { "session" },
             "directory": self.recent_maps.store.as_ref().map(|store| &store.directory),
             "error": self.recent_maps.error,
+            "reload_available":self.recent_maps.store.is_some(),
             "max_maps": recent_maps::MAX_RECENT_MAPS,
             "max_path_bytes": recent_maps::MAX_PATH_BYTES,
             "max_file_bytes": recent_maps::MAX_FILE_BYTES,
@@ -74,6 +101,7 @@ impl Session {
     }
 
     fn recent_map_error(&mut self, error: String) -> String {
+        let error = map_core::entity_helpers::bounded_preview(&error, recent_maps::MAX_ERROR_BYTES);
         self.recent_maps.error = Some(error.clone());
         self.recent_maps.serial += 1;
         self.log(Actor::System, &error);
@@ -82,12 +110,15 @@ impl Session {
 
     fn ensure_recent_maps_writable(&self) -> Result<(), String> {
         if self.recent_maps.load_failed {
-            return Err(format!(
-                "{}; fix storage and restart before changing recent maps",
-                self.recent_maps
-                    .error
-                    .as_deref()
-                    .unwrap_or("Recent maps did not load")
+            return Err(map_core::entity_helpers::bounded_preview(
+                &format!(
+                    "{}; fix storage and Reload saved list before changing recent maps",
+                    self.recent_maps
+                        .error
+                        .as_deref()
+                        .unwrap_or("Recent maps did not load")
+                ),
+                recent_maps::MAX_ERROR_BYTES,
             ));
         }
         Ok(())
@@ -95,12 +126,37 @@ impl Session {
 
     fn publish_recent_maps(&mut self, entries: Vec<Entry>) -> Result<(), String> {
         self.ensure_recent_maps_writable()?;
-        if let Some(store) = &self.recent_maps.store
-            && let Err(error) = store.save(&entries)
-        {
-            return Err(self.recent_map_error(format!("Recent maps could not save: {error}")));
+        if let Some(store) = &self.recent_maps.store {
+            let expected = self
+                .recent_maps
+                .source
+                .as_ref()
+                .ok_or("Reload saved list before changing recent maps")?;
+            match store.save_checked(&entries, expected) {
+                Ok(publication) => {
+                    self.recent_maps.entries = entries;
+                    match publication.source {
+                        Ok(source) => self.recent_maps.source = Some(source),
+                        Err(error) => {
+                            self.recent_maps.source = None;
+                            self.recent_maps.load_failed = true;
+                            return Err(self.recent_map_error(error));
+                        }
+                    }
+                }
+                Err(error) => {
+                    if error.conflict {
+                        self.recent_maps.load_failed = true;
+                    }
+                    return Err(self.recent_map_error(format!(
+                        "Recent maps could not save: {}",
+                        error.message
+                    )));
+                }
+            }
+        } else {
+            self.recent_maps.entries = entries;
         }
-        self.recent_maps.entries = entries;
         self.recent_maps.error = None;
         self.recent_maps.serial += 1;
         Ok(())
@@ -288,6 +344,140 @@ mod tests {
             "undo": session.document().undo_labels().collect::<Vec<_>>(),
             "redo": session.document().redo_labels().collect::<Vec<_>>(),
         })
+    }
+
+    #[test]
+    fn stale_editors_preserve_primary_open_save_and_recover_through_reload() {
+        for actor in [Actor::User, Actor::Agent] {
+            let (directory, mut first) = fixture();
+            let mut second = Session::new(Err("no assets needed".into()));
+            second.configure_recent_maps(Ok(directory.path().join("preferences")));
+            let a = map_file(directory.path(), "a.vmf");
+            let b = map_file(directory.path(), "b.vmf");
+            first.open(actor, &a, false).unwrap();
+            let storage = directory
+                .path()
+                .join("preferences")
+                .join(recent_maps::FILE_NAME);
+            let saved = fs::read(&storage).unwrap();
+            second.open(actor, &b, false).unwrap();
+            assert_eq!(second.path(), Some(b.as_path()));
+            assert!(second.recent_maps.entries.is_empty());
+            assert_eq!(second.recent_maps()["persistence"], "blocked");
+            assert!(
+                second.recent_maps()["error"]
+                    .as_str()
+                    .unwrap()
+                    .contains("Reload saved list")
+            );
+            let copy = directory.path().join("copy.vmf");
+            second.save(actor, Some(&copy)).unwrap();
+            assert!(copy.is_file() && !second.document.is_dirty());
+            assert_eq!(fs::read(&storage).unwrap(), saved);
+            second
+                .preview_block(DVec3::ZERO, DVec3::splat(16.0))
+                .unwrap();
+            let preview = second.block_preview();
+            let before = map_state(&second);
+            let camera = second.camera();
+            let options = second.compile_options();
+            second.reload_recent_maps().unwrap();
+            assert_eq!(second.recent_maps.entries, first.recent_maps.entries);
+            assert_eq!(map_state(&second), before);
+            assert_eq!(second.block_preview(), preview);
+            assert_eq!(second.camera(), camera);
+            assert_eq!(second.compile_options(), options);
+            second.cancel_block_preview();
+            second.save(actor, None).unwrap();
+            let paths = second
+                .recent_maps
+                .entries
+                .iter()
+                .map(|entry| &entry.path)
+                .collect::<Vec<_>>();
+            assert_eq!(paths, vec![&copy, &a]);
+            first.reload_recent_maps().unwrap();
+            assert_eq!(first.recent_maps.entries, second.recent_maps.entries);
+        }
+    }
+
+    #[test]
+    fn stale_remove_clear_and_context_updates_cannot_replace_other_editor_changes() {
+        for operation in ["remove", "clear", "context"] {
+            let (directory, mut first) = fixture();
+            let a = map_file(directory.path(), "a.vmf");
+            let b = map_file(directory.path(), "b.vmf");
+            first.open(Actor::User, &a, false).unwrap();
+            let mut second = Session::new(Err("no assets needed".into()));
+            second.configure_recent_maps(Ok(directory.path().join("preferences")));
+            second.open(Actor::Agent, &a, false).unwrap();
+            first.reload_recent_maps().unwrap();
+            first.open(Actor::User, &b, false).unwrap();
+            let storage = directory
+                .path()
+                .join("preferences")
+                .join(recent_maps::FILE_NAME);
+            let bytes = fs::read(&storage).unwrap();
+            let entries = second.recent_maps.entries.clone();
+            let map = map_state(&second);
+            match operation {
+                "remove" => assert!(second.remove_recent_map(&a).is_err()),
+                "clear" => assert!(second.clear_recent_maps().is_err()),
+                "context" => {
+                    second
+                        .update_build_settings(
+                            Actor::Agent,
+                            BuildSettingsUpdate {
+                                sky_quality: Some("detailed"),
+                                ..Default::default()
+                            },
+                        )
+                        .unwrap();
+                }
+                _ => unreachable!(),
+            }
+            assert_eq!(fs::read(&storage).unwrap(), bytes);
+            assert_eq!(second.recent_maps.entries, entries);
+            assert_eq!(map_state(&second), map);
+            assert_eq!(second.recent_maps()["persistence"], "blocked");
+            second.reload_recent_maps().unwrap();
+            assert_eq!(second.recent_maps.entries, first.recent_maps.entries);
+        }
+    }
+
+    #[test]
+    fn failed_explicit_reload_preserves_valid_list_and_map_until_storage_is_repaired() {
+        let (directory, mut session) = fixture();
+        let path = map_file(directory.path(), "map.vmf");
+        session.open(Actor::User, &path, false).unwrap();
+        session
+            .preview_block(DVec3::ZERO, DVec3::splat(16.0))
+            .unwrap();
+        let preview = session.block_preview();
+        let entries = session.recent_maps.entries.clone();
+        let before = map_state(&session);
+        let storage = directory
+            .path()
+            .join("preferences")
+            .join(recent_maps::FILE_NAME);
+        let valid = fs::read(&storage).unwrap();
+        for invalid in [
+            b"invalid".to_vec(),
+            vec![b' '; recent_maps::MAX_FILE_BYTES as usize + 1],
+        ] {
+            fs::write(&storage, &invalid).unwrap();
+            assert!(session.reload_recent_maps().is_err());
+            assert_eq!(session.recent_maps.entries, entries);
+            assert_eq!(map_state(&session), before);
+            assert_eq!(session.block_preview(), preview);
+            assert_eq!(fs::read(&storage).unwrap(), invalid);
+            assert!(session.clear_recent_maps().is_err());
+        }
+        fs::write(&storage, &valid).unwrap();
+        session.reload_recent_maps().unwrap();
+        assert_eq!(session.recent_maps.entries, entries);
+        assert!(session.recent_maps.error.is_none());
+        assert_eq!(session.block_preview(), preview);
     }
 
     #[test]

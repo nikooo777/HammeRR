@@ -4889,7 +4889,7 @@ pub(crate) fn recent_map_controls_share_reopen_and_guard_discard_remove_clear_an
     assert!(window.get_selected_detail().contains("direct_ldr"));
     save_ui_snapshot(window.window(), "recent-maps");
     for label in [
-        "Refresh list",
+        "Reload saved list",
         "Open selected map",
         "Remove from list",
         "Clear list",

@@ -14,6 +14,8 @@ mod reflection_settings_tests;
 mod reflection_transaction_tests;
 #[cfg(test)]
 mod sky_packing_settings_tests;
+#[cfg(test)]
+mod viscluster_tests;
 
 #[derive(Default)]
 pub struct State {

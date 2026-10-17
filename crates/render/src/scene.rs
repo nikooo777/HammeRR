@@ -1123,11 +1123,14 @@ impl SceneMesh {
         let mut indices = Vec::with_capacity(builder.indices.iter().map(Vec::len).sum());
         let mut batches = Vec::new();
         let mut stats = builder.stats;
+        let mut missing_materials = BTreeSet::new();
         for (material, list) in builder.indices.into_iter().enumerate() {
             if list.is_empty() {
                 continue;
             }
-            stats.missing_materials += usize::from(builder.library.get(material).missing);
+            if builder.library.get(material).missing {
+                missing_materials.insert(material);
+            }
             batches.push(Batch {
                 material,
                 first_index: indices.len() as u32,
@@ -1141,7 +1144,9 @@ impl SceneMesh {
             if list.is_empty() {
                 continue;
             }
-            stats.missing_materials += usize::from(builder.library.get(material).missing);
+            if builder.library.get(material).missing {
+                missing_materials.insert(material);
+            }
             batches.push(Batch {
                 material,
                 first_index: indices.len() as u32,
@@ -1151,6 +1156,7 @@ impl SceneMesh {
             });
             indices.extend(list);
         }
+        stats.missing_materials = missing_materials.len();
         let mut mesh = Self {
             icons: builder.displayed_icons,
             issues: terrain.issues,

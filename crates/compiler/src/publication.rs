@@ -56,6 +56,14 @@ impl FileStamp {
         &self.path
     }
 
+    pub(crate) fn same_file(&self, other: &Self) -> bool {
+        #[cfg(unix)]
+        if let (Some(a), Some(b)) = (&self.stamp, &other.stamp) {
+            return a.identity[..2] == b.identity[..2];
+        }
+        self.path == other.path
+    }
+
     pub fn verify_path(&self, path: &Path) -> io::Result<()> {
         if canonical_destination(path)? != self.path {
             return Err(io::Error::other(

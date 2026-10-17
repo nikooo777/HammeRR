@@ -919,3 +919,175 @@ fn cheap_source_location_freezes_parent_identity_before_worker_hashing() {
         }
     }
 }
+
+#[test]
+fn reference_presence_is_metadata_only_and_keeps_directory_changes_independent() {
+    let (directory, _, _, _) = fixture();
+    let location = SourceLocation::capture(&directory.path().join("parent.vmf")).unwrap();
+    let modules = directory.path().join("modules");
+    std::fs::create_dir(&modules).unwrap();
+    let path = modules.join("child.VMF");
+    std::fs::write(&path, [0xff, 0x00, 0xfe]).unwrap();
+    let reference = location.reference(".\\modules\\child.VMF").unwrap();
+    assert_eq!(reference.relative(), "modules/child.VMF");
+    assert_eq!(reference.path(), path);
+    assert_eq!(reference.bytes(), 3);
+    assert_eq!(
+        location.reference_from_path(&path).unwrap().relative(),
+        reference.relative()
+    );
+    std::fs::write(directory.path().join("unrelated.txt"), "unrelated").unwrap();
+    std::fs::create_dir(modules.join("unrelated")).unwrap();
+    reference.verify_metadata().unwrap();
+    let replacement = modules.join("replacement.VMF");
+    std::fs::write(&replacement, [0xff, 0x00, 0xfe]).unwrap();
+    std::fs::rename(replacement, &path).unwrap();
+    assert!(reference.verify_metadata().is_err());
+    location.verify_metadata().unwrap();
+    assert!(location.reference("modules/child.VMF").is_ok());
+}
+
+#[test]
+fn reference_presence_rejects_unsupported_paths_and_self_aliases() {
+    let (directory, _, _, _) = fixture();
+    let location = SourceLocation::capture(&directory.path().join("parent.vmf")).unwrap();
+    let oversized = directory.path().join("oversized.vmf");
+    std::fs::File::create(&oversized)
+        .unwrap()
+        .set_len(MAX_FILE_BYTES as u64 + 1)
+        .unwrap();
+    std::fs::create_dir(directory.path().join("directory.vmf")).unwrap();
+    #[cfg(unix)]
+    {
+        std::fs::hard_link(
+            directory.path().join("parent.vmf"),
+            directory.path().join("self.vmf"),
+        )
+        .unwrap();
+        assert!(location.reference("self.vmf").is_err());
+    }
+    for value in [
+        "",
+        "../child.vmf",
+        "modules/../child.vmf",
+        "/child.vmf",
+        "C:\\child.vmf",
+        "child",
+        "child.vmx",
+        "missing.vmf",
+        "directory.vmf",
+        "oversized.vmf",
+        "parent.vmf",
+        "child.vmf\n",
+    ] {
+        assert!(location.reference(value).is_err(), "{value:?}");
+    }
+    assert!(
+        location
+            .reference(&"x".repeat(MAX_FIELD_BYTES + 1))
+            .is_err()
+    );
+    assert!(
+        location
+            .reference_from_path(Path::new("child.vmf"))
+            .is_err()
+    );
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::copy(
+        directory.path().join("child.vmf"),
+        outside.path().join("child.vmf"),
+    )
+    .unwrap();
+    assert!(
+        location
+            .reference_from_path(&outside.path().join("child.vmf"))
+            .is_err()
+    );
+    assert!(location.reference("child.vmf").is_ok());
+}
+
+#[cfg(unix)]
+#[test]
+fn reference_picker_preserves_referring_aliases_and_rejects_child_symlinks() {
+    use std::os::unix::fs::symlink;
+    let (directory, _, _, _) = fixture();
+    let physical = directory.path().join("physical");
+    std::fs::create_dir(&physical).unwrap();
+    std::fs::copy(
+        directory.path().join("parent.vmf"),
+        physical.join("root.vmf"),
+    )
+    .unwrap();
+    let referring = directory.path().join("referring.vmf");
+    symlink(physical.join("root.vmf"), &referring).unwrap();
+    let alias = directory.path().join("alias");
+    symlink(directory.path(), &alias).unwrap();
+    let location = SourceLocation::capture(&alias.join("referring.vmf")).unwrap();
+    let reference = location
+        .reference_from_path(&alias.join("child.vmf"))
+        .unwrap();
+    assert_eq!(reference.relative(), "child.vmf");
+    assert_eq!(reference.path(), directory.path().join("child.vmf"));
+    assert!(
+        location
+            .reference_from_path(&directory.path().join("child.vmf"))
+            .is_ok()
+    );
+    assert!(location.reference("referring.vmf").is_err());
+    let child_alias = directory.path().join("child-alias.vmf");
+    symlink(directory.path().join("child.vmf"), &child_alias).unwrap();
+    assert!(location.reference_from_path(&child_alias).is_err());
+    let modules = directory.path().join("modules");
+    std::fs::create_dir(&modules).unwrap();
+    std::fs::copy(
+        directory.path().join("child.vmf"),
+        modules.join("child.vmf"),
+    )
+    .unwrap();
+    symlink(&modules, directory.path().join("linked-modules")).unwrap();
+    assert!(location.reference("linked-modules/child.vmf").is_err());
+    let ambiguous = directory.path().join("modules\\child.vmf");
+    std::fs::write(&ambiguous, "separate filename").unwrap();
+    assert!(location.reference_from_path(&ambiguous).is_err());
+    reference.verify_metadata().unwrap();
+    std::fs::remove_file(&referring).unwrap();
+    symlink(directory.path().join("parent.vmf"), &referring).unwrap();
+    assert!(reference.verify_metadata().is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn referring_directory_alias_cannot_hide_a_replaced_physical_directory() {
+    use std::os::unix::fs::symlink;
+    let (directory, _, _, _) = fixture();
+    let target = directory.path().join("target");
+    let replacement = directory.path().join("replacement");
+    std::fs::create_dir(&target).unwrap();
+    std::fs::create_dir(&replacement).unwrap();
+    for name in ["parent.vmf", "child.vmf"] {
+        std::fs::copy(directory.path().join(name), target.join(name)).unwrap();
+        std::fs::hard_link(target.join(name), replacement.join(name)).unwrap();
+    }
+    let alias = directory.path().join("referring");
+    symlink(&target, &alias).unwrap();
+    let location = SourceLocation::capture(&alias.join("parent.vmf")).unwrap();
+    let reference = location.reference("child.vmf").unwrap();
+    let context = location.clone().hydrate(&Control::default()).unwrap();
+    std::fs::write(target.join("unrelated.txt"), "unrelated").unwrap();
+    location.verify_metadata().unwrap();
+    reference.verify_metadata().unwrap();
+    context.verify_metadata().unwrap();
+    std::fs::rename(&target, directory.path().join("previous-target")).unwrap();
+    std::fs::rename(&replacement, &target).unwrap();
+    location.alias.verify_metadata().unwrap();
+    location.root.verify_metadata().unwrap();
+    location
+        .directory_alias
+        .as_ref()
+        .unwrap()
+        .verify_container_identity()
+        .unwrap();
+    assert!(location.verify_metadata().is_err());
+    assert!(reference.verify_metadata().is_err());
+    assert!(context.verify_metadata().is_err());
+}

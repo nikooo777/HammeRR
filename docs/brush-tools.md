@@ -52,6 +52,10 @@ To subtract several shapes at once, enable **Use multiple cutter brushes** and g
 | --- | --- |
 | ![Cutter and target roles with a batch preview](images/multiple-cutter-controls.png) | ![Two combined cutter shapes leave a stepped cavity](images/multiple-cutter-cavities.png) |
 
+Hollow and Carve reject new edits, previews, framing and Apply actions during
+document shutdown. Their **Cancel** buttons still close the dialogs; a rejected
+cleanup cannot cancel a different preview.
+
 ## Clip
 
 Cut brushes with a plane.

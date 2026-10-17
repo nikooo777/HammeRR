@@ -39,7 +39,7 @@ fn snapshot(shared: &SharedSession) -> (source_formats::vmf::Vmf, Value) {
         json!({
             "history": session.history_snapshot(),
             "camera": format!("{:?}", session.camera()),
-            "selected": session.selected_ids(),
+            "selected": session.selected_ids().into_iter().map(|id| id.to_string()).collect::<Vec<_>>(),
             "region": session.working_region_summary(),
             "scene_serial": session.scene_serial(),
             "log_serial": session.log_serial(),
@@ -176,6 +176,7 @@ fn retained_region_callbacks_release_runtime_session_and_originating_window() {
     let (_directory, document, access, _shared, controller) = fixture();
     let window = controller.window.as_weak();
     let target = access.downgrade();
+    controller.window.hide().unwrap();
     drop(controller);
     assert!(window.upgrade().is_none());
     callback(&window, &target, |_, _| {

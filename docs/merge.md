@@ -29,3 +29,5 @@ faces disappear; patterns on those internal faces are not retained.
 - A nonconvex shape, disconnected brushes, edge/corner contact without filled volume, or an interior cavity rejects. Overlapping and fully contained brushes are supported when their union is convex.
 - Geometry follows the editor's component precision and coordinate limits. Coverage checks use the same plane tolerance as carving and stop at 256 intermediate fragments; overly complex or thin cases may reject.
 - Changing selection, editing sources or starting another geometry preview closes the current draft. Camera movement keeps it.
+- During document shutdown, source choices, preview and Apply actions reject.
+  **Cancel** still closes the dialog, without cancelling a different preview.

@@ -176,6 +176,10 @@ Select faces and open **Face lighting…**:
 
 Click **Preview settings**, then **Apply settings**.
 
+During document shutdown, face-lighting group edits, view changes, preview and
+Apply actions reject. **Cancel** still closes the dialog and cannot clear
+another tool's preview.
+
 To see the settings, use the **Lightmap density** and **Group membership** views (also available as [viewport modes](basics.md#viewport-modes)).
 
 Direct LDR builds use each face's lightmap scale and assigned smoothing groups on world/detail brushes and rendered brush entities. Terrain uses its own sewn grid normals.
@@ -192,7 +196,7 @@ Direct LDR builds use each face's lightmap scale and assigned smoothing groups o
 
 ![Smoothing where a small face meets the middle of a longer edge](images/compiled-brush-junctions.png)
 
-Limits: explicitly assigned masks on world/detail brushes and rendered brush entities, with adjacency at matching source vertices and corners landing inside eligible neighboring edges. Unassigned faces keep flat normals when **Brush smoothing angle** is zero. Original fan centers stay fixed when junction points are added. Edge matching uses canonical native positions within 0.000001 world units. The smoothing fan is retained across lightmap subdivision; geometry, texture axes and collision stay fixed. Bump-light maps remain unfinished. Degenerate or backward normals fall back to the geometric face normal. Source allocation shares one cap of four million retained points across all world/model sources and added junctions, native normals at 65,536 entries, and work shares the lighting budget. The viewport's **Group membership** mode shows assignment; compiled shading is viewed in game.
+Limits: explicitly assigned masks on world/detail brushes and rendered brush entities, with adjacency at matching source vertices and corners landing inside eligible neighboring edges. Unassigned faces keep flat normals when **Brush smoothing angle** is zero. Original fan centers stay fixed when junction points are added. Edge matching uses canonical native positions within 0.000001 world units. The smoothing fan is retained across lightmap subdivision; geometry, texture axes and collision stay fixed. Supported `$bumpmap` materials receive [directional lightmaps](compile-and-play.md#normal-map-lighting) using these normals. Degenerate or backward normals fall back to the geometric face normal. Source allocation shares one cap of four million retained points across all world/model sources and added junctions, native normals at 65,536 entries, and work shares the lighting budget. The viewport's **Group membership** mode shows assignment; compiled shading is viewed in game.
 
 ### Smooth a brush model
 

@@ -51,7 +51,7 @@ fn snapshot(shared: &SharedSession) -> (source_formats::vmf::Vmf, Value) {
             "camera_serial": session.camera_serial(),
             "scene_serial": session.scene_serial(),
             "log_serial": session.log_serial(),
-            "selected": session.selected_ids(),
+            "selected": session.selected_ids().into_iter().map(|id| id.to_string()).collect::<Vec<_>>(),
         }),
     )
 }
@@ -196,6 +196,7 @@ fn retained_saved_views_callbacks_release_runtime_session_and_originating_window
     let (_directory, document, access, _shared, controller) = fixture();
     let window = controller.window.as_weak();
     let target = access.downgrade();
+    controller.window.hide().unwrap();
     drop(controller);
     assert!(window.upgrade().is_none());
     callback(&window, &target, |_, _| {

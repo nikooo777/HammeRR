@@ -672,7 +672,7 @@ pub(super) fn run(
     root_callback!(app, ui, on_saved_views, |app| {
         let mut ui = ui.borrow_mut();
         if ui.saved_views.is_none() {
-            match saved_views_ui::Controller::new(&ui.session) {
+            match saved_views_ui::Controller::new_with_access(&ui.document_access()) {
                 Ok(controller) => ui.saved_views = Some(controller),
                 Err(error) => {
                     app.unwrap().set_message(error.to_string().into());
@@ -917,7 +917,7 @@ pub(super) fn run(
         if ui.borrow().hollow_window.is_none() {
             match HollowWindow::new() {
                 Ok(window) => {
-                    hollow_ui::bind(&window, &session_of(&ui));
+                    hollow_ui::bind_with_access(&window, &file_access(&ui));
                     ui.borrow_mut().hollow_window = Some(window);
                 }
                 Err(error) => {
@@ -936,7 +936,7 @@ pub(super) fn run(
         if ui.borrow().carve_window.is_none() {
             match CarveWindow::new() {
                 Ok(window) => {
-                    carve_ui::bind(&window, &session_of(&ui));
+                    carve_ui::bind_with_access(&window, &file_access(&ui));
                     ui.borrow_mut().carve_window = Some(window);
                 }
                 Err(error) => {
@@ -955,7 +955,7 @@ pub(super) fn run(
         if ui.borrow().merge_window.is_none() {
             match MergeWindow::new() {
                 Ok(window) => {
-                    merge_ui::bind(&window, &session_of(&ui));
+                    merge_ui::bind_with_access(&window, &file_access(&ui));
                     ui.borrow_mut().merge_window = Some(window);
                 }
                 Err(error) => {
@@ -1406,7 +1406,7 @@ pub(super) fn run(
     root_callback!(app, ui, on_edit_face_lighting, |app| {
         let shared = session_of(&ui);
         if ui.borrow().lighting.is_none() {
-            match lighting_ui::Controller::new(&shared) {
+            match lighting_ui::Controller::new_with_access(&file_access(&ui)) {
                 Ok(controller) => ui.borrow_mut().lighting = Some(controller),
                 Err(error) => {
                     app.unwrap().set_message(error.to_string().into());
@@ -1518,7 +1518,7 @@ pub(super) fn run(
     root_callback!(app, ui, on_working_region, |app| {
         let shared = session_of(&ui);
         if ui.borrow().working_region.is_none() {
-            match working_region_ui::Controller::new(&shared) {
+            match working_region_ui::Controller::new_with_access(&file_access(&ui)) {
                 Ok(controller) => ui.borrow_mut().working_region = Some(controller),
                 Err(error) => {
                     app.unwrap().set_message(error.to_string().into());

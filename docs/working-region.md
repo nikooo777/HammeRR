@@ -39,6 +39,9 @@ or overlay drafts remain intact; changing the region ends spatial gestures.
 
 - One axis-aligned box per editor Session; it resets when opening or creating a
   map. It does not follow the camera, clip objects or save a visibility preset.
+- During document shutdown, **Apply**, **Use selection bounds** and **Clear
+  working region** reject without changing the current filter. **Cancel** still
+  closes the dialog.
 - Saved hide/show and tool-texture filters remain independent. **Compile region…**
   controls builds separately; working-region filtering never changes BSP output.
 - Unknown bounds remain visible with an `unresolved_bounds` inspection reason.

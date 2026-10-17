@@ -2646,6 +2646,12 @@ cargo test -p editor material_source_ui::tests
 cargo test -p editor ui::materials::admission_tests
 cargo test -p editor statistics_ui::admission_tests
 cargo test -p editor fog_ui::admission_tests
+cargo test -p editor saved_views_ui::admission_tests
+cargo test -p editor working_region_ui::admission_tests
+cargo test -p editor hollow_ui::tests
+cargo test -p editor carve_ui::admission_tests
+cargo test -p editor merge_ui::admission_tests
+cargo test -p editor lighting_ui::admission_tests
 ```
 
 Publication cases exercise retained parent descriptors, source symlinks and
@@ -2682,6 +2688,11 @@ favorites, caches and a complete Search callback/shutdown barrier. Full Ui
 opening and the ordinary multi-target Use dispatcher are reviewed in source;
 these software cases do not create a GPU-backed Ui. Statistics and Fog cases
 cover retained report/form data, exact preview choices, peers and owner release.
+Saved-view and region cases retain reviewed generation/revision and view stamps.
+Hollow, Carve, Merge and face-lighting cases retain actual owned previews across
+drain, reject foreign tokens, preserve live peers and keep local dismissal.
+Nested opening, cutter and group edits call borrowed bodies within one operation;
+barrier cases check final recovery cannot pass their complete action.
 
 The optional GPU resource-release case uses software windows and an offscreen
 adapter, without desktop input:

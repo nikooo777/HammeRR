@@ -118,7 +118,9 @@ Save named camera positions and jump back to them.
 
 **Rename**, **Replace with current** and **Delete view** manage the list. Saved views are stored in the VMF, and changes to them are undoable. Going to a view moves only the camera.
 
+![Named camera views with restore and edit controls](images/saved-views.png)
+
 - Up to 64 views per map, with names up to 80 characters.
 - Camera records written by Hammer are kept separately and preserved.
-
-![Named camera views with restore and edit controls](images/saved-views.png)
+- During document shutdown, view choices and edits reject without changing the
+  camera or saved records. **Cancel / close** remains available.

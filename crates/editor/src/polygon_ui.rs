@@ -9,7 +9,7 @@ use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::{
     PolygonCorner, PolygonWindow,
-    runtime::{SharedSession, lock},
+    runtime::{DocumentAccess, DocumentContinuation, SharedSession, lock},
     session::{Actor, Session},
     ui::preview_image,
 };
@@ -125,8 +125,31 @@ fn snap(session: &Session, point: DVec2, enabled: bool) -> DVec2 {
     }
 }
 
+fn with_window<R>(
+    window: &slint::Weak<PolygonWindow>,
+    target: &DocumentContinuation,
+    body: impl FnOnce(&PolygonWindow, &SharedSession) -> R,
+) -> Option<R> {
+    let window = window.upgrade()?;
+    let result = target
+        .upgrade()
+        .and_then(|access| access.with_shared(|shared| Ok(body(&window, shared))));
+    match result {
+        Ok(result) => Some(result),
+        Err(error) => {
+            window.set_message(error.into());
+            None
+        }
+    }
+}
+
 impl Controller {
+    #[cfg(test)]
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
+        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
+    }
+
+    pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let window = PolygonWindow::new()?;
         window
             .window()
@@ -136,229 +159,243 @@ impl Controller {
         let generation = Rc::new(Cell::new(0));
         let dirty = Rc::new(Cell::new(false));
         window.on_edited({
+            let target = access.downgrade();
             let (window, points, dirty) = (window.as_weak(), points.clone(), dirty.clone());
-            move || changed(&window.unwrap(), &dirty, &points.borrow())
+            move || {
+                with_window(&window, &target, |window, _shared| {
+                    changed(window, &dirty, &points.borrow())
+                });
+            }
         });
         window.on_view_edited({
+            let target = access.downgrade();
             let (window, points) = (window.as_weak(), points.clone());
             move || {
-                let window = window.unwrap();
-                if let Err(error) = display_points(&window, &points.borrow()) {
-                    window.set_message(error.into());
-                }
+                with_window(&window, &target, |window, _shared| {
+                    if let Err(error) = display_points(window, &points.borrow()) {
+                        window.set_message(error.into());
+                    }
+                });
             }
         });
         window.on_draw_corner({
-            let (window, points, dirty, shared) = (
-                window.as_weak(),
-                points.clone(),
-                dirty.clone(),
-                shared.clone(),
-            );
+            let target = access.downgrade();
+            let (window, points, dirty) = (window.as_weak(), points.clone(), dirty.clone());
             move |x, y| {
-                let window = window.unwrap();
-                let result = (|| {
-                    let (center, span) = view(&window)?;
-                    if points.borrow().len() >= map_core::polygon::MAX_CORNERS {
-                        return Err("Polygon supports at most 64 corners".into());
+                with_window(&window, &target, |window, shared| {
+                    let result = (|| {
+                        let (center, span) = view(&window)?;
+                        if points.borrow().len() >= map_core::polygon::MAX_CORNERS {
+                            return Err("Polygon supports at most 64 corners".into());
+                        }
+                        let point =
+                            center + DVec2::new(f64::from(x) - 0.5, 0.5 - f64::from(y)) * span;
+                        let point = snap(&lock(shared), point, window.get_snap());
+                        points.borrow_mut().push(point);
+                        changed(window, &dirty, &points.borrow());
+                        Ok::<_, String>(())
+                    })();
+                    if let Err(error) = result {
+                        window.set_message(error.into());
                     }
-                    let point = center + DVec2::new(f64::from(x) - 0.5, 0.5 - f64::from(y)) * span;
-                    let point = snap(&lock(&shared), point, window.get_snap());
-                    points.borrow_mut().push(point);
-                    changed(&window, &dirty, &points.borrow());
-                    Ok::<_, String>(())
-                })();
-                if let Err(error) = result {
-                    window.set_message(error.into());
-                }
+                });
             }
         });
         window.on_add_corner({
-            let (window, points, dirty, shared) = (
-                window.as_weak(),
-                points.clone(),
-                dirty.clone(),
-                shared.clone(),
-            );
+            let target = access.downgrade();
+            let (window, points, dirty) = (window.as_weak(), points.clone(), dirty.clone());
             move || {
-                let window = window.unwrap();
-                let result = (|| {
-                    if points.borrow().len() >= map_core::polygon::MAX_CORNERS {
-                        return Err("Polygon supports at most 64 corners".into());
+                with_window(&window, &target, |window, shared| {
+                    let result = (|| {
+                        if points.borrow().len() >= map_core::polygon::MAX_CORNERS {
+                            return Err("Polygon supports at most 64 corners".into());
+                        }
+                        let point = DVec2::new(
+                            number(&window.get_corner_u())?,
+                            number(&window.get_corner_v())?,
+                        );
+                        points
+                            .borrow_mut()
+                            .push(snap(&lock(shared), point, window.get_snap()));
+                        changed(window, &dirty, &points.borrow());
+                        Ok::<_, String>(())
+                    })();
+                    if let Err(error) = result {
+                        window.set_message(error.into());
                     }
-                    let point = DVec2::new(
-                        number(&window.get_corner_u())?,
-                        number(&window.get_corner_v())?,
-                    );
-                    points
-                        .borrow_mut()
-                        .push(snap(&lock(&shared), point, window.get_snap()));
-                    changed(&window, &dirty, &points.borrow());
-                    Ok::<_, String>(())
-                })();
-                if let Err(error) = result {
-                    window.set_message(error.into());
-                }
+                });
             }
         });
         window.on_change_corner({
-            let (window, points, dirty, shared) = (
-                window.as_weak(),
-                points.clone(),
-                dirty.clone(),
-                shared.clone(),
-            );
+            let target = access.downgrade();
+            let (window, points, dirty) = (window.as_weak(), points.clone(), dirty.clone());
             move |index, u, v| {
-                let window = window.unwrap();
-                let result = (|| {
-                    let point = DVec2::new(number(&u)?, number(&v)?);
-                    let mut points = points.borrow_mut();
-                    let selected = points
-                        .get_mut(index as usize)
-                        .ok_or("Corner no longer exists")?;
-                    *selected = snap(&lock(&shared), point, window.get_snap());
-                    changed(&window, &dirty, &points);
-                    Ok::<_, String>(())
-                })();
-                if let Err(error) = result {
-                    window.set_message(error.into());
-                }
+                with_window(&window, &target, |window, shared| {
+                    let result = (|| {
+                        let point = DVec2::new(number(&u)?, number(&v)?);
+                        let mut points = points.borrow_mut();
+                        let selected = points
+                            .get_mut(index as usize)
+                            .ok_or("Corner no longer exists")?;
+                        *selected = snap(&lock(shared), point, window.get_snap());
+                        changed(window, &dirty, &points);
+                        Ok::<_, String>(())
+                    })();
+                    if let Err(error) = result {
+                        window.set_message(error.into());
+                    }
+                });
             }
         });
         window.on_remove_corner({
+            let target = access.downgrade();
             let (window, points, dirty) = (window.as_weak(), points.clone(), dirty.clone());
             move |index| {
-                let mut points = points.borrow_mut();
-                if index >= 0 && (index as usize) < points.len() {
-                    points.remove(index as usize);
-                    changed(&window.unwrap(), &dirty, &points);
-                }
+                with_window(&window, &target, |window, _shared| {
+                    let mut points = points.borrow_mut();
+                    if index >= 0 && (index as usize) < points.len() {
+                        points.remove(index as usize);
+                        changed(window, &dirty, &points);
+                    }
+                });
             }
         });
         window.on_undo_corner({
+            let target = access.downgrade();
             let (window, points, dirty) = (window.as_weak(), points.clone(), dirty.clone());
             move || {
-                points.borrow_mut().pop();
-                changed(&window.unwrap(), &dirty, &points.borrow());
+                with_window(&window, &target, |window, _shared| {
+                    points.borrow_mut().pop();
+                    changed(window, &dirty, &points.borrow());
+                });
             }
         });
         window.on_clear_corners({
+            let target = access.downgrade();
             let (window, points, dirty) = (window.as_weak(), points.clone(), dirty.clone());
             move || {
-                points.borrow_mut().clear();
-                changed(&window.unwrap(), &dirty, &points.borrow());
+                with_window(&window, &target, |window, _shared| {
+                    points.borrow_mut().clear();
+                    changed(window, &dirty, &points.borrow());
+                });
             }
         });
         window.on_preview({
-            let (window, points, dirty, token, generation, shared) = (
+            let target = access.downgrade();
+            let (window, points, dirty, token, generation) = (
                 window.as_weak(),
                 points.clone(),
                 dirty.clone(),
                 token.clone(),
                 generation.clone(),
-                shared.clone(),
             );
             move || {
-                let window = window.unwrap();
-                let result = (|| {
-                    let mut session = lock(&shared);
-                    guard(&session, generation.get(), token.get())?;
-                    session.create_polygon(
-                        Actor::User,
-                        request(&window, &points.borrow())?,
-                        window.get_snap(),
-                        true,
-                    )?;
-                    let preview = session.primitive_preview().unwrap();
-                    token.set(Some(preview.token));
-                    *points.borrow_mut() = preview.spec.outline.clone();
-                    dirty.set(false);
-                    display_points(&window, &points.borrow())?;
-                    window.set_ready(true);
-                    window.set_summary(
-                        format!(
-                            "{} corners · {} editable brushes",
-                            points.borrow().len(),
-                            preview.ids.len()
-                        )
-                        .into(),
-                    );
-                    window.set_message(
-                        "Review the map preview, then Create brushes or Cancel.".into(),
-                    );
-                    Ok::<_, String>(())
-                })();
-                if let Err(error) = result {
-                    window.set_message(error.into());
-                }
+                with_window(&window, &target, |window, shared| {
+                    let result = (|| {
+                        let mut session = lock(shared);
+                        guard(&session, generation.get(), token.get())?;
+                        session.create_polygon(
+                            Actor::User,
+                            request(window, &points.borrow())?,
+                            window.get_snap(),
+                            true,
+                        )?;
+                        let preview = session.primitive_preview().unwrap();
+                        token.set(Some(preview.token));
+                        *points.borrow_mut() = preview.spec.outline.clone();
+                        dirty.set(false);
+                        display_points(window, &points.borrow())?;
+                        window.set_ready(true);
+                        window.set_summary(
+                            format!(
+                                "{} corners · {} editable brushes",
+                                points.borrow().len(),
+                                preview.ids.len()
+                            )
+                            .into(),
+                        );
+                        window.set_message(
+                            "Review the map preview, then Create brushes or Cancel.".into(),
+                        );
+                        Ok::<_, String>(())
+                    })();
+                    if let Err(error) = result {
+                        window.set_message(error.into());
+                    }
+                });
             }
         });
         window.on_apply({
-            let (window, dirty, token, generation, shared) = (
+            let target = access.downgrade();
+            let (window, dirty, token, generation) = (
                 window.as_weak(),
                 dirty.clone(),
                 token.clone(),
                 generation.clone(),
-                shared.clone(),
             );
             move || {
-                let window = window.unwrap();
-                let result = (|| {
-                    let mut session = lock(&shared);
-                    guard(&session, generation.get(), token.get())?;
-                    if dirty.get() {
-                        return Err("Preview changed settings before creating brushes".into());
+                with_window(&window, &target, |window, shared| {
+                    let result = (|| {
+                        let mut session = lock(shared);
+                        guard(&session, generation.get(), token.get())?;
+                        if dirty.get() {
+                            return Err("Preview changed settings before creating brushes".into());
+                        }
+                        session.commit_primitive_preview(
+                            Actor::User,
+                            token.get().ok_or("Preview the polygon first")?,
+                        )?;
+                        token.set(None);
+                        Ok::<_, String>(())
+                    })();
+                    match result {
+                        Ok(()) => {
+                            let _ = window.hide();
+                        }
+                        Err(error) => window.set_message(error.into()),
                     }
-                    session.commit_primitive_preview(
-                        Actor::User,
-                        token.get().ok_or("Preview the polygon first")?,
-                    )?;
-                    token.set(None);
-                    Ok::<_, String>(())
-                })();
-                match result {
-                    Ok(()) => {
-                        let _ = window.hide();
-                    }
-                    Err(error) => window.set_message(error.into()),
-                }
+                });
             }
         });
         window.on_frame({
-            let (window, token, generation, shared) = (
-                window.as_weak(),
-                token.clone(),
-                generation.clone(),
-                shared.clone(),
-            );
+            let target = access.downgrade();
+            let (window, token, generation) = (window.as_weak(), token.clone(), generation.clone());
             move || {
-                let window = window.unwrap();
-                let result = (|| {
-                    let mut session = lock(&shared);
-                    guard(&session, generation.get(), token.get())?;
-                    session.frame_primitive_preview(
-                        token.get().ok_or("Preview the polygon first")?,
-                        window.get_aspect(),
-                    )
-                })();
-                if let Err(error) = result {
-                    window.set_message(error.into());
-                }
+                with_window(&window, &target, |window, shared| {
+                    let result = (|| {
+                        let mut session = lock(shared);
+                        guard(&session, generation.get(), token.get())?;
+                        session.frame_primitive_preview(
+                            token.get().ok_or("Preview the polygon first")?,
+                            window.get_aspect(),
+                        )
+                    })();
+                    if let Err(error) = result {
+                        window.set_message(error.into());
+                    }
+                });
             }
         });
         window.on_cancel({
-            let (window, token, shared) = (window.as_weak(), token.clone(), shared.clone());
+            let target = access.downgrade();
+            let (window, token) = (window.as_weak(), token.clone());
             move || {
-                if let Some(token) = token.take() {
-                    let _ = lock(&shared).cancel_primitive_preview(token);
+                with_window(&window, &target, |_window, shared| {
+                    if let Some(token) = token.take() {
+                        let _ = lock(shared).cancel_primitive_preview(token);
+                    }
+                });
+                if let Some(window) = window.upgrade() {
+                    let _ = window.hide();
                 }
-                let _ = window.unwrap().hide();
             }
         });
         window.window().on_close_requested({
             let window = window.as_weak();
             move || {
-                window.unwrap().invoke_cancel();
+                if let Some(window) = window.upgrade() {
+                    window.invoke_cancel();
+                }
                 slint::CloseRequestResponse::HideWindow
             }
         });

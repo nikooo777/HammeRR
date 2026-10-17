@@ -9,7 +9,7 @@ use slint::ComponentHandle;
 
 use crate::{
     RepeatWindow,
-    runtime::{SharedSession, lock},
+    runtime::{DocumentAccess, DocumentContinuation, SharedSession, lock},
     session::{Actor, Session},
 };
 
@@ -134,8 +134,31 @@ fn present(window: &RepeatWindow, report: &serde_json::Value) {
     );
 }
 
+fn with_window<R>(
+    window: &slint::Weak<RepeatWindow>,
+    target: &DocumentContinuation,
+    body: impl FnOnce(&RepeatWindow, &SharedSession) -> R,
+) -> Option<R> {
+    let window = window.upgrade()?;
+    let result = target
+        .upgrade()
+        .and_then(|access| access.with_shared(|shared| Ok(body(&window, shared))));
+    match result {
+        Ok(result) => Some(result),
+        Err(error) => {
+            window.set_message(error.into());
+            None
+        }
+    }
+}
+
 impl Controller {
+    #[cfg(test)]
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
+        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
+    }
+
+    pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let window = RepeatWindow::new()?;
         window
             .window()
@@ -144,101 +167,108 @@ impl Controller {
         let token = Rc::new(Cell::new(None));
         let prepared = Rc::new(Cell::new(None));
         window.on_invalidate({
+            let target = access.downgrade();
             let (window, prepared) = (window.as_weak(), prepared.clone());
             move || {
-                prepared.set(None);
-                let window = window.unwrap();
-                window.set_ready(false);
-                window.set_message("Preview changed settings before applying them.".into());
+                with_window(&window, &target, |window, _shared| {
+                    prepared.set(None);
+
+                    window.set_ready(false);
+                    window.set_message("Preview changed settings before applying them.".into());
+                });
             }
         });
         window.on_preview({
-            let (window, shared, context, token, prepared) = (
+            let target = access.downgrade();
+            let (window, context, token, prepared) = (
                 window.as_weak(),
-                shared.clone(),
                 context.clone(),
                 token.clone(),
                 prepared.clone(),
             );
             move || {
-                let window = window.unwrap();
-                let result = (|| {
-                    let mut session = lock(&shared);
-                    let ids = validate(&session, &context, token.get())?;
-                    let requested = options(&window)?;
-                    let snapshot = session.repeat_stamp();
-                    let report = session.preview_repeat_array_in_space(
-                        &ids,
-                        requested.0,
-                        requested.1,
-                        &snapshot,
-                    )?;
-                    Ok::<_, String>((requested, report))
-                })();
-                match result {
-                    Ok((requested, report)) => {
-                        token.set(report["preview"]["token"].as_u64());
-                        prepared.set(Some(requested));
-                        present(&window, &report);
+                with_window(&window, &target, |window, shared| {
+                    let result = (|| {
+                        let mut session = lock(shared);
+                        let ids = validate(&session, &context, token.get())?;
+                        let requested = options(&window)?;
+                        let snapshot = session.repeat_stamp();
+                        let report = session.preview_repeat_array_in_space(
+                            &ids,
+                            requested.0,
+                            requested.1,
+                            &snapshot,
+                        )?;
+                        Ok::<_, String>((requested, report))
+                    })();
+                    match result {
+                        Ok((requested, report)) => {
+                            token.set(report["preview"]["token"].as_u64());
+                            prepared.set(Some(requested));
+                            present(window, &report);
+                        }
+                        Err(error) => {
+                            window.set_ready(false);
+                            window.set_message(error.into());
+                        }
                     }
-                    Err(error) => {
-                        window.set_ready(false);
-                        window.set_message(error.into());
-                    }
-                }
+                });
             }
         });
         window.on_apply({
-            let (window, shared, context, token, prepared) = (
+            let target = access.downgrade();
+            let (window, context, token, prepared) = (
                 window.as_weak(),
-                shared.clone(),
                 context.clone(),
                 token.clone(),
                 prepared.clone(),
             );
             move || {
-                let window = window.unwrap();
-                let result = (|| {
-                    if prepared.get() != Some(options(&window)?) {
-                        return Err("Preview changed settings before applying them".into());
+                with_window(&window, &target, |window, shared| {
+                    let result = (|| {
+                        if prepared.get() != Some(options(&window)?) {
+                            return Err("Preview changed settings before applying them".into());
+                        }
+                        let mut session = lock(shared);
+                        validate(&session, &context, token.get())?;
+                        session.apply_repeat_array(
+                            Actor::User,
+                            token.get().ok_or("Preview the array first")?,
+                        )
+                    })();
+                    match result {
+                        Ok(_) => {
+                            token.set(None);
+                            prepared.set(None);
+                            window.set_ready(false);
+                            let _ = window.hide();
+                        }
+                        Err(error) => window.set_message(error.into()),
                     }
-                    let mut session = lock(&shared);
-                    validate(&session, &context, token.get())?;
-                    session.apply_repeat_array(
-                        Actor::User,
-                        token.get().ok_or("Preview the array first")?,
-                    )
-                })();
-                match result {
-                    Ok(_) => {
-                        token.set(None);
-                        prepared.set(None);
-                        window.set_ready(false);
-                        let _ = window.hide();
-                    }
-                    Err(error) => window.set_message(error.into()),
-                }
+                });
             }
         });
         window.on_cancel({
-            let (window, shared, token, prepared) = (
-                window.as_weak(),
-                shared.clone(),
-                token.clone(),
-                prepared.clone(),
-            );
+            let target = access.downgrade();
+            let (window, token, prepared) = (window.as_weak(), token.clone(), prepared.clone());
             move || {
-                if let Some(token) = token.take() {
-                    let _ = lock(&shared).cancel_repeat_array(token);
+                with_window(&window, &target, |_window, shared| {
+                    if let Some(token) = token.take() {
+                        let _ = lock(shared).cancel_repeat_array(token);
+                    }
+                    prepared.set(None);
+                });
+                if let Some(window) = window.upgrade() {
+                    let _ = window.hide();
                 }
-                prepared.set(None);
-                let _ = window.unwrap().hide();
             }
         });
         window.window().on_close_requested({
             let window = window.as_weak();
             move || {
-                window.unwrap().invoke_cancel();
+                if let Some(window) = window.upgrade() {
+                    window.invoke_cancel();
+                }
                 slint::CloseRequestResponse::HideWindow
             }
         });

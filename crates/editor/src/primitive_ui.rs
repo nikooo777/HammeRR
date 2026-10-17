@@ -3,7 +3,7 @@ use map_core::primitive::{Axis, Shape, Spec};
 use slint::ComponentHandle;
 use source_formats::vmf::format_number;
 
-use crate::runtime::{SharedSession, lock};
+use crate::runtime::{DocumentAccess, DocumentContinuation, SharedSession, lock};
 use crate::session::{Actor, Session};
 use crate::{PrimitiveWindow, ui::preview_image};
 
@@ -221,65 +221,113 @@ fn cancel(window: &PrimitiveWindow, shared: &SharedSession) -> bool {
     okay
 }
 
+fn with_window<R>(
+    window: &slint::Weak<PrimitiveWindow>,
+    target: &DocumentContinuation,
+    body: impl FnOnce(&PrimitiveWindow, &SharedSession) -> R,
+) -> Option<R> {
+    let window = window.upgrade()?;
+    let result = target.upgrade().and_then(|access| {
+        access.with_shared(|shared| {
+            #[cfg(test)]
+            {
+                let hook = BEFORE_ACTION.with(|slot| slot.borrow_mut().take());
+                if let Some(hook) = hook {
+                    hook();
+                }
+            }
+            Ok(body(&window, shared))
+        })
+    });
+    match result {
+        Ok(result) => Some(result),
+        Err(error) => {
+            window.set_message(error.into());
+            None
+        }
+    }
+}
+
+#[cfg(test)]
 pub fn bind(window: &PrimitiveWindow, shared: &SharedSession) {
+    bind_with_access(window, &DocumentAccess::unmanaged(shared.clone()));
+}
+
+pub fn bind_with_access(window: &PrimitiveWindow, access: &DocumentAccess) {
     window.on_edited({
-        let (window, shared) = (window.as_weak(), shared.clone());
-        move || fields_changed(&window.unwrap(), &mut lock(&shared))
+        let (window, target) = (window.as_weak(), access.downgrade());
+        move || {
+            with_window(&window, &target, |window, shared| {
+                fields_changed(window, &mut lock(shared));
+            });
+        }
     });
     window.on_preview_shape({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, target) = (window.as_weak(), access.downgrade());
         move || {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            let result =
-                spec(&window).and_then(|spec| session.create_primitive(Actor::User, spec, true));
-            window.set_message(result.err().unwrap_or_default().into());
-            refresh(&window, &mut session);
+            with_window(&window, &target, |window, shared| {
+                let mut session = lock(shared);
+                let result =
+                    spec(window).and_then(|spec| session.create_primitive(Actor::User, spec, true));
+                window.set_message(result.err().unwrap_or_default().into());
+                refresh(window, &mut session);
+            });
         }
     });
     window.on_apply({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, target) = (window.as_weak(), access.downgrade());
         move || {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            let result = token(&window)
-                .and_then(|token| session.commit_primitive_preview(Actor::User, token));
-            let okay = result.is_ok();
-            window.set_message(result.err().unwrap_or_default().into());
-            refresh(&window, &mut session);
-            if okay {
-                let _ = window.hide();
-            }
+            with_window(&window, &target, |window, shared| {
+                let mut session = lock(shared);
+                let result = token(window)
+                    .and_then(|token| session.commit_primitive_preview(Actor::User, token));
+                let okay = result.is_ok();
+                window.set_message(result.err().unwrap_or_default().into());
+                refresh(window, &mut session);
+                if okay {
+                    let _ = window.hide();
+                }
+            });
         }
     });
     window.on_focus_preview({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, target) = (window.as_weak(), access.downgrade());
         move || {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            let result = token(&window)
-                .and_then(|token| session.frame_primitive_preview(token, window.get_aspect()));
-            window.set_message(result.err().unwrap_or_default().into());
-            refresh(&window, &mut session);
+            with_window(&window, &target, |window, shared| {
+                let mut session = lock(shared);
+                let result = token(window)
+                    .and_then(|token| session.frame_primitive_preview(token, window.get_aspect()));
+                window.set_message(result.err().unwrap_or_default().into());
+                refresh(window, &mut session);
+            });
         }
     });
     window.on_cancel({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, target) = (window.as_weak(), access.downgrade());
         move || {
-            let window = window.unwrap();
-            if cancel(&window, &shared) {
+            with_window(&window, &target, |window, shared| {
+                cancel(window, shared);
+            });
+            if let Some(window) = window.upgrade() {
                 let _ = window.hide();
             }
         }
     });
     window.window().on_close_requested({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let window = window.as_weak();
         move || {
-            if cancel(&window.unwrap(), &shared) {
-                slint::CloseRequestResponse::HideWindow
-            } else {
-                slint::CloseRequestResponse::KeepWindowShown
+            if let Some(window) = window.upgrade() {
+                window.invoke_cancel();
             }
+            slint::CloseRequestResponse::HideWindow
         }
     });
 }
+
+#[cfg(test)]
+std::thread_local! {
+    static BEFORE_ACTION: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+mod admission_tests;

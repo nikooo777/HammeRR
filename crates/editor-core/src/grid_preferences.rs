@@ -1,8 +1,6 @@
-use std::{
-    fs::{self, File},
-    io::Read,
-    path::PathBuf,
-};
+use std::{fs, path::PathBuf};
+
+pub(crate) use crate::preference_file::Source;
 
 use serde::{Deserialize, Serialize};
 
@@ -61,18 +59,6 @@ pub struct Store {
     pub directory: PathBuf,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) enum Source {
-    Missing,
-    File {
-        bytes: Vec<u8>,
-        length: u64,
-        modified: std::time::SystemTime,
-        #[cfg(unix)]
-        identity: (u64, u64),
-    },
-}
-
 impl Store {
     pub fn path(&self) -> PathBuf {
         self.directory.join(FILE_NAME)
@@ -83,57 +69,7 @@ impl Store {
     }
 
     pub(crate) fn read_source(&self) -> Result<Source, String> {
-        let path = self.path();
-        let metadata = match fs::symlink_metadata(&path) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(Source::Missing);
-            }
-            Err(error) => return Err(format!("{}: {error}", path.display())),
-        };
-        if !metadata.is_file() {
-            return Err(format!("{} must be a regular file", path.display()));
-        }
-        let file = File::open(&path).map_err(|error| format!("{}: {error}", path.display()))?;
-        let opened = file.metadata().map_err(|error| error.to_string())?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt;
-            if (opened.dev(), opened.ino()) != (metadata.dev(), metadata.ino()) {
-                return Err("Grid defaults were replaced while loading".into());
-            }
-        }
-        let modified = metadata
-            .modified()
-            .map_err(|error| format!("{}: {error}", path.display()))?;
-        if !opened.is_file()
-            || opened.len() != metadata.len()
-            || opened.modified().map_err(|error| error.to_string())? != modified
-        {
-            return Err("Grid defaults changed while loading".into());
-        }
-        let mut bytes = Vec::new();
-        (&file)
-            .take(MAX_FILE_BYTES + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|error| format!("{}: {error}", path.display()))?;
-        let after = file.metadata().map_err(|error| error.to_string())?;
-        if bytes.len() as u64 != metadata.len().min(MAX_FILE_BYTES + 1)
-            || after.len() != metadata.len()
-            || after.modified().map_err(|error| error.to_string())? != modified
-        {
-            return Err("Grid defaults changed size while loading".into());
-        }
-        Ok(Source::File {
-            bytes,
-            length: metadata.len(),
-            modified,
-            #[cfg(unix)]
-            identity: {
-                use std::os::unix::fs::MetadataExt;
-                (metadata.dev(), metadata.ino())
-            },
-        })
+        crate::preference_file::read_source(&self.path(), MAX_FILE_BYTES, "Grid defaults")
     }
 
     pub(crate) fn parse_source(&self, source: &Source) -> Result<Option<Grid>, String> {
@@ -165,14 +101,7 @@ impl Store {
             self.load()?;
         }
         let path = self.path();
-        match fs::symlink_metadata(&path) {
-            Ok(metadata) if !metadata.is_file() => {
-                return Err(format!("{} must be a regular file", path.display()));
-            }
-            Ok(_) => (),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
-            Err(error) => return Err(format!("{}: {error}", path.display())),
-        }
+        crate::preference_file::ensure_regular_target(&path)?;
         let data = serde_json::to_vec_pretty(&Preferences {
             version: FORMAT_VERSION,
             grid,

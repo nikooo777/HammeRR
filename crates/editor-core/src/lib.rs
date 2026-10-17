@@ -8,6 +8,8 @@ pub mod material_favorites;
 pub mod materials;
 pub mod model_preview;
 pub mod prefabs;
+mod preference_file;
+pub mod preview_preferences;
 pub mod recent_maps;
 pub mod recovery;
 pub mod runtime;

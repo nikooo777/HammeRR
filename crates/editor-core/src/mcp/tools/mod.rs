@@ -19,6 +19,7 @@ mod overlay;
 mod particles;
 mod partitions;
 mod placement;
+mod preview_preferences;
 mod recovery;
 mod selection;
 mod terrain;

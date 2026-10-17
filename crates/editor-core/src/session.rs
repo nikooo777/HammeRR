@@ -1231,7 +1231,15 @@ impl Session {
         self.scene_serial += 1;
     }
 
+    fn ensure_not_closing(&self) -> Result<(), String> {
+        if self.closing {
+            return Err("the editor is closing".into());
+        }
+        Ok(())
+    }
+
     fn ensure_discardable(&self, discard_changes: bool) -> Result<(), String> {
+        self.ensure_not_closing()?;
         if !discard_changes {
             self.ensure_partitions_resolved()?;
         }
@@ -1323,6 +1331,7 @@ impl Session {
     /// Saves to `path`, or to the current file. Writes a temporary file
     /// first so a failed write never truncates the map.
     pub fn save(&mut self, actor: Actor, path: Option<&Path>) -> Result<PathBuf, String> {
+        self.ensure_not_closing()?;
         self.ensure_partitions_resolved()?;
         self.ensure_entity_placement_resolved()?;
         let path = path

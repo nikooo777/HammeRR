@@ -16,6 +16,104 @@ fn recovery_state(session: &Session) -> Value {
 }
 
 #[test]
+fn retained_mcp_server_rejects_file_operations_after_document_drain() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut state = Session::new(Err("no assets needed".into()));
+    state.configure_recovery(Ok(directory.path().join("recovery")));
+    let path = directory.path().join("source.vmf");
+    std::fs::write(&path, "world { id 1 classname worldspawn }").unwrap();
+    state.open(Actor::User, &path, false).unwrap();
+    let request = state
+        .begin_recovery_snapshot(crate::recovery::Kind::Manual)
+        .unwrap();
+    let entry = state
+        .finish_recovery_snapshot(Actor::User, &request, request.run())
+        .unwrap();
+    state
+        .create_block(
+            Actor::User,
+            DVec3::ZERO,
+            DVec3::splat(16.0),
+            "brick/test",
+            false,
+        )
+        .unwrap();
+    let shared = Arc::new(Mutex::new(state));
+    let document = crate::runtime::DocumentHandle::start(shared.clone()).unwrap();
+    let server = EditorServer::for_document(document.clone(), None);
+    let info = value(server.get_map_info(), false);
+    let review = info["replacement_review"].as_str().unwrap();
+    let generation = info["generation"].clone();
+    document.shutdown().unwrap();
+    assert_eq!(lock(&shared).buffer_replacement_review().token(), review);
+    let destination = directory.path().join("destination.vmf");
+    std::fs::write(&destination, b"preserve destination").unwrap();
+    let source_bytes = std::fs::read(&path).unwrap();
+    let source = lock(&shared).document().vmf().clone();
+    let history = lock(&shared).history_snapshot();
+    let recovery = recovery_state(&lock(&shared));
+    let recent = lock(&shared).recent_maps();
+    let entries = serde_json::to_value(lock(&shared).recovery_entries().unwrap()).unwrap();
+    assert_eq!(entries["entries"].as_array().unwrap().len(), 2);
+    let results = [
+        server.new_map(Parameters(
+            serde_json::from_value(json!({"discard_changes":true,"expected_review":review}))
+                .unwrap(),
+        )),
+        server.open_map(Parameters(
+            serde_json::from_value(
+                json!({"path":path,"discard_changes":true,"expected_review":review}),
+            )
+            .unwrap(),
+        )),
+        server.open_recent_map(Parameters(
+            serde_json::from_value(
+                json!({"path":path,"discard_changes":true,"expected_review":review}),
+            )
+            .unwrap(),
+        )),
+        server.restore_recovery_snapshot(Parameters(
+            serde_json::from_value(
+                json!({"id":entry.id,"discard_changes":true,"expected_review":review}),
+            )
+            .unwrap(),
+        )),
+        server.save_map(Parameters(
+            serde_json::from_value(json!({"expected_generation":generation})).unwrap(),
+        )),
+        server.save_map(Parameters(
+            serde_json::from_value(json!({"path":destination,"expected_generation":generation}))
+                .unwrap(),
+        )),
+    ];
+    for result in results {
+        let failed = result.unwrap();
+        assert!(failed.is_error.unwrap_or(false), "{failed:?}");
+        assert!(
+            failed.content[0]
+                .as_text()
+                .unwrap()
+                .text
+                .contains("closing")
+        );
+    }
+    let state = lock(&shared);
+    assert_eq!(state.document().vmf(), &source);
+    assert_eq!(state.history_snapshot(), history);
+    assert_eq!(state.path(), Some(path.as_path()));
+    assert_eq!(recovery_state(&state), recovery);
+    assert_eq!(state.recent_maps(), recent);
+    assert_eq!(
+        serde_json::to_value(state.recovery_entries().unwrap()).unwrap(),
+        entries
+    );
+    assert_eq!(std::fs::read(path).unwrap(), source_bytes);
+    assert_eq!(std::fs::read(destination).unwrap(), b"preserve destination");
+    drop(state);
+    assert!(server.offscreen.lock().unwrap().renderer.is_none());
+}
+
+#[test]
 fn mcp_replacement_tokens_reject_peer_edits_and_saves_for_every_replacement() {
     for action in ["new", "open", "recent", "recovery"] {
         for save in [false, true] {

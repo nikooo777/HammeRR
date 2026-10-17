@@ -183,6 +183,7 @@ impl Session {
         path: &Path,
         discard_changes: bool,
     ) -> Result<String, String> {
+        self.ensure_not_closing()?;
         let entry = self
             .recent_maps
             .authority()

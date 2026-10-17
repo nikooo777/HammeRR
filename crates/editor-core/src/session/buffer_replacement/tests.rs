@@ -371,3 +371,125 @@ fn generation_guards_allow_same_buffer_edits_for_save_and_compile() {
     drop(request);
     session.finish_compile(Actor::User, &Err("fixture stopped before compiling".into()));
 }
+
+fn stored_files(directory: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+    let mut files = BTreeMap::new();
+    let mut directories = vec![directory.to_owned()];
+    while let Some(current) = directories.pop() {
+        for entry in std::fs::read_dir(current).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                directories.push(path);
+            } else {
+                files.insert(path.clone(), std::fs::read(path).unwrap());
+            }
+        }
+    }
+    files
+}
+
+#[test]
+fn drained_document_rejects_retained_file_operations_without_side_effects() {
+    let (directory, mut state, path, recovery_id) = fixture();
+    state
+        .create_block(
+            Actor::User,
+            DVec3::ZERO,
+            DVec3::splat(16.0),
+            "brick/test",
+            false,
+        )
+        .unwrap();
+    let review = state.buffer_replacement_review();
+    let generation = state.document_generation();
+    let destination = directory.path().join("destination.vmf");
+    std::fs::write(&destination, b"preserve destination").unwrap();
+    let shared = std::sync::Arc::new(std::sync::Mutex::new(state));
+    let document = crate::runtime::DocumentHandle::start(shared.clone()).unwrap();
+    document.shutdown().unwrap();
+    let files = stored_files(directory.path());
+    let mut state = crate::runtime::lock(&shared);
+    assert_eq!(state.buffer_replacement_review(), review);
+    assert_eq!(state.document_generation(), generation);
+    assert_eq!(state.recovery_entries().unwrap().entries.len(), 2);
+    let source = state.document().vmf().clone();
+    let history = state.history_snapshot();
+    let recovery = state.recovery_status();
+    let recent = state.recent_maps();
+    let selection = state.selected_ids();
+    let camera = state.camera();
+    let serials = (
+        state.scene_serial(),
+        state.view_serial(),
+        state.log_serial(),
+    );
+    for actor in [Actor::User, Actor::Agent] {
+        for replacement in REPLACEMENTS {
+            let error = replace(
+                &mut state,
+                actor,
+                replacement,
+                &path,
+                &recovery_id,
+                true,
+                &review,
+            )
+            .unwrap_err();
+            assert!(error.contains("closing"), "{error}");
+        }
+        let errors = [
+            state.new_map(actor, true).unwrap_err(),
+            state.open(actor, &path, true).unwrap_err(),
+            state
+                .open(actor, &directory.path().join("missing.vmf"), true)
+                .unwrap_err(),
+            state.open_recent_map(actor, &path, true).unwrap_err(),
+            state
+                .restore_recovery_snapshot(actor, &recovery_id, true, None)
+                .unwrap_err(),
+            state.save(actor, None).unwrap_err(),
+            state.save(actor, Some(&destination)).unwrap_err(),
+            state
+                .save_for_generation(actor, Some(&destination), Some(generation))
+                .unwrap_err(),
+        ];
+        for error in errors {
+            assert!(error.contains("closing"), "{error}");
+        }
+    }
+    assert_eq!(state.document().vmf(), &source);
+    assert_eq!(state.history_snapshot(), history);
+    assert_eq!(state.path(), Some(path.as_path()));
+    assert_eq!(state.recovery_status(), recovery);
+    assert_eq!(state.recent_maps(), recent);
+    assert_eq!(state.selected_ids(), selection);
+    assert_eq!(state.camera(), camera);
+    assert_eq!(
+        (
+            state.scene_serial(),
+            state.view_serial(),
+            state.log_serial()
+        ),
+        serials
+    );
+    assert_eq!(stored_files(directory.path()), files);
+    drop(state);
+    document.shutdown().unwrap();
+    assert_eq!(stored_files(directory.path()), files);
+
+    let mut peer = Session::new(Err("no assets needed".into()));
+    peer.open(Actor::Agent, &path, false).unwrap();
+    peer.create_block(
+        Actor::User,
+        DVec3::ZERO,
+        DVec3::splat(32.0),
+        "brick/test",
+        false,
+    )
+    .unwrap();
+    let peer_path = directory.path().join("peer.vmf");
+    peer.save(Actor::Agent, Some(&peer_path)).unwrap();
+    let review = peer.buffer_replacement_review();
+    peer.new_map_reviewed(Actor::User, false, &review).unwrap();
+    assert!(peer.document().objects().next().is_none());
+}

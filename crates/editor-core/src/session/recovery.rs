@@ -526,6 +526,7 @@ impl Session {
         discard_changes: bool,
         expected: Option<(u64, u64)>,
     ) -> Result<(), String> {
+        self.ensure_not_closing()?;
         if expected.is_some_and(|(generation, revision)| {
             generation != self.document_generation || revision != self.document.revision()
         }) {

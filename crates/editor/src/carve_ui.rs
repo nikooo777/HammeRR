@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use slint::{ComponentHandle, Model, VecModel};
 
-use crate::runtime::{SharedSession, lock};
+use crate::runtime::{DocumentAccess, DocumentContinuation, SharedSession, lock};
 use crate::session::{Actor, Session};
 use crate::{CarveRow, CarveWindow};
 
@@ -178,157 +178,222 @@ pub fn refresh_changed(window: &CarveWindow, session: &Session) {
     }
 }
 
+fn choose_cutter(window: &CarveWindow) {
+    let rows = window
+        .get_targets()
+        .iter()
+        .enumerate()
+        .map(|(index, mut row)| {
+            if row.cutter {
+                row.selected = true;
+            }
+            row.cutter = index == window.get_cutter() as usize;
+            if row.cutter {
+                row.selected = false;
+            }
+            row
+        })
+        .collect::<Vec<_>>();
+    window.set_targets(Rc::new(VecModel::from(rows)).into());
+    window.set_ready(false);
+    window.set_can_preview(can_preview(window));
+    window.set_message("Cutter changed. Preview the result before applying.".into());
+}
+
+fn with_window<R>(
+    window: &slint::Weak<CarveWindow>,
+    target: &DocumentContinuation,
+    body: impl FnOnce(&CarveWindow, &SharedSession) -> R,
+) -> Option<R> {
+    let window = window.upgrade()?;
+    let result = target.upgrade().and_then(|access| {
+        access.with_shared(|shared| {
+            #[cfg(test)]
+            {
+                let hook = BEFORE_ACTION.with(|slot| slot.borrow_mut().take());
+                if let Some(hook) = hook {
+                    hook();
+                }
+            }
+            Ok(body(&window, shared))
+        })
+    });
+    match result {
+        Ok(result) => Some(result),
+        Err(error) => {
+            window.set_message(error.into());
+            None
+        }
+    }
+}
+
+#[cfg(test)]
 pub fn bind(window: &CarveWindow, shared: &SharedSession) {
+    bind_with_access(window, &DocumentAccess::unmanaged(shared.clone()));
+}
+
+pub fn bind_with_access(window: &CarveWindow, access: &DocumentAccess) {
     window.on_choose_cutter({
         let window = window.as_weak();
+        let target = access.downgrade();
         move || {
-            let window = window.unwrap();
-            let rows = window
-                .get_targets()
-                .iter()
-                .enumerate()
-                .map(|(index, mut row)| {
-                    if row.cutter {
-                        row.selected = true;
-                    }
-                    row.cutter = index == window.get_cutter() as usize;
-                    if row.cutter {
-                        row.selected = false;
-                    }
-                    row
-                })
-                .collect::<Vec<_>>();
-            window.set_targets(Rc::new(VecModel::from(rows)).into());
-            window.set_ready(false);
-            window.set_can_preview(can_preview(&window));
-            window.set_message("Cutter changed. Preview the result before applying.".into());
+            with_window(&window, &target, |window, _| choose_cutter(window));
         }
     });
     window.on_toggle_multiple({
         let window = window.as_weak();
+        let target = access.downgrade();
         move || {
-            let window = window.unwrap();
-            if !window.get_multiple_cutters() {
-                window.invoke_choose_cutter();
-            }
-            window.set_ready(false);
-            window.set_can_preview(can_preview(&window));
-            window.set_message("Cutter mode changed. Preview the result before applying.".into());
+            with_window(&window, &target, |window, _| {
+                if !window.get_multiple_cutters() {
+                    choose_cutter(window);
+                }
+                window.set_ready(false);
+                window.set_can_preview(can_preview(window));
+                window
+                    .set_message("Cutter mode changed. Preview the result before applying.".into());
+            });
         }
     });
     window.on_choose_cut_role({
         let window = window.as_weak();
+        let target = access.downgrade();
         move |id| {
-            let window = window.unwrap();
-            let rows = window
-                .get_targets()
-                .iter()
-                .map(|mut row| {
-                    if row.solid == id {
-                        row.cutter = !row.cutter;
-                        row.selected = !row.cutter;
-                    }
-                    row
-                })
-                .collect::<Vec<_>>();
-            window.set_targets(Rc::new(VecModel::from(rows)).into());
-            window.set_ready(false);
-            window.set_can_preview(can_preview(&window));
-            window.set_message("Brush roles changed. Preview the result before applying.".into());
+            with_window(&window, &target, |window, _| {
+                let rows = window
+                    .get_targets()
+                    .iter()
+                    .map(|mut row| {
+                        if row.solid == id {
+                            row.cutter = !row.cutter;
+                            row.selected = !row.cutter;
+                        }
+                        row
+                    })
+                    .collect::<Vec<_>>();
+                window.set_targets(Rc::new(VecModel::from(rows)).into());
+                window.set_ready(false);
+                window.set_can_preview(can_preview(window));
+                window
+                    .set_message("Brush roles changed. Preview the result before applying.".into());
+            });
         }
     });
     window.on_choose_target({
         let window = window.as_weak();
+        let target = access.downgrade();
         move |id| {
-            let window = window.unwrap();
-            let rows = window
-                .get_targets()
-                .iter()
-                .map(|mut row| {
-                    if row.solid == id && !row.cutter {
-                        row.selected = !row.selected;
-                    }
-                    row
-                })
-                .collect::<Vec<_>>();
-            window.set_targets(Rc::new(VecModel::from(rows)).into());
-            window.set_ready(false);
-            window.set_can_preview(can_preview(&window));
-            window.set_message("Targets changed. Preview the result before applying.".into());
+            with_window(&window, &target, |window, _| {
+                let rows = window
+                    .get_targets()
+                    .iter()
+                    .map(|mut row| {
+                        if row.solid == id && !row.cutter {
+                            row.selected = !row.selected;
+                        }
+                        row
+                    })
+                    .collect::<Vec<_>>();
+                window.set_targets(Rc::new(VecModel::from(rows)).into());
+                window.set_ready(false);
+                window.set_can_preview(can_preview(window));
+                window.set_message("Targets changed. Preview the result before applying.".into());
+            });
         }
     });
     window.on_preview_edit({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let window = window.as_weak();
+        let target = access.downgrade();
         move || {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            let result = parameters(&window).and_then(|(cutters, targets)| {
-                if cutters.len() == 1 {
-                    session.preview_carve(cutters[0], &targets, window.get_stamp().as_str())
+            with_window(&window, &target, |window, shared| {
+                let mut session = lock(shared);
+                let result = parameters(window).and_then(|(cutters, targets)| {
+                    if cutters.len() == 1 {
+                        session.preview_carve(cutters[0], &targets, window.get_stamp().as_str())
+                    } else {
+                        session.preview_carve_many(&cutters, &targets, window.get_stamp().as_str())
+                    }
+                });
+                refresh(window, &session);
+                if let Err(error) = result {
+                    window.set_ready(false);
+                    window.set_message(error.into());
                 } else {
-                    session.preview_carve_many(&cutters, &targets, window.get_stamp().as_str())
+                    window.set_message("".into());
                 }
             });
-            refresh(&window, &session);
-            if let Err(error) = result {
-                window.set_ready(false);
-                window.set_message(error.into());
-            } else {
-                window.set_message("".into());
-            }
         }
     });
     window.on_discard({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let window = window.as_weak();
+        let target = access.downgrade();
         move || {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            let result = window
-                .get_token()
-                .parse::<u64>()
-                .map_err(|_| "Preview a carve first".to_string())
-                .and_then(|token| session.cancel_carve(token));
-            refresh(&window, &session);
-            window.set_message(result.err().unwrap_or_default().into());
+            with_window(&window, &target, |window, shared| {
+                let mut session = lock(shared);
+                let result = window
+                    .get_token()
+                    .parse::<u64>()
+                    .map_err(|_| "Preview a carve first".to_string())
+                    .and_then(|token| session.cancel_carve(token));
+                refresh(window, &session);
+                window.set_message(result.err().unwrap_or_default().into());
+            });
         }
     });
     window.on_apply({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let window = window.as_weak();
+        let target = access.downgrade();
         move || {
-            let window = window.unwrap();
-            if !window.get_ready() {
-                return;
-            }
-            let mut session = lock(&shared);
-            let result = window
-                .get_token()
-                .parse::<u64>()
-                .map_err(|_| "Preview a carve first".to_string())
-                .and_then(|token| session.commit_carve(Actor::User, token));
-            refresh(&window, &session);
-            window.set_message(
-                result
-                    .map(|_| "Carve applied. Undo restores the original brushes.".to_string())
-                    .unwrap_or_else(|error| error)
-                    .into(),
-            );
+            with_window(&window, &target, |window, shared| {
+                if !window.get_ready() {
+                    return;
+                }
+                let mut session = lock(shared);
+                let result = window
+                    .get_token()
+                    .parse::<u64>()
+                    .map_err(|_| "Preview a carve first".to_string())
+                    .and_then(|token| session.commit_carve(Actor::User, token));
+                refresh(window, &session);
+                window.set_message(
+                    result
+                        .map(|_| "Carve applied. Undo restores the original brushes.".to_string())
+                        .unwrap_or_else(|error| error)
+                        .into(),
+                );
+            });
         }
     });
     window.on_cancel({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let window = window.as_weak();
+        let target = access.downgrade();
         move || {
-            let window = window.unwrap();
-            if let Ok(token) = window.get_token().parse::<u64>() {
-                let _ = lock(&shared).cancel_carve(token);
-            }
+            let Some(window) = window.upgrade() else {
+                return;
+            };
+            with_window(&window.as_weak(), &target, |window, shared| {
+                if let Ok(token) = window.get_token().parse::<u64>() {
+                    let _ = lock(shared).cancel_carve(token);
+                }
+            });
             let _ = window.hide();
         }
     });
     window.window().on_close_requested({
         let window = window.as_weak();
         move || {
-            window.unwrap().invoke_cancel();
+            if let Some(window) = window.upgrade() {
+                window.invoke_cancel();
+            }
             slint::CloseRequestResponse::HideWindow
         }
     });
 }
+
+#[cfg(test)]
+std::thread_local! {
+    static BEFORE_ACTION: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+mod admission_tests;

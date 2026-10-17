@@ -1,8 +1,8 @@
-use std::{collections::BTreeSet, fs, path::PathBuf};
+use std::{collections::BTreeSet, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::preference_file::{self, Source};
+use crate::preference_file::{CoordinatedFile, ObservedSource, Publication, SaveError, Source};
 
 pub const FILE_NAME: &str = "shortcuts.json";
 pub const MAX_FILE_BYTES: u64 = 16 * 1024;
@@ -200,12 +200,28 @@ impl Store {
         self.directory.join(FILE_NAME)
     }
 
-    pub(crate) fn read_source(&self) -> Result<Source, String> {
-        preference_file::read_source(&self.path(), MAX_FILE_BYTES, "Keyboard shortcuts")
+    fn target(&self) -> CoordinatedFile<'_> {
+        CoordinatedFile {
+            directory: &self.directory,
+            file_name: FILE_NAME,
+            lock_name: ".shortcuts.lock",
+            label: "Keyboard shortcuts",
+            reload: "Reload saved",
+            saved_description: "saved bindings",
+            max_bytes: MAX_FILE_BYTES,
+        }
     }
 
-    pub(crate) fn parse(&self, source: &Source) -> Result<Option<Bindings>, String> {
-        let Source::File { bytes, length, .. } = source else {
+    pub(crate) fn read_source(&self) -> Result<ObservedSource, String> {
+        self.target().observe()
+    }
+
+    pub(crate) fn read_current(&self, expected: &ObservedSource) -> Result<ObservedSource, String> {
+        self.target().observe_from(expected)
+    }
+
+    pub(crate) fn parse(&self, source: &ObservedSource) -> Result<Option<Bindings>, String> {
+        let Source::File { bytes, length, .. } = &source.source else {
             return Ok(None);
         };
         if *length > MAX_FILE_BYTES {
@@ -225,17 +241,26 @@ impl Store {
         value.bindings.validated().map(Some)
     }
 
+    #[cfg(test)]
     pub(crate) fn save(&self, bindings: Bindings) -> Result<(), String> {
-        let path = self.path();
-        preference_file::ensure_regular_target(&path)?;
+        let source = self.read_source()?;
+        self.save_checked(bindings, &source)
+            .map_err(|error| error.message)?
+            .source
+            .map(|_| ())
+    }
+
+    pub(crate) fn save_checked(
+        &self,
+        bindings: Bindings,
+        expected: &ObservedSource,
+    ) -> Result<Publication, SaveError> {
         let bytes = serde_json::to_vec_pretty(&Preferences {
             version: FORMAT_VERSION,
-            bindings,
+            bindings: bindings.validated().map_err(SaveError::failure)?,
         })
-        .map_err(|error| error.to_string())?;
-        fs::create_dir_all(&self.directory)
-            .map_err(|error| format!("{}: {error}", self.directory.display()))?;
-        crate::recovery::atomic_write(&path, &bytes)
+        .map_err(|error| SaveError::failure(error.to_string()))?;
+        self.target().publish(&bytes, expected)
     }
 }
 

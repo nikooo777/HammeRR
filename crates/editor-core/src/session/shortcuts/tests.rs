@@ -258,3 +258,80 @@ fn object_shortcut_commands_reject_component_scope_without_discarding_its_state(
         }
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn committed_verification_failure_keeps_intended_values_and_original_directory_until_reload() {
+    use std::os::unix::fs::symlink;
+
+    let directory = tempfile::tempdir().unwrap();
+    let original = directory.path().join("original");
+    let other = directory.path().join("other");
+    std::fs::create_dir(&original).unwrap();
+    std::fs::create_dir(&other).unwrap();
+    let requested = directory.path().join("requested");
+    symlink(&original, &requested).unwrap();
+    let mut session = Session::new(Err("no assets needed".into()));
+    session.configure_recovery(Ok(requested.clone()));
+    let current = session.keyboard_shortcuts_state()["current"].clone();
+    let source = session.document.vmf().clone();
+    let camera = session.camera();
+    let expected = session.shortcuts.source.as_ref().unwrap().clone();
+    let intended = custom();
+    let data = serde_json::to_vec(&json!({"version":1,"bindings":intended})).unwrap();
+    let target = crate::preference_file::CoordinatedFile {
+        directory: &requested,
+        file_name: crate::shortcuts::FILE_NAME,
+        lock_name: ".shortcuts.lock",
+        label: "Keyboard shortcuts",
+        reload: "Reload saved",
+        saved_description: "saved bindings",
+        max_bytes: crate::shortcuts::MAX_FILE_BYTES,
+    };
+    let publication = target
+        .publish_with(&data, &expected, |path, data| {
+            crate::recovery::atomic_write(path, data)?;
+            std::fs::remove_file(&requested).map_err(|error| error.to_string())?;
+            symlink(&other, &requested).map_err(|error| error.to_string())
+        })
+        .unwrap();
+    assert!(
+        publication
+            .source
+            .as_ref()
+            .unwrap_err()
+            .contains("were written")
+    );
+    session.accept_shortcuts_publication(intended.clone(), publication);
+    let state = session.keyboard_shortcuts_state();
+    assert_eq!(state["ready"], false);
+    assert!(state["error"].as_str().unwrap().contains("were written"));
+    assert_eq!(state["current"], json!(intended));
+    assert_ne!(state["current"], current);
+    assert_eq!(
+        std::fs::read(original.join(target.file_name)).unwrap(),
+        data
+    );
+    for _ in 0..2 {
+        assert!(
+            session
+                .change_keyboard_shortcuts(Actor::User, &session.shortcuts_stamp(), "reset", None)
+                .unwrap_err()
+                .contains("directory")
+        );
+    }
+    assert!(!other.join(target.file_name).exists());
+    session
+        .change_keyboard_shortcuts(Actor::User, &session.shortcuts_stamp(), "reload", None)
+        .unwrap();
+    assert_eq!(
+        session
+            .change_keyboard_shortcuts(Actor::User, &session.shortcuts_stamp(), "reset", None)
+            .unwrap()["write_committed"],
+        true
+    );
+    assert!(other.join(target.file_name).is_file());
+    assert_eq!(session.document.vmf(), &source);
+    assert_eq!(session.document.undo_labels().count(), 0);
+    assert_eq!(session.camera(), camera);
+}

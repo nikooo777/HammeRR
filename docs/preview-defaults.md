@@ -33,8 +33,13 @@ Limits:
   The window shows its path and error. Save and Apply remain unavailable until
   Reload succeeds or you explicitly Reset the saved defaults.
 - Files are limited to 4096 bytes. Symlinked and nonregular targets reject,
-  including on Reset. Outside replacement or deletion rejects stale actions;
-  reload and inspect before trying again. Independent writers do not lock the
-  file, so a write can still race after the final check.
+  including on Reset. Outside replacement or deletion rejects stale actions.
+  Save and Reset coordinate with other editors through a nonblocking lock;
+  a busy lock preserves the saved file. Reload before retrying. Changed
+  directories require explicit Reload. Programs that ignore the lock can
+  still race with publication.
+- If a write completes but verification fails, the window reports the completed
+  write and its error. Current viewport settings stay unchanged; Reload to
+  inspect storage before continuing.
 
 ![An invalid preferences file remains visible with recovery controls](images/preview-defaults-error.png)

@@ -89,6 +89,7 @@ impl Store {
             lock_name: LOCK_FILE_NAME,
             label: "Recent maps",
             reload: "Reload saved list",
+            saved_description: "saved list",
             max_bytes: MAX_FILE_BYTES,
         }
     }

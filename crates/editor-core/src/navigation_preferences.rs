@@ -1,6 +1,7 @@
-use std::{fs, path::PathBuf};
+use std::path::PathBuf;
 
-pub(crate) use crate::preference_file::Source;
+pub(crate) use crate::preference_file::ObservedSource as Source;
+use crate::preference_file::{CoordinatedFile, Publication, SaveError, Source as RawSource};
 
 use serde::{Deserialize, Serialize};
 
@@ -59,12 +60,28 @@ impl Store {
         self.parse_source(&self.read_source()?)
     }
 
+    fn target(&self) -> CoordinatedFile<'_> {
+        CoordinatedFile {
+            directory: &self.directory,
+            file_name: FILE_NAME,
+            lock_name: ".navigation-defaults.lock",
+            label: "Navigation defaults",
+            reload: "Reload defaults",
+            saved_description: "saved defaults",
+            max_bytes: MAX_FILE_BYTES,
+        }
+    }
+
     pub(crate) fn read_source(&self) -> Result<Source, String> {
-        crate::preference_file::read_source(&self.path(), MAX_FILE_BYTES, "Navigation defaults")
+        self.target().observe()
+    }
+
+    pub(crate) fn read_current(&self, expected: &Source) -> Result<Source, String> {
+        self.target().observe_from(expected)
     }
 
     pub(crate) fn parse_source(&self, source: &Source) -> Result<Option<Navigation>, String> {
-        let Source::File { bytes, length, .. } = source else {
+        let RawSource::File { bytes, length, .. } = &source.source else {
             return Ok(None);
         };
         if *length > MAX_FILE_BYTES {
@@ -86,20 +103,29 @@ impl Store {
     }
 
     pub fn save(&self, navigation: Navigation, reset: bool) -> Result<(), String> {
-        navigation.validate()?;
+        let source = self.read_source()?;
+        self.save_checked(navigation, reset, &source)
+            .map_err(|error| error.message)?
+            .source
+            .map(|_| ())
+    }
+
+    pub(crate) fn save_checked(
+        &self,
+        navigation: Navigation,
+        reset: bool,
+        expected: &Source,
+    ) -> Result<Publication, SaveError> {
+        navigation.validate().map_err(SaveError::failure)?;
         if !reset {
-            self.load()?;
+            self.parse_source(expected).map_err(SaveError::failure)?;
         }
-        let path = self.path();
-        crate::preference_file::ensure_regular_target(&path)?;
         let data = serde_json::to_vec_pretty(&Preferences {
             version: FORMAT_VERSION,
             navigation,
         })
-        .map_err(|error| error.to_string())?;
-        fs::create_dir_all(&self.directory)
-            .map_err(|error| format!("{}: {error}", self.directory.display()))?;
-        crate::recovery::atomic_write(&path, &data)
+        .map_err(|error| SaveError::failure(error.to_string()))?;
+        self.target().publish(&data, expected)
     }
 }
 

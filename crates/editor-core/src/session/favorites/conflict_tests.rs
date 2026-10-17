@@ -186,6 +186,7 @@ fn favorites_snapshot_cannot_publish_another_preference_file() {
         lock_name: ".recent-maps.lock",
         label: "Recent maps",
         reload: "Reload saved list",
+        saved_description: "saved list",
         max_bytes: crate::material_favorites::MAX_FILE_BYTES,
     };
     assert!(other.publish(b"{}", &source).unwrap_err().conflict);

@@ -130,7 +130,7 @@ fn snapshot(fixture: &Fixture) -> (source_formats::vmf::Vmf, Value, BTreeMap<Pat
             "region": session.compile_region_state(),
             "history": session.history_snapshot(),
             "objects": session.selected_ids().into_iter().map(|id| id.to_string()).collect::<Vec<_>>(),
-            "faces": session.selected_faces(),
+            "faces": session.selected_faces().into_iter().map(|face| (face.solid, face.side)).collect::<Vec<_>>(),
             "camera": format!("{:?}", session.camera()),
             "serials": [session.scene_serial(),session.view_serial(),session.log_serial(),session.camera_serial()],
         }),

@@ -26,8 +26,8 @@ Shared session locking and compile/game workers live in `editor-core/src/runtime
 Persisted compiler options share `editor-core/src/build_settings.rs` across
 recipes and recent maps. Shared and temporary view requests resolve through
 `Session::resolve_view_update`; temporary requests do not commit that result.
-Measurements and linked paths share the captured viewport context in
-`session/viewport_pick.rs`. FGD adapters share classification facts while
+Measurements, linked paths and transform-pivot picking share the captured
+viewport context in `session/viewport_pick.rs`. FGD adapters share classification facts while
 retaining their own admission rules. Desktop face dialogs use the narrow
 context and ownership guards in `editor/src/face_edit_ui.rs`.
 
@@ -133,15 +133,15 @@ python3 -B scripts/validate_headless.py --output /tmp/hammerr-headless-check
 | --- | --- |
 | Application startup and shutdown | `headless` (edit/history, save/reopen, compile, lazy graphics and exit recovery; `--desktop-binary` compares both executable tool inventories, and `--baseline` compares a saved `tools/list` array sorted by name) |
 | Viewing and selection | `view_modes`, `saved_views`, `sky_preview`, `volume_selection`, `paint_selection`, `object_picking`, `working_region`, `fog_preview`, `map_statistics`, `pointfiles` |
-| Brushes and transforms | `geometry_tools`, `texture_lock_modes`, `brush_reflection`, `brush_shear`, `transform_display`, `precision_cycles`, `polygon_brushes`, `surface_placement`, `repeat_array` |
+| Brushes and transforms | `geometry_tools`, `texture_lock_modes`, `brush_reflection`, `brush_shear`, `transform_display`, `precision_cycles`, `polygon_brushes`, `surface_placement`, `transform_pivot_picking`, `repeat_array` |
 | Hollow, carve, merge and clip | `hollow`, `carving`, `carve_many`, `merge`, `clip_handles` |
 | Vertices, edges and faces | `components`, `component_sources`, `component_picking`, `component_topology`, `component_transforms`, `component_creases`, `weld_texture_attachment`, `split_texture_attachment`, `roof_texture_attachment` |
 | Flat partitions | `component_partitions`, `partition_picking`, `saved_partitions`, `partition_material_metadata`, `partition_materials`, `partition_textures`, `adjusted_partition_ridges`, `boundary_partitions`, `polygon_partitions`, `partition_extrusion`, `partition_visibility` |
-| Materials and textures | `face_lighting`, `material_replacement`, `material_favorites`, `material_reload`, `surface_group`, `texture_strokes`, `texture_chain`, `uv_vectors` |
+| Materials and textures | `face_lighting`, `material_replacement`, `material_favorites`, `material_reload`, `surface_group`, `texture_strokes`, `texture_chain`, `uv_vectors`, `atlas_face_fit`, `normal_map_preview` |
 | Map checks | `spawn_clearance`, `audit_fixes` |
 | Shared authoring | `fgd_size_helpers`, `measurement_picking`, `prefab_thumbnails`, `linked_paths`, `overlay_corners` |
 | Particle definitions | `particles` (active manifest discovery, bounded binary DMX parsing, metadata, owned choices and retryable errors) |
-| Local preferences | `recent_maps`, `build_recipes` |
+| Local preferences | `recent_maps`, `build_recipes`, `keyboard_shortcuts` |
 | Compiler | `compile_jobs`, `authored_planes`, `visibility`, `portal_flow`, `parallel_visibility`, `hints`, `sky_visibility`, `origin_brushes`, `cubemap_samples`, `reflection_settings`, `cubemap_reflections`, `water_metadata`, `water_bottom`, `water_bottom_native`, `water_overlays`, `static_prop_leaves`, `direct_lighting`, `hdr_lighting`, `bounced_lighting`, `brush_smoothing`, `smoothing_angle`, `spotlights`, `direct_sky`, `shadow_index`, `engine_physics`, `physics_surfaces`, `static_props`, `terrain`, `terrain_creation`, `terrain_normals`, `terrain_subdivision` |
 | In game | `prop_shadows_native` and `hdr_lighting` (optional `--runtime`), `native_runtime`, `brush_runtime`, `vphysics_backend` |
 
@@ -265,6 +265,78 @@ detail ON/OFF observer. The native occluder check accepts
 `validate_occluder_runtime.py --union touching|overlapping --runtime`; add
 `--start-inactive` for the inverse initial state. Each run needs a fresh output
 directory and uses the shared private launch guards.
+
+### Surface-picked transform pivots
+
+```sh
+cargo test -p editor-core --features mcp --lib transform_pivot
+cargo test -p editor --bin editor surface_pivot_ui_arms_cancels_picks_and_releases_foreign_or_stale_input
+python3 -B scripts/validate_transform_pivot_picking.py --binary target/debug/hammerr-headless --output /tmp/hammerr-transform-pivot-check
+```
+
+Use a new private output directory. The script checks exact unsnapped brush,
+terrain-sheet and model-triangle hits, hidden/helper-only misses, all four
+projections, pixel coordinates, active-preview admission, stale context/tokens,
+owned Cancel and retained surface provenance. It compares source/history,
+selection, camera and framing bounds and initializes no graphics. Software UI
+callbacks check Pick/Cancel, Custom coordinates and foreign/stale input freedom;
+`HAMMERR_UI_SNAPSHOTS` writes `surface-picked-transform-pivot.png`. The returned
+pivot is passed explicitly to `transform_objects`; omitted-pivot behavior stays
+selection-centered.
+
+### Atlas-region face texturing
+
+```sh
+cargo test -p map-core --lib texture_atlas
+cargo test -p editor-core --features mcp --lib atlas
+cargo test -p editor --bin editor atlas_dialog_preview_apply_cancel_and_material_reload_share_session_guards
+python3 -B scripts/validate_atlas_face_fit.py --binary target/debug/hammerr-headless --output /tmp/hammerr-atlas-face-fit-check
+```
+
+Independent UV checks cover rotated, skewed and mirrored flat polygons, texture
+edge rectangles and invalid/outside/overflowing requests. Session/MCP checks
+cover exact metadata and Undo/Redo, foreign/replaced tokens, generic face
+commit/cancel guards, bounded CPU thumbnails, rejected materials, cached/fresh
+VMT identity, material reload and unrelated normal admission. The private stdio
+fixture preserves source assets, selection and camera without graphics startup.
+The software callback exercises the Face Textures entry and full reviewed
+Preview/Apply/Cancel flow; `HAMMERR_UI_SNAPSHOTS` writes `atlas-face-fit.png`.
+
+### Flat-brush normal-map preview
+
+```sh
+cargo test -p render --lib normal_maps
+cargo test -p editor-core --features mcp --lib normal_map
+cargo test -p editor --bin editor normal_map_checkbox_uses_shared_view_and_preserves_pending_reviews
+cargo test -p render --lib normal_maps::tests::rendered_normal_maps_follow_signed_source_uv_and_preserve_disabled_diagnostic_pixels -- --exact --ignored
+python3 -B scripts/validate_normal_map_preview.py --binary target/debug/hammerr-headless --output /tmp/hammerr-normal-map-preview-check
+```
+
+CPU checks cover authored Source tangents, signed U/V, skew/rotation, lazy
+admission, supported shared texture decoding, transforms, bounds, cache budgets,
+reload recovery and cached/fresh VMT identity. The explicit ignored GPU check
+compares independent directional-light/sRGB expectations and unchanged disabled,
+Flat, Wireframe and diagnostic pixels. The private MCP fixture checks temporary
+render overrides, material provenance, reload/rejection, bounds and picking;
+it opens no visible editor or game. The software callback checks that toggling
+normal preview preserves an active transform review.
+
+### Keyboard shortcuts
+
+```sh
+cargo test -p editor-core --features mcp --lib shortcuts
+cargo test -p editor --bin editor shortcut_controls_save_atomically_report_conflicts_and_preserve_text_field_editing
+python3 -B scripts/validate_keyboard_shortcuts.py --binary target/debug/hammerr-headless --output /tmp/hammerr-keyboard-shortcuts-check
+```
+
+The private stdio fixture checks tool discovery, complete binding validation,
+Save/Reload/Reset, concurrent snapshots/outside writes, malformed-file recovery,
+separate-process restart and typed command transactions. Unit/Session checks
+cover exact modifiers, reserved keys, collisions, nonregular/oversized storage,
+unchanged map/camera during configuration and shared Delete/Duplicate Undo.
+Software callbacks check conflicts, stale forms, recovery and native text-field
+Delete/typing/Undo without map deletion; `HAMMERR_UI_SNAPSHOTS` writes
+`keyboard-shortcuts.png`. All checks use private sessions without desktop input.
 
 ### Direct UV vectors
 
@@ -580,6 +652,31 @@ their validators.
 Use a short output directory: the private Wayland socket path must fit within
 107 filesystem bytes. Overlong paths reject before directories or processes
 are created.
+
+### Offline diagnostic Grim capture receipts
+
+```sh
+python3 -B -m unittest discover -s scripts -p test_grim_capture_receipt.py
+python3 -B scripts/grim_capture_receipt.py --metadata /absolute/capture.json --stderr /absolute/capture.stderr --ppm /absolute/capture.ppm
+```
+
+The helper reads three retained files and emits one JSON receipt on stdout. It
+starts no process and performs no capture or pixel comparison. Schema-1 metadata
+binds supplied native/Grim PIDs, exact command/environment provenance, reviewed
+capture-stack hashes, artifact paths/lengths/SHA256 and a parent monotonic time
+bracket. Admission checks one negotiated screencopy-v1 lifecycle, output/object
+associations and a 1280×720 opaque P6 image from ARGB8888/XRGB8888 SHM. Unsupported
+versions, malformed/incomplete/reordered events, mismatched artifacts and
+out-of-bracket ready times reject without a partial receipt. Inputs cap at
+64 KiB metadata, 1 MiB trace, 8192 lines, 4096 bytes per line and 3 MiB image.
+
+Successful receipts report `diagnostic_only:true`,
+`protocol_receipt_valid:true`, `same_native_present_verified:false` and null
+native frame/present IDs and compositor commit sequence. The integer compositor
+ready timestamp and realtime log prefixes remain distinct. Offline checks
+cannot authenticate supplied process history, identify a Source present,
+establish HDR radiance or approve an eight-image gate. Parser tests use
+synthetic source-derived traces; they provide no native capture evidence.
 
 ## In-game checks
 

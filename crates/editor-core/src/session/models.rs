@@ -41,6 +41,28 @@ fn bodygroups(model: &source_formats::model::Model, body: u32) -> Vec<Value> {
     }).collect()
 }
 
+fn appearance_report(entity: &source_formats::vmf::Entity) -> Value {
+    let appearance = render::models::appearance(entity);
+    json!({
+        "supported": appearance.is_ok(),
+        "state": match &appearance {
+            Ok(appearance) if appearance.mode == source_formats::render_color::TEXTURE => "texture",
+            Ok(_) => "normal",
+            Err(_) => "unsupported",
+        },
+        "render_mode": appearance.as_ref().ok().map(|appearance| appearance.mode),
+        "render_amount": appearance.as_ref().ok().map(|appearance| appearance.amount),
+        "opacity": appearance.as_ref().ok().map(|appearance| appearance.opacity()),
+        "authored": {
+            "rendermode": entity.properties.get("rendermode"),
+            "renderamt": entity.properties.get("renderamt"),
+            "renderfx": entity.properties.get("renderfx"),
+        },
+        "error": appearance.err(),
+        "limits": "Textured model preview only: Normal (0) ignores renderamt; Texture (2) multiplies material alpha by renderamt/255, depth-tests without depth writes and sorts material batches by camera depth. Render FX must be None (0). No animation, runtime fading, material proxies, intersecting-transparency or native game-parity claim. rendercolor's fourth component is preserved and does not set opacity. Static-prop output requires Normal (0).",
+    })
+}
+
 impl Session {
     pub(super) fn model_instances(&self, document: &Document) -> Models {
         let mut models = Models {
@@ -165,6 +187,7 @@ impl Session {
                 .map_err(|_| "Model body must be a nonnegative native integer")
         })?;
         let asset = self.inspect_model_body(path, skin, body)?;
+        let appearance = appearance_report(entity);
         let models = self.model_instances(document);
         let instance = models
             .instances
@@ -176,7 +199,7 @@ impl Session {
             .map(String::as_str)
             .or_else(|| asset["material_error"].as_str());
         Ok(
-            json!({"entity":format!("entity:{id}"),"asset":asset,"displayed":instance.is_some_and(Instance::has_geometry),"helper":instance.is_some_and(|instance|!instance.has_geometry()),"error":error,"hidden":entity.hidden,"tint":instance.map(|instance|instance.tint),"opacity_preview":false,"attachments":instance.map(|instance|instance.asset.model.attachments.iter().enumerate().map(|(index,attachment)|super::model_attachments::report(attachment,index+1,instance.attachment(index+1).unwrap())).collect::<Vec<_>>()).unwrap_or_default(),"world_bounds":instance.map(|instance|{let(a,b)=instance.bounds();[a.to_array(),b.to_array()]})}),
+            json!({"entity":format!("entity:{id}"),"asset":asset,"displayed":instance.is_some_and(Instance::has_geometry),"helper":!entity.hidden && instance.is_none_or(|instance|!instance.has_geometry()),"error":error,"hidden":entity.hidden,"tint":instance.map(|instance|instance.tint),"opacity_preview":instance.is_some_and(|instance|instance.appearance.mode==source_formats::render_color::TEXTURE),"appearance":appearance,"attachments":instance.map(|instance|instance.asset.model.attachments.iter().enumerate().map(|(index,attachment)|super::model_attachments::report(attachment,index+1,instance.attachment(index+1).unwrap())).collect::<Vec<_>>()).unwrap_or_default(),"world_bounds":instance.map(|instance|{let(a,b)=instance.bounds();[a.to_array(),b.to_array()]})}),
         )
     }
 

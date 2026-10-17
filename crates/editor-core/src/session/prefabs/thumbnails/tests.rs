@@ -301,6 +301,7 @@ fn thumbnail_framing_ignores_inactive_bodygroup_vertices_and_disabled_rope_batch
         first_index,
         index_count: 1,
         rope: true,
+        model_translucent: false,
     });
     assert_eq!(geometry_bounds(&prepared.mesh).unwrap(), expected);
     prepared.mesh.batches.last_mut().unwrap().rope = false;

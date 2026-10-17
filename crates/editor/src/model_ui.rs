@@ -129,15 +129,19 @@ fn refresh(window: &ModelWindow, session: &Session, target: Option<(u32, u64)>) 
                 )
                 .into(),
             );
-            window.set_skin_info(
-                format!(
-                    "Skin {} · {} available · body parts: {}",
-                    asset["skin"].as_u64().unwrap_or(0),
-                    asset["skins"],
-                    asset["body_parts"]
-                )
-                .into(),
+            let mut skin_info = format!(
+                "Skin {} · {} available · body parts: {}",
+                asset["skin"].as_u64().unwrap_or(0),
+                asset["skins"],
+                asset["body_parts"]
             );
+            if report["appearance"]["state"] == "texture" {
+                skin_info.push_str(&format!(
+                    "\nTexture · Opacity {}/255 · source texture alpha",
+                    report["appearance"]["render_amount"]
+                ));
+            }
+            window.set_skin_info(skin_info.into());
             let bounds = report["world_bounds"]
                 .as_array()
                 .map(|bounds| {

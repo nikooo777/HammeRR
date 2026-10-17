@@ -61,6 +61,8 @@ pub struct Vertex {
     pub color: [u8; 4],
     pub lightmap: [f32; 3],
     pub smoothing: u32,
+    pub opacity: f32,
+    pub texture_alpha: u32,
 }
 
 #[repr(C)]
@@ -76,6 +78,7 @@ pub struct Batch {
     pub first_index: u32,
     pub index_count: u32,
     pub rope: bool,
+    pub model_translucent: bool,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -149,6 +152,7 @@ struct Builder<'a> {
     vertices: Vec<Vertex>,
     /// Indices per material id, concatenated into batches at the end.
     indices: Vec<Vec<u32>>,
+    model_batches: Vec<(MaterialId, Vec<u32>)>,
     lines: Vec<LineVertex>,
     selection_outline_ranges: Vec<std::ops::Range<u32>>,
     wire_lines: Vec<LineVertex>,
@@ -338,6 +342,8 @@ impl Builder<'_> {
                 color: [tint[0], tint[1], tint[2], 0],
                 lightmap: lightmap_vertex(side, point),
                 smoothing: side.smoothing_groups.unwrap_or(0),
+                opacity: 1.0,
+                texture_alpha: 0,
             });
         }
         for index in 1..points.len() as u32 - 1 {
@@ -395,6 +401,8 @@ impl Builder<'_> {
                 color: [tint[0], tint[1], tint[2], alpha],
                 lightmap: lightmap_vertex(side, mesh.base_positions[i]),
                 smoothing: side.smoothing_groups.unwrap_or(0),
+                opacity: 1.0,
+                texture_alpha: 0,
             });
         }
         self.indices[material].extend(triangles.iter().flatten().map(|&i| first + i as u32));
@@ -488,6 +496,8 @@ impl Builder<'_> {
                     color: [r, g, b, 0],
                     lightmap: [0.0; 3],
                     smoothing: 0,
+                    opacity: 1.0,
+                    texture_alpha: 0,
                 });
             }
             self.indices[material].extend([
@@ -529,6 +539,8 @@ impl Builder<'_> {
                 color: [color[0], color[1], color[2], 0],
                 lightmap: [0.0; 3],
                 smoothing: 0,
+                opacity: 1.0,
+                texture_alpha: 0,
             });
         }
         self.indices[material].extend([first, first + 1, first + 2]);
@@ -670,6 +682,10 @@ impl Builder<'_> {
                 }),
                 lightmap: [0.0, 0.0, -1.0],
                 smoothing: 0,
+                opacity: instance.appearance.opacity(),
+                texture_alpha: u32::from(
+                    instance.appearance.mode == source_formats::render_color::TEXTURE,
+                ),
             });
         }
         let materials = instance.asset.materials();
@@ -692,7 +708,14 @@ impl Builder<'_> {
                     }
                 }
             };
-            self.indices[material].extend(part.indices.iter().map(|&index| first + index));
+            let indices = part.indices.iter().map(|&index| first + index);
+            if material_override.is_none()
+                && instance.appearance.mode == source_formats::render_color::TEXTURE
+            {
+                self.model_batches.push((material, indices.collect()));
+            } else {
+                self.indices[material].extend(indices);
+            }
             for triangle in part.indices.as_chunks::<3>().0 {
                 for (a, b) in [(0, 1), (1, 2), (2, 0)] {
                     self.wire_lines
@@ -1036,6 +1059,7 @@ impl SceneMesh {
             library,
             vertices: Vec::new(),
             indices: Vec::new(),
+            model_batches: Vec::new(),
             lines: Vec::new(),
             selection_outline_ranges: Vec::new(),
             wire_lines: Vec::new(),
@@ -1109,6 +1133,21 @@ impl SceneMesh {
                 first_index: indices.len() as u32,
                 index_count: list.len() as u32,
                 rope: false,
+                model_translucent: false,
+            });
+            indices.extend(list);
+        }
+        for (material, list) in builder.model_batches {
+            if list.is_empty() {
+                continue;
+            }
+            stats.missing_materials += usize::from(builder.library.get(material).missing);
+            batches.push(Batch {
+                material,
+                first_index: indices.len() as u32,
+                index_count: list.len() as u32,
+                rope: false,
+                model_translucent: true,
             });
             indices.extend(list);
         }
@@ -1156,6 +1195,8 @@ impl SceneMesh {
                         color: [color[0], color[1], color[2], 0],
                         lightmap: [0.0; 3],
                         smoothing: 0,
+                        opacity: 1.0,
+                        texture_alpha: 0,
                     });
                     self.mins = self.mins.min(point.as_vec3());
                     self.maxs = self.maxs.max(point.as_vec3());
@@ -1178,6 +1219,7 @@ impl SceneMesh {
                 first_index,
                 index_count,
                 rope: true,
+                model_translucent: false,
             });
         }
     }

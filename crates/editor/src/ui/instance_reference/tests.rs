@@ -77,6 +77,18 @@ fn software_instance_reference_callbacks_share_creation_edits_and_expire_picker_
         &child,
     );
     assert_eq!(controller.window.get_file(), "child.vmf");
+    controller.window.set_origin_x("9".repeat(513).into());
+    controller.window.invoke_edited(1);
+    assert_eq!(controller.window.get_origin_x(), "80");
+    assert_eq!(controller.window.get_origin_y(), "16");
+    assert_eq!(controller.window.get_origin_z(), "8");
+    assert!(
+        controller
+            .window
+            .get_message()
+            .contains("rejected inputs were restored")
+    );
+    assert_eq!(lock(&shared).document().vmf(), &source);
     controller.window.invoke_apply();
     assert_eq!(lock(&shared).document().undo_labels().count(), 1);
     let ObjectId::Entity(id) = lock(&shared).selected_ids()[0] else {

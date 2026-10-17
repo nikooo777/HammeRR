@@ -3,10 +3,13 @@ use std::rc::Rc;
 
 use slint::{ComponentHandle, VecModel};
 
-use crate::runtime::{SharedSession, lock};
+use crate::runtime::{DocumentAccess, DocumentContinuation};
 use crate::session::saved_views::Guard;
 use crate::session::{Actor, Session};
 use crate::{SavedViewRow, SavedViewsWindow};
+
+#[cfg(test)]
+use crate::runtime::{SharedSession, lock};
 
 #[derive(Default)]
 struct Form {
@@ -147,31 +150,63 @@ fn apply(window: &SavedViewsWindow, session: &mut Session, form: &RefCell<Form>,
     }
 }
 
+fn callback(
+    window: &slint::Weak<SavedViewsWindow>,
+    target: &DocumentContinuation,
+    body: impl FnOnce(SavedViewsWindow, &mut Session),
+) {
+    let Some(window) = window.upgrade() else {
+        return;
+    };
+    let result = target.upgrade().and_then(|access| {
+        access.with_session(|session| {
+            body(window.clone_strong(), session);
+            Ok(())
+        })
+    });
+    if let Err(error) = result {
+        window.set_message(error.into());
+    }
+}
+
 impl Controller {
+    #[cfg(test)]
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
+        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
+    }
+
+    pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let window = SavedViewsWindow::new()?;
         let form = Rc::new(RefCell::new(Form::default()));
         window.on_choose({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, target, form) = (window.as_weak(), access.downgrade(), form.clone());
             move |id| {
-                if let Ok(id) = id.parse() {
-                    choose(&window.unwrap(), &lock(&shared), &form, id);
-                }
+                callback(&window, &target, |window, session| {
+                    if let Ok(id) = id.parse() {
+                        choose(&window, session, &form, id);
+                    }
+                });
             }
         });
-        let callback = |action| {
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
-            move || apply(&window.unwrap(), &mut lock(&shared), &form, action)
+        let action_callback = |action| {
+            let (window, target, form) = (window.as_weak(), access.downgrade(), form.clone());
+            move || {
+                callback(&window, &target, |window, session| {
+                    apply(&window, session, &form, action)
+                })
+            }
         };
-        window.on_save_new(callback(Action::Save));
-        window.on_replace_view(callback(Action::Replace));
-        window.on_rename_view(callback(Action::Rename));
-        window.on_restore_view(callback(Action::Restore));
-        window.on_delete_view(callback(Action::Delete));
+        window.on_save_new(action_callback(Action::Save));
+        window.on_replace_view(action_callback(Action::Replace));
+        window.on_rename_view(action_callback(Action::Rename));
+        window.on_restore_view(action_callback(Action::Restore));
+        window.on_delete_view(action_callback(Action::Delete));
         window.on_close_dialog({
             let window = window.as_weak();
             move || {
-                let _ = window.unwrap().hide();
+                if let Some(window) = window.upgrade() {
+                    let _ = window.hide();
+                }
             }
         });
         Ok(Self { window, form })
@@ -189,3 +224,6 @@ impl Controller {
         self.window.show()
     }
 }
+
+#[cfg(test)]
+mod admission_tests;

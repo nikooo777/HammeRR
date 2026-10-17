@@ -7,9 +7,12 @@ use source_formats::vmf::format_number;
 
 use crate::{
     AppWindow, WorkingRegionWindow,
-    runtime::{DocumentAccess, SharedSession, lock},
+    runtime::{DocumentAccess, DocumentContinuation},
     session::{Actor, Session, working_region::Action},
 };
+
+#[cfg(test)]
+use crate::runtime::{SharedSession, lock};
 
 pub struct Controller {
     pub window: WorkingRegionWindow,
@@ -103,64 +106,92 @@ pub fn bind_clear_with_access(app: &AppWindow, access: &DocumentAccess) {
     });
 }
 
+fn callback(
+    window: &slint::Weak<WorkingRegionWindow>,
+    target: &DocumentContinuation,
+    body: impl FnOnce(WorkingRegionWindow, &mut Session),
+) {
+    let Some(window) = window.upgrade() else {
+        return;
+    };
+    let result = target.upgrade().and_then(|access| {
+        access.with_session(|session| {
+            body(window.clone_strong(), session);
+            Ok(())
+        })
+    });
+    if let Err(error) = result {
+        window.set_message(error.into());
+    }
+}
+
 impl Controller {
+    #[cfg(test)]
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
+        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
+    }
+
+    pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let window = WorkingRegionWindow::new()?;
         let snapshot = Rc::new(RefCell::new(String::new()));
         window.on_apply({
-            let (window, shared, snapshot) = (window.as_weak(), shared.clone(), snapshot.clone());
+            let (window, target, snapshot) =
+                (window.as_weak(), access.downgrade(), snapshot.clone());
             move || {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
-                let result = fields(&window).and_then(|bounds| {
-                    session.set_working_region(
-                        Actor::User,
-                        Action::Set {
-                            bounds,
-                            enabled: window.get_region_enabled(),
-                        },
-                        &snapshot.borrow(),
-                    )
-                });
-                match result {
-                    Ok(_) => {
-                        window.set_message(
-                            "View updated. Source and compilation are unchanged.".into(),
-                        );
-                        refresh(&window, &mut session, &snapshot, false);
+                callback(&window, &target, |window, session| {
+                    let result = fields(&window).and_then(|bounds| {
+                        session.set_working_region(
+                            Actor::User,
+                            Action::Set {
+                                bounds,
+                                enabled: window.get_region_enabled(),
+                            },
+                            &snapshot.borrow(),
+                        )
+                    });
+                    match result {
+                        Ok(_) => {
+                            window.set_message(
+                                "View updated. Source and compilation are unchanged.".into(),
+                            );
+                            refresh(&window, session, &snapshot, false);
+                        }
+                        Err(error) => window.set_message(error.into()),
                     }
-                    Err(error) => window.set_message(error.into()),
-                }
+                });
             }
         });
         window.on_use_bounds({
-            let (window,shared,snapshot)=(window.as_weak(),shared.clone(),snapshot.clone());
+            let (window,target,snapshot)=(window.as_weak(),access.downgrade(),snapshot.clone());
             move || {
-                let window=window.unwrap();
-                let session=lock(&shared);
+                callback(&window, &target, |window, session| {
                 if *snapshot.borrow()!=session.working_region_stamp() { window.set_message("Map, selection or view changed. Reopen Working region to inspect it again.".into()); return; }
                 match session.working_region_selection_bounds() { Ok(bounds)=> { load(&window,&serde_json::json!(bounds.map(|point|point.to_array()))); window.set_region_enabled(true);window.set_message("Selection bounds loaded. Apply updates the view.".into()); }, Err(error)=>window.set_message(error.into()) }
+                });
             }
         });
         window.on_clear({
-            let (window, shared, snapshot) = (window.as_weak(), shared.clone(), snapshot.clone());
+            let (window, target, snapshot) =
+                (window.as_weak(), access.downgrade(), snapshot.clone());
             move || {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
-                let stamp = snapshot.borrow().clone();
-                match session.set_working_region(Actor::User, Action::Clear, &stamp) {
-                    Ok(_) => {
-                        window.set_message("Working region cleared.".into());
-                        refresh(&window, &mut session, &snapshot, true);
+                callback(&window, &target, |window, session| {
+                    let stamp = snapshot.borrow().clone();
+                    match session.set_working_region(Actor::User, Action::Clear, &stamp) {
+                        Ok(_) => {
+                            window.set_message("Working region cleared.".into());
+                            refresh(&window, session, &snapshot, true);
+                        }
+                        Err(error) => window.set_message(error.into()),
                     }
-                    Err(error) => window.set_message(error.into()),
-                }
+                });
             }
         });
         window.on_cancel({
             let window = window.as_weak();
             move || {
-                let _ = window.unwrap().hide();
+                if let Some(window) = window.upgrade() {
+                    let _ = window.hide();
+                }
             }
         });
         Ok(Self { window, snapshot })
@@ -180,6 +211,9 @@ impl Controller {
         }
     }
 }
+
+#[cfg(test)]
+mod admission_tests;
 
 #[cfg(test)]
 mod tests {

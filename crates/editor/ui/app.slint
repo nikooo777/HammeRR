@@ -1974,6 +1974,7 @@ export component AppWindow inherits Window {
     callback cancel-terrain-triangle-pick();
     in property <bool> terrain-center-picking;
     in property <bool> surface-picking;
+    in property <bool> overlay-handling;
     callback cancel-terrain-center-pick();
     in property <bool> terrain-stroking;
     callback cancel-terrain-stroke();
@@ -2233,7 +2234,7 @@ export component AppWindow inherits Window {
                     }
 
                     touch := TouchArea {
-                        mouse-cursor: root.flying ? MouseCursor.move : (root.surface-picking || ((root.drawing-block || root.clipping) && root.projection-index != 0)) ? MouseCursor.crosshair : MouseCursor.default;
+                        mouse-cursor: root.flying ? MouseCursor.move : (root.surface-picking || root.overlay-handling || ((root.drawing-block || root.clipping) && root.projection-index != 0)) ? MouseCursor.crosshair : MouseCursor.default;
                         pointer-event(event) => {
                             if (event.kind == PointerEventKind.down) {
                                 focus.focus();
@@ -2286,7 +2287,24 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                if !root.drawing-block && !root.clipping: Rectangle {
+                if root.overlay-handling: Rectangle {
+                    x: 12px;
+                    y: 64px;
+                    width: min(720px, parent.width - 24px);
+                    height: 64px;
+                    background: #20252eee;
+                    border-color: #394252;
+                    border-width: 1px;
+                    border-radius: 8px;
+                    HorizontalLayout {
+                        padding: 10px;
+                        spacing: 12px;
+                        Text {text:"Drag a cyan overlay corner. Release to review with Apply corners. Escape restores the pre-handle draft.";wrap:word-wrap;color:#91b9e9;}
+                        Button {text:"Cancel handles";clicked=>{root.cancel-surface-pick();}}
+                    }
+                }
+
+                if !root.drawing-block && !root.clipping && !root.overlay-handling: Rectangle {
                     x: 12px;
                     y: 64px;
                     width: min(root.handles-mode-index == 4 ? 550px : root.handles-mode-index == 5 ? 610px : 900px, parent.width - 24px);

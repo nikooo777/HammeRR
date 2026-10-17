@@ -1881,6 +1881,38 @@ pub(super) fn run(
                 ui.pick_release = false;
                 return;
             }
+            if button == 0 && lock(&ui.session).overlay_corner_handles_active() {
+                let Some(controller) = &ui.overlay else {
+                    app.set_message("Open Overlay… and Review current draft before using shared corner handles.".into());
+                    return;
+                };
+                let pointer = Pointer {
+                    position: DVec2::new(f64::from(x), f64::from(y)),
+                    size: (
+                        viewport_size.0.round().max(1.0) as u32,
+                        viewport_size.1.round().max(1.0) as u32,
+                    ),
+                };
+                let mut session = lock(&ui.session);
+                session.publish_camera(ui.viewport.camera);
+                let result = if down {
+                    controller.pick_handle(&mut session, pointer)
+                } else if session.overlay_corner_handle_dragging() {
+                    let move_error = controller.move_handle(&mut session, pointer).err();
+                    controller.finish_handles(&mut session).map(|()| {
+                        if let Some(error) = move_error {
+                            app.set_message(format!("{error}. Review the last valid corner draft.").into());
+                        }
+                    })
+                } else {
+                    Ok(())
+                };
+                app.set_overlay_handling(session.overlay_corner_handles_active());
+                if let Err(error) = result {
+                    app.set_message(error.into());
+                }
+                return;
+            }
             let path_picking = !lock(&ui.session).linked_path()["preview"]["picking"].is_null();
             if button == 0 && path_picking {
                 if down {
@@ -2408,6 +2440,26 @@ pub(super) fn run(
             }) {
                 return;
             }
+            if lock(&ui.session).overlay_corner_handles_active() {
+                let mut session = lock(&ui.session);
+                session.publish_camera(ui.viewport.camera);
+                if session.overlay_corner_handle_dragging()
+                    && let Some(controller) = &ui.overlay
+                    && let Err(error) = controller.move_handle(
+                        &mut session,
+                        Pointer {
+                            position: DVec2::new(f64::from(x), f64::from(y)),
+                            size: (
+                                size.0.round().max(1.0) as u32,
+                                size.1.round().max(1.0) as u32,
+                            ),
+                        },
+                    )
+                {
+                    app.set_message(error.into());
+                }
+                return;
+            }
             if let Some(controller) = &ui.terrain
                 && controller.is_handling()
             {
@@ -2536,6 +2588,12 @@ pub(super) fn run(
             {
                 let mut ui = ui.borrow_mut();
                 ui.object_cycle.cancel();
+                if lock(&ui.session).overlay_corner_handle_dragging()
+                    && let Some(controller) = &ui.overlay
+                {
+                    let _ = controller.discard_handles(&mut lock(&ui.session));
+                    app.unwrap().set_overlay_handling(false);
+                }
                 if let Some(controller) = &ui.terrain
                     && controller.is_stroking()
                     && controller.stroke_dragging()
@@ -3088,6 +3146,13 @@ pub(super) fn run(
                 lock(&ui.session).get_entity_placement()["draft"]["picking"] == true;
             let measurement_picking =
                 !lock(&ui.session).measurement_state()["draft"]["picking"].is_null();
+            if let Some(controller) = &ui.overlay {
+                controller.set_viewport((
+                    app.get_viewport_width().round().max(1.0) as u32,
+                    app.get_viewport_height().round().max(1.0) as u32,
+                ));
+            }
+            app.set_overlay_handling(lock(&ui.session).overlay_corner_handles_active());
             if let Some(controller) = &ui.linked_path {
                 controller.set_viewport((
                     app.get_viewport_width().round().max(1.0) as u32,

@@ -11,6 +11,14 @@ pub(super) struct Picking {
 }
 
 impl Session {
+    pub(super) fn linked_path_picking(&self) -> bool {
+        self.geometry
+            .linked_path
+            .preview
+            .as_ref()
+            .is_some_and(|preview| preview.picking.is_some())
+    }
+
     pub fn linked_path_pick_stamp(&self) -> String {
         format!(
             "{}:{}:{}:{}:{:?}",

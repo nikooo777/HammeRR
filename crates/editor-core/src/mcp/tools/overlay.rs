@@ -3,6 +3,73 @@ use super::super::*;
 #[tool_router(router = overlay_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
+        description = "Move an existing single-face overlay's local corner draft through the same viewport handles as the UI. action=inspect returns handle_snapshot and ordinary overlay state. First preview_overlay_corners or review_overlay to own a valid corners draft. action=begin requires its token, latest handle_snapshot as snapshot, width/height (1–8192) and optional temporary camera matching render_view. Captures scene/view/camera/viewport; returns a new token and four projected draft.handles.pixels with an 11-pixel pick radius. action=pick and move require current token, finite x/y pixel coordinates inside the captured width/height; pick chooses the nearest visible projected corner, move uses relative unsnapped motion on the fixed projection plane. Every successful gesture action returns a new token; use that token next. Misses, stale camera/view/map/selection/viewport, nonconvex or native-invalid moves preserve the last valid draft. Finish ends a picked drag and returns to ordinary apply_overlay/cancel_overlay review; no map/history changes before Apply, which remains one Undo. Cancel restores the exact pre-handle draft even after stale context changes. Foreign/replaced tokens reject. Review closes handles and takes ownership of the last valid corners; Apply rejects active handles. Single world/func_detail quad only; no terrain/multiface authoring, snapping or projected material preview. UI: Overlay… → Edit selected corners → Preview corners → Viewport handles → drag a cyan corner → Apply corners. Escape / Cancel handles restores the pre-handle draft."
+    )]
+    pub(in crate::mcp) fn overlay_corner_handles(
+        &self,
+        Parameters(args): Parameters<OverlayCornerHandleArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            match args {
+                OverlayCornerHandleArgs::Inspect => Ok(session.overlay_corner_handle_state()),
+                OverlayCornerHandleArgs::Begin {
+                    token,
+                    width,
+                    height,
+                    camera,
+                    snapshot,
+                } => {
+                    let camera = camera
+                        .unwrap_or_default()
+                        .resolve(&session, width as f32 / height as f32)?;
+                    session.begin_overlay_corner_handles(
+                        Actor::Agent,
+                        token,
+                        camera,
+                        (width, height),
+                        &snapshot,
+                    )
+                }
+                OverlayCornerHandleArgs::Pick {
+                    token,
+                    x,
+                    y,
+                    width,
+                    height,
+                } => session.pick_overlay_corner_handle(
+                    Actor::Agent,
+                    token,
+                    crate::session::Pointer {
+                        position: glam::DVec2::new(x, y),
+                        size: (width, height),
+                    },
+                ),
+                OverlayCornerHandleArgs::Move {
+                    token,
+                    x,
+                    y,
+                    width,
+                    height,
+                } => session.move_overlay_corner_handle(
+                    Actor::Agent,
+                    token,
+                    crate::session::Pointer {
+                        position: glam::DVec2::new(x, y),
+                        size: (width, height),
+                    },
+                ),
+                OverlayCornerHandleArgs::Finish { token } => {
+                    session.finish_overlay_corner_handles(Actor::Agent, token)
+                }
+                OverlayCornerHandleArgs::Cancel { token } => {
+                    session.cancel_overlay_corner_handles(Actor::Agent, token)
+                }
+            }
+        })
+    }
+
+    #[tool(
         description = "Preview four perimeter-ordered local U/V corner positions on one existing visible info_overlay. id defaults to the selected overlay. Inspect get_overlay_state.selected_corners for current local_corners and basis; pass its snapshot. corners is exactly four [u,v] world-unit pairs in the EXISTING BasisU/BasisV frame, separate from texture StartU/EndU ranges. Existing binding must be one eligible world/func_detail quad and its projection must lie on that plane; moved sources require explicit refit first. Rejects nonfinite, nonconvex, collapsed, out-of-world/native-float-invalid corners without replacing a valid draft. Does not refit or rebind. Preserves ID, raw basis/origin/sides/settings, connections and metadata; Apply changes uv0–uv3 XY in one Undo step. Corners may extend beyond the source perimeter and are clipped by native rendering. UI: select overlay → Overlay… → Edit selected corners → Preview corners → Apply corners."
     )]
     pub(in crate::mcp) fn preview_overlay_corners(
@@ -56,7 +123,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect shared overlay creation, existing-binding refit, explicit new-face rebind and numeric local corner editing: current snapshot, selected source/overlay eligibility and rejection reasons, draft operation/target/owner/token/validity, settings, corners and bounds. Preview changes no map, selection or history. Create adds an entity; Refit, Rebind and Corners update the same entity projection without changing its authored settings."
+        description = "Inspect shared overlay creation, existing-binding refit, explicit new-face rebind, numeric local corner editing and viewport corner handles: current snapshot, selected source/overlay eligibility and rejection reasons, draft operation/target/owner/token/validity, settings, corners and bounds. Preview changes no map, selection or history. Create adds an entity; Refit, Rebind and Corners update the same entity projection without changing its authored settings."
     )]
     pub(in crate::mcp) fn get_overlay_state(&self) -> ToolResult {
         ok(self.session().get_overlay_state())
@@ -107,7 +174,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Explicitly review and take ownership of the current valid overlay draft. Returns a new token, invalidating the previous owner's token. Human Review and this tool use the same Session operation; foreign drafts cannot be applied or cancelled until reviewed."
+        description = "Explicitly review and take ownership of the current valid overlay draft. Returns a new token, invalidating the previous owner's token. Human Review and this tool use the same Session operation. Reviewing active corner handles closes the gesture and adopts its last valid corners; foreign drafts cannot be applied or cancelled until reviewed."
     )]
     pub(in crate::mcp) fn review_overlay(
         &self,
@@ -117,7 +184,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Apply the current owned overlay draft in one atomic Undo step. draft.operation=create returns created and selects a new info_overlay; operation=refit/rebind/corners returns updated and selects the same existing entity, preserving authored option strings, connections and metadata. Rejects stale/replaced/foreign tokens, changed map or selection, and active geometry previews. Source brush geometry stays unchanged. Corners preserves the existing basis and binding; fitted operations generate the same projection used for Preview."
+        description = "Apply the current owned overlay draft in one atomic Undo step. draft.operation=create returns created and selects a new info_overlay; operation=refit/rebind/corners returns updated and selects the same existing entity, preserving authored option strings, connections and metadata. Rejects stale/replaced/foreign tokens, changed map or selection, and active geometry previews or corner handles. Source brush geometry stays unchanged. Corners preserves the existing basis and binding; fitted operations generate the same projection used for Preview."
     )]
     pub(in crate::mcp) fn apply_overlay(
         &self,

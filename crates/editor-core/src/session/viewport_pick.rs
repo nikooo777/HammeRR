@@ -15,6 +15,15 @@ pub(super) struct Context {
 }
 
 impl Context {
+    pub(super) fn camera(&self) -> Camera {
+        self.camera
+    }
+
+    pub(super) fn refresh_scene(&mut self, session: &Session) {
+        self.scene = session.scene_serial;
+        self.view = session.view_serial;
+    }
+
     pub(super) fn capture(
         session: &Session,
         camera: Camera,
@@ -66,7 +75,8 @@ impl Context {
 
 impl Session {
     pub(super) fn viewport_pick_conflict(&self) -> bool {
-        self.entity_surface_picking()
+        self.overlay_corner_handles_active()
+            || self.entity_surface_picking()
             || self.surface_position_picking()
             || self.clip_tool
             || self.spatial.draw_block

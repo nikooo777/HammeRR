@@ -1,6 +1,8 @@
 use super::*;
 use map_core::{ObjectId, edit};
 
+mod handle_tests;
+
 fn fixture(actor: Actor, detail: bool) -> (tempfile::TempDir, Session, FaceId) {
     let (directory, game) = crate::test_assets::game();
     let mut session = Session::new(Ok(game));

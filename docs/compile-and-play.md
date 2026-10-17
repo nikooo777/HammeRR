@@ -548,6 +548,10 @@ To follow a leak, open **Pointfile…**:
 
 **Play built map** shows which BSP it will launch. It is disabled, with an explanation, when the map changed since the build, the output is missing, the build settings changed, no Linux client is installed, or a build or game is already running. A failed rebuild keeps the previous successful build playable if the map hasn't changed since.
 
+If New or Open replaces the map while a launch is finishing, that old launch is
+rejected and its managed client and temporary files are cleaned up. Ordinary
+edits within the same map do not cancel a launch already admitted.
+
 ## Standalone compiler
 
 ```sh

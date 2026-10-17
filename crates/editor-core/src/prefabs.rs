@@ -527,7 +527,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let file = directory.path().join("Alpha.vmf");
         fs::write(&file, "retained").unwrap();
-        fs::set_permissions(&file, fs::Permissions::from_mode(0)).unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o0)).unwrap();
         let store = Store {
             directory: directory.path().into(),
         };

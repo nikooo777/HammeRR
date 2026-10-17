@@ -13,7 +13,9 @@ files; placement uses the same checked preview, naming and Undo behavior as Past
    VMF file without changing the map, selection, clipboard or map Undo. Existing
    names are never overwritten. **Cancel** or Escape discards the form.
 4. Use **Find a prefab** to search names. **Previous** and **Next** page results;
-   **Refresh library** reads changes made outside the editor.
+   **Refresh library** reads changes made outside the editor. Sessions attached
+   to one application share the catalog; each keeps its own selected entry,
+   placement review and thumbnails. Library changes do not edit the map.
 
 ![Prefab search, assembly details and placement controls](images/prefab-library.png)
 
@@ -116,10 +118,13 @@ operations are separate from map Undo.
   another absolute folder. The window reports the active folder. Independent
   editor instances and external writers are not coordinated; changed file
   metadata invalidates older actions. Refresh after edits made outside the editor.
-- Keep the library directory and its parent aliases stable while reviewing an
-  action. Physical directory identity is not included in the current metadata
-  stamp: replacing an empty library or retargeting a parent alias can leave an
-  old action valid for the replacement directory.
+- Reviews bind the physical library directory, including the existing ancestor
+  when the folder is initially absent. Replacing the directory or retargeting a
+  parent alias requires **Refresh library** and a new action review. Operations
+  retain their directory handle through publication. If verification fails after
+  a write commits, the library reports that committed write; inspect the files
+  before repeating the action. Independent writers remain uncoordinated.
+- Bound library file operations require Linux.
 - Capture and placement retain [clipboard limits](clipboard.md#limits), including
   16 top-level sources, checked references, metadata budgets and coordinate bounds.
   Component-only copies, saved partition intents and private Hammer formats remain

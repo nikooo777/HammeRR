@@ -67,6 +67,27 @@ When an agent connects, the server tells it how HammeRR works, so you don't need
 
 Each tool's description lists its parameters.
 
+### Review a map before replacing it
+
+1. Call `get_map_info` and retain its opaque `replacement_review`.
+2. Pass it as `expected_review` to `new_map`, `open_map`, `open_recent_map` or
+   `restore_recovery_snapshot`. Use `discard_changes: true` only when you intend
+   to discard the reviewed edits.
+3. If the review expires, inspect the current map before trying again. The
+   operation checks the review inside replacement admission, so an intervening
+   edit, save, buffer replacement or partition-preview change cannot be discarded
+   using the old review.
+
+These optional guards preserve existing immediate calls when omitted. Reviews
+belong to one Session; they do not transfer between processes or documents.
+Other uncommitted draft types are outside this replacement review.
+
+For a delayed Save or Compile request, retain `get_map_info.generation` and pass
+it as `expected_generation` to `save_map`, `start_compile`, `compile_map` or
+`run_map`. Replacing the buffer rejects the request before writing or starting a
+job. Edits within the same buffer remain allowed. Native Save and Compile file
+choosers use this same guard.
+
 ## A first call
 
 Place a warm light, then look at it:
@@ -93,6 +114,10 @@ To build the map, set the build options once, then compile:
 ```
 
 `start_compile` returns a job token right away; poll `get_compile_status` and stop with `cancel_compile`. `compile_map` and `run_map` wait for the build to finish. `launch_game` does the same as **Play built map**.
+
+Game launch completion belongs to its originating buffer and launch ticket.
+Replacing the map during launch rejects that completion and cleans only its
+managed client. Foreign or repeated completions cannot clear a newer launch.
 
 A saved parent can compile bounded single-level world/detail brush instances;
 see [Referenced brush assemblies](instances.md). `create_entity` uses
@@ -1969,8 +1994,10 @@ contacts and broader moving-body behavior remain unfinished. See
 `get_prefabs` lists named portable VMFs with `query`, `offset` and `limit`
 (default/max 64); `selected` decodes one assembly's counts, authored bounds and
 outgoing links. Inspection changes no map, clipboard or history. The response
-reports the storage folder, limits and a `snapshot` binding library file metadata
-to the current map/selection/clipboard state.
+reports the storage folder, limits, `registry_revision` and a `snapshot` binding
+the shared catalog to the current map/selection/clipboard state. Attached Sessions
+share catalog changes and storage errors; selection reports, thumbnail resources
+and Paste reviews stay local. Unchanged inspections keep the review valid.
 
 | Tool | Arguments and behavior |
 | --- | --- |
@@ -1994,9 +2021,13 @@ changed file metadata or Session state invalidates stale requests. Renamed or
 replaced sources invalidate loaded placement reviews; deletion alone retains the
 detached draft. Direct replacement, private formats and referenced instances are
 unavailable. Rename requires Linux atomic no-replace support.
-The metadata stamp does not bind physical directory identity: replacing an empty
-library or retargeting a parent alias can leave an old action valid for the new
-directory. Keep the library path and parent aliases stable during review.
+The review binds the library's physical directory, including an initially absent
+folder's existing ancestor. Replacement or parent-alias retarget requires a fresh
+inspection. File operations remain relative to the retained directory handle.
+Successful mutations include `write_committed: true`. A nullable `write_error`
+reports a committed write whose subsequent verification failed; inspect storage
+before repeating it. This does not coordinate independent writers or turn the
+metadata review into a digest of all VMF contents.
 
 Flat remains the default material-free brush/terrain/model thumbnail, including
 ordinary point helpers and authored hidden objects. Textured admits opaque
@@ -2223,11 +2254,20 @@ imported data and history.
 ### Recovery settings and errors
 
 `get_recovery.status` includes `settings_revision` and independent
-`settings_error`, `snapshot_error`, `retention_error` and `drain_error` fields.
+`settings_error`, `storage_error`, `snapshot_error`, `retention_error` and
+`drain_error` fields. `storage_error` describes the originating document's
+snapshot-folder configuration, independently of shared saved settings.
 Its combined `error` retains unresolved causes for existing clients. Saving
 settings clears only settings errors; successful capture clears snapshot and
 retention errors. Terminal drain failures remain visible. Snapshot-list warnings
 are reported separately and do not replace these causes.
+
+Attached Sessions share validated settings, `settings_revision` and settings
+errors. Optional fields in `set_recovery_settings` merge with the latest shared
+values under one lock. Document snapshot stores, scheduling, pending changes,
+capture errors and workers remain independent. An admitted request retains its
+captured settings policy after a peer update. These operations do not provide
+multiple-document routing.
 
 `reload_recovery_settings {expected_revision?: u64}` reads the saved complete
 settings through the same Session operation as **Recovery… → Reload settings**.

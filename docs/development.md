@@ -19,7 +19,7 @@
 
 The editor UI and the MCP server call the same session operations, so every feature behaves identically for people and agents. New features need both a UI control and an MCP tool.
 
-Shared session locking and compile/game workers live in `editor-core/src/runtime.rs`; object-ID parsing and formatting live in `identity.rs`. Both executables use `startup::Application` for content mounting, recovery and shutdown.
+Shared session locking and compile/game workers live in `editor-core/src/runtime.rs`; object-ID parsing and formatting live in `identity.rs`. Both executables use `startup::Application` for content mounting, recovery and shutdown. Its retained `runtime::DocumentHandle` owns the fixed Session, recovery worker and terminal shutdown result; production UI and both MCP entry points retain the same handle. Shutdown waits and joins outside Session guards. This ownership does not provide operation leases or multiple-document admission.
 Application owns concrete Favorites and Recent maps authorities; deliberately
 attached Sessions share their lists, storage observations, errors and revisions. Independently
 constructed Sessions keep their own authority. Recovery reconfiguration cannot
@@ -32,6 +32,15 @@ concrete Build recipes authority owns the saved list and storage state; local
 compiler options, applied IDs and captured jobs stay with each Session. Its
 action revision observes shared-list and local-settings changes without packing
 numeric revision fields. MCP tool groups and parameters live under `editor-core/src/mcp/`, while desktop composition and feature bindings live under `editor/src/ui/` and the feature-specific UI modules.
+
+Application also retains the prefab catalog and recovery-settings authorities.
+Prefabs share bounded metadata observations, mutations, errors and a dedicated
+revision. Local FGD decoding, Paste reviews and thumbnail renderers remain with
+the originating Session. Recovery shares effective saved settings, their
+revision and settings errors; each document retains its snapshot Store, clocks,
+captured state, diagnostic domains and worker. Optional MCP settings updates
+merge with the latest shared values while holding the settings authority lock.
+These authorities do not implement multiple-document admission or routing.
 
 `Session` owns geometry-preview state through `session/previews.rs`. Rendering, picking and tool-texture filtering share its displayed-document selector. Feature modules validate replacement drafts before clearing competitors through the coordinator; their own payloads and ownership tokens remain local.
 
@@ -1272,6 +1281,7 @@ python3 -B scripts/validate_prefab_thumbnails.py --binary target/debug/hammerr-h
 ```
 
 Storage checks cover atomic unique creation and no-replace renaming, filename scope, stale metadata,
+physical directory binding, parent-alias retargeting, initially absent folders,
 symlink rejection and preservation of unrelated files. Session/software UI checks
 cover source preservation, capture/preview/Apply/Cancel, stale source requests,
 failed load/placement retention and deletion review; the UI capture is
@@ -2436,3 +2446,33 @@ Linux FIFO rejection with an enforced deadline, valid regular-file symlinks and
 read-only behavior. Software controls retain listing warnings, typed settings
 on failed Reload and current document state. Set `HAMMERR_UI_SNAPSHOTS` to an
 existing directory for the failed-Reload capture.
+
+Attached-Session checks cover shared settings and errors, stale forms, atomic
+updates with omitted fields, independent snapshot state and workers, and frozen
+retention policy for in-flight captures. Shared prefab checks cover peer catalog
+changes, error/repair transitions, frozen action reviews and local Paste and
+thumbnail state without changing viewport or authoring revisions.
+
+### Reviewed buffer replacement and runtime ownership
+
+```sh
+cargo test -p editor-core --features mcp buffer_replacement
+cargo test -p editor-core --features mcp replacement_tests
+cargo test -p editor-core --features mcp runtime::document::tests
+cargo test -p editor-core --features mcp application_
+cargo test -p editor-core --features mcp launch_origin_tests
+cargo test -p editor-core --features mcp runtime::launch_tests
+```
+
+Replacement checks cover New/Open/Recent/Recovery after intervening edits,
+Save As and partition changes, matching discard opt-in, Session-scoped reviews,
+and stale Save/Compile destination requests. Software callbacks exercise the
+same admission paths. Existing private headless parity and recovery-exit scripts
+exercise both production entry points and their terminal drain behavior.
+
+Runtime checks retain owners through UI/MCP consumer release, preserve exact
+shutdown failures and prevent a second final capture. Launch tests use temporary
+fake clients and deterministic completion barriers for direct, background and
+compile-and-play paths. They check stale/foreign/repeated completions, process
+and artifact cleanup, preserved replacement geometry, and same-buffer edits;
+they never start the user's game.

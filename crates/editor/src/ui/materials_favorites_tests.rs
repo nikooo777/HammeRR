@@ -119,3 +119,67 @@ fn software_favorite_reload_remains_available_when_material_catalog_fails() {
     );
     assert!(lock(&shared).is_material_favorite("test/checker"));
 }
+
+#[test]
+fn software_browser_observes_attached_session_changes_and_errors_through_shared_revision() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: false,
+        },
+    )))
+    .unwrap();
+    let (directory, game) = crate::test_assets::game();
+    let store = directory.path().join("state");
+    let authority = material_favorites::Authority::configured(Ok(store.clone()));
+    let first = Session::with_material_favorites(Ok(game), authority.clone());
+    let mut second = Session::with_material_favorites(Err("no graphics".into()), authority);
+    let shared = Arc::new(Mutex::new(first));
+    let window = MaterialWindow::new().unwrap();
+    bind_material_favorites(&window, shared.clone(), || true);
+    window.set_material("test/checker".into());
+    window.set_group("favorites".into());
+    window.show().unwrap();
+    refresh_material_catalog(&window, &mut lock(&shared));
+    let mut seen = lock(&shared).material_favorites_serial();
+    let old = lock(&shared).material_favorites_snapshot();
+    second.favorite_material("test/checker", true).unwrap();
+    refresh_material_window_with_favorites(&window, &mut lock(&shared), &old);
+    assert_eq!(window.get_total(), 0);
+    assert!(!window.get_favorite());
+    assert_eq!(old.status.count, 0);
+    seen = refresh_shared_favorites(Some(&window), &mut lock(&shared), seen);
+    assert_eq!(seen, second.material_favorites_serial());
+    assert!(window.get_favorite());
+    assert_eq!(window.get_total(), 1);
+    assert!(second.favorite_material("../invalid", true).is_err());
+    seen = refresh_shared_favorites(Some(&window), &mut lock(&shared), seen);
+    assert_eq!(
+        window.get_favorites_status(),
+        second.material_favorite_status().error.unwrap()
+    );
+    window.invoke_toggle_favorite();
+    assert!(!second.is_material_favorite("test/checker"));
+    assert!(!window.get_favorite());
+    assert_eq!(window.get_total(), 0);
+    assert_eq!(
+        window.get_favorites_status(),
+        "Favorites saved across sessions"
+    );
+    let path = store.join(material_favorites::FILE_NAME);
+    std::fs::write(&path, b"broken").unwrap();
+    second.reload_material_favorites().unwrap_err();
+    seen = refresh_shared_favorites(Some(&window), &mut lock(&shared), seen);
+    assert!(window.get_favorites_status().contains("could not reload"));
+    std::fs::write(&path, b"{\"version\":1,\"materials\":[\"test/checker\"]}").unwrap();
+    second.reload_material_favorites().unwrap();
+    let next = refresh_shared_favorites(Some(&window), &mut lock(&shared), seen);
+    assert!(next > seen);
+    assert_eq!(window.get_total(), 1);
+    assert!(window.get_favorite());
+    assert_eq!(
+        window.get_favorites_status(),
+        "Favorites saved across sessions"
+    );
+}

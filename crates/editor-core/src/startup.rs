@@ -1,6 +1,6 @@
 use crate::runtime::{SharedSession, lock};
 use crate::session::{Actor, Session};
-use crate::{recovery, steam};
+use crate::{material_favorites, recovery, steam};
 use source_formats::{fgd::Catalog, gamefs::GameFs};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -110,6 +110,7 @@ pub struct Application {
     // Shutdown and exit recovery run while the session still has a strong owner.
     _shutdown: ShutdownGuard,
     _recovery_worker: recovery::Worker,
+    pub material_favorites: material_favorites::Authority,
     pub session: SharedSession,
     pub open_message: Option<Result<String, String>>,
     finished: Option<Result<(), String>>,
@@ -125,7 +126,10 @@ impl Application {
                 args.steam_root.as_deref(),
             )?;
         }
-        lock(&session).configure_recovery(recovery::default_directory());
+        let directory = recovery::default_directory();
+        let material_favorites = material_favorites::Authority::configured(directory.clone());
+        lock(&session).use_application_material_favorites(material_favorites.clone());
+        lock(&session).configure_recovery(directory);
         let worker = recovery::Worker::start(&session)?;
         let shutdown = ShutdownGuard {
             session: session.clone(),
@@ -151,6 +155,7 @@ impl Application {
         Ok(Self {
             _shutdown: shutdown,
             _recovery_worker: worker,
+            material_favorites,
             session,
             open_message,
             finished: None,

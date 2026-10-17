@@ -74,3 +74,63 @@ fn favorite_mcp_conflicts_and_reload_share_cpu_only_session_state() {
     assert!(first.offscreen.lock().unwrap().renderer.is_none());
     assert!(second.offscreen.lock().unwrap().renderer.is_none());
 }
+
+#[test]
+fn attached_mcp_sessions_observe_one_favorites_authority_and_keep_separate_property_drafts() {
+    let authority = crate::material_favorites::Authority::default();
+    let mut first = Session::with_material_favorites(Err("no graphics".into()), authority.clone());
+    let mut second = Session::with_material_favorites(Err("no graphics".into()), authority);
+    for session in [&mut first, &mut second] {
+        session
+            .begin_property_edit(crate::session::PropertyTarget::World)
+            .unwrap();
+    }
+    let first_token = first.property_draft().unwrap().token;
+    let second_token = second.property_draft().unwrap().token;
+    let first_shared = Arc::new(Mutex::new(first));
+    let second_shared = Arc::new(Mutex::new(second));
+    let first = EditorServer::new(first_shared.clone(), None);
+    let second = EditorServer::new(second_shared.clone(), None);
+    assert_eq!(value(set(&first, "first"))["favorites"]["count"], 1);
+    assert_eq!(value(set(&second, "second"))["favorites"]["count"], 2);
+    let catalog = value(first.browse_materials(Parameters(
+        serde_json::from_value(json!({"group":"favorites"})).unwrap(),
+    )));
+    assert_eq!(catalog["total"], 2);
+    assert_eq!(catalog["favorites"]["count"], 2);
+    assert!(
+        catalog["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["favorite"] == true)
+    );
+    assert!(set(&second, "../invalid").unwrap().is_error.unwrap());
+    let catalog = value(first.browse_materials(Parameters(
+        serde_json::from_value(json!({"group":"favorites"})).unwrap(),
+    )));
+    assert!(catalog["favorites"]["error"].is_string());
+    value(
+        first.set_material_favorite(Parameters(FavoriteMaterialArgs {
+            material: "first".into(),
+            favorite: false,
+        })),
+    );
+    assert!(!lock(&second_shared).is_material_favorite("first"));
+    assert!(
+        lock(&second_shared)
+            .material_favorite_status()
+            .error
+            .is_none()
+    );
+    assert_eq!(
+        lock(&first_shared).property_draft().unwrap().token,
+        first_token
+    );
+    assert_eq!(
+        lock(&second_shared).property_draft().unwrap().token,
+        second_token
+    );
+    assert!(first.offscreen.lock().unwrap().renderer.is_none());
+    assert!(second.offscreen.lock().unwrap().renderer.is_none());
+}

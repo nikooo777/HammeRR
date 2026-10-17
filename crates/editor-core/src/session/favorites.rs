@@ -1,165 +1,84 @@
 use std::path::PathBuf;
 
-use crate::material_favorites::{
-    MAX_ERROR_BYTES, MAX_FAVORITES, Persistence, Status, Store, canonical_name,
-};
-
-use crate::preference_file::ObservedSource;
-
 use super::{Actor, Session};
+use crate::material_favorites::{Authority, Snapshot, Status};
 
-#[derive(Default)]
-pub(super) struct State {
-    store: Option<Store>,
-    load_failed: bool,
-    error: Option<String>,
-    source: Option<ObservedSource>,
-    serial: u64,
+pub(super) enum Binding {
+    Independent(Authority),
+    Application(Authority),
+}
+
+impl Default for Binding {
+    fn default() -> Self {
+        Self::Independent(Authority::default())
+    }
+}
+
+impl Binding {
+    fn authority(&self) -> &Authority {
+        match self {
+            Self::Independent(authority) | Self::Application(authority) => authority,
+        }
+    }
 }
 
 impl Session {
-    pub(super) fn configure_material_favorites(&mut self, directory: Result<PathBuf, String>) {
-        let store = directory.map(|directory| Store { directory });
-        let loaded = match &store {
-            Ok(store) => store.load_snapshot(),
-            Err(error) => Err(error.clone()),
-        };
-        self.favorite_preferences.store = store.ok();
-        match loaded {
-            Ok((materials, source)) => {
-                self.material_favorites = materials;
-                self.favorite_preferences.source = Some(source);
-                self.favorite_preferences.load_failed = false;
-                self.favorite_preferences.error = None;
-                self.favorite_preferences.serial += 1;
-            }
-            Err(error) => {
-                self.favorite_preferences.source = None;
-                self.favorite_preferences.load_failed = true;
-                self.material_favorite_error(format!("Material favorites could not load: {error}"));
-            }
+    pub fn with_material_favorites(
+        game: Result<source_formats::gamefs::GameFs, String>,
+        authority: Authority,
+    ) -> Self {
+        let mut session = Self::new(game);
+        session.use_application_material_favorites(authority);
+        session
+    }
+
+    pub(crate) fn use_application_material_favorites(&mut self, authority: Authority) {
+        self.material_favorites = Binding::Application(authority);
+        if let Some(error) = self.material_favorite_status().error {
+            self.log(Actor::System, error);
         }
+    }
+
+    pub(super) fn configure_material_favorites(&mut self, directory: Result<PathBuf, String>) {
+        if let Binding::Independent(authority) = &self.material_favorites
+            && let Err(error) = authority.configure(directory)
+        {
+            self.log(Actor::System, error);
+        }
+    }
+
+    pub fn material_favorites_snapshot(&self) -> Snapshot {
+        self.material_favorites.authority().snapshot()
     }
 
     pub fn material_favorites_serial(&self) -> u64 {
-        self.favorite_preferences.serial
+        self.material_favorites.authority().serial()
     }
 
     pub fn reload_material_favorites(&mut self) -> Result<Status, String> {
-        let store = self.favorite_preferences.store.as_ref().ok_or(
-            "Material favorites storage is unavailable; session-only favorites remain editable",
-        )?;
-        match store.load_snapshot() {
-            Ok((materials, source)) => {
-                self.material_favorites = materials;
-                self.favorite_preferences.source = Some(source);
-                self.favorite_preferences.load_failed = false;
-                self.favorite_preferences.error = None;
-                self.favorite_preferences.serial += 1;
-                Ok(self.material_favorite_status())
-            }
-            Err(error) => {
-                self.favorite_preferences.load_failed = true;
-                Err(self.material_favorite_error(format!(
-                    "Material favorites could not reload: {error}"
-                )))
-            }
+        let result = self.material_favorites.authority().reload();
+        if let Err(error) = &result
+            && error != crate::material_favorites::RELOAD_UNAVAILABLE
+        {
+            self.log(Actor::System, error);
         }
+        result
     }
 
     pub fn material_favorite_status(&self) -> Status {
-        let mut status = Status::session(self.material_favorites.len());
-        status.directory = self
-            .favorite_preferences
-            .store
-            .as_ref()
-            .map(|store| store.directory.clone());
-        status.error = self.favorite_preferences.error.clone();
-        status.reload_available = self.favorite_preferences.store.is_some();
-        status.persistence = if self.favorite_preferences.load_failed {
-            Persistence::Blocked
-        } else if self.favorite_preferences.store.is_some() {
-            Persistence::Persistent
-        } else {
-            Persistence::Session
-        };
-        status
-    }
-
-    fn material_favorite_error(&mut self, error: String) -> String {
-        let error = map_core::entity_helpers::bounded_preview(&error, MAX_ERROR_BYTES);
-        self.favorite_preferences.error = Some(error.clone());
-        self.favorite_preferences.serial += 1;
-        self.log(Actor::System, &error);
-        error
+        self.material_favorites.authority().status()
     }
 
     pub fn favorite_material(&mut self, material: &str, favorite: bool) -> Result<(), String> {
-        if self.favorite_preferences.load_failed {
-            let error = format!(
-                "{}; fix storage and Reload favorites before changing favorites",
-                self.favorite_preferences
-                    .error
-                    .as_deref()
-                    .unwrap_or("Material favorites did not load")
-            );
-            let error = map_core::entity_helpers::bounded_preview(&error, MAX_ERROR_BYTES);
-            self.log(Actor::System, &error);
-            return Err(error);
+        let result = self.material_favorites.authority().set(material, favorite);
+        if let Err(error) = &result {
+            self.log(Actor::System, error);
         }
-        let name = canonical_name(material).map_err(|error| self.material_favorite_error(error))?;
-        if self.material_favorites.contains(&name) == favorite {
-            return Ok(());
-        }
-        let mut materials = self.material_favorites.clone();
-        if favorite {
-            if materials.len() == MAX_FAVORITES {
-                return Err(self.material_favorite_error(format!(
-                    "Keep at most {MAX_FAVORITES} material favorites"
-                )));
-            }
-            materials.insert(name);
-        } else {
-            materials.remove(&name);
-        }
-        if let Some(store) = &self.favorite_preferences.store {
-            let expected = self
-                .favorite_preferences
-                .source
-                .as_ref()
-                .ok_or("Reload favorites before changing favorites")?;
-            match store.save_checked(&materials, expected) {
-                Ok(publication) => {
-                    self.material_favorites = materials;
-                    match publication.source {
-                        Ok(source) => self.favorite_preferences.source = Some(source),
-                        Err(error) => {
-                            self.favorite_preferences.source = None;
-                            self.favorite_preferences.load_failed = true;
-                            return Err(self.material_favorite_error(error));
-                        }
-                    }
-                }
-                Err(error) => {
-                    if error.conflict {
-                        self.favorite_preferences.load_failed = true;
-                    }
-                    return Err(self.material_favorite_error(format!(
-                        "Material favorites could not save: {}",
-                        error.message
-                    )));
-                }
-            }
-        } else {
-            self.material_favorites = materials;
-        }
-        self.favorite_preferences.error = None;
-        self.favorite_preferences.serial += 1;
-        Ok(())
+        result
     }
 
     pub fn is_material_favorite(&self, material: &str) -> bool {
-        canonical_name(material).is_ok_and(|name| self.material_favorites.contains(&name))
+        self.material_favorites.authority().contains(material)
     }
 }
 
@@ -172,7 +91,9 @@ mod tests {
     use serde_json::{Value, json};
     use source_formats::keyvalues::WriteOptions;
 
-    use crate::material_favorites::{FILE_NAME, MAX_MATERIAL_BYTES};
+    use crate::material_favorites::{
+        FILE_NAME, MAX_FAVORITES, MAX_MATERIAL_BYTES, Persistence, Store,
+    };
 
     use super::*;
 
@@ -228,7 +149,7 @@ mod tests {
         assert!(session.is_material_favorite("custom/unmounted"));
         assert_eq!(session.material_recent[0], "wood/floor");
         session.configure_recovery(Ok(directory.path().join("another-store")));
-        assert!(session.material_favorites.is_empty());
+        assert!(session.material_favorites_snapshot().materials.is_empty());
         assert_eq!(session.material_recent[0], "wood/floor");
     }
 
@@ -270,7 +191,7 @@ mod tests {
             .unwrap();
         session.undo(Actor::User).unwrap();
         let before = map_state(&session);
-        let materials = session.material_favorites.clone();
+        let materials = session.material_favorites_snapshot().materials;
         let path = directory.path().join("recovery").join(FILE_NAME);
         let original = fs::read(&path).unwrap();
         let permissions = fs::metadata(&path).unwrap().permissions();
@@ -284,7 +205,7 @@ mod tests {
                     .unwrap_err()
                     .contains("could not save")
             );
-            assert_eq!(session.material_favorites, materials);
+            assert_eq!(session.material_favorites_snapshot().materials, materials);
             assert_eq!(fs::read(&path).unwrap(), original);
             assert_eq!(map_state(&session), before);
             let catalog = session.material_catalog("", "favorites", 0, 36).unwrap();
@@ -307,25 +228,17 @@ mod tests {
 
     #[test]
     fn favorites_limits_reject_without_publishing_or_mutating_the_map() {
-        let (_directory, mut session) = fixture();
-        session.material_favorites = (0..MAX_FAVORITES)
+        let (directory, mut session) = fixture();
+        let materials = (0..MAX_FAVORITES)
             .map(|index| format!("test/{index}"))
             .collect();
-        session
-            .favorite_preferences
-            .store
-            .as_ref()
-            .unwrap()
-            .save(&session.material_favorites)
-            .unwrap();
+        Store {
+            directory: directory.path().join("recovery"),
+        }
+        .save(&materials)
+        .unwrap();
         session.reload_material_favorites().unwrap();
-        let path = session
-            .favorite_preferences
-            .store
-            .as_ref()
-            .unwrap()
-            .directory
-            .join(FILE_NAME);
+        let path = directory.path().join("recovery").join(FILE_NAME);
         let original = fs::read(&path).unwrap();
         let before = map_state(&session);
         session.favorite_material("test/0", true).unwrap();
@@ -336,12 +249,18 @@ mod tests {
                 .is_err()
         );
         assert!(session.favorite_material("../wall", false).is_err());
-        assert_eq!(session.material_favorites.len(), MAX_FAVORITES);
+        assert_eq!(
+            session.material_favorites_snapshot().materials.len(),
+            MAX_FAVORITES
+        );
         assert_eq!(fs::read(&path).unwrap(), original);
         assert_eq!(map_state(&session), before);
         session.favorite_material("test/0", false).unwrap();
         session.favorite_material("extra/wall", true).unwrap();
-        assert_eq!(session.material_favorites.len(), MAX_FAVORITES);
+        assert_eq!(
+            session.material_favorites_snapshot().materials.len(),
+            MAX_FAVORITES
+        );
     }
 
     #[test]
@@ -407,9 +326,15 @@ mod tests {
             again.material_favorite_status().persistence,
             Persistence::Blocked
         );
-        assert_eq!(again.material_favorites, BTreeSet::new());
+        assert_eq!(
+            again.material_favorites_snapshot().materials,
+            BTreeSet::new()
+        );
     }
 }
 
 #[cfg(test)]
 mod conflict_tests;
+
+#[cfg(test)]
+mod authority_tests;

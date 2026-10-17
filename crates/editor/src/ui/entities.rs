@@ -1,6 +1,23 @@
 use super::*;
 use source_formats::fgd::Catalog;
 
+pub(super) fn set_inspected_property(
+    app: &AppWindow,
+    shared: &SharedSession,
+    key: &str,
+    value: &str,
+) {
+    let mut session = lock(shared);
+    let Some(entity) = single_selected_entity(&session) else {
+        return;
+    };
+    let changes = [(key.to_owned(), Some(value.to_owned()))];
+    if let Err(message) = session.set_entity_properties(Actor::User, entity, &changes) {
+        refresh_panel(app, &mut session);
+        app.set_message(message.into());
+    }
+}
+
 pub(super) fn selection_summary(session: &Session) -> (String, String, Option<Vec<KeyValue>>) {
     let doc = session.document();
     let ids = session.selected_ids();

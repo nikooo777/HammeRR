@@ -174,7 +174,7 @@ fn model_choice_tokens_stale_maps_and_geometry_previews_cannot_cross_ownership()
         session
             .choose_model(token, path, 0)
             .unwrap_err()
-            .contains("Scaled")
+            .contains("Static-prop output")
     );
 }
 

@@ -1834,17 +1834,7 @@ pub(super) fn run(
                 show_rename_window(&app.unwrap(), &ui, Some(value.to_string()));
                 return;
             }
-            let shared = session_of(&ui);
-            let mut session = lock(&shared);
-            let Some(entity) = single_selected_entity(&session) else {
-                return;
-            };
-            let changes = [(key.clone(), Some(value.to_string()))];
-            if let Err(message) = session.set_entity_properties(Actor::User, entity, &changes) {
-                let app = app.unwrap();
-                refresh_panel(&app, &mut session);
-                app.set_message(message.into());
-            }
+            set_inspected_property(&app.unwrap(), &session_of(&ui), &key, &value);
         }
     });
     app.on_property_removed({
@@ -3426,6 +3416,8 @@ mod viscluster_tests;
 
 #[cfg(test)]
 mod model_guide_tests;
+#[cfg(test)]
+mod model_scale_tests;
 
 #[cfg(test)]
 mod hdr_sky_tests;

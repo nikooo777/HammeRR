@@ -23,6 +23,9 @@ const MATERIAL_BINDING_RESERVE_BYTES: usize = MAX_MATERIAL_ERROR_CHARS * 4;
 const MATERIAL_BINDINGS_ERROR: &str = "Model material state was interrupted; reload models";
 pub const MAX_SCENE_VERTICES: usize = 1_000_000;
 pub const MAX_SCENE_INDICES: usize = 6_000_000;
+pub const MIN_MODEL_SCALE: f32 = 1.0 / 64.0;
+pub const MAX_MODEL_SCALE: f32 = 64.0;
+pub const MAX_MODEL_SCALE_TEXT_BYTES: usize = 64;
 
 #[cfg(test)]
 mod tests;
@@ -319,6 +322,7 @@ pub struct Instance {
     pub asset: Arc<Asset>,
     pub origin: DVec3,
     pub rotation: DQuat,
+    pub scale: f32,
     pub skin: usize,
     pub body: u32,
     pub tint: [u8; 3],
@@ -342,6 +346,45 @@ pub fn appearance(
         return Err("Static-prop output does not support authored render modes; use prop_dynamic for model opacity".into());
     }
     Ok(appearance)
+}
+
+pub fn scale_editable(entity: &Entity) -> bool {
+    !entity.classname().is_some_and(|name| {
+        [
+            "prop_static",
+            "prop_detail",
+            "detail_prop",
+            "prop_detail_sprite",
+        ]
+        .iter()
+        .any(|class| name.eq_ignore_ascii_case(class))
+    })
+}
+
+pub fn scale(entity: &Entity) -> Result<f32, String> {
+    let raw = entity.properties.get("modelscale");
+    let scale = raw.map_or(Ok(1.0), |raw| {
+        if raw.len() > MAX_MODEL_SCALE_TEXT_BYTES {
+            return Err(format!("Model scale exceeds {MAX_MODEL_SCALE_TEXT_BYTES} UTF-8 bytes"));
+        }
+        raw.parse::<f32>()
+            .ok()
+            .filter(|value| value.is_finite() && (MIN_MODEL_SCALE..=MAX_MODEL_SCALE).contains(value))
+            .ok_or_else(|| format!("Model scale must be a finite native float from {MIN_MODEL_SCALE} to {MAX_MODEL_SCALE}; these are editor numeric limits"))
+    })?;
+    if !scale_editable(entity) {
+        if entity
+            .classname()
+            .is_some_and(|name| name.eq_ignore_ascii_case("prop_static"))
+        {
+            if scale != 1.0 {
+                return Err("Static-prop output does not support modelscale other than 1; use a compatible dynamic model entity for scale".into());
+            }
+        } else if raw.is_some_and(|value| value.parse::<f64>().ok() != Some(1.0)) {
+            return Err("Native detail records require modelscale 1; dynamic model scaling does not apply to detail props".into());
+        }
+    }
+    Ok(scale)
 }
 
 impl Instance {
@@ -379,13 +422,17 @@ impl Instance {
             .origin()
             .filter(|point| point.is_finite() && point.abs().max_element() <= 65536.0)
             .ok_or("Model origin must fit finite coordinates within ±65536")?;
-        if entity
+        let scale = if authored {
+            scale(entity)?
+        } else if entity
             .properties
             .get("modelscale")
             .is_some_and(|value| value.parse::<f64>().ok() != Some(1.0))
         {
-            return Err("Scaled model previews remain unsupported".into());
-        }
+            return Err("Literal FGD model guides require modelscale 1".into());
+        } else {
+            1.0
+        };
         let body = entity.properties.get("body").map_or(Ok(0), |value| {
             value
                 .parse::<u32>()
@@ -437,6 +484,7 @@ impl Instance {
             asset,
             origin,
             rotation: DQuat::from_euler(EulerRot::ZYX, angles.y, angles.x, angles.z),
+            scale,
             skin,
             body,
             tint,
@@ -455,7 +503,14 @@ impl Instance {
     }
 
     pub fn point(&self, point: [f32; 3]) -> DVec3 {
-        self.origin + self.rotation * DVec3::from_array(point.map(f64::from))
+        let point = DVec3::from_array(point.map(f64::from));
+        self.origin
+            + self.rotation
+                * if self.scale == 1.0 {
+                    point
+                } else {
+                    point * f64::from(self.scale)
+                }
     }
 
     pub fn bounds(&self) -> (DVec3, DVec3) {
@@ -468,8 +523,16 @@ impl Instance {
 
     pub fn attachment(&self, index: usize) -> Option<glam::DAffine3> {
         let attachment = self.asset.model.attachments.get(index.checked_sub(1)?)?;
-        let mut transform = glam::DAffine3::from_rotation_translation(self.rotation, self.origin)
-            * attachment.transform;
+        let parent = if self.scale == 1.0 {
+            glam::DAffine3::from_rotation_translation(self.rotation, self.origin)
+        } else {
+            glam::DAffine3::from_scale_rotation_translation(
+                DVec3::splat(f64::from(self.scale)),
+                self.rotation,
+                self.origin,
+            )
+        };
+        let mut transform = parent * attachment.transform;
         if attachment.world_aligned() {
             transform.matrix3 = DMat3::IDENTITY;
         }
@@ -508,10 +571,13 @@ impl Instance {
             direction: ray.direction.try_normalize()?,
         };
         let ray = &world_ray;
-        let ray = Ray {
+        let mut ray = Ray {
             origin: self.rotation.conjugate() * (ray.origin - self.origin),
             direction: self.rotation.conjugate() * ray.direction,
         };
+        if self.scale != 1.0 {
+            ray.origin /= f64::from(self.scale);
+        }
         let model = &self.asset.model;
         if !map_core::query::ray_intersects_bounds(
             &ray,
@@ -545,6 +611,11 @@ impl Instance {
             }
         }
         let (distance, normal) = nearest?;
+        let distance = if self.scale == 1.0 {
+            distance
+        } else {
+            distance * f64::from(self.scale)
+        };
         Some(map_core::query::SurfaceHit {
             normal,
             hit: Hit {

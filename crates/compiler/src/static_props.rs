@@ -229,10 +229,11 @@ fn record(
     if prop.dx_levels[1] != 0 && prop.dx_levels[0] > prop.dx_levels[1] {
         return Err("minimum DX level exceeds maximum DX level".into());
     }
-    if number(entity, "modelscale", 1.0)? != 1.0 || integer(entity, "generatelightmaps", 0)? != 0 {
-        return Err(
-            "scaled static props and per-texel prop lightmaps are not supported yet".into(),
-        );
+    if number(entity, "modelscale", 1.0)? != 1.0 {
+        return Err("Static-prop output does not support modelscale other than 1; use a compatible dynamic model entity for scale".into());
+    }
+    if integer(entity, "generatelightmaps", 0)? != 0 {
+        return Err("Per-texel static-prop lightmaps are not supported yet".into());
     }
     if integer(entity, "body", 0)? != 0 {
         return Err("Static props require body 0; use prop_dynamic for bodygroups".into());

@@ -2,6 +2,9 @@ use serde::Serialize;
 use source_formats::fgd::{Class, Property, vector};
 use source_formats::vmf::Entity;
 
+#[cfg(test)]
+mod scale_tests;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Control {
@@ -103,10 +106,8 @@ fn label(key: &str, property: Option<&Property>) -> String {
     }
 }
 
-fn field(entity: &Entity, class: Option<&Class>, key: String) -> Field {
-    let property = class.and_then(|class| class.property(&key));
-    let lower = key.to_ascii_lowercase();
-    let dynamic_model = entity.solids.is_empty()
+fn dynamic_model(entity: &Entity, class: Option<&Class>) -> bool {
+    entity.solids.is_empty()
         && entity
             .properties
             .get("model")
@@ -114,7 +115,13 @@ fn field(entity: &Entity, class: Option<&Class>, key: String) -> Field {
         && !crate::sprite_resource::is_source(class)
         && !entity
             .classname()
-            .is_some_and(|name| name.eq_ignore_ascii_case("prop_static"));
+            .is_some_and(|name| name.eq_ignore_ascii_case("prop_static"))
+}
+
+fn field(entity: &Entity, class: Option<&Class>, key: String) -> Field {
+    let property = class.and_then(|class| class.property(&key));
+    let lower = key.to_ascii_lowercase();
+    let dynamic_model = dynamic_model(entity, class);
     let detail_tint = lower == "_detail_lighting_tint"
         && entity.classname().is_some_and(|class| {
             ["prop_detail", "detail_prop", "prop_detail_sprite"]
@@ -349,6 +356,24 @@ fn field(entity: &Entity, class: Option<&Class>, key: String) -> Field {
             result.range = Some([0.0, 255.0]);
         }
     }
+    if dynamic_model && render::models::scale_editable(entity) && lower == "modelscale" {
+        result.label = "Model scale".into();
+        result.description = "Positive uniform scale about the entity origin, at native float precision. The editor supports 1/64 through 64 with transformed mesh bounds within ±65536; these are editor numeric limits. Missing means 1. Mesh, picking, bounds and attachments share this scale. No animation, physics/collision or native game appearance parity is implied.".into();
+        result.advanced = false;
+        result.range = Some([
+            f64::from(render::models::MIN_MODEL_SCALE),
+            f64::from(render::models::MAX_MODEL_SCALE),
+        ]);
+        if entity.properties.get("modelscale").is_none() {
+            result.value = "1".into();
+        }
+        if render::models::scale(entity).is_ok() {
+            result.kind = "float".into();
+            result.control = Control::Number;
+        } else {
+            result.control = Control::Text;
+        }
+    }
     result
 }
 
@@ -367,6 +392,14 @@ pub fn inspect(entity: &Entity, class: Option<&Class>) -> Inspector {
                 names.push(property.name.clone());
             }
         }
+    }
+    if dynamic_model(entity, class)
+        && render::models::scale_editable(entity)
+        && !names
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case("modelscale"))
+    {
+        names.push("modelscale".into());
     }
     let mut properties: Vec<Field> = names
         .into_iter()

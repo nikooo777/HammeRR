@@ -8,6 +8,8 @@ use serde_json::{Value, json};
 use super::{Actor, Session};
 
 #[cfg(test)]
+mod scale_tests;
+#[cfg(test)]
 mod tests;
 
 pub(super) struct Models {
@@ -60,6 +62,19 @@ fn appearance_report(entity: &source_formats::vmf::Entity) -> Value {
         },
         "error": appearance.err(),
         "limits": "Textured model preview only: Normal (0) ignores renderamt; Texture (2) multiplies material alpha by renderamt/255, depth-tests without depth writes and sorts material batches by camera depth. Render FX must be None (0). No animation, runtime fading, material proxies, intersecting-transparency or native game-parity claim. rendercolor's fourth component is preserved and does not set opacity. Static-prop output requires Normal (0).",
+    })
+}
+
+fn scale_report(entity: &source_formats::vmf::Entity) -> Value {
+    let scale = render::models::scale(entity);
+    json!({
+        "supported": scale.is_ok(),
+        "authored": entity.properties.get("modelscale"),
+        "effective": scale.as_ref().ok(),
+        "range": [render::models::MIN_MODEL_SCALE, render::models::MAX_MODEL_SCALE],
+        "token_bytes": render::models::MAX_MODEL_SCALE_TEXT_BYTES,
+        "error": scale.err(),
+        "limits": "Authored MDL mesh preview: positive uniform native-float scale about the entity origin, with editor numeric range 1/64–64 and finite transformed mesh bounds within ±65536. Missing means 1; unsupported values retain a labeled helper. Mesh positions, picking, bounds and default-pose attachments share the transform. Static-prop and native detail writers require unit scale. Animation, runtime scale inputs, collision/physics, sequence culling bounds and native appearance parity are not evaluated. Asset-only browser previews remain unit scale; literal FGD guides retain their unit-scale admission.",
     })
 }
 
@@ -202,6 +217,7 @@ impl Session {
         })?;
         let asset = self.inspect_model_body(path, skin, body)?;
         let appearance = appearance_report(entity);
+        let mut scale = scale_report(entity);
         let models = self.model_instances(document);
         let instance = models
             .instances
@@ -212,8 +228,10 @@ impl Session {
             .get(&id)
             .map(String::as_str)
             .or_else(|| asset["material_error"].as_str());
+        scale["applied"] = json!(instance.is_some_and(Instance::has_geometry));
+        scale["instance_error"] = json!(error);
         Ok(
-            json!({"entity":format!("entity:{id}"),"asset":asset,"displayed":instance.is_some_and(Instance::has_geometry),"helper":!entity.hidden && instance.is_none_or(|instance|!instance.has_geometry()),"error":error,"hidden":entity.hidden,"tint":instance.map(|instance|instance.tint),"opacity_preview":instance.is_some_and(|instance|instance.appearance.mode==source_formats::render_color::TEXTURE),"appearance":appearance,"attachments":instance.map(|instance|instance.asset.model.attachments.iter().enumerate().map(|(index,attachment)|super::model_attachments::report(attachment,index+1,instance.attachment(index+1).unwrap())).collect::<Vec<_>>()).unwrap_or_default(),"world_bounds":instance.map(|instance|{let(a,b)=instance.bounds();[a.to_array(),b.to_array()]})}),
+            json!({"entity":format!("entity:{id}"),"asset":asset,"displayed":instance.is_some_and(Instance::has_geometry),"helper":!entity.hidden && instance.is_none_or(|instance|!instance.has_geometry()),"error":error,"hidden":entity.hidden,"tint":instance.map(|instance|instance.tint),"opacity_preview":instance.is_some_and(|instance|instance.appearance.mode==source_formats::render_color::TEXTURE),"appearance":appearance,"model_scale":scale,"attachments":instance.map(|instance|instance.asset.model.attachments.iter().enumerate().map(|(index,attachment)|super::model_attachments::report(attachment,index+1,instance.attachment(index+1).unwrap())).collect::<Vec<_>>()).unwrap_or_default(),"world_bounds":instance.map(|instance|{let(a,b)=instance.bounds();[a.to_array(),b.to_array()]})}),
         )
     }
 

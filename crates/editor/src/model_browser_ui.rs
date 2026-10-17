@@ -6,9 +6,12 @@ use slint::{ComponentHandle, Model};
 use crate::{
     ModelBodygroupRow, ModelBrowserWindow, ModelChoiceRow,
     model_preview::PreviewRenderer,
-    runtime::{SharedSession, lock},
+    runtime::{DocumentAccess, DocumentContinuation},
     session::{Actor, Session},
 };
+
+#[cfg(test)]
+use crate::runtime::{SharedSession, lock};
 
 const PAGE_SIZE: usize = 60;
 
@@ -277,8 +280,33 @@ fn preview(
     }
 }
 
+fn callback(
+    window: &slint::Weak<ModelBrowserWindow>,
+    continuation: &DocumentContinuation,
+    body: impl FnOnce(ModelBrowserWindow, &mut Session),
+) {
+    let Some(window) = window.upgrade() else {
+        return;
+    };
+    let result = continuation.upgrade().and_then(|access| {
+        access.with_session(|session| {
+            body(window.clone_strong(), session);
+            Ok(())
+        })
+    });
+    if let Err(error) = result {
+        window.set_message(error.into());
+    }
+}
+
 impl Controller {
+    #[cfg(test)]
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
+        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
+    }
+
+    pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
+        let continuation = access.downgrade();
         let window = ModelBrowserWindow::new()?;
         window
             .window()
@@ -289,154 +317,180 @@ impl Controller {
         window.on_resize_details({
             let window = window.as_weak();
             move || {
-                let window = window.unwrap();
-                fit_window(&window, window.get_bodygroups().row_count());
+                if let Some(window) = window.upgrade() {
+                    fit_window(&window, window.get_bodygroups().row_count());
+                }
             }
         });
         window.on_search({
-            let (window, shared, catalog) = (window.as_weak(), shared.clone(), catalog.clone());
+            let (window, continuation, catalog) =
+                (window.as_weak(), continuation.clone(), catalog.clone());
             move || {
-                let mut state = catalog.borrow_mut();
-                state.offset = 0;
-                refresh_catalog(&window.unwrap(), &mut lock(&shared), &mut state);
+                callback(&window, &continuation, |window, session| {
+                    let mut state = catalog.borrow_mut();
+                    state.offset = 0;
+                    refresh_catalog(&window, session, &mut state);
+                })
             }
         });
         window.on_group_changed({
             let window = window.as_weak();
-            move || window.unwrap().invoke_search()
+            move || {
+                if let Some(window) = window.upgrade() {
+                    window.invoke_search();
+                }
+            }
         });
         window.on_page({
-            let (window, shared, catalog) = (window.as_weak(), shared.clone(), catalog.clone());
+            let (window, continuation, catalog) =
+                (window.as_weak(), continuation.clone(), catalog.clone());
             move |direction| {
-                let mut state = catalog.borrow_mut();
-                state.offset = if direction < 0 {
-                    state.offset.saturating_sub(PAGE_SIZE)
-                } else {
-                    state.offset.saturating_add(PAGE_SIZE)
-                };
-                refresh_catalog(&window.unwrap(), &mut lock(&shared), &mut state);
+                callback(&window, &continuation, |window, session| {
+                    let mut state = catalog.borrow_mut();
+                    state.offset = if direction < 0 {
+                        state.offset.saturating_sub(PAGE_SIZE)
+                    } else {
+                        state.offset.saturating_add(PAGE_SIZE)
+                    };
+                    refresh_catalog(&window, session, &mut state);
+                })
             }
         });
         window.on_preview_model({
-            let (window, shared, token, renderer) = (
+            let (window, continuation, token, renderer) = (
                 window.as_weak(),
-                shared.clone(),
+                continuation.clone(),
                 token.clone(),
                 renderer.clone(),
             );
             move || {
-                preview(
-                    &window.unwrap(),
-                    &mut lock(&shared),
-                    token.get(),
-                    &mut renderer.borrow_mut(),
-                )
+                callback(&window, &continuation, |window, session| {
+                    preview(&window, session, token.get(), &mut renderer.borrow_mut())
+                })
             }
         });
         window.on_bodygroup_changed({
-            let (window, shared, token, renderer) = (
+            let (window, continuation, token, renderer) = (
                 window.as_weak(),
-                shared.clone(),
+                continuation.clone(),
                 token.clone(),
                 renderer.clone(),
             );
             move |group, variant| {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
-                let result = token
-                    .get()
-                    .ok_or("Reopen the model browser".to_owned())
-                    .and_then(|token| {
-                        session.choose_model_bodygroup(
-                            token,
-                            group.max(0) as usize,
-                            variant.max(0) as usize,
-                        )
-                    });
-                match result {
-                    Ok(report) => present(&window, &session, &report, &mut renderer.borrow_mut()),
-                    Err(error) => {
-                        window.set_can_apply(false);
-                        if let Some(token) = token.get()
-                            && let Ok(report) = session.model_choice(token)
-                        {
-                            present(&window, &session, &report, &mut renderer.borrow_mut());
+                callback(&window, &continuation, |window, session| {
+                    let result = token
+                        .get()
+                        .ok_or("Reopen the model browser".to_owned())
+                        .and_then(|token| {
+                            session.choose_model_bodygroup(
+                                token,
+                                group.max(0) as usize,
+                                variant.max(0) as usize,
+                            )
+                        });
+                    match result {
+                        Ok(report) => {
+                            present(&window, session, &report, &mut renderer.borrow_mut())
                         }
-                        window.set_message(error.into());
+                        Err(error) => {
+                            window.set_can_apply(false);
+                            if let Some(token) = token.get()
+                                && let Ok(report) = session.model_choice(token)
+                            {
+                                present(&window, session, &report, &mut renderer.borrow_mut());
+                            }
+                            window.set_message(error.into());
+                        }
                     }
-                }
+                })
             }
         });
         window.on_choose({
-            let window = window.as_weak();
+            let (window, continuation, token, renderer) = (
+                window.as_weak(),
+                continuation.clone(),
+                token.clone(),
+                renderer.clone(),
+            );
             move |path| {
-                let window = window.unwrap();
-                window.set_path(path);
-                window.set_skin(0);
-                window.set_body(0);
-                window.invoke_preview_model();
+                callback(&window, &continuation, |window, session| {
+                    window.set_path(path);
+                    window.set_skin(0);
+                    window.set_body(0);
+                    preview(&window, session, token.get(), &mut renderer.borrow_mut());
+                })
             }
         });
         window.on_invalidate({
-            let window = window.as_weak();
+            let (window, continuation) = (window.as_weak(), continuation.clone());
             move || {
-                let window = window.unwrap();
-                window.set_can_apply(false);
-                window.set_has_preview(false);
-                window.set_message("Preview the model path before applying it.".into());
+                callback(&window, &continuation, |window, _| {
+                    window.set_can_apply(false);
+                    window.set_has_preview(false);
+                    window.set_message("Preview the model path before applying it.".into());
+                })
             }
         });
         window.on_cancel({
-            let (window, shared, token) = (window.as_weak(), shared.clone(), token.clone());
+            let (window, continuation, token) =
+                (window.as_weak(), continuation.clone(), token.clone());
             move || {
-                if let Some(token) = token.take() {
-                    let _ = lock(&shared).cancel_model_choice(token);
-                }
-                let _ = window.unwrap().hide();
+                let Some(local_window) = window.upgrade() else {
+                    return;
+                };
+                let token = token.take();
+                callback(&window, &continuation, |_, session| {
+                    if let Some(token) = token {
+                        let _ = session.cancel_model_choice(token);
+                    }
+                });
+                let _ = local_window.hide();
             }
         });
         window.on_apply({
-            let (window, shared, token, renderer) = (
+            let (window, continuation, token, renderer) = (
                 window.as_weak(),
-                shared.clone(),
+                continuation.clone(),
                 token.clone(),
                 renderer.clone(),
             );
             move || {
-                let window = window.unwrap();
-                let result = token
-                    .get()
-                    .ok_or("Reopen the model browser".to_owned())
-                    .and_then(|token| {
-                        let mut session = lock(&shared);
-                        let report = session.model_choice(token)?;
-                        if renderer.borrow().seen.as_ref()
-                            != choice_key(&report, session.materials().generation()).as_ref()
-                        {
-                            present(&window, &session, &report, &mut renderer.borrow_mut());
-                            return Ok(None);
+                callback(&window, &continuation, |window, session| {
+                    let result = token
+                        .get()
+                        .ok_or("Reopen the model browser".to_owned())
+                        .and_then(|token| {
+                            let report = session.model_choice(token)?;
+                            if renderer.borrow().seen.as_ref()
+                                != choice_key(&report, session.materials().generation()).as_ref()
+                            {
+                                present(&window, session, &report, &mut renderer.borrow_mut());
+                                return Ok(None);
+                            }
+                            session.apply_model_choice(Actor::User, token).map(Some)
+                        });
+                    match result {
+                        Ok(Some(_)) => {
+                            token.set(None);
+                            let _ = window.hide();
                         }
-                        session.apply_model_choice(Actor::User, token).map(Some)
-                    });
-                match result {
-                    Ok(Some(_)) => {
-                        token.set(None);
-                        let _ = window.hide();
+                        Ok(None) => window.set_message(
+                            "Model choice changed. Review the preview before Use model.".into(),
+                        ),
+                        Err(error) => {
+                            window.set_can_apply(false);
+                            window.set_message(error.into());
+                        }
                     }
-                    Ok(None) => window.set_message(
-                        "Model choice changed. Review the preview before Use model.".into(),
-                    ),
-                    Err(error) => {
-                        window.set_can_apply(false);
-                        window.set_message(error.into());
-                    }
-                }
+                })
             }
         });
         window.window().on_close_requested({
             let window = window.as_weak();
             move || {
-                window.unwrap().invoke_cancel();
+                if let Some(window) = window.upgrade() {
+                    window.invoke_cancel();
+                }
                 slint::CloseRequestResponse::HideWindow
             }
         });
@@ -516,6 +570,246 @@ mod tests {
     use slint::Model;
     use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
+
+    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+    struct Fixture {
+        document: crate::runtime::DocumentHandle,
+        shared: SharedSession,
+        access: DocumentAccess,
+        browser: Controller,
+        inspector: crate::model_ui::Controller,
+        token: u64,
+        directory: tempfile::TempDir,
+    }
+
+    fn software() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+    }
+
+    fn create_fixture() -> Fixture {
+        let directory = tempfile::tempdir().unwrap();
+        let mut session = Session::new(Err("no model assets required".into()));
+        session.configure_recovery(Ok(directory.path().join("recovery")));
+        let ObjectId::Entity(id) = session
+            .create_entity(
+                Actor::User,
+                "prop_static",
+                Some(DVec3::ZERO),
+                BTreeMap::from([("model".into(), "".into())]),
+            )
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let token = session.begin_model_choice(id).unwrap()["token"]
+            .as_u64()
+            .unwrap();
+        let shared = Arc::new(Mutex::new(session));
+        let document = crate::test_assets::document(shared.clone());
+        let access = DocumentAccess::for_document(document.clone());
+        let browser = Controller::new_with_access(&access).unwrap();
+        let inspector = crate::model_ui::Controller::new_with_access(&access).unwrap();
+        browser.token.set(Some(token));
+        Fixture {
+            directory,
+            document,
+            shared,
+            access,
+            browser,
+            inspector,
+            token,
+        }
+    }
+
+    fn files(directory: &std::path::Path) -> BTreeMap<std::path::PathBuf, Vec<u8>> {
+        let mut result = BTreeMap::new();
+        for entry in std::fs::read_dir(directory).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                result.extend(files(&path));
+            } else {
+                result.insert(path.clone(), std::fs::read(path).unwrap());
+            }
+        }
+        result
+    }
+
+    #[derive(Debug, PartialEq)]
+    struct Snapshot {
+        map: source_formats::vmf::Vmf,
+        history: String,
+        selection: Vec<ObjectId>,
+        serials: [u64; 4],
+        camera: render::Camera,
+        choice: serde_json::Value,
+        attachment: serde_json::Value,
+        files: BTreeMap<std::path::PathBuf, Vec<u8>>,
+    }
+
+    fn snapshot(fixture: &Fixture) -> Snapshot {
+        let session = lock(&fixture.shared);
+        Snapshot {
+            map: session.document().vmf().clone(),
+            history: session.history_snapshot(),
+            selection: session.selected_ids(),
+            serials: [
+                session.scene_serial(),
+                session.view_serial(),
+                session.log_serial(),
+                session.camera_serial(),
+            ],
+            camera: session.camera(),
+            choice: session.current_model_choice(),
+            attachment: session.model_attachment_guide(),
+            files: files(fixture.directory.path()),
+        }
+    }
+
+    fn retained_actions(fixture: &Fixture, message: &str) {
+        let browser = &fixture.browser;
+        let inspector = &fixture.inspector;
+        browser.token.set(Some(fixture.token));
+        browser.catalog.borrow_mut().groups = vec!["retained group".into()];
+        browser.catalog.borrow_mut().offset = PAGE_SIZE;
+        browser.preview.borrow_mut().seen = Some((fixture.token, "retained.mdl".into(), 2, 3, 4));
+        browser.window.set_path("retained.mdl".into());
+        browser.window.set_skin(2);
+        browser.window.set_body(3);
+        browser.window.set_can_apply(true);
+        browser.window.set_has_preview(true);
+        browser
+            .window
+            .set_geometry("retained browser geometry".into());
+        inspector
+            .window
+            .set_geometry("retained inspector geometry".into());
+        inspector
+            .window
+            .set_attachment_info("retained attachment".into());
+        inspector.window.set_show_axes(true);
+        browser.window.show().unwrap();
+        inspector.window.show().unwrap();
+        browser.window.invoke_search();
+        browser.window.invoke_group_changed();
+        browser.window.invoke_page(1);
+        browser.window.invoke_preview_model();
+        browser.window.invoke_bodygroup_changed(0, 1);
+        browser.window.invoke_choose("replacement.mdl".into());
+        browser.window.invoke_invalidate();
+        browser.window.invoke_apply();
+        inspector.window.invoke_attachment_changed();
+        inspector.window.invoke_show_attachment();
+        inspector.window.invoke_frame_attachment();
+        inspector.window.invoke_reload();
+        assert_eq!(browser.window.get_message(), message);
+        assert_eq!(inspector.window.get_message(), message);
+        assert_eq!(browser.window.get_path(), "retained.mdl");
+        assert_eq!(browser.window.get_skin(), 2);
+        assert_eq!(browser.window.get_body(), 3);
+        assert!(browser.window.get_can_apply());
+        assert!(browser.window.get_has_preview());
+        assert_eq!(browser.window.get_geometry(), "retained browser geometry");
+        assert_eq!(
+            inspector.window.get_geometry(),
+            "retained inspector geometry"
+        );
+        assert_eq!(
+            inspector.window.get_attachment_info(),
+            "retained attachment"
+        );
+        assert!(inspector.window.get_show_axes());
+        assert_eq!(browser.catalog.borrow().groups, ["retained group"]);
+        assert_eq!(browser.catalog.borrow().offset, PAGE_SIZE);
+        assert_eq!(
+            browser.preview.borrow().seen,
+            Some((fixture.token, "retained.mdl".into(), 2, 3, 4))
+        );
+        assert!(!browser.preview.borrow().renderer.initialized());
+        browser.window.invoke_cancel();
+        inspector.window.invoke_cancel();
+        assert_eq!(browser.token.get(), None);
+        assert!(!browser.window.window().is_visible());
+        assert!(!inspector.window.window().is_visible());
+        assert!(!inspector.window.get_show_axes());
+        assert_eq!(browser.window.get_message(), message);
+        assert_eq!(inspector.window.get_message(), message);
+    }
+
+    #[test]
+    fn model_dialog_callbacks_reject_real_drain_and_finished_while_peer_stays_live() {
+        use crate::runtime::DocumentLifecycle;
+        use std::sync::mpsc;
+        use std::time::Instant;
+
+        software();
+        let fixture = create_fixture();
+        let peer = create_fixture();
+        let gate = fixture.document.admit().unwrap();
+        let draining = fixture.document.clone();
+        let (send, receive) = mpsc::channel();
+        let thread = std::thread::spawn(move || send.send(draining.shutdown()).unwrap());
+        let deadline = Instant::now() + TIMEOUT;
+        while fixture.document.lifecycle() == DocumentLifecycle::Live
+            || lock(&fixture.shared).compile_settings()["editable"] != false
+        {
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        assert!(receive.try_recv().is_err());
+        let before = snapshot(&fixture);
+        let peer_before = snapshot(&peer);
+        retained_actions(&fixture, "the editor is closing");
+        assert_eq!(snapshot(&fixture), before);
+        assert_eq!(snapshot(&peer), peer_before);
+        peer.browser.window.invoke_cancel();
+        assert!(lock(&peer.shared).current_model_choice()["token"].is_null());
+        assert_eq!(peer.browser.token.get(), None);
+        assert_eq!(peer.document.lifecycle(), DocumentLifecycle::Live);
+        let peer_after = snapshot(&peer);
+        drop(gate);
+        receive.recv_timeout(TIMEOUT).unwrap().unwrap();
+        thread.join().unwrap();
+        assert_eq!(fixture.document.lifecycle(), DocumentLifecycle::Finished);
+        let before = snapshot(&fixture);
+        retained_actions(&fixture, "the document is closed");
+        assert_eq!(snapshot(&fixture), before);
+        assert_eq!(snapshot(&peer), peer_after);
+        let entries = lock(&fixture.shared).recovery_entries().unwrap().entries;
+        assert_eq!(entries.len(), 1);
+        peer.document.shutdown().unwrap();
+    }
+
+    #[test]
+    fn model_dialog_registrations_release_session_and_runtime_with_windows_retained() {
+        software();
+        let fixture = create_fixture();
+        let weak_session = Arc::downgrade(&fixture.shared);
+        let continuation = fixture.access.downgrade();
+        let browser = fixture.browser.window.clone_strong();
+        let inspector = fixture.inspector.window.clone_strong();
+        drop(fixture);
+        assert!(weak_session.upgrade().is_none());
+        assert!(continuation.upgrade().is_err());
+        browser.invoke_search();
+        browser.invoke_choose("discarded.mdl".into());
+        browser.invoke_apply();
+        inspector.invoke_attachment_changed();
+        inspector.invoke_reload();
+        assert_eq!(browser.get_message(), "the document is closed");
+        assert_eq!(inspector.get_message(), "the document is closed");
+        browser.invoke_cancel();
+        inspector.invoke_cancel();
+        assert!(!browser.window().is_visible());
+        assert!(!inspector.window().is_visible());
+    }
 
     #[test]
     fn model_browser_search_skin_preview_apply_and_cancel_share_session_operations() {

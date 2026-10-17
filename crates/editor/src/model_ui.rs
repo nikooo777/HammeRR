@@ -5,9 +5,12 @@ use slint::ComponentHandle;
 
 use crate::{
     ModelWindow,
-    runtime::{SharedSession, lock},
+    runtime::{DocumentAccess, DocumentContinuation},
     session::{Actor, Session},
 };
+
+#[cfg(test)]
+use crate::runtime::{SharedSession, lock};
 
 pub struct Controller {
     pub window: ModelWindow,
@@ -202,78 +205,120 @@ fn refresh(window: &ModelWindow, session: &Session, target: Option<(u32, u64)>) 
     }
 }
 
+fn callback(
+    window: &slint::Weak<ModelWindow>,
+    continuation: &DocumentContinuation,
+    body: impl FnOnce(ModelWindow, &mut Session),
+) {
+    let Some(window) = window.upgrade() else {
+        return;
+    };
+    let result = continuation.upgrade().and_then(|access| {
+        access.with_session(|session| {
+            body(window.clone_strong(), session);
+            Ok(())
+        })
+    });
+    if let Err(error) = result {
+        window.set_message(error.into());
+    }
+}
+
 impl Controller {
+    #[cfg(test)]
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
+        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
+    }
+
+    pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
+        let continuation = access.downgrade();
         let window = ModelWindow::new()?;
         let target = Rc::new(Cell::new(None));
         let guide = Rc::new(Cell::new(None::<u64>));
         window.on_attachment_changed({
-            let (window, shared, target, guide) = (
+            let (window, continuation, target, guide) = (
                 window.as_weak(),
-                shared.clone(),
+                continuation.clone(),
                 target.clone(),
                 guide.clone(),
             );
             move || {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
-                refresh(&window, &session, target.get());
-                show_attachment(&window, &mut session, target.get(), &guide);
+                callback(&window, &continuation, |window, session| {
+                    refresh(&window, session, target.get());
+                    show_attachment(&window, session, target.get(), &guide);
+                })
             }
         });
         window.on_show_attachment({
-            let (window, shared, target, guide) = (
+            let (window, continuation, target, guide) = (
                 window.as_weak(),
-                shared.clone(),
+                continuation.clone(),
                 target.clone(),
                 guide.clone(),
             );
-            move || show_attachment(&window.unwrap(), &mut lock(&shared), target.get(), &guide)
+            move || {
+                callback(&window, &continuation, |window, session| {
+                    show_attachment(&window, session, target.get(), &guide)
+                })
+            }
         });
         window.on_frame_attachment({
-            let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
+            let (window, continuation, target) =
+                (window.as_weak(), continuation.clone(), target.clone());
             move || {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
-                let result = attachment_target(&session, target.get()).and_then(|id| {
-                    session.frame_model_attachment(
-                        Actor::User,
-                        id,
-                        window.get_attachment_index().max(0) as usize + 1,
-                        window.get_aspect(),
-                    )
-                });
-                if let Err(error) = result {
-                    window.set_message(error.into());
-                }
+                callback(&window, &continuation, |window, session| {
+                    let result = attachment_target(session, target.get()).and_then(|id| {
+                        session.frame_model_attachment(
+                            Actor::User,
+                            id,
+                            window.get_attachment_index().max(0) as usize + 1,
+                            window.get_aspect(),
+                        )
+                    });
+                    if let Err(error) = result {
+                        window.set_message(error.into());
+                    }
+                })
             }
         });
         window.on_reload({
-            let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
+            let (window, continuation, target) =
+                (window.as_weak(), continuation.clone(), target.clone());
             move || {
-                let mut session = lock(&shared);
-                let snap_preview_cancelled = session.refresh_model_assets(Actor::User);
-                let window = window.unwrap();
-                refresh(&window, &session, target.get());
-                if snap_preview_cancelled {
-                    window.set_message("Model assets reloaded; preview snap to grid again".into());
-                }
+                callback(&window, &continuation, |window, session| {
+                    let snap_preview_cancelled = session.refresh_model_assets(Actor::User);
+                    refresh(&window, session, target.get());
+                    if snap_preview_cancelled {
+                        window.set_message(
+                            "Model assets reloaded; preview snap to grid again".into(),
+                        );
+                    }
+                })
             }
         });
         window.on_cancel({
-            let (window, shared, guide) = (window.as_weak(), shared.clone(), guide.clone());
+            let (window, continuation, guide) =
+                (window.as_weak(), continuation.clone(), guide.clone());
             move || {
-                if let Some(token) = guide.take() {
-                    let _ = lock(&shared).clear_model_attachment(token);
-                }
-                window.unwrap().set_show_axes(false);
-                let _ = window.unwrap().hide();
+                let Some(local_window) = window.upgrade() else {
+                    return;
+                };
+                let token = guide.take();
+                callback(&window, &continuation, |_, session| {
+                    if let Some(token) = token {
+                        let _ = session.clear_model_attachment(token);
+                    }
+                });
+                local_window.set_show_axes(false);
+                let _ = local_window.hide();
             }
         });
         window.window().on_close_requested({
             let window = window.as_weak();
             move || {
-                window.unwrap().invoke_cancel();
+                if let Some(window) = window.upgrade() {
+                    window.invoke_cancel();
+                }
                 slint::CloseRequestResponse::HideWindow
             }
         });
@@ -324,6 +369,57 @@ mod tests {
     use slint::Model;
     use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn model_inspector_cancel_discards_local_guide_and_dropped_window_abandons_admission() {
+        i_slint_backend_testing::init_no_event_loop();
+        let directory = tempfile::tempdir().unwrap();
+        let mut session = Session::new(Err("no model assets required".into()));
+        session.configure_recovery(Ok(directory.path().join("recovery")));
+        let shared = Arc::new(Mutex::new(session));
+        let document = crate::test_assets::document(shared.clone());
+        let access = DocumentAccess::for_document(document.clone());
+        let controller = Controller::new_with_access(&access).unwrap();
+        let target = Some((123, lock(&shared).document_generation()));
+        controller.target.set(target);
+        controller.guide.set(Some(u64::MAX));
+        controller.window.set_show_axes(true);
+        document.shutdown().unwrap();
+        let before = {
+            let session = lock(&shared);
+            (
+                session.scene_serial(),
+                session.view_serial(),
+                session.history_snapshot(),
+                session.model_attachment_guide(),
+            )
+        };
+        controller.window.show().unwrap();
+        controller.window.invoke_cancel();
+        assert_eq!(controller.window.get_message(), "the document is closed");
+        assert_eq!(controller.guide.get(), None);
+        assert_eq!(controller.target.get(), target);
+        assert!(!controller.window.get_show_axes());
+        assert!(!controller.window.window().is_visible());
+        let session = lock(&shared);
+        assert_eq!(
+            (
+                session.scene_serial(),
+                session.view_serial(),
+                session.history_snapshot(),
+                session.model_attachment_guide()
+            ),
+            before
+        );
+        drop(session);
+        let window = controller.window.as_weak();
+        let continuation = access.downgrade();
+        drop(controller);
+        assert!(window.upgrade().is_none());
+        callback(&window, &continuation, |_, _| {
+            panic!("a vanished model window accessed Session")
+        });
+    }
 
     #[test]
     fn model_details_inspection_reload_and_cancel_preserve_the_source() {

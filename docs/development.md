@@ -2213,3 +2213,34 @@ editor selection and owned reviews.
 `tool_terrain_temporary_visibility_rebuilds_retained_lighting_counts_and_pixels`
 is an explicit GPU/MCP regression for retained reports across temporary Tool
 textures overrides; hidden tool terrain must report zero drawn triangles.
+
+### Instance authoring and reference contents
+
+```sh
+python3 -B scripts/validate_instance_authoring.py --binary target/debug/hammerr-headless --output /tmp/hammerr-instance-authoring-check
+python3 -B scripts/validate_instance_contents.py --binary target/debug/hammerr-headless --output /tmp/hammerr-instance-contents-check
+```
+
+Use fresh private directories. Authoring covers shared form ownership, exact
+raw fields, file/picker admission, one-step Create/Edit Undo, stale guards and
+metadata-only presence versus explicit full-content validation. Contents covers
+actual owner picks, frame bounds, default-off pixels, temporary visibility,
+Wireframe, diagnostics, stale dependency eviction and retained render reports.
+Neither script opens desktop windows or launches the game.
+
+Explicit offscreen regressions are
+`reference_gpu_preserves_disabled_pixels_wireframe_holes_and_ordinary_depth`
+and `instance_mcp_retains_uploaded_report_and_preflights_stale_geometry_before_cache_reuse`.
+The ordinary software UI suite drives the production desktop scene refresh,
+including dedicated reference revisions and unchanged root editing tokens.
+
+The real UI ownership regression uses a software window with an offscreen GPU
+adapter. Run it explicitly under the same eight-job, 24 GiB build wrapper:
+
+```sh
+cargo test -j8 -p editor --bin editor ui::ownership_tests::child_callbacks_work_then_release_ui_session_and_cached_resources -- --exact --ignored --test-threads=1
+```
+
+It checks live child callbacks, harmless callbacks after owner teardown and
+release of the UI, Session, child windows and cached assets. App/frame ownership
+and finite native-dialog lifetimes remain separate from these child callbacks.

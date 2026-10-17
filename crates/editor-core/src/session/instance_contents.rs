@@ -983,7 +983,9 @@ impl Session {
                 }
                 for indices in ready.mesh.indices
                     [brush.indices.start as usize..brush.indices.end as usize]
-                    .chunks_exact(3)
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
                 {
                     let positions = std::array::from_fn(|index| {
                         DVec3::from_array(

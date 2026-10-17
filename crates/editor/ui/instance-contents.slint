@@ -24,7 +24,10 @@ export component InstanceContentsWindow inherits Window {
     callback frame-contents();
     callback previous();
     callback next();
-    callback close();
+    callback close-dialog();
+    forward-focus: keys;
+    keys := FocusScope {
+      key-pressed(event) => { if event.text == Key.Escape { root.close-dialog(); accept } else { reject } }
     VerticalLayout {
         padding: 22px;
         spacing: 12px;
@@ -39,6 +42,7 @@ export component InstanceContentsWindow inherits Window {
             Button { text: "Frame instance contents"; enabled: root.can-frame; clicked => { root.frame-contents(); } }
         }
         ScrollView {
+            content-width: self.width;
             vertical-stretch: 1;
             VerticalLayout {
                 spacing: 12px;
@@ -54,6 +58,7 @@ export component InstanceContentsWindow inherits Window {
         }
         Text { text: "Flat reference geometry · root owner selection only\nNo child edits, material preview, nested instances or surface placement. Refresh after source changes."; color: #94a6ba; font-size: 12px; wrap: word-wrap; }
         if root.message != "": Text { text: root.message; color: #f0b377; wrap: word-wrap; }
-        Button { text: "Close"; clicked => { root.close(); } }
+        Button { text: "Close"; clicked => { root.close-dialog(); } }
+    }
     }
 }

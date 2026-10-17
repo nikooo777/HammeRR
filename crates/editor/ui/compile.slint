@@ -64,6 +64,7 @@ export component CompileWindow inherits Window {
     in property <string> launch-details;
     callback cancel-build();
     callback play-build();
+    callback inspect-baked-lightmaps();
     callback close-dialog();
     callback change-lighting(int);
     callback change-physics(int);
@@ -191,6 +192,76 @@ export component CompileWindow inherits Window {
             spacing: 8px;
             Button { text: "Cancel build"; enabled: root.cancellable; clicked => { root.cancel-build(); } }
             Button { text: "Play built map"; enabled: root.launch-ready; clicked => { root.play-build(); } }
+            Button { text: "Inspect baked lightmaps…"; clicked => { root.inspect-baked-lightmaps(); } }
+            Rectangle { horizontal-stretch: 1; }
+            Button { text: "Close"; clicked => { root.close-dialog(); } }
+        }
+    }
+}
+
+export component BakedLightmapsWindow inherits Window {
+    title: "Baked lightmaps - HammeRR";
+    width: 760px;
+    height: 900px;
+    in-out property <string> channel: "LDR";
+    in-out property <int> compiled-face;
+    in-out property <int> style-index;
+    in-out property <int> map-index;
+    in-out property <int> page-offset;
+    in property <string> build-state;
+    in property <string> channels;
+    in property <string> faces;
+    in property <string> selected;
+    in property <string> diagnostics;
+    in property <image> preview;
+    in property <bool> has-preview;
+    callback inspect-face();
+    callback query-changed();
+    callback close-dialog();
+    VerticalLayout {
+        padding: 24px;
+        spacing: 12px;
+        Text { text: "Baked BSP face lightmaps"; font-size: 24px; font-weight: 600; }
+        Text { text: root.build-state; wrap: word-wrap; color: #ffcb80; }
+        Text { text: root.channels; wrap: word-wrap; }
+        HorizontalLayout {
+            spacing: 8px;
+            Text { text: "Channel"; vertical-alignment: center; }
+            ComboBox { model: ["LDR", "HDR"]; current-value <=> root.channel; selected(value) => { root.query-changed(); } }
+            Text { text: "Compiled face"; vertical-alignment: center; }
+            SpinBox { minimum: 0; maximum: 65535; value <=> root.compiled-face; edited => { root.query-changed(); } }
+            Button { text: "Inspect face"; clicked => { root.inspect-face(); } }
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            Text { text: "Style index"; vertical-alignment: center; }
+            SpinBox { minimum: 0; maximum: 3; value <=> root.style-index; edited => { root.query-changed(); } }
+            Text { text: "Map index"; vertical-alignment: center; }
+            SpinBox { minimum: 0; maximum: 3; value <=> root.map-index; edited => { root.query-changed(); } }
+            Text { text: "0 = base · 1–3 = bump maps"; vertical-alignment: center; }
+        }
+        Text { text: "Indices identify the compiled BSP channel only. No authored VMF face correspondence is asserted."; wrap: word-wrap; color: #bac2ce; }
+        HorizontalLayout {
+            spacing: 12px;
+            Rectangle {
+                background: #11151d;
+                width: 220px;
+                height: 220px;
+                if root.has-preview: Image { source: root.preview; image-fit: contain; }
+                if !root.has-preview: Text { text: "No image"; color: #bac2ce; horizontal-alignment: center; vertical-alignment: center; }
+            }
+            TextEdit { text: root.selected; read-only: true; horizontal-stretch: 1; }
+        }
+        Text { text: "Image: per-channel Reinhard compression of intensity / 255, then gamma 1/2.2. Nearest sample reduction to ≤128 px. Linear statistics retain RGBExp32 intensity; this image does not reproduce game tone mapping."; wrap: word-wrap; color: #bac2ce; }
+        HorizontalLayout {
+            spacing: 8px;
+            Text { text: "Face page starts at"; vertical-alignment: center; }
+            SpinBox { minimum: 0; maximum: 65535; value <=> root.page-offset; edited => { root.query-changed(); } }
+            Text { text: "32 compiled faces per inspection"; vertical-alignment: center; }
+        }
+        TextEdit { text: root.faces; read-only: true; min-height: 130px; }
+        TextEdit { text: root.diagnostics; read-only: true; min-height: 70px; max-height: 110px; }
+        HorizontalLayout {
             Rectangle { horizontal-stretch: 1; }
             Button { text: "Close"; clicked => { root.close-dialog(); } }
         }

@@ -219,6 +219,18 @@ impl FileIdentity {
         Ok(())
     }
 
+    pub fn verify_bytes(&self, bytes: &[u8]) -> io::Result<()> {
+        let digest = format!("{:x}", Sha256::digest(bytes));
+        if self.sha256.as_deref() != Some(digest.as_str())
+            || self.stamp.as_ref().map(|stamp| stamp.length) != Some(bytes.len() as u64)
+        {
+            return Err(io::Error::other(
+                "Build file bytes differ from the expected content",
+            ));
+        }
+        Ok(())
+    }
+
     pub fn verify_metadata(&self) -> io::Result<()> {
         if canonical_destination(&self.requested)? != self.path {
             return Err(io::Error::other(

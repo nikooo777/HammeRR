@@ -24,6 +24,7 @@ struct Job {
     control: compiler::Control,
     path: PathBuf,
     source_path: Option<PathBuf>,
+    inspection_source: Result<Option<compiler::FileIdentity>, String>,
     snapshot: Snapshot,
     content_epoch: u64,
     native_runtime: Option<Value>,
@@ -487,11 +488,17 @@ impl Session {
                 (None, None)
             };
         self.compilation.serial += 1;
+        let inspection_source = self
+            .path
+            .as_ref()
+            .map(|path| baked_lightmaps::BuildIdentity::source(path, &control))
+            .transpose();
         self.compilation.job = Some(Job {
             token: self.compilation.serial,
             control: control.clone(),
             path: path.clone(),
             source_path:self.path.clone(),
+            inspection_source,
             content_epoch:self.content_epoch,
             native_runtime:environment.as_ref().map(|environment|serde_json::json!({"engine_root":environment.engine_root,"steam_root":environment.steam_root})),
             snapshot: Snapshot {
@@ -654,11 +661,23 @@ impl Session {
                 self.refresh_scene();
             }
             if result.published() {
+                let source = self
+                    .compilation
+                    .job
+                    .as_ref()
+                    .map(|job| job.inspection_source.clone())
+                    .unwrap_or_else(|| Err("Build source identity is unavailable".into()));
                 self.compiled = Some(CompiledMap {
                     path: result.path.clone(),
                     snapshot,
                     options: result.options,
                     content_epoch: result.content_epoch,
+                    lightmap_identity: baked_lightmaps::BuildIdentity::capture(
+                        result.token,
+                        &result.path,
+                        source,
+                        result.output.bsp.as_ref(),
+                    ),
                 });
             }
         }

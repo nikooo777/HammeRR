@@ -98,6 +98,7 @@ fn prepared_assets(
         },
         options: session.compilation.options,
         content_epoch: session.content_epoch,
+        lightmap_identity: baked_lightmaps::BuildIdentity::capture(0, &destination, Ok(None), None),
     });
     let result = CompileResult {
         token: request.token,

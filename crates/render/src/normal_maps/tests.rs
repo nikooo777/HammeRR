@@ -422,9 +422,11 @@ fn rendered_normal_maps_follow_signed_source_uv_and_preserve_disabled_diagnostic
         }
     }
     document
-        .edit("sample normal texel center", |tx| {
+        .edit("magnify 2x1 normal texel centers", |tx| {
             let id = tx.vmf().world.solids[0].id;
             for side in &mut tx.solid_mut(id)?.sides {
+                side.u_axis.scale = 64.0;
+                side.v_axis.scale = 32.0;
                 side.u_axis.offset = 0.25;
             }
             Ok(())
@@ -444,9 +446,12 @@ fn rendered_normal_maps_follow_signed_source_uv_and_preserve_disabled_diagnostic
         let active = mesh(&document, &fs, &mut materials, true);
         let pixels = render(&context, &mut renderer, &active, &materials, on);
         let center = (32 * 65 + 32) * 4;
+        let expected = expected_channel(expected);
         assert!(
-            pixels[center].abs_diff(expected_channel(expected)) <= 2,
-            "translation{translation}"
+            pixels[center].abs_diff(expected) <= 2,
+            "translation{translation}: actual RGBA {:?}, expected {:?}",
+            &pixels[center..center + 4],
+            [expected, expected, expected, 255],
         );
     }
 }

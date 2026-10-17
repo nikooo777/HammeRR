@@ -210,10 +210,10 @@ fn stale_dependencies_late_results_and_cancel_remove_pixels_hits_and_frame_targe
             assert!(finished.is_ok());
         }
         if mutation == "child_after_finish" {
-            let before = session.scene_serial();
+            let before = session.instance_contents_serial();
             std::fs::write(&child, b"changed dependency").unwrap();
             assert!(session.preflight_instance_contents());
-            assert!(session.scene_serial() > before);
+            assert!(session.instance_contents_serial() > before);
             assert!(!session.preflight_instance_contents());
         }
         let preview = session.instance_contents_preview(true);
@@ -305,9 +305,9 @@ fn context_and_working_region_preflight_track_contents_instead_of_marker_origin(
         "context_suppressed"
     );
     session.set_face_mode(false);
-    let before = session.scene_serial();
+    let before = session.instance_contents_serial();
     assert!(session.preflight_instance_contents());
-    assert!(session.scene_serial() > before);
+    assert!(session.instance_contents_serial() > before);
     assert!(session.instance_contents_preview(true).mesh.is_some());
 }
 
@@ -400,6 +400,189 @@ fn worker_spawn_failure_after_reopen_releases_only_its_expired_pending_slot() {
             .is_err()
     );
     assert_eq!(refresh(&mut session, Actor::Agent)["state"], "empty");
+}
+
+#[test]
+fn derived_layer_changes_preserve_fresh_owned_pivot_picks_and_genuine_stale_guards() {
+    for actor in [Actor::User, Actor::Agent] {
+        for initially_enabled in [false, true] {
+            let (_directory, mut session, _source, child, _owner) = opened(actor);
+            refresh(&mut session, actor);
+            let floor = ObjectId::Solid(session.document.vmf().world.solids[0].id);
+            session.select(&[floor], SelectMode::Replace).unwrap();
+            session.set_view(render::ViewOptions {
+                instance_contents: initially_enabled,
+                ..session.view()
+            });
+            let report = session
+                .begin_transform_pivot_pick(
+                    actor,
+                    session.camera(),
+                    (511, 511),
+                    &session.transform_pivot_pick_stamp(),
+                )
+                .unwrap();
+            let token = report.picking.unwrap().token;
+            let serials = (session.scene_serial(), session.view_serial());
+            let render_key = session.render_scene_key(session.view());
+            session.preflight_instance_contents();
+            assert_ne!(session.render_scene_key(session.view()), render_key);
+            session.build_scene();
+            assert_eq!((session.scene_serial(), session.view_serial()), serials);
+            session.set_view(render::ViewOptions {
+                instance_contents: !initially_enabled,
+                ..session.view()
+            });
+            assert_eq!((session.scene_serial(), session.view_serial()), serials);
+            let preview_token = session.inspect_instance_contents(0, 64).unwrap()["token"]
+                .as_u64()
+                .unwrap();
+            session
+                .clear_instance_contents(actor, preview_token)
+                .unwrap();
+            refresh(&mut session, actor);
+            std::fs::write(&child, b"changed child source").unwrap();
+            session.preflight_instance_contents();
+            session.build_scene();
+            assert_eq!((session.scene_serial(), session.view_serial()), serials);
+            assert!(session.transform_pivot_pick_state().picking.unwrap().valid);
+            let ray = Ray {
+                origin: DVec3::new(100.0, 100.0, 96.0),
+                direction: DVec3::NEG_Z,
+            };
+            let report = session.pick_transform_pivot_ray(actor, token, ray).unwrap();
+            assert_eq!(report.last_pick.unwrap().point, [100.0, 100.0, 0.0]);
+
+            for changed in ["camera", "view", "source"] {
+                let token = session
+                    .begin_transform_pivot_pick(
+                        actor,
+                        session.camera(),
+                        (511, 511),
+                        &session.transform_pivot_pick_stamp(),
+                    )
+                    .unwrap()
+                    .picking
+                    .unwrap()
+                    .token;
+                match changed {
+                    "camera" => {
+                        let camera = render::Camera::looking_at(
+                            glam::Vec3::new(180.0, -200.0, 160.0),
+                            glam::Vec3::ZERO,
+                        );
+                        session.set_camera(camera);
+                    }
+                    "view" => session.set_view(render::ViewOptions {
+                        tool_textures: !session.view().tool_textures,
+                        ..session.view()
+                    }),
+                    "source" => {
+                        session
+                            .edit(actor, "genuine root change", |tx| {
+                                tx.world_properties_mut().set("message", "changed");
+                                Ok(())
+                            })
+                            .unwrap();
+                    }
+                    _ => unreachable!(),
+                }
+                assert!(
+                    session.pick_transform_pivot_ray(actor, token, ray).is_err(),
+                    "{changed}"
+                );
+                let _ = session.cancel_transform_pivot_pick(actor, token);
+            }
+        }
+    }
+}
+
+#[test]
+fn suppressed_reference_refresh_preserves_transform_and_terrain_owned_previews() {
+    use glam::DVec2;
+    use map_core::surface::FaceId;
+    use render::handles::{Handle, Mode};
+    for actor in [Actor::User, Actor::Agent] {
+        let (_directory, mut session, _source, child, _owner) = opened(actor);
+        let floor = ObjectId::Solid(session.document.vmf().world.solids[0].id);
+        session.select(&[floor], SelectMode::Replace).unwrap();
+        refresh(&mut session, actor);
+        session
+            .set_transform_tool(
+                actor,
+                super::super::TransformTool {
+                    mode: Some(Mode::Move),
+                    ..session.transform_tool
+                },
+            )
+            .unwrap();
+        session.begin_transform_drag(Handle::X, None).unwrap();
+        session
+            .update_transform_drag(None, Some(DVec2::new(16.0, 0.0)))
+            .unwrap();
+        let serials = (session.scene_serial(), session.view_serial());
+        let preview = session.render_document().vmf().clone();
+        let request = session.begin_instance_contents_refresh(actor).unwrap();
+        session
+            .finish_instance_contents_refresh(actor, request.run())
+            .unwrap();
+        session.set_view(render::ViewOptions {
+            instance_contents: false,
+            ..session.view()
+        });
+        session.preflight_instance_contents();
+        session.build_scene();
+        assert_eq!((session.scene_serial(), session.view_serial()), serials);
+        assert!(session.transform_drag().is_some());
+        assert_eq!(session.render_document().vmf(), &preview);
+        session
+            .update_transform_drag(None, Some(DVec2::new(32.0, 0.0)))
+            .unwrap();
+        session.cancel_transform_preview();
+
+        let ObjectId::Solid(solid) = floor else {
+            unreachable!()
+        };
+        let side = session
+            .document
+            .solid(solid)
+            .unwrap()
+            .sides
+            .iter()
+            .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+            .unwrap()
+            .id;
+        let face = FaceId { solid, side };
+        session.create_terrain(actor, &[face], 2, 1).unwrap();
+        session.select_faces(&[face], SelectMode::Replace).unwrap();
+        let mask = session
+            .highlight_terrain_vertices(actor, &[(face, vec![7, 12])])
+            .unwrap();
+        refresh(&mut session, actor);
+        let token = session
+            .enable_terrain_move_handles(actor, &[face], mask)
+            .unwrap();
+        session
+            .begin_terrain_move_drag(token, Handle::Z, None)
+            .unwrap();
+        session
+            .update_terrain_move_drag(actor, token, None, Some(DVec2::new(16.0, 0.0)))
+            .unwrap();
+        let serials = (session.scene_serial(), session.view_serial());
+        let preview_token = session.face_preview_token();
+        let preview = session.render_document().vmf().clone();
+        refresh(&mut session, actor);
+        std::fs::write(&child, b"changed child source").unwrap();
+        session.preflight_instance_contents();
+        session.build_scene();
+        assert_eq!((session.scene_serial(), session.view_serial()), serials);
+        assert!(session.check_terrain_move_token(token).is_ok());
+        assert_eq!(session.face_preview_token(), preview_token);
+        assert_eq!(session.render_document().vmf(), &preview);
+        session
+            .update_terrain_move_drag(actor, token, None, Some(DVec2::new(32.0, 0.0)))
+            .unwrap();
+    }
 }
 
 #[test]

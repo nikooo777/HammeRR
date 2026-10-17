@@ -2534,7 +2534,7 @@ export component AppWindow inherits Window {
                     background: #000000a0;
 
                     hint := Text {
-                        text: root.clipping ? "Drag a plane handle · release keeps the preview · Apply cut changes the map · Esc cancels" : root.handles-mode-index == 5 ? "Drag to paint the sampled texture · release applies · Esc cancels" : root.handles-mode-index == 4 ? "Drag to paint visible hits · release selects · Ctrl toggles · Esc cancels" : root.handles-mode-index != 0 && !root.face-mode ? "Drag a handle · release applies · Esc cancels · drag elsewhere to select an area" : root.face-mode ? "Click or drag to select faces · Ctrl toggles · areas include faces through geometry" : "Click or drag to select · Ctrl toggles · right mouse navigates · F frames · Esc cancels";
+                        text: root.clipping ? "Drag a plane handle · release keeps the preview · Apply cut changes the map · Esc cancels" : root.handles-mode-index == 5 ? "Drag to paint the sampled texture · release applies · Esc cancels" : root.handles-mode-index == 4 ? "Drag to paint visible hits · release selects · Ctrl toggles · Esc cancels" : root.handles-mode-index != 0 && !root.face-mode ? "Drag a handle · release applies · Esc cancels · drag elsewhere to select an area" : root.face-mode ? "Click or drag to select faces · Ctrl toggles · areas include faces through geometry" : "Click or drag to select · Ctrl toggles · right mouse navigates" + (root.frame-shortcut == "" ? "" : " · " + root.frame-shortcut + " frames") + " · Esc cancels";
                         color: #c8ccd4;
                         font-size: 12px;
                     }

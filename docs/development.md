@@ -2642,6 +2642,7 @@ cargo test -p editor model_browser_ui::tests
 cargo test -p editor recent_maps_ui::tests
 cargo test -p editor recovery_ui::tests
 cargo test -p editor prefabs_ui::admission_tests
+cargo test -p editor material_source_ui::tests
 ```
 
 Publication cases exercise retained parent descriptors, source symlinks and
@@ -2671,6 +2672,8 @@ their exact draft/choice ownership and local dismissal after terminal drain.
 Recent Maps and Recovery cover complete retained actions, reviewed replacement,
 snapshot scheduling and terminal results. Prefab cases cover catalog writes,
 gallery rendering, shared-library peers and the owned Paste preview.
+Material-source cases also reject new reads and lazy window creation during
+drain, preserve the last report and allow a live peer to inspect its content.
 
 The optional GPU resource-release case uses software windows and an offscreen
 adapter, without desktop input:

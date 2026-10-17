@@ -38,6 +38,9 @@ shader parameters and conditional fallback blocks are not interpreted. Source
 inspection reads current files directly; cached previews retain their existing
 behavior and update through **Reload material assets**.
 
+When document shutdown begins, **Source…** and **Refresh source** reject new
+reads and preserve the last report. **Close** remains available.
+
 MCP exposes the same read-only report through `get_material_source` with a
 `material` path. Read, parse, include and decoding failures appear in the report's
 `error`; invalid input paths reject the call.

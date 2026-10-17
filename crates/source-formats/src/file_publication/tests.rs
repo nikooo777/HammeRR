@@ -146,6 +146,9 @@ fn absent_parent_that_appears_is_bound_to_its_opened_directory_before_staging() 
     let requested = root.path().join("nested/source.vmf");
     let destination = BoundDestination::capture(&requested, Policy::FollowSource).unwrap();
     fs::create_dir(root.path().join("nested")).unwrap();
+    let after_creation = BoundDestination::capture(&requested, Policy::ReplaceEntry).unwrap();
+    assert_eq!(destination.physical_path(), after_creation.physical_path());
+    assert_ne!(destination.claim_slots(), after_creation.claim_slots());
     let receipt = stage(&destination, b"source").commit().unwrap();
     assert!(receipt.warning.is_none());
     assert_eq!(
@@ -306,6 +309,27 @@ fn final_source_symlink_retarget_rejects_before_writing_either_target() {
     assert!(stage.commit().is_err());
     assert_eq!(fs::read(first).unwrap(), b"first");
     assert_eq!(fs::read(second).unwrap(), b"second");
+}
+
+#[test]
+fn final_source_link_retarget_after_verification_keeps_the_published_referent_claimed() {
+    let root = tempfile::tempdir().unwrap();
+    let first = root.path().join("first.vmf");
+    let second = root.path().join("second.vmf");
+    let alias = root.path().join("source.vmf");
+    fs::write(&first, b"first").unwrap();
+    fs::write(&second, b"second").unwrap();
+    symlink(&first, &alias).unwrap();
+    let destination = BoundDestination::capture(&alias, Policy::FollowSource).unwrap();
+    let receipt = stage(&destination, b"published")
+        .commit_with(|| retarget(&alias, &second), || {})
+        .unwrap();
+    assert!(receipt.warning.is_some());
+    assert_eq!(fs::read(&first).unwrap(), b"published");
+    assert_eq!(fs::read(&second).unwrap(), b"second");
+    let identity = FileIdentity::capture(&fs::metadata(&first).unwrap());
+    assert!(receipt.destination.file_identities().contains(&identity));
+    assert!(receipt.destination.stage().is_err());
 }
 
 #[test]

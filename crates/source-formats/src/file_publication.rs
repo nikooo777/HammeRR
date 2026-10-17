@@ -475,6 +475,12 @@ impl StagedFile {
                 let basename = path
                     .file_name()
                     .ok_or_else(|| io::Error::other("File staging basename is missing"))?;
+                if basename == destination.leaf {
+                    return Err(io::Error::new(
+                        io::ErrorKind::AlreadyExists,
+                        "Staging name matches the destination basename",
+                    ));
+                }
                 rustix::fs::openat(
                     destination.directory.handle()?,
                     basename,
@@ -598,10 +604,11 @@ impl Write for StagedFile {
 impl Drop for StagedFile {
     fn drop(&mut self) {
         #[cfg(target_os = "linux")]
-        if !self.committed && matches!(self.owned(), Ok(true)) {
-            if let Ok(parent) = self.destination.directory.handle() {
-                let _ = rustix::fs::unlinkat(parent, &self.basename, rustix::fs::AtFlags::empty());
-            }
+        if !self.committed
+            && matches!(self.owned(), Ok(true))
+            && let Ok(parent) = self.destination.directory.handle()
+        {
+            let _ = rustix::fs::unlinkat(parent, &self.basename, rustix::fs::AtFlags::empty());
         }
     }
 }
@@ -611,9 +618,6 @@ pub struct CommittedReceipt {
     pub destination: BoundDestination,
     pub warning: Option<String>,
 }
-
-#[cfg(all(test, target_os = "linux"))]
-mod tests;
 
 impl DirectoryBinding {
     pub fn requested(&self) -> &Path {
@@ -713,3 +717,6 @@ impl DirectoryBinding {
         same
     }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests;

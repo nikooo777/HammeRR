@@ -191,7 +191,7 @@ impl Controller {
                     let result = (|| {
                         let mut session = lock(shared);
                         let ids = validate(&session, &context, token.get())?;
-                        let requested = options(&window)?;
+                        let requested = options(window)?;
                         let snapshot = session.repeat_stamp();
                         let report = session.preview_repeat_array_in_space(
                             &ids,
@@ -226,7 +226,7 @@ impl Controller {
             move || {
                 with_window(&window, &target, |window, shared| {
                     let result = (|| {
-                        if prepared.get() != Some(options(&window)?) {
+                        if prepared.get() != Some(options(window)?) {
                             return Err("Preview changed settings before applying them".into());
                         }
                         let mut session = lock(shared);

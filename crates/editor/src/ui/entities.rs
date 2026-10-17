@@ -579,7 +579,7 @@ pub(super) fn show_connection_window(app: &AppWindow, ui: &SharedUi) {
                 return;
             }
         };
-        connection_ui::bind(&window, &shared);
+        connection_ui::bind_with_access(&window, &file_access(ui));
         ui.borrow_mut().connection_window = Some(window);
     }
     let window = ui
@@ -655,7 +655,7 @@ pub(super) fn show_report_window(app: &AppWindow, ui: &SharedUi) {
     if ui.borrow().report_window.is_none() {
         match ReportWindow::new() {
             Ok(window) => {
-                management_ui::bind_report(&window, &shared);
+                management_ui::bind_report_with_access(&window, &file_access(ui));
                 ui.borrow_mut().report_window = Some(window);
             }
             Err(error) => {
@@ -687,7 +687,7 @@ pub(super) fn show_rename_window(app: &AppWindow, ui: &SharedUi, name: Option<St
                 return;
             }
         };
-        rename_ui::bind(&window, &shared);
+        rename_ui::bind_with_access(&window, &file_access(ui));
         ui.borrow_mut().rename_window = Some(window);
     }
     let begin = if name.is_none()

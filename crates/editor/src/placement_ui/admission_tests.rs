@@ -368,7 +368,7 @@ fn managed_corner_placement_retains_the_exact_component_and_rejects_changed_sele
         let stamp = session.component_stamp();
         session
             .select_components(
-                &[component.clone()],
+                std::slice::from_ref(&component),
                 crate::session::SelectMode::Replace,
                 &stamp,
             )

@@ -164,7 +164,9 @@ fn managed_terrain_actions_keep_reviews_and_live_peer_across_drain_and_owner_rel
     target
         .access
         .with_session(|session| {
-            session.undo(Actor::User)?;
+            session
+                .undo(Actor::User)
+                .expect("applied terrain must be undoable");
             session.select_faces(&[target.face], SelectMode::Replace)?;
             session.highlight_terrain_vertices(Actor::User, &[(target.face, vec![12])])?;
             controller.initialize(session)

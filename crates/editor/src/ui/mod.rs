@@ -687,7 +687,7 @@ pub(super) fn run(
     root_callback!(app, ui, on_measurements, |app| {
         let mut ui = ui.borrow_mut();
         if ui.measurements.is_none() {
-            match measurements_ui::Controller::new(&ui.session) {
+            match measurements_ui::Controller::new_with_access(&ui.document_access()) {
                 Ok(controller) => ui.measurements = Some(controller),
                 Err(error) => {
                     app.unwrap().set_message(error.to_string().into());
@@ -974,7 +974,7 @@ pub(super) fn run(
         if ui.borrow().components_window.is_none() {
             match ComponentsWindow::new() {
                 Ok(window) => {
-                    components_ui::bind(&window, &session_of(&ui));
+                    components_ui::bind_with_access(&window, &file_access(&ui));
                     window.on_browse_partition_material({
                         let browse = material_browser(app.clone(), Rc::downgrade(&ui));
                         move || browse("@partition")
@@ -1063,7 +1063,7 @@ pub(super) fn run(
         if ui.borrow().checks_window.is_none() {
             match ChecksWindow::new() {
                 Ok(window) => {
-                    checks_ui::bind(&window, &session_of(&ui));
+                    checks_ui::bind_with_access(&window, &file_access(&ui));
                     ui.borrow_mut().checks_window = Some(window);
                 }
                 Err(error) => {
@@ -1084,7 +1084,7 @@ pub(super) fn run(
     root_callback!(app, ui, on_draw_polygon, |app| {
         let app = app.unwrap();
         if ui.borrow().polygon.is_none() {
-            match polygon_ui::Controller::new(&session_of(&ui)) {
+            match polygon_ui::Controller::new_with_access(&file_access(&ui)) {
                 Ok(controller) => {
                     controller.window.on_browse_material({
                         let browse = material_browser(app.as_weak(), Rc::downgrade(&ui));
@@ -1116,7 +1116,7 @@ pub(super) fn run(
         if ui.borrow().primitive_window.is_none() {
             match PrimitiveWindow::new() {
                 Ok(window) => {
-                    primitive_ui::bind(&window, &session_of(&ui));
+                    primitive_ui::bind_with_access(&window, &file_access(&ui));
                     window.on_browse_material({
                         let browse = material_browser(app.as_weak(), Rc::downgrade(&ui));
                         move || browse("@primitive")
@@ -1147,7 +1147,7 @@ pub(super) fn run(
         if ui.borrow().context_window.is_none() {
             match ContextWindow::new() {
                 Ok(window) => {
-                    context_ui::bind(&window, &session_of(&ui));
+                    context_ui::bind_with_access(&window, &file_access(&ui));
                     ui.borrow_mut().context_window = Some(window);
                 }
                 Err(error) => {
@@ -1200,7 +1200,7 @@ pub(super) fn run(
     root_callback!(app, ui, on_create_linked_path, |app| {
         let shared = session_of(&ui);
         if ui.borrow().linked_path.is_none() {
-            match linked_path_ui::Controller::new(&shared) {
+            match linked_path_ui::Controller::new_with_access(&file_access(&ui)) {
                 Ok(controller) => ui.borrow_mut().linked_path = Some(controller),
                 Err(error) => {
                     app.unwrap().set_message(error.to_string().into());
@@ -1221,7 +1221,7 @@ pub(super) fn run(
     root_callback!(app, ui, on_cubemap_faces, |app| {
         let shared = session_of(&ui);
         if ui.borrow().cubemap.is_none() {
-            match cubemap_ui::Controller::new(&shared) {
+            match cubemap_ui::Controller::new_with_access(&file_access(&ui)) {
                 Ok(controller) => ui.borrow_mut().cubemap = Some(controller),
                 Err(error) => {
                     app.unwrap().set_message(error.to_string().into());
@@ -1236,7 +1236,7 @@ pub(super) fn run(
     root_callback!(app, ui, on_create_overlay, |app| {
         let shared = session_of(&ui);
         if ui.borrow().overlay.is_none() {
-            match overlay_ui::Controller::new(&shared) {
+            match overlay_ui::Controller::new_with_access(&file_access(&ui)) {
                 Ok(controller) => {
                     controller.window.on_browse_material({
                         let browse = material_browser(app.clone(), Rc::downgrade(&ui));
@@ -1264,9 +1264,9 @@ pub(super) fn run(
         let shared = session_of(&ui);
         if ui.borrow().volume.is_none() {
             let viewport = app.clone();
-            match volume_ui::Controller::new(&shared, move || {
-                let app = viewport.unwrap();
-                (app.get_viewport_width() / app.get_viewport_height().max(1.0)).max(0.01)
+            match volume_ui::Controller::new_with_access(&file_access(&ui), move || {
+                let app = viewport.upgrade()?;
+                Some((app.get_viewport_width() / app.get_viewport_height().max(1.0)).max(0.01))
             }) {
                 Ok(controller) => ui.borrow_mut().volume = Some(controller),
                 Err(error) => {
@@ -1283,7 +1283,7 @@ pub(super) fn run(
     root_callback!(app, ui, on_map_face_group, |app| {
         let shared = session_of(&ui);
         if ui.borrow().surface_group.is_none() {
-            match surface_group_ui::Controller::new(&shared) {
+            match surface_group_ui::Controller::new_with_access(&file_access(&ui)) {
                 Ok(controller) => {
                     controller.window.on_browse({
                         let browse = material_browser(app.clone(), Rc::downgrade(&ui));
@@ -1356,7 +1356,7 @@ pub(super) fn run(
     root_callback!(app, ui, on_change_terrain_resolution, |app| {
         let shared = session_of(&ui);
         if ui.borrow().terrain.is_none() {
-            match terrain_ui::Controller::new(&shared) {
+            match terrain_ui::Controller::new_with_access(&file_access(&ui)) {
                 Ok(controller) => ui.borrow_mut().terrain = Some(controller),
                 Err(error) => {
                     app.unwrap().set_message(error.to_string().into());
@@ -1382,7 +1382,7 @@ pub(super) fn run(
     root_callback!(app, ui, on_edit_terrain_triangles, |app| {
         let shared = session_of(&ui);
         if ui.borrow().terrain_triangles.is_none() {
-            match terrain_triangles_ui::Controller::new(&shared) {
+            match terrain_triangles_ui::Controller::new_with_access(&file_access(&ui)) {
                 Ok(controller) => ui.borrow_mut().terrain_triangles = Some(controller),
                 Err(error) => {
                     app.unwrap().set_message(error.to_string().into());
@@ -1483,7 +1483,7 @@ pub(super) fn run(
     root_callback!(app, ui, on_repeat_array, |app| {
         let shared = session_of(&ui);
         if ui.borrow().repeat.is_none() {
-            match repeat_ui::Controller::new(&shared) {
+            match repeat_ui::Controller::new_with_access(&file_access(&ui)) {
                 Ok(controller) => ui.borrow_mut().repeat = Some(controller),
                 Err(error) => {
                     app.unwrap().set_message(error.to_string().into());
@@ -1541,9 +1541,9 @@ pub(super) fn run(
         let shared = session_of(&ui);
         if ui.borrow().compile_region.is_none() {
             let viewport = app.clone();
-            match compile_region_ui::Controller::new(&shared, move || {
-                let app = viewport.unwrap();
-                (app.get_viewport_width() / app.get_viewport_height().max(1.0)).max(0.01)
+            match compile_region_ui::Controller::new_with_access(&file_access(&ui), move || {
+                let app = viewport.upgrade()?;
+                Some((app.get_viewport_width() / app.get_viewport_height().max(1.0)).max(0.01))
             }) {
                 Ok(controller) => ui.borrow_mut().compile_region = Some(controller),
                 Err(error) => {
@@ -1590,7 +1590,7 @@ pub(super) fn run(
     root_callback!(app, ui, on_place_on_surface, |app| {
         let shared = session_of(&ui);
         if ui.borrow().placement.is_none() {
-            match placement_ui::Controller::new(&shared) {
+            match placement_ui::Controller::new_with_access(&file_access(&ui)) {
                 Ok(controller) => ui.borrow_mut().placement = Some(controller),
                 Err(error) => {
                     app.unwrap().set_message(error.to_string().into());
@@ -1949,7 +1949,7 @@ pub(super) fn run(
                 if down {
                     ui.pick_release = true;
                     if ui.measurements.is_none() {
-                        match measurements_ui::Controller::new(&ui.session) {
+                        match measurements_ui::Controller::new_with_access(&ui.document_access()) {
                             Ok(controller) => ui.measurements = Some(controller),
                             Err(error) => {
                                 app.set_message(error.to_string().into());
@@ -1991,7 +1991,7 @@ pub(super) fn run(
                 if down {
                     ui.pick_release = true;
                     if ui.entity_placement.is_none() {
-                        match entity_placement_ui::Controller::new(&ui.session) {
+                        match entity_placement_ui::Controller::new_with_access(&ui.document_access()) {
                             Ok(controller) => ui.entity_placement = Some(controller),
                             Err(error) => {
                                 app.set_message(error.to_string().into());
@@ -2039,7 +2039,7 @@ pub(super) fn run(
                 if down {
                     ui.pick_release = true;
                     if ui.placement.is_none() {
-                        match placement_ui::Controller::new(&ui.session) {
+                        match placement_ui::Controller::new_with_access(&ui.document_access()) {
                             Ok(controller) => ui.placement = Some(controller),
                             Err(error) => {
                                 app.set_message(error.to_string().into());

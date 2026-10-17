@@ -184,7 +184,7 @@ impl Controller {
             move |x, y| {
                 with_window(&window, &target, |window, shared| {
                     let result = (|| {
-                        let (center, span) = view(&window)?;
+                        let (center, span) = view(window)?;
                         if points.borrow().len() >= map_core::polygon::MAX_CORNERS {
                             return Err("Polygon supports at most 64 corners".into());
                         }

@@ -1583,7 +1583,7 @@ pub fn bind_with_access(window: &ComponentsWindow, access: &DocumentAccess) {
             with_window(&window, &target, |window, shared| {
                 let mut session = lock(shared);
                 let target = partition_material_target(&session);
-                let result = texture_inputs(&window).and_then(|texture| {
+                let result = texture_inputs(window).and_then(|texture| {
                     choose_partition_texture(window, &mut session, &target, Some(texture))
                 });
                 if let Err(error) = result {
@@ -1970,7 +1970,7 @@ pub fn bind_with_access(window: &ComponentsWindow, access: &DocumentAccess) {
         move || {
             with_window(&window, &target, |window, shared| {
                 let mut session = lock(shared);
-                let result = cut_inputs(&window).and_then(|parameters| {
+                let result = cut_inputs(window).and_then(|parameters| {
                     session.update_component_partition_cut(
                         window
                             .get_token()

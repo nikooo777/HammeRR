@@ -183,7 +183,9 @@ fn managed_triangle_actions_keep_selection_and_live_peer_through_drain_and_owner
     target
         .access
         .with_session(|session| {
-            session.undo(Actor::User)?;
+            session
+                .undo(Actor::User)
+                .expect("applied triangle edit must be undoable");
             session.select_faces(&[target.face], SelectMode::Replace)?;
             controller.initialize(session)
         })

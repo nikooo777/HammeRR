@@ -5,7 +5,7 @@ use editor_core::session::atlas_texturing::Rectangle;
 use serde_json::Value;
 use slint::ComponentHandle;
 
-use crate::runtime::{SharedSession, lock};
+use crate::runtime::{DocumentAccess, DocumentContinuation, SharedSession, lock};
 use crate::session::{Actor, Session};
 use crate::{AtlasWindow, face_edit_ui};
 
@@ -161,101 +161,146 @@ fn apply(window: &AtlasWindow, target: &mut Target, session: &mut Session) -> Re
     session.commit_face_preview(Actor::User)?;
     target.token = None;
     target.reviewed = None;
-    let _ = window.hide();
     Ok(())
 }
 
-fn cancel(window: &AtlasWindow, target: &RefCell<Option<Target>>, shared: &SharedSession) {
-    if let Some(target) = target.borrow_mut().as_mut() {
-        target.cancel(&mut lock(shared));
+fn with_window<R>(
+    window: &slint::Weak<AtlasWindow>,
+    access: &DocumentContinuation,
+    body: impl FnOnce(&AtlasWindow, &SharedSession) -> R,
+) -> Option<R> {
+    let window = window.upgrade()?;
+    let result = access
+        .upgrade()
+        .and_then(|access| access.with_shared(|shared| Ok(body(&window, shared))));
+    match result {
+        Ok(result) => Some(result),
+        Err(error) => {
+            window.set_message(error.into());
+            None
+        }
     }
-    let _ = window.hide();
 }
 
 impl Controller {
+    #[cfg(test)]
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
+        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
+    }
+
+    pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let window = AtlasWindow::new()?;
         let target = Rc::new(RefCell::new(None::<Target>));
         window.on_inspect_material({
-            let (window, target, shared) = (window.as_weak(), target.clone(), shared.clone());
+            let (window, target, access) = (window.as_weak(), target.clone(), access.downgrade());
             move || {
-                let window = window.unwrap();
-                if let Some(target) = target.borrow_mut().as_mut() {
-                    let result = inspect(&window, target, &mut lock(&shared));
-                    window.set_message(match result {
-                        Ok(()) => "Enter a rectangle, then Preview atlas fit.".into(),
-                        Err(error) => {
-                            window.set_loaded(false);
-                            window.set_ready(false);
-                            window.set_preview(slint::Image::default());
-                            error.into()
-                        }
-                    });
-                }
+                with_window(&window, &access, |window, shared| {
+                    if let Some(target) = target.borrow_mut().as_mut() {
+                        let result = inspect(window, target, &mut lock(shared));
+                        window.set_message(match result {
+                            Ok(()) => "Enter a rectangle, then Preview atlas fit.".into(),
+                            Err(error) => {
+                                window.set_loaded(false);
+                                window.set_ready(false);
+                                window.set_preview(slint::Image::default());
+                                error.into()
+                            }
+                        });
+                    }
+                });
             }
         });
         window.on_preview_fit({
-            let (window, target, shared) = (window.as_weak(), target.clone(), shared.clone());
+            let (window, target, access) = (window.as_weak(), target.clone(), access.downgrade());
             move || {
-                let window = window.unwrap();
-                if let Some(target) = target.borrow_mut().as_mut() {
-                    let result = preview(&window, target, &mut lock(&shared));
-                    if let Err(error) = result {
-                        window.set_ready(false);
-                        window.set_message(error.into());
+                with_window(&window, &access, |window, shared| {
+                    if let Some(target) = target.borrow_mut().as_mut() {
+                        let result = preview(window, target, &mut lock(shared));
+                        if let Err(error) = result {
+                            window.set_ready(false);
+                            window.set_message(error.into());
+                        }
                     }
-                }
+                });
             }
         });
         window.on_apply_fit({
-            let (window, target, shared) = (window.as_weak(), target.clone(), shared.clone());
+            let (window, target, access) = (window.as_weak(), target.clone(), access.downgrade());
             move || {
-                let window = window.unwrap();
-                if let Some(target) = target.borrow_mut().as_mut() {
-                    let result = apply(&window, target, &mut lock(&shared));
-                    if let Err(error) = result {
-                        window.set_ready(false);
-                        window.set_message(error.into());
+                with_window(&window, &access, |window, shared| {
+                    let result = target
+                        .borrow_mut()
+                        .as_mut()
+                        .map(|target| apply(window, target, &mut lock(shared)));
+                    match result {
+                        Some(Ok(())) => {
+                            let _ = window.hide();
+                        }
+                        Some(Err(error)) => {
+                            window.set_ready(false);
+                            window.set_message(error.into());
+                        }
+                        None => {}
                     }
-                }
+                });
             }
         });
         window.on_edited({
-            let (window, target) = (window.as_weak(), target.clone());
+            let (window, target, access) = (window.as_weak(), target.clone(), access.downgrade());
             move || {
-                let window = window.unwrap();
-                window.set_ready(false);
-                let same_material = target
-                    .borrow()
-                    .as_ref()
-                    .and_then(|target| target.atlas.as_ref())
-                    .is_some_and(|atlas| {
-                        atlas["material"].as_str() == Some(window.get_material().as_str())
-                    });
-                if !same_material {
-                    window.set_loaded(false);
-                    window.set_preview(slint::Image::default());
-                }
-                show_rectangle(&window);
-                window
-                    .set_message("Fields changed. Preview atlas fit again before applying.".into());
+                with_window(&window, &access, |window, _| {
+                    window.set_ready(false);
+                    let same_material = target
+                        .borrow()
+                        .as_ref()
+                        .and_then(|target| target.atlas.as_ref())
+                        .is_some_and(|atlas| {
+                            atlas["material"].as_str() == Some(window.get_material().as_str())
+                        });
+                    if !same_material {
+                        window.set_loaded(false);
+                        window.set_preview(slint::Image::default());
+                    }
+                    show_rectangle(window);
+                    window.set_message(
+                        "Fields changed. Preview atlas fit again before applying.".into(),
+                    );
+                });
             }
         });
         window.on_cancel({
-            let (window, target, shared) = (window.as_weak(), target.clone(), shared.clone());
-            move || cancel(&window.unwrap(), &target, &shared)
+            let (window, target, access) = (window.as_weak(), target.clone(), access.downgrade());
+            move || {
+                let Some(window) = window.upgrade() else {
+                    return;
+                };
+                with_window(&window.as_weak(), &access, |_, shared| {
+                    if let Some(target) = target.borrow_mut().as_mut() {
+                        target.cancel(&mut lock(shared));
+                    }
+                });
+                let _ = window.hide();
+            }
         });
         window.window().on_close_requested({
-            let (window, target, shared) = (window.as_weak(), target.clone(), shared.clone());
+            let window = window.as_weak();
             move || {
-                cancel(&window.unwrap(), &target, &shared);
+                if let Some(window) = window.upgrade() {
+                    window.invoke_cancel();
+                }
                 slint::CloseRequestResponse::HideWindow
             }
         });
         Ok(Self { window, target })
     }
 
+    #[cfg(test)]
     pub fn show(&self, session: &mut Session, material: &str) -> Result<(), String> {
+        self.initialize(session, material)?;
+        self.window.show().map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn initialize(&self, session: &mut Session, material: &str) -> Result<(), String> {
         let faces = session.selected_faces();
         if faces.is_empty() {
             return Err("Select flat brush faces before fitting an atlas region".into());
@@ -290,7 +335,7 @@ impl Controller {
                 Err(error) => error.into(),
             });
         *self.target.borrow_mut() = Some(target);
-        self.window.show().map_err(|error| error.to_string())
+        Ok(())
     }
 
     pub fn choose_material(&self, session: &mut Session, material: &str) {
@@ -346,3 +391,6 @@ impl Controller {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod admission_tests;

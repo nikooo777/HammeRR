@@ -529,9 +529,110 @@ pub(super) fn material_browser(app: slint::Weak<AppWindow>, ui: WeakUi) -> impl 
     }
 }
 
+type SurfaceTarget = (Vec<map_core::surface::FaceId>, u64, u64);
+
+fn with_surface_window<R>(
+    window: &slint::Weak<SurfaceWindow>,
+    access: &DocumentContinuation,
+    body: impl FnOnce(&SurfaceWindow, &SharedSession) -> R,
+) -> Option<R> {
+    let window = window.upgrade()?;
+    let result = access
+        .upgrade()
+        .and_then(|access| access.with_shared(|shared| Ok(body(&window, shared))));
+    match result {
+        Ok(result) => Some(result),
+        Err(error) => {
+            window.set_message(error.into());
+            None
+        }
+    }
+}
+
+fn bind_surface_edits_with_access(
+    window: &SurfaceWindow,
+    access: &DocumentAccess,
+    alive: impl Fn() -> bool + 'static,
+    target: impl Fn() -> Option<SurfaceTarget> + 'static,
+) {
+    let alive: Rc<dyn Fn() -> bool> = Rc::new(alive);
+    let target: Rc<dyn Fn() -> Option<SurfaceTarget>> = Rc::new(target);
+    window.on_preview_edit({
+        let (window, access, alive, target) = (
+            window.as_weak(),
+            access.downgrade(),
+            alive.clone(),
+            target.clone(),
+        );
+        move || {
+            let Some(window) = window.upgrade() else {
+                return;
+            };
+            if !alive() {
+                return;
+            }
+            with_surface_window(&window.as_weak(), &access, |window, shared| {
+                if let Some(target) = target() {
+                    let result = apply_surface_dialog(window, &mut lock(shared), &target, true);
+                    window.set_message(match result {
+                        Ok(_) => "Preview shown in the viewport. Apply to keep it.".into(),
+                        Err(error) => error.into(),
+                    });
+                }
+            });
+        }
+    });
+    window.on_apply({
+        let (window, access, alive, target) =
+            (window.as_weak(), access.downgrade(), alive.clone(), target);
+        move || {
+            let Some(window) = window.upgrade() else {
+                return;
+            };
+            if !alive() {
+                return;
+            }
+            with_surface_window(&window.as_weak(), &access, |window, shared| {
+                if let Some(target) = target() {
+                    let result = apply_surface_dialog(window, &mut lock(shared), &target, false);
+                    match result {
+                        Ok(_) => {
+                            let _ = window.hide();
+                        }
+                        Err(error) => window.set_message(error.into()),
+                    }
+                }
+            });
+        }
+    });
+    window.on_cancel({
+        let (window, access) = (window.as_weak(), access.downgrade());
+        move || {
+            let Some(window) = window.upgrade() else {
+                return;
+            };
+            if alive() {
+                with_surface_window(&window.as_weak(), &access, |window, shared| {
+                    cancel_surface_dialog(window, &mut lock(shared));
+                });
+            }
+            let _ = window.hide();
+        }
+    });
+    window.window().on_close_requested({
+        let window = window.as_weak();
+        move || {
+            if let Some(window) = window.upgrade() {
+                window.invoke_cancel();
+            }
+            slint::CloseRequestResponse::HideWindow
+        }
+    });
+}
+
 fn show_atlas_window(app: &AppWindow, ui: &SharedUi, material: &str) {
     if ui.borrow().atlas.is_none() {
-        let controller = match atlas_ui::Controller::new(&session_of(ui)) {
+        let controller = match atlas_ui::Controller::new_with_access(&file_access(ui)) {
             Ok(controller) => controller,
             Err(error) => {
                 app.set_message(error.to_string().into());
@@ -539,14 +640,40 @@ fn show_atlas_window(app: &AppWindow, ui: &SharedUi, material: &str) {
             }
         };
         controller.window.on_browse({
-            let browse = material_browser(app.as_weak(), Rc::downgrade(ui));
-            move || browse("@atlas")
+            let (window, app, owner, access) = (
+                controller.window.as_weak(),
+                app.as_weak(),
+                Rc::downgrade(ui),
+                file_access(ui).downgrade(),
+            );
+            move || {
+                let (Some(_window), Some(app), Some(ui)) =
+                    (window.upgrade(), app.upgrade(), owner.upgrade())
+                else {
+                    return;
+                };
+                let result = access.upgrade().and_then(|access| {
+                    access.with_shared(|_| {
+                        show_material_window(&app, &ui, "@atlas");
+                        Ok(())
+                    })
+                });
+                if let Err(error) = result {
+                    app.set_message(error.into());
+                }
+            }
         });
         ui.borrow_mut().atlas = Some(controller);
     }
     let shared = session_of(ui);
-    if let Some(controller) = &ui.borrow().atlas {
-        let result = controller.show(&mut lock(&shared), material);
+    let initialized = ui.borrow().atlas.as_ref().map(|controller| {
+        (
+            controller.initialize(&mut lock(&shared), material),
+            controller.window.clone_strong(),
+        )
+    });
+    if let Some((result, window)) = initialized {
+        let result = result.and_then(|()| window.show().map_err(|error| error.to_string()));
         if let Err(error) = result {
             app.set_message(error.into());
         }
@@ -562,74 +689,51 @@ pub(super) fn show_surface_window(app: &AppWindow, ui: &SharedUi) {
                 return;
             }
         };
-        window.on_cancel({
-            let (window, ui) = (window.as_weak(), Rc::downgrade(ui));
-            move || {
-                let (Some(window), Some(ui)) = (window.upgrade(), ui.upgrade()) else {
-                    return;
-                };
-                cancel_surface_dialog(&window, &mut lock(&session_of(&ui)));
-                let _ = window.hide();
-            }
-        });
-        window.window().on_close_requested({
-            let (window, ui) = (window.as_weak(), Rc::downgrade(ui));
-            move || {
-                let (Some(window), Some(ui)) = (window.upgrade(), ui.upgrade()) else {
-                    return slint::CloseRequestResponse::HideWindow;
-                };
-                cancel_surface_dialog(&window, &mut lock(&session_of(&ui)));
-                slint::CloseRequestResponse::HideWindow
-            }
-        });
+        let access = file_access(ui);
+        let owner = Rc::downgrade(ui);
+        bind_surface_edits_with_access(
+            &window,
+            &access,
+            {
+                let owner = owner.clone();
+                move || owner.upgrade().is_some()
+            },
+            move || owner.upgrade()?.borrow().surface_target.clone(),
+        );
         window.on_browse({
-            let browse = material_browser(app.as_weak(), Rc::downgrade(ui));
-            move || browse("@faces")
-        });
-        window.on_fit_atlas({
-            let (app, ui, window) = (app.as_weak(), Rc::downgrade(ui), window.as_weak());
+            let (window, app, owner, access) = (
+                window.as_weak(),
+                app.as_weak(),
+                Rc::downgrade(ui),
+                access.downgrade(),
+            );
             move || {
-                let (Some(app), Some(ui), Some(window)) =
-                    (app.upgrade(), ui.upgrade(), window.upgrade())
+                let (Some(window), Some(app), Some(ui)) =
+                    (window.upgrade(), app.upgrade(), owner.upgrade())
                 else {
                     return;
                 };
-                show_atlas_window(&app, &ui, &window.get_material());
+                with_surface_window(&window.as_weak(), &access, |_, _| {
+                    show_material_window(&app, &ui, "@faces")
+                });
             }
         });
-        window.on_preview_edit({
-            let (window, ui) = (window.as_weak(), Rc::downgrade(ui));
+        window.on_fit_atlas({
+            let (window, app, owner, access) = (
+                window.as_weak(),
+                app.as_weak(),
+                Rc::downgrade(ui),
+                access.downgrade(),
+            );
             move || {
-                let (Some(window), Some(ui)) = (window.upgrade(), ui.upgrade()) else {
+                let (Some(window), Some(app), Some(ui)) =
+                    (window.upgrade(), app.upgrade(), owner.upgrade())
+                else {
                     return;
                 };
-                let target = ui.borrow().surface_target.clone();
-                if let Some(target) = target {
-                    let result =
-                        apply_surface_dialog(&window, &mut lock(&session_of(&ui)), &target, true);
-                    window.set_message(match result {
-                        Ok(_) => "Preview shown in the viewport. Apply to keep it.".into(),
-                        Err(error) => error.into(),
-                    });
-                }
-            }
-        });
-        window.on_apply({
-            let (window, ui) = (window.as_weak(), Rc::downgrade(ui));
-            move || {
-                let (Some(window), Some(ui)) = (window.upgrade(), ui.upgrade()) else {
-                    return;
-                };
-                let target = ui.borrow().surface_target.clone();
-                if let Some(target) = target {
-                    match apply_surface_dialog(&window, &mut lock(&session_of(&ui)), &target, false)
-                    {
-                        Ok(_) => {
-                            let _ = window.hide();
-                        }
-                        Err(error) => window.set_message(error.into()),
-                    }
-                }
+                with_surface_window(&window.as_weak(), &access, |window, _| {
+                    show_atlas_window(&app, &ui, &window.get_material())
+                });
             }
         });
         ui.borrow_mut().surface_window = Some(window);
@@ -1342,3 +1446,7 @@ mod favorites_tests;
 #[cfg(test)]
 #[path = "materials_admission_tests.rs"]
 mod admission_tests;
+
+#[cfg(test)]
+#[path = "surface_admission_tests.rs"]
+mod surface_admission_tests;

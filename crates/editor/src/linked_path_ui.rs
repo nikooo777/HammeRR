@@ -7,9 +7,12 @@ use glam::DVec3;
 use serde_json::Value;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
+#[cfg(test)]
+use crate::runtime::{SharedSession, lock};
+
 use crate::{
     LinkedPathPoint, LinkedPathWindow,
-    runtime::{SharedSession, lock},
+    runtime::{DocumentAccess, DocumentContinuation},
     session::{
         Actor, Session,
         linked_path::{ChangeRequest, EditNode, MAX_POINTS, MIN_POINTS, Request},
@@ -307,8 +310,32 @@ fn cancel_position_pick(
     Ok(())
 }
 
+fn with_session<R>(
+    window: &slint::Weak<LinkedPathWindow>,
+    access: &DocumentContinuation,
+    body: impl FnOnce(&LinkedPathWindow, &mut Session) -> R,
+) -> Option<R> {
+    let window = window.upgrade()?;
+    match access
+        .upgrade()
+        .and_then(|access| access.with_session(|session| Ok(body(&window, session))))
+    {
+        Ok(result) => Some(result),
+        Err(error) => {
+            window.set_message(error.into());
+            None
+        }
+    }
+}
+
 impl Controller {
+    #[cfg(test)]
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
+        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
+    }
+
+    pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
+        let access = access.downgrade();
         let window = LinkedPathWindow::new()?;
         let viewport = Rc::new(Cell::new((1, 1)));
         window
@@ -316,99 +343,122 @@ impl Controller {
             .set_size(slint::LogicalSize::new(840.0, 700.0));
         let form = Rc::new(RefCell::new(Form::default()));
         window.on_pick_position({
-            let (window,shared,form,viewport) = (window.as_weak(),shared.clone(),form.clone(),viewport.clone());
+            let (window, access, form, viewport) = (
+                window.as_weak(),
+                access.clone(),
+                form.clone(),
+                viewport.clone(),
+            );
             move |row| {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
-                let result = (|| {
-                    refresh(&window,&session,&form);
-                    if !window.get_ready() || row < 0 { return Err("Preview and review the current values before picking a position".into()); }
-                    let token = form.borrow().owned_token.ok_or("Review the path first")?;
-                    let camera = session.camera();
-                    let stamp = session.linked_path_pick_stamp();
-                    let state = session.begin_linked_path_pick(Actor::User,token,row as usize,camera,viewport.get(),&stamp)?;
-                    adopt_preview(&window,&state,&form)?;
-                    refresh(&window,&session,&form);
-                    window.set_message("Click a visible surface to update this preview row. Escape cancels picking. Apply is still required.".into());
-                    let _ = window.hide();
-                    Ok::<_,String>(())
-                })();
-                if let Err(error) = result { window.set_message(error.into()); }
+                with_session(&window, &access, |window, session| {
+                    let result = (|| {
+                        refresh(window, session, &form);
+                        if !window.get_ready() || row < 0 {
+                            return Err("Preview and review the current values before picking a position".into());
+                        }
+                        let token = form.borrow().owned_token.ok_or("Review the path first")?;
+                        let camera = session.camera();
+                        let stamp = session.linked_path_pick_stamp();
+                        let state = session.begin_linked_path_pick(
+                            Actor::User,
+                            token,
+                            row as usize,
+                            camera,
+                            viewport.get(),
+                            &stamp,
+                        )?;
+                        adopt_preview(window, &state, &form)?;
+                        refresh(window, session, &form);
+                        window.set_message("Click a visible surface to update this preview row. Escape cancels picking. Apply is still required.".into());
+                        let _ = window.hide();
+                        Ok::<_, String>(())
+                    })();
+                    if let Err(error) = result {
+                        window.set_message(error.into());
+                    }
+                });
             }
         });
         window.on_cancel_pick({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, access, form) = (window.as_weak(), access.clone(), form.clone());
             move || {
-                let window = window.unwrap();
-                if let Err(error) = cancel_position_pick(&window, &mut lock(&shared), &form) {
-                    window.set_message(error.into());
-                }
+                with_session(&window, &access, |window, session| {
+                    if let Err(error) = cancel_position_pick(window, session, &form) {
+                        window.set_message(error.into());
+                    }
+                });
             }
         });
         window.on_load_selected({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, access, form) = (window.as_weak(), access.clone(), form.clone());
             move || {
-                let window = window.unwrap();
-                let session = lock(&shared);
-                let result = (|| {
-                    if form.borrow().generation != session.document_generation() {
-                        return Err("Map changed; reopen Create linked path…".into());
+                with_session(&window, &access, |window, session| {
+                    let result = (|| {
+                        if form.borrow().generation != session.document_generation() {
+                            return Err("Map changed; reopen Create linked path…".into());
+                        }
+                        let selected = session.selected_ids();
+                        let [map_core::ObjectId::Entity(id)] = selected.as_slice() else {
+                            return Err("Select one existing path_corner or path_track node".into());
+                        };
+                        let state = session.inspect_existing_linked_path(*id)?;
+                        load_preview(window, &state)?;
+                        form.borrow_mut().existing_seed = preview_seed(&state)?;
+                        form.borrow_mut().existing_snapshot = state["snapshot"].as_str().map(str::to_owned);
+                        form.borrow_mut().dirty = true;
+                        window.set_message("Add, remove or move rows, then Preview. Retained names, class and open/closed topology stay fixed. Referenced nodes and connections cannot be removed.".into());
+                        Ok::<_, String>(())
+                    })();
+                    if let Err(error) = result {
+                        window.set_message(error.into());
                     }
-                    let selected = session.selected_ids();
-                    let [map_core::ObjectId::Entity(id)] = selected.as_slice() else {
-                        return Err("Select one existing path_corner or path_track node".into());
-                    };
-                    let state = session.inspect_existing_linked_path(*id)?;
-                    load_preview(&window, &state)?;
-                    form.borrow_mut().existing_seed = preview_seed(&state)?;
-                    form.borrow_mut().existing_snapshot = state["snapshot"].as_str().map(str::to_owned);
-                    form.borrow_mut().dirty = true;
-                    window.set_message("Add, remove or move rows, then Preview. Retained names, class and open/closed topology stay fixed. Referenced nodes and connections cannot be removed.".into());
-                    Ok::<_, String>(())
-                })();
-                if let Err(error) = result { window.set_message(error.into()); }
-                refresh(&window, &session, &form);
+                    refresh(window, session, &form);
+                });
             }
         });
         window.on_new_path({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, access, form) = (window.as_weak(), access.clone(), form.clone());
             move || {
-                let window = window.unwrap();
-                window.set_existing(false);
-                window.set_prefix("path".into());
-                window.set_closed(false);
-                let rows = window
-                    .get_points()
-                    .iter()
-                    .enumerate()
-                    .map(|(index, mut row)| {
-                        row.id = Default::default();
-                        row.name = Default::default();
-                        row.label = (index + 1).to_string().into();
-                        row
-                    })
-                    .collect();
-                set_rows(&window, rows);
-                form.borrow_mut().existing_snapshot = None;
-                form.borrow_mut().existing_seed = None;
-                window.set_removed_nodes(ModelRc::new(VecModel::default()));
-                edited(&window, &lock(&shared), &form);
+                with_session(&window, &access, |window, session| {
+                    window.set_existing(false);
+                    window.set_prefix("path".into());
+                    window.set_closed(false);
+                    let rows = window
+                        .get_points()
+                        .iter()
+                        .enumerate()
+                        .map(|(index, mut row)| {
+                            row.id = Default::default();
+                            row.name = Default::default();
+                            row.label = (index + 1).to_string().into();
+                            row
+                        })
+                        .collect();
+                    set_rows(window, rows);
+                    form.borrow_mut().existing_snapshot = None;
+                    form.borrow_mut().existing_seed = None;
+                    window.set_removed_nodes(ModelRc::new(VecModel::default()));
+                    edited(window, session, &form);
+                });
             }
         });
         window.on_edited({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
-            move || edited(&window.unwrap(), &lock(&shared), &form)
+            let (window, access, form) = (window.as_weak(), access.clone(), form.clone());
+            move || {
+                with_session(&window, &access, |window, session| {
+                    edited(window, session, &form);
+                });
+            }
         });
         window.on_add_point({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, access, form) = (window.as_weak(), access.clone(), form.clone());
             move || {
-                let window = window.unwrap();
-                let mut rows = window.get_points().iter().collect::<Vec<_>>();
-                if rows.len() >= MAX_POINTS {
-                    return;
-                }
-                let point =
-                    match request(&window).and_then(|request| {
+                with_session(&window, &access, |window, session| {
+                    let mut rows = window.get_points().iter().collect::<Vec<_>>();
+                    if rows.len() >= MAX_POINTS {
+                        return;
+                    }
+                    let point = match request(window).and_then(|request| {
                         request.points.last().copied().ok_or_else(|| {
                             "No path point to extend; reopen Create linked path…".into()
                         })
@@ -419,163 +469,176 @@ impl Controller {
                             return;
                         }
                     };
-                let step = if point.x <= crate::spatial::MAX_EXTENT - POINT_STEP {
-                    POINT_STEP
-                } else {
-                    -POINT_STEP
-                };
-                rows.push(point_row(point + DVec3::X * step, rows.len()));
-                set_rows(&window, rows);
-                edited(&window, &lock(&shared), &form);
+                    let step = if point.x <= crate::spatial::MAX_EXTENT - POINT_STEP {
+                        POINT_STEP
+                    } else {
+                        -POINT_STEP
+                    };
+                    rows.push(point_row(point + DVec3::X * step, rows.len()));
+                    set_rows(window, rows);
+                    edited(window, session, &form);
+                });
             }
         });
         window.on_remove_point({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, access, form) = (window.as_weak(), access.clone(), form.clone());
             move |index| {
-                let window = window.unwrap();
-                let mut rows = window.get_points().iter().collect::<Vec<_>>();
-                if rows.len() > MIN_POINTS && index >= 0 && (index as usize) < rows.len() {
-                    rows.remove(index as usize);
-                    set_rows(&window, rows);
-                    edited(&window, &lock(&shared), &form);
-                }
+                with_session(&window, &access, |window, session| {
+                    let mut rows = window.get_points().iter().collect::<Vec<_>>();
+                    if rows.len() > MIN_POINTS && index >= 0 && (index as usize) < rows.len() {
+                        rows.remove(index as usize);
+                        set_rows(window, rows);
+                        edited(window, session, &form);
+                    }
+                });
             }
         });
         window.on_move_point({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, access, form) = (window.as_weak(), access.clone(), form.clone());
             move |index, direction| {
-                let window = window.unwrap();
-                let mut rows = window.get_points().iter().collect::<Vec<_>>();
-                let target = index + direction;
-                if direction.abs() == 1
-                    && index >= 0
-                    && target >= 0
-                    && (index as usize) < rows.len()
-                    && (target as usize) < rows.len()
-                {
-                    rows.swap(index as usize, target as usize);
-                    set_rows(&window, rows);
-                    edited(&window, &lock(&shared), &form);
-                }
+                with_session(&window, &access, |window, session| {
+                    let mut rows = window.get_points().iter().collect::<Vec<_>>();
+                    let target = index + direction;
+                    if direction.abs() == 1
+                        && index >= 0
+                        && target >= 0
+                        && (index as usize) < rows.len()
+                        && (target as usize) < rows.len()
+                    {
+                        rows.swap(index as usize, target as usize);
+                        set_rows(window, rows);
+                        edited(window, session, &form);
+                    }
+                });
             }
         });
         window.on_preview({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, access, form) = (window.as_weak(), access.clone(), form.clone());
             move || {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
-                let result = (|| {
-                    if form.borrow().generation != session.document_generation() {
-                        return Err("Map changed; reopen Create linked path…".into());
-                    }
-                    let request = request(&window)?;
-                    if window.get_existing() {
-                        let nodes = window
-                            .get_points()
-                            .iter()
-                            .zip(request.points)
-                            .map(|(row, origin)| {
-                                let id = if row.id.is_empty() {
-                                    None
-                                } else {
-                                    let map_core::ObjectId::Entity(id) =
-                                        crate::identity::parse_id(&row.id)?
-                                    else {
-                                        return Err(
-                                            "Existing path row has no entity ID; load it again"
-                                                .into(),
-                                        );
+                with_session(&window, &access, |window, session| {
+                    let result = (|| {
+                        if form.borrow().generation != session.document_generation() {
+                            return Err("Map changed; reopen Create linked path…".into());
+                        }
+                        let request = request(window)?;
+                        if window.get_existing() {
+                            let nodes = window
+                                .get_points()
+                                .iter()
+                                .zip(request.points)
+                                .map(|(row, origin)| {
+                                    let id = if row.id.is_empty() {
+                                        None
+                                    } else {
+                                        let map_core::ObjectId::Entity(id) =
+                                            crate::identity::parse_id(&row.id)?
+                                        else {
+                                            return Err(
+                                                "Existing path row has no entity ID; load it again"
+                                                    .into(),
+                                            );
+                                        };
+                                        Some(id)
                                     };
-                                    Some(id)
-                                };
-                                Ok(EditNode { id, origin })
-                            })
-                            .collect::<Result<Vec<_>, String>>()?;
-                        let snapshot = form
-                            .borrow()
-                            .existing_snapshot
-                            .clone()
-                            .ok_or("Load the existing path again")?;
-                        let seed = form
-                            .borrow()
-                            .existing_seed
-                            .ok_or("Load the existing path again")?;
-                        session.preview_linked_path_changes(
-                            Actor::User,
-                            ChangeRequest {
-                                seed,
-                                nodes,
-                                prefix: request.prefix,
-                            },
-                            &snapshot,
-                        )
-                    } else {
-                        let snapshot = session.linked_path_stamp();
-                        session.preview_linked_path(Actor::User, request, &snapshot)
+                                    Ok(EditNode { id, origin })
+                                })
+                                .collect::<Result<Vec<_>, String>>()?;
+                            let snapshot = form
+                                .borrow()
+                                .existing_snapshot
+                                .clone()
+                                .ok_or("Load the existing path again")?;
+                            let seed = form
+                                .borrow()
+                                .existing_seed
+                                .ok_or("Load the existing path again")?;
+                            session.preview_linked_path_changes(
+                                Actor::User,
+                                ChangeRequest {
+                                    seed,
+                                    nodes,
+                                    prefix: request.prefix,
+                                },
+                                &snapshot,
+                            )
+                        } else {
+                            let snapshot = session.linked_path_stamp();
+                            session.preview_linked_path(Actor::User, request, &snapshot)
+                        }
+                    })();
+                    if let Err(error) =
+                        result.and_then(|state| adopt_preview(window, &state, &form))
+                    {
+                        window.set_message(error.into());
                     }
-                })();
-                if let Err(error) = result.and_then(|state| adopt_preview(&window, &state, &form)) {
-                    window.set_message(error.into());
-                }
-                refresh(&window, &session, &form);
+                    refresh(window, session, &form);
+                });
             }
         });
         window.on_review({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, access, form) = (window.as_weak(), access.clone(), form.clone());
             move || {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
-                let result = (|| {
-                    if form.borrow().generation != session.document_generation() {
-                        return Err("Map changed; reopen Create linked path…".into());
+                with_session(&window, &access, |window, session| {
+                    let result = (|| {
+                        if form.borrow().generation != session.document_generation() {
+                            return Err("Map changed; reopen Create linked path…".into());
+                        }
+                        let state = session.linked_path();
+                        let token = state["preview"]["token"]
+                            .as_u64()
+                            .ok_or("No linked path preview to review")?;
+                        session.review_linked_path(Actor::User, token)
+                    })();
+                    if let Err(error) =
+                        result.and_then(|state| adopt_preview(window, &state, &form))
+                    {
+                        window.set_message(error.into());
                     }
-                    let state = session.linked_path();
-                    let token = state["preview"]["token"]
-                        .as_u64()
-                        .ok_or("No linked path preview to review")?;
-                    session.review_linked_path(Actor::User, token)
-                })();
-                if let Err(error) = result.and_then(|state| adopt_preview(&window, &state, &form)) {
-                    window.set_message(error.into());
-                }
-                refresh(&window, &session, &form);
+                    refresh(window, session, &form);
+                });
             }
         });
         window.on_apply({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, access, form) = (window.as_weak(), access.clone(), form.clone());
             move || {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
-                refresh(&window, &session, &form);
-                if !window.get_ready() {
-                    window.set_message(
-                        "Preview and review the current settings before Apply.".into(),
-                    );
-                    return;
-                }
-                let token = form.borrow().owned_token.unwrap();
-                match session.apply_linked_path(Actor::User, token) {
-                    Ok(_) => {
-                        form.borrow_mut().owned_token = None;
-                        form.borrow_mut().dirty = true;
-                        let _ = window.hide();
+                with_session(&window, &access, |window, session| {
+                    refresh(window, session, &form);
+                    if !window.get_ready() {
+                        window.set_message(
+                            "Preview and review the current settings before Apply.".into(),
+                        );
+                        return;
                     }
-                    Err(error) => window.set_message(error.into()),
-                }
-                refresh(&window, &session, &form);
+                    let token = form.borrow().owned_token.unwrap();
+                    match session.apply_linked_path(Actor::User, token) {
+                        Ok(_) => {
+                            form.borrow_mut().owned_token = None;
+                            form.borrow_mut().dirty = true;
+                            let _ = window.hide();
+                        }
+                        Err(error) => window.set_message(error.into()),
+                    }
+                    refresh(window, session, &form);
+                });
             }
         });
         window.on_cancel({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, access, form) = (window.as_weak(), access.clone(), form.clone());
             move || {
-                cancel_owned(&mut lock(&shared), &form);
-                let _ = window.unwrap().hide();
+                with_session(&window, &access, |_window, session| {
+                    cancel_owned(session, &form);
+                });
+                if let Some(window) = window.upgrade() {
+                    let _ = window.hide();
+                }
             }
         });
         window.window().on_close_requested({
-            let (shared, form) = (shared.clone(), form.clone());
+            let window = window.as_weak();
             move || {
-                cancel_owned(&mut lock(&shared), &form);
+                if let Some(window) = window.upgrade() {
+                    window.invoke_cancel();
+                }
                 slint::CloseRequestResponse::HideWindow
             }
         });
@@ -665,3 +728,6 @@ impl Controller {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod admission_tests;

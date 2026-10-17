@@ -148,6 +148,46 @@ pub(super) fn prepare(vmf: &Vmf) -> Prepared {
     prepared
 }
 
+pub(super) fn lighting_error(
+    mesh: &DisplacementMesh,
+    normals: &[[f64; 3]],
+) -> Option<&'static str> {
+    if mesh.positions.iter().any(|point| {
+        !point.is_finite() || point.abs().max_element() > map_core::checks::SOURCE_COORDINATE_LIMIT
+    }) {
+        return Some("Terrain authored-light receivers must fit finite Source compile coordinates");
+    }
+    if normals.len() != mesh.positions.len() {
+        return Some("Terrain authored lighting needs complete prepared normals");
+    }
+    let normals = normals
+        .iter()
+        .map(|normal| Vec3::from_array(normal.map(|v| v as f32)))
+        .collect::<Vec<_>>();
+    if normals.iter().any(|normal| {
+        let squared = normal.length_squared();
+        !normal.is_finite() || !squared.is_finite() || squared < 1e-12
+    }) {
+        return Some("Terrain authored lighting needs finite nonzero packed normals");
+    }
+    for triangle in mesh.triangles() {
+        let [a, b, c] = triangle.map(|index| mesh.positions[index].as_vec3());
+        let Some(geometric) = (c - a).cross(b - a).try_normalize() else {
+            return Some("Terrain authored lighting excludes degenerate packed triangles");
+        };
+        // A common positive hemisphere bounds every interpolated normal away from zero.
+        if triangle
+            .iter()
+            .any(|&index| normals[index].normalize().dot(geometric) <= 1e-4)
+        {
+            return Some(
+                "Terrain authored lighting needs a safe common normal hemisphere on every triangle",
+            );
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -212,6 +252,12 @@ mod tests {
         let source = vmf.clone();
         let prepared = prepare(&vmf);
         assert!(prepared.issues.is_empty());
+        assert!(
+            prepared
+                .meshes
+                .values()
+                .all(|surface| lighting_error(&surface.mesh, &surface.normals).is_none())
+        );
         let solid = &vmf.world.solids[1];
         let side = solid
             .sides
@@ -307,6 +353,73 @@ mod tests {
             vmf.world.solids[0].hidden = true;
             assert!(prepare(&vmf).issues.is_empty());
         }
+    }
+
+    #[test]
+    fn authored_terrain_guard_checks_the_packed_mesh_without_repairing_it() {
+        let vmf = fixture();
+        let prepared = prepare(&vmf);
+        let original = prepared.meshes.values().next().unwrap();
+        assert_eq!(lighting_error(&original.mesh, &original.normals), None);
+        let mut bounded = original.mesh.clone();
+        let maximum = bounded
+            .positions
+            .iter()
+            .map(|point| point.x)
+            .fold(f64::NEG_INFINITY, f64::max);
+        for point in &mut bounded.positions {
+            point.x += map_core::checks::SOURCE_COORDINATE_LIMIT - maximum;
+        }
+        assert_eq!(lighting_error(&bounded, &original.normals), None);
+        for case in [
+            "zero",
+            "nan",
+            "overflow",
+            "underflow",
+            "opposite",
+            "perpendicular",
+            "triangle",
+            "coordinates",
+        ] {
+            let mut mesh = original.mesh.clone();
+            let mut normals = original.normals.clone();
+            match case {
+                "zero" => normals[0] = [0.0; 3],
+                "nan" => normals[0] = [f64::NAN; 3],
+                "overflow" => normals[0] = [f64::MAX; 3],
+                "underflow" => normals[0] = [f64::MIN_POSITIVE; 3],
+                "opposite" => normals[0] = [0.0, 0.0, -1.0],
+                "perpendicular" => normals[0] = [1.0, 0.0, 0.0],
+                "triangle" => {
+                    let [a, b, _] = mesh.triangles().next().unwrap();
+                    mesh.positions[a] = DVec3::splat(16.0);
+                    mesh.positions[b] = mesh.positions[a] + DVec3::new(1e-9, 0.0, 0.0);
+                    assert_ne!(mesh.positions[a], mesh.positions[b]);
+                    assert_eq!(mesh.positions[a].as_vec3(), mesh.positions[b].as_vec3());
+                }
+                "coordinates" => {
+                    mesh.positions[0].x = map_core::checks::SOURCE_COORDINATE_LIMIT + 1.0
+                }
+                _ => unreachable!(),
+            }
+            let positions = mesh.positions.clone();
+            let expected = match case {
+                "triangle" => "degenerate packed triangles",
+                "opposite" | "perpendicular" => "safe common normal hemisphere",
+                "coordinates" => "Source compile coordinates",
+                _ => "finite nonzero packed normals",
+            };
+            assert!(
+                lighting_error(&mesh, &normals).unwrap().contains(expected),
+                "{case}"
+            );
+            assert_eq!(mesh.positions, positions);
+        }
+        assert!(
+            lighting_error(&original.mesh, &[])
+                .unwrap()
+                .contains("complete prepared normals")
+        );
     }
 
     #[test]

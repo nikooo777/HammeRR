@@ -632,3 +632,5 @@ fn authored_lighting_reports_bounded_diagnostics_without_hiding_invalid_lights_o
     assert!(current.source.as_ref().unwrap().revision > source.revision);
     assert_eq!(first.admitted_lights, 0);
 }
+
+mod terrain;

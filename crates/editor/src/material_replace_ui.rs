@@ -3,7 +3,9 @@ use std::rc::Rc;
 
 use slint::ComponentHandle;
 
-use crate::runtime::{SharedSession, lock};
+#[cfg(test)]
+use crate::runtime::SharedSession;
+use crate::runtime::{DocumentAccess, DocumentContinuation};
 use crate::session::material_search::{Query, Scope};
 use crate::session::{Actor, SelectMode, Session};
 use crate::{MaterialReplaceWindow, ui::preview_image};
@@ -83,122 +85,150 @@ fn refresh(window: &MaterialReplaceWindow, session: &Session, target: &Target) {
     }
 }
 
+fn with_session<R>(
+    window: &slint::Weak<MaterialReplaceWindow>,
+    access: &DocumentContinuation,
+    body: impl FnOnce(&MaterialReplaceWindow, &mut Session) -> R,
+) -> Option<R> {
+    let window = window.upgrade()?;
+    match access
+        .upgrade()
+        .and_then(|access| access.with_session(|session| Ok(body(&window, session))))
+    {
+        Ok(result) => Some(result),
+        Err(error) => {
+            window.set_message(error.into());
+            None
+        }
+    }
+}
+
 impl Controller {
+    #[cfg(test)]
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
+        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
+    }
+
+    pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let window = MaterialReplaceWindow::new()?;
         let target = Rc::new(RefCell::new(Target::default()));
         window.on_search_edited({
-            let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
+            let (window, access, target) = (window.as_weak(), access.downgrade(), target.clone());
             move || {
-                let mut target = target.borrow_mut();
-                target.cancel_preview(&mut lock(&shared));
-                target.report = None;
-                let window = window.unwrap();
-                window.set_ready(false);
-                window.set_summary("Search changed. Find faces to refresh the results.".into());
-                window.set_message("".into());
+                with_session(&window, &access, |window, session| {
+                    let mut target = target.borrow_mut();
+                    target.cancel_preview(session);
+                    target.report = None;
+                    window.set_ready(false);
+                    window.set_summary("Search changed. Find faces to refresh the results.".into());
+                    window.set_message("".into());
+                });
             }
         });
         window.on_replacement_edited({
-            let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
+            let (window, access, target) = (window.as_weak(), access.downgrade(), target.clone());
             move || {
-                let mut session = lock(&shared);
-                let mut target = target.borrow_mut();
-                target.cancel_preview(&mut session);
-                let window = window.unwrap();
-                window.set_message("Preview or apply the new replacement.".into());
-                refresh(&window, &session, &target);
+                with_session(&window, &access, |window, session| {
+                    let mut target = target.borrow_mut();
+                    target.cancel_preview(session);
+                    window.set_message("Preview or apply the new replacement.".into());
+                    refresh(window, session, &target);
+                });
             }
         });
         window.on_find({
-            let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
+            let (window, access, target) = (window.as_weak(), access.downgrade(), target.clone());
             move || {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
-                let mut target = target.borrow_mut();
-                target.cancel_preview(&mut session);
-                target.report = None;
-                match session.find_material_faces(query(&window)) {
-                    Ok(token) => {
-                        target.report = Some(token);
-                        window.set_message(
-                            "Review the match count, then choose a replacement.".into(),
-                        );
+                with_session(&window, &access, |window, session| {
+                    let mut target = target.borrow_mut();
+                    target.cancel_preview(session);
+                    target.report = None;
+                    match session.find_material_faces(query(window)) {
+                        Ok(token) => {
+                            target.report = Some(token);
+                            window.set_message(
+                                "Review the match count, then choose a replacement.".into(),
+                            );
+                        }
+                        Err(error) => window.set_message(error.into()),
                     }
-                    Err(error) => window.set_message(error.into()),
-                }
-                refresh_images(&window, &session);
-                refresh(&window, &session, &target);
+                    refresh_images(window, session);
+                    refresh(window, session, &target);
+                });
             }
         });
         window.on_select_matches({
-            let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
+            let (window, access, target) = (window.as_weak(), access.downgrade(), target.clone());
             move || {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
-                let mut target = target.borrow_mut();
-                target.cancel_preview(&mut session);
-                if let Some(token) = target.report {
-                    match session.select_material_faces(token, SelectMode::Replace) {
-                        Ok(count) => window.set_message(
-                            format!("Selected {count} matching faces. Hidden faces stay hidden.")
+                with_session(&window, &access, |window, session| {
+                    let mut target = target.borrow_mut();
+                    target.cancel_preview(session);
+                    if let Some(token) = target.report {
+                        match session.select_material_faces(token, SelectMode::Replace) {
+                            Ok(count) => window.set_message(
+                                format!(
+                                    "Selected {count} matching faces. Hidden faces stay hidden."
+                                )
                                 .into(),
-                        ),
-                        Err(error) => window.set_message(error.into()),
+                            ),
+                            Err(error) => window.set_message(error.into()),
+                        }
                     }
-                }
-                refresh(&window, &session, &target);
+                    refresh(window, session, &target);
+                });
             }
         });
         for preview in [true, false] {
-            let (weak, shared, target) = (window.as_weak(), shared.clone(), target.clone());
+            let (weak, access, target) = (window.as_weak(), access.downgrade(), target.clone());
             let action = move || {
-                let window = weak.unwrap();
-                let mut session = lock(&shared);
-                let mut target = target.borrow_mut();
-                let result = (|| {
-                    let token = target.report.ok_or("Find material faces first")?;
-                    if !preview
-                        && session.face_preview_token().is_some()
-                        && session.face_preview_token() != target.preview
-                    {
-                        return Err("Another face preview is active. Preview this replacement before applying.".into());
-                    }
-                    if !preview && target.preview.is_some() {
-                        if session.material_search_stale()
-                            || session.material_search_report().map(|report| report.token)
-                                != Some(token)
+                let hide = with_session(&weak, &access, |window, session| {
+                    let mut target = target.borrow_mut();
+                    let result = (|| {
+                        let token = target.report.ok_or("Find material faces first")?;
+                        if !preview
+                            && session.face_preview_token().is_some()
+                            && session.face_preview_token() != target.preview
                         {
-                            return Err("Material results changed. Find faces again.".into());
+                            return Err("Another face preview is active. Preview this replacement before applying.".into());
                         }
-                        session.check_face_preview_token(target.preview)?;
-                        session.commit_face_preview(Actor::User)
-                    } else {
-                        session.replace_materials(
-                            Actor::User,
-                            token,
-                            &window.get_replacement(),
-                            preview,
-                        )
-                    }
-                })();
-                match result {
-                    Ok(count) => {
-                        target.preview = session.face_preview_token();
-                        window.set_message(
-                            format!(
-                                "Preview: {count} faces change. Replace faces to keep the result."
+                        if !preview && target.preview.is_some() {
+                            if session.material_search_stale()
+                                || session.material_search_report().map(|report| report.token)
+                                    != Some(token)
+                            {
+                                return Err("Material results changed. Find faces again.".into());
+                            }
+                            session.check_face_preview_token(target.preview)?;
+                            session.commit_face_preview(Actor::User)
+                        } else {
+                            session.replace_materials(
+                                Actor::User,
+                                token,
+                                &window.get_replacement(),
+                                preview,
                             )
-                            .into(),
-                        );
-                        if !preview {
-                            let _ = window.hide();
                         }
-                    }
-                    Err(error) => window.set_message(error.into()),
+                    })();
+                    let hide = match result {
+                        Ok(count) => {
+                            target.preview = session.face_preview_token();
+                            window.set_message(format!("Preview: {count} faces change. Replace faces to keep the result.").into());
+                            !preview
+                        }
+                        Err(error) => {
+                            window.set_message(error.into());
+                            false
+                        }
+                    };
+                    refresh_images(window, session);
+                    refresh(window, session, &target);
+                    hide
+                });
+                if hide == Some(true)
+                    && let Some(window) = weak.upgrade()
+                {
+                    let _ = window.hide();
                 }
-                refresh_images(&window, &session);
-                refresh(&window, &session, &target);
             };
             if preview {
                 window.on_preview_edit(action);
@@ -207,16 +237,23 @@ impl Controller {
             }
         }
         window.on_cancel({
-            let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
+            let (window, access, target) = (window.as_weak(), access.downgrade(), target.clone());
             move || {
-                target.borrow_mut().cancel_preview(&mut lock(&shared));
-                let _ = window.unwrap().hide();
+                let Some(owner) = window.upgrade() else {
+                    return;
+                };
+                with_session(&window, &access, |_, session| {
+                    target.borrow_mut().cancel_preview(session)
+                });
+                let _ = owner.hide();
             }
         });
         window.window().on_close_requested({
-            let (shared, target) = (shared.clone(), target.clone());
+            let (window, access, target) = (window.as_weak(), access.downgrade(), target.clone());
             move || {
-                target.borrow_mut().cancel_preview(&mut lock(&shared));
+                with_session(&window, &access, |_, session| {
+                    target.borrow_mut().cancel_preview(session)
+                });
                 slint::CloseRequestResponse::HideWindow
             }
         });
@@ -261,3 +298,6 @@ impl Controller {
         refresh(&self.window, session, &self.target.borrow());
     }
 }
+
+#[cfg(test)]
+mod tests;

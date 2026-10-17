@@ -22,6 +22,7 @@ mod publication;
 pub mod sky_assets;
 mod static_props;
 pub mod tree;
+mod visclusters;
 mod visibility;
 mod water;
 pub mod winding;
@@ -429,6 +430,10 @@ pub struct Stats {
     pub displacement_lod_disabled_vertices: usize,
     pub displacement_lod_snapped_vertices: usize,
     pub clusters: usize,
+    pub visibility_solved_clusters: usize,
+    pub viscluster_helpers: usize,
+    pub viscluster_groups: usize,
+    pub viscluster_grouped_leaves: usize,
     pub visibility_portals: usize,
     pub visibility_bytes: usize,
     pub visibility_work: usize,
@@ -906,7 +911,22 @@ fn build(
         });
     }
     control.advance(Stage::Visibility)?;
-    let mut visibility = visibility::build(&tree, &portals, control, options.visibility)?;
+    let (mut visibility, visclusters) = visibility::build_authored(
+        visclusters::Context {
+            map: &map,
+            tree: &tree,
+            areas: &areas,
+            water: &water,
+            control,
+        },
+        &portals,
+        &mut output.report,
+        options.visibility,
+    )?;
+    output.stats.visibility_solved_clusters = visclusters.solved_clusters;
+    output.stats.viscluster_helpers = visclusters.helpers;
+    output.stats.viscluster_groups = visclusters.groups;
+    output.stats.viscluster_grouped_leaves = visclusters.grouped_leaves;
     output.stats.clusters = visibility.count;
     output.stats.visibility_portals = visibility.portals;
     output.stats.visibility_bytes = visibility.data.len();
@@ -1058,6 +1078,7 @@ fn build(
                 options,
                 smoothing_sources: &emission.smoothing_sources,
                 model_entities: &emission.model_entities,
+                world_leaf_nodes: &emission.world_leaf_nodes,
                 detail_model_centers: &detail_stats.model_centers,
                 detail_lighting_origins: &detail_stats.lighting_origins,
                 detail_lighting_tints: &detail_stats.lighting_tints,

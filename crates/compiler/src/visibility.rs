@@ -16,7 +16,7 @@ mod flow;
 mod parallel;
 
 const MAX_CLUSTERS: usize = i16::MAX as usize + 1;
-const MAX_VISIBILITY_WORK: usize = 100_000_000;
+pub(crate) const MAX_VISIBILITY_WORK: usize = 100_000_000;
 const VISIBILITY_EPSILON: f64 = 0.1;
 
 pub(crate) struct Visibility {
@@ -78,6 +78,16 @@ pub(crate) fn build(
     control: &Control,
     mode: VisibilityMode,
 ) -> Result<Visibility, String> {
+    build_budgeted(tree, portals, control, mode, MAX_VISIBILITY_WORK)
+}
+
+fn build_budgeted(
+    tree: &Tree,
+    portals: &[Portal],
+    control: &Control,
+    mode: VisibilityMode,
+    budget: usize,
+) -> Result<Visibility, String> {
     let mut clusters = vec![None; tree.nodes.len()];
     let mut count = 0;
     for index in tree.preorder() {
@@ -127,7 +137,7 @@ pub(crate) fn build(
             winding: &portal.winding,
         });
     }
-    let solution = solve(count, &directed, control, MAX_VISIBILITY_WORK, mode)?;
+    let solution = solve(count, &directed, control, budget, mode)?;
     Ok(Visibility {
         clusters,
         count,
@@ -138,6 +148,90 @@ pub(crate) fn build(
         removed_pairs: solution.removed_pairs,
         workers: solution.workers,
     })
+}
+
+pub(crate) fn build_authored(
+    context: crate::visclusters::Context<'_>,
+    portals: &[Portal],
+    report: &mut crate::Report,
+    mode: VisibilityMode,
+) -> Result<(Visibility, crate::visclusters::Summary), String> {
+    let crate::visclusters::Context {
+        map, tree, control, ..
+    } = context;
+    if map.visclusters.is_empty() {
+        let visibility = build(tree, portals, control, mode)?;
+        let summary = crate::visclusters::Summary {
+            solved_clusters: visibility.count,
+            ..Default::default()
+        };
+        return Ok((visibility, summary));
+    }
+    let mut work = Work::Local(MAX_VISIBILITY_WORK);
+    work.consume(map.viscluster_work)?;
+    let mut visibility = build_budgeted(tree, portals, control, mode, work.remaining())?;
+    work.consume(visibility.work)?;
+    let partition = crate::visclusters::partition(
+        context,
+        &visibility.clusters,
+        visibility.count,
+        report,
+        &mut |amount| {
+            control.checkpoint()?;
+            work.consume(amount)
+        },
+    )?;
+    if partition.count < visibility.count {
+        let rows = quotient(
+            &visibility.data,
+            &partition.mapping,
+            partition.count,
+            control,
+            &mut work,
+        )?;
+        visibility.data = encode_rows(&rows, control, &mut work)?;
+        for cluster in visibility.clusters.iter_mut().flatten() {
+            *cluster = partition.mapping[*cluster];
+        }
+        visibility.count = partition.count;
+        visibility.sky = vec![0; partition.count];
+    }
+    visibility.work = MAX_VISIBILITY_WORK - work.remaining();
+    report.diagnostics.push(crate::Diagnostic::info(
+        format!("Authored visclusters solved {} leaf clusters and emitted {} clusters ({} helper groups, {} member leaves); coarsening may expand visibility and does not reduce solver cost", partition.summary.solved_clusters, visibility.count, partition.summary.groups, partition.summary.grouped_leaves), None, None,
+    ));
+    Ok((visibility, partition.summary))
+}
+
+fn quotient(
+    data: &[u8],
+    mapping: &[usize],
+    count: usize,
+    control: &Control,
+    work: &mut Work,
+) -> Result<Vec<Vec<u8>>, String> {
+    use source_formats::bsp::{Visibility as ParsedVisibility, VisibilityKind};
+    let parsed = ParsedVisibility::parse(data).map_err(|error| error.to_string())?;
+    if parsed.clusters() != mapping.len()
+        || count == 0
+        || mapping.iter().any(|&group| group >= count)
+    {
+        return Err("Viscluster quotient mapping disagrees with solved visibility".into());
+    }
+    work.consume(mapping.len().checked_mul(mapping.len()).ok_or(WORK_LIMIT)?)?;
+    let mut rows = vec![vec![0; count.div_ceil(8)]; count];
+    for (source, &group) in mapping.iter().enumerate() {
+        control.checkpoint()?;
+        let row = parsed
+            .row(source, VisibilityKind::Visible)
+            .map_err(|error| error.to_string())?;
+        for (target, &destination) in mapping.iter().enumerate() {
+            if bit(&row, target) {
+                set(&mut rows[group], destination);
+            }
+        }
+    }
+    Ok(rows)
 }
 
 impl Visibility {
@@ -324,6 +418,18 @@ fn solve_workers(
     } else {
         0
     };
+    let data = encode_rows(&rows, control, &mut work)?;
+    Ok(Solution {
+        data,
+        work: budget - work.remaining(),
+        removed_pairs,
+        workers,
+    })
+}
+
+fn encode_rows(rows: &[Vec<u8>], control: &Control, work: &mut Work) -> Result<Vec<u8>, String> {
+    let count = rows.len();
+    let width = count.div_ceil(8);
     let header = 4 + count * 8;
     let mut data = vec![0; header];
     data[..4].copy_from_slice(&(count as i32).to_le_bytes());
@@ -346,12 +452,7 @@ fn solve_workers(
         }
         store_row(&mut data, &mut stored, &audible, 8 + index * 8)?;
     }
-    Ok(Solution {
-        data,
-        work: budget - work.remaining(),
-        removed_pairs,
-        workers,
-    })
+    Ok(data)
 }
 
 fn compress(row: &[u8]) -> Vec<u8> {
@@ -430,6 +531,33 @@ mod tests {
             DVec3::new(x, high, 2.0),
             DVec3::new(x, low, 2.0),
         ])
+    }
+
+    #[test]
+    fn quotient_unions_source_and_destination_members_and_rebuilds_audibility() {
+        use source_formats::bsp::{Visibility as ParsedVisibility, VisibilityKind};
+        let control = Control::default();
+        let mut work = Work::Local(MAX_VISIBILITY_WORK);
+        let baseline = encode_rows(
+            &[vec![3], vec![7], vec![14], vec![12], vec![16]],
+            &control,
+            &mut work,
+        )
+        .unwrap();
+        let rows = quotient(&baseline, &[0, 1, 0, 2, 3], 4, &control, &mut work).unwrap();
+        assert_eq!(rows, [vec![7], vec![3], vec![5], vec![8]]);
+        let data = encode_rows(&rows, &control, &mut work).unwrap();
+        let parsed = ParsedVisibility::parse(&data).unwrap();
+        for (cluster, expected) in [7, 7, 7, 8].into_iter().enumerate() {
+            assert_eq!(
+                parsed.row(cluster, VisibilityKind::Audible).unwrap(),
+                [expected]
+            );
+        }
+        let mut exhausted = Work::Local(24);
+        assert!(quotient(&baseline, &[0, 1, 0, 2, 3], 4, &control, &mut exhausted).is_err());
+        control.cancel().unwrap();
+        assert!(quotient(&baseline, &[0, 1, 0, 2, 3], 4, &control, &mut work).is_err());
     }
 
     #[test]

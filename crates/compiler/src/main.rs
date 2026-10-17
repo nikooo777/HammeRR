@@ -213,11 +213,19 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     println!(
-        "Visibility {}: workers {} · {} cluster pairs removed · {} work units",
+        "Visibility {}: workers {} · {} leaf-cluster pairs removed before authored grouping · {} work units",
         stats.visibility_mode.label(),
         stats.visibility_workers,
         stats.visibility_removed_pairs,
         stats.visibility_work
+    );
+    println!(
+        "Visibility clusters: {} solved · {} emitted · {} helpers · {} groups · {} grouped leaves",
+        stats.visibility_solved_clusters,
+        stats.clusters,
+        stats.viscluster_helpers,
+        stats.viscluster_groups,
+        stats.viscluster_grouped_leaves
     );
     println!(
         "overlays: {} · face references: {}",

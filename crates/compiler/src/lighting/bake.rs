@@ -592,6 +592,7 @@ pub(crate) struct Settings<'a> {
     pub vmf: &'a source_formats::vmf::Vmf,
     pub options: crate::Options,
     pub model_entities: &'a [usize],
+    pub world_leaf_nodes: &'a [Option<usize>],
     pub detail_model_centers: &'a [DVec3],
     pub detail_lighting_origins: &'a [Option<DVec3>],
     pub detail_lighting_tints: &'a [crate::detail_props::Tint],
@@ -800,6 +801,7 @@ pub(crate) fn bake(
             .map_err(|error| error.to_string())?;
     }
     let ctx = ChannelContext {
+        world_leaf_nodes: settings.world_leaf_nodes,
         map,
         tree,
         visibility,
@@ -890,6 +892,7 @@ pub(crate) fn bake(
 }
 
 struct ChannelContext<'a> {
+    world_leaf_nodes: &'a [Option<usize>],
     map: &'a Map<'a>,
     tree: &'a Tree,
     visibility: &'a Visibility,
@@ -919,6 +922,7 @@ fn bake_channel(
 ) -> Result<BakeStats, String> {
     let start_work = budget.work;
     let ChannelContext {
+        world_leaf_nodes,
         map,
         tree,
         visibility,
@@ -1222,10 +1226,10 @@ fn bake_channel(
         .unwrap_or(DVec3::ZERO);
     let ambient = super::probes::bake(
         &super::probes::Context {
+            world_leaf_nodes,
             map,
             kind,
             tree,
-            visibility,
             shadows,
             terrain: terrain_shadows,
             prop_shadows,

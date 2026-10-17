@@ -10,10 +10,13 @@ use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::{
     OverlayTargetRow, OverlayWindow,
-    runtime::{SharedSession, lock},
+    runtime::{DocumentAccess, DocumentContinuation},
     session::{Actor, Pointer, Session, overlay::Request},
     ui::preview_image,
 };
+
+#[cfg(test)]
+use crate::runtime::{SharedSession, lock};
 
 #[derive(Default)]
 struct Form {
@@ -652,182 +655,246 @@ fn cancel_owned(session: &mut Session, form: &RefCell<Form>) {
     form.borrow_mut().reviewed = None;
 }
 
+fn callback(
+    window: &slint::Weak<OverlayWindow>,
+    document: &DocumentContinuation,
+    body: impl FnOnce(OverlayWindow, &mut Session),
+) {
+    let Some(window) = window.upgrade() else {
+        return;
+    };
+    let result = document.upgrade().and_then(|access| {
+        access.with_session(|session| {
+            body(window.clone_strong(), session);
+            Ok(())
+        })
+    });
+    if let Err(error) = result {
+        window.set_message(error.into());
+    }
+}
+
 impl Controller {
+    #[cfg(test)]
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
+        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
+    }
+
+    pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let window = OverlayWindow::new()?;
         let form = Rc::new(RefCell::new(Form::default()));
         let viewport = Rc::new(Cell::new((1024, 576)));
         window.on_edited({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
-            move || edited(&window.unwrap(), &mut lock(&shared), &form)
+            let (window, document, form) = (window.as_weak(), access.downgrade(), form.clone());
+            move || {
+                callback(&window, &document, |window, session| {
+                    edited(&window, session, &form);
+                });
+            }
         });
         window.on_preview({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
-            move || preview(&window.unwrap(), &mut lock(&shared), &form)
+            let (window, document, form) = (window.as_weak(), access.downgrade(), form.clone());
+            move || {
+                callback(&window, &document, |window, session| {
+                    preview(&window, session, &form);
+                });
+            }
         });
         window.on_search_overlays({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, document, form) = (window.as_weak(), access.downgrade(), form.clone());
             move || {
-                form.borrow_mut().choices_offset = 0;
-                refresh_choices(&window.unwrap(), &lock(&shared), &form);
+                callback(&window, &document, |window, session| {
+                    form.borrow_mut().choices_offset = 0;
+                    refresh_choices(&window, session, &form);
+                });
             }
         });
         window.on_overlay_page_change({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, document, form) = (window.as_weak(), access.downgrade(), form.clone());
             move |direction| {
-                let offset = form.borrow().choices_offset;
-                form.borrow_mut().choices_offset = if direction < 0 {
-                    offset.saturating_sub(OVERLAY_PAGE_SIZE)
-                } else {
-                    offset.saturating_add(OVERLAY_PAGE_SIZE)
-                };
-                refresh_choices(&window.unwrap(), &lock(&shared), &form);
+                callback(&window, &document, |window, session| {
+                    let offset = form.borrow().choices_offset;
+                    form.borrow_mut().choices_offset = if direction < 0 {
+                        offset.saturating_sub(OVERLAY_PAGE_SIZE)
+                    } else {
+                        offset.saturating_add(OVERLAY_PAGE_SIZE)
+                    };
+                    refresh_choices(&window, session, &form);
+                });
             }
         });
         window.on_choose_overlay({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
-            move |entity| choose_overlay(&window.unwrap(), &lock(&shared), &form, &entity)
+            let (window, document, form) = (window.as_weak(), access.downgrade(), form.clone());
+            move |entity| {
+                callback(&window, &document, |window, session| {
+                    choose_overlay(&window, session, &form, &entity);
+                });
+            }
         });
         window.on_rebind({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
-            move || preview_rebind(&window.unwrap(), &mut lock(&shared), &form)
+            let (window, document, form) = (window.as_weak(), access.downgrade(), form.clone());
+            move || {
+                callback(&window, &document, |window, session| {
+                    preview_rebind(&window, session, &form);
+                });
+            }
         });
         window.on_edit_corners({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
-            move || edit_selected_corners(&window.unwrap(), &lock(&shared), &form)
+            let (window, document, form) = (window.as_weak(), access.downgrade(), form.clone());
+            move || {
+                callback(&window, &document, |window, session| {
+                    edit_selected_corners(&window, session, &form);
+                });
+            }
         });
         window.on_preview_corners({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
-            move || preview_corners(&window.unwrap(), &mut lock(&shared), &form)
+            let (window, document, form) = (window.as_weak(), access.downgrade(), form.clone());
+            move || {
+                callback(&window, &document, |window, session| {
+                    preview_corners(&window, session, &form);
+                });
+            }
         });
         window.on_handle_corners({
-            let (window, shared, form, viewport) = (window.as_weak(), shared.clone(), form.clone(), viewport.clone());
+            let (window, document, form, viewport) = (window.as_weak(), access.downgrade(), form.clone(), viewport.clone());
             move || {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
-                let result = {
-                    let current = form.borrow();
-                    if !current.corners
-                        || current.reviewed.is_none()
-                        || fields(&window).ok().as_ref() != current.reviewed.as_ref()
-                        || !corner_form_matches(&window, &current)
-                    {
-                        Err("Preview corners before starting viewport handles".to_string())
-                    } else {
-                        current.token.ok_or_else(|| "Preview or Review the corner draft first".to_string()).and_then(|token| {
-                            let camera = session.camera();
-                            let stamp = session.overlay_corner_handle_stamp();
-                            session.begin_overlay_corner_handles(Actor::User, token, camera, viewport.get(), &stamp)
-                        })
+                callback(&window, &document, |window, session| {
+                    let result = {
+                        let current = form.borrow();
+                        if !current.corners
+                            || current.reviewed.is_none()
+                            || fields(&window).ok().as_ref() != current.reviewed.as_ref()
+                            || !corner_form_matches(&window, &current)
+                        {
+                            Err("Preview corners before starting viewport handles".to_string())
+                        } else {
+                            current.token.ok_or_else(|| "Preview or Review the corner draft first".to_string()).and_then(|token| {
+                                let camera = session.camera();
+                                let stamp = session.overlay_corner_handle_stamp();
+                                session.begin_overlay_corner_handles(Actor::User, token, camera, viewport.get(), &stamp)
+                            })
+                        }
+                    };
+                    match result {
+                        Ok(state) => {
+                            adopt(&window, &state, &form);
+                            window.set_message("Drag one cyan corner in the viewport. Release to review; Escape or Cancel handles restores this draft.".into());
+                            let _ = window.hide();
+                        }
+                        Err(error) => window.set_message(error.into()),
                     }
-                };
-                match result {
-                    Ok(state) => {
-                        adopt(&window, &state, &form);
-                        window.set_message("Drag one cyan corner in the viewport. Release to review; Escape or Cancel handles restores this draft.".into());
-                        let _ = window.hide();
-                    }
-                    Err(error) => window.set_message(error.into()),
-                }
-                refresh(&window, &session, &form);
+                    refresh(&window, session, &form);
+                });
             }
         });
         window.on_corners_edited({
-            let (window, form) = (window.as_weak(), form.clone());
+            let (window, document, form) = (window.as_weak(), access.downgrade(), form.clone());
             move || {
-                let mut current = form.borrow_mut();
-                current.reviewed_corners = None;
-                current.serial += 1;
-                let window = window.unwrap();
-                window.set_ready(false);
-                window.set_message("Corners changed. Preview corners before applying.".into());
+                callback(&window, &document, |window, _session| {
+                    let mut current = form.borrow_mut();
+                    current.reviewed_corners = None;
+                    current.serial += 1;
+                    window.set_ready(false);
+                    window.set_message("Corners changed. Preview corners before applying.".into());
+                });
             }
         });
         window.on_refit({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
-            move || preview_refit(&window.unwrap(), &mut lock(&shared), &form)
+            let (window, document, form) = (window.as_weak(), access.downgrade(), form.clone());
+            move || {
+                callback(&window, &document, |window, session| {
+                    preview_refit(&window, session, &form);
+                });
+            }
         });
         window.on_fit({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, document, form) = (window.as_weak(), access.downgrade(), form.clone());
             move || {
-                let window = window.unwrap();
-                if form.borrow().refit {
-                    return;
-                }
-                window.set_u_start("0".into());
-                window.set_u_end("1".into());
-                window.set_v_start("0".into());
-                window.set_v_end("1".into());
-                edited(&window, &mut lock(&shared), &form);
-                preview(&window, &mut lock(&shared), &form);
+                callback(&window, &document, |window, session| {
+                    if form.borrow().refit {
+                        return;
+                    }
+                    window.set_u_start("0".into());
+                    window.set_u_end("1".into());
+                    window.set_v_start("0".into());
+                    window.set_v_end("1".into());
+                    edited(&window, session, &form);
+                    preview(&window, session, &form);
+                });
             }
         });
         window.on_review({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, document, form) = (window.as_weak(), access.downgrade(), form.clone());
             move || {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
-                let state = session.get_overlay_state();
-                let Some(token) = state["draft"]["token"].as_u64() else {
-                    window.set_message("No current overlay draft to review.".into());
-                    return;
-                };
-                match session.review_overlay(Actor::User, token) {
-                    Ok(state) => {
-                        adopt(&window, &state, &form);
-                        window.set_message(if state["draft"]["operation"] == "corners" { "Corner draft loaded. Apply corners updates the existing projection; Cancel discards this reviewed draft." } else if state["draft"]["operation"] == "rebind" { "Rebind draft loaded. Apply rebind updates the existing entity to the reviewed destination; Cancel discards this draft." } else if state["draft"]["operation"] == "refit" { "Refit draft loaded. Apply refit updates the existing entity; Cancel discards this reviewed draft." } else { "Current draft loaded. Apply overlay confirms it; Cancel discards this reviewed draft." }.into());
+                callback(&window, &document, |window, session| {
+                    let state = session.get_overlay_state();
+                    let Some(token) = state["draft"]["token"].as_u64() else {
+                        window.set_message("No current overlay draft to review.".into());
+                        return;
+                    };
+                    match session.review_overlay(Actor::User, token) {
+                        Ok(state) => {
+                            adopt(&window, &state, &form);
+                            window.set_message(if state["draft"]["operation"] == "corners" { "Corner draft loaded. Apply corners updates the existing projection; Cancel discards this reviewed draft." } else if state["draft"]["operation"] == "rebind" { "Rebind draft loaded. Apply rebind updates the existing entity to the reviewed destination; Cancel discards this draft." } else if state["draft"]["operation"] == "refit" { "Refit draft loaded. Apply refit updates the existing entity; Cancel discards this reviewed draft." } else { "Current draft loaded. Apply overlay confirms it; Cancel discards this reviewed draft." }.into());
+                        }
+                        Err(error) => window.set_message(error.into()),
                     }
-                    Err(error) => window.set_message(error.into()),
-                }
-                refresh_material(&window, &session);
-                refresh(&window, &session, &form);
+                    refresh_material(&window, session);
+                    refresh(&window, session, &form);
+                });
             }
         });
         window.on_apply({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, document, form) = (window.as_weak(), access.downgrade(), form.clone());
             move || {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
-                let token = {
-                    let form = form.borrow();
-                    form.token.filter(|_| {
-                        form.reviewed.is_some()
-                            && fields(&window).ok().as_ref() == form.reviewed.as_ref()
-                            && corner_form_matches(&window, &form)
-                    })
-                };
-                let Some(token) = token else {
-                    window.set_ready(false);
-                    window.set_message(
-                        "Preview or Review current draft before applying.".into(),
-                    );
-                    return;
-                };
-                match session.apply_overlay(Actor::User, token) {
-                    Ok(result) => {
-                        *form.borrow_mut() = Form::default();
-                        window.set_message(if result["operation"] == "corners" { "Overlay corners updated. Undo restores the previous projection." } else if result["operation"] == "rebind" { "Overlay rebound and selected. Undo restores its previous binding and projection." } else if result["operation"] == "refit" { "Overlay refitted and selected. Undo restores its previous projection." } else { "Overlay created and selected. Undo removes it." }.into());
-                        refresh(&window, &session, &form);
-                        let _ = window.hide();
+                callback(&window, &document, |window, session| {
+                    let token = {
+                        let form = form.borrow();
+                        form.token.filter(|_| {
+                            form.reviewed.is_some()
+                                && fields(&window).ok().as_ref() == form.reviewed.as_ref()
+                                && corner_form_matches(&window, &form)
+                        })
+                    };
+                    let Some(token) = token else {
+                        window.set_ready(false);
+                        window.set_message(
+                            "Preview or Review current draft before applying.".into(),
+                        );
+                        return;
+                    };
+                    match session.apply_overlay(Actor::User, token) {
+                        Ok(result) => {
+                            *form.borrow_mut() = Form::default();
+                            window.set_message(if result["operation"] == "corners" { "Overlay corners updated. Undo restores the previous projection." } else if result["operation"] == "rebind" { "Overlay rebound and selected. Undo restores its previous binding and projection." } else if result["operation"] == "refit" { "Overlay refitted and selected. Undo restores its previous projection." } else { "Overlay created and selected. Undo removes it." }.into());
+                            refresh(&window, session, &form);
+                            let _ = window.hide();
+                        }
+                        Err(error) => {
+                            window.set_message(error.into());
+                            refresh(&window, session, &form);
+                        }
                     }
-                    Err(error) => {
-                        window.set_message(error.into());
-                        refresh(&window, &session, &form);
-                    }
-                }
+                });
             }
         });
         window.on_cancel({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, document, form) = (window.as_weak(), access.downgrade(), form.clone());
             move || {
-                cancel_owned(&mut lock(&shared), &form);
-                let _ = window.unwrap().hide();
+                callback(&window, &document, |_window, session| {
+                    cancel_owned(session, &form);
+                });
+                if let Some(window) = window.upgrade() {
+                    let _ = window.hide();
+                }
             }
         });
         window.window().on_close_requested({
-            let (shared, form) = (shared.clone(), form.clone());
+            let (window, document, form) = (window.as_weak(), access.downgrade(), form.clone());
             move || {
-                cancel_owned(&mut lock(&shared), &form);
+                callback(&window, &document, |_window, session| {
+                    cancel_owned(session, &form);
+                });
                 slint::CloseRequestResponse::HideWindow
             }
         });
@@ -953,6 +1020,9 @@ impl Controller {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod admission_tests;
 
 #[cfg(test)]
 mod tests {

@@ -33,7 +33,7 @@ fn shortcut_tools_share_persistence_and_the_typed_command_dispatcher() {
     let saved = value(
         server.set_keyboard_shortcuts(Parameters(ShortcutsArgs::Save {
             snapshot: initial["snapshot"].as_str().unwrap().into(),
-            bindings: bindings.clone(),
+            bindings: Box::new(bindings.clone()),
         })),
     );
     assert_eq!(saved["ready"], true);

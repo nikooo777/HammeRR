@@ -50,9 +50,11 @@ fn factory_aliases_and_exact_modifiers_resolve_without_reserved_key_collisions()
 
 #[test]
 fn rebinding_unbinding_and_atomic_swaps_reject_duplicate_and_unsupported_chords() {
-    let mut bindings = Bindings::default();
-    bindings.undo = [chord("f6", false, true), None];
-    bindings.duplicate_selection = [None, None];
+    let bindings = Bindings {
+        undo: [chord("f6", false, true), None],
+        duplicate_selection: [None, None],
+        ..Default::default()
+    };
     let bindings = bindings.validated().unwrap();
     assert_eq!(bindings.undo[0].as_ref().unwrap().key, "F6");
     assert_eq!(bindings.label(Command::DuplicateSelection), "Unbound");

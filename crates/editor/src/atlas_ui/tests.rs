@@ -24,7 +24,7 @@ fn atlas_dialog_preview_apply_cancel_and_material_reload_share_session_guards() 
     let texture = directory.path().join("materials/test/checker.vtf");
     let mut bytes = std::fs::read(&texture).unwrap();
     let mut normal = bytes.clone();
-    for pixel in normal[80..].chunks_exact_mut(4) {
+    for pixel in normal[80..].as_chunks_mut::<4>().0 {
         pixel.copy_from_slice(&[128, 128, 255, 255]);
     }
     std::fs::write(

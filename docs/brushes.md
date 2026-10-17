@@ -44,6 +44,30 @@ The **Pivot** can be the **Selection center**, the **World origin** or **Custom*
 
 Typed transforms are exact and ignore grid snapping. While a transform preview is open, from the handles, the inspector or an agent, the inspector shows its values and a summary of every operation in it. Click **Apply transform** or **Cancel** before starting another.
 
+### Pick a custom pivot on a surface
+
+1. Select whole objects and enable **Transform selection**.
+2. Click **Pick pivot…** beside the pivot choices.
+3. Click a visible brush face, terrain sheet or supported model surface. The
+   exact unsnapped hit becomes **Custom** XYZ; inspect the target and coordinates.
+4. Rotate or scale using the ordinary numeric controls or handles. The pivot
+   remains a fixed world point; it does not follow the picked object afterward.
+5. Escape during the pick or **Cancel pivot pick** disarms it without changing
+   the previous pivot. Empty-space clicks leave it armed and unchanged.
+
+![Surface-picked custom transform pivot](images/surface-picked-transform-pivot.png)
+
+![Rotation handles centered on the picked surface point](images/surface-picked-transform-pivot-viewport.png)
+
+Finish previews and active tools before picking. Camera, viewport, view, source,
+selection or transform-tool changes invalidate an armed pick; its owned Cancel
+remains available. Foreign or stale picks leave ordinary viewport input usable.
+Helpers, unavailable meshes and empty space provide no substitute plane.
+No pivot attachment, offsets, snapping or startup persistence is added.
+MCP uses `transform_pivot_pick`; pass its `current_pivot` explicitly to
+`transform_objects` when desired, since that tool keeps its default
+selection-center behavior when `pivot` is omitted.
+
 ### Snap selection to grid
 
 Move an off-grid selection onto the grid without changing its shape or the spacing between objects:

@@ -6,7 +6,7 @@ use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::{
     CubemapFaceRow, CubemapFacesWindow,
-    runtime::{SharedSession, lock},
+    runtime::{DocumentAccess, DocumentContinuation},
     session::{
         Actor, SelectMode, Session,
         cubemap_bindings::{Operation, Query, Request},
@@ -14,6 +14,9 @@ use crate::{
 };
 
 const PAGE_SIZE: usize = 20;
+
+#[cfg(test)]
+use crate::runtime::{SharedSession, lock};
 
 #[derive(Default)]
 struct Form {
@@ -396,181 +399,202 @@ fn cancel_owned(session: &mut Session, form: &RefCell<Form>) {
     form.borrow_mut().seen.clear();
 }
 
+fn callback(
+    window: &slint::Weak<CubemapFacesWindow>,
+    document: &DocumentContinuation,
+    body: impl FnOnce(CubemapFacesWindow, &mut Session),
+) {
+    let Some(window) = window.upgrade() else {
+        return;
+    };
+    let result = document.upgrade().and_then(|access| {
+        access.with_session(|session| {
+            body(window.clone_strong(), session);
+            Ok(())
+        })
+    });
+    if let Err(error) = result {
+        window.set_message(error.into());
+    }
+}
+
 impl Controller {
+    #[cfg(test)]
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
+        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
+    }
+
+    pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let window = CubemapFacesWindow::new()?;
         let form = Rc::new(RefCell::new(Form::default()));
         window.on_refresh({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, document, form) = (window.as_weak(), access.downgrade(), form.clone());
             move || {
-                form.borrow_mut().offset = 0;
-                inspect(&window.unwrap(), &lock(&shared), &form);
+                callback(&window, &document, |window, session| {
+                    form.borrow_mut().offset = 0;
+                    inspect(&window, session, &form);
+                });
             }
         });
         window.on_page_change({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, document, form) = (window.as_weak(), access.downgrade(), form.clone());
             move |direction| {
-                let session = lock(&shared);
-                if !inspection_current(&session, &form.borrow())
-                    || form.borrow().report_query != window.unwrap().get_search().as_str()
-                {
-                    window
-                        .unwrap()
-                        .set_message("Refresh assignments before changing pages.".into());
-                    return;
-                }
-                let mut state = form.borrow_mut();
-                state.offset = if direction < 0 {
-                    state.offset.saturating_sub(PAGE_SIZE)
-                } else {
-                    state.offset.saturating_add(PAGE_SIZE)
-                };
-                drop(state);
-                inspect(&window.unwrap(), &session, &form);
+                callback(&window, &document, |window, session| {
+                    if !inspection_current(session, &form.borrow())
+                        || form.borrow().report_query != window.get_search().as_str()
+                    {
+                        window.set_message("Refresh assignments before changing pages.".into());
+                        return;
+                    }
+                    let mut state = form.borrow_mut();
+                    state.offset = if direction < 0 {
+                        state.offset.saturating_sub(PAGE_SIZE)
+                    } else {
+                        state.offset.saturating_add(PAGE_SIZE)
+                    };
+                    drop(state);
+                    inspect(&window, session, &form);
+                });
             }
         });
         window.on_select_face({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, document, form) = (window.as_weak(), access.downgrade(), form.clone());
             move |index| {
-                let mut session = lock(&shared);
-                let source = {
-                    let form = form.borrow();
-                    if !inspection_current(&session, &form) {
-                        window.unwrap().set_message(
-                            "Refresh assignments before selecting a listed face.".into(),
-                        );
-                        return;
+                callback(&window, &document, |window, session| {
+                    let source = {
+                        let form = form.borrow();
+                        if !inspection_current(session, &form) {
+                            window.set_message(
+                                "Refresh assignments before selecting a listed face.".into(),
+                            );
+                            return;
+                        }
+                        usize::try_from(index)
+                            .ok()
+                            .and_then(|index| form.report.as_ref()?.get("assignments")?.get(index))
+                            .and_then(|row| face(&row["face"]))
+                    };
+                    if let Some(source) = source
+                        && let Err(error) = session.select_faces(&[source], SelectMode::Toggle)
+                    {
+                        window.set_message(error.into());
                     }
-                    usize::try_from(index)
-                        .ok()
-                        .and_then(|index| form.report.as_ref()?.get("assignments")?.get(index))
-                        .and_then(|row| face(&row["face"]))
-                };
-                if let Some(source) = source
-                    && let Err(error) = session.select_faces(&[source], SelectMode::Toggle)
-                {
-                    window.unwrap().set_message(error.into());
-                }
-                refresh(&window.unwrap(), &session, &form);
+                    refresh(&window, session, &form);
+                });
             }
         });
         window.on_select_bound({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, document, form) = (window.as_weak(), access.downgrade(), form.clone());
             move || {
-                let mut session = lock(&shared);
-                if !inspection_current(&session, &form.borrow()) {
-                    window
-                        .unwrap()
-                        .set_message("Refresh before selecting bound faces.".into());
-                    return;
-                }
-                let faces = manual_faces(&form.borrow());
-                if let Err(error) = session.select_faces(&faces, SelectMode::Replace) {
-                    window.unwrap().set_message(error.into());
-                }
-                refresh(&window.unwrap(), &session, &form);
+                callback(&window, &document, |window, session| {
+                    if !inspection_current(session, &form.borrow()) {
+                        window.set_message("Refresh before selecting bound faces.".into());
+                        return;
+                    }
+                    let faces = manual_faces(&form.borrow());
+                    if let Err(error) = session.select_faces(&faces, SelectMode::Replace) {
+                        window.set_message(error.into());
+                    }
+                    refresh(&window, session, &form);
+                });
             }
         });
         window.on_bind({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, document, form) = (window.as_weak(), access.downgrade(), form.clone());
             move || {
-                preview(
-                    &window.unwrap(),
-                    &mut lock(&shared),
-                    &form,
-                    Operation::Bind,
-                    false,
-                )
+                callback(&window, &document, |window, session| {
+                    preview(&window, session, &form, Operation::Bind, false)
+                });
             }
         });
         window.on_remove({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, document, form) = (window.as_weak(), access.downgrade(), form.clone());
             move || {
-                preview(
-                    &window.unwrap(),
-                    &mut lock(&shared),
-                    &form,
-                    Operation::Remove,
-                    false,
-                )
+                callback(&window, &document, |window, session| {
+                    preview(&window, session, &form, Operation::Remove, false)
+                });
             }
         });
         window.on_clear_bindings({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, document, form) = (window.as_weak(), access.downgrade(), form.clone());
             move || {
-                preview(
-                    &window.unwrap(),
-                    &mut lock(&shared),
-                    &form,
-                    Operation::Remove,
-                    true,
-                )
+                callback(&window, &document, |window, session| {
+                    preview(&window, session, &form, Operation::Remove, true)
+                });
             }
         });
         window.on_review({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, document, form) = (window.as_weak(), access.downgrade(), form.clone());
             move || {
-                let mut session = lock(&shared);
-                let token = session.cubemap_binding_state()["draft"]["token"].as_u64();
-                if let Some(token) = token {
-                    match session.review_cubemap_bindings(Actor::User, token) {
-                        Ok(state) => {
-                            let mut current = form.borrow_mut();
-                            if current.helper.map(u64::from) != state["draft"]["helper"].as_u64() {
-                                current.report = None;
+                callback(&window, &document, |window, session| {
+                    let token = session.cubemap_binding_state()["draft"]["token"].as_u64();
+                    if let Some(token) = token {
+                        match session.review_cubemap_bindings(Actor::User, token) {
+                            Ok(state) => {
+                                let mut current = form.borrow_mut();
+                                if current.helper.map(u64::from) != state["draft"]["helper"].as_u64() {
+                                    current.report = None;
+                                }
+                                current.generation = session.document_generation();
+                                drop(current);
+                                adopt(&form, &state);
+                                let message = "Current draft reviewed. Check its helper, faces and exact sample choices before Apply.";
+                                window.set_message(message.into());
                             }
-                            current.generation = session.document_generation();
-                            drop(current);
-                            adopt(&form, &state);
-                            let message = "Current draft reviewed. Check its helper, faces and exact sample choices before Apply.";
-                            window.unwrap().set_message(message.into());
+                            Err(error) => window.set_message(error.into()),
                         }
-                        Err(error) => window.unwrap().set_message(error.into()),
                     }
-                }
-                refresh(&window.unwrap(), &session, &form);
+                    refresh(&window, session, &form);
+                });
             }
         });
         window.on_apply({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, document, form) = (window.as_weak(), access.downgrade(), form.clone());
             move || {
-                let mut session = lock(&shared);
-                refresh(&window.unwrap(), &session, &form);
-                if !window.unwrap().get_ready() {
-                    window.unwrap().set_message("Preview or Review the current binding draft before Apply.".into());
-                    return;
-                }
-                let token = form.borrow().reviewed_token.unwrap();
-                match session.apply_cubemap_bindings(Actor::User, token) {
-                    Ok(_) => {
-                        let mut form = form.borrow_mut();
-                        form.owned_token = None;
-                        form.reviewed_token = None;
-                        form.seen.clear();
-                        let message = "Cubemap bindings applied. Undo restores the previous sides property. Refresh to update the assignment list.";
-                        window.unwrap().set_message(message.into());
+                callback(&window, &document, |window, session| {
+                    refresh(&window, session, &form);
+                    if !window.get_ready() {
+                        window.set_message("Preview or Review the current binding draft before Apply.".into());
+                        return;
                     }
-                    Err(error) => {
-                        let mut form = form.borrow_mut();
-                        form.reviewed_token = None;
-                        form.seen.clear();
-                        window.unwrap().set_message(error.into());
+                    let token = form.borrow().reviewed_token.unwrap();
+                    match session.apply_cubemap_bindings(Actor::User, token) {
+                        Ok(_) => {
+                            let mut form = form.borrow_mut();
+                            form.owned_token = None;
+                            form.reviewed_token = None;
+                            form.seen.clear();
+                            let message = "Cubemap bindings applied. Undo restores the previous sides property. Refresh to update the assignment list.";
+                            window.set_message(message.into());
+                        }
+                        Err(error) => {
+                            let mut form = form.borrow_mut();
+                            form.reviewed_token = None;
+                            form.seen.clear();
+                            window.set_message(error.into());
+                        }
                     }
-                }
-                refresh(&window.unwrap(), &session, &form);
+                    refresh(&window, session, &form);
+                });
             }
         });
         window.on_cancel({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, document, form) = (window.as_weak(), access.downgrade(), form.clone());
             move || {
-                cancel_owned(&mut lock(&shared), &form);
-                let _ = window.unwrap().hide();
+                callback(&window, &document, |_window, session| {
+                    cancel_owned(session, &form);
+                });
+                if let Some(window) = window.upgrade() {
+                    let _ = window.hide();
+                }
             }
         });
         window.window().on_close_requested({
-            let (shared, form) = (shared.clone(), form.clone());
+            let (window, document, form) = (window.as_weak(), access.downgrade(), form.clone());
             move || {
-                cancel_owned(&mut lock(&shared), &form);
+                callback(&window, &document, |_window, session| {
+                    cancel_owned(session, &form);
+                });
                 slint::CloseRequestResponse::HideWindow
             }
         });
@@ -599,6 +623,9 @@ impl Controller {
         refresh(&self.window, session, &self.form);
     }
 }
+
+#[cfg(test)]
+mod admission_tests;
 
 #[cfg(test)]
 mod tests;

@@ -31,8 +31,41 @@ pub struct SourceLocation {
     requested: PathBuf,
     alias: FileStamp,
     directory_alias: Option<FileStamp>,
+    directory_identity: Option<FileStamp>,
     root: FileStamp,
     directory: PathBuf,
+}
+
+#[derive(Clone, Debug)]
+pub struct ReferencePath {
+    source: SourceLocation,
+    relative: String,
+    path: PathBuf,
+    bytes: u64,
+    identity: FileStamp,
+}
+
+impl ReferencePath {
+    pub fn relative(&self) -> &str {
+        &self.relative
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn bytes(&self) -> u64 {
+        self.bytes
+    }
+
+    pub fn verify_metadata(&self) -> io::Result<()> {
+        self.source.verify_metadata()?;
+        if resolve_path_in(&self.source.directory, &self.relative)? != self.path {
+            return Err(io::Error::other("Instance reference resolution changed"));
+        }
+        self.identity.verify_metadata()?;
+        self.source.verify_metadata()
+    }
 }
 
 impl SourceLocation {
@@ -47,6 +80,10 @@ impl SourceLocation {
             .map(|_| FileStamp::capture_container(parent))
             .transpose()?;
         let directory = parent.canonicalize()?;
+        let directory_identity = directory
+            .file_name()
+            .map(|_| FileStamp::capture_container(&directory))
+            .transpose()?;
         let physical = requested.canonicalize()?;
         if std::fs::metadata(&physical)?.len() > MAX_PARENT_BYTES {
             return Err(io::Error::other("Saved instance parent exceeds 128 MiB"));
@@ -55,6 +92,7 @@ impl SourceLocation {
             requested,
             alias,
             directory_alias,
+            directory_identity,
             root: FileStamp::capture(&physical)?,
             directory,
         };
@@ -62,10 +100,65 @@ impl SourceLocation {
         Ok(location)
     }
 
+    pub fn reference(&self, value: &str) -> io::Result<ReferencePath> {
+        self.verify_metadata()?;
+        let relative = filename(value).map_err(io::Error::other)?;
+        let path = resolve_path_in(&self.directory, &relative)?;
+        let identity = FileStamp::capture(&path)?;
+        let metadata = std::fs::symlink_metadata(&path)?;
+        if !metadata.is_file() || metadata.len() > MAX_FILE_BYTES as u64 {
+            return Err(io::Error::other(
+                "Instance reference must be a regular file of at most 4 MiB",
+            ));
+        }
+        if identity.same_file(&self.root) {
+            return Err(io::Error::other(
+                "Instance reference forms a self-reference cycle",
+            ));
+        }
+        let reference = ReferencePath {
+            source: self.clone(),
+            relative,
+            path,
+            bytes: metadata.len(),
+            identity,
+        };
+        reference.verify_metadata()?;
+        Ok(reference)
+    }
+
+    pub fn reference_from_path(&self, selected: &Path) -> io::Result<ReferencePath> {
+        if !selected.is_absolute() {
+            return Err(io::Error::other("Choose an absolute instance filename"));
+        }
+        self.verify_metadata()?;
+        let requested_parent = self
+            .requested
+            .parent()
+            .ok_or_else(|| io::Error::other("Instance source has no parent directory"))?;
+        let relative = selected
+            .strip_prefix(requested_parent)
+            .or_else(|_| selected.strip_prefix(&self.directory))
+            .map_err(|_| {
+                io::Error::other("Choose an instance beneath the referring map directory")
+            })?;
+        let value = relative
+            .to_str()
+            .ok_or_else(|| io::Error::other("Instance filename must be valid UTF-8"))?;
+        let normalized = filename(value).map_err(io::Error::other)?;
+        if Path::new(&normalized) != relative {
+            return Err(io::Error::other("Selected instance filename is ambiguous"));
+        }
+        self.reference(&normalized)
+    }
+
     pub fn verify_metadata(&self) -> io::Result<()> {
         self.alias.verify_metadata()?;
         if let Some(alias) = &self.directory_alias {
             alias.verify_container_identity()?;
+        }
+        if let Some(directory) = &self.directory_identity {
+            directory.verify_container_identity()?;
         }
         if self.requested.canonicalize()? != self.root.path()
             || self
@@ -92,6 +185,7 @@ impl SourceLocation {
             requested: self.requested,
             alias: self.alias,
             directory_alias: self.directory_alias,
+            directory_identity: self.directory_identity,
             root,
             directory: self.directory,
         })
@@ -103,6 +197,7 @@ pub struct SourceContext {
     requested: PathBuf,
     alias: FileStamp,
     directory_alias: Option<FileStamp>,
+    directory_identity: Option<FileStamp>,
     root: FileIdentity,
     directory: PathBuf,
 }
@@ -131,6 +226,9 @@ impl SourceContext {
         self.alias.verify_metadata()?;
         if let Some(alias) = &self.directory_alias {
             alias.verify_container_identity()?;
+        }
+        if let Some(directory) = &self.directory_identity {
+            directory.verify_container_identity()?;
         }
         if self.requested.canonicalize()? != self.root.path()
             || self
@@ -244,8 +342,12 @@ fn filename(value: &str) -> Result<String, String> {
 }
 
 fn resolve_path(source: &SourceContext, relative: &str) -> io::Result<PathBuf> {
+    resolve_path_in(&source.directory, relative)
+}
+
+fn resolve_path_in(directory: &Path, relative: &str) -> io::Result<PathBuf> {
     let relative = filename(relative).map_err(io::Error::other)?;
-    let mut path = source.directory.clone();
+    let mut path = directory.to_owned();
     for part in Path::new(&relative).components() {
         path.push(part);
         let metadata = std::fs::symlink_metadata(&path)?;

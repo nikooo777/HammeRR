@@ -117,7 +117,17 @@ pub fn bind(window: &RecentMapsWindow, shared: &SharedSession) {
     });
     window.on_refresh({
         let (window, session) = (window.as_weak(), shared.clone());
-        move || refresh(&window.unwrap(), &lock(&session))
+        move || {
+            let window = window.unwrap();
+            let mut session = lock(&session);
+            let result = session.reload_recent_maps();
+            window.set_confirm_clear(false);
+            window.set_message(match result {
+                Ok(_) => "Saved list reloaded; the current map is unchanged.".into(),
+                Err(error) => error.into(),
+            });
+            refresh(&window, &session);
+        }
     });
     window.on_select_map({
         let (window, session) = (window.as_weak(), shared.clone());
@@ -187,3 +197,6 @@ pub fn bind(window: &RecentMapsWindow, shared: &SharedSession) {
         }
     });
 }
+
+#[cfg(test)]
+mod tests;

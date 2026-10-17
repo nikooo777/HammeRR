@@ -145,6 +145,13 @@ impl EditorServer {
     }
 
     #[tool(
+        description = "Reload the saved Recent maps list through the same Session operation as Reload saved list in the editor. Clears a stale-writer conflict only after a successful bounded read and validation. Failed Reload preserves the previous valid list and exposes the storage error. Does not open/save a map, restore build settings, change selection/camera/history, or apply/cancel drafts. get_recent_maps only inspects the current list."
+    )]
+    pub(in crate::mcp) fn reload_recent_maps(&self) -> ToolResult {
+        run(|| self.session().reload_recent_maps())
+    }
+
+    #[tool(
         description = "Reopen an exact path from get_recent_maps through the normal map validation and dirty/discard guards. Restores retained build settings only for matching mounted game content and while no compile is active. Does not switch game content. Failed opens preserve the map, history and recent list."
     )]
     pub(in crate::mcp) fn open_recent_map(
@@ -290,3 +297,6 @@ impl EditorServer {
         ok(json!({ "redone": redone }))
     }
 }
+
+#[cfg(test)]
+mod recent_tests;

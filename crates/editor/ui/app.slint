@@ -1399,7 +1399,7 @@ export component RecentMapsWindow inherits Window {
             Text { text: "Reopen a map with its retained build settings. Game content stays mounted from this editor session."; wrap: word-wrap; color: #aab0bb; }
             HorizontalLayout {
                 Text { text: root.summary; horizontal-stretch: 1; vertical-alignment: center; }
-                Button { text: "Refresh list"; clicked => { root.refresh(); } }
+                Button { text: "Reload saved list"; clicked => { root.refresh(); } }
             }
             ListView {
                 min-height: 140px;

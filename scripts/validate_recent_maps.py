@@ -1,4 +1,5 @@
 import argparse
+import fcntl
 import json
 import tempfile
 from contextlib import contextmanager
@@ -9,8 +10,8 @@ from validate_face_lighting import DEFAULT_BINARY, Client
 
 
 @contextmanager
-def launched(binary, output, stage):
-    with patch.dict("os.environ", {"HAMMERR_RECENT_MAPS_DIR": str(output / "recent-map-state")}):
+def launched(binary, output, stage, preferences=None):
+    with patch.dict("os.environ", {"HAMMERR_RECENT_MAPS_DIR": str(preferences or output / "recent-map-state")}):
         client = Client(None, binary, output)
     try:
         yield client
@@ -26,6 +27,52 @@ def map_state(client):
         "generation": info["recovery"]["generation"],
         "revision": info["recovery"]["revision"],
     }
+
+
+def validate_conflicts(binary, output, check):
+    first_output = output / "writer-a"
+    second_output = output / "writer-b"
+    first_output.mkdir()
+    second_output.mkdir()
+    preferences = output / "conflict-state"
+    store = preferences / "recent-maps.json"
+    first = output / "conflict-a.vmf"
+    second = output / "conflict-b.vmf"
+    with launched(binary, first_output, "a", preferences) as left:
+        with launched(binary, second_output, "b", preferences) as right:
+            check(not store.exists(), "Two writers inspect the same initially missing preference file")
+            left.call("save_map", {"path": str(first)})
+            saved = store.read_bytes()
+            right.call("save_map", {"path": str(second)})
+            listing = right.call("get_recent_maps")
+            check(second.is_file() and map_state(right)["path"] == str(second), "Stale history publication does not fail a successful primary save")
+            check(store.read_bytes() == saved and listing["entries"] == [], "A stale writer preserves the first editor's saved list and its own local list")
+            check(listing["persistence"] == "blocked" and "Reload saved list" in listing["error"], "Stale writer conflict is visible and recoverable")
+            measurement = right.call("get_measurements")
+            right.call("set_measurement", {"action": "preview", "snapshot": measurement["snapshot"], "name": "Owned clearance", "start": [0, 0, 0], "end": [64, 0, 0]})
+            owned = right.call("get_measurements")["draft"]
+            before = map_state(right)
+            reloaded = right.call("reload_recent_maps")
+            check(reloaded["entries"][0]["path"] == str(first) and reloaded["error"] is None, "Explicit MCP Reload adopts the current saved list and clears conflict")
+            check(map_state(right) == before and right.call("get_measurements")["draft"] == owned, "Reload preserves map/history/selection and the Agent-owned review")
+            right.call("save_map")
+            check([entry["path"] for entry in right.call("get_recent_maps")["entries"]] == [str(second), str(first)], "Saving after Reload retains both editors' map entries")
+            left.call("reload_recent_maps")
+            current = store.read_bytes()
+            with (preferences / ".recent-maps.lock").open("r+b") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                left.call("clear_recent_maps", error=True)
+                check(store.read_bytes() == current and "busy" in left.call("get_recent_maps")["error"], "Independent lock ownership fails promptly and preserves the saved list")
+            left.call("clear_recent_maps")
+            check(left.call("get_recent_maps")["entries"] == [], "A released lock permits retry without restarting")
+            right.call("reload_recent_maps")
+            valid = store.read_bytes()
+            store.write_bytes(b"malformed preferences")
+            right.call("reload_recent_maps", error=True)
+            check(right.call("get_recent_maps")["persistence"] == "blocked" and store.read_bytes() == b"malformed preferences", "Invalid Reload blocks writes without overwriting malformed storage")
+            store.write_bytes(valid)
+            right.call("reload_recent_maps")
+            check(right.call("get_recent_maps")["error"] is None, "Repair plus explicit Reload restores a usable preference list")
 
 
 def validate(binary, output):
@@ -54,7 +101,7 @@ def validate(binary, output):
     check(not store.exists(), "Validation starts with isolated empty storage")
     with launched(binary, output, "workflow") as client:
         names = {tool["name"] for tool in client.rpc("tools/list", {})["tools"]}
-        check({"get_recent_maps", "open_recent_map", "remove_recent_map", "clear_recent_maps"} <= names, "Recent-map tools are discoverable")
+        check({"get_recent_maps", "reload_recent_maps", "open_recent_map", "remove_recent_map", "clear_recent_maps"} <= names, "Recent-map tools are discoverable")
         initial = listing(client)
         check(initial["entries"] == [], "Fresh recent list is empty")
         check(initial["persistence"] == "persistent" and initial["directory"] == str(store.parent), "Storage override is explicit and isolated")
@@ -163,6 +210,8 @@ def validate(binary, output):
     store.write_bytes(valid)
     with launched(binary, output, "repaired") as client:
         check(listing(client)["persistence"] == "persistent" and len(paths(client)) == 1, "Repair and restart recovers preserved history")
+
+    validate_conflicts(binary, output, check)
 
     return {"checks": checks, "count": len(checks), "output": str(output)}
 

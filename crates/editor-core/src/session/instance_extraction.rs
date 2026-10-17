@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use source_formats::vmf::{Entity, Vmf};
 
-use super::instance_worker::{Slot, Ticket};
+use super::worker::{Slot, Ticket};
 use super::*;
 
 mod admission;

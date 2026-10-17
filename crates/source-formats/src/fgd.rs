@@ -1,6 +1,11 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+mod loading;
+#[cfg(test)]
+mod loading_tests;
+use loading::{Budget, MAX_FIELD_BYTES, MAX_FILE_BYTES, helper_bytes};
+
 const MAX_DEPTH: usize = 128;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -163,7 +168,9 @@ pub struct Catalog {
 
 impl Catalog {
     pub fn parse(text: &str) -> Result<Self, String> {
-        let declarations = Parser::new(text)?.parse()?;
+        let mut check = || Ok(());
+        let mut budget = Budget::new(&mut check);
+        let declarations = Parser::new(text, &mut budget)?.parse()?;
         let mut raw = RawCatalog::default();
         for declaration in declarations {
             match declaration {
@@ -173,20 +180,32 @@ impl Catalog {
                 declaration => raw.insert(declaration, None),
             }
         }
-        Self::resolve(raw, Vec::new())
+        Self::resolve(raw, Vec::new(), &mut budget)
     }
 
     pub fn load(path: &Path) -> Result<Self, String> {
-        let mut raw = RawCatalog::default();
-        let mut sources = Vec::new();
-        load(path, &mut raw, &mut sources, &mut Vec::new())?;
-        Self::resolve(raw, sources)
+        Self::load_controlled(path, &mut || Ok(()))
     }
 
-    fn resolve(raw: RawCatalog, sources: Vec<PathBuf>) -> Result<Self, String> {
+    pub fn load_controlled(
+        path: &Path,
+        check: &mut dyn FnMut() -> Result<(), String>,
+    ) -> Result<Self, String> {
+        let mut budget = Budget::new(check);
+        let mut raw = RawCatalog::default();
+        let mut sources = Vec::new();
+        load(path, &mut raw, &mut sources, &mut Vec::new(), &mut budget)?;
+        Self::resolve(raw, sources, &mut budget)
+    }
+
+    fn resolve(
+        raw: RawCatalog,
+        sources: Vec<PathBuf>,
+        budget: &mut Budget<'_>,
+    ) -> Result<Self, String> {
         let mut classes = BTreeMap::new();
         for name in raw.classes.keys() {
-            resolve(name, &raw, &mut classes, &mut Vec::new())?;
+            resolve(name, &raw, &mut classes, &mut Vec::new(), budget)?;
         }
         Ok(Self {
             classes,
@@ -242,7 +261,9 @@ fn load(
     raw: &mut RawCatalog,
     sources: &mut Vec<PathBuf>,
     active: &mut Vec<PathBuf>,
+    budget: &mut Budget<'_>,
 ) -> Result<(), String> {
+    budget.poll()?;
     let path = path
         .canonicalize()
         .map_err(|e| format!("{}: {e}", path.display()))?;
@@ -255,9 +276,11 @@ fn load(
     if sources.contains(&path) {
         return Ok(());
     }
-    let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let bytes = budget
+        .read(&path)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
     let text = String::from_utf8_lossy(&bytes);
-    let declarations = Parser::new(&text)
+    let declarations = Parser::new(&text, budget)
         .and_then(Parser::parse)
         .map_err(|e| format!("{}: {e}", path.display()))?;
     active.push(path.clone());
@@ -271,6 +294,7 @@ fn load(
                 raw,
                 sources,
                 active,
+                budget,
             )?,
             declaration => raw.insert(declaration, Some(&path)),
         }
@@ -285,8 +309,11 @@ fn resolve(
     raw: &RawCatalog,
     resolved: &mut BTreeMap<String, Class>,
     active: &mut Vec<String>,
+    budget: &mut Budget<'_>,
 ) -> Result<Class, String> {
+    budget.poll()?;
     if let Some(class) = resolved.get(name) {
+        budget.copy_class(class)?;
         return Ok(class.clone());
     }
     if active.iter().any(|item| item == name) || active.len() >= MAX_DEPTH {
@@ -298,6 +325,7 @@ fn resolve(
         .classes
         .get(name)
         .ok_or_else(|| format!("unknown FGD base class {name}"))?;
+    budget.copy_class(own)?;
     let mut class = own.clone();
     class.properties.clear();
     class.inputs.clear();
@@ -305,66 +333,117 @@ fn resolve(
     class.helpers.clear();
     active.push(name.into());
     for base in &own.bases {
-        let parent = resolve(base, raw, resolved, active)?;
-        merge(&mut class, &parent, true);
+        let parent = resolve(base, raw, resolved, active, budget)?;
+        merge(&mut class, &parent, true, budget)?;
     }
-    merge(&mut class, own, true);
+    merge(&mut class, own, true, budget)?;
     if let Some(extensions) = raw.extensions.get(name) {
         for extension in extensions {
-            merge(&mut class, extension, false);
+            merge(&mut class, extension, false, budget)?;
         }
     }
     active.pop();
+    budget.copy_class(&class)?;
     resolved.insert(name.into(), class.clone());
     Ok(class)
 }
 
-fn merge(class: &mut Class, other: &Class, inherit_flags: bool) {
+fn merge(
+    class: &mut Class,
+    other: &Class,
+    inherit_flags: bool,
+    budget: &mut Budget<'_>,
+) -> Result<(), String> {
     for property in &other.properties {
+        budget.property(property)?;
         let mut property = property.clone();
-        if inherit_flags
-            && property.kind == "flags"
-            && let Some(previous) = class.property(&property.name)
-            && previous.kind == "flags"
-        {
-            let mut choices = previous.choices.clone();
-            for choice in &property.choices {
-                upsert(&mut choices, choice.clone(), |item| &item.value);
+        if inherit_flags && property.kind == "flags" {
+            let mut previous = None;
+            for candidate in &class.properties {
+                budget.work(candidate.name.len() + property.name.len() + 1)?;
+                if candidate.name.eq_ignore_ascii_case(&property.name) {
+                    previous = Some(candidate);
+                    break;
+                }
             }
-            property.choices = choices;
+            if let Some(previous) = previous.filter(|previous| previous.kind == "flags") {
+                budget.property(previous)?;
+                let mut choices = previous.choices.clone();
+                for choice in &property.choices {
+                    budget.choice(choice)?;
+                    upsert(&mut choices, choice.clone(), |item| &item.value, budget)?;
+                }
+                property.choices = choices;
+            }
         }
-        upsert(&mut class.properties, property, |item| &item.name);
+        upsert(&mut class.properties, property, |item| &item.name, budget)?;
     }
     for input in &other.inputs {
-        upsert(&mut class.inputs, input.clone(), |item| &item.name);
+        budget.io(input)?;
+        upsert(&mut class.inputs, input.clone(), |item| &item.name, budget)?;
     }
     for output in &other.outputs {
-        upsert(&mut class.outputs, output.clone(), |item| &item.name);
+        budget.io(output)?;
+        upsert(
+            &mut class.outputs,
+            output.clone(),
+            |item| &item.name,
+            budget,
+        )?;
     }
     for (index, helper) in other.helpers.iter().enumerate() {
-        if !other.helpers[..index]
-            .iter()
-            .any(|previous| previous.name.eq_ignore_ascii_case(&helper.name))
-        {
-            class
-                .helpers
-                .retain(|previous| !previous.name.eq_ignore_ascii_case(&helper.name));
+        let mut earlier = false;
+        for previous in &other.helpers[..index] {
+            budget.work(previous.name.len() + helper.name.len() + 1)?;
+            if previous.name.eq_ignore_ascii_case(&helper.name) {
+                earlier = true;
+                break;
+            }
         }
-        if !class.helpers.contains(helper) {
+        if !earlier {
+            let mut index = 0;
+            while index < class.helpers.len() {
+                budget.work(
+                    class.helpers[index].name.len() + helper.name.len() + class.helpers.len() + 1,
+                )?;
+                if class.helpers[index].name.eq_ignore_ascii_case(&helper.name) {
+                    class.helpers.remove(index);
+                } else {
+                    index += 1;
+                }
+            }
+        }
+        let mut duplicate = false;
+        for previous in &class.helpers {
+            budget.work(helper_bytes(previous) + helper_bytes(helper) + 1)?;
+            if previous == helper {
+                duplicate = true;
+                break;
+            }
+        }
+        if !duplicate {
+            budget.helper(helper)?;
             class.helpers.push(helper.clone());
         }
     }
+    Ok(())
 }
 
-fn upsert<T>(items: &mut Vec<T>, value: T, name: impl Fn(&T) -> &str) {
-    if let Some(index) = items
-        .iter()
-        .position(|item| name(item).eq_ignore_ascii_case(name(&value)))
-    {
-        items[index] = value;
-    } else {
-        items.push(value);
+fn upsert<T>(
+    items: &mut Vec<T>,
+    value: T,
+    name: impl Fn(&T) -> &str,
+    budget: &mut Budget<'_>,
+) -> Result<(), String> {
+    for item in items.iter_mut() {
+        budget.work(name(item).len() + name(&value).len() + 1)?;
+        if name(item).eq_ignore_ascii_case(name(&value)) {
+            *item = value;
+            return Ok(());
+        }
     }
+    items.push(value);
+    Ok(())
 }
 
 enum Declaration {
@@ -380,22 +459,30 @@ struct Token {
     quoted: bool,
 }
 
-struct Parser<'a> {
+struct Parser<'a, 'b, 'c> {
     source: &'a str,
     tokens: Vec<Token>,
     index: usize,
+    lines: Vec<usize>,
+    budget: &'b mut Budget<'c>,
 }
 
-impl<'a> Parser<'a> {
-    fn new(source: &'a str) -> Result<Self, String> {
+impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
+    fn new(source: &'a str, budget: &'b mut Budget<'c>) -> Result<Self, String> {
+        budget.start_scan()?;
+        if source.len() > MAX_FILE_BYTES {
+            return Err(format!("FGD input exceeds {MAX_FILE_BYTES} bytes"));
+        }
         let mut tokens = Vec::new();
         let mut chars = source.char_indices().peekable();
         while let Some((offset, character)) = chars.next() {
+            budget.scan(offset)?;
             if character.is_whitespace() || character == '\u{feff}' {
                 continue;
             }
             if character == '/' && chars.peek().is_some_and(|(_, c)| *c == '/') {
-                for (_, c) in chars.by_ref() {
+                for (at, c) in chars.by_ref() {
+                    budget.scan(at)?;
                     if c == '\n' {
                         break;
                     }
@@ -405,7 +492,8 @@ impl<'a> Parser<'a> {
             if character == '/' && chars.peek().is_some_and(|(_, c)| *c == '*') {
                 chars.next();
                 let mut closed = false;
-                while let Some((_, c)) = chars.next() {
+                while let Some((at, c)) = chars.next() {
+                    budget.scan(at)?;
                     if c == '*' && chars.peek().is_some_and(|(_, c)| *c == '/') {
                         chars.next();
                         closed = true;
@@ -421,15 +509,22 @@ impl<'a> Parser<'a> {
             let quoted = character == '"';
             if quoted {
                 let mut closed = false;
-                while let Some((_, c)) = chars.next() {
+                while let Some((at, c)) = chars.next() {
+                    budget.scan(at)?;
                     if c == '"' {
                         closed = true;
                         break;
                     }
                     if c == '\\' && chars.peek().is_some_and(|(_, c)| *c == '"') {
                         chars.next();
+                        if text.len() >= MAX_FIELD_BYTES {
+                            return Err("FGD field byte limit exceeded".into());
+                        }
                         text.push('"');
                     } else {
+                        if text.len() + c.len_utf8() > MAX_FIELD_BYTES {
+                            return Err("FGD field byte limit exceeded".into());
+                        }
                         text.push(c);
                     }
                 }
@@ -439,18 +534,26 @@ impl<'a> Parser<'a> {
             } else {
                 text.push(character);
                 if !"()[]=:,+".contains(character) {
-                    while let Some(&(_, c)) = chars.peek() {
+                    while let Some(&(at, c)) = chars.peek() {
+                        budget.scan(at)?;
                         if c.is_whitespace()
                             || "()[]=:,+\"".contains(c)
                             || c == '/' && chars.clone().nth(1).is_some_and(|(_, c)| c == '/')
                         {
                             break;
                         }
+                        if text.len() + c.len_utf8() > MAX_FIELD_BYTES {
+                            return Err("FGD field byte limit exceeded".into());
+                        }
                         text.push(c);
                         chars.next();
                     }
                 }
             }
+            if text.len() > MAX_FIELD_BYTES {
+                return Err("FGD field byte limit exceeded".into());
+            }
+            budget.token()?;
             tokens.push(Token {
                 text,
                 offset,
@@ -461,6 +564,10 @@ impl<'a> Parser<'a> {
             source,
             tokens,
             index: 0,
+            lines: std::iter::once(0)
+                .chain(source.match_indices('\n').map(|(offset, _)| offset + 1))
+                .collect(),
+            budget,
         })
     }
 
@@ -500,14 +607,11 @@ impl<'a> Parser<'a> {
             .tokens
             .get(index)
             .map_or(self.source.len(), |token| token.offset);
-        self.source[..offset]
-            .bytes()
-            .filter(|b| *b == b'\n')
-            .count()
-            + 1
+        self.lines.partition_point(|line| *line <= offset)
     }
 
     fn atom(&mut self) -> Result<String, String> {
+        self.budget.poll()?;
         let token = self
             .tokens
             .get(self.index)
@@ -524,7 +628,11 @@ impl<'a> Parser<'a> {
     fn text(&mut self) -> Result<String, String> {
         let mut text = self.atom()?;
         while self.take("+") {
-            text += &self.atom()?;
+            let part = self.atom()?;
+            if text.len().saturating_add(part.len()) > MAX_FIELD_BYTES {
+                return Err(self.error("FGD concatenated field byte limit exceeded"));
+            }
+            text += &part;
         }
         Ok(text)
     }
@@ -544,6 +652,7 @@ impl<'a> Parser<'a> {
     fn parse(mut self) -> Result<Vec<Declaration>, String> {
         let mut declarations = Vec::new();
         while self.index < self.tokens.len() {
+            self.budget.poll()?;
             let directive = self.peek().to_ascii_lowercase();
             self.index += 1;
             match directive.as_str() {
@@ -581,6 +690,7 @@ impl<'a> Parser<'a> {
                 _ if directive.starts_with('@') => {
                     let mut depth = 0_i32;
                     while self.index < self.tokens.len() {
+                        self.budget.poll()?;
                         let token = &self.tokens[self.index];
                         if !token.quoted {
                             if depth == 0 && token.text.starts_with('@') {
@@ -623,6 +733,7 @@ impl<'a> Parser<'a> {
     }
 
     fn class(&mut self, kind: ClassKind) -> Result<Class, String> {
+        self.budget.class()?;
         let mut helpers = Vec::new();
         let mut bases = Vec::new();
         while !self.take("=") {
@@ -630,6 +741,7 @@ impl<'a> Parser<'a> {
             let mut arguments = Vec::new();
             if self.take("(") {
                 while !self.take(")") {
+                    self.budget.poll()?;
                     if !self.take(",") {
                         arguments.push(self.atom()?);
                     }
@@ -677,11 +789,13 @@ impl<'a> Parser<'a> {
                 self.peek().to_ascii_lowercase().as_str(),
                 "readonly" | "report"
             ) {
+                self.budget.poll()?;
                 read_only |= self.peek().eq_ignore_ascii_case("readonly");
                 self.index += 1;
             }
             let mut fields = Vec::new();
             while self.take(":") {
+                self.budget.poll()?;
                 fields.push(self.optional_text()?);
             }
             if let Some(io) = io {

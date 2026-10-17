@@ -4754,6 +4754,7 @@ dependencies = [
  "crc32fast",
  "flate2",
  "glam",
+ "libc",
  "png",
  "tempfile",
  "thiserror 2.0.21",

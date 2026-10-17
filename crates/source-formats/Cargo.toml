@@ -13,6 +13,9 @@ glam.workspace = true
 thiserror.workspace = true
 zip = { version = "9.0.3", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.190"
+
 [dev-dependencies]
 tempfile = "3.27.0"
 png = "0.18.1"

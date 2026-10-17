@@ -2,6 +2,67 @@ use super::*;
 use crate::session::{Actor, Session};
 
 #[test]
+fn shutdown_waits_for_fgd_result_cleanup_before_recovery_and_keeps_peer_live() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("definitions.fgd");
+    std::fs::write(&path, "@PointClass = loaded []").unwrap();
+    let mut state = Session::new(Err("no assets needed".into()));
+    let store = recovery::Store {
+        directory: directory.path().join("recovery"),
+    };
+    state.configure_recovery(Ok(store.directory.clone()));
+    state
+        .create_block(
+            Actor::User,
+            glam::DVec3::ZERO,
+            glam::DVec3::splat(16.0),
+            "no/assets",
+            false,
+        )
+        .unwrap();
+    let completed = state.begin_definitions_load(&path).unwrap().run();
+    let catalog = state.entity_definitions_report();
+    let source = state.document().vmf().clone();
+    let session = Arc::new(Mutex::new(state));
+    let document = DocumentHandle::start(session.clone()).unwrap();
+    let draining = document.clone();
+    let (send, receive) = std::sync::mpsc::channel();
+    let thread = std::thread::spawn(move || {
+        send.send(draining.shutdown()).unwrap();
+    });
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let error = lock(&session).begin_definitions_load(&path).err().unwrap();
+        if error == "The editor is closing" {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    assert!(receive.try_recv().is_err());
+    assert!(store.list().unwrap().entries.is_empty());
+    let mut peer = Session::new(Err("no assets needed".into()));
+    let peer_request = peer.begin_definitions_load(&path).unwrap();
+    peer.finish_definitions_load(Actor::Agent, peer_request.run())
+        .unwrap();
+    assert!(peer.definitions().class("loaded").is_some());
+    assert!(
+        lock(&session)
+            .finish_definitions_load(Actor::User, completed)
+            .is_err()
+    );
+    receive
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap()
+        .unwrap();
+    thread.join().unwrap();
+    assert_eq!(lock(&session).entity_definitions_report(), catalog);
+    assert_eq!(lock(&session).document().vmf(), &source);
+    assert!(!lock(&session).definitions_load_busy());
+    assert_eq!(store.list().unwrap().entries.len(), 1);
+}
+
+#[test]
 fn document_shutdown_waits_for_instance_cleanup_before_final_capture_and_leaves_peer_live() {
     let (directory, game, parent, selected) = crate::test_assets::instance_extraction_map();
     let source = std::fs::read(&parent).unwrap();

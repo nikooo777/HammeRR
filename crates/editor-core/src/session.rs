@@ -51,7 +51,6 @@ pub mod hollowing;
 pub mod instance_contents;
 pub mod instance_extraction;
 pub mod instance_reference;
-mod instance_worker;
 pub mod layers;
 mod lighting_preview;
 pub mod linked_path;
@@ -80,6 +79,7 @@ mod recent;
 pub mod shortcuts;
 mod view;
 mod viewport_pick;
+mod worker;
 pub use view::ViewUpdate;
 mod recovery;
 pub mod repeat;
@@ -279,6 +279,7 @@ pub struct Session {
     definitions: Catalog,
     definitions_error: Option<String>,
     definitions_serial: u64,
+    definitions_load: definitions::LoadState,
 }
 
 pub struct LaunchRequest {
@@ -440,6 +441,7 @@ impl Session {
             definitions: Catalog::default(),
             definitions_error: None,
             definitions_serial: 0,
+            definitions_load: definitions::LoadState::default(),
         }
     }
 
@@ -1987,6 +1989,7 @@ impl Session {
 
     pub fn shutdown(&mut self) {
         self.closing = true;
+        self.shutdown_definitions_load();
         self.reset_instance_contents();
         self.shutdown_instance_extraction();
         self.shutdown_sound_preview();

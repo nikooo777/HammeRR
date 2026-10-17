@@ -42,7 +42,9 @@ use serde::Deserialize;
 
 use serde_json::{Value, json};
 
-use source_formats::fgd::{Catalog, Class, ClassKind};
+#[cfg(test)]
+use source_formats::fgd::Catalog;
+use source_formats::fgd::{Class, ClassKind};
 
 use source_formats::vmf::{Entity, Solid};
 

@@ -1,5 +1,4 @@
 use super::*;
-use source_formats::fgd::Catalog;
 
 pub(super) fn set_inspected_property(
     app: &AppWindow,
@@ -294,6 +293,59 @@ pub(super) fn refresh_entity_picker(ui: &SharedUi) {
     }
 }
 
+fn start_fgd_load(app: &slint::Weak<AppWindow>, ui: &SharedUi, path: &Path) {
+    let shared = session_of(ui);
+    let window = ui
+        .borrow()
+        .entity_window
+        .as_ref()
+        .map(ComponentHandle::as_weak);
+    spawn_fgd_load(app, window, &shared, path);
+}
+
+fn spawn_fgd_load(
+    app: &slint::Weak<AppWindow>,
+    window: Option<slint::Weak<EntityWindow>>,
+    shared: &SharedSession,
+    path: &Path,
+) {
+    let request = match lock(&shared).begin_definitions_load(path) {
+        Ok(request) => request,
+        Err(error) => {
+            if let Some(app) = app.upgrade() {
+                app.set_message(error.into());
+            }
+            return;
+        }
+    };
+    let token = request.token();
+    let app_for_worker = app.clone();
+    let worker_session = shared.clone();
+    let spawned = std::thread::Builder::new()
+        .name("fgd-load".into())
+        .spawn(move || {
+            let completed = request.run();
+            let result = lock(&worker_session).finish_definitions_load(Actor::User, completed);
+            let message = match result {
+                Ok(_) => "Entity definitions loaded".to_owned(),
+                Err(error) => error,
+            };
+            if let Some(window) = window {
+                let message = message.clone();
+                let _ =
+                    window.upgrade_in_event_loop(move |window| window.set_message(message.into()));
+            }
+            let _ =
+                app_for_worker.upgrade_in_event_loop(move |app| app.set_message(message.into()));
+        });
+    if let Err(error) = spawned {
+        lock(&shared).fail_definitions_load(token);
+        if let Some(app) = app.upgrade() {
+            app.set_message(error.to_string().into());
+        }
+    }
+}
+
 pub(super) fn load_fgd(app: &AppWindow, ui: &SharedUi) {
     let (app, ui) = (app.as_weak(), ui.clone());
     slint::spawn_local(async move {
@@ -304,24 +356,7 @@ pub(super) fn load_fgd(app: &AppWindow, ui: &SharedUi) {
         else {
             return;
         };
-        let result = Catalog::load(file.path());
-        match result {
-            Ok(catalog) => {
-                lock(&session_of(&ui)).set_definitions(Actor::User, catalog);
-                if let Some(window) = &ui.borrow().entity_window {
-                    window.set_message("Entity definitions loaded".into());
-                }
-                refresh_entity_picker(&ui);
-            }
-            Err(error) => {
-                if let Some(app) = app.upgrade() {
-                    app.set_message(error.clone().into());
-                }
-                if let Some(window) = &ui.borrow().entity_window {
-                    window.set_message(error.into());
-                }
-            }
-        }
+        start_fgd_load(&app, &ui, file.path());
     })
     .expect("event loop is running");
 }
@@ -742,3 +777,6 @@ pub(super) fn single_selected_entity(session: &Session) -> Option<u32> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod fgd_loading_tests;

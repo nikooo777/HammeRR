@@ -12,7 +12,7 @@ use render::scene::{LineVertex, Vertex};
 use serde_json::{Value, json};
 use source_formats::vmf::{Vmf, parse_vec3};
 
-use super::instance_worker::{Slot, Ticket};
+use super::worker::{Slot, Ticket};
 use super::{Actor, Session};
 
 const MAX_DIAGNOSTICS: usize = 64;

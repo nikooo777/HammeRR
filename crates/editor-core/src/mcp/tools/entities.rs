@@ -467,18 +467,26 @@ impl EditorServer {
         &self,
         Parameters(args): Parameters<DefinitionsArgs>,
     ) -> ToolResult {
+        let request = match self.session().begin_definitions_load(Path::new(&args.path)) {
+            Ok(request) => request,
+            Err(error) => return fail(error),
+        };
+        let token = request.token();
         let session = self.session.clone();
         match tokio::task::spawn_blocking(move || {
-            let catalog = Catalog::load(&PathBuf::from(args.path))?;
+            let completed = request.run();
             let mut session = lock(&session);
-            session.set_definitions(Actor::Agent, catalog);
+            session.finish_definitions_load(Actor::Agent, completed)?;
             Ok::<_, String>(definitions_json(&session))
         })
         .await
         {
             Ok(Ok(value)) => ok(value),
             Ok(Err(error)) => fail(error),
-            Err(error) => fail(error.to_string()),
+            Err(error) => {
+                self.session().fail_definitions_load(token);
+                fail(error.to_string())
+            }
         }
     }
 

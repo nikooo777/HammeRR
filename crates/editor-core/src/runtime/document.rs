@@ -24,6 +24,7 @@ impl ShutdownGuard {
                     || session.recovery_busy()
                     || session.compiling()
                     || session.instance_workers_busy()
+                    || session.definitions_load_busy()
             };
             if !busy {
                 break;

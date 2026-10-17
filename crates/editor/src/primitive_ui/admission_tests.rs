@@ -19,7 +19,6 @@ enum Family {
 const FAMILIES: [Family; 3] = [Family::Primitive, Family::Polygon, Family::Repeat];
 
 struct Fixture {
-    directory: tempfile::TempDir,
     document: DocumentHandle,
     access: DocumentAccess,
     shared: SharedSession,
@@ -28,6 +27,7 @@ struct Fixture {
     repeat: crate::repeat_ui::Controller,
     source: map_core::ObjectId,
     family: Family,
+    directory: tempfile::TempDir,
 }
 
 impl Fixture {

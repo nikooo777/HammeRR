@@ -31,6 +31,10 @@ struct Stroke {
 }
 
 impl Session {
+    pub(super) fn terrain_stroke_active(&self) -> bool {
+        self.terrain_strokes.stroke.is_some()
+    }
+
     pub(super) fn working_region_end_terrain_stroke(&mut self) {
         self.terrain_strokes.stroke = None;
     }

@@ -1,5 +1,7 @@
 import json
+import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -30,6 +32,97 @@ class PrivateRuntimeGuards(unittest.TestCase):
             self.assertEqual(environment["TMPDIR"], "/host/tmp")
             with self.assertRaises(FileExistsError):
                 private_runtime.private_readonly_launch(native, output, environment)
+
+    def test_native_process_preserves_primary_error_and_all_cleanup_failures(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            process = Mock(returncode=None)
+            process.poll.return_value = None
+            process.terminate.side_effect = RuntimeError("termination failed")
+            original = ValueError("observation failed")
+            report = {}
+            with (
+                patch.object(private_runtime.subprocess, "Popen", return_value=process),
+                patch.object(private_runtime, "finish_private_launch", side_effect=RuntimeError("audit failed")) as audit,
+                self.assertRaises(ValueError) as caught,
+            ):
+                with private_runtime.private_native_process(["game", "-insecure"], output, output / "cstrike", output, {}, report):
+                    raise original
+            self.assertIs(caught.exception, original)
+            self.assertEqual(report["cleanup_failures"], ["termination failed", "audit failed"])
+            self.assertEqual(len(original.__notes__), 2)
+            self.assertFalse(report["success"])
+            audit.assert_called_once()
+
+    def test_native_process_audits_failed_startup_without_masking_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            report = {}
+            failure = OSError("launch failed")
+            with (
+                patch.object(private_runtime.subprocess, "Popen", side_effect=failure),
+                patch.object(private_runtime, "finish_private_launch", return_value={"success": True}) as audit,
+                self.assertRaises(OSError) as caught,
+            ):
+                with private_runtime.private_native_process(["game"], output, output / "cstrike", output, {}, report):
+                    self.fail("Startup must not enter the observation body")
+            self.assertIs(caught.exception, failure)
+            self.assertIsNone(report["exit_code"])
+            self.assertTrue(report["configuration_preservation"]["success"])
+            audit.assert_called_once()
+
+    def test_native_process_timeout_kills_before_auditing_and_records_isolation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            events = []
+            process = Mock(returncode=-9)
+            process.poll.return_value = None
+            process.wait.side_effect = [subprocess.TimeoutExpired("game", 5), -9]
+            process.terminate.side_effect = lambda: events.append("terminate")
+            process.kill.side_effect = lambda: events.append("kill")
+            report = {}
+            def audit(game):
+                events.append("audit")
+                return {"success": True}
+            with (
+                patch.object(private_runtime.subprocess, "Popen", return_value=process) as launch,
+                patch.object(private_runtime, "finish_private_launch", side_effect=audit),
+            ):
+                with private_runtime.private_native_process(["game", "-insecure"], output, output / "cstrike", output, {}, report):
+                    events.append("observe")
+            self.assertEqual(events, ["observe", "terminate", "kill", "audit"])
+            self.assertEqual(launch.call_args.args[0][:5], ["/usr/bin/bwrap", "--die-with-parent", "--ro-bind", "/", "/"])
+            self.assertEqual(report["exit_code"], -9)
+            self.assertEqual(report["command"], launch.call_args.args[0])
+
+    @unittest.skipUnless(os.environ.get("HAMMERR_TEST_BWRAP") == "1", "Requires Linux Bubblewrap namespaces")
+    def test_native_process_writes_only_inside_its_private_bind(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            protected = root / "protected.txt"
+            protected.write_text("unchanged")
+            output = root / "private"
+            output.mkdir()
+            report = {}
+            program = """import os, sys
+from pathlib import Path
+protected, output = map(Path, sys.argv[1:])
+try:
+    protected.write_text('changed')
+except OSError as error:
+    assert error.errno == 30, error
+else:
+    raise AssertionError('External file was writable')
+assert Path(os.environ['TMPDIR']) == output / 'tmp'
+(output / 'observed.txt').write_text('private write succeeded')
+"""
+            command = [sys.executable, "-B", "-c", program, str(protected), str(output)]
+            with patch.object(private_runtime, "finish_private_launch", return_value={"success": True}):
+                with private_runtime.private_native_process(command, root, output / "cstrike", output, os.environ.copy(), report) as process:
+                    self.assertEqual(process.wait(timeout=10), 0)
+            self.assertEqual(protected.read_text(), "unchanged")
+            self.assertEqual((output / "observed.txt").read_text(), "private write succeeded")
+            self.assertEqual(report["exit_code"], 0)
 
     def test_identity_preflight_rejects_uploads_and_log_rotation(self):
         with tempfile.TemporaryDirectory() as directory:

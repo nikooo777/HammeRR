@@ -1,7 +1,6 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use map_core::surface::FaceId;
 use slint::ComponentHandle;
 
 use crate::TerrainWindow;
@@ -9,9 +8,7 @@ use crate::runtime::{SharedSession, lock};
 use crate::session::{Actor, Session};
 
 struct Target {
-    faces: Vec<FaceId>,
-    generation: u64,
-    revision: u64,
+    context: crate::face_edit_ui::Context,
     preview: Option<u64>,
     mask_token: Option<u64>,
     stroke: Option<u64>,
@@ -20,13 +17,10 @@ struct Target {
 
 impl Target {
     fn check(&self, session: &Session) -> Result<(), String> {
-        if self.generation != session.document_generation()
-            || self.revision != session.document().revision()
-            || self.faces != session.selected_faces()
-        {
-            return Err("Map or face selection changed. Cancel and reopen terrain editing.".into());
-        }
-        Ok(())
+        self.context.check(
+            session,
+            "Map or face selection changed. Cancel and reopen terrain editing.",
+        )
     }
 
     fn cancel(&mut self, session: &mut Session) {
@@ -36,10 +30,7 @@ impl Target {
         if let Some(token) = self.stroke.take() {
             let _ = session.cancel_terrain_stroke(token);
         }
-        if self.preview.is_some() && self.preview == session.face_preview_token() {
-            session.cancel_face_preview();
-        }
-        self.preview = None;
+        crate::face_edit_ui::cancel_preview(session, &mut self.preview);
     }
 }
 
@@ -219,7 +210,11 @@ impl Controller {
                             .mask_token
                             .ok_or("Retain terrain vertices before using handles")?;
                         target.cancel(&mut session);
-                        session.enable_terrain_move_handles(Actor::User, &target.faces, mask)
+                        session.enable_terrain_move_handles(
+                            Actor::User,
+                            &target.context.faces,
+                            mask,
+                        )
                     });
                     match result {
                         Ok(token) => {
@@ -258,7 +253,12 @@ impl Controller {
                                 None
                             };
                         target.cancel(&mut session);
-                        session.begin_terrain_stroke(Actor::User, &target.faces, operation, mask)
+                        session.begin_terrain_stroke(
+                            Actor::User,
+                            &target.context.faces,
+                            operation,
+                            mask,
+                        )
                     });
                     match result {
                         Ok(token) => {
@@ -319,18 +319,18 @@ impl Controller {
                 if let Some(target) = target.borrow_mut().as_mut() {
                     let result = target.check(&session).and_then(|_| {
                         if window.get_operation_index() == 12 {
-                            session.preview_terrain_subdivision(Actor::User, &target.faces).map(|result|result.summary())
+                            session.preview_terrain_subdivision(Actor::User, &target.context.faces).map(|result|result.summary())
                         } else if window.get_operation_index() == 9 {
                             session
                                 .preview_terrain_sew(
                                     Actor::User,
-                                    &target.faces,
+                                    &target.context.faces,
                                     window.get_sew_blend(),
                                 )
                                 .map(|result| result.summary())
                         } else if window.get_operation_index() == 11 {
                             let offset=glam::DVec3::new(number(window.get_vertex_x(),"world X offset")?,number(window.get_vertex_y(),"world Y offset")?,number(window.get_vertex_z(),"world Z offset")?);
-                            let changed=session.preview_terrain_vertex_move(Actor::User,&target.faces,offset,target.mask_token.ok_or("Retain a terrain vertex selection and reopen terrain editing")?)?;
+                            let changed=session.preview_terrain_vertex_move(Actor::User,&target.context.faces,offset,target.mask_token.ok_or("Retain a terrain vertex selection and reopen terrain editing")?)?;
                             Ok(format!("Preview moves selected vertices on {changed} surfaces. Apply to keep one Undo step."))
                         } else {
                             let operation = operation(&window)?;
@@ -339,7 +339,7 @@ impl Controller {
                             {
                                 session.preview_terrain_masked_edit(
                                     Actor::User,
-                                    &target.faces,
+                                    &target.context.faces,
                                     operation,
                                     target.mask_token.ok_or(
                                         "Retain a triangle selection and reopen terrain editing",
@@ -348,7 +348,7 @@ impl Controller {
                             } else {
                                 session.preview_terrain_edit(
                                     Actor::User,
-                                    &target.faces,
+                                    &target.context.faces,
                                     operation,
                                 )?
                             };
@@ -547,9 +547,7 @@ impl Controller {
                 .into(),
         );
         *self.target.borrow_mut() = Some(Target {
-            faces,
-            generation: session.document_generation(),
-            revision: session.document().revision(),
+            context: crate::face_edit_ui::Context::capture(session, faces),
             preview: None,
             mask_token: mask.map(|mask| mask.token),
             stroke: None,
@@ -595,7 +593,7 @@ impl Controller {
             solid: hit.solid.ok_or("Click a selected terrain surface")?,
             side: hit.side.ok_or("Click a selected terrain surface")?,
         };
-        if !target.faces.contains(&face) {
+        if !target.context.faces.contains(&face) {
             return Err("Click one of the selected terrain surfaces, or cancel picking".into());
         }
         target.cancel(session);

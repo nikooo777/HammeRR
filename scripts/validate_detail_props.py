@@ -14,15 +14,14 @@ from pathlib import Path
 import validate_cubemap_capture_probe as probe
 import validate_native_runtime as runtime
 from private_runtime_config import (
-    finish_private_launch,
     private_launch_options,
+    private_native_process,
     private_observer,
-    private_readonly_launch,
     verify_private_launch,
 )
+from reflection_validation import ppm
 from validate_authored_planes import records
 from validate_compile_jobs import stopped_on_exit, wait_job
-from validate_cubemap_reflections import ppm
 from validate_face_lighting import DEFAULT_BINARY, Client, detail
 from validate_visibility import ROOM
 
@@ -312,8 +311,13 @@ def worker(args):
     ready = output / "probe-ready"
     hdr_controls = {}
     if args.probe_library is not None:
-        from validate_hdr_lighting import ENGINE_SHA256, read_probe
-        from validate_hdr_reflections import HDR_CONTROLS, verify_hardware
+        from hdr_observer import (
+            ENGINE_SHA256,
+            HDR_CONTROLS,
+            probe_environment,
+            read_probe,
+            verify_hardware,
+        )
 
         require(probe.digest((args.game_dir / "bin/linux64/engine.so").read_bytes()) == ENGINE_SHA256, "Playable engine changed; re-verify the HDR hardware interface")
         hdr_controls = HDR_CONTROLS
@@ -354,16 +358,13 @@ def worker(args):
         (settings / name).mkdir(parents=True)
     environment = {**os.environ, "LD_LIBRARY_PATH": str(args.game_dir / "bin/linux64"), "SteamAppId": "240", "SteamGameId": "240", "SDL_VIDEODRIVER": "x11", "XDG_CONFIG_HOME": str(settings / "config"), "XDG_CACHE_HOME": str(settings / "cache"), "XDG_DATA_HOME": str(settings / "data")}
     if args.probe_library is not None:
-        environment.update({"LD_PRELOAD": str(args.probe_library), "HAMMERR_HDR_EXPECTED_EXE": str((args.game_dir / "cstrike_linux64").resolve(strict=True)), "HAMMERR_HDR_LIBRARY_DIR": str((args.game_dir / "bin/linux64").resolve(strict=True)), "HAMMERR_HDR_PRIVATE_GAME": str(game), "HAMMERR_HDR_READY": str(ready), "HAMMERR_HDR_REPORT": str(hardware_log)})
+        environment.update(probe_environment(args.game_dir, game, args.probe_library, ready, hardware_log))
     flags = private_launch_options(args.game_dir, game, hdr_level=args.hdr_level, map_name="hammerr_detail_props", log_name="hammerr-detail.log", controls={"servercfgfile": "hammerr_detail_postmap.cfg", "mat_fullbright": 0, **hdr_controls})
     native = [str(args.game_dir / "cstrike_linux64"), "-game", str(game), "-windowed", "-w", str(probe.WIDTH), "-h", str(probe.HEIGHT), "-novid", *flags, "-nomaster", "-nojoy", "-console", "-port", str(args.port)]
-    command, environment = private_readonly_launch(native, output, environment)
-    report = {"success": False, "command": command, "bsp_sha256": probe.digest(original), "exact_compiled_bsp": True, "sprite_orientation": args.sprite_orientation, "view": args.view, "module_fingerprints": probe.module_fingerprints(args.game_dir), "filesystem_isolation": {"external_paths": "read_only", "writable_directory": str(output)}, "desktop_input": False}
+    report = {"success": False, "command": native, "bsp_sha256": probe.digest(original), "exact_compiled_bsp": True, "sprite_orientation": args.sprite_orientation, "view": args.view, "module_fingerprints": probe.module_fingerprints(args.game_dir), "filesystem_isolation": {"external_paths": "read_only", "writable_directory": str(output)}, "desktop_input": False}
     console = game / "hammerr-detail.log"
-    process = None
     try:
-        with (output / "launcher.log").open("w") as stream:
-            process = subprocess.Popen(command, cwd=args.game_dir, env=environment, stdin=subprocess.DEVNULL, stdout=stream, stderr=stream)
+        with private_native_process(native, args.game_dir, game, output, environment, report, preservation_key="preservation") as process:
             started = time.monotonic()
             on = off = False
             sway_phase = 0
@@ -431,20 +432,7 @@ def worker(args):
         report["error"] = str(error)
         raise
     finally:
-        if process is not None and process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=5)
-        try:
-            report["preservation"] = finish_private_launch(game)
-        except BaseException as error:
-            report.update({"success": False, "preservation_error": str(error)})
-            raise
-        finally:
-            (output / "runtime.json").write_text(json.dumps(report, indent=2) + "\n")
+        (output / "runtime.json").write_text(json.dumps(report, indent=2) + "\n")
 
 
 def main():

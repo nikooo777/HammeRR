@@ -14,12 +14,12 @@ from pathlib import Path
 import validate_cubemap_capture_probe as probe
 import validate_native_runtime as runtime
 from private_runtime_config import (
-    finish_private_launch,
     private_launch_options,
+    private_native_process,
     private_observer,
-    private_readonly_launch,
     verify_private_launch,
 )
+from reflection_validation import difference, fake_install, ppm, protected_files
 from validate_bump_lighting import texture
 from validate_face_lighting import DEFAULT_BINARY, Client, detail
 from validate_visibility import ROOM
@@ -85,42 +85,8 @@ def source_assets(game):
     }
 
 
-def protected_files(args, names):
-    paths = [args.game_dir / "bin/linux64" / name for name in probe.MODULES]
-    paths.extend(path for path in (args.game_dir / "cstrike/cfg").rglob("*") if path.is_file())
-    for name in names:
-        paths.append(args.game_dir / "cstrike/maps" / f"{name}.bsp")
-        for prefix in [args.game_dir, args.game_dir / "cstrike"]:
-            for folder in ["materials/maps", "materialsrc/maps"]:
-                paths.extend(path for path in (prefix / folder / name).rglob("*") if path.is_file())
-    return {
-        str(path): probe.digest(probe.read_bounded(path, probe.MAX_BSP_BYTES)) if path.exists() else None
-        for path in sorted(set(paths))
-    }
 
 
-def fake_install(game, output):
-    executable = game.parent / "cstrike_linux64"
-    program = """#!/usr/bin/env python3
-import json
-import shutil
-import sys
-from pathlib import Path
-args = sys.argv[1:]
-assert '-insecure' in args and args[args.index('+sv_lan') + 1] == '1', args
-game = Path(args[args.index('-game') + 1]).resolve(strict=True)
-name = args[args.index('+map') + 1]
-assert name.startswith('hammerr_') and '/' not in name and '\\\\' not in name, name
-source = game / 'maps' / (name + '.bsp')
-assert source.stat().st_size <= 64 * 1024**2
-output = Path(__file__).resolve().parent.parent
-shutil.copyfile(source, output / 'run-staged.bsp')
-(output / 'run-launch.json').write_text(json.dumps({'map':name,'game':str(game),'argv':args,'fake_executable':str(Path(__file__).resolve())},indent=2)+'\\n')
-"""
-    executable.write_text(program)
-    executable.chmod(0o700)
-    require(executable.resolve().parent == game.parent.resolve(), "Fake Run executable escaped the private fixture")
-    return executable
 
 
 def author(args):
@@ -312,29 +278,8 @@ def verify_assets(data, namespace, output):
     return {"manifest": manifest, "samples": sample_reports, "pak": records, "bound_texinfos": len(bindings), "bound_consumers": len(consumers), "unused_original_materials": sorted(original_materials), "bsp_sha256": probe.digest(data)}
 
 
-def ppm(path):
-    data = probe.read_bounded(path, 4 * probe.WIDTH * probe.HEIGHT)
-    match = re.match(rb"P6\s+(\d+)\s+(\d+)\s+255\s", data)
-    require(match is not None, "Invalid PPM screenshot")
-    width, height = map(int, match.groups())
-    pixels = data[match.end():]
-    require((width, height) == (probe.WIDTH, probe.HEIGHT) and len(pixels) == width * height * 3, "Native viewport differs from the verified dimensions")
-    return pixels
 
 
-def difference(first, second):
-    left, top, right, bottom = REGION
-    a = b"".join(first[(y * probe.WIDTH + left) * 3:(y * probe.WIDTH + right) * 3] for y in range(top, bottom))
-    b = b"".join(second[(y * probe.WIDTH + left) * 3:(y * probe.WIDTH + right) * 3] for y in range(top, bottom))
-    delta = [abs(x - y) for x, y in zip(a, b, strict=True)]
-    count = len(a) // 3
-    return {
-        "region": REGION,
-        "mean_component_difference": sum(delta) / len(delta),
-        "changed_fraction": sum(max(delta[index:index + 3]) > 8 for index in range(0, len(delta), 3)) / count,
-        "first_rgb": [sum(a[axis::3]) / count for axis in range(3)],
-        "second_rgb": [sum(b[axis::3]) / count for axis in range(3)],
-    }
 
 
 def worker(args):
@@ -369,13 +314,10 @@ def worker(args):
     }
     flags = private_launch_options(args.game_dir, game, hdr_level=0, map_name=args.map_name, log_name="hammerr-reflections.log", controls={"servercfgfile": "hammerr_reflection_postmap.cfg", "mat_fullbright": 0})
     native = [str(args.game_dir / "cstrike_linux64"), "-game", str(game), "-windowed", "-w", str(probe.WIDTH), "-h", str(probe.HEIGHT), "-novid", *flags, "-nomaster", "-nojoy", "-console", "-port", str(args.port)]
-    command, environment = private_readonly_launch(native, output, environment)
-    report = {"command": command, "map": args.map_name, "bsp_sha256": probe.digest(data), "private_entity_adapter_only": True, "filesystem_isolation": {"external_paths": "read_only", "writable_directory": str(output)}, "desktop_input": False, "success": False}
+    report = {"command": native, "map": args.map_name, "bsp_sha256": probe.digest(data), "private_entity_adapter_only": True, "filesystem_isolation": {"external_paths": "read_only", "writable_directory": str(output)}, "desktop_input": False, "success": False}
     console = game / "hammerr-reflections.log"
-    process = None
     try:
-        with (output / "launcher.log").open("w") as stream:
-            process = subprocess.Popen(command, cwd=args.game_dir, env=environment, stdin=subprocess.DEVNULL, stdout=stream, stderr=stream)
+        with private_native_process(native, args.game_dir, game, output, environment, report) as process:
             started = time.monotonic()
             on = off = False
             while time.monotonic() - started < 90:
@@ -413,7 +355,7 @@ def worker(args):
             require(set(unused_warnings).issubset(bindings["unused_original_materials"]), f"The engine reported an unverified unbound material: {unused_warnings}")
             report["unused_material_diagnostics"] = unused_warnings
             report["geometry_consumers_verified"] = bindings["bound_consumers"]
-            delta = difference(ppm(output / "specular-on.ppm"), ppm(output / "specular-off.ppm"))
+            delta = difference(ppm(output / "specular-on.ppm"), ppm(output / "specular-off.ppm"), REGION)
             require(delta["mean_component_difference"] > 8 and delta["changed_fraction"] > 0.05, f"The actual floor did not display a measurable reflection: {delta}")
             gains = [on - off for on, off in zip(delta["first_rgb"], delta["second_rgb"], strict=True)]
             require(max(gains[1:]) > gains[0] + 5, f"The reflection lacks the expected green/blue directional signature: {gains}")
@@ -423,21 +365,7 @@ def worker(args):
         report.update({"error": str(error), "traceback": traceback.format_exc()})
         raise
     finally:
-        if process is not None and process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=5)
-        try:
-            report["configuration_preservation"] = finish_private_launch(game)
-        except BaseException as error:
-            report.update({"success": False, "preservation_error": str(error)})
-            raise
-        finally:
-            report["exit_code"] = None if process is None else process.returncode
-            (output / "runtime.json").write_text(json.dumps(report, indent=2) + "\n")
+        (output / "runtime.json").write_text(json.dumps(report, indent=2) + "\n")
 
 
 def main():
@@ -485,7 +413,7 @@ def main():
             runtime.private_compositor(command, destination, timeout=125)
             views[name] = json.loads((destination / "runtime.json").read_text())
             require(views[name]["success"] is True, views[name])
-        parity = difference(ppm(args.output / "published-view/specular-on.ppm"), ppm(args.output / "run-view/specular-on.ppm"))
+        parity = difference(ppm(args.output / "published-view/specular-on.ppm"), ppm(args.output / "run-view/specular-on.ppm"), REGION)
         require(parity["mean_component_difference"] < 3 and parity["changed_fraction"] < 0.02, f"Run rebasing visibly changed the reflective floor: {parity}")
         require((source.read_bytes(), bsp.read_bytes(), source_assets(Path(fixture["fixture_game"]))) == preserved, "Private native views changed the published BSP or source assets")
         require(protected_files(args, names) == public_before, "Private native views changed installed game assets")

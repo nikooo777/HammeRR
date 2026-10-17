@@ -1,12 +1,10 @@
 use std::collections::BTreeMap;
 
-use map_core::{
-    Document, ObjectId,
-    entity_helpers::{MAX_HELPER_EXTENT, specialized_light},
-};
+use map_core::Document;
+#[cfg(test)]
+use map_core::ObjectId;
 use render::models::Instance;
 use serde::Serialize;
-use source_formats::fgd::ClassKind;
 
 use super::super::{Session, working_region::Evaluation};
 
@@ -56,12 +54,8 @@ impl Session {
         let mut evaluated = 0;
         let mut vertices = 0;
         let mut indices = 0;
-        let entities = document
-            .vmf()
-            .entities
-            .iter()
-            .map(|entity| (entity.id, entity))
-            .collect::<BTreeMap<_, _>>();
+        let context = super::classification::Context::new(evaluation, self.selection());
+        let entities = context.entities(document, inspected, false);
         for (id, entity) in entities {
             if inspected.is_some_and(|target| id > target) {
                 break;
@@ -81,6 +75,7 @@ impl Session {
             let Some(first) = declarations.first() else {
                 continue;
             };
+            let facts = context.facts(entity, class);
             let literal = first.arguments.first().map_or("", String::as_str);
             let mut report = Report {
                 source: "fgd_literal",
@@ -115,55 +110,33 @@ impl Session {
             } else if let Err(error) = path.as_ref() {
                 report.error = Some(error.clone());
             }
-            report.suppression_reason =
-                if class.kind != ClassKind::Point || !entity.solids.is_empty() {
-                    Some("brush_or_nonpoint")
-                } else if specialized_light(entity) {
-                    Some("specialized_light")
-                } else if entity.classname().is_some_and(|name| {
-                    ["move_rope", "keyframe_rope"]
-                        .iter()
-                        .any(|special| name.eq_ignore_ascii_case(special))
-                }) {
-                    Some("specialized_rope")
-                } else if entity.properties.get("model").is_some() {
-                    Some("authored_model")
-                } else if class.property("model").is_some() {
-                    Some("model_property")
-                } else if class.helpers.iter().any(|helper| {
-                    ["model", "sprite", "decal", "overlay"].contains(&helper.name.as_str())
-                }) || entity.classname().is_some_and(|name| {
-                    [
-                        "info_overlay",
-                        "info_overlay_transition",
-                        "env_sprite",
-                        "env_sprite_oriented",
-                    ]
-                    .iter()
-                    .any(|special| name.eq_ignore_ascii_case(special))
-                }) {
-                    Some("specialized_helper")
-                } else if evaluation
-                    .helpers
-                    .get(&ObjectId::Entity(id))
-                    .is_some_and(|appearance| appearance.invalid_size)
-                {
-                    Some("invalid_fgd_size")
-                } else if entity.hidden {
-                    Some("authored_hidden")
-                } else if !evaluation.objects.contains(&ObjectId::Entity(id)) {
-                    Some("outside_working_region")
-                } else if !entity.origin().is_some_and(|origin| {
-                    origin.is_finite() && origin.abs().max_element() <= MAX_HELPER_EXTENT
-                }) {
-                    Some("invalid_origin")
-                } else if !enabled {
-                    Some("view_disabled")
-                } else if evaluated >= MAX_GUIDES {
-                    Some("scene_model_limit")
-                } else {
-                    None
-                };
+            report.suppression_reason = if !facts.point {
+                Some("brush_or_nonpoint")
+            } else if facts.light {
+                Some("specialized_light")
+            } else if facts.rope {
+                Some("specialized_rope")
+            } else if facts.authored_model {
+                Some("authored_model")
+            } else if facts.declared_model {
+                Some("model_property")
+            } else if facts.other_specialized {
+                Some("specialized_helper")
+            } else if facts.invalid_size {
+                Some("invalid_fgd_size")
+            } else if facts.hidden {
+                Some("authored_hidden")
+            } else if facts.outside {
+                Some("outside_working_region")
+            } else if !facts.valid_origin {
+                Some("invalid_origin")
+            } else if !enabled {
+                Some("view_disabled")
+            } else if evaluated >= MAX_GUIDES {
+                Some("scene_model_limit")
+            } else {
+                None
+            };
             let mut displayed = None;
             if report.declaration_supported && report.suppression_reason.is_none() {
                 evaluated += 1;

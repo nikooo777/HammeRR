@@ -7,6 +7,7 @@ use serde::Serialize;
 
 use super::{Session, models::Models, working_region::Evaluation};
 
+mod classification;
 mod frustums;
 mod icons;
 mod lines;

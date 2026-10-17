@@ -122,6 +122,9 @@ pub struct Vtf {
     pub depth: u32,
     pub flags: u32,
     pub frames: u16,
+    pub authored_frames: u16,
+    pub authored_depth: Option<u16>,
+    pub first_frame: u16,
     pub faces: u8,
     pub mip_count: u8,
     pub format: ImageFormat,
@@ -173,7 +176,8 @@ impl Vtf {
         let width = u32::from(u16_at(&data, 16)?);
         let height = u32::from(u16_at(&data, 18)?);
         let flags = u32_at(&data, 20)?;
-        let frames = u16_at(&data, 24)?.max(1);
+        let authored_frames = u16_at(&data, 24)?;
+        let frames = authored_frames.max(1);
         let first_frame = u16_at(&data, 26)?;
         let reflectivity = [f32_at(&data, 32)?, f32_at(&data, 36)?, f32_at(&data, 40)?];
         let format = ImageFormat::from_id(u32_at(&data, 52)? as i32)?;
@@ -181,11 +185,12 @@ impl Vtf {
         let low_res_format = u32_at(&data, 57)? as i32;
         let low_res_width = u32::from(*data.get(61).ok_or(Error::Truncated)?);
         let low_res_height = u32::from(*data.get(62).ok_or(Error::Truncated)?);
-        let depth = if version.1 >= 2 {
-            u32::from(u16_at(&data, 63)?.max(1))
+        let authored_depth = if version.1 >= 2 {
+            Some(u16_at(&data, 63)?)
         } else {
-            1
+            None
         };
+        let depth = u32::from(authored_depth.unwrap_or(1).max(1));
 
         let minimum_header = if version.1 >= 3 {
             80
@@ -240,6 +245,9 @@ impl Vtf {
             depth,
             flags,
             frames,
+            authored_frames,
+            authored_depth,
+            first_frame,
             faces,
             mip_count,
             format,

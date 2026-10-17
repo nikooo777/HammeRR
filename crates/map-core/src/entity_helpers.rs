@@ -9,6 +9,7 @@ pub mod frustums;
 pub mod lines;
 pub mod projectors;
 pub mod spheres;
+mod values;
 
 pub const MAX_HELPER_EXTENT: f64 = 65_536.0;
 

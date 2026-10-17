@@ -13,7 +13,7 @@ pub enum Endpoint {
     End,
 }
 
-const MAX_PICK_VIEWPORT_SIZE: u32 = 8192;
+const MAX_PICK_VIEWPORT_SIZE: u32 = super::viewport_pick::MAX_DIMENSION;
 
 #[derive(Clone, Debug)]
 pub struct Request {
@@ -63,12 +63,7 @@ struct Draft {
 
 struct Picking {
     endpoint: Endpoint,
-    scene: u64,
-    view: u64,
-    camera_serial: u64,
-    session_camera: Camera,
-    camera: Camera,
-    size: (u32, u32),
+    pub(super) context: super::viewport_pick::Context,
 }
 
 fn measurement_json(measurement: &Measurement) -> Value {
@@ -78,6 +73,13 @@ fn measurement_json(measurement: &Measurement) -> Value {
 }
 
 impl Session {
+    pub(super) fn measurement_picking(&self) -> bool {
+        self.measurements
+            .draft
+            .as_ref()
+            .is_some_and(|draft| draft.picking.is_some())
+    }
+
     pub fn measurements(&self) -> Result<Measurements, String> {
         Measurements::parse(self.document.vmf())
     }
@@ -119,11 +121,7 @@ impl Session {
             .picking
             .as_ref()
             .ok_or("Choose Pick start or Pick end first")?;
-        if picking.scene != self.scene_serial
-            || picking.view != self.view_serial
-            || picking.camera_serial != self.camera_serial
-            || picking.session_camera != self.camera
-        {
+        if !picking.context.is_current(self) {
             return Err("Scene or camera changed; choose Pick start or Pick end again".into());
         }
         Ok(picking)
@@ -169,7 +167,7 @@ impl Session {
         };
         let draft = self.measurements.draft.as_ref().map(|draft| {
             let picking = draft.picking.as_ref().map(|picking| json!({
-                "endpoint":picking.endpoint,"width":picking.size.0,"height":picking.size.1,
+                "endpoint":picking.endpoint,"width":picking.context.size.0,"height":picking.context.size.1,
                 "valid":self.checked_measurement_pick(draft.owner,draft.token).is_ok(),
                 "error":self.checked_measurement_pick(draft.owner,draft.token).err()}));
             let last_pick = draft.last_pick.map(|(endpoint, surface)| json!({"endpoint":endpoint,
@@ -270,43 +268,13 @@ impl Session {
         if draft.owner != actor {
             return Err("Review the other actor's measurement before picking an endpoint".into());
         }
-        if size.0 == 0
-            || size.1 == 0
-            || size.0 > MAX_PICK_VIEWPORT_SIZE
-            || size.1 > MAX_PICK_VIEWPORT_SIZE
-        {
-            return Err("Measurement viewport dimensions must be between 1 and 8192".into());
-        }
-        let (origin, direction) = camera.ray(0.0, 0.0, size.0 as f32 / size.1 as f32);
-        if !origin.is_finite() || !direction.is_finite() || direction.length_squared() == 0.0 {
-            return Err("Measurement picking requires a finite camera".into());
-        }
-        if self.get_entity_placement()["draft"]["picking"] == true
-            || self.surface_placement()["picking"] == true
-            || self.clip_tool
-            || self.spatial.draw_block
-            || self.component_picking().is_some()
-            || self.component_drag().is_some()
-            || self.paint_stroke().is_some()
-            || self.transform_drag().is_some()
-            || self.area_preview().is_some()
-            || self.volume_preview().is_some()
-            || self.terrain_move_handles_json()["active"] == true
-            || self.terrain_stroke_json()["active"] == true
-        {
+        let context = super::viewport_pick::Context::capture(self, camera, size, "Measurement")?;
+        if self.viewport_pick_conflict() {
             return Err(
                 "Finish the active viewport tool before picking a measurement endpoint".into(),
             );
         }
-        let picking = Picking {
-            endpoint,
-            scene: self.scene_serial,
-            view: self.view_serial,
-            camera_serial: self.camera_serial,
-            session_camera: self.camera,
-            camera,
-            size,
-        };
+        let picking = Picking { endpoint, context };
         self.measurements.serial += 1;
         let draft = self.measurements.draft.as_mut().unwrap();
         draft.token = self.measurements.serial;
@@ -368,31 +336,8 @@ impl Session {
         pointer: Pointer,
     ) -> Result<Value, String> {
         let picking = self.checked_measurement_pick(actor, token)?;
-        let pointer = pointer.validate()?;
-        if pointer.size != picking.size {
-            return Err("Viewport dimensions changed; choose Pick start or Pick end again".into());
-        }
-        if pointer.position.x < 0.0
-            || pointer.position.y < 0.0
-            || pointer.position.x >= f64::from(pointer.size.0)
-            || pointer.position.y >= f64::from(pointer.size.1)
-        {
-            return Err("Measurement pixel must lie inside the captured viewport".into());
-        }
-        let ndc = pointer.ndc();
-        let (origin, direction) = picking.camera.ray(
-            ndc.x as f32,
-            ndc.y as f32,
-            pointer.size.0 as f32 / pointer.size.1 as f32,
-        );
-        self.pick_measurement_ray(
-            actor,
-            token,
-            Ray {
-                origin: origin.as_dvec3(),
-                direction: direction.as_dvec3(),
-            },
-        )
+        let ray = picking.context.ray(pointer)?;
+        self.pick_measurement_ray(actor, token, ray)
     }
 
     pub fn review_measurement(&mut self, actor: Actor, token: u64) -> Result<Value, String> {

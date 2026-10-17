@@ -127,13 +127,10 @@ fn load_face(
         face.texture = Some(texture.clone());
         return Ok(());
     }
-    if asset.data.get(24..26) == Some(&[0, 0])
-        || (asset.data.get(8).is_some_and(|minor| *minor >= 2)
-            && asset.data.get(63..65) == Some(&[0, 0]))
-    {
+    let texture = Vtf::parse(asset.data.clone()).map_err(|error| error.to_string())?;
+    if texture.authored_frames == 0 || texture.authored_depth == Some(0) {
         return Err("HDR preview requires nonzero authored frame/depth counts".into());
     }
-    let texture = Vtf::parse(asset.data.clone()).map_err(|error| error.to_string())?;
     let issues = texture_issues(&texture, "$hdrbasetexture", true);
     if !issues.is_empty() {
         return Err(issues.join("; "));

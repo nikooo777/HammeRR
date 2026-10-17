@@ -13,8 +13,8 @@ from unittest.mock import patch
 
 import validate_native_runtime as runtime
 from private_runtime_config import (
-    finish_private_launch,
     private_launch_options,
+    private_native_process,
     private_observer,
     verify_private_launch,
 )
@@ -628,16 +628,9 @@ def worker(args):
     ]
     captures = {}
     configured = views(args.vertical_sides)
-    with (output / "launcher.log").open("w") as log:
-        process = subprocess.Popen(
-            command,
-            cwd=root,
-            env=environment,
-            stdin=subprocess.DEVNULL,
-            stdout=log,
-            stderr=log,
-        )
-        try:
+    report = {}
+    try:
+        with private_native_process(command, root, game, output, environment, report) as process:
             deadline = time.monotonic() + 53
             while time.monotonic() < deadline and len(captures) < len(configured) * 2:
                 if process.poll() is not None:
@@ -683,7 +676,7 @@ def worker(args):
                 json.dumps(diagnostics, indent=2) + "\n"
             )
             assert not diagnostics["fixture_failures"], diagnostics["fixture_failures"]
-            report = {
+            report.update({
                 "diagnostics": diagnostics,
                 "private_launch": verify_private_launch(game, text),
                 "pid": process.pid,
@@ -696,17 +689,9 @@ def worker(args):
                 "wayland_display": os.environ.get("WAYLAND_DISPLAY"),
                 "engine_sha256": digest((root / "bin/linux64/engine.so").read_bytes()),
                 "materials_sha256": material_hashes(game),
-            }
-            (output / "runtime.json").write_text(json.dumps(report, indent=2) + "\n")
-        finally:
-            if process.poll() is None:
-                process.terminate()
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=5)
-            finish_private_launch(game)
+            })
+    finally:
+        (output / "runtime.json").write_text(json.dumps(report, indent=2) + "\n")
 
 
 def pixels(path):

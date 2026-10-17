@@ -372,7 +372,8 @@ Limits: zero to five arguments, with omitted property bindings `_fov`,
 `_NearPlane`, `_FarPlane`, `_light`; no literal scalar/RGB extension. Bindings
 must be distinct, use 1–79 UTF-8 bytes and avoid reserved origin/angles names.
 FOV/near/far require declared float or integer properties; color requires
-color255. Authored values precede labeled FGD defaults; missing values never
+color255. Numeric bindings allow surrounding whitespace while inspection
+retains the original text. Authored values precede labeled FGD defaults; missing values never
 receive fabricated Hammer constructor defaults. Origin must be authored. Scale
 and its product with raw pitch must remain finite at native precision, before
 angle reduction. Nominal FOV must be 0.02–178 degrees and

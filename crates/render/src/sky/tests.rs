@@ -126,6 +126,15 @@ fn partial_and_unsupported_skies_report_each_failed_face() {
 
 #[test]
 fn stock_vertical_scale_and_centered_scale_translate_are_supported() {
+    assert_eq!(
+        texture_transform(Some("scale 2 3 scale 4 5")).unwrap(),
+        [4.0, 5.0, -1.5, -2.0]
+    );
+    assert_eq!(
+        texture_transform(Some("scale 1024.00001 1")).unwrap()[0],
+        1024.0
+    );
+
     assert_eq!(texture_transform(None).unwrap(), [1.0, 1.0, 0.0, 0.0]);
     assert_eq!(
         texture_transform(Some("center 0 0 scale 1 2 rotate 0 translate 0 0")).unwrap(),

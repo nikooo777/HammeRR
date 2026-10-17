@@ -632,7 +632,9 @@ bindings are `_fov`, `_NearPlane`, `_FarPlane` and `_light`; omitted fifth
 `pitch_scale` is `1`. First-three bindings require declared `float`/`integer`
 properties, fourth `color255`. Origin is authored-only and angles require an
 `angle` declaration. Authored values precede labeled FGD defaults; absent
-values never acquire native constructor substitutes.
+values never acquire native constructor substitutes. Numeric helper bindings
+allow surrounding whitespace without changing reported `raw` text or its byte
+limit.
 
 Each row contains `declaration_index`, bounded `arguments`,
 `arguments_truncated`, `inputs`, `orientation_policy`, `pitch_scale_evaluated`,

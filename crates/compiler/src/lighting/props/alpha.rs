@@ -58,51 +58,25 @@ fn scalar(material: &vmt::Material, key: &str, default: f64) -> Result<f64, Stri
 }
 
 fn transform(value: Option<&str>) -> Result<[f64; 4], String> {
-    let mut center = [0.5; 2];
-    let mut scale = [1.0; 2];
-    let mut translate = [0.0; 2];
-    let mut seen = [false; 4];
-    let mut tokens = value.unwrap_or_default().split_whitespace();
-    while let Some(key) = tokens.next() {
-        let (index, count) = match key {
-            "center" => (0, 2),
-            "scale" => (1, 2),
-            "translate" => (2, 2),
-            "rotate" => (3, 1),
-            _ => return Err("unsupported $basetexturetransform syntax".into()),
-        };
-        if std::mem::replace(&mut seen[index], true) {
-            return Err("duplicate $basetexturetransform operation".into());
-        }
-        let mut values = [0.0; 2];
-        for value in values.iter_mut().take(count) {
-            *value = tokens
-                .next()
-                .ok_or("incomplete $basetexturetransform")?
-                .parse::<f64>()
-                .map_err(|_| "invalid $basetexturetransform")?;
-            if !value.is_finite() || value.abs() > 1024.0 {
-                return Err("$basetexturetransform values must be finite and within ±1024".into());
+    source_formats::vmt::texture_transform(value, source_formats::vmt::DuplicateOperations::Reject)
+        .map_err(|error| match error {
+            source_formats::vmt::TransformError::Syntax => {
+                "unsupported $basetexturetransform syntax".into()
             }
-        }
-        match index {
-            0 => center = values,
-            1 => scale = values,
-            2 => translate = values,
-            _ if values[0] != 0.0 => {
-                return Err(
-                    "rotated $basetexturetransform is unsupported for texture shadows".into(),
-                );
+            source_formats::vmt::TransformError::Duplicate => {
+                "duplicate $basetexturetransform operation".into()
             }
-            _ => {}
-        }
-    }
-    Ok([
-        scale[0],
-        scale[1],
-        center[0] * (1.0 - scale[0]) + translate[0],
-        center[1] * (1.0 - scale[1]) + translate[1],
-    ])
+            source_formats::vmt::TransformError::Incomplete => {
+                "incomplete $basetexturetransform".into()
+            }
+            source_formats::vmt::TransformError::Invalid => "invalid $basetexturetransform".into(),
+            source_formats::vmt::TransformError::Bounds => {
+                "$basetexturetransform values must be finite and within ±1024".into()
+            }
+            source_formats::vmt::TransformError::Rotation => {
+                "rotated $basetexturetransform is unsupported for texture shadows".into()
+            }
+        })
 }
 
 fn texture_allocations(
@@ -341,6 +315,17 @@ mod tests {
 
     #[test]
     fn cutout_rays_interpolate_uvs_repeat_clamp_transform_and_apply_the_reference() {
+        assert!(
+            transform(Some("scale 2 3 scale 4 5"))
+                .unwrap_err()
+                .contains("duplicate")
+        );
+        assert!(
+            transform(Some("scale 1024.00001 1"))
+                .unwrap_err()
+                .contains("1024")
+        );
+
         let identity = [1.0, 1.0, 0.0, 0.0];
         for (clamp, mapping, reference, point, expected) in [
             ([false; 2], identity, 0.5, [1.0, 1.0], false),

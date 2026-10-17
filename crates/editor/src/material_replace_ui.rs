@@ -16,10 +16,7 @@ struct Target {
 
 impl Target {
     fn cancel_preview(&mut self, session: &mut Session) {
-        if self.preview.is_some() && session.face_preview_token() == self.preview {
-            session.cancel_face_preview();
-        }
-        self.preview = None;
+        crate::face_edit_ui::cancel_preview(session, &mut self.preview);
     }
 }
 

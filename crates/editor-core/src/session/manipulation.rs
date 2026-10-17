@@ -214,7 +214,7 @@ impl Pointer {
         Ok(self)
     }
 
-    fn ray(self, camera: Camera) -> (DVec3, DVec3) {
+    pub(super) fn ray(self, camera: Camera) -> (DVec3, DVec3) {
         let ndc = self.ndc();
         let (origin, direction) = camera.ray(
             ndc.x as f32,

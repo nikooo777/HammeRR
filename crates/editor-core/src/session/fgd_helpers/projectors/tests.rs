@@ -1,6 +1,7 @@
 use super::*;
 use crate::session::{Actor, SelectMode, working_region};
 use glam::DVec3;
+use map_core::ObjectId;
 use map_core::{edit::Transform, query::Ray};
 use source_formats::fgd::Catalog;
 

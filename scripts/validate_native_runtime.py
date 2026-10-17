@@ -14,8 +14,8 @@ from pathlib import Path
 from private_runtime_config import (
     finish_private_launch,
     private_launch_options,
+    private_native_process,
     private_observer,
-    private_readonly_launch,
     validate_private_game_paths,
     verify_private_launch,
 )
@@ -148,12 +148,9 @@ def worker(args, *, launch_adapter=None):
     ]
     if launch_adapter is not None:
         command, env = launch_adapter(root, game, output, command, env)
-    command, env = private_readonly_launch(command, output, env)
-    with (output / "launcher.log").open("w") as log:
-        process = subprocess.Popen(
-            command, cwd=root, env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=log
-        )
-        try:
+    report = {}
+    try:
+        with private_native_process(command, root, game, output, env, report) as process:
             started = time.monotonic()
             while time.monotonic() - started < getattr(args, "observe_seconds", 30):
                 if process.poll() is not None:
@@ -190,7 +187,7 @@ def worker(args, *, launch_adapter=None):
             ), players
             assert '"mat_fullbright" = "0"' in text and "Level unlit" not in text
             assert props, "Physics prop did not enter the observer"
-            report = {
+            report.update({
                 "private_launch": verify_private_launch(game, text),
                 "players": players,
                 "prop_positions": props,
@@ -199,13 +196,9 @@ def worker(args, *, launch_adapter=None):
                 "insecure": True,
                 "ground_z": ground_z,
                 "ground_tolerance": ground_tolerance,
-            }
-            (output / "runtime.json").write_text(json.dumps(report, indent=2) + "\n")
-        finally:
-            if process.poll() is None:
-                process.kill()
-            process.wait(timeout=10)
-            finish_private_launch(game)
+            })
+    finally:
+        (output / "runtime.json").write_text(json.dumps(report, indent=2) + "\n")
 
 
 def compile_cases(args):

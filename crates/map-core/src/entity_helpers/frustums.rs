@@ -43,58 +43,38 @@ pub struct Frustum {
 }
 
 fn bounded(value: &str) -> String {
-    let mut end = value.len().min(MAX_VALUE_BYTES);
-    while !value.is_char_boundary(end) {
-        end -= 1;
-    }
-    value[..end].to_owned()
+    super::values::bounded(value, MAX_VALUE_BYTES)
 }
 
 fn input(class: &Class, entity: &Entity, key: &str, kinds: &[&str]) -> Input {
-    let property = class.property(key);
-    let mut authored = entity.properties.get_all(key);
-    let first = authored.next();
-    let duplicate = authored.next().is_some();
-    let raw = if key == "origin" {
-        first
-    } else {
-        first.or_else(|| property.and_then(|p| p.default.as_deref()))
-    };
-    let error = if duplicate {
-        Some(format!("FGD frustum {key} occurs more than once"))
-    } else if raw.is_some_and(|raw| raw.len() > MAX_VALUE_BYTES) {
-        Some(format!(
-            "FGD frustum {key} exceeds the {MAX_VALUE_BYTES}-byte input limit"
-        ))
-    } else if key != "origin" && !property.is_some_and(|p| kinds.contains(&p.kind.as_str())) {
-        Some(format!(
-            "FGD frustum {key} requires a declared {} property",
-            kinds.join(" or ")
-        ))
-    } else {
-        raw.and_then(|raw| property.and_then(|p| p.validate(raw).err()))
-            .map(|error| format!("FGD frustum {key}: {error}"))
-    };
+    let value = super::values::Value::resolve(class, entity, key, key != "origin");
+    let (property, raw) = (value.property, value.raw);
+    let error = value
+        .validate(MAX_VALUE_BYTES, (key != "origin").then_some(kinds))
+        .err()
+        .map(|error| match error {
+            super::values::Error::Duplicate => format!("FGD frustum {key} occurs more than once"),
+            super::values::Error::Oversized => {
+                format!("FGD frustum {key} exceeds the {MAX_VALUE_BYTES}-byte input limit")
+            }
+            super::values::Error::Kind => format!(
+                "FGD frustum {key} requires a declared {} property",
+                kinds.join(" or ")
+            ),
+            super::values::Error::Invalid(error) => format!("FGD frustum {key}: {error}"),
+        });
     Input {
         property: key.to_owned(),
         property_type: property.map(|p| bounded(&p.kind)),
         raw: raw.map(bounded),
         raw_truncated: raw.is_some_and(|raw| raw.len() > MAX_VALUE_BYTES),
-        value_source: if first.is_some() {
-            "authored"
-        } else if raw.is_some() {
-            "fgd_default"
-        } else {
-            "missing"
-        },
+        value_source: value.source,
         error,
     }
 }
 
 fn numbers(input: &Input, counts: &[usize]) -> Result<Vec<f64>, String> {
-    input.raw.as_deref().and_then(|raw| raw.split_whitespace().map(|part| {
-        part.parse::<f64>().ok().filter(|v| v.is_finite() && (*v as f32).is_finite())
-    }).collect::<Option<Vec<_>>>()).filter(|v| counts.contains(&v.len())).ok_or_else(|| {
+    input.raw.as_deref().and_then(|raw| super::values::numbers(raw, counts)).ok_or_else(|| {
         format!("FGD frustum {} requires {} finite native numbers from an authored value or FGD default", input.property, counts.iter().map(usize::to_string).collect::<Vec<_>>().join(" or "))
     })
 }

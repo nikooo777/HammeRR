@@ -1,3 +1,4 @@
+use crate::identity::id_string as object_name;
 use std::collections::{BTreeMap, BTreeSet};
 
 use glam::DVec3;
@@ -157,13 +158,6 @@ fn validate_points(points: &[DVec3]) -> Result<(), String> {
     Ok(())
 }
 
-fn object_name(id: ObjectId) -> String {
-    match id {
-        ObjectId::Entity(id) => format!("entity:{id}"),
-        ObjectId::Solid(id) => format!("solid:{id}"),
-    }
-}
-
 impl Session {
     pub fn linked_path_stamp(&self) -> String {
         format!(
@@ -196,7 +190,7 @@ impl Session {
                 "classname":preview.request.classname,"prefix":preview.request.prefix,
                 "points":preview.request.points.iter().map(|point|point.to_array()).collect::<Vec<_>>(),
                 "closed":preview.request.closed,"nodes":nodes,
-                "picking":preview.picking.as_ref().map(|pick|json!({"row":pick.row,"width":pick.size.0,"height":pick.size.1,"valid":self.checked_linked_path_pick(preview.owner,preview.token).is_ok()})),
+                "picking":preview.picking.as_ref().map(|pick|json!({"row":pick.row,"width":pick.context.size.0,"height":pick.context.size.1,"valid":self.checked_linked_path_pick(preview.owner,preview.token).is_ok()})),
                 "last_pick":preview.last_pick.map(|(row,surface)|json!({"row":row,"target":object_name(surface.hit.object),"solid":surface.hit.solid,"side":surface.hit.side,"point":surface.hit.point.to_array(),"normal":surface.normal.to_array()})),
             })
         });

@@ -11,50 +11,7 @@ pub const MAX_FILE_BYTES: u64 = 192 * 1024;
 pub const FILE_NAME: &str = "recent-maps.json";
 const FORMAT_VERSION: u32 = 1;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BuildSettings {
-    pub lighting: String,
-    pub physics: String,
-    pub sky_quality: String,
-    pub visibility: String,
-    pub bounces: u8,
-    pub smoothing_angle: u8,
-    #[serde(default)]
-    pub generate_reflections: bool,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub pack_sky_assets: bool,
-}
-
-impl BuildSettings {
-    pub fn from_options(options: compiler::Options) -> Self {
-        Self {
-            lighting: options.lighting.name().into(),
-            physics: options.physics.name().into(),
-            sky_quality: options.sky_quality.name().into(),
-            visibility: options.visibility.name().into(),
-            bounces: options.bounces,
-            smoothing_angle: options.smoothing_angle,
-            generate_reflections: options.generate_reflections,
-            pack_sky_assets: options.pack_sky_assets,
-        }
-    }
-
-    pub fn validate(&self) -> Result<(), String> {
-        compiler::Options {
-            lighting: compiler::LightingMode::parse(&self.lighting)?,
-            physics: compiler::PhysicsMode::parse(&self.physics)?,
-            sky_quality: compiler::SkyQuality::parse(&self.sky_quality)?,
-            visibility: compiler::VisibilityMode::parse(&self.visibility)?,
-            bounces: self.bounces,
-            smoothing_angle: self.smoothing_angle,
-            generate_reflections: self.generate_reflections,
-            pack_sky_assets: self.pack_sky_assets,
-        }
-        .validate()?;
-        Ok(())
-    }
-}
+pub use crate::build_settings::BuildSettings;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

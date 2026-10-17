@@ -15,16 +15,16 @@ from unittest.mock import patch
 import validate_cubemap_capture_probe as probe
 import validate_hdr_reflections as reflections
 import validate_native_runtime as runtime
+from hdr_observer import HDR_CONTROLS, probe_environment, read_probe, verify_hardware
 from private_runtime_config import (
     private_launch_options,
     private_native_process,
     private_observer,
     verify_private_launch,
 )
+from reflection_validation import ppm
 from validate_compile_jobs import wait_job
-from validate_cubemap_reflections import ppm
 from validate_face_lighting import DEFAULT_BINARY, Client, detail
-from validate_hdr_lighting import read_probe
 from validate_sky_preview import set_sky
 
 MANIFEST = "hammerr/packed-sky.json"
@@ -474,7 +474,7 @@ def worker(args):
     (game / "scripts/vscripts/mapspawn.nut").write_text(mapspawn)
     cfg = game / "cfg/hammerr_packed_sky_once.cfg"
     probe.write_cfg(cfg, "echo HAMMERR_PACKED_SKY_WAIT\n")
-    controls = {"sv_lan": 1, "mat_hdr_level": args.hdr_level, "mat_fullbright": 0, **reflections.HDR_CONTROLS}
+    controls = {"sv_lan": 1, "mat_hdr_level": args.hdr_level, "mat_fullbright": 0, **HDR_CONTROLS}
     post_map = "toggle sv_lan 1\ntoggle mat_fullbright 0\n" + "".join(f"help {name}\n" for name in controls)
     for name in ["server.cfg", "listenserver.cfg", "hammerr_packed_sky_postmap.cfg"]:
         (game / "cfg" / name).write_text(post_map)
@@ -488,13 +488,10 @@ def worker(args):
         **os.environ, "LD_LIBRARY_PATH": str(args.game_dir / "bin/linux64"),
         "SteamAppId": "240", "SteamGameId": "240", "SDL_VIDEODRIVER": "x11",
         "XDG_CONFIG_HOME": str(settings / "config"), "XDG_CACHE_HOME": str(settings / "cache"),
-        "XDG_DATA_HOME": str(settings / "data"), "LD_PRELOAD": str(args.probe_library),
-        "HAMMERR_HDR_EXPECTED_EXE": str((args.game_dir / "cstrike_linux64").resolve(strict=True)),
-        "HAMMERR_HDR_LIBRARY_DIR": str((args.game_dir / "bin/linux64").resolve(strict=True)),
-        "HAMMERR_HDR_PRIVATE_GAME": str(game), "HAMMERR_HDR_READY": str(ready),
-        "HAMMERR_HDR_REPORT": str(hardware_log),
+        "XDG_DATA_HOME": str(settings / "data"),
+        **probe_environment(args.game_dir, game, args.probe_library, ready, hardware_log),
     }
-    flags = private_launch_options(args.game_dir, game, hdr_level=args.hdr_level, map_name=args.map_name, log_name="hammerr-packed-sky.log", controls={"servercfgfile": "hammerr_packed_sky_postmap.cfg", "mat_fullbright": 0, **reflections.HDR_CONTROLS})
+    flags = private_launch_options(args.game_dir, game, hdr_level=args.hdr_level, map_name=args.map_name, log_name="hammerr-packed-sky.log", controls={"servercfgfile": "hammerr_packed_sky_postmap.cfg", "mat_fullbright": 0, **HDR_CONTROLS})
     command = [str(args.game_dir / "cstrike_linux64"), "-game", str(game), "-windowed", "-w", str(probe.WIDTH), "-h", str(probe.HEIGHT), "-novid", *flags, "-nomaster", "-nojoy", "-console", "-port", str(args.port)]
     report = {"success": False, "map": args.map_name, "family": args.family, "hdr_level": args.hdr_level, "bsp_sha256": probe.digest(data), "probe_sha256": probe.digest(args.probe_library.read_bytes()), "original_custom_source_mounted": False, "runtime_source_audit": source_audit, "runtime_observer": {"injection": "private mapspawn SpawnEntityFromTable", "class": OBSERVER_CLASS, "round_preservation": {"server_sha256": PRESERVATION_SERVER_SHA256, "table_file_offset": "0xce2ce0", "table_elf_vaddr": "0xce3ce0", "cleanup_elf_vaddr": "0x817170"}, "scheduling": "one player_spawn callback AddThinkToEnt", "mapspawn_sha256": probe.digest(mapspawn.encode()), "script_sha256": probe.digest((game / "scripts/vscripts" / (OBSERVER_NAME + ".nut")).read_bytes()), "bsp_entity_lump_modified": False, "creation_marker": RUNTIME_OBSERVER_READY, "listener_marker": RUNTIME_OBSERVER_REGISTERED, "callback_marker": RUNTIME_OBSERVER_EVENT, "callback_userids": [], "scheduling_marker": RUNTIME_OBSERVER_SCHEDULED, "verified_created": False, "verified_listener": False, "verified_scheduled": False}, "script_free_bsp": True, "staged_bsp_bytes_exact": True, "published_bsp_loaded_exact": False, "desktop_input": False, "archive_verified": True, "native_exercised": False, "faces": [], "hardware": None}
     console = game / "hammerr-packed-sky.log"
@@ -515,7 +512,7 @@ def worker(args):
                 if not ready.exists() and "HAMMERR_PACKED_SKY_FACE 0 2 100" in text:
                     ready.write_text("post-map sky view ready\n")
                 report["hardware_observations"] = read_probe(hardware_log)
-                hardware = reflections.verify_hardware(report["hardware_observations"], args.hdr_level)
+                hardware = verify_hardware(report["hardware_observations"], args.hdr_level)
                 if hardware:
                     report["hardware"] = hardware
                     report["native_exercised"] = True

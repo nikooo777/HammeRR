@@ -58,48 +58,24 @@ pub struct Projector {
 }
 
 fn bounded(value: &str) -> String {
-    let mut end = value.len().min(MAX_VALUE_BYTES);
-    while !value.is_char_boundary(end) {
-        end -= 1;
-    }
-    value[..end].to_owned()
+    super::values::bounded(value, MAX_VALUE_BYTES)
 }
 
 fn input(class: &Class, entity: &Entity, key: &'static str, kind: &str) -> Input {
-    let property = class.property(key);
-    let mut authored = entity.properties.get_all(key);
-    let first = authored.next();
-    let duplicate = authored.next().is_some();
-    let raw = if key == "origin" {
-        first
-    } else {
-        first.or_else(|| property.and_then(|property| property.default.as_deref()))
-    };
-    let error = if duplicate {
-        Some(format!("Source projector {key} occurs more than once"))
-    } else if raw.is_some_and(|raw| raw.len() > MAX_VALUE_BYTES) {
-        Some(format!(
-            "Source projector {key} exceeds the {MAX_VALUE_BYTES}-byte value limit; oversized input was not parsed"
-        ))
-    } else if key != "origin" && !property.is_some_and(|property| property.kind == kind) {
-        Some(format!(
-            "Source projector {key} requires a declared {kind} property"
-        ))
-    } else {
-        raw.and_then(|raw| property.and_then(|property| property.validate(raw.trim()).err()))
-    };
+    let value = super::values::Value::resolve(class, entity, key, key != "origin");
+    let (property, raw) = (value.property, value.raw);
+    let error = value.validate(MAX_VALUE_BYTES, (key != "origin").then_some(&[kind][..])).err().map(|error| match error {
+        super::values::Error::Duplicate => format!("Source projector {key} occurs more than once"),
+        super::values::Error::Oversized => format!("Source projector {key} exceeds the {MAX_VALUE_BYTES}-byte value limit; oversized input was not parsed"),
+        super::values::Error::Kind => format!("Source projector {key} requires a declared {kind} property"),
+        super::values::Error::Invalid(error) => error,
+    });
     Input {
         property: key,
         property_type: property.map(|property| bounded(&property.kind)),
         raw: raw.map(bounded),
         raw_truncated: raw.is_some_and(|raw| raw.len() > MAX_VALUE_BYTES),
-        value_source: if first.is_some() {
-            "authored"
-        } else if raw.is_some() {
-            "fgd_default"
-        } else {
-            "missing"
-        },
+        value_source: value.source,
         error,
     }
 }
@@ -111,27 +87,17 @@ fn numbers(input: &Input, counts: &[usize]) -> Result<Vec<f64>, String> {
             input.property
         )
     })?;
-    let values = raw
-        .split_whitespace()
-        .map(|value| {
-            value
-                .parse::<f64>()
-                .ok()
-                .filter(|value| value.is_finite() && (*value as f32).is_finite())
-        })
-        .collect::<Option<Vec<_>>>()
-        .filter(|values| counts.contains(&values.len()))
-        .ok_or_else(|| {
-            format!(
-                "Source projector {} needs {} finite native numbers",
-                input.property,
-                counts
-                    .iter()
-                    .map(usize::to_string)
-                    .collect::<Vec<_>>()
-                    .join(" or ")
-            )
-        })?;
+    let values = super::values::numbers(raw, counts).ok_or_else(|| {
+        format!(
+            "Source projector {} needs {} finite native numbers",
+            input.property,
+            counts
+                .iter()
+                .map(usize::to_string)
+                .collect::<Vec<_>>()
+                .join(" or ")
+        )
+    })?;
     Ok(values)
 }
 

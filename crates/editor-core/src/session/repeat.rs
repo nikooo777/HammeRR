@@ -1,3 +1,4 @@
+use crate::identity::id_string;
 use map_core::{Document, EditError, ObjectId, repeat};
 use serde_json::{Value, json};
 
@@ -19,13 +20,6 @@ pub struct Preview {
 pub struct State {
     serial: u64,
     pub preview: Option<Preview>,
-}
-
-fn id_string(id: ObjectId) -> String {
-    match id {
-        ObjectId::Solid(id) => format!("solid:{id}"),
-        ObjectId::Entity(id) => format!("entity:{id}"),
-    }
 }
 
 impl Session {

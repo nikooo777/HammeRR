@@ -373,3 +373,26 @@ pub(in crate::mcp) fn camera_view_guard(
         _ => Err("Supply both generation and revision from get_camera_views".into()),
     }
 }
+
+macro_rules! view_update {
+    ($($args:ty),+) => { $(
+        impl $args {
+            pub(in crate::mcp) fn view_update(&self) -> crate::session::ViewUpdate<'_> {
+                crate::session::ViewUpdate {
+                    surface: self.surface.as_deref(),
+                    smoothing_group: self.smoothing_group,
+                    tool_textures: self.tool_textures,
+                    leak_path: self.leak_path,
+                    sky_preview: self.sky_preview,
+                    rope_preview: self.rope_preview,
+                    selection_outlines: self.selection_outlines,
+                    entity_images: self.entity_images,
+                    entity_model_guides: self.entity_model_guides,
+                    sky_channel: self.sky_channel.as_deref(),
+                    sky_exposure_ev: self.sky_exposure_ev,
+                }
+            }
+        }
+    )+ };
+}
+view_update!(SetViewArgs, RenderArgs);

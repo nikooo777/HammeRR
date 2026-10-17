@@ -29,11 +29,12 @@ HammeRR includes its own native compiler, so it builds Counter-Strike: Source ma
 | **Build details…** | Bar below the toolbar, after the first build | Lighting, physics, visibility and sampling settings, progress, timings, statistics and diagnostics. |
 | **Play built map** | Build details | Launches the last successful build without compiling again. |
 | **Cancel build** | Bar below the toolbar and Build details | Stops the build and keeps the previous output. |
+| **Inspect baked lightmaps…** | Build settings / Build details | Opens read-only compiled face samples, channels, styles and intensity statistics from a successful build. |
 | **Game Log** | Toolbar | Shows the game's console and launcher output. |
 | **Stop Map** | Toolbar | Stops the game started by the editor. |
 | **Leak path** | Toolbar | Shows or hides the red leak line after a failed build. |
 
-Builds run in the background, and closing Build details leaves them running. Scroll the window to inspect settings, statistics and **Diagnostics**; **Close**, **Cancel build** and **Play built map** stay at the bottom. Output is written in one step at the end: a failed or cancelled build never replaces the previous BSP or pointfile.
+Builds run in the background, and closing Build details leaves them running. Scroll the window to inspect settings, statistics and **Diagnostics**; the build controls and **Close** stay at the bottom. Output is written in one step at the end: a failed or cancelled build never replaces the previous BSP or pointfile. Use [Baked lightmaps](baked-lightmaps.md) to inspect actual samples after a lit build.
 
 ![Build settings, statistics, stage, output and diagnostics](images/build-status.png)
 

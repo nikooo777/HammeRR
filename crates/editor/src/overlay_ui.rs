@@ -715,7 +715,9 @@ impl Controller {
                         Err("Preview corners before starting viewport handles".to_string())
                     } else {
                         current.token.ok_or_else(|| "Preview or Review the corner draft first".to_string()).and_then(|token| {
-                            session.begin_overlay_corner_handles(Actor::User, token, session.camera(), viewport.get(), &session.overlay_corner_handle_stamp())
+                            let camera = session.camera();
+                            let stamp = session.overlay_corner_handle_stamp();
+                            session.begin_overlay_corner_handles(Actor::User, token, camera, viewport.get(), &stamp)
                         })
                     }
                 };

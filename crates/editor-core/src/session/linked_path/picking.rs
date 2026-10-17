@@ -11,7 +11,7 @@ pub(super) struct Picking {
 }
 
 impl Session {
-    pub(super) fn linked_path_picking(&self) -> bool {
+    pub(in crate::session) fn linked_path_picking(&self) -> bool {
         self.geometry
             .linked_path
             .preview

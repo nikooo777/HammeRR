@@ -611,7 +611,10 @@ fn rendered_model_opacity_preserves_texture_alpha_depth_and_sorted_overlap() {
     );
     let front = opacity_model(2, 16.0, "0", "255", "blue");
     let obscured = opacity_model(3, 0.0, "2", "128", "red");
-    assert_eq!(render(&[front.clone()]), render(&[front, obscured]));
+    assert_eq!(
+        render(std::slice::from_ref(&front)),
+        render(&[front, obscured])
+    );
     let far = opacity_model(2, 0.0, "2", "128", "red");
     let near = opacity_model(3, 8.0, "2", "128", "green");
     let ordered = render(&[far.clone(), near.clone()]);

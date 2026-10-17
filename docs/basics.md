@@ -57,7 +57,7 @@ Save your preferred startup grid separately from temporary changes:
 3. Review **Current session**, then choose **Save current as defaults**. Future startups use these three values.
 4. Use **Apply saved defaults** to restore them in the current session. **Reload defaults** retries reading storage without changing the current grid.
 
-**Reset saved defaults** explicitly saves the factory values: 16 units, snapping on and grid visible. It leaves the current grid alone until **Apply saved defaults**. Workplane elevation, brush depth, preview toggles and active tools are never persisted. These actions leave the map and Undo history unchanged. Temporary toolbar or MCP grid changes never save automatically.
+**Reset saved defaults** explicitly saves the factory values: 16 units, snapping on and grid visible. It leaves the current grid alone until **Apply saved defaults**. Grid defaults do not store workplane elevation, brush depth, preview toggles or active tools. These actions leave the map and Undo history unchanged. Temporary toolbar or MCP grid changes never save automatically. Save selected guide and image switches separately in [Preview defaults](preview-defaults.md).
 
 ![Grid defaults with current and saved grid settings](images/grid-defaults.png)
 

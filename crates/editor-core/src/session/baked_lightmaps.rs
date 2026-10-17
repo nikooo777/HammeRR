@@ -253,15 +253,15 @@ impl Session {
                 });
             }
         };
-        if let Ok(Some(source)) = &build.lightmap_identity.source {
-            if let Err(error) = read_owned_bytes(source) {
-                report["build"]["status"] = json!("stale");
-                report["build"]["current"] = json!(false);
-                report["build"]["diagnostics"]
-                    .as_array_mut()
-                    .expect("build diagnostics")
-                    .push(json!(format!("Saved VMF source changed: {error}")));
-            }
+        if let Ok(Some(source)) = &build.lightmap_identity.source
+            && let Err(error) = read_owned_bytes(source)
+        {
+            report["build"]["status"] = json!("stale");
+            report["build"]["current"] = json!(false);
+            report["build"]["diagnostics"]
+                .as_array_mut()
+                .expect("build diagnostics")
+                .push(json!(format!("Saved VMF source changed: {error}")));
         }
         let inspected = inspect_bsp(&bsp, query);
         match inspected {

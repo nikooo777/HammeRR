@@ -70,7 +70,17 @@ fn baked_lightmap_controls_inspect_successful_build_and_clear_changed_output() {
     window.set_style_index(0);
     window.invoke_inspect_face();
     assert!(window.get_has_preview());
+    let inspection = lock(&shared)
+        .inspect_baked_lightmaps(&Query {
+            channel: Channel::Hdr,
+            ..Query::default()
+        })
+        .unwrap();
+    assert_eq!(inspection.report["build"]["status"], "current");
     std::fs::write(&output, b"external replacement").unwrap();
+    present(window, inspection, &controller.baked_lightmaps.baseline);
+    assert!(window.get_has_preview());
+    assert!(window.get_build_state().contains("current"));
     controller.refresh(&lock(&shared));
     assert!(!window.get_has_preview());
     assert!(window.get_build_state().contains("unavailable"));

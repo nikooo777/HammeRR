@@ -65,8 +65,8 @@ const MAX_RENDER_SIDE: u32 = 2048;
 
 const INSTRUCTIONS: &str = "\
 HammeRR, a map editor for Counter-Strike: Source (Valve Source engine, Hammer-compatible VMF files). \
-The user has the same map open in an editor window and sees every change live; all edits \
-are undoable and share the user's undo history.\n\
+The desktop HTTP server shares the live editor session; a stdio server owns a private \
+session. Edits use the session's shared undo history.\n\
 Coordinates: Z is up, units are Hammer units (about an inch). A player is 32x32x72 \
 (crouched 36), steps are up to 18 high, doors are typically 56x112, walls 8-16 thick. \
 Keep brush coordinates inside +-16384. set_spatial_settings configures the shared grid \
@@ -75,7 +75,10 @@ Objects are addressed as 'solid:<id>' (world brushes) and 'entity:<id>' (point o
 entities; a brush entity owns its brushes). Tools that take ids default to the current \
 selection when ids are omitted, and creation tools select what they create.\n\
 Materials are paths under materials/ without extension, e.g. 'tools/toolsnodraw', \
-'tools/toolsskybox', 'dev/dev_measuregeneric01'; find more with search_materials.\n\
+'tools/toolsskybox', 'dev/dev_measuregeneric01'; find more with search_materials. \
+Sprite Name fields are model-resource references: a material choice must be authored \
+as 'materials/<catalog-name>.vmt', retaining nested directories. Existing supported \
+'sprites/<basename>.spr' values remain unchanged until an explicit edit.\n\
 Verify work visually with render_view (focus on objects, or an explicit camera) and \
 pick_at_pixel to identify what is at a point in a rendered image. Save with save_map. \
 set_camera selects perspective/top/front/side; planar cameras accept center and ortho_height. \

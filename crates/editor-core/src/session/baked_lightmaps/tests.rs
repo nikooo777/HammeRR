@@ -199,7 +199,9 @@ fn baked_lightmap_state_guards_source_settings_content_and_owned_bsp_without_edi
     let inspected = session.inspect_baked_lightmaps(&Query::default()).unwrap();
     assert_eq!(inspected.report["build"]["status"], "current");
     assert!(inspected.image.is_some());
-    session.compilation.options.lighting = compiler::LightingMode::DirectLdr;
+    session
+        .update_compile_settings(Actor::User, Some("direct_ldr"), None)
+        .unwrap();
     assert_eq!(
         session
             .inspect_baked_lightmaps(&Query::default())
@@ -207,7 +209,9 @@ fn baked_lightmap_state_guards_source_settings_content_and_owned_bsp_without_edi
             .report["build"]["status"],
         "stale"
     );
-    session.compilation.options.lighting = compiler::LightingMode::Fullbright;
+    session
+        .update_compile_settings(Actor::User, Some("fullbright"), None)
+        .unwrap();
     session.content_epoch += 1;
     assert_eq!(session.baked_lightmap_build_state()["status"], "stale");
     session.content_epoch -= 1;

@@ -36,7 +36,30 @@ Use [Surface placement](placement.md) to drop models onto floors or ceilings, or
 
 ![Framed reference-pose attachment axes](images/model-attachment-guide.png)
 
-Limits: MDL versions 44/48 with VVD4 and DX90 VTX7 companions, LOD 0 and scale 1. Unsupported, missing or malformed model geometry retains a helper; inspection reports the reason. Attachment positions follow default local bone poses; animated, procedural/IK and included-model virtual attachment results are not evaluated. Attachment parenting and placement tools remain planned. Animation playback, procedural/IK poses, flexes, scaling, entity opacity/render modes and baked prop lighting remain planned. Tint preview supports integer RGB channels from 0 to 255; an authored fourth component is preserved when editing RGB, with no opacity preview. Nonwhite static-prop tints are rejected by the current compiler output and retain a helper; this is a writer limit. `prop_static` requires a model built as a static prop and body 0; use a compatible dynamic entity for reference poses or other bodygroup selections. Entirely blank choices show an editor helper, which remains selectable. Bodygroup choices change displayed geometry; collision still comes from the model’s physics data. Marquee and volume selection use loaded models’ transformed asset bounds; point picking intersects triangles. Hidden models are excluded from region matching. Unsupported assets retain their existing helper bounds. **Reload models** refreshes model geometry; **Reload material assets** refreshes cached material contents and repeats material-path lookup using the cached MDL directories. If no candidate exists, the existing bare-name lookup remains visible in **Show materials** and missing images use the missing-texture display. Search failures expose a material-resolution error and discard the previous display bindings. See [Reload changed materials](textures.md#reload-changed-materials).
+## Preview opacity
+
+Use static transparency on a dynamic model without changing its placement or
+selection bounds.
+
+1. Select a supported `prop_dynamic` or other dynamic model entity.
+2. Set **Render mode** to **Texture · opacity**.
+3. Set **Opacity** from 0 to 255 with its slider or numeric input. Zero hides
+   the mesh; 255 keeps the material's original alpha. **Tint** remains independent.
+4. Choose **Normal** to restore ordinary material rendering; Normal ignores
+   Opacity. Use Undo to restore a property edit.
+5. Open **Model details…** to read the opacity summary or an unsupported-appearance
+   diagnostic. Unsupported modes or Render FX retain a diagnostic helper.
+
+![Dynamic models using authored opacity](images/model-opacity.png)
+
+Opacity preview applies in **Textured** mode with **Render FX → None** only.
+It uses material alpha, depth testing and back-to-front batch-center sorting;
+intersecting/cyclic transparent geometry and triangle-level sorting remain
+outside this preview. Asset-only browser images retain original materials.
+It does not reproduce native runtime effects, fades or animation. Literal FGD
+model guides keep their independent flat editor appearance.
+
+Limits: MDL versions 44/48 with VVD4 and DX90 VTX7 companions, LOD 0 and scale 1. Unsupported, missing or malformed model geometry retains a helper; inspection reports the reason. Attachment positions follow default local bone poses; animated, procedural/IK and included-model virtual attachment results are not evaluated. Attachment parenting and placement tools remain planned. Animation playback, procedural/IK poses, flexes, scaling, other render modes and baked prop lighting remain planned. Tint preview supports integer RGB channels from 0 to 255; an authored fourth component is preserved when editing RGB and does not control opacity. Nonwhite static-prop tints, nonnormal render modes and unsupported Render FX are rejected by the current compiler output and retain a helper; these are writer limits. `prop_static` requires a model built as a static prop and body 0; use a compatible dynamic entity for reference poses or other bodygroup selections. Entirely blank choices show an editor helper, which remains selectable. Bodygroup choices change displayed geometry; collision still comes from the model’s physics data. Marquee and volume selection use loaded models’ transformed asset bounds; point picking intersects triangles even at zero opacity. Hidden models are excluded from region matching. Unsupported assets retain their existing helper bounds. **Reload models** refreshes model geometry; **Reload material assets** refreshes cached material contents and repeats material-path lookup using the cached MDL directories. If no candidate exists, the existing bare-name lookup remains visible in **Show materials** and missing images use the missing-texture display. Search failures expose a material-resolution error and discard the previous display bindings. See [Reload changed materials](textures.md#reload-changed-materials).
 
 HammeRR limits each companion file to 64 MiB, the model cache to 128 entries and 256 MiB, and a scene to one million model vertices and six million model indices. Reference pose decoding supports up to 256 bones and three weights per vertex. Entities beyond those budgets retain helpers. These are editor resource limits. Inspection and rendering preserve map properties and Undo history.
 

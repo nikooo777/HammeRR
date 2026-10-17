@@ -10,8 +10,8 @@ def state(client):
     return client.call("get_measurements")
 
 
-def action(client, name, **arguments):
-    return client.call("set_measurement", {"action": name, **arguments})
+def action(client, action_name, **arguments):
+    return client.call("set_measurement", {"action": action_name, **arguments})
 
 
 def token(client):

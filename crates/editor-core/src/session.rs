@@ -65,6 +65,7 @@ pub mod prefabs;
 pub mod preview_preferences;
 pub mod primitives;
 mod recent;
+pub mod shortcuts;
 mod view;
 mod viewport_pick;
 pub use view::ViewUpdate;
@@ -236,6 +237,7 @@ pub struct Session {
     spatial: spatial::Settings,
     grid_preferences: grid_preferences::State,
     preview_preferences: preview_preferences::State,
+    shortcuts: shortcuts::State,
     saved_cameras: [Option<Camera>; 4],
     block_preview: Option<(DVec3, DVec3)>,
     brush_epoch: u64,
@@ -358,6 +360,7 @@ impl Session {
             spatial: spatial::Settings::default(),
             grid_preferences: grid_preferences::State::default(),
             preview_preferences: preview_preferences::State::default(),
+            shortcuts: shortcuts::State::default(),
             saved_cameras: [None; 4],
             block_preview: None,
             brush_epoch: 0,

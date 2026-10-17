@@ -14,6 +14,7 @@ pub mod recent_maps;
 pub mod recovery;
 pub mod runtime;
 pub mod session;
+pub mod shortcuts;
 pub mod sky_assets;
 pub mod spatial;
 pub mod sprite_resource;

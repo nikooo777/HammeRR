@@ -109,6 +109,7 @@ struct Ui {
     measurements: Option<measurements_ui::Controller>,
     grid_defaults: Option<grid_defaults_ui::Controller>,
     preview_defaults: Option<preview_defaults_ui::Controller>,
+    shortcuts: Option<shortcuts_ui::Controller>,
     material_for_group: bool,
     overlay_material_target: Option<overlay_ui::MaterialTarget>,
     material_for_replace: Option<bool>,
@@ -467,6 +468,7 @@ pub(super) fn run(
         measurements: None,
         grid_defaults: None,
         preview_defaults: None,
+        shortcuts: None,
         material_for_group: false,
         overlay_material_target: None,
         material_for_replace: None,
@@ -643,6 +645,24 @@ pub(super) fn run(
             }
         }
     });
+    app.on_keyboard_shortcuts({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let mut ui = ui.borrow_mut();
+            if ui.shortcuts.is_none() {
+                match shortcuts_ui::Controller::new(&ui.session) {
+                    Ok(controller) => ui.shortcuts = Some(controller),
+                    Err(error) => {
+                        app.unwrap().set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            if let Err(error) = ui.shortcuts.as_ref().unwrap().show(&lock(&ui.session)) {
+                app.unwrap().set_message(error.to_string().into());
+            }
+        }
+    });
     app.on_fog_preview({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || {
@@ -776,12 +796,14 @@ pub(super) fn run(
     app.on_delete_selection({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || {
-            edit_selection(
-                &app.unwrap(),
-                &ui,
-                |n| format!("delete {n} objects"),
-                edit::delete,
-            )
+            let shared = session_of(&ui);
+            let mut session = lock(&shared);
+            let ids = session.selected_ids();
+            if ids.is_empty() {
+                app.unwrap().set_message("Nothing selected".into());
+            } else if let Err(error) = session.delete_objects(Actor::User, &ids) {
+                app.unwrap().set_message(error.into());
+            }
         }
     });
     app.on_selection_mode_changed({
@@ -1860,9 +1882,25 @@ pub(super) fn run(
     bind_view_controls(&app, session_of(&ui));
     app.on_key({
         let (app, ui) = (app.as_weak(), ui.clone());
-        move |text, down, control, shift| {
+        move |text, down, control, shift, alt, meta| {
+            if down
+                && shortcuts_ui::dispatch_key(
+                    &app.unwrap(),
+                    &mut lock(&session_of(&ui)),
+                    &text,
+                    control,
+                    shift,
+                    alt,
+                    meta,
+                )
+            {
+                return true;
+            }
             if down && command_key(&app.unwrap(), &ui, &text, control, shift) {
                 return true;
+            }
+            if down && (control || alt || meta) {
+                return false;
             }
             ui.borrow_mut().viewport.key(&text, down)
         }
@@ -3064,6 +3102,7 @@ pub(super) fn run(
                 app.set_preview_defaults_error(
                     lock(&ui.session).preview_preferences_error().is_some(),
                 );
+                shortcuts_ui::refresh_hint(&app, &lock(&ui.session));
                 if let Some(window) = &ui.hollow_window
                     && window.window().is_visible()
                 {
@@ -3159,6 +3198,11 @@ pub(super) fn run(
                     controller.refresh(&lock(&ui.session));
                 }
                 if let Some(controller) = &ui.preview_defaults
+                    && controller.window.window().is_visible()
+                {
+                    controller.refresh(&lock(&ui.session));
+                }
+                if let Some(controller) = &ui.shortcuts
                     && controller.window.window().is_visible()
                 {
                     controller.refresh(&lock(&ui.session));

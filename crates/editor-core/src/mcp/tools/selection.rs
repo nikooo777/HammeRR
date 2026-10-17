@@ -51,11 +51,7 @@ impl EditorServer {
         run(|| {
             let mut session = self.session();
             let ids = ids_or_selection(&session, args.ids.as_deref())?;
-            session.edit(
-                Actor::Agent,
-                &format!("delete {} objects", ids.len()),
-                |tx| edit::delete(tx, &ids),
-            )?;
+            session.delete_objects(Actor::Agent, &ids)?;
             Ok(json!({ "deleted": ids.iter().map(|&id| id_string(id)).collect::<Vec<_>>() }))
         })
     }
@@ -152,12 +148,7 @@ impl EditorServer {
         run(|| {
             let mut session = self.session();
             let ids = ids_or_selection(&session, args.ids.as_deref())?;
-            let copies = session.edit(
-                Actor::Agent,
-                &format!("duplicate {} objects", ids.len()),
-                |tx| edit::duplicate(tx, &ids, vec3(args.offset)),
-            )?;
-            session.select(&copies, SelectMode::Replace)?;
+            let copies = session.duplicate_objects(Actor::Agent, &ids, vec3(args.offset))?;
             let doc = session.document();
             Ok(json!({ "copies": copies.iter().map(|&id| summary(doc, id)).collect::<Vec<_>>() }))
         })

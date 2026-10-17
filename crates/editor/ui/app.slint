@@ -3,6 +3,7 @@ export { SkyAssetsWindow, SkyAssetFaceRow } from "sky-assets.slint";
 export { HistoryWindow, HistoryRow } from "history.slint";
 export { GridDefaultsWindow } from "grid-defaults.slint";
 export { PreviewDefaultsWindow, PreviewDefaultRow } from "preview-defaults.slint";
+export { ShortcutsWindow, ShortcutRow } from "shortcuts.slint";
 export { WorkingRegionWindow } from "working-region.slint";
 export { CompileRegionWindow } from "compile-region.slint";
 export { FogWindow } from "fog.slint";
@@ -1953,6 +1954,9 @@ export component AppWindow inherits Window {
     in property <bool> grid-defaults-error;
     callback preview-defaults();
     in property <bool> preview-defaults-error;
+    callback keyboard-shortcuts();
+    in property <bool> shortcuts-error;
+    in property <string> frame-shortcut: "F";
     callback start-clip();
     callback clip-points-action(int);
     callback preview-clip-plane();
@@ -2041,7 +2045,7 @@ export component AppWindow inherits Window {
     callback tie-entity();
     callback move-to-world();
     // Returns whether the key was handled.
-    callback key(text: string, down: bool, control: bool, shift: bool) -> bool;
+    callback key(text: string, down: bool, control: bool, shift: bool, alt: bool, meta: bool) -> bool;
     // button: 0 = left, 1 = right, 2 = middle
     callback mouse-button(button: int, down: bool, x: length, y: length, control: bool, alt: bool);
     callback mouse-moved(x: length, y: length);
@@ -2237,10 +2241,10 @@ export component AppWindow inherits Window {
                             root.open-map();
                             return accept;
                         }
-                        root.key(event.text, true, event.modifiers.control, event.modifiers.shift) ? EventResult.accept : EventResult.reject
+                        root.key(event.text, true, event.modifiers.control, event.modifiers.shift, event.modifiers.alt, event.modifiers.meta) ? EventResult.accept : EventResult.reject
                     }
                     key-released(event) => {
-                        root.key(event.text, false, event.modifiers.control, event.modifiers.shift) ? EventResult.accept : EventResult.reject
+                        root.key(event.text, false, event.modifiers.control, event.modifiers.shift, event.modifiers.alt, event.modifiers.meta) ? EventResult.accept : EventResult.reject
                     }
                     focus-lost => {
                         root.viewport-focus-lost();
@@ -2290,11 +2294,11 @@ export component AppWindow inherits Window {
                             current-index: root.projection-index;
                             selected => { root.projection-changed(self.current-index); }
                         }
-                        Button { text: "Frame · F"; clicked => { root.frame-selection(); } }
+                        Button { text: root.frame-shortcut == "" ? "Frame" : "Frame · " + root.frame-shortcut; accessible-label: "Frame selection"; clicked => { root.frame-selection(); } }
                         Button { text: "Saved views…"; clicked => { root.saved-views(); } }
                         Button { text: "Measurements…"; clicked => { root.measurements(); } }
                         Text { text: "Grid"; vertical-alignment: center; color: #c8ccd4; }
-                        LineEdit { width: 65px; text <=> root.grid-size; input-type: decimal; accepted => { root.spatial-changed(); } }
+                        LineEdit { width: 65px; text <=> root.grid-size; input-type: decimal; accessible-label: "Viewport grid size"; accepted => { root.spatial-changed(); } }
                         CheckBox { text: "Snap"; checked <=> root.snap-grid; toggled => { root.spatial-changed(); } }
                         CheckBox { text: "Show grid"; checked <=> root.grid-visible; toggled => { root.spatial-changed(); } }
                     }
@@ -2551,6 +2555,7 @@ export component AppWindow inherits Window {
                     }
                     Button { text: root.grid-defaults-error ? "Grid defaults… · needs attention" : "Grid defaults…"; clicked => { root.grid-defaults(); } }
                     Button { text: root.preview-defaults-error ? "Preview defaults… · needs attention" : "Preview defaults…"; clicked => { root.preview-defaults(); } }
+                    Button { text: root.shortcuts-error ? "Keyboard shortcuts… · needs attention" : "Keyboard shortcuts…"; clicked => { root.keyboard-shortcuts(); } }
                     ComboBox {
                         model: ["Textured", "Flat shading", "Wireframe", "Lightmap density", "Smoothing groups"];
                         current-index <=> root.surface-view;

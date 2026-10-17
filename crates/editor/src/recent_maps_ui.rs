@@ -2,9 +2,16 @@ use std::path::Path;
 
 use slint::{ComponentHandle, ModelRc, VecModel};
 
-use crate::runtime::{SharedSession, lock};
+use crate::runtime::{DocumentAccess, DocumentContinuation, SharedSession};
 use crate::session::{Actor, Session};
 use crate::{RecentMapRow, RecentMapsWindow};
+
+#[cfg(test)]
+std::thread_local! {
+    static BEFORE_ACTION: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const {
+        std::cell::RefCell::new(None)
+    };
+}
 
 fn map_guard(session: &Session) -> String {
     session.buffer_replacement_review().token()
@@ -112,45 +119,76 @@ pub fn bind(window: &RecentMapsWindow, shared: &SharedSession) {
     );
 }
 
+fn with_session<R>(
+    window: &slint::Weak<RecentMapsWindow>,
+    access: &DocumentContinuation,
+    body: impl FnOnce(&RecentMapsWindow, &mut Session) -> R,
+) -> Option<R> {
+    let window = window.upgrade()?;
+    match access.upgrade().and_then(|access| {
+        access.with_session(|session| {
+            #[cfg(test)]
+            let before = BEFORE_ACTION.with(|hook| hook.borrow_mut().take());
+            #[cfg(test)]
+            if let Some(before) = before {
+                before();
+            }
+            Ok(body(&window, session))
+        })
+    }) {
+        Ok(result) => Some(result),
+        Err(error) => {
+            window.set_message(error.into());
+            None
+        }
+    }
+}
+
 pub fn bind_with_access(
     window: &RecentMapsWindow,
-    shared: &SharedSession,
-    access: crate::runtime::DocumentAccess,
+    _shared: &SharedSession,
+    access: DocumentAccess,
 ) {
+    let access = access.downgrade();
     window.on_cancel({
         let window = window.as_weak();
         move || {
-            let _ = window.unwrap().hide();
+            if let Some(window) = window.upgrade() {
+                let _ = window.hide();
+            }
         }
     });
+    window
+        .window()
+        .on_close_requested(|| slint::CloseRequestResponse::HideWindow);
     window.on_refresh({
-        let (window, session) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.clone());
         move || {
-            let window = window.unwrap();
-            let mut session = lock(&session);
-            let result = session.reload_recent_maps();
-            window.set_confirm_clear(false);
-            window.set_message(match result {
-                Ok(_) => "Saved list reloaded; the current map is unchanged.".into(),
-                Err(error) => error.into(),
+            with_session(&window, &access, |window, session| {
+                let result = session.reload_recent_maps();
+                window.set_confirm_clear(false);
+                window.set_message(match result {
+                    Ok(_) => "Saved list reloaded; the current map is unchanged.".into(),
+                    Err(error) => error.into(),
+                });
+                refresh(window, session);
             });
-            refresh(&window, &session);
         }
     });
     window.on_select_map({
-        let (window, session) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.clone());
         move |path| {
-            let window = window.unwrap();
-            window.set_selected_path(path);
-            window.set_message("".into());
-            refresh(&window, &lock(&session));
+            with_session(&window, &access, |window, session| {
+                window.set_selected_path(path);
+                window.set_message("".into());
+                refresh(window, session);
+            });
         }
     });
     window.on_open_selected({
-        let window = window.as_weak();
+        let (window, access) = (window.as_weak(), access.clone());
         move || {
-            let window = window.unwrap();
-            let admitted = access.with_session(|session| {
+            let hide = with_session(&window, &access, |window, session| {
                 let result = session
                     .buffer_replacement_review_from_token(&window.get_map_guard())
                     .and_then(|review| {
@@ -161,50 +199,56 @@ pub fn bind_with_access(
                             &review,
                         )
                     });
-                match result {
+                let hide = match result {
                     Ok(message) => {
                         window.set_message(message.into());
-                        let _ = window.hide();
+                        true
                     }
-                    Err(error) => window.set_message(error.into()),
-                }
-                refresh(&window, session);
-                Ok(())
+                    Err(error) => {
+                        window.set_message(error.into());
+                        false
+                    }
+                };
+                refresh(window, session);
+                hide
             });
-            if let Err(error) = admitted {
-                window.set_message(error.into());
+            if hide == Some(true)
+                && let Some(window) = window.upgrade()
+            {
+                let _ = window.hide();
             }
         }
     });
     window.on_remove_selected({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.clone());
         move || {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            let result = session.remove_recent_map(Path::new(window.get_selected_path().as_str()));
-            window.set_message(match result {
-                Ok(()) => "Removed from recent maps; the file is unchanged.".into(),
-                Err(error) => error.into(),
+            with_session(&window, &access, |window, session| {
+                let result =
+                    session.remove_recent_map(Path::new(window.get_selected_path().as_str()));
+                window.set_message(match result {
+                    Ok(()) => "Removed from recent maps; the file is unchanged.".into(),
+                    Err(error) => error.into(),
+                });
+                refresh(window, session);
             });
-            refresh(&window, &session);
         }
     });
     window.on_clear_list({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.clone());
         move || {
-            let window = window.unwrap();
-            if !window.get_confirm_clear() {
-                window.set_message("Select Confirm clear list first.".into());
-                return;
-            }
-            let mut session = lock(&shared);
-            let result = session.clear_recent_maps();
-            window.set_message(match result {
-                Ok(()) => "Recent maps cleared; map files are unchanged.".into(),
-                Err(error) => error.into(),
+            with_session(&window, &access, |window, session| {
+                if !window.get_confirm_clear() {
+                    window.set_message("Select Confirm clear list first.".into());
+                    return;
+                }
+                let result = session.clear_recent_maps();
+                window.set_message(match result {
+                    Ok(()) => "Recent maps cleared; map files are unchanged.".into(),
+                    Err(error) => error.into(),
+                });
+                window.set_confirm_clear(false);
+                refresh(window, session);
             });
-            window.set_confirm_clear(false);
-            refresh(&window, &session);
         }
     });
 }

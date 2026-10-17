@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::recovery::{Kind, Settings};
-use crate::runtime::{SharedSession, lock};
+use crate::runtime::{DocumentAccess, DocumentContinuation, SharedSession, lock};
 use crate::session::{Actor, Session};
 use crate::{RecoveryRow, RecoveryWindow};
 
@@ -165,109 +165,143 @@ pub fn bind(window: &RecoveryWindow, shared: &SharedSession) {
     );
 }
 
-pub fn bind_with_access(
-    window: &RecoveryWindow,
-    shared: &SharedSession,
-    access: crate::runtime::DocumentAccess,
-) {
+fn with_shared<R>(
+    window: &slint::Weak<RecoveryWindow>,
+    access: &DocumentContinuation,
+    body: impl FnOnce(&RecoveryWindow, &SharedSession) -> R,
+) -> Option<R> {
+    let window = window.upgrade()?;
+    match access
+        .upgrade()
+        .and_then(|access| access.with_shared(|shared| Ok(body(&window, shared))))
+    {
+        Ok(result) => Some(result),
+        Err(error) => {
+            window.set_message(error.into());
+            None
+        }
+    }
+}
+
+fn with_session<R>(
+    window: &slint::Weak<RecoveryWindow>,
+    access: &DocumentContinuation,
+    body: impl FnOnce(&RecoveryWindow, &mut Session) -> R,
+) -> Option<R> {
+    with_shared(window, access, |window, shared| {
+        body(window, &mut lock(shared))
+    })
+}
+
+pub fn bind_with_access(window: &RecoveryWindow, _shared: &SharedSession, access: DocumentAccess) {
+    let access = access.downgrade();
     window.on_cancel({
         let window = window.as_weak();
         move || {
-            let _ = window.unwrap().hide();
+            if let Some(window) = window.upgrade() {
+                let _ = window.hide();
+            }
         }
     });
+    window
+        .window()
+        .on_close_requested(|| slint::CloseRequestResponse::HideWindow);
     window.on_refresh({
-        let (window, session) = (window.as_weak(), shared.clone());
-        move || refresh(&window.unwrap(), &lock(&session))
+        let (window, access) = (window.as_weak(), access.clone());
+        move || {
+            with_session(&window, &access, |window, session| refresh(window, session));
+        }
     });
     window.on_reload_settings({
-        let (window, session) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.clone());
         move || {
-            let Some(window) = window.upgrade() else {
-                return;
-            };
-            let mut session = lock(&session);
-            match session.reload_recovery_settings(Actor::User, None) {
-                Ok(_) => {
-                    window.set_settings_dirty(false);
-                    window.set_message("Saved recovery settings reloaded.".into());
+            with_session(&window, &access, |window, session| {
+                match session.reload_recovery_settings(Actor::User, None) {
+                    Ok(_) => {
+                        window.set_settings_dirty(false);
+                        window.set_message("Saved recovery settings reloaded.".into());
+                    }
+                    Err(error) => window.set_message(error.into()),
                 }
-                Err(error) => window.set_message(error.into()),
-            }
-            refresh(&window, &session);
+                refresh(window, session);
+            });
         }
     });
     window.on_apply_settings({
-        let (window, session) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.clone());
         move || {
-            let window = window.unwrap();
-            let version = window.get_settings_revision().parse::<u64>();
-            let result = version
-                .map_err(|_| "Reload recovery settings first".to_owned())
-                .and_then(|version| {
-                    lock(&session).set_recovery_settings(
-                        Actor::User,
-                        Settings {
-                            enabled: window.get_autosave_enabled(),
-                            interval_seconds: window.get_interval_seconds().max(0) as u64,
-                            keep_per_map: window.get_keep_count().max(0) as usize,
-                        },
-                        Some(version),
-                    )
-                });
-            match result {
-                Ok(()) => {
-                    window.set_settings_dirty(false);
-                    window.set_message("Recovery settings saved.".into());
+            with_session(&window, &access, |window, session| {
+                let result = window
+                    .get_settings_revision()
+                    .parse::<u64>()
+                    .map_err(|_| "Reload recovery settings first".to_owned())
+                    .and_then(|version| {
+                        session.set_recovery_settings(
+                            Actor::User,
+                            Settings {
+                                enabled: window.get_autosave_enabled(),
+                                interval_seconds: window.get_interval_seconds().max(0) as u64,
+                                keep_per_map: window.get_keep_count().max(0) as usize,
+                            },
+                            Some(version),
+                        )
+                    });
+                match result {
+                    Ok(()) => {
+                        window.set_settings_dirty(false);
+                        window.set_message("Recovery settings saved.".into());
+                    }
+                    Err(error) => window.set_message(error.into()),
                 }
-                Err(error) => window.set_message(error.into()),
-            }
-            refresh(&window, &lock(&session));
+                refresh(window, session);
+            });
         }
     });
     window.on_select_snapshot({
-        let (window, session) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.clone());
         move |id| {
-            let window = window.unwrap();
-            window.set_selected_id(id);
-            window.set_confirm_delete(false);
-            window.set_discard_changes(false);
-            window.set_message("".into());
-            refresh(&window, &lock(&session));
+            with_session(&window, &access, |window, session| {
+                window.set_selected_id(id);
+                window.set_confirm_delete(false);
+                window.set_discard_changes(false);
+                window.set_message("".into());
+                refresh(window, session);
+            });
         }
     });
     window.on_delete_snapshot({
-        let (window, session) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.clone());
         move || {
-            let window = window.unwrap();
-            if !window.get_confirm_delete() {
-                window.set_message("Confirm deletion first.".into());
-                return;
-            }
-            let result =
-                lock(&session).delete_recovery_snapshot(Actor::User, &window.get_selected_id());
-            window.set_message(match result {
-                Ok(()) => "Snapshot deleted.".into(),
-                Err(error) => error.into(),
+            with_session(&window, &access, |window, session| {
+                if !window.get_confirm_delete() {
+                    window.set_message("Confirm deletion first.".into());
+                    return;
+                }
+                let result =
+                    session.delete_recovery_snapshot(Actor::User, &window.get_selected_id());
+                window.set_message(match result {
+                    Ok(()) => "Snapshot deleted.".into(),
+                    Err(error) => error.into(),
+                });
+                refresh(window, session);
             });
-            refresh(&window, &lock(&session));
         }
     });
     window.on_snapshot_now({
-        let (window, session) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.clone());
         move || {
-            let window = window.unwrap();
-            if let Err(error) = start_snapshot(&session) {
-                window.set_message(error.into());
-            }
-            refresh(&window, &lock(&session));
+            with_shared(&window, &access, |window, shared| {
+                if let Err(error) = start_snapshot(shared) {
+                    window.set_message(error.into());
+                }
+                refresh(window, &lock(shared));
+            });
         }
     });
     window.on_restore_snapshot({
-        let window = window.as_weak();
+        let (window, access) = (window.as_weak(), access.clone());
         move || {
-            let window = window.unwrap();
-            let admitted = access.with_session(|session| {
+            let hide = with_session(&window, &access, |window, session| {
                 let result = session
                     .buffer_replacement_review_from_token(&window.get_map_review())
                     .and_then(|review| {
@@ -279,17 +313,20 @@ pub fn bind_with_access(
                             &review,
                         )
                     });
-                match result {
-                    Ok(()) => {
-                        let _ = window.hide();
+                let hide = match result {
+                    Ok(()) => true,
+                    Err(error) => {
+                        window.set_message(error.into());
+                        false
                     }
-                    Err(error) => window.set_message(error.into()),
-                }
-                refresh(&window, session);
-                Ok(())
+                };
+                refresh(window, session);
+                hide
             });
-            if let Err(error) = admitted {
-                window.set_message(error.into());
+            if hide == Some(true)
+                && let Some(window) = window.upgrade()
+            {
+                let _ = window.hide();
             }
         }
     });

@@ -19,6 +19,7 @@ pub const MAX_RELOAD_FAILURES: usize = 100;
 
 #[derive(Debug)]
 pub struct MaterialInfo {
+    pub lighting_error: Option<String>,
     pub normal: Option<Arc<crate::normal_maps::Asset>>,
     material_identity: Option<u64>,
     /// Material name as used in the map, lowercase (`de_cbble/cobbleroad01`).
@@ -95,6 +96,9 @@ impl MaterialInfo {
 
         Ok(Self {
             material_identity: material.as_ref().map(material_identity),
+            lighting_error: material
+                .as_ref()
+                .map_or_else(|| Some("No resolved material".into()), lighting_error),
             normal: None,
             helper: None,
             error: None,
@@ -115,6 +119,7 @@ impl MaterialInfo {
     pub fn untextured(name: &str) -> Self {
         Self {
             material_identity: None,
+            lighting_error: Some("Editor helper or unavailable material".into()),
             normal: None,
             helper: None,
             name: name.to_owned(),
@@ -130,6 +135,23 @@ impl MaterialInfo {
             error: None,
         }
     }
+}
+
+fn lighting_error(material: &Material) -> Option<String> {
+    let reason = if material.shader != "lightmappedgeneric" {
+        "Authored lighting requires LightmappedGeneric"
+    } else if !material.blocks.is_empty() {
+        "Authored lighting excludes proxies and nested fallback/effect blocks"
+    } else if material.translucent() || material.alpha_test() {
+        "Authored lighting excludes translucent and alpha-tested materials"
+    } else if material.params.iter().any(|(key, _)| {
+        key.starts_with("$selfillum") || ["%tooltexture", "$additive"].contains(&key.as_str())
+    }) {
+        "Authored lighting excludes self-illumination, additive and base display overrides"
+    } else {
+        return None;
+    };
+    Some(reason.into())
 }
 
 fn hash_nodes(

@@ -549,6 +549,8 @@ mod hdr_sky_tests;
 mod baked_lightmap_tests;
 
 #[cfg(test)]
+mod lighting_preview_tests;
+#[cfg(test)]
 mod normal_map_tests;
 
 #[cfg(test)]

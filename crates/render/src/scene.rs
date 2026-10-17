@@ -64,6 +64,7 @@ pub struct Vertex {
     pub opacity: f32,
     pub texture_alpha: u32,
     pub tangent: [f32; 4],
+    pub lighting_receiver: u32,
 }
 
 #[repr(C)]
@@ -95,6 +96,7 @@ pub struct SceneStats {
 
 #[derive(Debug)]
 pub struct SceneMesh {
+    pub lighting: crate::lighting::Preview,
     pub normal_maps: crate::normal_maps::Report,
     pub issues: Vec<SceneIssue>,
     pub skybox: Option<std::sync::Arc<crate::sky::Skybox>>,
@@ -142,6 +144,7 @@ pub struct FaceOverlay {
 }
 
 struct Builder<'a> {
+    lighting: crate::lighting::Preview,
     normal_maps: crate::normal_maps::Report,
     icons: &'a BTreeMap<u32, crate::icons::Instance>,
     displayed_icons: Vec<crate::icons::Instance>,
@@ -337,6 +340,28 @@ impl Builder<'_> {
         let size = glam::DVec2::new(f64::from(info.width), f64::from(info.height));
         let dimensions = [info.width, info.height];
         let missing_base = info.base.is_none() || info.missing;
+        let mut lighting_receiver = 0;
+        if self.lighting.report.active {
+            let reason = if tool {
+                Some("Tool and sky surfaces are excluded from authored lighting")
+            } else if missing_base {
+                Some("Authored lighting needs an available base display texture")
+            } else if points.iter().any(|point| {
+                !point.is_finite()
+                    || point.abs().max_element() > map_core::checks::SOURCE_COORDINATE_LIMIT
+            }) {
+                Some("Authored-light receivers must fit finite Source compile coordinates")
+            } else {
+                info.lighting_error.as_deref()
+            };
+            if let Some(reason) = reason {
+                self.lighting.report.excluded_receivers += 1;
+                self.lighting.report.diagnostic(None, Some(name), reason);
+            } else {
+                lighting_receiver = 1;
+                self.lighting.report.admitted_receivers += 1;
+            }
+        }
         let mut tangent = [0.0; 4];
         if self.normal_maps.active && !tool {
             let asset = self.library.normal_map(self.fs, material);
@@ -400,6 +425,7 @@ impl Builder<'_> {
                 opacity: 1.0,
                 texture_alpha: 0,
                 tangent,
+                lighting_receiver,
             });
         }
         for index in 1..points.len() as u32 - 1 {
@@ -460,6 +486,7 @@ impl Builder<'_> {
                 opacity: 1.0,
                 texture_alpha: 0,
                 tangent: [0.0; 4],
+                lighting_receiver: 0,
             });
         }
         self.indices[material].extend(triangles.iter().flatten().map(|&i| first + i as u32));
@@ -556,6 +583,7 @@ impl Builder<'_> {
                     opacity: 1.0,
                     texture_alpha: 0,
                     tangent: [0.0; 4],
+                    lighting_receiver: 0,
                 });
             }
             self.indices[material].extend([
@@ -600,6 +628,7 @@ impl Builder<'_> {
                 opacity: 1.0,
                 texture_alpha: 0,
                 tangent: [0.0; 4],
+                lighting_receiver: 0,
             });
         }
         self.indices[material].extend([first, first + 1, first + 2]);
@@ -746,6 +775,7 @@ impl Builder<'_> {
                     instance.appearance.mode == source_formats::render_color::TEXTURE,
                 ),
                 tangent: [0.0; 4],
+                lighting_receiver: 0,
             });
         }
         let materials = instance.asset.materials();
@@ -1127,11 +1157,54 @@ impl SceneMesh {
         normal_maps: bool,
         include: impl Fn(ObjectId) -> bool,
     ) -> Self {
+        Self::build_with_previews_filtered(
+            vmf,
+            fs,
+            library,
+            selection,
+            overlays,
+            entities,
+            guides,
+            skybox,
+            normal_maps,
+            false,
+            include,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_with_previews_filtered(
+        vmf: &Vmf,
+        fs: &GameFs,
+        library: &mut MaterialLibrary,
+        selection: (&HashSet<ObjectId>, &HashSet<FaceId>),
+        overlays: &[FaceOverlay],
+        entities: (
+            &[crate::models::Instance],
+            &BTreeMap<ObjectId, map_core::entity_helpers::Appearance>,
+        ),
+        guides: (
+            &BTreeMap<u32, crate::icons::Instance>,
+            &[crate::models::Instance],
+        ),
+        skybox: Option<std::sync::Arc<crate::sky::Skybox>>,
+        normal_maps: bool,
+        lighting: bool,
+        include: impl Fn(ObjectId) -> bool,
+    ) -> Self {
         let (icons, model_guides) = guides;
         let (models, helpers) = entities;
         let (selected, selected_faces) = selection;
         let terrain = terrain::prepare(vmf);
         let mut builder = Builder {
+            lighting: crate::lighting::Preview {
+                report: crate::lighting::Report {
+                    requested: lighting,
+                    active: lighting,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             normal_maps: crate::normal_maps::Report {
                 requested: normal_maps,
                 active: normal_maps,
@@ -1247,6 +1320,7 @@ impl SceneMesh {
         }
         stats.missing_materials = missing_materials.len();
         let mut mesh = Self {
+            lighting: builder.lighting,
             normal_maps: builder.normal_maps,
             icons: builder.displayed_icons,
             issues: terrain.issues,
@@ -1294,6 +1368,7 @@ impl SceneMesh {
                         opacity: 1.0,
                         texture_alpha: 0,
                         tangent: [0.0; 4],
+                        lighting_receiver: 0,
                     });
                     self.mins = self.mins.min(point.as_vec3());
                     self.maxs = self.maxs.max(point.as_vec3());

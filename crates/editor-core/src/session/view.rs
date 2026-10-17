@@ -3,6 +3,9 @@ use render::ViewOptions;
 
 #[derive(Default)]
 pub struct ViewUpdate<'a> {
+    pub lighting_preview: Option<bool>,
+    pub lighting_quality: Option<&'a str>,
+    pub lighting_exposure_ev: Option<f64>,
     pub normal_maps: Option<bool>,
     pub surface: Option<&'a str>,
     pub smoothing_group: Option<u32>,
@@ -51,6 +54,24 @@ impl Session {
         }
         if let Some(value) = update.entity_model_guides {
             view.entity_model_guides = value;
+        }
+        if let Some(value) = update.lighting_preview {
+            view.lighting_preview = value;
+        }
+        if let Some(value) = update.lighting_quality {
+            view.lighting_quality = render::lighting::Quality::parse(value)?;
+        }
+        if let Some(value) = update.lighting_exposure_ev {
+            if !value.is_finite() || !(-8.0..=8.0).contains(&value) {
+                return Err("Lighting exposure must be finite and between -8 and 8 EV".into());
+            }
+            view.lighting_exposure_ev = value as f32;
+        }
+        if view.lighting_preview
+            && view.normal_maps
+            && view.lighting_quality == render::lighting::Quality::Fast
+        {
+            return Err("Fast authored lighting does not support normal maps; choose Detail or disable Normal map preview".into());
         }
         self.sky_preview_options(view, update.sky_channel, update.sky_exposure_ev)
     }

@@ -139,3 +139,49 @@ fn hdr_sky_inline_controls_share_validation_restore_rejected_toggles_and_preserv
     assert_eq!(lock(&session).camera(), camera);
     app.hide().unwrap();
 }
+
+#[test]
+fn authored_lighting_controls_validate_combined_view_and_keep_owned_drafts() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: false,
+        },
+    )))
+    .unwrap();
+    let mut session = Session::new(Err("no assets".into()));
+    session
+        .begin_property_edit(editor_core::session::PropertyTarget::World)
+        .unwrap();
+    let source = session.document().vmf().clone();
+    let token = session.property_draft().unwrap().token;
+    let shared = std::sync::Arc::new(std::sync::Mutex::new(session));
+    let app = AppWindow::new().unwrap();
+    bind_view_controls(&app, shared.clone());
+    refresh_view_controls(&app, &lock(&shared));
+    assert!(!app.get_lighting_preview());
+    assert_eq!(app.get_lighting_quality(), 1);
+    app.set_lighting_preview(true);
+    app.set_lighting_exposure_ev("2".into());
+    app.invoke_options_changed();
+    assert!(lock(&shared).view().lighting_preview);
+    assert_eq!(lock(&shared).view().lighting_exposure_ev, 2.0);
+    app.set_normal_maps(true);
+    app.invoke_options_changed();
+    let accepted = lock(&shared).view();
+    app.set_lighting_quality(0);
+    app.invoke_options_changed();
+    assert_eq!(lock(&shared).view(), accepted);
+    assert_eq!(app.get_lighting_quality(), 1);
+    assert!(app.get_lighting_error().contains("choose Detail"));
+    app.set_lighting_exposure_ev("NaN".into());
+    app.invoke_options_changed();
+    assert_eq!(lock(&shared).view(), accepted);
+    assert_eq!(app.get_lighting_exposure_ev().as_str(), "2");
+    app.set_lighting_preview(false);
+    app.invoke_options_changed();
+    assert!(!lock(&shared).view().lighting_preview);
+    assert_eq!(lock(&shared).document().vmf(), &source);
+    assert_eq!(lock(&shared).property_draft().unwrap().token, token);
+}

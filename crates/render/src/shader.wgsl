@@ -1,3 +1,11 @@
+struct AuthoredLight {
+    origin_radius: vec4<f32>,
+    intensity_cap: vec4<f32>,
+    coefficients_spot: vec4<f32>,
+    direction_inner: vec4<f32>,
+    outer_exponent_fade: vec4<f32>,
+}
+
 struct Globals {
     view_proj: mat4x4<f32>,
     light_dir: vec4<f32>,
@@ -9,6 +17,8 @@ struct Globals {
     right: vec4<f32>,
     up: vec4<f32>,
     sky_params: vec4<f32>,
+    lighting_settings: vec4<f32>,
+    lighting_lights: array<AuthoredLight, 32>,
 }
 
 // x: alpha test, y: two-layer blend, z: translucent, w: untextured.
@@ -37,6 +47,7 @@ struct VertexIn {
     @location(6) opacity: f32,
     @location(7) texture_alpha: u32,
     @location(8) tangent: vec4<f32>,
+    @location(9) lighting_receiver: u32,
 }
 
 struct VertexOut {
@@ -50,6 +61,50 @@ struct VertexOut {
     @location(6) opacity: f32,
     @location(7) @interpolate(flat) texture_alpha: u32,
     @location(8) tangent: vec4<f32>,
+    @location(9) @interpolate(flat) lighting_receiver: u32,
+    @location(10) authored_irradiance: vec3<f32>,
+}
+
+fn authored_irradiance(position: vec3<f32>, normal: vec3<f32>) -> vec3<f32> {
+    var total = vec3<f32>(0.0);
+    for (var index = 0u; index < min(u32(globals.lighting_settings.x), 32u); index += 1u) {
+        let light = globals.lighting_lights[index];
+        let offset = light.origin_radius.xyz - position;
+        let scale = max(max(abs(offset.x), abs(offset.y)), abs(offset.z));
+        if scale == 0.0 { continue; }
+        let distance = scale * length(offset / scale);
+        let fade_end = light.outer_exponent_fade.w;
+        if distance == 0.0 || (light.origin_radius.w > 0.0 && distance > light.origin_radius.w) || (fade_end > 0.0 && distance >= fade_end) { continue; }
+        let direction = offset / distance;
+        var evaluated = max(distance, 1.0);
+        if light.intensity_cap.w > 0.0 { evaluated = min(evaluated, light.intensity_cap.w); }
+        let coefficients = light.coefficients_spot.xyz;
+        let divisor = coefficients.x + evaluated * coefficients.y + evaluated * evaluated * coefficients.z;
+        if !(divisor > 0.0) { continue; }
+        var fade = 1.0;
+        if fade_end > 0.0 {
+            let t = clamp(1.0 - (max(distance, 1.0) - light.outer_exponent_fade.z) / (fade_end - light.outer_exponent_fade.z), 0.0, 1.0);
+            fade = t * t * t * (t * (6.0 * t - 15.0) + 10.0);
+        }
+        var cone = 1.0;
+        if light.coefficients_spot.w > 0.0 {
+            let angle = clamp(dot(light.direction_inner.xyz, -direction), -1.0, 1.0);
+            let inner = light.direction_inner.w;
+            let outer = light.outer_exponent_fade.x;
+            cone = 0.0;
+            if angle > outer {
+                cone = angle;
+                if angle < inner {
+                    let fringe = clamp((angle - outer) / (inner - outer), 0.0, 1.0);
+                    let exponent = light.outer_exponent_fade.y;
+                    if exponent == 0.0 || exponent == 1.0 { cone *= fringe; }
+                    else { cone *= pow(fringe, exponent); }
+                }
+            }
+        }
+        total += light.intensity_cap.xyz * (clamp(dot(normal, direction), 0.0, 1.0) * cone * fade / divisor);
+    }
+    return total;
 }
 
 @vertex
@@ -65,6 +120,11 @@ fn vs_main(v: VertexIn) -> VertexOut {
     out.opacity = v.opacity;
     out.texture_alpha = v.texture_alpha;
     out.tangent = v.tangent;
+    out.lighting_receiver = v.lighting_receiver;
+    out.authored_irradiance = vec3<f32>(0.0);
+    if globals.lighting_settings.z > 0.5 && globals.lighting_settings.y < 0.5 && v.lighting_receiver != 0u {
+        out.authored_irradiance = authored_irradiance(v.position, normalize(v.normal));
+    }
     return out;
 }
 
@@ -148,6 +208,12 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     }
     let shade = 0.55 + 0.45 * clamp(dot(shading_normal, globals.light_dir.xyz) * 0.5 + 0.5, 0.0, 1.0);
     var color = texel.rgb * in.color.rgb * shade;
+    if globals.lighting_settings.z > 0.5 && in.lighting_receiver != 0u {
+        var irradiance = in.authored_irradiance;
+        if globals.lighting_settings.y > 0.5 { irradiance = authored_irradiance(in.world_position, shading_normal); }
+        let radiance = texel.rgb * in.color.rgb * irradiance * globals.lighting_settings.w;
+        color = radiance / (vec3<f32>(1.0) + radiance);
+    }
     if globals.fog_color.a > 0.0 && material.helper.y < 0.5 {
         let depth = dot(in.world_position - globals.eye.xyz, globals.forward.xyz);
         let factor = clamp((depth - globals.fog_range.x) * globals.fog_range.y, 0.0, globals.fog_color.a);

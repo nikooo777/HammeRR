@@ -1897,6 +1897,11 @@ export component AppWindow inherits Window {
     changed has-transform-preview => { if root.has-transform-preview { root.refresh-transform-values(); } }
     in-out property <bool> show-tools: true;
     in-out property <bool> sky-preview: false;
+    in-out property <bool> lighting-preview: false;
+    in-out property <int> lighting-quality: 1;
+    in-out property <string> lighting-exposure-ev: "0";
+    in property <string> lighting-status: "Authored lighting preview is off";
+    in property <string> lighting-error;
     in-out property <bool> normal-maps: false;
     in property <string> normal-map-status: "Normal map preview is off";
     in-out property <int> sky-channel: 0;
@@ -2574,7 +2579,27 @@ export component AppWindow inherits Window {
                         checked <=> root.normal-maps;
                         toggled => { root.options-changed(); }
                     }
-                    if root.normal-maps: Text { text: root.normal-map-status + "\nTextured flat brushes · fixed editor light"; color: #aeb9c8; wrap: word-wrap; font-size: 12px; }
+                    if root.normal-maps: Text { text: root.normal-map-status + (root.lighting-preview ? "\nTextured flat brushes · unshadowed authored lights" : "\nTextured flat brushes · fixed editor light"); color: #aeb9c8; wrap: word-wrap; font-size: 12px; }
+                    CheckBox {
+                        text: "Unshadowed authored lighting";
+                        checked <=> root.lighting-preview;
+                        toggled => { root.options-changed(); }
+                    }
+                    ComboBox {
+                        model: ["Fast · vertex lighting", "Detail · per-fragment lighting"];
+                        current-index <=> root.lighting-quality;
+                        selected => { root.options-changed(); }
+                    }
+                    HorizontalLayout {
+                        Text { text: "Lighting exposure (EV)"; color: #bac2ce; vertical-alignment: center; }
+                        LineEdit {
+                            text <=> root.lighting-exposure-ev;
+                            placeholder-text: "−8 to 8";
+                            accepted => { root.options-changed(); }
+                        }
+                    }
+                    if root.lighting-preview: Text { text: root.lighting-status + "\nNo shadows, sun, ambient or bounce · editor display"; color: #aeb9c8; wrap: word-wrap; font-size: 12px; }
+                    if root.lighting-error != "": Text { text: root.lighting-error; color: #f0b377; wrap: word-wrap; font-size: 12px; }
                     CheckBox {
                         text: "Entity images";
                         checked <=> root.entity-images;

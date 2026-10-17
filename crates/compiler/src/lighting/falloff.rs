@@ -9,8 +9,8 @@ pub(super) struct Falloff {
     pub coefficients: [f64; 3],
     pub gain: f64,
     pub radius: f64,
-    cap: Option<f64>,
-    fade: Option<[f64; 2]>,
+    pub(super) cap: Option<f64>,
+    pub(super) fade: Option<[f64; 2]>,
 }
 
 impl Falloff {

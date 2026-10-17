@@ -4,7 +4,7 @@ use glam::DVec3;
 use map_core::subobject::{Component, ComponentTransform, WeldTarget};
 use slint::{ComponentHandle, Model, VecModel};
 
-use crate::runtime::{SharedSession, lock};
+use crate::runtime::{DocumentAccess, DocumentContinuation, SharedSession, lock};
 use crate::session::component_picking::Kind;
 use crate::session::{Actor, SelectMode, Session};
 use crate::{ComponentCreaseRow, ComponentRow, ComponentsWindow};
@@ -1330,609 +1330,757 @@ fn picking(window: &ComponentsWindow, shared: &SharedSession, enabled: bool) {
     window.set_message(result.err().unwrap_or_default().into());
 }
 
-pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
-    window.on_choose_texture_rotation({
-        let (window, shared) = (window.as_weak(), shared.clone());
-        move |value| {
-            let window = window.unwrap();
-            window.set_texture_rotation(number(f64::from(value)).into());
-            window.set_texture_rotation_value(value);
-            refresh(&window, &lock(&shared));
-        }
-    });
-    window.on_preview_partition_texture({
-        let (window, shared) = (window.as_weak(), shared.clone());
-        move || {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            let target = partition_material_target(&session);
-            let result = texture_inputs(&window).and_then(|texture| {
-                choose_partition_texture(&window, &mut session, &target, Some(texture))
-            });
-            if let Err(error) = result {
-                window.set_message(error.into());
-            }
-        }
-    });
-    window.on_fit_partition_texture({
-        let (window, shared) = (window.as_weak(), shared.clone());
-        move || {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            let target = partition_material_target(&session);
-            if let Err(error) = place_partition_texture(&window, &mut session, &target, true) {
-                window.set_message(error.into());
-            }
-        }
-    });
-    window.on_justify_partition_texture({
-        let (window, shared) = (window.as_weak(), shared.clone());
-        move || {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            let target = partition_material_target(&session);
-            if let Err(error) = place_partition_texture(&window, &mut session, &target, false) {
-                window.set_message(error.into());
-            }
-        }
-    });
-    window.on_inherit_partition_texture({
-        let (window, shared) = (window.as_weak(), shared.clone());
-        move || {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            let target = partition_material_target(&session);
-            if let Err(error) = choose_partition_texture(&window, &mut session, &target, None) {
-                window.set_message(error.into());
-            }
-        }
-    });
-    window.on_preview_partition_material({
-        let (window, shared) = (window.as_weak(), shared.clone());
-        move || {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            let target = partition_material_target(&session);
-            let material = window.get_top_material();
-            let result =
-                choose_partition_material(&window, &mut session, &target, Some(material.as_str()));
-            if let Err(error) = result {
-                window.set_message(error.into());
-            }
-        }
-    });
-    window.on_inherit_partition_material({
-        let (window, shared) = (window.as_weak(), shared.clone());
-        move || {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            let target = partition_material_target(&session);
-            let result = choose_partition_material(&window, &mut session, &target, None);
-            if let Err(error) = result {
-                window.set_message(error.into());
-            }
-        }
-    });
-    window.on_resume_saved_partition({
-        let (window, shared) = (window.as_weak(), shared.clone());
-        move || saved_partition_action(&window.unwrap(), &shared, false)
-    });
-    window.on_remove_saved_partition({
-        let (window, shared) = (window.as_weak(), shared.clone());
-        move || saved_partition_action(&window.unwrap(), &shared, true)
-    });
-    window.on_choose_partition({
-        let (window, shared) = (window.as_weak(), shared.clone());
-        move |key| {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            let result = component(key.as_str()).and_then(|component| {
-                session.select_component_partitions(
-                    window
-                        .get_token()
-                        .parse()
-                        .map_err(|_| "Stage a partition first".to_string())?,
-                    &[crate::session::components::PartitionRef {
-                        solid: component.solid,
-                        partition: component.sides[0],
-                    }],
-                    SelectMode::Toggle,
-                )
-            });
-            refresh(&window, &session);
-            window.set_message(result.err().unwrap_or_default().into());
-        }
-    });
-    window.on_frame_partitions({
-        let (window, shared) = (window.as_weak(), shared.clone());
-        move || {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            let result = window
-                .get_token()
-                .parse()
-                .map_err(|_| "Stage a partition first".to_string())
-                .and_then(|token| {
-                    session.frame_component_partitions(Actor::User, token, window.get_aspect())
-                });
-            refresh(&window, &session);
-            window.set_message(result.err().unwrap_or_default().into());
-        }
-    });
-    window.on_flatten_partitions({
-        let (window, shared) = (window.as_weak(), shared.clone());
-        move || {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            let result = window
-                .get_token()
-                .parse()
-                .map_err(|_| "Stage a partition first".to_string())
-                .and_then(|token| session.raise_component_partition(token, 0.0));
-            refresh(&window, &session);
-            window.set_message(result.err().unwrap_or_default().into());
-        }
-    });
-    window.on_choose_crease_pair({
-        let window = window.as_weak();
-        move |key, choice| {
-            let window = window.unwrap();
-            let rows = window
-                .get_crease_rows()
-                .iter()
-                .map(|mut row| {
-                    if row.key == key {
-                        row.choice = choice;
-                    }
-                    row
-                })
-                .collect::<Vec<_>>();
-            window.set_crease_rows(Rc::new(VecModel::from(rows)).into());
-            window.invoke_edited();
-        }
-    });
-    window.on_choose_source({
-        let (window, shared) = (window.as_weak(), shared.clone());
-        move || {
-            let window = window.unwrap();
-            if window.get_source_index() <= 0 {
-                return;
-            }
-            if let Some(id) = window
-                .get_source_ids()
-                .row_data(window.get_source_index() as usize - 1)
-                .and_then(|id| id.parse::<u32>().ok())
-            {
-                let action = match window.get_source_mode() {
-                    1 => crate::session::components::ScopeAction::Add,
-                    2 => crate::session::components::ScopeAction::Remove,
-                    _ => crate::session::components::ScopeAction::Replace,
-                };
-                let kind = match window.get_kind() {
-                    1 => Kind::Vertex,
-                    2 => Kind::Face,
-                    _ => Kind::Edge,
-                };
-                let mut session = lock(&shared);
-                let result =
-                    session.update_component_scope(kind, id, action, window.get_stamp().as_str());
-                refresh(&window, &session);
-                window.set_message(result.err().unwrap_or_default().into());
-            }
-        }
-    });
-    window.on_all_sources({
-        let (window, shared) = (window.as_weak(), shared.clone());
-        move || {
-            let window = window.unwrap();
-            let session = lock(&shared);
-            let report = session
-                .component_sources(0, map_core::subobject::MAX_SOLIDS)
-                .unwrap();
-            if report["total"].as_u64().unwrap() as usize > map_core::subobject::MAX_SOLIDS {
-                return;
-            }
-            let ids = report["sources"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|source| source["solid"].as_u64().unwrap() as u32)
-                .collect();
-            drop(session);
-            capture_sources(&window, &shared, ids);
-        }
-    });
-    window.on_page_sources({
-        let (window, shared) = (window.as_weak(), shared.clone());
-        move |direction| {
-            let window = window.unwrap();
-            window.set_source_offset(
-                window
-                    .get_source_offset()
-                    .saturating_add(
-                        direction
-                            .saturating_mul(crate::session::components::SOURCE_PAGE_SIZE as i32),
-                    )
-                    .max(0),
-            );
-            refresh(&window, &lock(&shared));
-        }
-    });
-    window.on_toggle_picking({
-        let (window, shared) = (window.as_weak(), shared.clone());
-        move || {
-            let window = window.unwrap();
-            picking(&window, &shared, !window.get_picking());
-        }
-    });
-    window.on_change_kind({
-        let (window, shared) = (window.as_weak(), shared.clone());
-        move || {
-            let window = window.unwrap();
-            if window.get_picking() {
-                picking(&window, &shared, true);
-            } else {
-                refresh(&window, &lock(&shared));
-            }
-        }
-    });
-    window.on_refresh({
-        let (window, shared) = (window.as_weak(), shared.clone());
-        move || refresh(&window.unwrap(), &lock(&shared))
-    });
-    window.on_choose({
-        let (window, shared) = (window.as_weak(), shared.clone());
-        move |key| {
-            selection(
-                &window.unwrap(),
-                &shared,
-                component(&key).map(|component| vec![component]),
-                SelectMode::Toggle,
-            )
-        }
-    });
-    window.on_select_all({
-        let (window, shared) = (window.as_weak(), shared.clone());
-        move || {
-            let window = window.unwrap();
-            let components = window
-                .get_rows()
-                .iter()
-                .map(|row| component(row.key.as_str()))
-                .collect();
-            selection(&window, &shared, components, SelectMode::Replace);
-        }
-    });
-    window.on_clear({
-        let (window, shared) = (window.as_weak(), shared.clone());
-        move || {
-            selection(
-                &window.unwrap(),
-                &shared,
-                Ok(Vec::new()),
-                SelectMode::Replace,
-            )
-        }
-    });
-    window.on_choose_pivot({
-        let (window, shared) = (window.as_weak(), shared.clone());
-        move || {
-            let window = window.unwrap();
-            if window.get_pivot_mode() == 1
-                && let Ok(Some(point)) = lock(&shared).component_center()
-            {
-                window.set_pivot_x(point.x.to_string().into());
-                window.set_pivot_y(point.y.to_string().into());
-                window.set_pivot_z(point.z.to_string().into());
-            }
-            window.invoke_edited();
-        }
-    });
-    window.on_choose_weld_mode({
-        let (window, shared) = (window.as_weak(), shared.clone());
-        move || {
-            let window = window.unwrap();
-            if window.get_weld_target_mode() == 2
-                && let Ok(Some(center)) = lock(&shared).component_weld_center()
-            {
-                window.set_weld_x(center.x.to_string().into());
-                window.set_weld_y(center.y.to_string().into());
-                window.set_weld_z(center.z.to_string().into());
-            }
-            window.invoke_edited();
-        }
-    });
-    window.on_edited({
-        let (window, shared) = (window.as_weak(), shared.clone());
-        move || {
-            let window = window.unwrap();
-            if let Ok(rise) = window.get_split_rise().parse::<f64>()
-                && ((window.get_operation() == 6 && rise == 0.0)
-                    || (map_core::subobject::MIN_SPLIT_RISE..=map_core::subobject::MAX_SPLIT_RISE)
-                        .contains(&rise))
-            {
-                window.set_split_rise_value(rise as f32);
-            }
-            if let Ok(height) = window.get_extrusion_height().parse::<f64>()
-                && (map_core::subobject::MIN_SPLIT_RISE..=map_core::subobject::MAX_SPLIT_RISE)
-                    .contains(&height)
-            {
-                window.set_extrusion_height_value(height as f32);
-            }
-            if window.get_operation() == 6
-                && window.get_partition_mode() == 1
-                && window.get_wall_override()
-            {
-                window.set_wall_preview(
-                    lock(&shared)
-                        .material_preview(window.get_wall_material().as_str())
-                        .ok()
-                        .map(|preview| crate::ui::preview_image(&preview))
-                        .unwrap_or_default(),
-                );
-            }
-            for (index, value) in [window.get_cut_first(), window.get_cut_second()]
-                .iter()
-                .enumerate()
-            {
-                if let Ok(value) = value.parse::<f32>()
-                    && value > 0.0
-                    && value < 100.0
-                {
-                    if index == 0 {
-                        window.set_cut_first_value(value);
-                    } else {
-                        window.set_cut_second_value(value);
-                    }
-                }
-            }
-            window.set_ready(false);
-            window.set_message("Settings changed. Preview the change before applying.".into());
-        }
-    });
-    window.on_choose_cut_position({
-        let window = window.as_weak();
-        move |index, value| {
-            let window = window.unwrap();
+fn edited(window: &ComponentsWindow, shared: &SharedSession) {
+    if let Ok(rise) = window.get_split_rise().parse::<f64>()
+        && ((window.get_operation() == 6 && rise == 0.0)
+            || (map_core::subobject::MIN_SPLIT_RISE..=map_core::subobject::MAX_SPLIT_RISE)
+                .contains(&rise))
+    {
+        window.set_split_rise_value(rise as f32);
+    }
+    if let Ok(height) = window.get_extrusion_height().parse::<f64>()
+        && (map_core::subobject::MIN_SPLIT_RISE..=map_core::subobject::MAX_SPLIT_RISE)
+            .contains(&height)
+    {
+        window.set_extrusion_height_value(height as f32);
+    }
+    if window.get_operation() == 6 && window.get_partition_mode() == 1 && window.get_wall_override()
+    {
+        window.set_wall_preview(
+            lock(shared)
+                .material_preview(window.get_wall_material().as_str())
+                .ok()
+                .map(|preview| crate::ui::preview_image(&preview))
+                .unwrap_or_default(),
+        );
+    }
+    for (index, value) in [window.get_cut_first(), window.get_cut_second()]
+        .iter()
+        .enumerate()
+    {
+        if let Ok(value) = value.parse::<f32>()
+            && value > 0.0
+            && value < 100.0
+        {
             if index == 0 {
-                window.set_cut_first(value.to_string().into());
                 window.set_cut_first_value(value);
             } else {
-                window.set_cut_second(value.to_string().into());
                 window.set_cut_second_value(value);
             }
-            window.invoke_edited();
         }
-    });
-    window.on_preview_cut({
-        let (window, shared) = (window.as_weak(), shared.clone());
-        move || {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            let result = cut_inputs(&window).and_then(|parameters| {
-                session.update_component_partition_cut(
+    }
+    window.set_ready(false);
+    window.set_message("Settings changed. Preview the change before applying.".into());
+}
+
+fn preview_edit(window: &ComponentsWindow, shared: &SharedSession) {
+    let delta = [
+        window.get_move_x(),
+        window.get_move_y(),
+        window.get_move_z(),
+    ]
+    .iter()
+    .map(|value| {
+        value
+            .trim()
+            .parse::<f64>()
+            .map_err(|_| "Enter numeric X, Y and Z offsets".to_string())
+    })
+    .collect::<Result<Vec<_>, _>>();
+    let mut session = lock(shared);
+    let result = if window.get_operation() == 6 {
+        if window.get_has_partition_preview()
+            && window.get_top_material() != window.get_top_material_baseline()
+        {
+            Err("Preview the planned top material before raising or extruding".into())
+        } else if window.get_has_partition_preview() && !texture_inputs_match(window) {
+            Err("Preview the texture placement before raising or extruding".into())
+        } else if window.get_has_partition_preview()
+            && !cut_inputs_match(
+                window,
+                &session.component_report(&[]).unwrap()["preview"]["partition"]["edge_parameters"],
+            )
+        {
+            Err("Preview the cut positions before raising or extruding".into())
+        } else if window.get_has_partition_preview() && window.get_partition_mode() == 1 {
+            extrusion_inputs(window).and_then(|spec| {
+                session.preview_partition_extrusion(
                     window
                         .get_token()
                         .parse()
                         .map_err(|_| "Stage flat pieces first".to_string())?,
-                    parameters,
+                    spec,
                 )
-            });
-            refresh(&window, &session);
-            if result.is_err() {
-                window.set_ready(false);
-            }
-            window.set_message(result.err().unwrap_or_default().into());
-        }
-    });
-    window.on_choose_extrusion_height({
-        let window = window.as_weak();
-        move |value| {
-            let window = window.unwrap();
-            window.set_extrusion_height(value.to_string().into());
-            window.invoke_edited();
-        }
-    });
-    window.on_choose_rise({
-        let window = window.as_weak();
-        move |value| {
-            let window = window.unwrap();
-            window.set_split_rise(value.to_string().into());
-            window.invoke_edited();
-        }
-    });
-    window.on_move_options({
-        let (window, shared) = (window.as_weak(), shared.clone());
-        move || {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            let result = session.set_component_move_options(
-                crate::session::component_drag::Options {
-                    enabled: window.get_move_handles(),
-                    snap: window.get_snap(),
-                    texture_lock: window.get_texture_lock(),
-                },
-                window.get_stamp().as_str(),
-            );
-            refresh(&window, &session);
-            window.set_message(result.err().unwrap_or_default().into());
-        }
-    });
-    window.on_preview_edit({
-        let (window, shared) = (window.as_weak(), shared.clone());
-        move || {
-            let window = window.unwrap();
-            let delta = [
-                window.get_move_x(),
-                window.get_move_y(),
-                window.get_move_z(),
-            ]
-            .iter()
-            .map(|value| {
-                value
-                    .trim()
-                    .parse::<f64>()
-                    .map_err(|_| "Enter numeric X, Y and Z offsets".to_string())
             })
-            .collect::<Result<Vec<_>, _>>();
-            let mut session = lock(&shared);
-            let result = if window.get_operation() == 6 {
-                if window.get_has_partition_preview() && window.get_top_material()!=window.get_top_material_baseline() {
-                    Err("Preview the planned top material before raising or extruding".into())
-                } else if window.get_has_partition_preview() && !texture_inputs_match(&window) {
-                    Err("Preview the texture placement before raising or extruding".into())
-                } else if window.get_has_partition_preview() && !cut_inputs_match(&window,&session.component_report(&[]).unwrap()["preview"]["partition"]["edge_parameters"]) {
-                    Err("Preview the cut positions before raising or extruding".into())
-                } else if window.get_has_partition_preview() && window.get_partition_mode() == 1 {
-                    extrusion_inputs(&window).and_then(|spec| {
-                        session.preview_partition_extrusion(
-                            window
-                                .get_token()
-                                .parse()
-                                .map_err(|_| "Stage flat pieces first".to_string())?,
-                            spec,
-                        )
-                    })
-                } else if window.get_has_partition_preview() {
-                    (if window.get_can_raise_partition() {
-                        window.get_split_rise().trim().parse::<f64>().map_err(|_| "Enter a numeric ridge height".to_string())
-                    } else { Ok(0.0) })
-                        .and_then(|rise| {
-                            session.raise_component_partition_with_texture(
-                                window
-                                    .get_token()
-                                    .parse()
-                                    .map_err(|_| "Stage a partition first".to_string())?,
-                                rise,
-                                Some(window.get_roof_texture_lock()),
-                            )
-                        })
-                } else {
-                    crease_inputs(&window, &session).and_then(|pairs| {
-                        session.preview_component_partition(&pairs, window.get_stamp().as_str())
-                    })
-                }
-            } else if window.get_operation() == 5 {
+        } else if window.get_has_partition_preview() {
+            (if window.get_can_raise_partition() {
                 window
                     .get_split_rise()
                     .trim()
                     .parse::<f64>()
                     .map_err(|_| "Enter a numeric ridge height".to_string())
-                    .and_then(|rise| {
-                        let inputs = crease_inputs(&window, &session)?;
-                        session.preview_component_crease_with_texture(
-                            &inputs,
-                            rise,
-                            window.get_roof_texture_lock(),
-                            window.get_stamp().as_str(),
-                        )
-                    })
-            } else if window.get_operation() == 3 || window.get_operation() == 4 {
-                transform_inputs(&window).and_then(|(spec, pivot)| {
-                    session.preview_component_transform(
-                        spec,
-                        pivot,
-                        window.get_texture_lock(),
-                        window.get_stamp().as_str(),
-                    )
-                })
-            } else if window.get_operation() == 2 {
-                window
-                    .get_split_rise()
-                    .trim()
-                    .parse::<f64>()
-                    .map_err(|_| "Enter a numeric split rise".to_string())
-                    .and_then(|rise| {
-                        session.preview_component_split_with_texture(
-                            rise,
-                            window.get_texture_lock(),
-                            window.get_stamp().as_str(),
-                        )
-                    })
-            } else if window.get_operation() == 1 {
-                weld_target(&window, &session).and_then(|target| {
-                    session.preview_component_weld_with_texture(
-                        target,
-                        window.get_texture_lock(),
-                        window.get_stamp().as_str(),
-                    )
-                })
             } else {
-                delta.and_then(|delta| {
-                    session.preview_component_move(
-                        DVec3::new(delta[0], delta[1], delta[2]),
-                        window.get_snap(),
-                        window.get_texture_lock(),
-                        window.get_stamp().as_str(),
-                    )
-                })
-            };
-            refresh(&window, &session);
-            match result {
-                Ok(_) => window.set_message("".into()),
-                Err(error) => {
-                    window.set_ready(false);
-                    window.set_message(error.into());
+                Ok(0.0)
+            })
+            .and_then(|rise| {
+                session.raise_component_partition_with_texture(
+                    window
+                        .get_token()
+                        .parse()
+                        .map_err(|_| "Stage a partition first".to_string())?,
+                    rise,
+                    Some(window.get_roof_texture_lock()),
+                )
+            })
+        } else {
+            crease_inputs(window, &session).and_then(|pairs| {
+                session.preview_component_partition(&pairs, window.get_stamp().as_str())
+            })
+        }
+    } else if window.get_operation() == 5 {
+        window
+            .get_split_rise()
+            .trim()
+            .parse::<f64>()
+            .map_err(|_| "Enter a numeric ridge height".to_string())
+            .and_then(|rise| {
+                let inputs = crease_inputs(window, &session)?;
+                session.preview_component_crease_with_texture(
+                    &inputs,
+                    rise,
+                    window.get_roof_texture_lock(),
+                    window.get_stamp().as_str(),
+                )
+            })
+    } else if window.get_operation() == 3 || window.get_operation() == 4 {
+        transform_inputs(window).and_then(|(spec, pivot)| {
+            session.preview_component_transform(
+                spec,
+                pivot,
+                window.get_texture_lock(),
+                window.get_stamp().as_str(),
+            )
+        })
+    } else if window.get_operation() == 2 {
+        window
+            .get_split_rise()
+            .trim()
+            .parse::<f64>()
+            .map_err(|_| "Enter a numeric split rise".to_string())
+            .and_then(|rise| {
+                session.preview_component_split_with_texture(
+                    rise,
+                    window.get_texture_lock(),
+                    window.get_stamp().as_str(),
+                )
+            })
+    } else if window.get_operation() == 1 {
+        weld_target(window, &session).and_then(|target| {
+            session.preview_component_weld_with_texture(
+                target,
+                window.get_texture_lock(),
+                window.get_stamp().as_str(),
+            )
+        })
+    } else {
+        delta.and_then(|delta| {
+            session.preview_component_move(
+                DVec3::new(delta[0], delta[1], delta[2]),
+                window.get_snap(),
+                window.get_texture_lock(),
+                window.get_stamp().as_str(),
+            )
+        })
+    };
+    refresh(window, &session);
+    match result {
+        Ok(_) => window.set_message("".into()),
+        Err(error) => {
+            window.set_ready(false);
+            window.set_message(error.into());
+        }
+    }
+}
+
+fn apply(window: &ComponentsWindow, shared: &SharedSession) {
+    if !window.get_ready() {
+        return;
+    }
+    let mut session = lock(shared);
+    let extrusion = window.get_has_extrusion_preview();
+    let inward = extrusion && window.get_extrusion_direction() == 1;
+    let flat = window.get_has_partition_preview() && window.get_partition_flat() && !extrusion;
+    let result = window
+        .get_token()
+        .parse()
+        .map_err(|_| "Preview a change first".to_string())
+        .and_then(|token| {
+            if flat {
+                session.store_component_partition(Actor::User, token)
+            } else {
+                session.commit_component_edit(Actor::User, token)
+            }
+        });
+    refresh(window, &session);
+    window.set_message(
+        result
+            .map(|count| {
+                if inward { format!("Cut sources into {count} convex fragments. Their faces are selected; Undo restores the sources and saved pieces.") } else if extrusion { format!("Added {count} volumes. Their faces are selected; Undo removes the volumes.") } else if flat { format!("Kept {count} flat partitions. Save the map to retain them after reopening.") } else { format!("Changed {count} brushes. Undo restores the previous shape.") }
+            })
+            .unwrap_or_else(|error| error)
+            .into(),
+    );
+}
+
+fn with_window<R>(
+    window: &slint::Weak<ComponentsWindow>,
+    target: &DocumentContinuation,
+    body: impl FnOnce(&ComponentsWindow, &SharedSession) -> R,
+) -> Option<R> {
+    let window = window.upgrade()?;
+    let result = target.upgrade().and_then(|access| {
+        access.with_shared(|shared| {
+            #[cfg(test)]
+            {
+                let hook = BEFORE_ACTION.with(|slot| slot.borrow_mut().take());
+                if let Some(hook) = hook {
+                    hook();
                 }
             }
+            Ok(body(&window, shared))
+        })
+    });
+    match result {
+        Ok(result) => Some(result),
+        Err(error) => {
+            window.set_message(error.into());
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
+    bind_with_access(window, &DocumentAccess::unmanaged(shared.clone()));
+}
+
+pub fn bind_with_access(window: &ComponentsWindow, access: &DocumentAccess) {
+    window.on_choose_texture_rotation({
+        let target = access.downgrade();
+        let window = window.as_weak();
+        move |value| {
+            with_window(&window, &target, |window, shared| {
+                window.set_texture_rotation(number(f64::from(value)).into());
+                window.set_texture_rotation_value(value);
+                refresh(window, &lock(shared));
+            });
+        }
+    });
+    window.on_preview_partition_texture({
+        let target = access.downgrade();
+        let window = window.as_weak();
+        move || {
+            with_window(&window, &target, |window, shared| {
+                let mut session = lock(shared);
+                let target = partition_material_target(&session);
+                let result = texture_inputs(&window).and_then(|texture| {
+                    choose_partition_texture(window, &mut session, &target, Some(texture))
+                });
+                if let Err(error) = result {
+                    window.set_message(error.into());
+                }
+            });
+        }
+    });
+    window.on_fit_partition_texture({
+        let target = access.downgrade();
+        let window = window.as_weak();
+        move || {
+            with_window(&window, &target, |window, shared| {
+                let mut session = lock(shared);
+                let target = partition_material_target(&session);
+                if let Err(error) = place_partition_texture(window, &mut session, &target, true) {
+                    window.set_message(error.into());
+                }
+            });
+        }
+    });
+    window.on_justify_partition_texture({
+        let target = access.downgrade();
+        let window = window.as_weak();
+        move || {
+            with_window(&window, &target, |window, shared| {
+                let mut session = lock(shared);
+                let target = partition_material_target(&session);
+                if let Err(error) = place_partition_texture(window, &mut session, &target, false) {
+                    window.set_message(error.into());
+                }
+            });
+        }
+    });
+    window.on_inherit_partition_texture({
+        let target = access.downgrade();
+        let window = window.as_weak();
+        move || {
+            with_window(&window, &target, |window, shared| {
+                let mut session = lock(shared);
+                let target = partition_material_target(&session);
+                if let Err(error) = choose_partition_texture(window, &mut session, &target, None) {
+                    window.set_message(error.into());
+                }
+            });
+        }
+    });
+    window.on_preview_partition_material({
+        let target = access.downgrade();
+        let window = window.as_weak();
+        move || {
+            with_window(&window, &target, |window, shared| {
+                let mut session = lock(shared);
+                let target = partition_material_target(&session);
+                let material = window.get_top_material();
+                let result = choose_partition_material(
+                    window,
+                    &mut session,
+                    &target,
+                    Some(material.as_str()),
+                );
+                if let Err(error) = result {
+                    window.set_message(error.into());
+                }
+            });
+        }
+    });
+    window.on_inherit_partition_material({
+        let target = access.downgrade();
+        let window = window.as_weak();
+        move || {
+            with_window(&window, &target, |window, shared| {
+                let mut session = lock(shared);
+                let target = partition_material_target(&session);
+                let result = choose_partition_material(window, &mut session, &target, None);
+                if let Err(error) = result {
+                    window.set_message(error.into());
+                }
+            });
+        }
+    });
+    window.on_resume_saved_partition({
+        let target = access.downgrade();
+        let window = window.as_weak();
+        move || {
+            with_window(&window, &target, |window, shared| {
+                saved_partition_action(window, shared, false)
+            });
+        }
+    });
+    window.on_remove_saved_partition({
+        let target = access.downgrade();
+        let window = window.as_weak();
+        move || {
+            with_window(&window, &target, |window, shared| {
+                saved_partition_action(window, shared, true)
+            });
+        }
+    });
+    window.on_choose_partition({
+        let target = access.downgrade();
+        let window = window.as_weak();
+        move |key| {
+            with_window(&window, &target, |window, shared| {
+                let mut session = lock(shared);
+                let result = component(key.as_str()).and_then(|component| {
+                    session.select_component_partitions(
+                        window
+                            .get_token()
+                            .parse()
+                            .map_err(|_| "Stage a partition first".to_string())?,
+                        &[crate::session::components::PartitionRef {
+                            solid: component.solid,
+                            partition: component.sides[0],
+                        }],
+                        SelectMode::Toggle,
+                    )
+                });
+                refresh(window, &session);
+                window.set_message(result.err().unwrap_or_default().into());
+            });
+        }
+    });
+    window.on_frame_partitions({
+        let target = access.downgrade();
+        let window = window.as_weak();
+        move || {
+            with_window(&window, &target, |window, shared| {
+                let mut session = lock(shared);
+                let result = window
+                    .get_token()
+                    .parse()
+                    .map_err(|_| "Stage a partition first".to_string())
+                    .and_then(|token| {
+                        session.frame_component_partitions(Actor::User, token, window.get_aspect())
+                    });
+                refresh(window, &session);
+                window.set_message(result.err().unwrap_or_default().into());
+            });
+        }
+    });
+    window.on_flatten_partitions({
+        let target = access.downgrade();
+        let window = window.as_weak();
+        move || {
+            with_window(&window, &target, |window, shared| {
+                let mut session = lock(shared);
+                let result = window
+                    .get_token()
+                    .parse()
+                    .map_err(|_| "Stage a partition first".to_string())
+                    .and_then(|token| session.raise_component_partition(token, 0.0));
+                refresh(window, &session);
+                window.set_message(result.err().unwrap_or_default().into());
+            });
+        }
+    });
+    window.on_choose_crease_pair({
+        let target = access.downgrade();
+        let window = window.as_weak();
+        move |key, choice| {
+            with_window(&window, &target, |window, shared| {
+                let rows = window
+                    .get_crease_rows()
+                    .iter()
+                    .map(|mut row| {
+                        if row.key == key {
+                            row.choice = choice;
+                        }
+                        row
+                    })
+                    .collect::<Vec<_>>();
+                window.set_crease_rows(Rc::new(VecModel::from(rows)).into());
+                edited(window, shared);
+            });
+        }
+    });
+    window.on_choose_source({
+        let target = access.downgrade();
+        let window = window.as_weak();
+        move || {
+            with_window(&window, &target, |window, shared| {
+                if window.get_source_index() <= 0 {
+                    return;
+                }
+                if let Some(id) = window
+                    .get_source_ids()
+                    .row_data(window.get_source_index() as usize - 1)
+                    .and_then(|id| id.parse::<u32>().ok())
+                {
+                    let action = match window.get_source_mode() {
+                        1 => crate::session::components::ScopeAction::Add,
+                        2 => crate::session::components::ScopeAction::Remove,
+                        _ => crate::session::components::ScopeAction::Replace,
+                    };
+                    let kind = match window.get_kind() {
+                        1 => Kind::Vertex,
+                        2 => Kind::Face,
+                        _ => Kind::Edge,
+                    };
+                    let mut session = lock(shared);
+                    let result = session.update_component_scope(
+                        kind,
+                        id,
+                        action,
+                        window.get_stamp().as_str(),
+                    );
+                    refresh(window, &session);
+                    window.set_message(result.err().unwrap_or_default().into());
+                }
+            });
+        }
+    });
+    window.on_all_sources({
+        let target = access.downgrade();
+        let window = window.as_weak();
+        move || {
+            with_window(&window, &target, |window, shared| {
+                let session = lock(shared);
+                let report = session
+                    .component_sources(0, map_core::subobject::MAX_SOLIDS)
+                    .unwrap();
+                if report["total"].as_u64().unwrap() as usize > map_core::subobject::MAX_SOLIDS {
+                    return;
+                }
+                let ids = report["sources"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|source| source["solid"].as_u64().unwrap() as u32)
+                    .collect();
+                drop(session);
+                capture_sources(window, shared, ids);
+            });
+        }
+    });
+    window.on_page_sources({
+        let target = access.downgrade();
+        let window = window.as_weak();
+        move |direction| {
+            with_window(&window, &target, |window, shared| {
+                window.set_source_offset(
+                    window
+                        .get_source_offset()
+                        .saturating_add(
+                            direction.saturating_mul(
+                                crate::session::components::SOURCE_PAGE_SIZE as i32,
+                            ),
+                        )
+                        .max(0),
+                );
+                refresh(window, &lock(shared));
+            });
+        }
+    });
+    window.on_toggle_picking({
+        let target = access.downgrade();
+        let window = window.as_weak();
+        move || {
+            with_window(&window, &target, |window, shared| {
+                picking(window, shared, !window.get_picking());
+            });
+        }
+    });
+    window.on_change_kind({
+        let target = access.downgrade();
+        let window = window.as_weak();
+        move || {
+            with_window(&window, &target, |window, shared| {
+                if window.get_picking() {
+                    picking(window, shared, true);
+                } else {
+                    refresh(window, &lock(shared));
+                }
+            });
+        }
+    });
+    window.on_refresh({
+        let target = access.downgrade();
+        let window = window.as_weak();
+        move || {
+            with_window(&window, &target, |window, shared| {
+                refresh(window, &lock(shared))
+            });
+        }
+    });
+    window.on_choose({
+        let target = access.downgrade();
+        let window = window.as_weak();
+        move |key| {
+            with_window(&window, &target, |window, shared| {
+                selection(
+                    window,
+                    shared,
+                    component(&key).map(|component| vec![component]),
+                    SelectMode::Toggle,
+                )
+            });
+        }
+    });
+    window.on_select_all({
+        let target = access.downgrade();
+        let window = window.as_weak();
+        move || {
+            with_window(&window, &target, |window, shared| {
+                let components = window
+                    .get_rows()
+                    .iter()
+                    .map(|row| component(row.key.as_str()))
+                    .collect();
+                selection(window, shared, components, SelectMode::Replace);
+            });
+        }
+    });
+    window.on_clear({
+        let target = access.downgrade();
+        let window = window.as_weak();
+        move || {
+            with_window(&window, &target, |window, shared| {
+                selection(window, shared, Ok(Vec::new()), SelectMode::Replace)
+            });
+        }
+    });
+    window.on_choose_pivot({
+        let target = access.downgrade();
+        let window = window.as_weak();
+        move || {
+            with_window(&window, &target, |window, shared| {
+                if window.get_pivot_mode() == 1
+                    && let Ok(Some(point)) = lock(shared).component_center()
+                {
+                    window.set_pivot_x(point.x.to_string().into());
+                    window.set_pivot_y(point.y.to_string().into());
+                    window.set_pivot_z(point.z.to_string().into());
+                }
+                edited(window, shared);
+            });
+        }
+    });
+    window.on_choose_weld_mode({
+        let target = access.downgrade();
+        let window = window.as_weak();
+        move || {
+            with_window(&window, &target, |window, shared| {
+                if window.get_weld_target_mode() == 2
+                    && let Ok(Some(center)) = lock(shared).component_weld_center()
+                {
+                    window.set_weld_x(center.x.to_string().into());
+                    window.set_weld_y(center.y.to_string().into());
+                    window.set_weld_z(center.z.to_string().into());
+                }
+                edited(window, shared);
+            });
+        }
+    });
+    window.on_edited({
+        let target = access.downgrade();
+        let window = window.as_weak();
+        move || {
+            with_window(&window, &target, |window, shared| {
+                edited(window, shared);
+            });
+        }
+    });
+    window.on_choose_cut_position({
+        let target = access.downgrade();
+        let window = window.as_weak();
+        move |index, value| {
+            with_window(&window, &target, |window, shared| {
+                if index == 0 {
+                    window.set_cut_first(value.to_string().into());
+                    window.set_cut_first_value(value);
+                } else {
+                    window.set_cut_second(value.to_string().into());
+                    window.set_cut_second_value(value);
+                }
+                edited(window, shared);
+            });
+        }
+    });
+    window.on_preview_cut({
+        let target = access.downgrade();
+        let window = window.as_weak();
+        move || {
+            with_window(&window, &target, |window, shared| {
+                let mut session = lock(shared);
+                let result = cut_inputs(&window).and_then(|parameters| {
+                    session.update_component_partition_cut(
+                        window
+                            .get_token()
+                            .parse()
+                            .map_err(|_| "Stage flat pieces first".to_string())?,
+                        parameters,
+                    )
+                });
+                refresh(window, &session);
+                if result.is_err() {
+                    window.set_ready(false);
+                }
+                window.set_message(result.err().unwrap_or_default().into());
+            });
+        }
+    });
+    window.on_choose_extrusion_height({
+        let target = access.downgrade();
+        let window = window.as_weak();
+        move |value| {
+            with_window(&window, &target, |window, shared| {
+                window.set_extrusion_height(value.to_string().into());
+                edited(window, shared);
+            });
+        }
+    });
+    window.on_choose_rise({
+        let target = access.downgrade();
+        let window = window.as_weak();
+        move |value| {
+            with_window(&window, &target, |window, shared| {
+                window.set_split_rise(value.to_string().into());
+                edited(window, shared);
+            });
+        }
+    });
+    window.on_move_options({
+        let target = access.downgrade();
+        let window = window.as_weak();
+        move || {
+            with_window(&window, &target, |window, shared| {
+                let mut session = lock(shared);
+                let result = session.set_component_move_options(
+                    crate::session::component_drag::Options {
+                        enabled: window.get_move_handles(),
+                        snap: window.get_snap(),
+                        texture_lock: window.get_texture_lock(),
+                    },
+                    window.get_stamp().as_str(),
+                );
+                refresh(window, &session);
+                window.set_message(result.err().unwrap_or_default().into());
+            });
+        }
+    });
+    window.on_preview_edit({
+        let target = access.downgrade();
+        let window = window.as_weak();
+        move || {
+            with_window(&window, &target, |window, shared| {
+                preview_edit(window, shared);
+            });
         }
     });
     window.on_apply({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let target = access.downgrade();
+        let window = window.as_weak();
         move || {
-            let window = window.unwrap();
-            if !window.get_ready() {
-                return;
-            }
-            let mut session = lock(&shared);
-            let extrusion = window.get_has_extrusion_preview();
-            let inward = extrusion && window.get_extrusion_direction() == 1;
-            let flat = window.get_has_partition_preview() && window.get_partition_flat() && !extrusion;
-            let result = window
-                .get_token()
-                .parse()
-                .map_err(|_| "Preview a change first".to_string())
-                .and_then(|token| if flat { session.store_component_partition(Actor::User, token) } else { session.commit_component_edit(Actor::User, token) });
-            refresh(&window, &session);
-            window.set_message(
-                result
-                    .map(|count| {
-                        if inward { format!("Cut sources into {count} convex fragments. Their faces are selected; Undo restores the sources and saved pieces.") } else if extrusion { format!("Added {count} volumes. Their faces are selected; Undo removes the volumes.") } else if flat { format!("Kept {count} flat partitions. Save the map to retain them after reopening.") } else { format!("Changed {count} brushes. Undo restores the previous shape.") }
-                    })
-                    .unwrap_or_else(|error| error)
-                    .into(),
-            );
+            with_window(&window, &target, |window, shared| {
+                apply(window, shared);
+            });
         }
     });
     window.on_discard_preview({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let target = access.downgrade();
+        let window = window.as_weak();
         move || {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            let result = window
-                .get_token()
-                .parse()
-                .map_err(|_| "Preview a change first".to_string())
-                .and_then(|token| session.cancel_component_move(token));
-            refresh(&window, &session);
-            window.set_message(result.err().unwrap_or_default().into());
+            with_window(&window, &target, |window, shared| {
+                let mut session = lock(shared);
+                let result = window
+                    .get_token()
+                    .parse()
+                    .map_err(|_| "Preview a change first".to_string())
+                    .and_then(|token| session.cancel_component_move(token));
+                refresh(window, &session);
+                window.set_message(result.err().unwrap_or_default().into());
+            });
         }
     });
     window.on_cancel({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let target = access.downgrade();
+        let window = window.as_weak();
         move || {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            if session.component_stamp() == window.get_stamp().as_str() {
-                let _ = session.set_component_picking(None, &[], window.get_stamp().as_str());
+            with_window(&window, &target, |window, shared| {
+                let mut session = lock(shared);
+                if session.component_stamp() == window.get_stamp().as_str() {
+                    let _ = session.set_component_picking(None, &[], window.get_stamp().as_str());
+                }
+            });
+            if let Some(window) = window.upgrade() {
+                let _ = window.hide();
             }
-            let _ = window.hide();
         }
     });
     window.window().on_close_requested({
         let window = window.as_weak();
         move || {
-            window.unwrap().invoke_cancel();
+            if let Some(window) = window.upgrade() {
+                window.invoke_cancel();
+            }
             slint::CloseRequestResponse::HideWindow
         }
     });
@@ -1954,3 +2102,11 @@ pub fn refresh_material_previews(window: &ComponentsWindow, session: &Session) {
             .unwrap_or_default(),
     );
 }
+
+#[cfg(test)]
+std::thread_local! {
+    static BEFORE_ACTION: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+mod admission_tests;

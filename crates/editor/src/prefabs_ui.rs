@@ -82,7 +82,8 @@ struct Form {
     offset: usize,
     stamp: String,
     action: Option<Draft>,
-    seen: Option<(u64, u64, u64)>,
+    seen: Option<(u64, u64, u64, u64)>,
+    library_message: Option<String>,
 }
 pub struct Controller {
     pub window: PrefabsWindow,
@@ -183,17 +184,40 @@ fn refresh(window: &PrefabsWindow, session: &Session, state: &RefCell<Form>, for
         session.document_generation(),
         session.document().revision(),
         session.view_serial(),
+        session.prefab_registry_serial(),
     );
     if !force && form.seen == Some(seen) {
         return;
     }
-    form.seen = Some(seen);
-    let report = session.prefab_report(
+    let mut report = session.prefab_report(
         &window.get_query(),
         form.offset,
         PAGE,
         form.selected.as_deref(),
     );
+    if let Some(total) = report["total"].as_u64()
+        && form.offset > 0
+        && form.offset >= total as usize
+    {
+        form.offset = total.saturating_sub(1) as usize / PAGE * PAGE;
+        report = session.prefab_report(
+            &window.get_query(),
+            form.offset,
+            PAGE,
+            form.selected.as_deref(),
+        );
+    }
+    form.seen = Some((
+        seen.0,
+        seen.1,
+        seen.2,
+        report["registry_revision"].as_u64().unwrap_or(seen.3),
+    ));
+    if let Some(previous) = form.library_message.take()
+        && window.get_message().as_str() == previous
+    {
+        window.set_message("".into());
+    }
     window.set_can_save(!session.selected_ids().is_empty());
     window.set_can_preview(!report["selected"].is_null() && form.action.is_none());
     window.set_editing(form.action.is_some());
@@ -219,10 +243,23 @@ fn refresh(window: &PrefabsWindow, session: &Session, state: &RefCell<Form>, for
             .into(),
     );
     form.stamp = report["snapshot"].as_str().unwrap_or_default().into();
+    let selected = if let Some(draft) = &form.action {
+        draft.source.as_deref().unwrap_or_default()
+    } else if report["selected_exists"] == true {
+        form.selected.as_deref().unwrap_or_default()
+    } else {
+        ""
+    };
+    window.set_selected(selected.into());
     refresh_thumbnail(window, session, form.selected.as_deref());
     if let Some(error) = report["error"].as_str() {
         window.set_message(error.into());
+        form.library_message = Some(error.into());
         window.set_entries(Default::default());
+        window.set_detail(error.into());
+        window.set_page_label("Prefabs unavailable".into());
+        window.set_previous(false);
+        window.set_next(false);
         return;
     }
     let rows = report["entries"]
@@ -239,7 +276,11 @@ fn refresh(window: &PrefabsWindow, session: &Session, state: &RefCell<Form>, for
         })
         .collect::<Vec<_>>();
     window.set_entries(Rc::new(VecModel::from(rows)).into());
-    window.set_selected(form.selected.as_deref().unwrap_or_default().into());
+    if let Some(error) = report["write_error"].as_str() {
+        let message = format!("Library write committed: {error}");
+        window.set_message(message.clone().into());
+        form.library_message = Some(message);
+    }
     window.set_page_label(format!("Prefabs: {}", report["total"]).into());
     window.set_previous(form.offset > 0);
     window.set_next(!report["next_offset"].is_null());
@@ -401,7 +442,7 @@ impl Controller {
                     }
                 })();
                 match result {
-                    Ok(_) => {
+                    Ok(report) => {
                         let mut state = form.borrow_mut();
                         if action == Action::Delete {
                             state.selected = None;
@@ -425,6 +466,16 @@ impl Controller {
                             .into(),
                         );
                         refresh(&window, &session, &form, true);
+                        if let Some(error) = report["error"].as_str() {
+                            let message =
+                                format!("Library write committed; library unavailable: {error}");
+                            window.set_message(message.clone().into());
+                            form.borrow_mut().library_message = Some(message);
+                        } else if let Some(error) = report["write_error"].as_str() {
+                            let message = format!("Library write committed: {error}");
+                            window.set_message(message.clone().into());
+                            form.borrow_mut().library_message = Some(message);
+                        }
                     }
                     Err(error) => window.set_message(error.into()),
                 }
@@ -514,7 +565,136 @@ impl Controller {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use slint::Model;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn peer_catalog_refresh_preserves_frozen_actions_clamps_pages_and_clears_repaired_errors() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let authority =
+            editor_core::prefabs::Authority::from_directory(Ok(directory.path().into()));
+        let mut origin = Session::with_prefabs(Err("No assets required".into()), authority.clone());
+        let mut peer = Session::with_prefabs(Err("No assets required".into()), authority);
+        for session in [&mut origin, &mut peer] {
+            session
+                .create_block(
+                    Actor::User,
+                    glam::DVec3::ZERO,
+                    glam::DVec3::splat(32.0),
+                    "brick/test",
+                    false,
+                )
+                .unwrap();
+        }
+        let peer_ids = peer.selected_ids();
+        for index in 0..65 {
+            let stamp = peer.prefab_report("", 0, PAGE, None)["snapshot"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            peer.save_prefab(Actor::Agent, &format!("Item{index:03}"), &peer_ids, &stamp)
+                .unwrap();
+        }
+        let shared = Arc::new(Mutex::new(origin));
+        let controller = Controller::new(&shared).unwrap();
+        controller.show(&lock(&shared)).unwrap();
+        controller.window.invoke_begin_save();
+        controller.window.set_prefab_name("Typed name".into());
+        controller.window.set_center_x("123".into());
+        let frozen = controller
+            .form
+            .borrow()
+            .action
+            .as_ref()
+            .unwrap()
+            .stamp
+            .clone();
+        let stamp = peer.prefab_report("", 0, PAGE, None)["snapshot"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        peer.save_prefab(Actor::Agent, "Peer", &peer_ids, &stamp)
+            .unwrap();
+        controller.refresh(&lock(&shared));
+        assert_eq!(controller.window.get_prefab_name(), "Typed name");
+        assert_eq!(controller.window.get_center_x(), "123");
+        assert_eq!(
+            controller.form.borrow().action.as_ref().unwrap().stamp,
+            frozen
+        );
+        controller.window.invoke_save();
+        assert!(controller.window.get_message().contains("changed"));
+        assert!(controller.window.get_editing());
+        assert!(!directory.path().join("Typed name.vmf").exists());
+        controller.window.invoke_cancel();
+        controller.window.invoke_choose("Item064".into());
+        controller.window.invoke_begin_rename();
+        controller.window.set_prefab_name("Typed rename".into());
+        let stamp = peer.prefab_report("", 0, PAGE, None)["snapshot"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        peer.rename_prefab(Actor::Agent, "Item064", "Renamed", &stamp)
+            .unwrap();
+        controller.refresh(&lock(&shared));
+        assert_eq!(controller.window.get_selected(), "Item064");
+        assert_eq!(controller.window.get_prefab_name(), "Typed rename");
+        controller.window.invoke_rename();
+        assert!(controller.window.get_message().contains("changed"));
+        controller.window.invoke_cancel();
+        assert_eq!(controller.window.get_selected(), "");
+        assert!(!controller.window.get_can_preview());
+        controller.window.invoke_choose("Item063".into());
+        controller.window.invoke_begin_delete();
+        let stamp = peer.prefab_report("", 0, PAGE, None)["snapshot"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        peer.delete_prefab(Actor::Agent, "Item063", &stamp).unwrap();
+        controller.refresh(&lock(&shared));
+        assert_eq!(controller.window.get_selected(), "Item063");
+        controller.window.invoke_delete();
+        assert!(controller.window.get_message().contains("changed"));
+        controller.window.invoke_cancel();
+        controller.window.invoke_page(1);
+        assert_eq!(controller.form.borrow().offset, PAGE);
+        let stamp = peer.prefab_report("", 0, PAGE, None)["snapshot"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        peer.delete_prefab(Actor::Agent, "Renamed", &stamp).unwrap();
+        controller.refresh(&lock(&shared));
+        assert_eq!(controller.form.borrow().offset, 0);
+        assert_eq!(controller.window.get_entries().row_count(), PAGE);
+        std::fs::create_dir(directory.path().join("Blocked.vmf")).unwrap();
+        peer.prefab_report("", 0, PAGE, None);
+        controller.refresh(&lock(&shared));
+        assert!(controller.window.get_message().contains("regular VMF"));
+        assert_eq!(controller.window.get_entries().row_count(), 0);
+        assert!(controller.window.get_detail().contains("regular VMF"));
+        std::fs::remove_dir(directory.path().join("Blocked.vmf")).unwrap();
+        peer.prefab_report("", 0, PAGE, None);
+        controller.refresh(&lock(&shared));
+        assert!(!controller.window.get_message().contains("regular VMF"));
+        assert_eq!(controller.window.get_entries().row_count(), PAGE);
+        std::fs::write(directory.path().join("Malformed.vmf"), "not VMF").unwrap();
+        controller.window.invoke_refresh();
+        controller.window.invoke_choose("Malformed".into());
+        assert_eq!(controller.window.get_selected(), "Malformed");
+        assert!(!controller.window.get_can_preview());
+        controller.window.invoke_begin_delete();
+        controller.window.invoke_delete();
+        assert!(!directory.path().join("Malformed.vmf").exists());
+        assert!(!controller.window.get_editing());
+    }
 
     #[test]
     fn prefab_thumbnail_controls_show_cpu_diagnostics_and_preserve_owned_placement() {

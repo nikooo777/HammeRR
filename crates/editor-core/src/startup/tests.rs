@@ -18,6 +18,8 @@ fn fixture() -> (tempfile::TempDir, Application, PathBuf) {
     state.use_application_build_recipes(build_recipes.clone());
     let recovery_settings = recovery::Authority::configured(Ok(path.clone()));
     state.use_application_recovery_settings(recovery_settings.clone());
+    let prefabs = prefabs::Authority::from_directory(Ok(path.join("prefabs")));
+    state.use_application_prefabs(prefabs.clone());
     state.configure_recovery(Ok(path.clone()));
     state
         .create_block(
@@ -42,6 +44,7 @@ fn fixture() -> (tempfile::TempDir, Application, PathBuf) {
         saved_defaults,
         build_recipes,
         recovery_settings,
+        prefabs,
         session,
         open_message: None,
         finished: None,
@@ -74,6 +77,44 @@ fn application_shutdown_drains_once_with_retained_session_and_drop_fallback() {
             1
         );
     }
+}
+
+#[test]
+fn application_retains_prefab_owner_across_session_recovery_configuration() {
+    let (_directory, mut application, path) = fixture();
+    let mut peer = Session::with_prefabs(
+        Err("No assets required".into()),
+        application.prefabs.clone(),
+    );
+    peer.configure_recovery(Err("Peer document recovery unavailable".into()));
+    let mut session = lock(&application.session);
+    let ids = session.selected_ids();
+    let stamp = session.prefab_report("", 0, 64, None)["snapshot"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    session
+        .save_prefab(Actor::User, "Application owned", &ids, &stamp)
+        .unwrap();
+    assert_eq!(
+        application.prefabs.snapshot().entries[0].name,
+        "Application owned"
+    );
+    assert_eq!(
+        peer.prefab_report("", 0, 64, None)["directory"],
+        path.join("prefabs").to_str().unwrap()
+    );
+    assert_eq!(
+        peer.prefab_report("", 0, 64, None)["entries"][0]["name"],
+        "Application owned"
+    );
+    drop(session);
+    application.shutdown().unwrap();
+    drop(application);
+    assert_eq!(
+        peer.prefab_report("", 0, 64, None)["entries"][0]["name"],
+        "Application owned"
+    );
 }
 
 #[test]

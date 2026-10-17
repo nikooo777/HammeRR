@@ -1,6 +1,6 @@
 use crate::runtime::{SharedSession, lock};
 use crate::session::{Actor, Session};
-use crate::{build_recipes, material_favorites, recent_maps, recovery, shortcuts, steam};
+use crate::{build_recipes, material_favorites, prefabs, recent_maps, recovery, shortcuts, steam};
 use source_formats::{fgd::Catalog, gamefs::GameFs};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -116,6 +116,7 @@ pub struct Application {
     pub saved_defaults: crate::saved_defaults::SavedDefaults,
     pub build_recipes: build_recipes::Authority,
     pub recovery_settings: recovery::Authority,
+    pub prefabs: prefabs::Authority,
     pub session: SharedSession,
     pub open_message: Option<Result<String, String>>,
     finished: Option<Result<(), String>>,
@@ -147,6 +148,8 @@ impl Application {
         lock(&session).use_application_build_recipes(build_recipes.clone());
         let recovery_settings = recovery::Authority::configured(directory.clone());
         lock(&session).use_application_recovery_settings(recovery_settings.clone());
+        let prefabs = prefabs::Authority::configured(directory.clone());
+        lock(&session).use_application_prefabs(prefabs.clone());
         lock(&session).configure_recovery(directory);
         let worker = recovery::Worker::start(&session)?;
         let shutdown = ShutdownGuard {
@@ -179,6 +182,7 @@ impl Application {
             saved_defaults,
             build_recipes,
             recovery_settings,
+            prefabs,
             session,
             open_message,
             finished: None,

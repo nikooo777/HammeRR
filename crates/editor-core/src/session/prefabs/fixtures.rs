@@ -4,9 +4,8 @@ use crate::session::Session;
 pub fn fixture() -> (Session, tempfile::TempDir, ObjectId) {
     let directory = tempfile::tempdir().unwrap();
     let (mut session, id, _) = crate::test_assets::clipboard();
-    session.prefabs.store = Ok(Store {
-        directory: directory.path().into(),
-    });
+    session.prefabs.binding =
+        Binding::Independent(Authority::from_directory(Ok(directory.path().into())));
     (session, directory, id)
 }
 
@@ -14,9 +13,8 @@ pub fn textured_fixture() -> (Session, tempfile::TempDir, tempfile::TempDir, Obj
     let (assets, game) = crate::test_assets::game();
     let library = tempfile::tempdir().unwrap();
     let mut session = Session::new(Ok(game));
-    session.prefabs.store = Ok(Store {
-        directory: library.path().to_owned(),
-    });
+    session.prefabs.binding =
+        Binding::Independent(Authority::from_directory(Ok(library.path().to_owned())));
     let brush = session
         .create_block(
             Actor::User,

@@ -581,6 +581,7 @@ impl EditorServer {
             + Self::shortcut_tools()
             + Self::history_tools()
             + Self::instance_contents_tools()
+            + Self::instance_reference_tools()
             + Self::linked_path_tools()
             + Self::materials_tools()
             + Self::measurement_tools()

@@ -31,6 +31,7 @@ use materials::*;
 mod navigation;
 use navigation::*;
 mod instance_contents;
+mod instance_reference;
 mod object_picking;
 mod transform_pivot;
 use transform_pivot::*;
@@ -356,6 +357,7 @@ fn refresh_panel(app: &AppWindow, session: &mut Session) {
     app.set_selection_title(title.into());
     app.set_selection_detail(detail.into());
     app.set_entity_selected(properties.is_some());
+    app.set_can_edit_instance_reference(single_selected_entity(session).and_then(|id|doc.entity(id)).is_some_and(|entity|entity.classname().is_some_and(|name|name.eq_ignore_ascii_case("func_instance"))));
     let helper_report =
         single_selected_entity(session).and_then(|id| session.entity_helper_report(id).ok());
     app.set_has_fgd_model_guide(
@@ -1957,6 +1959,7 @@ pub(super) fn run(
     bind_model_guide_reload(&app, session_of(&ui));
     bind_view_controls(&app, session_of(&ui));
     instance_contents::bind(&app, session_of(&ui));
+    instance_reference::bind(&app, session_of(&ui));
     app.on_key({
         let (app, ui) = (app.as_weak(), ui.clone());
         move |text, down, control, shift, alt, meta| {

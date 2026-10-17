@@ -1,0 +1,110 @@
+import { Button, LineEdit } from "std-widgets.slint";
+
+component ReferenceVector inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> label-x;
+    in property <string> label-y;
+    in property <string> label-z;
+    in property <bool> enabled;
+    in-out property <string> value-x;
+    in-out property <string> value-y;
+    in-out property <string> value-z;
+    callback edited();
+    spacing: 8px;
+    Text { text: root.label; width: 80px; vertical-alignment: center; color: #cbd6e4; }
+    for label[index] in [root.label-x, root.label-y, root.label-z]: VerticalLayout {
+        spacing: 4px;
+        Text { text: label; color: #a7b5c8; font-size: 12px; }
+        LineEdit {
+            min-width: 70px;
+            horizontal-stretch: 1;
+            enabled: root.enabled;
+            input-type: decimal;
+            text: index == 0 ? root.value-x : index == 1 ? root.value-y : root.value-z;
+            edited(value) => {
+                if index == 0 { root.value-x = value; }
+                else if index == 1 { root.value-y = value; }
+                else { root.value-z = value; }
+                root.edited();
+            }
+        }
+    }
+}
+
+export component InstanceReferenceWindow inherits Window {
+    title: root.edit-mode ? "Edit instance reference - HammeRR" : "Instance reference - HammeRR";
+    preferred-width: 760px;
+    preferred-height: 690px;
+    background: #20242b;
+    in property <bool> edit-mode;
+    in property <bool> owned;
+    in property <bool> ready;
+    in property <bool> shared-form;
+    in property <string> source;
+    in property <string> status;
+    in property <string> contents;
+    in property <string> message;
+    in property <string> raw-origin;
+    in property <string> raw-angles;
+    in-out property <string> file;
+    in-out property <string> origin-x;
+    in-out property <string> origin-y;
+    in-out property <string> origin-z;
+    in-out property <string> pitch;
+    in-out property <string> yaw;
+    in-out property <string> roll;
+    callback edited(int);
+    callback browse();
+    callback check-file();
+    callback review();
+    callback refresh-contents();
+    callback apply();
+    callback cancel();
+    forward-focus: dialog-focus;
+    dialog-focus := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape { root.cancel(); accept } else { reject }
+        }
+        VerticalLayout {
+            padding: 22px;
+            spacing: 14px;
+            Text { text: root.edit-mode ? "Edit instance reference" : "Create instance reference"; font-size: 23px; font-weight: 600; color: #e1e7ef; }
+            Text { text: root.source; color: #9eafc5; wrap: word-wrap; font-size: 12px; }
+            Text { text: "VMF reference"; color: #cbd6e4; }
+            HorizontalLayout {
+                spacing: 8px;
+                LineEdit { text <=> root.file; enabled: root.owned; placeholder-text: "parts/arch.vmf"; edited => { root.edited(0); } }
+                Button { text: "Browse…"; enabled: root.owned; clicked => { root.browse(); } }
+            }
+            ReferenceVector {
+                label: "Position"; label-x: "X"; label-y: "Y"; label-z: "Z"; enabled: root.owned;
+                value-x <=> root.origin-x; value-y <=> root.origin-y; value-z <=> root.origin-z;
+                edited => { root.edited(1); }
+            }
+            if root.raw-origin != "": Text { text: "Invalid stored Position: " + root.raw-origin; color: #efb28a; wrap: word-wrap; }
+            ReferenceVector {
+                label: "Rotation"; label-x: "Pitch"; label-y: "Yaw"; label-z: "Roll"; enabled: root.owned;
+                value-x <=> root.pitch; value-y <=> root.yaw; value-z <=> root.roll;
+                edited => { root.edited(2); }
+            }
+            if root.raw-angles != "": Text { text: "Invalid stored Rotation: " + root.raw-angles; color: #efb28a; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: 8px;
+                Button { text: "Check file"; enabled: root.owned; clicked => { root.check-file(); } }
+                if root.shared-form: Button { text: "Review shared form"; clicked => { root.review(); } }
+            }
+            Text { text: root.status; color: #e4c19d; wrap: word-wrap; }
+            Button { text: "Refresh instance contents"; clicked => { root.refresh-contents(); } }
+            Text { text: root.contents; color: #a9bed5; wrap: word-wrap; }
+            Rectangle { vertical-stretch: 1; }
+            Text { text: "File checks confirm path and presence only. Refresh or Compile validates committed child contents.\nOne level · world and func_detail brushes · no child editing, replacements or search fallback."; color: #9eafc5; wrap: word-wrap; font-size: 12px; }
+            if root.message != "": Text { text: root.message; color: #f0b377; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: 8px;
+                Button { text: "Cancel"; clicked => { root.cancel(); } }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: root.edit-mode ? "Apply" : "Create"; enabled: root.ready && root.owned; clicked => { root.apply(); } }
+            }
+        }
+    }
+}

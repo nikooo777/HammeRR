@@ -14,6 +14,7 @@ mod grid_preferences;
 mod groups;
 mod history;
 mod instance_contents;
+mod instance_reference;
 mod linked_path;
 mod materials;
 mod measurements;

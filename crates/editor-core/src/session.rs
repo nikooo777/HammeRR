@@ -45,6 +45,7 @@ pub mod groups;
 pub mod history;
 pub mod hollowing;
 pub mod instance_contents;
+pub mod instance_reference;
 pub mod layers;
 mod lighting_preview;
 pub mod linked_path;
@@ -180,6 +181,7 @@ pub struct Session {
     layers: layers::State,
     prefabs: prefabs::State,
     model_browser: model_browser::State,
+    instance_reference: instance_reference::State,
     sounds: sounds::State,
     particles: particles::State,
     placement: placement::State,
@@ -325,6 +327,7 @@ impl Session {
             terrain_strokes: terrain_strokes::State::default(),
             models: std::cell::RefCell::default(),
             model_browser: model_browser::State::default(),
+            instance_reference: instance_reference::State::default(),
             sounds: sounds::State::default(),
             particles: particles::State::default(),
             placement: placement::State::default(),

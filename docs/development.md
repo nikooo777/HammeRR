@@ -2476,3 +2476,27 @@ fake clients and deterministic completion barriers for direct, background and
 compile-and-play paths. They check stale/foreign/repeated completions, process
 and artifact cleanup, preserved replacement geometry, and same-buffer edits;
 they never start the user's game.
+
+### Prefab gallery and common compile submission
+
+```sh
+cargo test -p editor-core --features mcp session::prefabs::gallery::tests
+cargo test -p editor-core --features mcp gallery_tool_checks_review_limits
+cargo test -p editor prefab_gallery_controls_render_actual_cards_and_capture_gallery_without_mutating_owned_paste -- --ignored --test-threads=1
+python3 -B scripts/validate_prefab_thumbnails.py --binary target/debug/hammerr-headless --output /tmp/hammerr-prefab-gallery-check
+cargo test -p editor-core --features mcp runtime::compile_tests
+cargo test -p editor-core --features mcp submission_tests
+```
+
+Gallery checks cover eight-image bounds, explicit Flat/Textured styles, mixed
+entry errors, stale catalog/source/asset rejection, exact cache-publication
+identity and unchanged Paste/forms/history. The private MCP script checks actual
+PNG content indices and page limits. The ignored UI check renders real cards
+inside the software window and writes `prefab-gallery.png` when
+`HAMMERR_UI_SNAPSHOTS` names an existing directory; it uses no desktop input.
+
+UI/background and synchronous MCP compilation share `runtime::CompileSubmission`.
+Its fixed-origin completion ticket checks the unfinished job token before failure
+or success, including spawn/Join errors. Checks cover atomic Play/generation
+admission, cancellation, repeated/foreign completion, preserved initial status,
+and busy rejection through both paths. No compiler queue is introduced.

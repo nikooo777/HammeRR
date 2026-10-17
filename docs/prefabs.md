@@ -19,12 +19,26 @@ files; placement uses the same checked preview, naming and Undo behavior as Past
 
 ![Prefab search, assembly details and placement controls](images/prefab-library.png)
 
+## Browse assembly previews
+
+1. Open **Prefabs…** and use **Find a prefab** to filter the cards.
+2. Choose **Flat** or **Textured** in the style menu above the cards, then click
+   **Render page**. Up to eight assemblies render on the current page. An entry
+   that cannot render shows its error; other entries can still have images.
+3. Use **Previous** or **Next** to change pages, then **Render page** again.
+   Changing the filter or style also clears the previous page's images.
+4. Choose a card to inspect its details and placement settings. Cards also
+   support keyboard focus and Enter or Space. **Render thumbnail** switches to
+   the selected assembly's larger preview.
+
+![Textured prefab cards beside the selected assembly's placement controls](images/prefab-gallery.png)
+
 ## Inspect an assembly's shape
 
 1. Choose an entry in **Prefab library**. Counts and source diagnostics are
    available immediately, including when graphics are unavailable.
-2. Leave **Thumbnail** set to **Flat**, then click **Render thumbnail**. The
-   320 × 240 image shows actual brush, terrain and model geometry with editor
+2. Leave the style menu above the cards set to **Flat**, then click **Render
+   thumbnail**. The 320 × 240 image shows actual brush, terrain and model geometry with editor
    point helpers. Flat includes authored hidden objects and omits textures and
    sky. Inspection and rendering preserve the map, selection, clipboard, camera,
    active placement review and Undo.
@@ -169,6 +183,10 @@ operations are separate from map Undo.
   can still race source-file changes after snapshot validation; existing targets
   are never overwritten. Preview source identity/size/mtime changes are checked
   before Apply, including changes made by another Session.
-- Thumbnail grids, direct replacement from selection,
+- The gallery renders only the requested page, with at most eight images.
+  Graphics start on an explicit render. **Refresh library** checks external
+  source changes; stale page images clear before another render. Rendering a
+  selected thumbnail clears the page images, retaining the same eight-image cap.
+- Direct replacement from selection,
   local-frame placement, referenced instances and linked editing are unavailable.
   Applied copies can be transformed independently through the normal controls.

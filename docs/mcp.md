@@ -2002,7 +2002,8 @@ and Paste reviews stay local. Unchanged inspections keep the review valid.
 | Tool | Arguments and behavior |
 | --- | --- |
 | `inspect_prefab_thumbnail` | Exact `name`, optional `style` (`flat` or `textured`, default Flat); detached CPU geometry/material/count/bounds diagnostics, cache state and limits. Initializes no graphics. |
-| `render_prefab_thumbnail` | Exact `name`, optional `style` and `refresh` (default false); returns the same 320×240 PNG and report as **Thumbnail → Flat / Textured → Render thumbnail / Refresh thumbnail**. |
+| `render_prefab_thumbnail` | Exact `name`, optional `style` and `refresh` (default false); returns the same 320×240 PNG and report as choosing **Flat** or **Textured**, then **Render thumbnail** or **Refresh thumbnail**. |
+| `render_prefab_gallery` | Required `snapshot` from `get_prefabs`; optional `query`, `offset`, `limit` (1–8, default 8) and `style` (`flat` or `textured`, default Flat). Renders the same reviewed page as **Render page**. The first text block lists ordered entries; each successful entry's `image_content_index` identifies its PNG in the result's content array. Other entries report their own error without an image. |
 | `save_prefab` | Latest `snapshot`, new `name` and optional whole-object `ids` (selection by default). Captures before atomically creating a new file. Never overwrites; map/history/clipboard stay unchanged. |
 | `preview_prefab` | Latest `snapshot`, `name`, optional world `position` (defaults to zero), XYZ `rotation` in degrees, positive XYZ `scale`, source-world `pivot` (bounds center when omitted) and `keep_external_links` (false). Scale then rotation precede placement; nonidentity scale requires brushes only. Privately validates before changing clipboard/preview state. Returns `paste.preview.token` for `apply_paste` / `cancel_paste`. |
 | `rename_prefab` | Latest `snapshot`, original `name` and `new_name`. Atomically renames without overwriting an existing entry. Retains VMF bytes, clipboard, selection and map history. |
@@ -2053,6 +2054,11 @@ source-guard capture can read at most 80 MiB. Larger assemblies can still use
 placement. Inspection rejects unresolved instances, invalid geometry and missing
 or unsupported model geometry with explicit errors.
 See [Prefab library](prefabs.md).
+
+Gallery rendering reuses the same renderer and eight-image cache. A changed
+catalog rejects the whole page; source and texture dependencies are checked again
+before returning PNGs. The operation preserves the map, clipboard, camera,
+selection, placement review and history. It renders no other library pages.
 
 ### Overlay authoring
 

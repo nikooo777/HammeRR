@@ -294,13 +294,20 @@ pub(super) fn refresh_entity_picker(ui: &SharedUi) {
 }
 
 fn start_fgd_load(app: &slint::Weak<AppWindow>, ui: &SharedUi, path: &Path) {
-    let shared = session_of(ui);
     let window = ui
         .borrow()
         .entity_window
         .as_ref()
         .map(ComponentHandle::as_weak);
-    spawn_fgd_load(app, window, &shared, path);
+    let result = file_access(ui).with_shared(|shared| {
+        spawn_fgd_load(app, window, shared, path);
+        Ok(())
+    });
+    if let Err(error) = result
+        && let Some(app) = app.upgrade()
+    {
+        app.set_message(error.into());
+    }
 }
 
 fn spawn_fgd_load(
@@ -347,7 +354,11 @@ fn spawn_fgd_load(
 }
 
 pub(super) fn load_fgd(app: &AppWindow, ui: &SharedUi) {
-    let (app, ui) = (app.as_weak(), ui.clone());
+    if let Err(error) = file_access(ui).with_session(|_| Ok(())) {
+        app.set_message(error.into());
+        return;
+    }
+    let (app, ui) = (app.as_weak(), Rc::downgrade(ui));
     slint::spawn_local(async move {
         let Some(file) = rfd::AsyncFileDialog::new()
             .add_filter("Entity definitions", &["fgd"])
@@ -356,7 +367,11 @@ pub(super) fn load_fgd(app: &AppWindow, ui: &SharedUi) {
         else {
             return;
         };
-        start_fgd_load(&app, &ui, file.path());
+        if let Some(ui) = ui.upgrade()
+            && app.upgrade().is_some()
+        {
+            start_fgd_load(&app, &ui, file.path());
+        }
     })
     .expect("event loop is running");
 }

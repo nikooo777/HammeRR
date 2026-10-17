@@ -576,13 +576,20 @@ pub(super) fn run(
     let ui = Rc::new(RefCell::new(Ui::for_document(document, ctx)));
 
     app.window().on_close_requested({
-        let ui = ui.clone();
+        let (ui, app) = (ui.clone(), app.as_weak());
         move || {
-            let shared = session_of(&ui);
-            confirm_discard(&ui, move |review| {
-                let mut session = lock(&shared);
-                if let Err(error) = session.ensure_buffer_replacement_review(&review) {
-                    session.log(Actor::System, error);
+            let window = app.unwrap();
+            let app = app.clone();
+            let owner = Rc::downgrade(&ui);
+            confirm_discard(&window, &ui, move |continuation, review| {
+                let (Some(app), Some(_ui)) = (app.upgrade(), owner.upgrade()) else {
+                    return;
+                };
+                let result = continuation.upgrade().and_then(|access| {
+                    access.with_session(|session| session.ensure_buffer_replacement_review(&review))
+                });
+                if let Err(error) = result {
+                    app.set_message(error.into());
                     return;
                 }
                 if let Err(error) = slint::quit_event_loop() {
@@ -604,7 +611,11 @@ pub(super) fn run(
             if ui.borrow().recent_maps_window.is_none() {
                 match RecentMapsWindow::new() {
                     Ok(window) => {
-                        recent_maps_ui::bind(&window, &session_of(&ui));
+                        recent_maps_ui::bind_with_access(
+                            &window,
+                            &session_of(&ui),
+                            file_access(&ui),
+                        );
                         ui.borrow_mut().recent_maps_window = Some(window);
                     }
                     Err(error) => {
@@ -630,15 +641,7 @@ pub(super) fn run(
     });
     app.on_new_map({
         let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let (app, shared) = (app.clone(), session_of(&ui));
-            confirm_discard(&ui, move |review| {
-                let result = lock(&shared).new_map_reviewed(Actor::User, true, &review);
-                if let Some(app) = app.upgrade() {
-                    report(&app, result.map(|()| "New map".into()));
-                }
-            });
-        }
+        move || new_map(&app.unwrap(), &ui)
     });
     app.on_save_map({
         let (app, ui) = (app.as_weak(), ui.clone());
@@ -1238,7 +1241,7 @@ pub(super) fn run(
             if ui.borrow().recovery_window.is_none() {
                 match RecoveryWindow::new() {
                     Ok(window) => {
-                        recovery_ui::bind(&window, &session_of(&ui));
+                        recovery_ui::bind_with_access(&window, &session_of(&ui), file_access(&ui));
                         ui.borrow_mut().recovery_window = Some(window);
                     }
                     Err(error) => {

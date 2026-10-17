@@ -87,9 +87,11 @@ impl EditorServer {
                 Err(error) => return fail(error),
             };
         let mut cancellation = submission.cancellation();
-        let worker = match submission
-            .schedule_with(|submission| Ok(tokio::task::spawn_blocking(move || submission.run())))
-        {
+        let worker = match submission.schedule_with(|submission| {
+            Ok(tokio::task::spawn_blocking(
+                self.worker(move || submission.run()),
+            ))
+        }) {
             Ok(worker) => worker,
             Err(error) => return fail(error),
         };

@@ -473,12 +473,12 @@ impl EditorServer {
         };
         let token = request.token();
         let session = self.session.clone();
-        match tokio::task::spawn_blocking(move || {
+        match tokio::task::spawn_blocking(self.worker(move || {
             let completed = request.run();
             let mut session = lock(&session);
             session.finish_definitions_load(Actor::Agent, completed)?;
             Ok::<_, String>(definitions_json(&session))
-        })
+        }))
         .await
         {
             Ok(Ok(value)) => ok(value),

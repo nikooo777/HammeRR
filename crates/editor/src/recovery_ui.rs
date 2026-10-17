@@ -156,7 +156,20 @@ pub fn refresh(window: &RecoveryWindow, session: &Session) {
     }
 }
 
+#[cfg(test)]
 pub fn bind(window: &RecoveryWindow, shared: &SharedSession) {
+    bind_with_access(
+        window,
+        shared,
+        crate::runtime::DocumentAccess::unmanaged(shared.clone()),
+    );
+}
+
+pub fn bind_with_access(
+    window: &RecoveryWindow,
+    shared: &SharedSession,
+    access: crate::runtime::DocumentAccess,
+) {
     window.on_cancel({
         let window = window.as_weak();
         move || {
@@ -251,12 +264,11 @@ pub fn bind(window: &RecoveryWindow, shared: &SharedSession) {
         }
     });
     window.on_restore_snapshot({
-        let (window, session) = (window.as_weak(), shared.clone());
+        let window = window.as_weak();
         move || {
             let window = window.unwrap();
-            let result = {
-                let mut session = lock(&session);
-                session
+            let admitted = access.with_session(|session| {
+                let result = session
                     .buffer_replacement_review_from_token(&window.get_map_review())
                     .and_then(|review| {
                         session.restore_recovery_snapshot_reviewed(
@@ -266,15 +278,19 @@ pub fn bind(window: &RecoveryWindow, shared: &SharedSession) {
                             None,
                             &review,
                         )
-                    })
-            };
-            match result {
-                Ok(()) => {
-                    let _ = window.hide();
+                    });
+                match result {
+                    Ok(()) => {
+                        let _ = window.hide();
+                    }
+                    Err(error) => window.set_message(error.into()),
                 }
-                Err(error) => window.set_message(error.into()),
+                refresh(&window, session);
+                Ok(())
+            });
+            if let Err(error) = admitted {
+                window.set_message(error.into());
             }
-            refresh(&window, &lock(&session));
         }
     });
 }

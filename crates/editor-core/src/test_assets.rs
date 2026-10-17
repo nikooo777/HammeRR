@@ -5,6 +5,10 @@ use source_formats::gamefs::{GameFs, Mount, MountedPath};
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
+pub fn document(session: crate::runtime::SharedSession) -> crate::runtime::DocumentHandle {
+    crate::runtime::DocumentHandle::start(session).unwrap()
+}
+
 pub fn game() -> (tempfile::TempDir, GameFs) {
     let directory = tempfile::tempdir().unwrap();
     let materials = directory.path().join("materials/test");

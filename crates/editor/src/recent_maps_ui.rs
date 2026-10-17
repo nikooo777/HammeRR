@@ -103,7 +103,20 @@ pub fn refresh(window: &RecentMapsWindow, session: &Session) {
     }
 }
 
+#[cfg(test)]
 pub fn bind(window: &RecentMapsWindow, shared: &SharedSession) {
+    bind_with_access(
+        window,
+        shared,
+        crate::runtime::DocumentAccess::unmanaged(shared.clone()),
+    );
+}
+
+pub fn bind_with_access(
+    window: &RecentMapsWindow,
+    shared: &SharedSession,
+    access: crate::runtime::DocumentAccess,
+) {
     window.on_cancel({
         let window = window.as_weak();
         move || {
@@ -134,28 +147,33 @@ pub fn bind(window: &RecentMapsWindow, shared: &SharedSession) {
         }
     });
     window.on_open_selected({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let window = window.as_weak();
         move || {
             let window = window.unwrap();
-            let mut session = lock(&shared);
-            let result = session
-                .buffer_replacement_review_from_token(&window.get_map_guard())
-                .and_then(|review| {
-                    session.open_recent_map_reviewed(
-                        Actor::User,
-                        Path::new(window.get_selected_path().as_str()),
-                        window.get_discard_changes(),
-                        &review,
-                    )
-                });
-            match result {
-                Ok(message) => {
-                    window.set_message(message.into());
-                    let _ = window.hide();
+            let admitted = access.with_session(|session| {
+                let result = session
+                    .buffer_replacement_review_from_token(&window.get_map_guard())
+                    .and_then(|review| {
+                        session.open_recent_map_reviewed(
+                            Actor::User,
+                            Path::new(window.get_selected_path().as_str()),
+                            window.get_discard_changes(),
+                            &review,
+                        )
+                    });
+                match result {
+                    Ok(message) => {
+                        window.set_message(message.into());
+                        let _ = window.hide();
+                    }
+                    Err(error) => window.set_message(error.into()),
                 }
-                Err(error) => window.set_message(error.into()),
+                refresh(&window, session);
+                Ok(())
+            });
+            if let Err(error) = admitted {
+                window.set_message(error.into());
             }
-            refresh(&window, &session);
         }
     });
     window.on_remove_selected({

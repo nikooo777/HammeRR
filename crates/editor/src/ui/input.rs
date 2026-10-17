@@ -240,15 +240,7 @@ pub(super) fn command_key(
             "c" => app.invoke_copy_objects(),
             "x" => app.invoke_cut_objects(),
             "v" => app.invoke_paste_objects(),
-            "n" => {
-                let (app, shared) = (app.as_weak(), session_of(ui));
-                confirm_discard(ui, move |review| {
-                    let result = lock(&shared).new_map_reviewed(Actor::User, true, &review);
-                    if let Some(app) = app.upgrade() {
-                        report(&app, result.map(|()| "New map".into()));
-                    }
-                });
-            }
+            "n" => new_map(app, ui),
             _ => return false,
         }
         return true;

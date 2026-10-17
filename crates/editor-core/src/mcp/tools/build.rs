@@ -166,12 +166,13 @@ impl EditorServer {
         Parameters(args): Parameters<CompileArgs>,
     ) -> ToolResult {
         run(|| {
-            crate::runtime::start_compile_for_generation(
+            crate::runtime::start_compile_with_operation(
                 &self.session,
                 Actor::Agent,
                 args.path.as_deref().map(std::path::Path::new),
                 false,
                 args.expected_generation,
+                self.operation.clone(),
             )
         })
     }
@@ -234,7 +235,7 @@ impl EditorServer {
             }
         };
         let mut cancellation = submission.cancellation();
-        let result = tokio::task::spawn_blocking(move || submission.run()).await;
+        let result = tokio::task::spawn_blocking(self.worker(move || submission.run())).await;
         cancellation.disarm();
         match result {
             Ok(Ok(log)) => ok(game_log_json(&log)),
@@ -263,7 +264,11 @@ impl EditorServer {
     )]
     pub(in crate::mcp) async fn stop_game(&self) -> ToolResult {
         let session = self.session.clone();
-        match tokio::task::spawn_blocking(move || lock(&session).stop_game(Actor::Agent)).await {
+        match tokio::task::spawn_blocking(
+            self.worker(move || lock(&session).stop_game(Actor::Agent)),
+        )
+        .await
+        {
             Ok(Ok(())) => ok(json!({"stopped": true})),
             Ok(Err(error)) => fail(error),
             Err(error) => fail(error.to_string()),

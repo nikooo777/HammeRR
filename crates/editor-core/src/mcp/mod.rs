@@ -52,7 +52,9 @@ use crate::game;
 
 use crate::identity::{id_string, parse_id};
 
-use crate::runtime::{CompileSubmission, DocumentHandle, LaunchSubmission, SharedSession, lock};
+use crate::runtime::{
+    CompileSubmission, DocumentHandle, DocumentOperation, LaunchSubmission, SharedSession, lock,
+};
 
 use crate::session::{
     Actor, ConnectionFields, ConnectionRecord, ObjectFilter, PropertyChange, PropertyTarget,
@@ -363,6 +365,7 @@ fn game_log_json(log: &game::Log) -> Value {
 #[derive(Clone)]
 pub struct EditorServer {
     session: SharedSession,
+    operation: Option<DocumentOperation>,
     _document: Option<DocumentHandle>,
     offscreen: Arc<Mutex<OffscreenState>>,
     model_renderer: Arc<Mutex<crate::model_preview::PreviewRenderer>>,
@@ -374,6 +377,7 @@ impl EditorServer {
         Self {
             session,
             _document: None,
+            operation: None,
             model_renderer: Arc::default(),
             offscreen: Arc::new(Mutex::new(OffscreenState {
                 renderer: ctx.map(Offscreen::new),
@@ -391,6 +395,30 @@ impl EditorServer {
 
     fn session(&self) -> MutexGuard<'_, Session> {
         lock(&self.session)
+    }
+
+    fn admitted(&self) -> Result<Self, String> {
+        let mut server = self.clone();
+        if server.operation.is_none() {
+            server.operation = server
+                ._document
+                .as_ref()
+                .map(DocumentHandle::admit)
+                .transpose()?;
+        }
+        Ok(server)
+    }
+
+    fn worker<F, R>(&self, work: F) -> impl FnOnce() -> R + Send + 'static
+    where
+        F: FnOnce() -> R + Send + 'static,
+    {
+        // Abandoned requests must retire before their last runtime owner drains.
+        let worker = (work, self.clone());
+        move || {
+            let (work, _scope) = worker;
+            work()
+        }
     }
 }
 
@@ -436,7 +464,7 @@ impl EditorServer {
             }
         };
         let completion = submission.completion();
-        let worker = tokio::task::spawn_blocking(move || submission.run()).await;
+        let worker = tokio::task::spawn_blocking(self.worker(move || submission.run())).await;
         let result = match worker {
             Ok(result) => result,
             Err(error) => {
@@ -476,6 +504,19 @@ impl EditorServer {
 
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for EditorServer {
+    async fn call_tool(
+        &self,
+        request: rmcp::model::CallToolRequestParams,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<rmcp::model::CallToolResponse, ErrorData> {
+        let server = match self.admitted() {
+            Ok(server) => server,
+            Err(error) => return fail(error).map(Into::into),
+        };
+        let context = rmcp::handler::server::tool::ToolCallContext::new(&server, request, context);
+        server.tool_router.call(context).await
+    }
+
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(rmcp::model::Implementation::new(
@@ -536,6 +577,9 @@ pub fn serve_stdio(server: EditorServer) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod admission_tests;
 
 #[cfg(test)]
 mod headless_tests;

@@ -62,11 +62,11 @@ impl EditorServer {
                     let shared = self.session.clone();
                     let spawned = std::thread::Builder::new()
                         .name("instance-contents".into())
-                        .spawn(move || {
+                        .spawn(self.worker(move || {
                             let result = request.run();
                             let _ = lock(&shared)
                                 .finish_instance_contents_refresh(Actor::Agent, result);
-                        });
+                        }));
                     if let Err(error) = spawned {
                         return self.session().fail_instance_contents_refresh(
                             Actor::Agent,

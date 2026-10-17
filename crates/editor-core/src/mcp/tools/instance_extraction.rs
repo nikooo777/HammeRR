@@ -78,10 +78,10 @@ impl EditorServer {
                 let shared = self.session.clone();
                 if let Err(error) = std::thread::Builder::new()
                     .name("instance-extraction".into())
-                    .spawn(move || {
+                    .spawn(self.worker(move || {
                         let completed = request.run();
                         let _ = lock(&shared).finish_instance_extraction(Actor::Agent, completed);
-                    })
+                    }))
                 {
                     let _ = self
                         .session()

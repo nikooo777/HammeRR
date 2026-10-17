@@ -7,7 +7,10 @@ use crate::session::compilation::{CompileRequest, CompileResult};
 use crate::session::{Actor, LaunchOrigin, LaunchRequest, Session};
 
 mod document;
-pub use document::DocumentHandle;
+pub use document::{
+    DocumentAccess, DocumentContinuation, DocumentHandle, DocumentId, DocumentLifecycle,
+    DocumentOperation,
+};
 mod recovery;
 #[cfg(feature = "mcp")]
 pub(crate) use recovery::RecoverySubmission;
@@ -140,6 +143,7 @@ pub(crate) struct CompileSubmission {
     request: CompileRequest,
     completion: CompileCompletion,
     status: Value,
+    _operation: Option<DocumentOperation>,
 }
 
 #[derive(Clone)]
@@ -179,6 +183,7 @@ impl CompileSubmission {
             request,
             completion,
             status,
+            _operation: None,
         })
     }
 
@@ -264,7 +269,19 @@ pub fn start_compile_for_generation(
     play: bool,
     expected_generation: Option<u64>,
 ) -> Result<Value, String> {
-    let submission = CompileSubmission::begin(session, actor, path, play, expected_generation)?;
+    start_compile_with_operation(session, actor, path, play, expected_generation, None)
+}
+
+pub(crate) fn start_compile_with_operation(
+    session: &SharedSession,
+    actor: Actor,
+    path: Option<&std::path::Path>,
+    play: bool,
+    expected_generation: Option<u64>,
+    operation: Option<DocumentOperation>,
+) -> Result<Value, String> {
+    let mut submission = CompileSubmission::begin(session, actor, path, play, expected_generation)?;
+    submission._operation = operation;
     let status = submission.status().clone();
     let completion = submission.completion();
     if let Err(error) = std::thread::Builder::new()

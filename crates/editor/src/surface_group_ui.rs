@@ -5,7 +5,9 @@ use glam::DVec2;
 use map_core::surface;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
-use crate::runtime::{SharedSession, lock};
+#[cfg(test)]
+use crate::runtime::SharedSession;
+use crate::runtime::{DocumentAccess, DocumentContinuation};
 use crate::session::{Actor, GroupProjection, Session};
 use crate::{SurfaceGroupWindow, ui::preview_image};
 
@@ -94,42 +96,70 @@ fn apply(
     Ok(count)
 }
 
+fn callback(
+    window: &slint::Weak<SurfaceGroupWindow>,
+    document: &DocumentContinuation,
+    body: impl FnOnce(SurfaceGroupWindow, &mut Session),
+) {
+    let Some(window) = window.upgrade() else {
+        return;
+    };
+    let result = document.upgrade().and_then(|access| {
+        access.with_session(|session| {
+            body(window.clone_strong(), session);
+            Ok(())
+        })
+    });
+    if let Err(error) = result {
+        window.set_message(error.into());
+    }
+}
+
 impl Controller {
+    #[cfg(test)]
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
+        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
+    }
+
+    pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let window = SurfaceGroupWindow::new()?;
         let target = Rc::new(RefCell::new(None::<Target>));
         window.on_edited({
-            let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
+            let (window, document, target) = (window.as_weak(), access.downgrade(), target.clone());
             move || {
-                if let Some(target) = target.borrow_mut().as_mut() {
-                    target.cancel_preview(&mut lock(&shared));
-                }
-                window
-                    .unwrap()
-                    .set_message("Preview or apply the new mapping.".into());
+                callback(&window, &document, |window, session| {
+                    if let Some(target) = target.borrow_mut().as_mut() {
+                        target.cancel_preview(session);
+                    }
+                    window.set_message("Preview or apply the new mapping.".into());
+                });
             }
         });
         window.on_load_material({
-            let (window, shared) = (window.as_weak(), shared.clone());
-            move || refresh_material(&window.unwrap(), &lock(&shared))
+            let (window, document) = (window.as_weak(), access.downgrade());
+            move || {
+                callback(&window, &document, |window, session| {
+                    refresh_material(&window, session);
+                });
+            }
         });
         for preview in [true, false] {
-            let (weak, shared, target) = (window.as_weak(), shared.clone(), target.clone());
+            let (weak, document, target) = (window.as_weak(), access.downgrade(), target.clone());
             let action = move || {
-                let window = weak.unwrap();
-                let mut session = lock(&shared);
-                if let Some(target) = target.borrow_mut().as_mut() {
-                    match apply(&window, &mut session, target, preview) {
-                        Ok(count) => {
-                            window.set_message(format!("Preview: {count} faces share one texture mapping. Apply to keep it.").into());
-                            if !preview {
-                                let _ = window.hide();
+                callback(&weak, &document, |window, session| {
+                    if let Some(target) = target.borrow_mut().as_mut() {
+                        match apply(&window, session, target, preview) {
+                            Ok(count) => {
+                                window.set_message(format!("Preview: {count} faces share one texture mapping. Apply to keep it.").into());
+                                if !preview {
+                                    let _ = window.hide();
+                                }
                             }
+                            Err(error) => window.set_message(error.into()),
                         }
-                        Err(error) => window.set_message(error.into()),
                     }
-                }
-                refresh_material(&window, &session);
+                    refresh_material(&window, session);
+                });
             };
             if preview {
                 window.on_preview_edit(action);
@@ -138,20 +168,26 @@ impl Controller {
             }
         }
         window.on_cancel({
-            let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
+            let (window, document, target) = (window.as_weak(), access.downgrade(), target.clone());
             move || {
-                if let Some(target) = target.borrow_mut().as_mut() {
-                    target.cancel_preview(&mut lock(&shared));
+                callback(&window, &document, |_window, session| {
+                    if let Some(target) = target.borrow_mut().as_mut() {
+                        target.cancel_preview(session);
+                    }
+                });
+                if let Some(window) = window.upgrade() {
+                    let _ = window.hide();
                 }
-                let _ = window.unwrap().hide();
             }
         });
         window.window().on_close_requested({
-            let (shared, target) = (shared.clone(), target.clone());
+            let (window, document, target) = (window.as_weak(), access.downgrade(), target.clone());
             move || {
-                if let Some(target) = target.borrow_mut().as_mut() {
-                    target.cancel_preview(&mut lock(&shared));
-                }
+                callback(&window, &document, |_window, session| {
+                    if let Some(target) = target.borrow_mut().as_mut() {
+                        target.cancel_preview(session);
+                    }
+                });
                 slint::CloseRequestResponse::HideWindow
             }
         });

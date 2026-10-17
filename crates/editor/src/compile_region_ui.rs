@@ -7,9 +7,12 @@ use std::{cell::RefCell, rc::Rc};
 
 use crate::{
     CompileRegionWindow,
-    runtime::{SharedSession, lock},
+    runtime::{DocumentAccess, DocumentContinuation},
     session::{Actor, Session},
 };
+
+#[cfg(test)]
+use crate::runtime::{SharedSession, lock};
 
 #[derive(Default)]
 struct Form {
@@ -163,142 +166,182 @@ fn cancel_owned(session: &mut Session, form: &RefCell<Form>) {
     form.reviewed = None;
 }
 
+fn callback(
+    window: &slint::Weak<CompileRegionWindow>,
+    document: &DocumentContinuation,
+    body: impl FnOnce(CompileRegionWindow, &mut Session),
+) {
+    let Some(window) = window.upgrade() else {
+        return;
+    };
+    let result = document.upgrade().and_then(|access| {
+        access.with_session(|session| {
+            body(window.clone_strong(), session);
+            Ok(())
+        })
+    });
+    if let Err(error) = result {
+        window.set_message(error.into());
+    }
+}
+
 impl Controller {
+    #[cfg(test)]
     pub fn new(
         shared: &SharedSession,
+        aspect: impl Fn() -> f32 + 'static,
+    ) -> Result<Self, slint::PlatformError> {
+        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()), aspect)
+    }
+
+    pub fn new_with_access(
+        access: &DocumentAccess,
         aspect: impl Fn() -> f32 + 'static,
     ) -> Result<Self, slint::PlatformError> {
         let window = CompileRegionWindow::new()?;
         let form = Rc::new(RefCell::new(Form::default()));
         window.on_edited({
-            let (window, form) = (window.as_weak(), form.clone());
+            let (window, document, form) = (window.as_weak(), access.downgrade(), form.clone());
             move || {
-                form.borrow_mut().reviewed = None;
-                window.unwrap().set_ready(false);
+                callback(&window, &document, |window, _session| {
+                    form.borrow_mut().reviewed = None;
+                    window.set_ready(false);
+                });
             }
         });
         window.on_use_bounds({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, document, form) = (window.as_weak(), access.downgrade(), form.clone());
             move || {
-                let window = window.unwrap();
-                let session = lock(&shared);
-                let state = session.compile_region_state();
-                if let Some(error) = state["suggested_bounds"]["error"].as_str() {
-                    window.set_message(error.into());
-                    return;
-                }
-                load(&window, &state["suggested_bounds"]);
-                form.borrow_mut().reviewed = None;
-                refresh(&window, &session, &form);
+                callback(&window, &document, |window, session| {
+                    let state = session.compile_region_state();
+                    if let Some(error) = state["suggested_bounds"]["error"].as_str() {
+                        window.set_message(error.into());
+                        return;
+                    }
+                    load(&window, &state["suggested_bounds"]);
+                    form.borrow_mut().reviewed = None;
+                    refresh(&window, session, &form);
+                });
             }
         });
         window.on_preview({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, document, form) = (window.as_weak(), access.downgrade(), form.clone());
             move || {
-                let window = window.unwrap();
-                match fields(&window) {
-                    Ok(value) => stage(&window, &mut lock(&shared), &form, Some(value)),
-                    Err(error) => window.set_message(error.into()),
-                }
+                callback(&window, &document, |window, session| {
+                    match fields(&window) {
+                        Ok(value) => stage(&window, session, &form, Some(value)),
+                        Err(error) => window.set_message(error.into()),
+                    }
+                });
             }
         });
         window.on_preview_clear({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, document, form) = (window.as_weak(), access.downgrade(), form.clone());
             move || {
-                stage(&window.unwrap(), &mut lock(&shared), &form, None);
+                callback(&window, &document, |window, session| {
+                    stage(&window, session, &form, None);
+                });
             }
         });
         window.on_review({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, document, form) = (window.as_weak(), access.downgrade(), form.clone());
             move || {
-                let window = window.unwrap();
-                let session = lock(&shared);
-                let state = session.compile_region_state();
-                let draft = &state["draft"];
-                if draft["valid"] != true {
-                    window.set_message("No current draft to review.".into());
-                    return;
-                }
-                let definition = if draft["clear"] == true {
-                    None
-                } else {
-                    load(&window, &draft["region"]);
-                    match fields(&window) {
-                        Ok(value) => Some(value),
-                        Err(error) => {
-                            window.set_message(error.into());
-                            return;
-                        }
+                callback(&window, &document, |window, session| {
+                    let state = session.compile_region_state();
+                    let draft = &state["draft"];
+                    if draft["valid"] != true {
+                        window.set_message("No current draft to review.".into());
+                        return;
                     }
-                };
-                {
-                    let mut form = form.borrow_mut();
-                    form.token = draft["token"].as_u64();
-                    form.reviewed = Some(definition);
-                }
-                window.set_message(
-                    if definition.is_none() {
-                        "Review: remove all region metadata. Apply region confirms."
+                    let definition = if draft["clear"] == true {
+                        None
                     } else {
-                        "Current draft loaded for review. Apply region confirms it."
+                        load(&window, &draft["region"]);
+                        match fields(&window) {
+                            Ok(value) => Some(value),
+                            Err(error) => {
+                                window.set_message(error.into());
+                                return;
+                            }
+                        }
+                    };
+                    {
+                        let mut form = form.borrow_mut();
+                        form.token = draft["token"].as_u64();
+                        form.reviewed = Some(definition);
                     }
-                    .into(),
-                );
-                refresh(&window, &session, &form);
+                    window.set_message(
+                        if definition.is_none() {
+                            "Review: remove all region metadata. Apply region confirms."
+                        } else {
+                            "Current draft loaded for review. Apply region confirms it."
+                        }
+                        .into(),
+                    );
+                    refresh(&window, session, &form);
+                });
             }
         });
         window.on_frame({
-            let (window, shared) = (window.as_weak(), shared.clone());
+            let (window, document) = (window.as_weak(), access.downgrade());
             move || {
-                if let Err(error) = lock(&shared).frame_compile_region(Actor::User, aspect()) {
-                    window.unwrap().set_message(error.into());
-                }
+                callback(&window, &document, |window, session| {
+                    if let Err(error) = session.frame_compile_region(Actor::User, aspect()) {
+                        window.set_message(error.into());
+                    }
+                });
             }
         });
         window.on_apply({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, document, form) = (window.as_weak(), access.downgrade(), form.clone());
             move || {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
-                let (token, reviewed) = {
-                    let form = form.borrow();
-                    (form.token, form.reviewed)
-                };
-                let Some(token) = token.filter(|_| reviewed.is_some()) else {
-                    window.set_message("Preview or review the region before applying.".into());
-                    return;
-                };
-                if reviewed
-                    .flatten()
-                    .is_some_and(|reviewed| fields(&window).ok() != Some(reviewed))
-                {
-                    window.set_message("Fields changed; preview the region again.".into());
-                    window.set_ready(false);
-                    return;
-                }
-                match session.apply_compile_region(Actor::User, token) {
-                    Ok(_) => {
-                        *form.borrow_mut() = Form::default();
-                        window.set_message(
-                            "Region applied. Compile uses the saved enabled state.".into(),
-                        );
+                callback(&window, &document, |window, session| {
+                    let (token, reviewed) = {
+                        let form = form.borrow();
+                        (form.token, form.reviewed)
+                    };
+                    let Some(token) = token.filter(|_| reviewed.is_some()) else {
+                        window.set_message("Preview or review the region before applying.".into());
+                        return;
+                    };
+                    if reviewed
+                        .flatten()
+                        .is_some_and(|reviewed| fields(&window).ok() != Some(reviewed))
+                    {
+                        window.set_message("Fields changed; preview the region again.".into());
+                        window.set_ready(false);
+                        return;
                     }
-                    Err(error) => window.set_message(error.into()),
-                }
-                refresh(&window, &session, &form);
+                    match session.apply_compile_region(Actor::User, token) {
+                        Ok(_) => {
+                            *form.borrow_mut() = Form::default();
+                            window.set_message(
+                                "Region applied. Compile uses the saved enabled state.".into(),
+                            );
+                        }
+                        Err(error) => window.set_message(error.into()),
+                    }
+                    refresh(&window, session, &form);
+                });
             }
         });
         window.on_cancel({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, document, form) = (window.as_weak(), access.downgrade(), form.clone());
             move || {
-                cancel_owned(&mut lock(&shared), &form);
-                let _ = window.unwrap().hide();
+                callback(&window, &document, |_window, session| {
+                    cancel_owned(session, &form);
+                });
+                if let Some(window) = window.upgrade() {
+                    let _ = window.hide();
+                }
             }
         });
         window.window().on_close_requested({
-            let (shared, form) = (shared.clone(), form.clone());
+            let (window, document, form) = (window.as_weak(), access.downgrade(), form.clone());
             move || {
-                cancel_owned(&mut lock(&shared), &form);
+                callback(&window, &document, |_window, session| {
+                    cancel_owned(session, &form);
+                });
                 slint::CloseRequestResponse::HideWindow
             }
         });
@@ -331,6 +374,9 @@ impl Controller {
         refresh(&self.window, session, &self.form);
     }
 }
+
+#[cfg(test)]
+mod admission_tests;
 
 #[cfg(test)]
 mod tests {

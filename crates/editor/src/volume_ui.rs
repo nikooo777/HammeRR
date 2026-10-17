@@ -7,6 +7,8 @@ use slint::ComponentHandle;
 use source_formats::vmf::format_number;
 
 use crate::VolumeWindow;
+use crate::runtime::{DocumentAccess, DocumentContinuation};
+#[cfg(test)]
 use crate::runtime::{SharedSession, lock};
 use crate::session::volume::Spec;
 use crate::session::{Actor, SelectMode, Session};
@@ -111,91 +113,128 @@ fn refresh(window: &VolumeWindow, session: &Session, token: Option<u64>) {
     }
 }
 
+fn callback(
+    window: &slint::Weak<VolumeWindow>,
+    document: &DocumentContinuation,
+    body: impl FnOnce(VolumeWindow, &mut Session),
+) {
+    let Some(window) = window.upgrade() else {
+        return;
+    };
+    let result = document.upgrade().and_then(|access| {
+        access.with_session(|session| {
+            body(window.clone_strong(), session);
+            Ok(())
+        })
+    });
+    if let Err(error) = result {
+        window.set_message(error.into());
+    }
+}
+
 impl Controller {
+    #[cfg(test)]
     pub fn new(
         shared: &SharedSession,
+        aspect: impl Fn() -> f32 + 'static,
+    ) -> Result<Self, slint::PlatformError> {
+        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()), aspect)
+    }
+
+    pub fn new_with_access(
+        access: &DocumentAccess,
         aspect: impl Fn() -> f32 + 'static,
     ) -> Result<Self, slint::PlatformError> {
         let window = VolumeWindow::new()?;
         let token = Rc::new(Cell::new(None));
         window.on_edited({
-            let (window, shared, token) = (window.as_weak(), shared.clone(), token.clone());
+            let (window, document, token) = (window.as_weak(), access.downgrade(), token.clone());
             move || {
-                let mut session = lock(&shared);
-                cancel(&mut session, &token);
-                let window = window.unwrap();
-                window
-                    .set_message("Region changed. Preview the new matches before applying.".into());
-                refresh(&window, &session, token.get());
+                callback(&window, &document, |window, session| {
+                    cancel(session, &token);
+                    window.set_message(
+                        "Region changed. Preview the new matches before applying.".into(),
+                    );
+                    refresh(&window, session, token.get());
+                });
             }
         });
         window.on_use_bounds({
-            let (window, shared, token) = (window.as_weak(), shared.clone(), token.clone());
+            let (window, document, token) = (window.as_weak(), access.downgrade(), token.clone());
             move || {
-                let mut session = lock(&shared);
-                cancel(&mut session, &token);
-                let window = window.unwrap();
-                load_bounds(&window, &session);
-                window.set_message("Preview the updated bounds.".into());
-                refresh(&window, &session, token.get());
+                callback(&window, &document, |window, session| {
+                    cancel(session, &token);
+                    load_bounds(&window, session);
+                    window.set_message("Preview the updated bounds.".into());
+                    refresh(&window, session, token.get());
+                });
             }
         });
         window.on_preview_edit({
-            let (window, shared, token) = (window.as_weak(), shared.clone(), token.clone());
+            let (window, document, token) = (window.as_weak(), access.downgrade(), token.clone());
             move || {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
-                match spec(&window).and_then(|spec| session.preview_volume_selection(spec)) {
-                    Ok(value) => {
-                        token.set(Some(value));
-                        window
-                            .set_message("Review the highlights, then select the matches.".into());
+                callback(&window, &document, |window, session| {
+                    match spec(&window).and_then(|spec| session.preview_volume_selection(spec)) {
+                        Ok(value) => {
+                            token.set(Some(value));
+                            window.set_message(
+                                "Review the highlights, then select the matches.".into(),
+                            );
+                        }
+                        Err(error) => window.set_message(error.into()),
                     }
-                    Err(error) => window.set_message(error.into()),
-                }
-                refresh(&window, &session, token.get());
+                    refresh(&window, session, token.get());
+                });
             }
         });
         window.on_frame({
-            let (window, shared, token) = (window.as_weak(), shared.clone(), token.clone());
+            let (window, document, token) = (window.as_weak(), access.downgrade(), token.clone());
             move || {
-                if let Some(token) = token.get()
-                    && let Err(error) = lock(&shared).frame_volume_selection(token, aspect())
-                {
-                    window.unwrap().set_message(error.into());
-                }
+                callback(&window, &document, |window, session| {
+                    if let Some(token) = token.get()
+                        && let Err(error) = session.frame_volume_selection(token, aspect())
+                    {
+                        window.set_message(error.into());
+                    }
+                });
             }
         });
         window.on_apply({
-            let (window, shared, token) = (window.as_weak(), shared.clone(), token.clone());
+            let (window, document, token) = (window.as_weak(), access.downgrade(), token.clone());
             move || {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
-                let result = token
-                    .get()
-                    .ok_or_else(|| "Preview the region first".to_string())
-                    .and_then(|token| session.commit_volume_selection(Actor::User, token));
-                match result {
-                    Ok(_) => {
-                        token.set(None);
-                        let _ = window.hide();
+                callback(&window, &document, |window, session| {
+                    let result = token
+                        .get()
+                        .ok_or_else(|| "Preview the region first".to_string())
+                        .and_then(|token| session.commit_volume_selection(Actor::User, token));
+                    match result {
+                        Ok(_) => {
+                            token.set(None);
+                            let _ = window.hide();
+                        }
+                        Err(error) => window.set_message(error.into()),
                     }
-                    Err(error) => window.set_message(error.into()),
-                }
-                refresh(&window, &session, token.get());
+                    refresh(&window, session, token.get());
+                });
             }
         });
         window.on_cancel({
-            let (window, shared, token) = (window.as_weak(), shared.clone(), token.clone());
+            let (window, document, token) = (window.as_weak(), access.downgrade(), token.clone());
             move || {
-                cancel(&mut lock(&shared), &token);
-                let _ = window.unwrap().hide();
+                callback(&window, &document, |_window, session| {
+                    cancel(session, &token);
+                });
+                if let Some(window) = window.upgrade() {
+                    let _ = window.hide();
+                }
             }
         });
         window.window().on_close_requested({
-            let (shared, token) = (shared.clone(), token.clone());
+            let (window, document, token) = (window.as_weak(), access.downgrade(), token.clone());
             move || {
-                cancel(&mut lock(&shared), &token);
+                callback(&window, &document, |_window, session| {
+                    cancel(session, &token);
+                });
                 slint::CloseRequestResponse::HideWindow
             }
         });

@@ -6,9 +6,12 @@ use std::{
 use map_core::{ObjectId, query::Ray, subobject::Component};
 use slint::ComponentHandle;
 
+#[cfg(test)]
+use crate::runtime::{SharedSession, lock};
+
 use crate::{
     PlacementWindow,
-    runtime::{SharedSession, lock},
+    runtime::{DocumentAccess, DocumentContinuation},
     session::{
         Actor, Session,
         placement::{Method, Options},
@@ -104,8 +107,32 @@ fn present(window: &PlacementWindow, report: &serde_json::Value) {
     });
 }
 
+fn with_session<R>(
+    window: &slint::Weak<PlacementWindow>,
+    access: &DocumentContinuation,
+    body: impl FnOnce(&PlacementWindow, &mut Session) -> R,
+) -> Option<R> {
+    let window = window.upgrade()?;
+    match access
+        .upgrade()
+        .and_then(|access| access.with_session(|session| Ok(body(&window, session))))
+    {
+        Ok(result) => Some(result),
+        Err(error) => {
+            window.set_message(error.into());
+            None
+        }
+    }
+}
+
 impl Controller {
+    #[cfg(test)]
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
+        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
+    }
+
+    pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
+        let access = access.downgrade();
         let window = PlacementWindow::new()?;
         window
             .window()
@@ -115,137 +142,145 @@ impl Controller {
         let picking = Rc::new(Cell::new(false));
         let dirty = Rc::new(Cell::new(false));
         window.on_invalidate({
-            let (window, dirty) = (window.as_weak(), dirty.clone());
+            let (window, access, dirty) = (window.as_weak(), access.clone(), dirty.clone());
             move || {
-                dirty.set(true);
-                let window = window.unwrap();
-                window.set_ready(false);
-                window.set_message("Preview changed settings before applying them.".into());
+                with_session(&window, &access, |window, _session| {
+                    dirty.set(true);
+                    window.set_ready(false);
+                    window.set_message("Preview changed settings before applying them.".into());
+                });
             }
         });
         window.on_preview({
-            let (window, shared, context, token, picking, dirty) = (
+            let (window, access, context, token, picking, dirty) = (
                 window.as_weak(),
-                shared.clone(),
+                access.clone(),
                 context.clone(),
                 token.clone(),
                 picking.clone(),
                 dirty.clone(),
             );
             move || {
-                let window = window.unwrap();
-                let result = (|| {
-                    let mut session = lock(&shared);
-                    let ids = validate(&session, &context, token.get())?;
-                    let options = options(
-                        &window,
-                        context
-                            .borrow()
-                            .as_ref()
-                            .and_then(|context| context.source_corner.clone()),
-                    )?;
-                    if window.get_method() >= 2 {
-                        session.begin_surface_placement_pick(&ids, options)
-                    } else {
-                        session.preview_surface_placement(
-                            Actor::User,
-                            &ids,
-                            if window.get_method() == 1 {
-                                Method::Ceiling
-                            } else {
-                                Method::Floor
-                            },
-                            None,
-                            options,
-                        )
-                    }
-                })();
-                match result {
-                    Ok(report) => {
-                        token.set(report["token"].as_u64());
-                        picking.set(report["picking"] == true);
-                        dirty.set(false);
-                        present(&window, &report);
-                        if picking.get() {
-                            let _ = window.hide();
+                with_session(&window, &access, |window, session| {
+                    let result = (|| {
+                        let ids = validate(session, &context, token.get())?;
+                        let options = options(
+                            window,
+                            context
+                                .borrow()
+                                .as_ref()
+                                .and_then(|context| context.source_corner.clone()),
+                        )?;
+                        if window.get_method() >= 2 {
+                            session.begin_surface_placement_pick(&ids, options)
+                        } else {
+                            session.preview_surface_placement(
+                                Actor::User,
+                                &ids,
+                                if window.get_method() == 1 {
+                                    Method::Ceiling
+                                } else {
+                                    Method::Floor
+                                },
+                                None,
+                                options,
+                            )
                         }
+                    })();
+                    match result {
+                        Ok(report) => {
+                            token.set(report["token"].as_u64());
+                            picking.set(report["picking"] == true);
+                            dirty.set(false);
+                            present(window, &report);
+                            if picking.get() {
+                                let _ = window.hide();
+                            }
+                        }
+                        Err(error) => window.set_message(error.into()),
                     }
-                    Err(error) => window.set_message(error.into()),
-                }
+                });
             }
         });
         window.on_apply({
-            let (window, shared, token, context, dirty) = (
+            let (window, access, token, context, dirty) = (
                 window.as_weak(),
-                shared.clone(),
+                access.clone(),
                 token.clone(),
                 context.clone(),
                 dirty.clone(),
             );
             move || {
-                let window = window.unwrap();
-                let result = (|| {
-                    if dirty.get() {
-                        return Err("Preview changed settings before applying them".into());
+                with_session(&window, &access, |window, session| {
+                    let result = (|| {
+                        if dirty.get() {
+                            return Err("Preview changed settings before applying them".into());
+                        }
+
+                        validate(session, &context, token.get())?;
+                        session.apply_surface_placement(
+                            Actor::User,
+                            token.get().ok_or("Preview placement first")?,
+                        )
+                    })();
+                    match result {
+                        Ok(_) => {
+                            token.set(None);
+                            let _ = window.hide();
+                        }
+                        Err(error) => window.set_message(error.into()),
                     }
-                    let mut session = lock(&shared);
-                    validate(&session, &context, token.get())?;
-                    session.apply_surface_placement(
-                        Actor::User,
-                        token.get().ok_or("Preview placement first")?,
-                    )
-                })();
-                match result {
-                    Ok(_) => {
-                        token.set(None);
-                        let _ = window.hide();
-                    }
-                    Err(error) => window.set_message(error.into()),
-                }
+                });
             }
         });
         window.on_frame({
-            let (window, shared, token, context, dirty) = (
+            let (window, access, token, context, dirty) = (
                 window.as_weak(),
-                shared.clone(),
+                access.clone(),
                 token.clone(),
                 context.clone(),
                 dirty.clone(),
             );
             move || {
-                let window = window.unwrap();
-                let result = (|| {
-                    let mut session = lock(&shared);
-                    validate(&session, &context, token.get())?;
-                    if dirty.get() || session.surface_placement()["valid"] != true {
-                        return Err("Preview placement before framing".into());
+                with_session(&window, &access, |window, session| {
+                    let result = (|| {
+                        validate(session, &context, token.get())?;
+                        if dirty.get() || session.surface_placement()["valid"] != true {
+                            return Err("Preview placement before framing".into());
+                        }
+                        session.frame_selection(Actor::User, window.get_aspect())
+                    })();
+                    if let Err(error) = result {
+                        window.set_message(error.into());
                     }
-                    session.frame_selection(Actor::User, window.get_aspect())
-                })();
-                if let Err(error) = result {
-                    window.set_message(error.into());
-                }
+                });
             }
         });
         window.on_cancel({
-            let (window, shared, token, picking) = (
+            let (window, access, token, picking) = (
                 window.as_weak(),
-                shared.clone(),
+                access.clone(),
                 token.clone(),
                 picking.clone(),
             );
             move || {
-                if let Some(token) = token.take() {
-                    let _ = lock(&shared).cancel_surface_placement(token);
+                with_session(&window, &access, |_window, session| {
+                    if let Some(token) = token.take() {
+                        let _ = session.cancel_surface_placement(token);
+                    }
+                    picking.set(false);
+                });
+                if let Some(window) = window.upgrade() {
+                    let _ = window.hide();
                 }
-                picking.set(false);
-                let _ = window.unwrap().hide();
             }
         });
         window.window().on_close_requested({
             let window = window.as_weak();
             move || {
-                window.unwrap().invoke_cancel();
+                if let Some(window) = window.upgrade() {
+                    window.invoke_cancel();
+                }
                 slint::CloseRequestResponse::HideWindow
             }
         });
@@ -564,3 +599,6 @@ mod tests {
         assert_eq!(lock(&shared).document().vmf(), &source);
     }
 }
+
+#[cfg(test)]
+mod admission_tests;

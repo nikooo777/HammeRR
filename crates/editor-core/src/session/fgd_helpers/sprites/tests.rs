@@ -400,3 +400,257 @@ fn shared_visible_image_limit_uses_entity_order_for_icons_and_sprite_resources()
         Some("scene_image_limit")
     );
 }
+
+fn additive_definitions() -> Catalog {
+    Catalog::parse(&FGD.replace(
+        "rendercolor(color255) : \"FX Color\" : \"255 255 255\"",
+        "rendercolor(color255) : \"FX Color\" : \"255 255 255\"\nrenderamt(integer) : \"FX Amount\" : 255\nrendermode(choices) : \"Render Mode\" : 0 = [0 : \"Normal\" 5 : \"Additive\"]\nrenderfx(integer) : \"Render FX\" : 0",
+    )).unwrap()
+}
+
+#[test]
+fn additive_sprite_guides_are_opt_in_per_instance_and_preserve_owned_reviews() {
+    for actor in [Actor::User, Actor::Agent] {
+        let (_directory, mut session, id) = fixture(actor);
+        session.set_definitions(actor, additive_definitions());
+        session
+            .set_entity_properties(
+                actor,
+                id,
+                &[
+                    ("rendermode".into(), Some("5".into())),
+                    ("HDRColorScale".into(), Some("0.7".into())),
+                ],
+            )
+            .unwrap();
+        session
+            .create_entity(
+                actor,
+                "icon_sample",
+                Some(DVec3::X * 200.0),
+                BTreeMap::new(),
+            )
+            .unwrap();
+        session
+            .create_entity(
+                actor,
+                "env_sprite",
+                Some(DVec3::X * 400.0),
+                BTreeMap::from([("scale".into(), "1".into())]),
+            )
+            .unwrap();
+        session.select(&[], SelectMode::Replace).unwrap();
+        let source = session.document().vmf().clone();
+        let history = session.document().undo_labels().count();
+        let bounds = session.object_bounds_in(session.document(), &[ObjectId::Entity(id)]);
+        let before = session.build_scene();
+        assert!(
+            before
+                .icons
+                .iter()
+                .all(|instance| instance.blend == render::icons::Blend::Alpha)
+        );
+        assert_eq!(
+            report(&session, id).rendering_policy,
+            "unlit_rgba_editor_image_no_fog"
+        );
+        session
+            .preview_transform(
+                actor,
+                &[ObjectId::Entity(id)],
+                map_core::edit::Transform {
+                    translation: DVec3::Y * 8.0,
+                    ..Default::default()
+                },
+                None,
+            )
+            .unwrap();
+        let preview = session.render_document().vmf().clone();
+        let view = session
+            .resolve_view_update(crate::session::ViewUpdate {
+                additive_sprite_guides: Some(true),
+                ..Default::default()
+            })
+            .unwrap();
+        session.set_view(view);
+        assert_eq!(session.render_document().vmf(), &preview);
+        let mesh = session.build_scene();
+        assert_eq!(
+            mesh.icons
+                .iter()
+                .map(|instance| instance.blend)
+                .collect::<Vec<_>>(),
+            [
+                render::icons::Blend::Additive,
+                render::icons::Blend::Alpha,
+                render::icons::Blend::Alpha
+            ]
+        );
+        assert!(Arc::ptr_eq(&before.icons[0].asset, &mesh.icons[0].asset));
+        assert!(Arc::ptr_eq(&mesh.icons[0].asset, &mesh.icons[1].asset));
+        assert!(Arc::ptr_eq(&mesh.icons[0].asset, &mesh.icons[2].asset));
+        let guide = report(&session, id);
+        assert!(
+            guide.displayed
+                && guide.blend_preview.applied
+                && guide.blend_preview.appearance_supported
+        );
+        assert_eq!(guide.blend_preview.rendermode.value_source, "authored");
+        assert_eq!(guide.blend_preview.renderamt.value_source, "fgd_default");
+        assert_eq!(guide.blend_preview.evaluated_guide_mode, Some(5));
+        assert!(guide.unevaluated_runtime_fields.contains(&"HDRColorScale"));
+        assert!(!guide.unevaluated_runtime_fields.contains(&"rendermode"));
+        assert!(
+            session
+                .entity_helper_report(id)
+                .unwrap()
+                .status
+                .contains("authored Additive LDR")
+        );
+        let disabled = render::ViewOptions {
+            additive_sprite_guides: false,
+            ..session.view()
+        };
+        assert!(
+            session
+                .build_scene_for_view(disabled)
+                .icons
+                .iter()
+                .all(|instance| instance.blend == render::icons::Blend::Alpha)
+        );
+        assert!(session.view().additive_sprite_guides);
+        assert_eq!(session.document().vmf(), &source);
+        assert_eq!(session.document().undo_labels().count(), history);
+        assert_eq!(
+            session.object_bounds_in(session.document(), &[ObjectId::Entity(id)]),
+            bounds
+        );
+    }
+}
+
+#[test]
+fn additive_sprite_appearance_constraints_never_invent_defaults_or_runtime_tint() {
+    let (_directory, session, id) = fixture(Actor::Agent);
+    let catalog = additive_definitions();
+    let class = catalog.class("env_sprite").unwrap();
+    let mut entity = session.document().entity(id).unwrap().clone();
+    entity.properties.set("rendermode", "5");
+    let baseline = BlendPreview::resolve(class, &entity, true);
+    assert!(baseline.appearance_supported);
+    for (key, value, error) in [
+        ("rendermode", "0", "Render Mode 0"),
+        ("rendermode", "3", "Render Mode 3"),
+        ("rendermode", "9", "Render Mode 9"),
+        ("rendermode", "NaN", "integer byte"),
+        ("rendercolor", "254 255 255", "FX Color"),
+        ("rendercolor", "255 255", "FX Color"),
+        ("renderamt", "128", "FX Amount"),
+        ("renderamt", "0", "FX Amount"),
+        ("renderamt", "255.0", "integer byte"),
+        ("renderamt", "inf", "integer byte"),
+        ("renderfx", "1", "Render FX"),
+    ] {
+        let mut changed = entity.clone();
+        changed.properties.set(key, value);
+        let report = BlendPreview::resolve(class, &changed, true);
+        assert!(!report.appearance_supported && !report.applied);
+        assert_eq!(report.effective_policy, "raw_rgba");
+        assert!(report.error.unwrap().contains(error), "{key}={value}");
+        assert!(
+            BlendPreview::resolve(class, &changed, false)
+                .error
+                .is_none()
+        );
+    }
+    let mut oversized = entity.clone();
+    oversized.properties.set("rendercolor", " ".repeat(257));
+    let rejected = BlendPreview::resolve(class, &oversized, true);
+    assert!(rejected.rendercolor.raw_truncated);
+    assert!(rejected.error.unwrap().contains("256 bytes"));
+    for key in ["rendermode", "rendercolor", "renderamt", "renderfx"] {
+        let mut duplicate = entity.clone();
+        let value = match key {
+            "rendermode" => "5",
+            "rendercolor" => "255 255 255",
+            "renderamt" => "255",
+            _ => "0",
+        };
+        duplicate.properties.0.push((key.into(), value.into()));
+        duplicate.properties.0.push((key.into(), value.into()));
+        assert!(
+            BlendPreview::resolve(class, &duplicate, true)
+                .error
+                .unwrap()
+                .contains("Duplicate")
+        );
+    }
+    entity.properties.remove("rendermode");
+    let defaults = Catalog::parse(&FGD.replace(
+        "rendercolor(color255)",
+        "rendermode(integer) : \"Mode\" : 5\nrendercolor(color255)",
+    ))
+    .unwrap();
+    let report = BlendPreview::resolve(defaults.class("env_sprite").unwrap(), &entity, true);
+    assert_eq!(report.rendermode.value_source, "fgd_default");
+    assert!(report.error.unwrap().contains("explicitly authored"));
+    entity.properties.set("rendermode", "5");
+    let missing = Catalog::parse(FGD).unwrap();
+    assert!(
+        BlendPreview::resolve(missing.class("env_sprite").unwrap(), &entity, true)
+            .error
+            .unwrap()
+            .contains("renderamt")
+    );
+}
+
+#[test]
+fn additive_sprite_unavailable_appearance_keeps_raw_image_and_parent_visibility_is_lazy() {
+    let (directory, mut session, id) = fixture(Actor::Agent);
+    session.set_definitions(Actor::Agent, additive_definitions());
+    session
+        .set_entity_properties(
+            Actor::Agent,
+            id,
+            &[
+                ("rendermode".into(), Some("5".into())),
+                ("renderamt".into(), Some("128".into())),
+            ],
+        )
+        .unwrap();
+    session.set_view(render::ViewOptions {
+        additive_sprite_guides: true,
+        entity_images: false,
+        ..session.view()
+    });
+    let path = directory.path().join("materials/sprites/glow01.vmt");
+    let good = std::fs::read(&path).unwrap();
+    std::fs::write(&path, "broken winning material").unwrap();
+    let deferred = report(&session, id);
+    assert_eq!(deferred.suppression_reason, Some("view_disabled"));
+    assert!(deferred.image.is_none());
+    std::fs::write(&path, &good).unwrap();
+    session.set_view(render::ViewOptions {
+        entity_images: true,
+        ..session.view()
+    });
+    let raw = report(&session, id);
+    assert!(raw.displayed && raw.error.is_none() && raw.blend_preview.error.is_some());
+    assert_eq!(
+        session.build_scene().icons[0].blend,
+        render::icons::Blend::Alpha
+    );
+    assert!(
+        session
+            .entity_helper_report(id)
+            .unwrap()
+            .status
+            .contains("Additive guide unavailable")
+    );
+    std::fs::write(&path, "broken winning material").unwrap();
+    session.reload_material_assets(Actor::Agent);
+    assert!(!report(&session, id).displayed);
+    std::fs::write(&path, &good).unwrap();
+    assert!(!report(&session, id).displayed);
+    session.reload_material_assets(Actor::Agent);
+    assert!(report(&session, id).displayed);
+}

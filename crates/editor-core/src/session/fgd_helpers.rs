@@ -209,14 +209,37 @@ impl Session {
         }
         if let Some(sprite) = &sprite_resource {
             status += &format!(
-                ". Sprite resource guide: {}; {}; independent live-camera unlit RGBA image, runtime FX unevaluated, box bounds retained",
+                ". Sprite resource guide: {}; {}; {}; runtime color/FX/HDR unevaluated, box bounds retained",
                 if sprite.displayed {
                     "displayed"
                 } else {
                     sprite.suppression_reason.unwrap_or(sprite.state)
                 },
-                sprite.resolved_vmt.as_deref().unwrap_or("unresolved VMT")
+                sprite.resolved_vmt.as_deref().unwrap_or("unresolved VMT"),
+                if sprite.blend_preview.applied {
+                    "authored Additive LDR editor image, SRC_ALPHA/ONE RGB"
+                } else {
+                    "raw independent live-camera unlit RGBA image"
+                }
             );
+            if sprite.blend_preview.requested {
+                for input in [
+                    &sprite.blend_preview.rendermode,
+                    &sprite.blend_preview.rendercolor,
+                    &sprite.blend_preview.renderamt,
+                    &sprite.blend_preview.renderfx,
+                ] {
+                    status += &format!(
+                        ". {} {}={}",
+                        input.value_source,
+                        input.property,
+                        input.raw.as_deref().unwrap_or("missing")
+                    );
+                }
+                if let Some(error) = &sprite.blend_preview.error {
+                    status += &format!(". Additive guide unavailable: {error}");
+                }
+            }
             for input in [&sprite.model, &sprite.scale] {
                 if input.value_source == "fgd_default" {
                     status += &format!(

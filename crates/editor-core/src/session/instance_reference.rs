@@ -208,8 +208,10 @@ impl Session {
             return json!({"token":null,"valid":false,"contents_validation":"not_checked"});
         };
         let context = self.instance_reference_form(form.token, None);
-        let error = context
+        let error = self
+            .instance_reference_context()
             .err()
+            .or_else(|| context.err())
             .or_else(|| form.source_error.clone())
             .or_else(|| form.candidate_error.clone());
         let checked = form
@@ -249,6 +251,7 @@ impl Session {
         token: u64,
         changes: Changes,
     ) -> Result<Value, String> {
+        self.instance_reference_context()?;
         self.instance_reference_form(token, Some(actor))?;
         if [&changes.file, &changes.origin, &changes.angles]
             .into_iter()
@@ -281,6 +284,7 @@ impl Session {
     }
 
     pub fn check_instance_reference(&mut self, actor: Actor, token: u64) -> Result<Value, String> {
+        self.instance_reference_context()?;
         let form = self.instance_reference_form(token, Some(actor))?;
         self.instance_reference_candidate(form)?;
         let location = form.location.as_ref().ok_or_else(|| {
@@ -301,6 +305,7 @@ impl Session {
         token: u64,
         selected: &Path,
     ) -> Result<Value, String> {
+        self.instance_reference_context()?;
         let form = self.instance_reference_form(token, Some(actor))?;
         let location = form.location.as_ref().ok_or_else(|| {
             form.source_error

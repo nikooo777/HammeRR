@@ -299,6 +299,64 @@ fn instance_reference_invalid_imported_data_and_missing_source_are_never_repaire
 }
 
 #[test]
+fn instance_reference_late_edits_and_competing_drafts_reject_without_clearing_them() {
+    let (_directory, mut session, _parent, child, id) = opened();
+    let token = begin(&mut session, Actor::User, Some(id));
+    session
+        .set_entity_properties(
+            Actor::Agent,
+            id,
+            &[("targetname".into(), Some("changed_by_agent".into()))],
+        )
+        .unwrap();
+    let source = session.document.vmf().clone();
+    let history = session.history_snapshot();
+    assert!(
+        session
+            .apply_instance_reference(Actor::User, token)
+            .is_err()
+    );
+    assert!(
+        session
+            .instance_reference_file(Actor::User, token, &child)
+            .is_err()
+    );
+    assert_eq!(session.document.vmf(), &source);
+    assert_eq!(session.history_snapshot(), history);
+    session.undo(Actor::Agent).unwrap();
+    assert!(
+        session
+            .apply_instance_reference(Actor::User, token)
+            .is_err()
+    );
+    session
+        .cancel_instance_reference(Actor::User, token)
+        .unwrap();
+    let token = begin(&mut session, Actor::User, Some(id));
+    session.begin_property_edit(PropertyTarget::World).unwrap();
+    let draft = session.property_draft().unwrap().token;
+    let source = session.document.vmf().clone();
+    let history = session.history_snapshot();
+    assert!(
+        session
+            .apply_instance_reference(Actor::User, token)
+            .is_err()
+    );
+    assert!(
+        session
+            .instance_reference_file(Actor::User, token, &child)
+            .is_err()
+    );
+    assert_eq!(session.property_draft().unwrap().token, draft);
+    session
+        .cancel_instance_reference(Actor::User, token)
+        .unwrap();
+    assert_eq!(session.property_draft().unwrap().token, draft);
+    assert_eq!(session.document.vmf(), &source);
+    assert_eq!(session.history_snapshot(), history);
+}
+
+#[test]
 fn instance_reference_creation_uses_fgd_defaults_and_definition_changes_stale_the_form() {
     let (_directory, mut session, _parent, _child, _id) = opened();
     let definitions=Catalog::parse(r#"@PointClass = func_instance [ file(instance_file) : "VMF Filename" angles(angle) : "Rotation" : "0 0 0" fixup_style(integer) : "Fixup" : 2 targetname(string) : "Fix Up Name" : "assembly" ]"#).unwrap();

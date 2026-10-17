@@ -333,6 +333,21 @@ impl Document {
         label: impl Into<String>,
         f: impl FnOnce(&mut Transaction) -> Result<R, EditError>,
     ) -> Result<R, EditError> {
+        self.edit_with_finalizer(label, f, |_| Ok(()))
+    }
+
+    /// Runs `finalize` after successful edits and context cleanup, before history
+    /// commit. Any error rolls back the document, including allocated IDs.
+    /// The finalizer also runs for successful edits that leave no map changes.
+    /// Callers needing an Undo step must ensure that edits change the map.
+    /// Undo and redo never run the finalizer.
+    pub fn edit_with_finalizer<R>(
+        &mut self,
+        label: impl Into<String>,
+        f: impl FnOnce(&mut Transaction) -> Result<R, EditError>,
+        finalize: impl FnOnce(&R) -> Result<(), EditError>,
+    ) -> Result<R, EditError> {
+        let label = label.into();
         let mut tx = Transaction {
             start_ids: (
                 self.next_object_id,
@@ -349,10 +364,14 @@ impl Document {
             groups: None,
             visgroups: None,
         };
-        let result = f(&mut tx).and_then(|value| tx.remove_deleted_context().map(|()| value));
+        let result = f(&mut tx).and_then(|value| {
+            tx.remove_deleted_context()?;
+            finalize(&value)?;
+            Ok(value)
+        });
         match result {
             Ok(result) => {
-                tx.commit(label.into());
+                tx.commit(label);
                 Ok(result)
             }
             Err(error) => {
@@ -831,6 +850,10 @@ impl Transaction<'_> {
         self.doc.restore_objects(self.touched);
     }
 }
+
+#[cfg(test)]
+#[path = "document_finalizer_tests.rs"]
+mod finalizer_tests;
 
 #[cfg(test)]
 mod tests {

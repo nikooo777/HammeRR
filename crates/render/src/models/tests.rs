@@ -6,6 +6,8 @@ use source_formats::{
 };
 use std::collections::HashSet;
 
+mod scale_tests;
+
 fn asset() -> Arc<Asset> {
     Arc::new(Asset::new(
         "models/test.mdl".into(),

@@ -48,6 +48,55 @@ fn add_prop(vmf: &mut Vmf, origin: &str) -> usize {
 }
 
 #[test]
+fn model_scale_runtime_tokens_survive_and_static_writer_rejects_without_replacing_outputs() {
+    let (directory, game) = game();
+    let mut vmf = common::room();
+    let prop = add_prop(&mut vmf, "32 32 8");
+    let baseline = compiler::compile(&vmf, &game).bsp.unwrap().to_bytes();
+    let path = directory.path().join("scale.bsp");
+    let lin = path.with_extension("lin");
+    std::fs::write(&path, &baseline).unwrap();
+    std::fs::write(&lin, b"previous pointfile").unwrap();
+    for raw in ["1", "1.00000001"] {
+        let mut unit = vmf.clone();
+        unit.entities[prop].properties.set("modelscale", raw);
+        assert_eq!(
+            compiler::compile(&unit, &game).bsp.unwrap().to_bytes(),
+            baseline
+        );
+    }
+    for raw in ["0.5", "2", "64"] {
+        vmf.entities[prop].properties.set("modelscale", raw);
+        let original = vmf.clone();
+        let failed = compiler::compile(&vmf, &game);
+        assert!(failed.report.diagnostics.iter().any(|diagnostic| {
+            diagnostic
+                .message
+                .contains("Static-prop output does not support modelscale other than 1")
+        }));
+        assert!(!failed.write(&path).unwrap());
+        assert_eq!(std::fs::read(&path).unwrap(), baseline);
+        assert_eq!(std::fs::read(&lin).unwrap(), b"previous pointfile");
+        assert_eq!(vmf, original);
+    }
+    for class in ["prop_dynamic", "prop_physics", "custom_model_entity"] {
+        vmf.entities[prop].properties.set("classname", class);
+        vmf.entities[prop]
+            .properties
+            .set("modelscale", "0.5000000001");
+        let original = vmf.clone();
+        let output = compiler::compile(&vmf, &game);
+        assert!(!output.report.has_errors(), "{:?}", output.report);
+        assert_eq!(output.stats.static_props, 0);
+        let bsp = output.bsp.unwrap();
+        let text = bsp.entities().unwrap();
+        assert!(text.contains("\"modelscale\" \"0.5000000001\""));
+        assert!(text.contains(&format!("\"classname\" \"{class}\"")));
+        assert_eq!(vmf, original);
+    }
+}
+
+#[test]
 fn static_props_emit_native_dictionary_transforms_leaves_and_lighting_origins() {
     let (_directory, game) = game();
     let mut document = Document::new(common::room());

@@ -98,9 +98,13 @@ fn refresh(window: &ModelWindow, session: &Session, target: Option<(u32, u64)>) 
             refresh_attachment(window, &report);
             let asset = &report["asset"];
             window.set_pose_info(if asset["pose"] == "reference" {
-                format!("Reference pose · {} bones · body {} · LOD 0. Animation and scaling remain planned.",asset["reference_bones"],asset["body"]).into()
+                format!(
+                    "Reference pose · {} bones · body {} · LOD 0. Animation remains planned.",
+                    asset["reference_bones"], asset["body"]
+                )
+                .into()
             } else {
-                format!("Static model · body {} · LOD 0. Scaling remains planned.",asset["body"]).into()
+                format!("Static model · body {} · LOD 0.", asset["body"]).into()
             });
             window.set_bodygroups(slint::ModelRc::new(slint::VecModel::from(
                 asset["bodygroups"]
@@ -135,6 +139,9 @@ fn refresh(window: &ModelWindow, session: &Session, target: Option<(u32, u64)>) 
                 asset["skins"],
                 asset["body_parts"]
             );
+            if let Some(scale) = report["model_scale"]["effective"].as_f64() {
+                skin_info.push_str(&format!("\nModel scale {scale} · about entity origin"));
+            }
             if report["appearance"]["state"] == "texture" {
                 skin_info.push_str(&format!(
                     "\nTexture · Opacity {}/255 · source texture alpha",

@@ -1,5 +1,8 @@
 use super::super::*;
 
+#[cfg(test)]
+mod model_scale_tests;
+
 #[tool_router(router = assets_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
@@ -201,7 +204,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect the selected/explicit model entity's shared viewport asset, skin/body, transformed bounds, RGB tint, authored render mode/amount/FX and supported appearance state, named world attachment positions/axes, displayed state and fallback reason. Textured dynamic-model previews support Normal (0) and Texture (2) with renderamt 0–255 and renderfx 0; Normal ignores the amount. Edit through set_entity_properties, shared with the inspector's Render mode and Opacity controls. Other render modes/FX retain a diagnostic helper. Reads the rendered draft, preserving source/history. Static meshes, checked reference poses and selected bodygroups at scale1/LOD0 are supported. UI: Model details….",
+        description = "Inspect the selected/explicit model entity's shared viewport asset, skin/body, transformed bounds, RGB tint, authored render mode/amount/FX, model_scale authored/effective/support/applied/error and limits, named world attachment positions/axes, displayed state and fallback reason. Positive uniform modelscale uses native float precision in editor range1/64–64, with at most64 UTF-8 bytes and complete mesh bounds within±65536. Missing means1. Mesh/picks/bounds/default-pose attachments share the origin-relative transform; native physics/collision, animation and runtime scale inputs are unevaluated. Static-prop/native detail writers and literal FGD guides retain unit-scale admission. Textured dynamic-model previews support Normal (0) and Texture (2) with renderamt0–255 and renderfx0; Normal ignores the amount. Edit through set_entity_properties, shared with the inspector's Model scale, Render mode and Opacity controls. Unsupported values/modes/FX retain a diagnostic helper. Reads the rendered draft, preserving source/history. Static meshes, checked reference poses and selected bodygroups at LOD0 are supported. UI: Model details….",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn inspect_entity_model(

@@ -32,10 +32,32 @@ MCP renders.
 
 ![Surface-picked ruler with exact endpoint controls](images/measurements-surface-picked.png)
 
+## Attach an endpoint to an entity origin
+
+Keep a ruler endpoint at a point entity's authored origin as that entity moves.
+
+1. Open or create a measurement and click **Preview**. For an agent's draft,
+   click **Review preview** first.
+2. Enter `entity:<id>` beside **Attach start origin** or **Attach end origin**.
+   Leave it empty to use the single selected point entity.
+3. Click **Attach start origin** or **Attach end origin**. The endpoint fields
+   become read-only and the status identifies the target. Inspect the resolved
+   distance, then click **Apply**.
+4. Move the target entity. The saved ruler follows its origin. Undo restores
+   both the entity position and the ruler's resolved position.
+5. To retain its current position without following the entity, preview the
+   ruler and click **Detach start** or **Detach end**, then **Apply**.
+6. If a target is missing or invalid, **Use start world** or **Use end world**
+   explicitly replaces that attachment with the displayed stored coordinates.
+   Edit the now-unlocked fields, click **Preview**, then **Apply** to repair it.
+   **Cancel** preserves the saved reference.
+
+![Ruler endpoints explicitly attached to point-entity origins](images/measurements-origin-attachment.png)
+
 MCP uses `get_measurements` and `set_measurement`. The latter supports `preview`,
 `review`, `apply`, `cancel`, `delete`, `frame`, `view`, `begin_pick`, `pick_ray`,
-`pick_pixel` and `cancel_pick`; inspection provides the
-snapshot and ownership token needed for guarded actions. UI and MCP use the same
+`pick_pixel`, `cancel_pick`, `attach_origin`, `detach_origin` and `world_endpoint`;
+inspection provides the snapshot and ownership token needed for guarded actions. UI and MCP use the same
 Session operations and rendered guide mesh.
 
 For MCP surface picks, preview first, then pass the owned token, `endpoint`
@@ -55,10 +77,15 @@ Limits:
 - Both endpoints must be distinct and finite, within ±65536 on each axis.
   Endpoint coordinates retain double precision; rendered lines use the
   renderer's single precision. Readouts display six decimal places.
-- Endpoints retain world coordinates from numeric input or surface picks. They
-  are not snapped or attached to objects and do not follow later geometry
-  changes. Dimension labels in the viewport and configurable 3D workplanes
-  remain absent.
+- Numeric and surface-picked endpoints retain unsnapped world coordinates and
+  do not follow geometry. Explicit origin attachments follow point-entity
+  origins only; brush/surface attachments, local offsets and runtime parenting
+  are unsupported. Dimension labels and configurable 3D workplanes remain absent.
+- Missing, duplicate or invalid origin targets retain their reference and show
+  an unavailable ruler with no line or distance. Detach requires a resolvable
+  origin; explicit world replacement can repair an unavailable reference.
+  Hidden point entities remain valid origin targets. Duplicating a target
+  leaves the ruler attached to the original ID.
 - Surface picks follow authored visibility, tool filters and the working
   region. Point-entity helpers and unavailable model meshes supply no target.
   Empty space has no plane fallback. Coincident endpoints reject. Camera, scene

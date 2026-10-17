@@ -1490,9 +1490,10 @@ mod tests {
         let below = Camera::looking_at(glam::Vec3::new(0.0, 0.0, -64.0), glam::Vec3::ZERO);
         let near = batch(glam::Vec3::new(0.0, 0.0, 16.0), true);
         let far = batch(glam::Vec3::new(0.0, 0.0, -16.0), true);
-        let ordered = translucent_order(&[near, far], &above);
+        let models = [near, far];
+        let ordered = translucent_order(&models, &above);
         assert_eq!(ordered[0].center, far.center);
-        let reversed = translucent_order(&[near, far], &below);
+        let reversed = translucent_order(&models, &below);
         assert_eq!(reversed[0].center, near.center);
         let normal = [batch(near.center, false), batch(far.center, false)];
         assert_eq!(translucent_order(&normal, &above)[0].center, near.center);

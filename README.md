@@ -154,10 +154,10 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 | ![Wireframe view with a light helper](docs/images/wireframe-view.png) | ![Named camera views](docs/images/saved-views.png) |
 | Choose a viewport mode and show or hide selection outlines in every projection. | Name camera positions and jump back to them. They are saved in the map. |
 
-| Grid defaults |
-| --- |
-| ![Saved grid size, snapping and visibility controls](docs/images/grid-defaults.png) |
-| Save your startup grid while keeping temporary grid changes independent. |
+| Grid defaults | Preview defaults |
+| --- | --- |
+| ![Saved grid size, snapping and visibility controls](docs/images/grid-defaults.png) | ![Saved entity guide and viewport preview choices](docs/images/preview-defaults.png) |
+| Save your startup grid while keeping temporary grid changes independent. | Save startup outlines, entity images, model guides, ropes and sky visibility. |
 
 | Working region | Fog preview |
 | --- | --- |
@@ -171,10 +171,10 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 
 | Measurement guides | Rope preview |
 | --- | --- |
-| ![Surface-picked named ruler and exact coordinate controls](docs/images/measurements-surface-picked.png) | ![Authored rope spans with a static sag preview](docs/images/rope-preview.png) |
-| Pick ruler endpoints on visible surfaces or enter exact coordinates; save distances and XYZ components. | Inspect linked rope spans with authored slack, width and subdivision. |
+| ![Ruler endpoint attached to an entity origin](docs/images/measurements-origin-attachment.png) | ![Authored rope spans with a static sag preview](docs/images/rope-preview.png) |
+| Pick surface points, enter exact coordinates or attach ruler endpoints to entity origins. | Inspect linked rope spans with authored slack, width and subdivision. |
 
-[Editor basics →](docs/basics.md) · [Selecting →](docs/selection.md)
+[Editor basics →](docs/basics.md) · [Selecting →](docs/selection.md) · [Preview defaults →](docs/preview-defaults.md) · [Measurements →](docs/measurements.md)
 
 ### Entities and logic
 
@@ -197,6 +197,13 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 | --- | --- |
 | ![Player-start, camera and constraint resource models](docs/images/fgd-model-guides.png) | ![The same entities with their resource guides hidden and ordinary boxes retained](docs/images/entity-resource-guides-hidden.png) |
 | Show mounted class models with flat shading while retaining their ordinary selection boxes. | Hide editor images and model guides while keeping their boxes selectable. |
+
+| Sprite resource guides |
+| --- |
+| ![Scaled sprite resource image](docs/images/sprite-resource-guide.png) |
+| Browse Sprite materials and place camera-facing resource images at their authored scale. |
+
+[Sprite resource guides →](docs/sprite-guides.md)
 
 | Connections | Safe renaming |
 | --- | --- |
@@ -280,6 +287,13 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Named build recipes and their compiler settings](docs/images/build-recipes.png) | ![Sky asset packing enabled in Build settings](docs/images/build-pack-sky-assets.png) |
 | Recall Fast preview, Final lighting or named custom combinations of native compiler settings. | Include supported LDR/HDR sky materials and textures in the BSP with their original names and bytes. |
 
+| Baked lightmaps |
+| --- |
+| ![Baked face lightmap inspection](docs/images/baked-lightmaps.png) |
+| Inspect compiled LDR/HDR face samples, styles, directional maps and decoded intensity statistics. |
+
+[Baked lightmaps →](docs/baked-lightmaps.md)
+
 | Compile regions |
 | --- |
 | ![Orange compile-region bounds inside the full source map](docs/images/compile-region-preview.png) |
@@ -302,10 +316,12 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Painted grass and dirt on terrain](docs/images/terrain-blending.png) |
 | Create, sculpt and blend terrain, sew borders or corners, and preview edits with Undo. |
 
-| Source models |
-| --- |
-| ![Model browser and bodygroup preview](docs/images/bodygroup-model-browser.png) |
-| Browse models, skins and named bodygroups with reference poses and dynamic-model tints. |
+| Source models | Model opacity |
+| --- | --- |
+| ![Model browser and bodygroup preview](docs/images/bodygroup-model-browser.png) | ![Dynamic model opacity preview](docs/images/model-opacity.png) |
+| Browse models, skins and named bodygroups with reference poses and dynamic-model tints. | Preview Texture render mode with authored opacity while retaining texture alpha and depth. |
+
+[Source models →](docs/models.md)
 
 | Model detail props |
 | --- |
@@ -427,8 +443,8 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 
 | Overlays |
 | --- |
-| ![Numeric overlay projection corner controls](docs/images/overlay-corners.png) |
-| Fit, rebind or edit projection corners on world/detail faces while retaining settings and entity links. |
+| ![Viewport overlay corner handles](docs/images/overlay-corner-handles-viewport.png) |
+| Fit, rebind or drag projection corners on world/detail faces while retaining settings and entity links. |
 
 [Overlays →](docs/overlays.md)
 

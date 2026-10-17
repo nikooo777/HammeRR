@@ -10,6 +10,7 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | --- | --- |
 | [Getting started](getting-started.md) | Requirements, building, launching, game content |
 | [Editor basics](basics.md) | The window, previews and undo, navigation, viewport modes, saved camera views |
+| [Preview defaults](preview-defaults.md) | Save, apply and recover startup visibility for existing images and guides |
 | [Recent maps](recent-maps.md) | Reopening retained paths with compatible build settings, removing and clearing entries |
 | [Transaction history](history.md) | Inspecting human/agent edits and navigating retained undo/redo states |
 | [Measurement guides](measurements.md) | Named persistent rulers, surface endpoint picks, exact distances and axis components |
@@ -37,12 +38,14 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | [Cubemap faces](cubemap-faces.md) | Inspecting sample choices and previewing manual reflection bindings |
 | [Generated reflections](reflections.md) | Capturing LDR or paired LDR/HDR samples during a build and packing them for play |
 | [Models](models.md) | Static mesh previews, skin materials, bounds, picking and model inspection |
+| [Sprite resource guides](sprite-guides.md) | Static mounted Sprite images, physical scale, safe resource choices and limits |
 | [Particle effects](particles.md) | Active manifest definitions, metadata and guarded effect-name choices |
 | [Sounds](sounds.md) | Sound files and script names, audition, volume and entity assignment |
 | [Entities and logic](entities.md) | Placing entities, lights, brush entities, inputs/outputs, safe renaming, editing many entities |
 | [Linked paths](path-authoring.md) | Ordered open or closed path_corner/path_track chains with preview and Undo |
 | [Organizing and checking maps](map-tools.md) | Finding objects, visibility, statistics, map checks, design notes, autosave and recovery |
 | [Compile and play](compile-and-play.md) | Building BSPs, portable sky assets, lighting, physics, leaks and launching Counter-Strike: Source |
+| [Baked lightmaps](baked-lightmaps.md) | Actual compiled LDR/HDR face samples, style and directional-map inspection |
 | [Water](water.md) | Flat world pools, underwater materials, fog and floating objects |
 | [Compile regions](compile-regions.md) | Previewing and saving bounds for sealed partial-map builds |
 | [Physics and mass](physics.md) | Engine collision bodies and material-derived brush-model masses |

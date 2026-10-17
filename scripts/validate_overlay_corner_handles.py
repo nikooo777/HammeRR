@@ -1,5 +1,6 @@
 import argparse
 import json
+import re
 from pathlib import Path
 from unittest.mock import patch
 
@@ -67,18 +68,26 @@ def validate(client, output, render):
         uv0 = properties["uv0"].split()
         client.call("set_entity_properties", {"id": overlay, "set": {
             "StartU": "-00.2500", "RenderOrder": "02", "custom_option": "raw preserved",
-            "uv0": f"{uv0[0]} {uv0[1]} 17.125",
         }})
+        imported = output / f"{label}-import.vmf"
+        client.call("save_map", {"path": str(imported)})
+        data, replacements = re.subn(
+            r'"uv0"\s+"' + re.escape(properties["uv0"]) + '"',
+            f'"uv0" "{uv0[0]} {uv0[1]} 17.125"', imported.read_text(),
+        )
+        assert replacements == 1
+        imported.write_text(data)
+        client.call("open_map", {"path": str(imported), "discard_changes": True})
         client.call("set_view", {"surface": "flat"})
-        initial = client.call("preview_overlay_corners", {
-            "id": overlay, "corners": CORNERS, "snapshot": client.call("get_overlay_state")["snapshot"],
-        })
         before = detail(client, [overlay])[0]
         history = client.call("get_history")["undo_count"]
         original_camera = client.call("get_camera")
         source_path = output / f"{label}-before.vmf"
         client.call("save_map", {"path": str(source_path)})
         original_bytes = source_path.read_bytes()
+        initial = client.call("preview_overlay_corners", {
+            "id": overlay, "corners": CORNERS, "snapshot": client.call("get_overlay_state")["snapshot"],
+        })
         draft = begin(client)
         check(draft["draft"]["handles"]["valid"] and draft["draft"]["handles"]["snapping"] is False, f"{label}: typed shared viewport handles capture a valid unsnapped plane")
         reject(client, "pick", token=draft["draft"]["token"], x=1, y=1, width=WIDTH, height=HEIGHT)

@@ -96,10 +96,31 @@ not inherit the authored top surface's transition references. Compile regions
 keep the complete imported projection independently of its marker position;
 omitting any referenced surface stops publication of the new BSP.
 
+## Drag projection corners
+
+1. Select an eligible existing overlay, open **Overlay…**, then click
+   **Edit selected corners** and **Preview corners**.
+2. Click **Viewport handles**. The dialog hides and four cyan corner handles
+   appear in the viewport. Drag a corner in the existing projection plane.
+   Motion is unsnapped; invalid corners preserve the last valid preview.
+3. Release the mouse button to return to the corner dialog. Inspect the
+   updated outline and numbers, then click **Apply corners** for one Undo step.
+4. Escape during your current interaction or **Cancel handles** restores the
+   draft from before the gesture. The explicit button also clears your stale
+   gesture after a camera or viewport change. **Cancel** in the dialog discards
+   its owned overlay draft.
+5. To take over a current agent draft, click **Review current draft** first.
+   Foreign or stale gestures show a notice and leave ordinary viewport input
+   available. After a source change, preview again before applying.
+
+![Four projection corner handles on the existing bound face](images/overlay-corner-handles-viewport.png)
+
+![Corner controls after a viewport gesture](images/overlay-corner-handles.png)
+
 ## Limits
 
 - New overlay fitting supports one visible planar world or `func_detail` quad. Terrain, brush models and faces with other corner counts cannot be used for new fitting. Imported overlays retain their broader compile support.
-- Refit supports only one existing bound world or `func_detail` quad. Explicit rebind supports a different visible world/detail quad and requires one eligible existing binding. Numeric corner editing uses the existing single bound quad and projection plane. Viewport corner dragging, material projection and automatic refitting after geometry edits are unavailable. The imported **Overlay Basis** and **Overlay Point** fields remain read-only outside the explicit overlay operations.
+- Refit supports only one existing bound world or `func_detail` quad. Explicit rebind supports a different visible world/detail quad and requires one eligible existing binding. Numeric and viewport corner editing use the existing single bound quad and projection plane. Multiface/terrain/model creation, material projection and automatic refitting after geometry edits are unavailable. The imported **Overlay Basis** and **Overlay Point** fields remain read-only outside the explicit overlay operations.
 - Targets must be visible, exposed world, detail or terrain faces. Hidden, absent, non-rendering and brush-model targets fail compilation. Hidden overlays are omitted.
 - Budgets: 1,024 regular overlays, 64 source sides and 64 compiled surface references per regular overlay, and 65,536 total source or face bindings. Subdivision can increase the compiled face count; use fewer targets or a larger lightmap scale if it exceeds the budget. These are bounded compiler budgets, not a claim about every engine limit.
 - Imported water transitions have a separate 1,024-record budget, at most 64

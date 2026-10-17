@@ -38,8 +38,13 @@ fn rgb(value: &Value) -> String {
         .unwrap_or_default()
 }
 
-fn present(window: &BakedLightmapsWindow, inspection: Inspection) {
+fn present(
+    window: &BakedLightmapsWindow,
+    inspection: Inspection,
+    baseline: &RefCell<Option<Value>>,
+) {
     let report = inspection.report;
+    *baseline.borrow_mut() = Some(report["build"].clone());
     window.set_build_state(state_text(&report["build"]).into());
     window.set_channels(
         report["channels"]
@@ -166,14 +171,14 @@ fn inspect(
         ..Query::default()
     };
     match session.inspect_baked_lightmaps(&query) {
-        Ok(inspection) => present(window, inspection),
+        Ok(inspection) => present(window, inspection, baseline),
         Err(error) => {
+            *baseline.borrow_mut() = Some(session.baked_lightmap_build_state());
             window.set_diagnostics(error.into());
             window.set_has_preview(false);
             window.set_preview(slint::Image::default());
         }
     }
-    *baseline.borrow_mut() = Some(session.baked_lightmap_build_state());
 }
 
 impl Form {

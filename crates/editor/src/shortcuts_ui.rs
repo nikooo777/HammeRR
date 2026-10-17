@@ -250,7 +250,7 @@ fn event_key(text: &str) -> Option<String> {
         .or_else(|| editor_core::shortcuts::canonical_key(text))
 }
 
-pub fn dispatch_key(
+fn dispatch_key(
     app: &AppWindow,
     session: &mut Session,
     text: &str,
@@ -270,6 +270,43 @@ pub fn dispatch_key(
         app.set_message(error.into());
     }
     true
+}
+
+pub struct ViewportKey<'a> {
+    pub text: &'a str,
+    pub down: bool,
+    pub control: bool,
+    pub shift: bool,
+    pub alt: bool,
+    pub meta: bool,
+}
+
+pub fn route_viewport_key(
+    app: &AppWindow,
+    session: &SharedSession,
+    key: ViewportKey<'_>,
+    fixed_command: impl FnOnce(&str, bool, bool) -> bool,
+    navigation: impl FnOnce(&str, bool) -> bool,
+) -> bool {
+    if !key.down {
+        return navigation(key.text, false);
+    }
+    if key.alt || key.meta {
+        return false;
+    }
+    let configured = dispatch_key(
+        app,
+        &mut lock(session),
+        key.text,
+        key.control,
+        key.shift,
+        key.alt,
+        key.meta,
+    );
+    if configured || fixed_command(key.text, key.control, key.shift) {
+        return true;
+    }
+    !key.control && navigation(key.text, true)
 }
 
 pub fn refresh_hint(app: &AppWindow, session: &Session) {

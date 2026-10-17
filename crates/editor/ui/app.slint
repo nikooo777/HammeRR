@@ -2240,7 +2240,7 @@ export component AppWindow inherits Window {
 
                 focus := FocusScope {
                     key-pressed(event) => {
-                        if (event.modifiers.control && event.text == "o") {
+                        if (event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta && event.text == "o") {
                             root.open-map();
                             return accept;
                         }

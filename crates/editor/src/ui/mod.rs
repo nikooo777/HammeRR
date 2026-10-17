@@ -1887,26 +1887,21 @@ pub(super) fn run(
     app.on_key({
         let (app, ui) = (app.as_weak(), ui.clone());
         move |text, down, control, shift, alt, meta| {
-            if down
-                && shortcuts_ui::dispatch_key(
-                    &app.unwrap(),
-                    &mut lock(&session_of(&ui)),
-                    &text,
+            let app = app.unwrap();
+            shortcuts_ui::route_viewport_key(
+                &app,
+                &session_of(&ui),
+                shortcuts_ui::ViewportKey {
+                    text: &text,
+                    down,
                     control,
                     shift,
                     alt,
                     meta,
-                )
-            {
-                return true;
-            }
-            if down && command_key(&app.unwrap(), &ui, &text, control, shift) {
-                return true;
-            }
-            if down && (control || alt || meta) {
-                return false;
-            }
-            ui.borrow_mut().viewport.key(&text, down)
+                },
+                |text, control, shift| command_key(&app, &ui, text, control, shift),
+                |text, down| ui.borrow_mut().viewport.key(text, down),
+            )
         }
     });
     app.on_mouse_button({

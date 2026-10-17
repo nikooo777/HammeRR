@@ -1,4 +1,5 @@
 use super::*;
+use crate::runtime::{DocumentAccess, DocumentContinuation};
 
 pub(super) fn set_inspected_property(
     app: &AppWindow,
@@ -280,19 +281,6 @@ pub(super) fn entity_class_preview(class: &source_formats::fgd::Class) -> String
     text
 }
 
-pub(super) fn refresh_entity_picker(ui: &SharedUi) {
-    let (session, window) = {
-        let ui = ui.borrow();
-        (
-            ui.session.clone(),
-            ui.entity_window.as_ref().map(ComponentHandle::clone_strong),
-        )
-    };
-    if let Some(window) = window {
-        refresh_entity_window(&window, &lock(&session));
-    }
-}
-
 fn start_fgd_load(app: &slint::Weak<AppWindow>, ui: &SharedUi, path: &Path) {
     let window = ui
         .borrow()
@@ -376,88 +364,55 @@ pub(super) fn load_fgd(app: &AppWindow, ui: &SharedUi) {
     .expect("event loop is running");
 }
 
-pub(super) fn show_entity_window(app: &AppWindow, ui: &SharedUi, brush_mode: bool) {
-    if ui.borrow().entity_window.is_none() {
-        let window = match EntityWindow::new() {
-            Ok(window) => window,
-            Err(error) => {
-                app.set_message(error.to_string().into());
-                return;
-            }
-        };
-        window.on_cancel({
-            let window = window.as_weak();
-            move || {
-                let _ = window.unwrap().hide();
-            }
-        });
-        window.on_filter_changed({
-            let ui = Rc::downgrade(ui);
-            move || {
-                if let Some(ui) = ui.upgrade() {
-                    refresh_entity_picker(&ui);
-                }
-            }
-        });
-        window.on_class_selected({
-            let ui = Rc::downgrade(ui);
-            move || {
-                if let Some(ui) = ui.upgrade() {
-                    refresh_entity_picker(&ui);
-                }
-            }
-        });
-        window.on_load_fgd({
-            let (app, ui) = (app.as_weak(), Rc::downgrade(ui));
-            move || {
-                let (Some(app), Some(ui)) = (app.upgrade(), ui.upgrade()) else {
-                    return;
-                };
-                load_fgd(&app, &ui);
-            }
-        });
-        window.on_pick_surface({
-            let (app, ui) = (app.as_weak(), Rc::downgrade(ui));
-            move || {
-                let (Some(app), Some(ui)) = (app.upgrade(), ui.upgrade()) else {
-                    return;
-                };
-                let shared = session_of(&ui);
-                let mut state = ui.borrow_mut();
-                if state.entity_placement.is_none() {
-                    match entity_placement_ui::Controller::new(&shared) {
-                        Ok(controller) => state.entity_placement = Some(controller),
-                        Err(error) => {
-                            app.set_message(error.to_string().into());
-                            return;
-                        }
-                    }
-                }
-                let window = state.entity_window.as_ref().unwrap();
-                let controller = state.entity_placement.as_ref().unwrap();
-                controller.initialize(&lock(&shared), &window.get_classname());
+fn with_entity<R>(
+    window: &slint::Weak<EntityWindow>,
+    access: &DocumentContinuation,
+    body: impl FnOnce(&EntityWindow, &SharedSession) -> R,
+) -> Option<R> {
+    let window = window.upgrade()?;
+    match access
+        .upgrade()
+        .and_then(|access| access.with_shared(|shared| Ok(body(&window, shared))))
+    {
+        Ok(result) => Some(result),
+        Err(error) => {
+            window.set_message(error.into());
+            None
+        }
+    }
+}
+
+fn bind_entity_actions(window: &EntityWindow, app: &AppWindow, access: &DocumentAccess) {
+    let access = access.downgrade();
+    window.on_cancel({
+        let window = window.as_weak();
+        move || {
+            if let Some(window) = window.upgrade() {
                 let _ = window.hide();
-                if let Err(error) = controller.window.show() {
-                    app.set_message(error.to_string().into());
-                }
             }
-        });
-        window.on_create({
-            let (app, ui) = (app.as_weak(), Rc::downgrade(ui));
-            move || {
-                let (Some(app), Some(ui)) = (app.upgrade(), ui.upgrade()) else {
-                    return;
-                };
-                let Some(window) = ui
-                    .borrow()
-                    .entity_window
-                    .as_ref()
-                    .map(ComponentHandle::clone_strong)
-                else {
-                    return;
-                };
-                let shared = session_of(&ui);
-                let mut session = lock(&shared);
+        }
+    });
+    window.on_filter_changed({
+        let (window, access) = (window.as_weak(), access.clone());
+        move || {
+            with_entity(&window, &access, |window, shared| {
+                refresh_entity_window(window, &lock(shared));
+            });
+        }
+    });
+    window.on_class_selected({
+        let (window, access) = (window.as_weak(), access.clone());
+        move || {
+            with_entity(&window, &access, |window, shared| {
+                refresh_entity_window(window, &lock(shared));
+            });
+        }
+    });
+    window.on_create({
+        let (window, app, access) = (window.as_weak(), app.as_weak(), access.clone());
+        move || {
+            with_entity(&window, &access, |window, shared| {
+                let mut session = lock(shared);
                 let result = if window.get_brush_mode() {
                     let ids = session.selected_ids();
                     session.tie_to_entity(
@@ -486,15 +441,83 @@ pub(super) fn show_entity_window(app: &AppWindow, ui: &SharedUi, brush_mode: boo
                 };
                 match result {
                     Ok(_) => {
-                        if let Err(error) = window.hide() {
+                        if let Err(error) = window.hide()
+                            && let Some(app) = app.upgrade()
+                        {
                             app.set_message(error.to_string().into());
                         }
                     }
                     Err(error) => {
                         window.set_message(error.clone().into());
-                        app.set_message(error.into());
+                        if let Some(app) = app.upgrade() {
+                            app.set_message(error.into());
+                        }
                     }
                 }
+            });
+        }
+    });
+}
+
+fn bind_entity_pick_surface(
+    window: &EntityWindow,
+    access: &DocumentAccess,
+    open: impl Fn(&EntityWindow, &SharedSession) + 'static,
+) {
+    window.on_pick_surface({
+        let (window, access) = (window.as_weak(), access.downgrade());
+        move || {
+            with_entity(&window, &access, |window, shared| open(window, shared));
+        }
+    });
+}
+
+pub(super) fn show_entity_window(app: &AppWindow, ui: &SharedUi, brush_mode: bool) {
+    if ui.borrow().entity_window.is_none() {
+        let window = match EntityWindow::new() {
+            Ok(window) => window,
+            Err(error) => {
+                app.set_message(error.to_string().into());
+                return;
+            }
+        };
+        let access = file_access(ui);
+        bind_entity_actions(&window, app, &access);
+        bind_entity_pick_surface(&window, &access, {
+            let (app, ui) = (app.as_weak(), Rc::downgrade(ui));
+            move |window, shared| {
+                let (Some(app), Some(ui)) = (app.upgrade(), ui.upgrade()) else {
+                    return;
+                };
+                let access = file_access(&ui);
+                let mut state = ui.borrow_mut();
+                if state.entity_placement.is_none() {
+                    match entity_placement_ui::Controller::new_with_access(&access) {
+                        Ok(controller) => state.entity_placement = Some(controller),
+                        Err(error) => {
+                            app.set_message(error.to_string().into());
+                            return;
+                        }
+                    }
+                }
+                let controller = state.entity_placement.as_ref().unwrap();
+                controller.initialize(&lock(shared), &window.get_classname());
+                let _ = window.hide();
+                if let Err(error) = controller.window.show() {
+                    app.set_message(error.to_string().into());
+                }
+            }
+        });
+        window.on_load_fgd({
+            let (window, app, ui) = (window.as_weak(), app.as_weak(), Rc::downgrade(ui));
+            move || {
+                let Some(_window) = window.upgrade() else {
+                    return;
+                };
+                let (Some(app), Some(ui)) = (app.upgrade(), ui.upgrade()) else {
+                    return;
+                };
+                load_fgd(&app, &ui);
             }
         });
         ui.borrow_mut().entity_window = Some(window);
@@ -694,28 +717,42 @@ pub(super) fn show_rename_window(app: &AppWindow, ui: &SharedUi, name: Option<St
     }
 }
 
-pub(super) fn show_color_window(app: &AppWindow, ui: &SharedUi, key: &str) {
-    if ui.borrow().color_window.is_none() {
-        let window = match ColorWindow::new() {
-            Ok(window) => window,
-            Err(error) => {
-                app.set_message(error.to_string().into());
-                return;
+fn with_color<R>(
+    window: &slint::Weak<ColorWindow>,
+    access: &DocumentContinuation,
+    body: impl FnOnce(&ColorWindow, &mut Session) -> R,
+) -> Option<R> {
+    let window = window.upgrade()?;
+    match access
+        .upgrade()
+        .and_then(|access| access.with_session(|session| Ok(body(&window, session))))
+    {
+        Ok(result) => Some(result),
+        Err(error) => {
+            window.set_message(error.into());
+            None
+        }
+    }
+}
+
+fn bind_color_actions(
+    window: &ColorWindow,
+    access: &DocumentAccess,
+    target: impl Fn() -> Option<(u32, String, u64)> + 'static,
+) {
+    window.on_cancel({
+        let window = window.as_weak();
+        move || {
+            if let Some(window) = window.upgrade() {
+                let _ = window.hide();
             }
-        };
-        window.on_cancel({
-            let window = window.as_weak();
-            move || {
-                let _ = window.unwrap().hide();
-            }
-        });
-        window.on_apply({
-            let (window, ui) = (window.as_weak(), Rc::downgrade(ui));
-            move || {
-                let (Some(window), Some(ui)) = (window.upgrade(), ui.upgrade()) else {
-                    return;
-                };
-                let Some((id, key, generation)) = ui.borrow().color_target.clone() else {
+        }
+    });
+    window.on_apply({
+        let (window, access) = (window.as_weak(), access.downgrade());
+        move || {
+            with_color(&window, &access, |window, session| {
+                let Some((id, key, generation)) = target() else {
                     return;
                 };
                 let intensity = if window.get_has_intensity() {
@@ -734,8 +771,6 @@ pub(super) fn show_color_window(app: &AppWindow, ui: &SharedUi, key: &str) {
                     window.get_green() as u8,
                     window.get_blue() as u8,
                 ];
-                let shared = session_of(&ui);
-                let mut session = lock(&shared);
                 if session.document_generation() != generation {
                     window.set_message("Map changed. Open this picker again.".into());
                     return;
@@ -747,7 +782,23 @@ pub(super) fn show_color_window(app: &AppWindow, ui: &SharedUi, key: &str) {
                     }
                     Err(error) => window.set_message(error.into()),
                 }
+            });
+        }
+    });
+}
+
+pub(super) fn show_color_window(app: &AppWindow, ui: &SharedUi, key: &str) {
+    if ui.borrow().color_window.is_none() {
+        let window = match ColorWindow::new() {
+            Ok(window) => window,
+            Err(error) => {
+                app.set_message(error.to_string().into());
+                return;
             }
+        };
+        bind_color_actions(&window, &file_access(ui), {
+            let ui = Rc::downgrade(ui);
+            move || ui.upgrade().and_then(|ui| ui.borrow().color_target.clone())
         });
         ui.borrow_mut().color_window = Some(window);
     }
@@ -795,3 +846,6 @@ pub(super) fn single_selected_entity(session: &Session) -> Option<u32> {
 
 #[cfg(test)]
 mod fgd_loading_tests;
+
+#[cfg(test)]
+mod admission_tests;

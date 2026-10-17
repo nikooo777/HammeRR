@@ -6,9 +6,12 @@ use slint::ComponentHandle;
 
 use crate::{
     EntityPlacementWindow,
-    runtime::{SharedSession, lock},
+    runtime::{DocumentAccess, DocumentContinuation},
     session::{Actor, Session, entity_placement::Request},
 };
+
+#[cfg(test)]
+use crate::runtime::{SharedSession, lock};
 
 #[derive(Default)]
 struct Form {
@@ -88,107 +91,121 @@ fn present(window: &EntityPlacementWindow, report: &Value, dirty: bool) {
 }
 
 impl Controller {
+    #[cfg(test)]
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
+        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
+    }
+
+    pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let window = EntityPlacementWindow::new()?;
         let form = Rc::new(RefCell::new(Form::default()));
+        let access = access.downgrade();
         window.on_invalidate({
-            let (window, form) = (window.as_weak(), form.clone());
+            let (window, form, access) = (window.as_weak(), form.clone(), access.clone());
             move || {
-                form.borrow_mut().dirty = true;
-                window.unwrap().set_ready(false);
-                window
-                    .unwrap()
-                    .set_message("Pick a surface again after changing settings.".into());
+                callback(&window, &access, |window, _| {
+                    form.borrow_mut().dirty = true;
+                    window.set_ready(false);
+                    window.set_message("Pick a surface again after changing settings.".into());
+                });
             }
         });
         window.on_pick({
-            let (window, form, shared) = (window.as_weak(), form.clone(), shared.clone());
+            let (window, form, access) = (window.as_weak(), form.clone(), access.clone());
             move || {
-                let window = window.unwrap();
-                let result = (|| {
-                    let mut session = lock(&shared);
-                    let request = Request {
-                        classname: window.get_classname().to_string(),
-                        properties: form.borrow().properties.clone(),
-                        offset: window
-                            .get_offset()
-                            .parse()
-                            .map_err(|_| "Enter a finite surface offset")?,
-                        align: window.get_align(),
-                        snap: window.get_snap(),
-                    };
-                    let snapshot = form.borrow().snapshot.clone();
-                    session.begin_entity_placement(Actor::User, request, &snapshot)
-                })();
-                match result {
-                    Ok(report) => {
-                        let mut form = form.borrow_mut();
-                        form.token = report["draft"]["token"].as_u64();
-                        form.snapshot = report["snapshot"].as_str().unwrap().into();
-                        form.dirty = false;
-                        present(&window, &report, false);
-                        let _ = window.hide();
+                callback(&window, &access, |window, session| {
+                    let result = (|| {
+                        let request = Request {
+                            classname: window.get_classname().to_string(),
+                            properties: form.borrow().properties.clone(),
+                            offset: window
+                                .get_offset()
+                                .parse()
+                                .map_err(|_| "Enter a finite surface offset")?,
+                            align: window.get_align(),
+                            snap: window.get_snap(),
+                        };
+                        let snapshot = form.borrow().snapshot.clone();
+                        session.begin_entity_placement(Actor::User, request, &snapshot)
+                    })();
+                    match result {
+                        Ok(report) => {
+                            let mut form = form.borrow_mut();
+                            form.token = report["draft"]["token"].as_u64();
+                            form.snapshot = report["snapshot"].as_str().unwrap().into();
+                            form.dirty = false;
+                            present(window, &report, false);
+                            let _ = window.hide();
+                        }
+                        Err(error) => window.set_message(error.into()),
                     }
-                    Err(error) => window.set_message(error.into()),
-                }
+                });
             }
         });
         window.on_review({
-            let (window, form, shared) = (window.as_weak(), form.clone(), shared.clone());
+            let (window, form, access) = (window.as_weak(), form.clone(), access.clone());
             move || {
-                let result = form
-                    .borrow()
-                    .token
-                    .ok_or("No shared entity placement to review".into())
-                    .and_then(|token| lock(&shared).review_entity_placement(Actor::User, token));
-                let window = window.unwrap();
-                match result {
-                    Ok(report) => {
-                        let mut form = form.borrow_mut();
-                        form.token = report["draft"]["token"].as_u64();
-                        form.snapshot = report["snapshot"].as_str().unwrap().into();
-                        present(&window, &report, form.dirty);
+                callback(&window, &access, |window, session| {
+                    let result = form
+                        .borrow()
+                        .token
+                        .ok_or("No shared entity placement to review".into())
+                        .and_then(|token| session.review_entity_placement(Actor::User, token));
+                    match result {
+                        Ok(report) => {
+                            let mut form = form.borrow_mut();
+                            form.token = report["draft"]["token"].as_u64();
+                            form.snapshot = report["snapshot"].as_str().unwrap().into();
+                            present(window, &report, form.dirty);
+                        }
+                        Err(error) => window.set_message(error.into()),
                     }
-                    Err(error) => window.set_message(error.into()),
-                }
+                });
             }
         });
         window.on_apply({
-            let (window, form, shared) = (window.as_weak(), form.clone(), shared.clone());
+            let (window, form, access) = (window.as_weak(), form.clone(), access.clone());
             move || {
-                let result = (|| {
-                    let form = form.borrow();
-                    if form.dirty {
-                        return Err("Pick a surface again after changing settings".into());
+                callback(&window, &access, |window, session| {
+                    let result = (|| {
+                        let form = form.borrow();
+                        if form.dirty {
+                            return Err("Pick a surface again after changing settings".into());
+                        }
+                        session.apply_entity_placement(
+                            Actor::User,
+                            form.token.ok_or("Pick a surface first")?,
+                        )
+                    })();
+                    match result {
+                        Ok(_) => {
+                            form.borrow_mut().token = None;
+                            let _ = window.hide();
+                        }
+                        Err(error) => window.set_message(error.into()),
                     }
-                    lock(&shared).apply_entity_placement(
-                        Actor::User,
-                        form.token.ok_or("Pick a surface first")?,
-                    )
-                })();
-                let window = window.unwrap();
-                match result {
-                    Ok(_) => {
-                        form.borrow_mut().token = None;
-                        let _ = window.hide();
-                    }
-                    Err(error) => window.set_message(error.into()),
-                }
+                });
             }
         });
         window.on_cancel({
-            let (window, form, shared) = (window.as_weak(), form.clone(), shared.clone());
+            let (window, form, access) = (window.as_weak(), form.clone(), access.clone());
             move || {
-                if let Some(token) = form.borrow_mut().token.take() {
-                    let _ = lock(&shared).cancel_entity_placement(Actor::User, token);
+                callback(&window, &access, |_, session| {
+                    if let Some(token) = form.borrow_mut().token.take() {
+                        let _ = session.cancel_entity_placement(Actor::User, token);
+                    }
+                });
+                if let Some(window) = window.upgrade() {
+                    let _ = window.hide();
                 }
-                let _ = window.unwrap().hide();
             }
         });
         window.window().on_close_requested({
             let window = window.as_weak();
             move || {
-                window.unwrap().invoke_cancel();
+                if let Some(window) = window.upgrade() {
+                    window.invoke_cancel();
+                }
                 slint::CloseRequestResponse::HideWindow
             }
         });
@@ -243,5 +260,26 @@ impl Controller {
     }
 }
 
+fn callback<R>(
+    window: &slint::Weak<EntityPlacementWindow>,
+    access: &DocumentContinuation,
+    body: impl FnOnce(&EntityPlacementWindow, &mut Session) -> R,
+) -> Option<R> {
+    let window = window.upgrade()?;
+    match access
+        .upgrade()
+        .and_then(|access| access.with_session(|session| Ok(body(&window, session))))
+    {
+        Ok(result) => Some(result),
+        Err(error) => {
+            window.set_message(error.into());
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod admission_tests;

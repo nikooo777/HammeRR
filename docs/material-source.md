@@ -41,3 +41,32 @@ behavior and update through **Reload material assets**.
 MCP exposes the same read-only report through `get_material_source` with a
 `material` path. Read, parse, include and decoding failures appear in the report's
 `error`; invalid input paths reject the call.
+
+## Inspect the display image's alpha
+
+1. In **Browse materials…**, select a material or enter its **Material path**.
+2. Click **Alpha** below the selected preview. Black represents alpha 0, white
+   alpha 255 and gray intermediate source values. The preview itself is opaque.
+3. Read the source alpha range, display texture path, mip and VMT identity
+   beside the image. **Cached display** identifies an already loaded image;
+   **Current load** identifies a material not held in the display cache.
+4. Click **Color** to restore the unchanged RGBA preview. Neither action applies
+   the material or changes the map, camera, selection, history or pending edits.
+5. Use **Reload material assets** after changing cached source files. Missing
+   textures show **No texture preview**; read/parse/decode errors remain visible.
+
+![Selected material alpha and source identity](images/material-alpha-preview.png)
+
+This inspects decoded alpha from the selected display image and mip, using the
+same source as Color. It does not simulate alpha testing, blending, shader
+opacity, proxy animation, other texture layers or native appearance. Formats
+without stored alpha decode as opaque. Cached pixels retain the texture path
+and resolved VMT identity captured when loaded; switching channels does not
+combine them with fresh VMT declarations. Uncached materials retain the existing
+current-file loading behavior. The virtual texture path is separate from the
+current mounted-file provenance shown by **Source…**.
+
+MCP `preview_material` accepts optional `channel:"color"|"alpha"`, defaulting to
+Color. It returns the shared image, channel, source identity/cache/mip metadata
+and decoded `alpha_range` without starting graphics. Missing images have no PNG
+or invented alpha values; read/decode failures reject explicitly.

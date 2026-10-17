@@ -44,6 +44,23 @@ pub fn game() -> (tempfile::TempDir, GameFs) {
     (directory, game)
 }
 
+pub fn alpha_game() -> (tempfile::TempDir, GameFs) {
+    let (directory, game) = game();
+    let path = directory.path().join("materials/test/checker.vtf");
+    let mut bytes = std::fs::read(&path).unwrap();
+    let colors = [
+        [255, 0, 0, 0],
+        [0, 255, 0, 64],
+        [0, 0, 255, 128],
+        [255, 255, 0, 255],
+    ];
+    for (index, pixel) in bytes[80..].chunks_exact_mut(4).enumerate() {
+        pixel.copy_from_slice(&colors[index % 64 / 16]);
+    }
+    std::fs::write(path, bytes).unwrap();
+    (directory, game)
+}
+
 pub fn room() -> source_formats::vmf::Vmf {
     use glam::DVec3;
     use map_core::{Document, edit};

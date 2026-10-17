@@ -613,6 +613,7 @@ export component MaterialWindow inherits Window {
     in-out property <string> asset-generation;
     in property <bool> favorite;
     in property <image> preview;
+    in-out property <int> preview-channel;
     in property <string> detail;
     in property <bool> available;
     callback search();
@@ -685,11 +686,17 @@ export component MaterialWindow inherits Window {
                         preview-image := Image { width: parent.width; height: parent.height; source: root.preview; image-fit: contain; }
                         if !root.available: Text { text: "No texture preview"; horizontal-alignment: center; vertical-alignment: center; color: #aab0bb; }
                     }
-                    Text { text: root.detail; wrap: word-wrap; }
+                    HorizontalLayout {
+                        Button { text: "Color"; enabled: root.preview-channel != 0; clicked => { root.preview-channel = 0; root.preview-material(); } }
+                        Button { text: "Alpha"; enabled: root.preview-channel != 1; clicked => { root.preview-channel = 1; root.preview-material(); } }
+                    }
+                    ScrollView {
+                        vertical-stretch: 1;
+                        Text { text: root.detail; wrap: word-wrap; }
+                    }
                     Button { text: "Source…"; enabled: root.material != ""; clicked => { root.inspect-source(); } }
                     Button { text: root.favorite ? "Remove favorite" : "Add favorite"; enabled: root.material != ""; clicked => { root.toggle-favorite(); } }
                     favorites-state := Text { text: root.favorites-status; wrap: word-wrap; font-size: 11px; }
-                    Rectangle { vertical-stretch: 1; }
                 }
             }
             if root.reload-status != "": ScrollView {

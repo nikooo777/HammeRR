@@ -49,6 +49,7 @@ mod lighting_preview;
 pub mod linked_path;
 mod management;
 pub mod material_assets;
+pub mod material_preview;
 pub mod material_search;
 pub mod material_source;
 pub mod measurements;
@@ -117,15 +118,7 @@ struct FacePreview {
     atlas: Option<atlas_texturing::PreviewGuard>,
 }
 
-#[derive(Debug)]
-pub struct MaterialPreview {
-    pub name: String,
-    pub width: u32,
-    pub height: u32,
-    pub missing: bool,
-    pub tool: bool,
-    pub image: Option<source_formats::vtf::RgbaImage>,
-}
+pub use material_preview::{Channel as MaterialPreviewChannel, MaterialPreview};
 
 #[derive(Clone)]
 struct Snapshot {
@@ -853,34 +846,7 @@ impl Session {
     }
 
     pub fn material_preview(&self, name: &str) -> Result<MaterialPreview, String> {
-        let name = name.trim();
-        if name.is_empty() {
-            return Err("material name must not be empty".into());
-        }
-        let loaded;
-        let material = if let Some(material) = self.materials.find(name) {
-            material
-        } else {
-            loaded = render::materials::MaterialInfo::load(&self.game, name);
-            &loaded
-        };
-        if let Some(error) = &material.error {
-            return Err(error.clone());
-        }
-        let image = material
-            .base
-            .as_ref()
-            .map(|texture| texture.decode_rgba8(texture.mip_for_size(256), 0, 0))
-            .transpose()
-            .map_err(|error| error.to_string())?;
-        Ok(MaterialPreview {
-            name: material.name.clone(),
-            width: material.width,
-            height: material.height,
-            missing: material.missing,
-            tool: material.tool,
-            image,
-        })
+        self.material_preview_channel(name, MaterialPreviewChannel::Color)
     }
 
     pub fn search_entity_classes(

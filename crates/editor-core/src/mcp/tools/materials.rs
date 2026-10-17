@@ -645,18 +645,21 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Preview a game material as a PNG, with its name, original dimensions, tool status and missing-texture status. Uses the same thumbnail as the GUI material picker.",
+        description = "Inspect the material browser's selected image as a CPU PNG. Optional channel=color (default, unchanged RGBA) or alpha (source alpha bytes as opaque grayscale). Reports original dimensions, missing/tool state, decoded-mip alpha range and the display texture path/resolved VMT identity captured with those pixels. Cached display data stays paired until Reload material assets; uncached materials use one current load. No fresh VMT is paired with an old base image. This inspects the editor display image, not shader opacity or a second layer. Missing images produce no substitute PNG; read/decode errors fail explicitly. No graphics startup or map/history/camera/selection/draft changes.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn preview_material(
         &self,
         Parameters(args): Parameters<MaterialPreviewArgs>,
     ) -> ToolResult {
-        let preview = match self.session().material_preview(&args.material) {
+        let preview = match self
+            .session()
+            .material_preview_channel(&args.material, args.channel.unwrap_or_default())
+        {
             Ok(preview) => preview,
             Err(error) => return fail(error),
         };
-        let mut content = vec![ContentBlock::text(json!({"material": preview.name, "width": preview.width, "height": preview.height, "missing": preview.missing, "tool": preview.tool}).to_string())];
+        let mut content = vec![ContentBlock::text(json!({"material": preview.name, "width": preview.width, "height": preview.height, "missing": preview.missing, "tool": preview.tool, "channel":preview.channel, "source":preview.source, "alpha_range":preview.alpha_range}).to_string())];
         if let Some(image) = preview.image {
             let mut bytes = Vec::new();
             let mut encoder = png::Encoder::new(Cursor::new(&mut bytes), image.width, image.height);
@@ -676,6 +679,10 @@ impl EditorServer {
         Ok(CallToolResult::success(content))
     }
 }
+
+#[cfg(test)]
+#[path = "material_preview_tests.rs"]
+mod material_preview_tests;
 
 #[cfg(test)]
 mod material_source_tests {

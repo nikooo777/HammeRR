@@ -7,12 +7,12 @@ use std::time::{Duration, Instant};
 const TIMEOUT: Duration = Duration::from_secs(5);
 
 struct Fixture {
-    directory: tempfile::TempDir,
     document: DocumentHandle,
     access: DocumentAccess,
     shared: SharedSession,
     controller: Controller,
     origin: map_core::ObjectId,
+    directory: tempfile::TempDir,
 }
 
 fn software() {
@@ -291,6 +291,10 @@ fn measurements_reject_every_callback_during_drain_after_finish_and_after_failur
         directory: target.directory.path().join("recovery"),
     };
     let recovered = store.read(&entries[0].id).unwrap().1;
+    assert_eq!(
+        source_formats::vmf::Vmf::parse(&recovered).unwrap(),
+        before.0
+    );
     rejected_actions(&target.controller, "the document is closed");
     assert_eq!(snapshot(&target.shared), before);
     assert_eq!(store.read(&entries[0].id).unwrap().1, recovered);

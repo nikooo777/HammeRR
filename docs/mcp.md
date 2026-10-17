@@ -178,7 +178,7 @@ for source, geometry and memory limits.
 
 ## Tools by task
 
-The shared desktop and private stdio server register 408 tools. `tools/list`
+The shared desktop and private stdio server register 409 tools. `tools/list`
 returns their current schemas and descriptions.
 
 | Task | Tools |
@@ -251,7 +251,7 @@ returns their current schemas and descriptions.
 | Saved camera views | `get_camera_views`, `save_camera_view`, `restore_camera_view`, `rename_camera_view`, `delete_camera_view` |
 | Pointfiles | `load_pointfile`, `get_pointfile`, `navigate_pointfile`, `frame_pointfile`, `clear_pointfile` |
 | Compile and play | `get_compile_settings`, `set_compile_settings`, `start_compile`, `get_compile_status`, `cancel_compile`, `compile_map`, `run_map`, `launch_game`, `game_log`, `stop_game` |
-| Build recipes | `get_build_recipes`, `save_build_recipe`, `rename_build_recipe`, `delete_build_recipe`, `apply_build_recipe` |
+| Build recipes | `get_build_recipes`, `save_build_recipe`, `rename_build_recipe`, `delete_build_recipe`, `apply_build_recipe`, `reload_build_recipes` |
 
 ## Good to know
 
@@ -1864,10 +1864,11 @@ Preferences use `recent-maps.json` in recovery storage. `HAMMERR_RECENT_MAPS_DIR
 | `rename_build_recipe` | `id`, `name`, optional `revision`; changes only a custom recipe's name. |
 | `delete_build_recipe` | `id`, optional `revision`; removes a custom recipe while retaining current compiler values. |
 | `apply_build_recipe` | `id`, optional `revision`; applies all settings through the shared settings operation without starting a build. |
+| `reload_build_recipes` | Optional `revision`; adopts a complete valid saved registry without applying compiler settings. |
 
-Pass the returned registry revision to reject stale edits. Active or cancelling jobs block every recipe mutation and Apply. `get_compile_settings.recipe` identifies the current applied recipe or is null; a changed value clears it. `get_compile_status.job.recipe` keeps the identity captured when that build started, including after rename/deletion. Names alone do not stale output. These operations leave VMF and map Undo unchanged.
+Pass the returned registry revision to reject stale edits. Active or cancelling jobs block every recipe mutation, Apply and Reload. `get_compile_settings.recipe` identifies the current applied recipe or is null; a changed value clears it. `get_compile_status.job.recipe` keeps the identity captured when that build started, including after rename/deletion. Names alone do not stale output. These operations leave VMF and map Undo unchanged.
 
-Custom recipes use `build-recipes.json` in recovery storage; `HAMMERR_BUILD_RECIPES` overrides the file and `HAMMERR_RECOVERY_DIR` isolates the default. Limits are 32 customs, unique names ignoring case, 1–80 UTF-8 bytes per trimmed name without control characters and a 65,536-byte file. Invalid loads block custom edits while built-ins remain usable. Failed writes preserve preferences and can retry; detected disk changes require restart. Simultaneous writes are not coordinated. Loading recipes does not apply a custom recipe automatically. See [Build recipes](build-recipes.md).
+Custom recipes use `build-recipes.json` in recovery storage; `HAMMERR_BUILD_RECIPES` overrides the file and `HAMMERR_RECOVERY_DIR` isolates the default. Limits are 32 customs, unique names ignoring case, 1–80 UTF-8 bytes per trimmed name without control characters and a 65,536-byte file. Invalid loads block custom edits while built-ins remain usable. Failed writes preserve preferences and can retry; detected disk changes require `reload_build_recipes`. Reload shares **Reload recipes** in **Build settings…** or **Build details…**. A failed configured-path Reload retains the valid list and active identity, reports the error and blocks custom edits until repaired storage reloads. Successful Reload retains the same applied recipe ID only when its loaded settings still match current options; rename updates the label, replacement/deletion clears it. Neither outcome applies options or changes map/history/camera/owned drafts or captured jobs. Unconfigured session-only storage rejects Reload without blocking local edits. Simultaneous writes remain uncoordinated. Loading recipes does not apply a custom recipe automatically. See [Build recipes](build-recipes.md).
 
 ### Prop shadows and occluders
 

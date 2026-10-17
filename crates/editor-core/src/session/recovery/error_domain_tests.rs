@@ -137,3 +137,97 @@ fn aggregate_does_not_hide_an_unrelated_substring_error() {
         "snapshot disk failure; disk"
     );
 }
+
+#[test]
+fn disk_reload_preserves_live_requests_and_errors_and_only_adopts_valid_settings() {
+    let (directory, mut session) = fixture();
+    let settings = Settings {
+        enabled: true,
+        interval_seconds: 60,
+        keep_per_map: 4,
+    };
+    session
+        .set_recovery_settings(Actor::User, settings.clone(), None)
+        .unwrap();
+    let failed = session.begin_recovery_snapshot(Kind::Manual).unwrap();
+    session
+        .finish_recovery_snapshot(
+            Actor::Agent,
+            &failed,
+            Err("retained capture failure".into()),
+        )
+        .unwrap_err();
+    let request = session.begin_recovery_snapshot(Kind::Manual).unwrap();
+    let revision = session.recovery_settings_revision();
+    let attempt = session.recovery.last_attempt;
+    let source = session.document().vmf().clone();
+    let history = session.history_snapshot();
+    let camera = session.camera();
+    let path = directory.path().join("settings.json");
+    for invalid in [
+        b"broken".to_vec(),
+        vec![b' '; crate::recovery::MAX_SETTINGS_BYTES as usize + 1],
+    ] {
+        std::fs::write(&path, &invalid).unwrap();
+        assert!(
+            session
+                .reload_recovery_settings(Actor::Agent, Some(revision))
+                .is_err()
+        );
+        assert_eq!(session.recovery_settings(), &settings);
+        assert_eq!(session.recovery_settings_revision(), revision);
+        assert_eq!(session.recovery.last_attempt, attempt);
+        assert!(session.recovery_busy());
+        assert_eq!(
+            session.recovery_status()["snapshot_error"],
+            "retained capture failure"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), invalid);
+    }
+    let replacement = Settings {
+        enabled: false,
+        interval_seconds: 90,
+        keep_per_map: 2,
+    };
+    std::fs::write(&path, serde_json::to_vec(&replacement).unwrap()).unwrap();
+    session
+        .reload_recovery_settings(Actor::User, Some(revision))
+        .unwrap();
+    assert_eq!(session.recovery_settings(), &replacement);
+    assert_eq!(request.keep, 4);
+    assert_eq!(session.recovery.last_attempt, attempt);
+    assert!(session.recovery_busy());
+    assert!(session.recovery_status()["settings_error"].is_null());
+    assert_eq!(
+        session.recovery_status()["snapshot_error"],
+        "retained capture failure"
+    );
+    assert!(
+        session
+            .reload_recovery_settings(Actor::Agent, Some(revision))
+            .is_err()
+    );
+    assert!(
+        session
+            .set_recovery_settings(Actor::Agent, settings, Some(revision))
+            .is_err()
+    );
+    assert_eq!(session.document().vmf(), &source);
+    assert_eq!(session.history_snapshot(), history);
+    assert_eq!(session.camera(), camera);
+    std::fs::remove_file(&path).unwrap();
+    session.reload_recovery_settings(Actor::User, None).unwrap();
+    assert_eq!(session.recovery_settings(), &Settings::default());
+    let mut unavailable = Session::new(Err("no assets".into()));
+    let before = unavailable.recovery_status();
+    assert!(
+        unavailable
+            .reload_recovery_settings(Actor::Agent, None)
+            .is_err()
+    );
+    let after = unavailable.recovery_status();
+    assert_eq!(after["settings"], before["settings"]);
+    assert_eq!(after["settings_revision"], before["settings_revision"]);
+    assert!(after["settings_error"].is_string());
+    assert!(after["snapshot_error"].is_null());
+}

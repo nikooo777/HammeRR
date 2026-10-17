@@ -283,6 +283,12 @@ pub struct RecoverySettingsArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReloadRecoverySettingsArgs {
+    pub expected_revision: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct RecoveryIdArgs {
     pub id: String,
 }

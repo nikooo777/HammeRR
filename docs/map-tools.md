@@ -91,4 +91,12 @@ Normal exit waits for in-flight recovery, then captures outstanding committed ch
 
 Recovery retains settings, snapshot, retention and shutdown failures separately. Saving settings clears only settings errors; a successful snapshot clears only snapshot and retention errors. Recovery displays unresolved causes together with listing warnings, and MCP reports the same causes separately as well as in its combined error. A settings warning alone does not turn a successful exit snapshot into a shutdown failure.
 
+To reload settings after repairing or changing the saved file outside the editor:
+
+1. Open **Recovery…**.
+2. Click **Reload settings**. Success adopts the complete saved settings. Failure keeps your typed values and current settings, and displays the error.
+3. To save an explicit edit, change the settings and click **Apply settings**.
+
 ![Autosave settings, snapshots and recovery controls](images/recovery.png)
+
+Reload does not capture a snapshot or write the map. An absent settings file restores the two-minute interval, ten snapshots per map and enabled autosave. Settings files must resolve to a regular file no larger than **32 KiB**; valid regular-file symlinks remain supported. Each Session keeps its own settings, and simultaneous writers remain uncoordinated.

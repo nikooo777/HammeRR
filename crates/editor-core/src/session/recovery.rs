@@ -232,6 +232,41 @@ impl Session {
         Ok(())
     }
 
+    pub fn reload_recovery_settings(
+        &mut self,
+        actor: Actor,
+        expected_revision: Option<u64>,
+    ) -> Result<Value, String> {
+        if expected_revision.is_some_and(|version| version != self.recovery.settings_revision) {
+            return Err(
+                "Recovery settings changed elsewhere; reload the settings before applying".into(),
+            );
+        }
+        let loaded = self
+            .recovery
+            .store
+            .as_ref()
+            .ok_or_else(|| "Recovery storage is unavailable".to_owned())
+            .and_then(Store::load_settings);
+        match loaded {
+            Ok(settings) => {
+                self.recovery.settings = settings;
+                self.recovery.settings_revision += 1;
+                self.recovery.settings_error = None;
+                self.recovery.serial += 1;
+                self.log(actor, "Reloaded saved recovery settings");
+                Ok(self.recovery_status())
+            }
+            Err(error) => {
+                let error = format!("Recovery settings could not reload: {error}");
+                self.recovery.settings_error = Some(error.clone());
+                self.recovery.serial += 1;
+                self.log(actor, &error);
+                Err(error)
+            }
+        }
+    }
+
     pub fn recovery_entries(&self) -> Result<Listing, String> {
         self.recovery
             .store

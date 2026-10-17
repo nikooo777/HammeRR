@@ -141,7 +141,7 @@ def validate(client, output, gameinfo, result):
     assert any(diagnostic["object"] == helper and child_relative in diagnostic["message"]
                and "child world settings are ignored" in diagnostic["message"]
                for diagnostic in built["diagnostics"])
-    assert any(diagnostic["level"] == "info" and "not shown in the editor viewport" in diagnostic["message"]
+    assert any(diagnostic["level"] == "info" and "Expanded 1 brush instances from 1 files" in diagnostic["message"]
                for diagnostic in built["diagnostics"])
     check(blocking_path.read_bytes().startswith(b"VBSP")
           and blocking_path.with_suffix(".lin").read_bytes() == previous_lin,

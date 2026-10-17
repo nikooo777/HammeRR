@@ -52,6 +52,8 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | [Compile and play](compile-and-play.md) | Building BSPs, portable sky assets, lighting, physics, leaks and launching Counter-Strike: Source |
 | [Baked lightmaps](baked-lightmaps.md) | Actual compiled LDR/HDR face samples, style and directional-map inspection |
 | [Water](water.md) | Flat world pools, underwater materials, fog and floating objects |
+| [Instance authoring](instance-authoring.md) | Place and edit saved VMF references with readable path and transform controls |
+| [Instance contents](instance-contents.md) | Resolve, inspect, select and frame a flat reference layer |
 | [Referenced instances](instances.md) | Compile saved world/detail assemblies with guarded dependencies |
 | [Compile regions](compile-regions.md) | Previewing and saving bounds for sealed partial-map builds |
 | [Physics and mass](physics.md) | Engine collision bodies and material-derived brush-model masses |

@@ -1619,6 +1619,7 @@ mod tests {
     fn transparent_model_order_tracks_render_camera_and_keeps_normal_order() {
         use super::*;
         let batch = |center, model_translucent| DrawBatch {
+            reference: false,
             batch: Batch {
                 material: 0,
                 first_index: 0,

@@ -11,7 +11,7 @@ from validate_sky_preview import rgba_png
 
 TOP = {"projection": "top", "center": [0, 0, 0], "ortho_height": 96}
 SIZE = 513
-PROBE = (171, 256)
+PROBE = (64, 256)
 
 
 def digest(path):
@@ -64,7 +64,7 @@ def validate(client, output, result):
 
     child = output / "parts/child.vmf"
     child.parent.mkdir()
-    block([-24, -24, 0], [24, 24, 40])
+    block([-40, -40, 0], [40, 40, 40])
     child_detail = block([40, -12, 0], [64, 12, 24])
     client.call("tie_to_entity", {"ids": [child_detail], "classname": "func_detail"})
     client.call("save_map", {"path": str(child)})
@@ -116,8 +116,11 @@ def validate(client, output, result):
     check(on != off and probe(on) != probe(off) and report["displayed"],
         "Actual flat world/detail reference surfaces render at transformed positions")
     reference_hit = pick(True)
+    marker_hit = client.call("pick_at_pixel", {"x": 171, "y": 256, "width": SIZE,
+        "height": SIZE, "camera": TOP, "instance_contents": False})
     check(reference_hit["object"] == owners[0] and reference_hit["solid"] is None
-        and reference_hit["side"] is None and pick(False) == {"hit": None},
+        and reference_hit["side"] is None and pick(False) == {"hit": None}
+        and marker_hit["object"] == owners[0] and marker_hit["point"][2] < reference_hit["point"][2],
         "Temporary render/pixel-pick overrides agree and expose only the existing root owner")
     center_hit = client.call("pick_at_pixel", {"x": 256, "y": 256, "width": SIZE, "height": SIZE,
         "camera": TOP, "instance_contents": True})

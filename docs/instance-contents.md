@@ -1,3 +1,5 @@
+[← Manual](README.md)
+
 # Instance contents
 
 Inspect the world and detail geometry referenced by saved `func_instance`
@@ -5,8 +7,8 @@ helpers. The flat reference layer uses the helpers' complete Source transforms,
 with owner selection, depth and camera framing. It leaves child files and parent
 map objects unchanged.
 
-1. Save the parent VMF. Give each visible instance helper an explicit relative
-   `.vmf` **file** reference inside the saved parent's directory tree.
+1. Save the parent VMF. Use **Instance reference…** to create an explicit relative
+   `.vmf` reference inside its directory tree; see [Instance authoring](instance-authoring.md).
 2. Under **VIEWPORT**, enable **Instance contents**, then open **Instance contents…**.
 3. Click **Refresh instance contents**. The inspector reports loading, ready,
    empty or failed state, owner references, transforms, world/detail counts,
@@ -20,6 +22,10 @@ map objects unchanged.
    **Refresh instance contents** again. Stale contents disappear from rendering,
    picking and framing; a failed refresh keeps its error and shows no old layer.
 
+![Reference inspector with owner and dependency details](images/instance-contents.png)
+
+![Resolved reference geometry with a selected root owner](images/instance-reference-contents.png)
+
 Turning the checkbox on or off displays an existing current snapshot; it never
 loads child files. Refresh resolves one immutable parent snapshot outside the
 Session lock. Unsaved edits in that parent remain authoritative. All visible
@@ -27,7 +33,7 @@ references must resolve successfully together. A missing or unsupported child
 fails the whole layer, including repeated occurrences of that child.
 
 The layer is available in ordinary **Objects** mode. Faces, components,
-placement, paint, clipping and active geometry drafts suppress it, with a status
+placement, paint, clipping, ruler endpoint picking and active geometry drafts suppress it, with a status
 reason. Child geometry never becomes an editable root face or placement target.
 Selection dimensions, transform pivots, measurement attachments, volume tools
 and other authoring bounds continue to use real parent objects. A working region
@@ -38,8 +44,8 @@ outline. Root geometry occludes them by depth. **Wireframe** draws their edges
 without filling the faces. The layer does not load child materials or evaluate
 lighting, normals, sky, water, transparency, models or runtime entities.
 **Tool textures** does not classify this flat reference layer. Nested instances,
-child editing, file browsing/replacement authoring and live transformed child
-previews remain unsupported.
+child editing, parameter replacements and live transformed child previews remain
+unsupported. [Instance authoring](instance-authoring.md) edits the root reference.
 
 Limits include 256 occurrences, 32 unique files, 4 MiB per file and 32 MiB total
 source bytes, with bounded parsing and geometry work. Derived geometry is capped

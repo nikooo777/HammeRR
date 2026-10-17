@@ -3,18 +3,19 @@
 # Compile referenced brush assemblies
 
 Reuse a saved VMF's world and detail brushes at several positions and rotations.
-Compilation expands the referenced geometry; the editor currently shows only the
-instance helper, not its child contents.
+Compilation expands the referenced geometry. The editor can resolve a separate,
+explicitly refreshed [flat reference preview](instance-contents.md).
 
 1. Save the parent map. Save a child VMF inside the same directory tree, such as
    `parts/arch.vmf`. Keep the child's visible contents to world brushes and
    ordinary `func_detail` brushes. Its world settings do not replace the parent's.
-2. In the parent, click **Entity…**. Enter `func_instance` in
-   **Classname (custom classes are supported)**, set **Position**, then click
-   **Place entity**. **Cancel** closes the form without placing it.
-3. Select the helper and enable **Advanced properties**. Add `file` using
-   **Property key** and `parts/arch.vmf` using **Value**, then press Enter.
-   With the Source SDK definition loaded, the same field is **VMF Filename**.
+2. Click **Instance reference…**. Set **VMF reference** to `parts/arch.vmf`,
+   choose **Position** and **Rotation**, then click **Create**. **Cancel** leaves
+   the map unchanged. See [Instance authoring](instance-authoring.md) for browsing,
+   editing and file-check controls.
+3. To inspect child shapes, enable **Instance contents**, open **Instance contents…**
+   and click **Refresh instance contents**. The layer is a flat reference view,
+   not a compiled or editable copy of the child.
 4. Move or rotate the helper with the ordinary transform controls. Its origin
    places the child's origin. The `angles` property uses Source pitch, yaw, roll;
    brushes and attached texture coordinates rotate together. Keep replacement
@@ -55,8 +56,8 @@ Limits:
   and pointfile. A successful build retains its dependency identities separately
   from later failed jobs. External mutation after final verification remains a
   filesystem race; the editor does not lock referenced files.
-- Referenced viewport contents, extraction, in-context editing, automatic search
-  and nested/runtime-name expansion remain unavailable. Compiler calls without
+- Extraction, in-context editing, automatic search and nested/runtime-name
+  expansion remain unavailable. Compiler calls without
   a saved source context continue to reject unresolved instances.
 
 MCP uses the same `create_entity`, `set_entity_properties`, transforms,

@@ -108,13 +108,52 @@ jobs report `instance_dependencies.current/error`; `stale`, launch readiness
 and baked inspection include the retained build's dependencies. Launch verifies
 exact contents in its worker. Source/settings changes, dependency failures and
 cancellation preserve previous BSP/pointfile bytes. **Generate reflections**
-with instances rejects; viewport expansion and nested/runtime-name expansion
-remain unavailable. `run_map_checks` performs only pure helper-field/path-state
+with instances rejects; nested/runtime-name expansion remains unavailable. The
+explicitly refreshed flat reference layer is separate from compilation. `run_map_checks` performs only pure helper-field/path-state
 admission, leaving child reads and complete validation to compilation.
+
+## Instance reference tools
+
+`get_instance_reference` inspects the owned authoring form without loading child
+contents. `set_instance_reference` shares **Instance reference…** and **Edit
+instance reference…**: use `action:"begin"` with an optional root helper `id`,
+then `update` with changed `file`, `origin` and `angles` strings. Subsequent
+`check`, `file`, `review`, `apply` and `cancel` actions require the current token.
+`file` converts an explicitly supplied picker `selected_path` through the same saved-parent
+path admission; it does not copy or search. `review` transfers the form with a new
+token. Create/Edit applies one Undo step and preserves untouched imported data.
+Source/save/revision/definition changes and competing drafts reject stale work.
+`contents_validation:"not_checked"` means path/presence only; explicit Refresh or
+Compile performs child-content admission. See [Instance authoring](instance-authoring.md).
+
+`inspect_instance_contents` reads the default-off reference layer's state,
+source/dependency identities, transforms, bounds, counts and diagnostics without
+loading child bytes or initializing graphics. `offset` and `limit` page at most
+64 owners. `set_instance_contents` accepts `action:"refresh"` and optional
+`background:true`; poll inspection for completion. Refresh resolves the current
+immutable parent outside the Session lock and evicts any earlier effective layer.
+One missing or unsupported visible child fails the complete layer.
+
+`cancel`, `clear` and `frame` require the current contents token. Frame optionally
+takes root `ids` and a positive `aspect`; omitted IDs use selection, and empty
+selection frames all. These operations do not toggle the checkbox. Shared
+`set_view.instance_contents` and temporary `render_view.instance_contents` control
+display; `pick_at_pixel.instance_contents` matches temporary visibility. Picks
+return root helper ownership with null root solid/side, never editable child
+surfaces. Face/component modes, ruler endpoint picks and incompatible authoring
+tools suppress the layer. Camera framing can include child bounds, while editing
+bounds and pivots remain rooted in parent objects.
+
+Stale metadata is checked before UI and MCP render-cache reuse. Render metadata
+retains the exact uploaded layer report, separately from newer Session state.
+Reference toggles, Refresh/Clear and suppression use a derived render revision;
+they do not invalidate active root editing tools. Refresh/Clear never edits map
+source/history or loads child materials. See [Instance contents](instance-contents.md)
+for source, geometry and memory limits.
 
 ## Tools by task
 
-The shared desktop and private stdio server register 400 tools. `tools/list`
+The shared desktop and private stdio server register 404 tools. `tools/list`
 returns their current schemas and descriptions.
 
 | Task | Tools |
@@ -133,6 +172,8 @@ returns their current schemas and descriptions.
 | Selection and history | `select`, `get_selection`, `set_selection_mode`, `undo`, `redo`, `get_history`, `navigate_history` |
 | Measurement guides | `get_measurements`, `set_measurement` |
 | Overlapping objects | `get_object_hit_candidates`, `cycle_object_hit` |
+| Instance reference authoring | `get_instance_reference`, `set_instance_reference` |
+| Instance contents preview | `inspect_instance_contents`, `set_instance_contents` |
 | Prefab library | `get_prefabs`, `inspect_prefab_thumbnail`, `render_prefab_thumbnail`, `save_prefab`, `preview_prefab`, `rename_prefab`, `delete_prefab`; placement uses `apply_paste` / `cancel_paste` |
 | Layers | `get_layers`, `begin_layer_edit`, `update_layer_edit`, `apply_layer_edit`, `cancel_layer_edit`, `select_layer_members`, `set_layer_visibility` |
 | Clipboard and transfer | `get_clipboard`, `copy_objects`, `cut_objects`, `import_clipboard`, `export_clipboard`, `preview_paste`, `apply_paste`, `cancel_paste` |

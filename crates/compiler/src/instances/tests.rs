@@ -950,6 +950,12 @@ fn reference_presence_is_metadata_only_and_keeps_directory_changes_independent()
 #[test]
 fn reference_presence_rejects_unsupported_paths_and_self_aliases() {
     let (directory, _, _, _) = fixture();
+    #[cfg(unix)]
+    std::fs::hard_link(
+        directory.path().join("parent.vmf"),
+        directory.path().join("self.vmf"),
+    )
+    .unwrap();
     let location = SourceLocation::capture(&directory.path().join("parent.vmf")).unwrap();
     let oversized = directory.path().join("oversized.vmf");
     std::fs::File::create(&oversized)
@@ -958,14 +964,13 @@ fn reference_presence_rejects_unsupported_paths_and_self_aliases() {
         .unwrap();
     std::fs::create_dir(directory.path().join("directory.vmf")).unwrap();
     #[cfg(unix)]
-    {
-        std::fs::hard_link(
-            directory.path().join("parent.vmf"),
-            directory.path().join("self.vmf"),
-        )
-        .unwrap();
-        assert!(location.reference("self.vmf").is_err());
-    }
+    assert!(
+        location
+            .reference("self.vmf")
+            .unwrap_err()
+            .to_string()
+            .contains("self-reference cycle")
+    );
     for value in [
         "",
         "../child.vmf",

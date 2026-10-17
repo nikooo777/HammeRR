@@ -259,7 +259,7 @@ impl Controller {
                 }
             }
         });
-        controller.window.on_close({
+        controller.window.on_close_dialog({
             let weak = Rc::downgrade(&controller);
             move || {
                 if let Some(controller) = weak.upgrade() {

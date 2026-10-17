@@ -364,13 +364,11 @@ impl Controller {
                 if let Some(controller) = weak.upgrade() {
                     if controller.window.get_owned()
                         && let Some(token) = controller.token.get()
-                    {
-                        if let Err(error) =
+                        && let Err(error) =
                             lock(&controller.shared).cancel_instance_reference(Actor::User, token)
-                        {
-                            controller.window.set_message(error.into());
-                            return;
-                        }
+                    {
+                        controller.window.set_message(error.into());
+                        return;
                     }
                     controller
                         .generation

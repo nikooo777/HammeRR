@@ -319,16 +319,31 @@ pub fn capture(
     kind: Kind,
 ) -> Result<Entry, String> {
     let request = crate::runtime::lock(session).begin_recovery_snapshot(kind)?;
-    complete_capture(session, actor, request)
+    complete_capture(session, actor, &request)
 }
 
-fn complete_capture(
+pub fn complete_capture(
     session: &crate::runtime::SharedSession,
     actor: crate::session::Actor,
-    request: crate::session::RecoveryRequest,
+    request: &crate::session::RecoveryRequest,
 ) -> Result<Entry, String> {
-    let result = request.run();
-    crate::runtime::lock(session).finish_recovery_snapshot(actor, &request, result)
+    complete_capture_with(
+        session,
+        actor,
+        request,
+        crate::session::RecoveryRequest::run,
+    )
+}
+
+fn complete_capture_with(
+    session: &crate::runtime::SharedSession,
+    actor: crate::session::Actor,
+    request: &crate::session::RecoveryRequest,
+    run: impl FnOnce(&crate::session::RecoveryRequest) -> Result<Entry, String>,
+) -> Result<Entry, String> {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(request)))
+        .unwrap_or_else(|_| Err("Recovery snapshot worker panicked".into()));
+    crate::runtime::lock(session).finish_recovery_snapshot(actor, request, result)
 }
 
 type StopSignal = std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>;
@@ -337,6 +352,7 @@ pub struct Worker {
     stop: StopSignal,
     thread: Option<std::thread::JoinHandle<()>>,
     session: std::sync::Weak<std::sync::Mutex<crate::session::Session>>,
+    drained: Option<Result<Option<Entry>, String>>,
 }
 
 impl Worker {
@@ -353,33 +369,63 @@ impl Worker {
             stop,
             thread: Some(thread),
             session: worker_session,
+            drained: None,
         })
     }
-}
 
-impl Drop for Worker {
-    fn drop(&mut self) {
+    pub fn drain(&mut self) -> Result<Option<Entry>, String> {
+        if let Some(result) = &self.drained {
+            return result.clone();
+        }
+        let session = self.session.upgrade();
         *self
             .stop
             .0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = true;
         self.stop.1.notify_all();
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
-        if let Some(session) = self.session.upgrade() {
-            let should_save = {
-                let state = crate::runtime::lock(&session);
-                state.recovery_settings().enabled
-                    && state.recovery_status()["pending_changes"] == true
-                    && state.recovery_status()["available"] == true
-            };
-            if should_save
-                && let Err(error) = capture(&session, crate::session::Actor::System, Kind::Autosave)
-            {
-                eprintln!("Could not write exit recovery snapshot: {error}");
+        let joined = self.thread.take().map_or(Ok(()), |thread| {
+            thread
+                .join()
+                .map_err(|_| "Recovery autosave thread panicked".to_owned())
+        });
+        let captured = match &session {
+            None => Err("Recovery session was released before worker drain".into()),
+            Some(session) => {
+                let status = crate::runtime::lock(session).recovery_status();
+                if status["settings"]["enabled"] != true || status["pending_changes"] != true {
+                    Ok(None)
+                } else if status["available"] != true {
+                    Err("Exit recovery storage is unavailable".into())
+                } else {
+                    capture(session,crate::session::Actor::System,Kind::Autosave)
+                        .map(Some).map_err(|error|format!("Exit recovery snapshot failed: {error}"))
+                        .and_then(|entry| {
+                            let status=crate::runtime::lock(session).recovery_status();
+                            if let Some(error)=status["error"].as_str() {Err(format!("Exit recovery snapshot saved, but recovery cleanup failed: {error}"))}else{Ok(entry)}
+                        })
+                }
             }
+        };
+        let result = match (joined, captured) {
+            (Ok(()), result) => result,
+            (Err(join), Ok(_)) => Err(join),
+            (Err(join), Err(capture)) => Err(format!("{join}; {capture}")),
+        };
+        if let (Some(session), Err(error)) = (&session, &result) {
+            crate::runtime::lock(session).report_recovery_worker_error(error.clone());
+        }
+        self.drained = Some(result.clone());
+        result
+    }
+}
+
+impl Drop for Worker {
+    fn drop(&mut self) {
+        if self.drained.is_none()
+            && let Err(error) = self.drain()
+        {
+            eprintln!("Could not drain recovery worker: {error}");
         }
     }
 }
@@ -413,7 +459,7 @@ fn autosave_loop(
             }
         };
         if let Some(request) = request {
-            let _ = complete_capture(&session, crate::session::Actor::System, request);
+            let _ = complete_capture(&session, crate::session::Actor::System, &request);
         }
     }
 }
@@ -528,3 +574,6 @@ mod tests {
         assert_eq!(fs::read(&map).unwrap(), b"updated");
     }
 }
+
+#[cfg(test)]
+mod worker_tests;

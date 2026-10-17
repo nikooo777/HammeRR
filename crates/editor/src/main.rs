@@ -72,25 +72,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse()?;
     let application = Application::open(&args)?;
     let session = application.session.clone();
-    if args.headless {
-        if let Some(Err(message)) = &application.open_message {
-            eprintln!("{message}");
-        }
-        return Ok(mcp::serve_stdio(EditorServer::new(session.clone(), None))?);
-    }
-
-    let ctx = GpuContext::new()?;
-    let server = EditorServer::new(session.clone(), Some(ctx.clone()));
-
-    let mcp_status = match args.mcp_port {
-        Some(port) => {
-            match mcp::spawn_http(server, SocketAddr::from((Ipv4Addr::LOCALHOST, port))) {
-                Ok(addr) => format!("MCP http://{addr}/mcp"),
-                Err(message) => message,
+    let result = (|| {
+        if args.headless {
+            if let Some(Err(message)) = &application.open_message {
+                eprintln!("{message}");
             }
+            return Ok(mcp::serve_stdio(EditorServer::new(session.clone(), None))?);
         }
-        None => "MCP off".into(),
-    };
 
-    ui::run(session, ctx, mcp_status, application.open_message.clone())
+        let ctx = GpuContext::new()?;
+        let server = EditorServer::new(session.clone(), Some(ctx.clone()));
+
+        let mcp_status = match args.mcp_port {
+            Some(port) => {
+                match mcp::spawn_http(server, SocketAddr::from((Ipv4Addr::LOCALHOST, port))) {
+                    Ok(addr) => format!("MCP http://{addr}/mcp"),
+                    Err(message) => message,
+                }
+            }
+            None => "MCP off".into(),
+        };
+
+        ui::run(session, ctx, mcp_status, application.open_message.clone())
+    })();
+    application.finish(result)
 }

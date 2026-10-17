@@ -466,9 +466,8 @@ fn failed_transforms_retain_owned_preview_and_changed_definitions_reject_apply()
 fn prefab_persistence_preview_cancel_and_stale_requests_preserve_source() {
     let directory = tempfile::tempdir().unwrap();
     let (mut session, id, _) = crate::test_assets::clipboard();
-    session.prefabs.store = Ok(Store {
-        directory: directory.path().into(),
-    });
+    session.prefabs.binding =
+        Binding::Independent(Authority::from_directory(Ok(directory.path().into())));
     let before = session.document.vmf().clone();
     let history = session.document.undo_labels().count();
     let stamp = session.prefab_snapshot().unwrap().1;
@@ -507,9 +506,8 @@ fn prefab_persistence_preview_cancel_and_stale_requests_preserve_source() {
             .is_err()
     );
     let mut fresh = Session::new(Err("no assets".into()));
-    fresh.prefabs.store = Ok(Store {
-        directory: directory.path().into(),
-    });
+    fresh.prefabs.binding =
+        Binding::Independent(Authority::from_directory(Ok(directory.path().into())));
     assert_eq!(
         fresh.prefab_report("Fix", 0, 64, Some("Fixture"))["selected"]["objects"],
         1
@@ -523,9 +521,8 @@ fn prefab_persistence_preview_cancel_and_stale_requests_preserve_source() {
 fn invalid_files_or_placement_retain_clipboard_and_owned_paste() {
     let directory = tempfile::tempdir().unwrap();
     let (mut session, id, _) = crate::test_assets::clipboard();
-    session.prefabs.store = Ok(Store {
-        directory: directory.path().into(),
-    });
+    session.prefabs.binding =
+        Binding::Independent(Authority::from_directory(Ok(directory.path().into())));
     let stamp = session.prefab_snapshot().unwrap().1;
     session
         .save_prefab(Actor::Agent, "Fixture", &[id], &stamp)

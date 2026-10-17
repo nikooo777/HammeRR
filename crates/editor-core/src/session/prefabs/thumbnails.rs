@@ -112,8 +112,7 @@ fn geometry_bounds(mesh: &SceneMesh) -> Result<(Vec3, Vec3), String> {
 impl Session {
     fn thumbnail_source(&self, name: &str) -> Result<Source, String> {
         prefabs::name(name)?;
-        let store = self.prefabs.store.as_ref().map_err(Clone::clone)?;
-        let snapshot = store.snapshot()?;
+        let (snapshot, _) = self.prefab_snapshot()?;
         let entry = snapshot
             .entries
             .iter()
@@ -124,11 +123,12 @@ impl Session {
                 "Prefab thumbnail source exceeds 2 MiB; placement remains available".into(),
             );
         }
-        let text = store.read(name, &snapshot.stamp)?;
-        Ok(Source {
-            entry: entry.clone(),
-            text,
-        })
+        let (entry, text) =
+            self.prefabs
+                .binding
+                .authority()
+                .read(name, snapshot.revision, &snapshot.stamp)?;
+        Ok(Source { entry, text })
     }
 
     fn cached_thumbnail(

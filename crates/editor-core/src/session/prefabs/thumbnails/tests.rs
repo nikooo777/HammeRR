@@ -248,9 +248,9 @@ fn thumbnail_real_models_use_shared_instances_without_texture_assets_or_helper_s
     };
     let mut session = Session::new(Ok(game));
     let directory = tempfile::tempdir().unwrap();
-    session.prefabs.store = Ok(prefabs::Store {
-        directory: directory.path().into(),
-    });
+    session.prefabs.binding = super::super::Binding::Independent(
+        crate::prefabs::Authority::from_directory(Ok(directory.path().into())),
+    );
     let entity = session
         .create_entity(
             Actor::User,

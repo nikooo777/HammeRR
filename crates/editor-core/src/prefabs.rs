@@ -14,6 +14,9 @@ pub const MAX_ENTRIES: usize = 128;
 pub const MAX_SCAN: usize = 512;
 pub const MAX_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
 pub const MAX_NAME_BYTES: usize = 80;
+mod authority;
+pub(crate) use authority::Edit;
+pub use authority::{Authority, Snapshot as RegistrySnapshot};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
     pub name: String,

@@ -1,6 +1,6 @@
 use crate::{
     LayerRow, LayersWindow,
-    runtime::{SharedSession, lock},
+    runtime::{DocumentAccess, DocumentContinuation, SharedSession, lock},
     session::{Actor, SelectMode, Session},
 };
 use map_core::ObjectId;
@@ -281,91 +281,140 @@ fn cancel(window: &LayersWindow, session: &mut Session, state: &RefCell<Form>) {
     state.borrow_mut().reviewed = None;
     refresh(window, session, state, true);
 }
+fn callback(
+    window: &slint::Weak<LayersWindow>,
+    target: &DocumentContinuation,
+    body: impl FnOnce(LayersWindow, &SharedSession),
+) {
+    let Some(window) = window.upgrade() else {
+        return;
+    };
+    let result = target.upgrade().and_then(|access| {
+        access.with_shared(|shared| {
+            body(window.clone_strong(), shared);
+            Ok(())
+        })
+    });
+    if let Err(error) = result {
+        window.set_message(error.into());
+    }
+}
+
 impl Controller {
+    #[cfg(test)]
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
+        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
+    }
+
+    pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
+        let target = access.downgrade();
         let window = LayersWindow::new()?;
         let form = Rc::new(RefCell::new(Form::default()));
         window.on_choose({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, target, form) = (window.as_weak(), target.clone(), form.clone());
             move |id| {
-                let mut state = form.borrow_mut();
-                if state.token.is_some() {
-                    return;
-                }
-                state.selected = id.parse().ok();
-                state.member_offset = 0;
-                drop(state);
-                refresh(&window.unwrap(), &lock(&shared), &form, true);
+                callback(&window, &target, |window, shared| {
+                    let mut state = form.borrow_mut();
+                    if state.token.is_some() {
+                        return;
+                    }
+                    state.selected = id.parse().ok();
+                    state.member_offset = 0;
+                    drop(state);
+                    refresh(&window, &lock(shared), &form, true);
+                })
             }
         });
         window.on_search({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, target, form) = (window.as_weak(), target.clone(), form.clone());
             move || {
-                form.borrow_mut().offset = 0;
-                refresh(&window.unwrap(), &lock(&shared), &form, true);
+                callback(&window, &target, |window, shared| {
+                    form.borrow_mut().offset = 0;
+                    refresh(&window, &lock(shared), &form, true);
+                })
             }
         });
         window.on_begin({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
-            move |action| begin(&window.unwrap(), &mut lock(&shared), &form, action)
+            let (window, target, form) = (window.as_weak(), target.clone(), form.clone());
+            move |action| {
+                callback(&window, &target, |window, shared| {
+                    begin(&window, &mut lock(shared), &form, action)
+                })
+            }
         });
         window.on_review_pending({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, target, form) = (window.as_weak(), target.clone(), form.clone());
             move || {
-                let session = lock(&shared);
-                let report = session.layer_report("", 0, PAGE, None, 0);
-                load_draft(&window.unwrap(), &session, &form, &report);
+                callback(&window, &target, |window, shared| {
+                    let session = lock(shared);
+                    let report = session.layer_report("", 0, PAGE, None, 0);
+                    load_draft(&window, &session, &form, &report);
+                })
             }
         });
         window.on_review({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
-            move || review(&window.unwrap(), &mut lock(&shared), &form)
+            let (window, target, form) = (window.as_weak(), target.clone(), form.clone());
+            move || {
+                callback(&window, &target, |window, shared| {
+                    review(&window, &mut lock(shared), &form)
+                })
+            }
         });
         window.on_apply({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, target, form) = (window.as_weak(), target.clone(), form.clone());
             move || {
-                let window = window.unwrap();
-                let identity = {
-                    let state = form.borrow();
-                    if state.reviewed.as_ref() != Some(&fields(&window, &state)) {
-                        window.set_ready(false);
-                        window.set_message("Review the changed fields before applying.".into());
-                        return;
-                    }
-                    state.token
-                };
-                if let Some((token, version)) = identity {
-                    let mut session = lock(&shared);
-                    match session.apply_layer_edit(Actor::User, token, version) {
-                        Ok(report) => {
-                            let mut state = form.borrow_mut();
-                            state.token = None;
-                            state.reviewed = None;
-                            state.selected = if report["deleted"] == true {
-                                None
-                            } else {
-                                report["layer"].as_u64().map(|id| id as u32)
-                            };
-                            state.member_offset = 0;
-                            drop(state);
-                            window.set_message("Layer changes applied. Undo restores them.".into());
+                callback(&window, &target, |window, shared| {
+                    let identity = {
+                        let state = form.borrow();
+                        if state.reviewed.as_ref() != Some(&fields(&window, &state)) {
+                            window.set_ready(false);
+                            window.set_message("Review the changed fields before applying.".into());
+                            return;
                         }
-                        Err(error) => window.set_message(error.into()),
+                        state.token
+                    };
+                    if let Some((token, version)) = identity {
+                        let mut session = lock(shared);
+                        match session.apply_layer_edit(Actor::User, token, version) {
+                            Ok(report) => {
+                                let mut state = form.borrow_mut();
+                                state.token = None;
+                                state.reviewed = None;
+                                state.selected = if report["deleted"] == true {
+                                    None
+                                } else {
+                                    report["layer"].as_u64().map(|id| id as u32)
+                                };
+                                state.member_offset = 0;
+                                drop(state);
+                                window.set_message(
+                                    "Layer changes applied. Undo restores them.".into(),
+                                );
+                            }
+                            Err(error) => window.set_message(error.into()),
+                        }
+                        refresh(&window, &session, &form, true);
                     }
-                    refresh(&window, &session, &form, true);
-                }
+                })
             }
         });
         window.on_cancel({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
-            move || cancel(&window.unwrap(), &mut lock(&shared), &form)
+            let (window, target, form) = (window.as_weak(), target.clone(), form.clone());
+            move || {
+                callback(&window, &target, |window, shared| {
+                    cancel(&window, &mut lock(shared), &form)
+                })
+            }
         });
         window.on_close_dialog({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, target, form) = (window.as_weak(), target.clone(), form.clone());
             move || {
-                let window = window.unwrap();
-                cancel(&window, &mut lock(&shared), &form);
-                let _ = window.hide();
+                callback(&window, &target, |window, shared| {
+                    cancel(&window, &mut lock(shared), &form);
+                });
+                if let Some(window) = window.upgrade() {
+                    let _ = window.hide();
+                }
             }
         });
         window.window().on_close_requested({
@@ -376,112 +425,120 @@ impl Controller {
             }
         });
         window.on_selection({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, target, form) = (window.as_weak(), target.clone(), form.clone());
             move |action| {
-                let selection = lock(&shared).layer_selection();
-                let mut state = form.borrow_mut();
-                if state.token.is_none() {
-                    return;
-                }
-                let mut members = state
-                    .members
-                    .iter()
-                    .copied()
-                    .collect::<std::collections::BTreeSet<_>>();
-                match action {
-                    0 => members = selection.into_iter().collect(),
-                    1 => members.extend(selection),
-                    _ => members.retain(|id| !selection.contains(id)),
-                };
-                state.members = members.into_iter().collect();
-                state.member_offset = 0;
-                state.reviewed = None;
-                drop(state);
-                window.unwrap().set_ready(false);
-                refresh(&window.unwrap(), &lock(&shared), &form, true);
-            }
-        });
-        window.on_remove({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
-            move |id| {
-                if let Ok(id) = crate::identity::parse_id(&id) {
+                callback(&window, &target, |window, shared| {
+                    let selection = lock(shared).layer_selection();
                     let mut state = form.borrow_mut();
                     if state.token.is_none() {
                         return;
                     }
-                    state.members.retain(|member| *member != id);
+                    let mut members = state
+                        .members
+                        .iter()
+                        .copied()
+                        .collect::<std::collections::BTreeSet<_>>();
+                    match action {
+                        0 => members = selection.into_iter().collect(),
+                        1 => members.extend(selection),
+                        _ => members.retain(|id| !selection.contains(id)),
+                    };
+                    state.members = members.into_iter().collect();
+                    state.member_offset = 0;
                     state.reviewed = None;
                     drop(state);
-                    refresh(&window.unwrap(), &lock(&shared), &form, true);
-                }
+                    window.set_ready(false);
+                    refresh(&window, &lock(shared), &form, true);
+                })
+            }
+        });
+        window.on_remove({
+            let (window, target, form) = (window.as_weak(), target.clone(), form.clone());
+            move |id| {
+                callback(&window, &target, |window, shared| {
+                    if let Ok(id) = crate::identity::parse_id(&id) {
+                        let mut state = form.borrow_mut();
+                        if state.token.is_none() {
+                            return;
+                        }
+                        state.members.retain(|member| *member != id);
+                        state.reviewed = None;
+                        drop(state);
+                        refresh(&window, &lock(shared), &form, true);
+                    }
+                })
             }
         });
         let page_callback = |member| {
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, target, form) = (window.as_weak(), target.clone(), form.clone());
             move |direction: i32| {
-                let mut state = form.borrow_mut();
-                let (offset, step) = if member {
-                    (&mut state.member_offset, MEMBERS)
-                } else {
-                    (&mut state.offset, PAGE)
-                };
-                *offset = if direction < 0 {
-                    offset.saturating_sub(step)
-                } else {
-                    offset.saturating_add(step)
-                };
-                drop(state);
-                refresh(&window.unwrap(), &lock(&shared), &form, true);
+                callback(&window, &target, |window, shared| {
+                    let mut state = form.borrow_mut();
+                    let (offset, step) = if member {
+                        (&mut state.member_offset, MEMBERS)
+                    } else {
+                        (&mut state.offset, PAGE)
+                    };
+                    *offset = if direction < 0 {
+                        offset.saturating_sub(step)
+                    } else {
+                        offset.saturating_add(step)
+                    };
+                    drop(state);
+                    refresh(&window, &lock(shared), &form, true);
+                })
             }
         };
         window.on_page(page_callback(false));
         window.on_member_page(page_callback(true));
         window.on_select_members({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, target, form) = (window.as_weak(), target.clone(), form.clone());
             move || {
-                let window = window.unwrap();
-                let Some(id) = form.borrow().selected else {
-                    return;
-                };
-                let mode = match window.get_selection_mode() {
-                    1 => SelectMode::Add,
-                    2 => SelectMode::Remove,
-                    3 => SelectMode::Toggle,
-                    _ => SelectMode::Replace,
-                };
-                let mut session = lock(&shared);
-                let stamp = session.layer_stamp();
-                if let Err(error) = session.select_layer_members(
-                    id,
-                    window.get_recursive(),
-                    window.get_include_hidden(),
-                    mode,
-                    &stamp,
-                ) {
-                    window.set_message(error.into());
-                }
-                refresh(&window, &session, &form, true);
+                callback(&window, &target, |window, shared| {
+                    let Some(id) = form.borrow().selected else {
+                        return;
+                    };
+                    let mode = match window.get_selection_mode() {
+                        1 => SelectMode::Add,
+                        2 => SelectMode::Remove,
+                        3 => SelectMode::Toggle,
+                        _ => SelectMode::Replace,
+                    };
+                    let mut session = lock(shared);
+                    let stamp = session.layer_stamp();
+                    if let Err(error) = session.select_layer_members(
+                        id,
+                        window.get_recursive(),
+                        window.get_include_hidden(),
+                        mode,
+                        &stamp,
+                    ) {
+                        window.set_message(error.into());
+                    }
+                    refresh(&window, &session, &form, true);
+                })
             }
         });
         window.on_visibility({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, target, form) = (window.as_weak(), target.clone(), form.clone());
             move |action| {
-                let window = window.unwrap();
-                let Some(id) = form.borrow().selected else {
-                    return;
-                };
-                let mut session = lock(&shared);
-                let stamp = session.layer_stamp();
-                if let Err(error) = session.set_layer_visibility(
-                    Actor::User,
-                    id,
-                    window.get_recursive(),
-                    &action,
-                    &stamp,
-                ) {
-                    window.set_message(error.into());
-                }
-                refresh(&window, &session, &form, true);
+                callback(&window, &target, |window, shared| {
+                    let Some(id) = form.borrow().selected else {
+                        return;
+                    };
+                    let mut session = lock(shared);
+                    let stamp = session.layer_stamp();
+                    if let Err(error) = session.set_layer_visibility(
+                        Actor::User,
+                        id,
+                        window.get_recursive(),
+                        &action,
+                        &stamp,
+                    ) {
+                        window.set_message(error.into());
+                    }
+                    refresh(&window, &session, &form, true);
+                })
             }
         });
         Ok(Self { window, form })
@@ -499,8 +556,7 @@ impl Controller {
 mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
-    #[test]
-    fn layer_controls_review_fields_cancel_and_preserve_newer_agent_drafts() {
+    fn software() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions {
                 renderer_name: Some("software".into()),
@@ -509,6 +565,68 @@ mod tests {
             },
         )))
         .unwrap();
+    }
+
+    #[test]
+    fn managed_layer_apply_preserves_reviewed_draft_after_finished_or_failed_drain() {
+        software();
+        for fail in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let recovery = directory.path().join("recovery");
+            let (mut session, _, _) = crate::test_assets::clipboard();
+            session.configure_recovery(Ok(recovery.clone()));
+            let shared = Arc::new(Mutex::new(session));
+            let document = crate::test_assets::document(shared.clone());
+            let access = DocumentAccess::for_document(document.clone());
+            let controller = Controller::new_with_access(&access).unwrap();
+            controller.show(&lock(&shared)).unwrap();
+            let initial_history = lock(&shared).document().undo_labels().count();
+            controller.window.invoke_begin(0);
+            controller.window.set_layer_name("Committed layer".into());
+            controller.window.invoke_review();
+            controller.window.invoke_apply();
+            assert_eq!(
+                lock(&shared).document().undo_labels().count(),
+                initial_history + 1
+            );
+            controller.window.invoke_begin(1);
+            controller.window.set_layer_name("Late layer edit".into());
+            controller.window.invoke_review();
+            assert!(controller.window.get_ready());
+            let (peer, _, _) = crate::test_assets::clipboard();
+            let peer_source = peer.document().vmf().clone();
+            let peer_history = peer.history_snapshot();
+            let message = if fail {
+                std::fs::write(&recovery, b"not a directory").unwrap();
+                format!(
+                    "document shutdown failed: {}",
+                    document.shutdown().unwrap_err()
+                )
+            } else {
+                document.shutdown().unwrap();
+                "the document is closed".into()
+            };
+            let source = lock(&shared).document().vmf().clone();
+            let history = lock(&shared).history_snapshot();
+            let draft = lock(&shared).layer_report("", 0, PAGE, None, 0)["draft"].clone();
+            controller.window.invoke_apply();
+            assert_eq!(controller.window.get_message(), message);
+            controller.window.invoke_close_dialog();
+            assert!(!controller.window.window().is_visible());
+            assert_eq!(lock(&shared).document().vmf(), &source);
+            assert_eq!(lock(&shared).history_snapshot(), history);
+            assert_eq!(
+                lock(&shared).layer_report("", 0, PAGE, None, 0)["draft"],
+                draft
+            );
+            assert_eq!(peer.document().vmf(), &peer_source);
+            assert_eq!(peer.history_snapshot(), peer_history);
+        }
+    }
+
+    #[test]
+    fn layer_controls_review_fields_cancel_and_preserve_newer_agent_drafts() {
+        software();
         let (session, id, _) = crate::test_assets::clipboard();
         let shared = Arc::new(Mutex::new(session));
         let controller = Controller::new(&shared).unwrap();

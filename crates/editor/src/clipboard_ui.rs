@@ -10,7 +10,7 @@ use slint::ComponentHandle;
 
 use crate::{
     PasteWindow,
-    runtime::{SharedSession, lock},
+    runtime::{DocumentAccess, DocumentContinuation, SharedSession, lock},
     session::{Actor, Session},
 };
 
@@ -123,8 +123,33 @@ fn checked(session: &Session, stamp: &RefCell<String>, token: Option<u64>) -> Re
     Ok(())
 }
 
+fn callback(
+    window: &slint::Weak<PasteWindow>,
+    target: &DocumentContinuation,
+    body: impl FnOnce(PasteWindow, &SharedSession),
+) {
+    let Some(window) = window.upgrade() else {
+        return;
+    };
+    let result = target.upgrade().and_then(|access| {
+        access.with_shared(|shared| {
+            body(window.clone_strong(), shared);
+            Ok(())
+        })
+    });
+    if let Err(error) = result {
+        window.set_message(error.into());
+    }
+}
+
 impl Controller {
+    #[cfg(test)]
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
+        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
+    }
+
+    pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
+        let target = access.downgrade();
         let window = PasteWindow::new()?;
         window
             .window()
@@ -142,134 +167,144 @@ impl Controller {
             }
         });
         window.on_preview({
-            let (window, shared, stamp, token, prepared) = (
+            let (window, target, stamp, token, prepared) = (
                 window.as_weak(),
-                shared.clone(),
+                target.clone(),
                 stamp.clone(),
                 token.clone(),
                 prepared.clone(),
             );
             move || {
-                let window = window.unwrap();
-                let result = (|| {
-                    let mut session = lock(&shared);
-                    checked(&session, &stamp, token.get())?;
-                    let requested = options(&window)?;
-                    let snapshot = session.clipboard_stamp();
-                    let report = session.preview_paste(requested, &snapshot)?;
-                    *stamp.borrow_mut() = session.clipboard_stamp();
-                    token.set(report["preview"]["token"].as_u64());
-                    prepared.set(Some(requested));
-                    present(&window, &session, &report);
-                    Ok::<_, String>(())
-                })();
-                match result {
-                    Ok(()) => {
-                        window.set_ready(true);
-                        window.set_message(
+                callback(&window, &target, |window, shared| {
+                    let result = (|| {
+                        let mut session = lock(shared);
+                        checked(&session, &stamp, token.get())?;
+                        let requested = options(&window)?;
+                        let snapshot = session.clipboard_stamp();
+                        let report = session.preview_paste(requested, &snapshot)?;
+                        *stamp.borrow_mut() = session.clipboard_stamp();
+                        token.set(report["preview"]["token"].as_u64());
+                        prepared.set(Some(requested));
+                        present(&window, &session, &report);
+                        Ok::<_, String>(())
+                    })();
+                    match result {
+                        Ok(()) => {
+                            window.set_ready(true);
+                            window.set_message(
                             "Review the map preview, names and links. Apply creates one Undo step."
                                 .into(),
                         );
+                        }
+                        Err(error) => {
+                            window.set_ready(false);
+                            window.set_message(error.into());
+                        }
                     }
-                    Err(error) => {
-                        window.set_ready(false);
-                        window.set_message(error.into());
-                    }
-                }
+                })
             }
         });
         window.on_apply({
-            let (window, shared, stamp, token, prepared) = (
+            let (window, target, stamp, token, prepared) = (
                 window.as_weak(),
-                shared.clone(),
+                target.clone(),
                 stamp.clone(),
                 token.clone(),
                 prepared.clone(),
             );
             move || {
-                let window = window.unwrap();
-                let result = (|| {
-                    if prepared.get() != Some(options(&window)?) {
-                        return Err("Preview changed settings before applying them".into());
+                callback(&window, &target, |window, shared| {
+                    let result = (|| {
+                        if prepared.get() != Some(options(&window)?) {
+                            return Err("Preview changed settings before applying them".into());
+                        }
+                        let mut session = lock(shared);
+                        checked(&session, &stamp, token.get())?;
+                        session
+                            .apply_paste(Actor::User, token.get().ok_or("Preview the paste first")?)
+                    })();
+                    match result {
+                        Ok(_) => {
+                            token.set(None);
+                            prepared.set(None);
+                            window.set_ready(false);
+                            let _ = window.hide();
+                        }
+                        Err(error) => window.set_message(error.into()),
                     }
-                    let mut session = lock(&shared);
-                    checked(&session, &stamp, token.get())?;
-                    session.apply_paste(Actor::User, token.get().ok_or("Preview the paste first")?)
-                })();
-                match result {
-                    Ok(_) => {
-                        token.set(None);
-                        prepared.set(None);
-                        window.set_ready(false);
-                        let _ = window.hide();
-                    }
-                    Err(error) => window.set_message(error.into()),
-                }
+                })
             }
         });
         window.on_cancel({
-            let (window, shared, token, prepared) = (
+            let (window, target, token, prepared) = (
                 window.as_weak(),
-                shared.clone(),
+                target.clone(),
                 token.clone(),
                 prepared.clone(),
             );
             move || {
-                if let Some(token) = token.take() {
-                    let _ = lock(&shared).cancel_paste(token);
-                }
+                callback(&window, &target, |_, shared| {
+                    if let Some(token) = token.take() {
+                        let _ = lock(shared).cancel_paste(token);
+                    }
+                });
                 prepared.set(None);
-                let _ = window.unwrap().hide();
+                if let Some(window) = window.upgrade() {
+                    let _ = window.hide();
+                }
             }
         });
         window.on_read_system({
-            let (window, shared, stamp, token, prepared) = (
+            let (window, target, stamp, token, prepared) = (
                 window.as_weak(),
-                shared.clone(),
+                target.clone(),
                 stamp.clone(),
                 token.clone(),
                 prepared.clone(),
             );
             move || {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
-                let snapshot = session.clipboard_stamp();
-                match session.import_clipboard(Actor::User, None, &snapshot) {
-                    Ok(report) => {
-                        *stamp.borrow_mut() = session.clipboard_stamp();
-                        token.set(report["preview"]["token"].as_u64());
-                        prepared.set(None);
-                        window.set_ready(false);
-                        window.set_restore_names(session.can_restore_cut_names());
-                        present(&window, &session, &report);
-                        window.set_message(
-                            "System clipboard imported. Preview before applying.".into(),
-                        );
+                callback(&window, &target, |window, shared| {
+                    let mut session = lock(shared);
+                    let snapshot = session.clipboard_stamp();
+                    match session.import_clipboard(Actor::User, None, &snapshot) {
+                        Ok(report) => {
+                            *stamp.borrow_mut() = session.clipboard_stamp();
+                            token.set(report["preview"]["token"].as_u64());
+                            prepared.set(None);
+                            window.set_ready(false);
+                            window.set_restore_names(session.can_restore_cut_names());
+                            present(&window, &session, &report);
+                            window.set_message(
+                                "System clipboard imported. Preview before applying.".into(),
+                            );
+                        }
+                        Err(error) => window.set_message(error.into()),
                     }
-                    Err(error) => window.set_message(error.into()),
-                }
+                })
             }
         });
         window.on_publish_system({
-            let (window, shared, stamp, token) = (
+            let (window, target, stamp, token) = (
                 window.as_weak(),
-                shared.clone(),
+                target.clone(),
                 stamp.clone(),
                 token.clone(),
             );
             move || {
-                let result = (|| {
-                    let mut session = lock(&shared);
-                    checked(&session, &stamp, token.get())?;
-                    let content = session.clipboard_report()["payload"]["content_revision"]
-                        .as_u64()
-                        .ok_or("Clipboard is empty")?;
-                    session.export_clipboard(content, true)
-                })();
-                window.unwrap().set_message(match result {
-                    Ok(_) => "VMF text published to system clipboard.".into(),
-                    Err(error) => error.into(),
-                });
+                callback(&window, &target, |window, shared| {
+                    let result = (|| {
+                        let mut session = lock(shared);
+                        checked(&session, &stamp, token.get())?;
+                        let content = session.clipboard_report()["payload"]["content_revision"]
+                            .as_u64()
+                            .ok_or("Clipboard is empty")?;
+                        session.export_clipboard(content, true)
+                    })();
+                    window.set_message(match result {
+                        Ok(_) => "VMF text published to system clipboard.".into(),
+                        Err(error) => error.into(),
+                    });
+                })
             }
         });
         window.window().on_close_requested({
@@ -356,8 +391,7 @@ mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
 
-    #[test]
-    fn paste_controls_share_native_import_owned_preview_review_apply_and_cancel() {
+    fn software() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions {
                 renderer_name: Some("software".into()),
@@ -366,6 +400,69 @@ mod tests {
             },
         )))
         .unwrap();
+    }
+
+    #[test]
+    fn managed_paste_callbacks_reject_after_drain_without_changing_payload_or_transport() {
+        software();
+        let directory = tempfile::tempdir().unwrap();
+        let (mut session, id, memory) = crate::test_assets::clipboard();
+        session.configure_recovery(Ok(directory.path().join("recovery")));
+        session
+            .capture_clipboard(Actor::User, &[id], &session.clipboard_stamp(), false, false)
+            .unwrap();
+        let shared = Arc::new(Mutex::new(session));
+        let document = crate::test_assets::document(shared.clone());
+        let access = DocumentAccess::for_document(document.clone());
+        let controller = Controller::new_with_access(&access).unwrap();
+        controller.initialize(&mut lock(&shared), false);
+        let initial_history = lock(&shared).document().undo_labels().count();
+        controller.window.set_placement(1);
+        controller.window.set_offset_x("80".into());
+        controller.window.invoke_preview();
+        controller.window.invoke_apply();
+        assert_eq!(
+            lock(&shared).document().undo_labels().count(),
+            initial_history + 1
+        );
+        controller.initialize(&mut lock(&shared), false);
+        controller.window.set_placement(1);
+        controller.window.set_offset_x("160".into());
+        controller.window.invoke_preview();
+        assert!(controller.window.get_ready());
+        controller.window.show().unwrap();
+        memory.lock().unwrap().text = "independent native clipboard contents".into();
+        let (peer, _, _) = crate::test_assets::clipboard();
+        let peer_source = peer.document().vmf().clone();
+        let peer_history = peer.history_snapshot();
+        document.shutdown().unwrap();
+        let source = lock(&shared).document().vmf().clone();
+        let preview = lock(&shared).render_document().vmf().clone();
+        let history = lock(&shared).history_snapshot();
+        let payload = lock(&shared).clipboard_report();
+        let selection = lock(&shared).selected_ids();
+        controller.window.invoke_apply();
+        assert_eq!(controller.window.get_message(), "the document is closed");
+        controller.window.invoke_read_system();
+        controller.window.invoke_publish_system();
+        controller.window.invoke_cancel();
+        assert!(!controller.window.window().is_visible());
+        assert_eq!(lock(&shared).document().vmf(), &source);
+        assert_eq!(lock(&shared).render_document().vmf(), &preview);
+        assert_eq!(lock(&shared).history_snapshot(), history);
+        assert_eq!(lock(&shared).clipboard_report(), payload);
+        assert_eq!(lock(&shared).selected_ids(), selection);
+        assert_eq!(
+            memory.lock().unwrap().text,
+            "independent native clipboard contents"
+        );
+        assert_eq!(peer.document().vmf(), &peer_source);
+        assert_eq!(peer.history_snapshot(), peer_history);
+    }
+
+    #[test]
+    fn paste_controls_share_native_import_owned_preview_review_apply_and_cancel() {
+        software();
         let (mut session, id, _) = crate::test_assets::clipboard();
         session
             .capture_clipboard(Actor::User, &[id], &session.clipboard_stamp(), false, true)

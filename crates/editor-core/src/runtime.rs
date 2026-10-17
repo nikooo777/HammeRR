@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use serde_json::Value;
 
 use crate::game;
+use crate::session::compilation::{CompileRequest, CompileResult};
 use crate::session::{Actor, LaunchRequest, Session};
 
 mod document;
@@ -66,53 +67,113 @@ fn start_launch_with(
     }
 }
 
-pub(crate) fn finish_compile_worker(
-    session: &SharedSession,
-    actor: Actor,
-    result: &Result<crate::session::compilation::CompileResult, String>,
-    play: bool,
-) -> Result<Option<game::Log>, String> {
-    finish_compile_worker_with(session, actor, result, play, LaunchRequest::run)
+pub(crate) struct CompileSubmission {
+    request: CompileRequest,
+    completion: CompileCompletion,
+    status: Value,
 }
 
-fn finish_compile_worker_with(
-    session: &SharedSession,
+#[derive(Clone)]
+pub(crate) struct CompileCompletion {
+    session: SharedSession,
     actor: Actor,
-    result: &Result<crate::session::compilation::CompileResult, String>,
+    token: u64,
     play: bool,
-    run: impl FnOnce(LaunchRequest) -> Result<game::Run, String>,
-) -> Result<Option<game::Log>, String> {
-    let launch_request = {
-        let mut state = lock(session);
-        state.finish_compile(actor, result);
-        if let Some(error) = result
-            .as_ref()
-            .ok()
-            .and_then(|result| result.publication_error())
-        {
-            return Err(error);
-        }
-        if play && result.as_ref().is_ok_and(|result| result.published()) {
-            match state.begin_launch(actor) {
-                Ok(request) => Some(request),
-                Err(error) => {
-                    state.log(actor, format!("game launch failed: {error}"));
-                    return Err(error);
-                }
+}
+
+impl CompileSubmission {
+    pub(crate) fn begin(
+        session: &SharedSession,
+        actor: Actor,
+        path: Option<&std::path::Path>,
+        play: bool,
+        expected_generation: Option<u64>,
+    ) -> Result<Self, String> {
+        let (request, status) = {
+            let mut state = lock(session);
+            if play && (state.game_running() || state.launching()) {
+                return Err(
+                    "CS:S is already launching or running; close it before running another map"
+                        .into(),
+                );
             }
-        } else {
-            None
-        }
-    };
-    launch_request
-        .map(|request| {
-            let origin = request.origin();
-            let result = run(request);
-            lock(session).finish_launch(actor, &origin, result)
+            let request = state.begin_compile_for_generation(actor, path, expected_generation)?;
+            (request, state.compile_status())
+        };
+        let completion = CompileCompletion {
+            session: session.clone(),
+            actor,
+            token: request.token(),
+            play,
+        };
+        Ok(Self {
+            request,
+            completion,
+            status,
         })
-        .transpose()
+    }
+
+    pub(crate) fn status(&self) -> &Value {
+        &self.status
+    }
+
+    pub(crate) fn completion(&self) -> CompileCompletion {
+        self.completion.clone()
+    }
+
+    pub(crate) fn run(self) -> Result<(CompileResult, Option<game::Log>), String> {
+        let result = self.request.run();
+        let game = self.completion.finish_with(&result, LaunchRequest::run)?;
+        Ok((result?, game))
+    }
 }
 
+impl CompileCompletion {
+    pub(crate) fn fail(&self, error: String) -> bool {
+        lock(&self.session).finish_compile_for_token(self.actor, self.token, &Err(error))
+    }
+
+    fn finish_with(
+        &self,
+        result: &Result<CompileResult, String>,
+        run: impl FnOnce(LaunchRequest) -> Result<game::Run, String>,
+    ) -> Result<Option<game::Log>, String> {
+        let launch_request = {
+            let mut state = lock(&self.session);
+            if !state.finish_compile_for_token(self.actor, self.token, result) {
+                return Ok(None);
+            }
+            if let Some(error) = result
+                .as_ref()
+                .ok()
+                .and_then(|result| result.publication_error())
+            {
+                return Err(error);
+            }
+            if self.play && result.as_ref().is_ok_and(|result| result.published()) {
+                match state.begin_launch(self.actor) {
+                    Ok(request) => Some(request),
+                    Err(error) => {
+                        state.log(self.actor, format!("game launch failed: {error}"));
+                        return Err(error);
+                    }
+                }
+            } else {
+                None
+            }
+        };
+        launch_request
+            .map(|request| {
+                let origin = request.origin();
+                let result = run(request);
+                lock(&self.session).finish_launch(self.actor, &origin, result)
+            })
+            .transpose()
+    }
+}
+
+#[cfg(test)]
+mod compile_tests;
 #[cfg(test)]
 mod launch_tests;
 
@@ -132,26 +193,17 @@ pub fn start_compile_for_generation(
     play: bool,
     expected_generation: Option<u64>,
 ) -> Result<Value, String> {
-    let (request, status) = {
-        let mut state = lock(session);
-        if play && (state.game_running() || state.launching()) {
-            return Err(
-                "CS:S is already launching or running; close it before running another map".into(),
-            );
-        }
-        let request = state.begin_compile_for_generation(actor, path, expected_generation)?;
-        (request, state.compile_status())
-    };
-    let worker_session = session.clone();
+    let submission = CompileSubmission::begin(session, actor, path, play, expected_generation)?;
+    let status = submission.status().clone();
+    let completion = submission.completion();
     if let Err(error) = std::thread::Builder::new()
         .name("map-compile".into())
         .spawn(move || {
-            let result = request.run();
-            let _ = finish_compile_worker(&worker_session, actor, &result, play);
+            let _ = submission.run();
         })
     {
         let error = error.to_string();
-        lock(session).finish_compile(actor, &Err(error.clone()));
+        completion.fail(error.clone());
         return Err(error);
     }
     Ok(status)
@@ -168,26 +220,22 @@ mod tests {
         let vmf = directory.path().join("room.vmf");
         std::fs::write(&vmf, crate::test_assets::room().write(&Default::default())).unwrap();
         lock(&shared).open(Actor::Agent, &vmf, true).unwrap();
-        let request = lock(&shared).begin_compile(Actor::Agent, None).unwrap();
+        let submission = CompileSubmission::begin(&shared, Actor::Agent, None, true, None).unwrap();
         let token = lock(&shared).compile_token().unwrap();
         lock(&shared).cancel_compile(Actor::User, token).unwrap();
-        let result = request.run();
-        assert!(result.is_err());
-        assert!(
-            finish_compile_worker(&shared, Actor::Agent, &result, true)
-                .unwrap()
-                .is_none()
+        assert_eq!(
+            lock(&shared).compile_status()["job"]["status"],
+            "cancelling"
         );
+        let result = submission.run();
+        assert!(result.is_err());
+        assert!(!lock(&shared).compiling());
+        assert_eq!(lock(&shared).compile_status()["job"]["status"], "cancelled");
         assert!(!lock(&shared).game_running());
         assert!(!lock(&shared).launching());
         assert!(!directory.path().join("cstrike/downloadlists").exists());
-        let request = lock(&shared).begin_compile(Actor::User, None).unwrap();
-        let result = request.run();
-        assert!(
-            finish_compile_worker(&shared, Actor::User, &result, true)
-                .unwrap()
-                .is_some()
-        );
+        let submission = CompileSubmission::begin(&shared, Actor::User, None, true, None).unwrap();
+        assert!(submission.run().unwrap().1.is_some());
         assert!(lock(&shared).game_running());
         lock(&shared).stop_game(Actor::User).unwrap();
     }

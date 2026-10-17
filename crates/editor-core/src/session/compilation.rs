@@ -106,6 +106,10 @@ impl CompileResult {
 }
 
 impl CompileRequest {
+    pub(crate) fn token(&self) -> u64 {
+        self.token
+    }
+
     pub fn run(self) -> Result<CompileResult, String> {
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.run_inner()))
             .unwrap_or_else(|_| Err("Compilation worker panicked".into()))
@@ -723,6 +727,26 @@ impl Session {
             publication.error = Some(error.clone());
         }
         outcome
+    }
+
+    pub(crate) fn finish_compile_for_token(
+        &mut self,
+        actor: Actor,
+        token: u64,
+        result: &Result<CompileResult, String>,
+    ) -> bool {
+        if !self.compiling
+            || self
+                .compilation
+                .job
+                .as_ref()
+                .is_none_or(|job| job.token != token || job.finished.is_some())
+            || result.as_ref().is_ok_and(|result| result.token != token)
+        {
+            return false;
+        }
+        self.finish_compile(actor, result);
+        true
     }
 
     pub fn finish_compile(&mut self, actor: Actor, result: &Result<CompileResult, String>) {

@@ -12,6 +12,7 @@ fn fixture() -> (
     SharedSession,
     Result<CompileResult, String>,
     std::path::PathBuf,
+    CompileCompletion,
 ) {
     let (directory, game, _) = crate::test_assets::game_process(true);
     let game_dir = game.game_dir.clone();
@@ -19,12 +20,11 @@ fn fixture() -> (
     let vmf = directory.path().join("room.vmf");
     std::fs::write(&vmf, crate::test_assets::room().write(&Default::default())).unwrap();
     lock(&shared).open(Actor::User, &vmf, true).unwrap();
-    let result = lock(&shared)
-        .begin_compile(Actor::Agent, None)
-        .unwrap()
-        .run();
+    let submission = CompileSubmission::begin(&shared, Actor::Agent, None, true, None).unwrap();
+    let completion = submission.completion();
+    let result = submission.request.run();
     assert!(result.as_ref().unwrap().output.bsp.is_some());
-    (directory, shared, result, game_dir)
+    (directory, shared, result, game_dir, completion)
 }
 
 fn gated() -> (
@@ -101,7 +101,7 @@ fn discarded(
 
 #[test]
 fn synchronous_launch_rejects_replacement_before_completion() {
-    let (_directory, shared, result, game_dir) = fixture();
+    let (_directory, shared, result, game_dir, _completion) = fixture();
     lock(&shared).finish_compile(Actor::Agent, &result);
     let (run, started, release) = gated();
     let worker_session = shared.clone();
@@ -122,7 +122,7 @@ fn synchronous_launch_rejects_replacement_before_completion() {
 
 #[test]
 fn asynchronous_launch_rejects_replacement_before_completion() {
-    let (_directory, shared, result, game_dir) = fixture();
+    let (_directory, shared, result, game_dir, _completion) = fixture();
     lock(&shared).finish_compile(Actor::Agent, &result);
     let (run, started, release) = gated();
     let worker = start_launch_with(&shared, Actor::User, run).unwrap();
@@ -143,12 +143,9 @@ fn asynchronous_launch_rejects_replacement_before_completion() {
 
 #[test]
 fn compile_and_play_rejects_replacement_during_its_launch_completion() {
-    let (_directory, shared, result, game_dir) = fixture();
+    let (_directory, shared, result, game_dir, completion) = fixture();
     let (run, started, release) = gated();
-    let worker_session = shared.clone();
-    let worker = std::thread::spawn(move || {
-        finish_compile_worker_with(&worker_session, Actor::Agent, &result, true, run)
-    });
+    let worker = std::thread::spawn(move || completion.finish_with(&result, run));
     let log = started.recv_timeout(Duration::from_secs(5)).unwrap();
     let (document, history) = replace(&shared);
     release.send(()).unwrap();

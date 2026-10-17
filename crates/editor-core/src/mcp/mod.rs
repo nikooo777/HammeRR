@@ -50,7 +50,7 @@ use crate::game;
 
 use crate::identity::{id_string, parse_id};
 
-use crate::runtime::{DocumentHandle, SharedSession, finish_compile_worker, launch, lock};
+use crate::runtime::{CompileSubmission, DocumentHandle, SharedSession, launch, lock};
 
 use crate::session::{
     Actor, ConnectionFields, ConnectionRecord, ObjectFilter, PropertyChange, PropertyTarget,
@@ -420,39 +420,26 @@ impl EditorServer {
         args: CompileArgs,
         play: bool,
     ) -> ToolResult {
-        if play {
-            let session = self.session();
-            if session.game_running() || session.launching() {
-                return fail(
-                    "CS:S is already launching or running; close it before running another map",
-                );
-            }
-        }
-        let request = {
+        let submission = {
             let path = args.path.as_ref().map(PathBuf::from);
-            match self.session().begin_compile_for_generation(
+            match CompileSubmission::begin(
+                &self.session,
                 Actor::Agent,
                 path.as_deref(),
+                play,
                 args.expected_generation,
             ) {
-                Ok(request) => request,
+                Ok(submission) => submission,
                 Err(message) => return fail(message),
             }
         };
-        let session = self.session.clone();
-        let worker = tokio::task::spawn_blocking(move || {
-            let result = request.run();
-            let game = finish_compile_worker(&session, Actor::Agent, &result, play)?;
-            let result = result?;
-            Ok((result, game))
-        })
-        .await;
+        let completion = submission.completion();
+        let worker = tokio::task::spawn_blocking(move || submission.run()).await;
         let result = match worker {
             Ok(result) => result,
             Err(error) => {
                 let error = error.to_string();
-                let mut session = self.session();
-                session.finish_compile(Actor::Agent, &Err(error.clone()));
+                completion.fail(error.clone());
                 Err(error)
             }
         };

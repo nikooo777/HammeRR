@@ -11,6 +11,8 @@ mod reflection_settings_tests;
 #[cfg(test)]
 mod sky_packing_settings_tests;
 #[cfg(test)]
+mod submission_tests;
+#[cfg(test)]
 mod viscluster_tests;
 
 #[tool_router(router = build_tools, vis = "pub(in crate::mcp)")]

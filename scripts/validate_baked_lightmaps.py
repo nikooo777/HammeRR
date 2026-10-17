@@ -8,7 +8,7 @@ from pathlib import Path
 
 from validate_compile_jobs import wait_job
 from validate_direct_lighting import FACE_FORMAT
-from validate_face_lighting import DEFAULT_BINARY, Client
+from validate_face_lighting import DEFAULT_BINARY, Client, detail
 from validate_material_replacement import preserved_map
 from validate_visibility import ROOM
 
@@ -73,14 +73,60 @@ def compile_map(client, output, name, lighting):
     return path
 
 
+def validate_instance_origins(client, output):
+    client.call("new_map", {"discard_changes": True})
+    child_id = client.call("create_block", {"mins": [-24, -24, 16], "maxs": [24, 24, 48], "material": "dev/dev_measuregeneric01"})["id"]
+    child_shape = detail(client, [child_id])[0]
+    child_top = next(face for face in child_shape["faces"] if face["normal"][2] > 0.99)
+    child = output / "origin-child.vmf"
+    client.call("save_map", {"path": str(child)})
+    child_bytes = child.read_bytes()
+    client.call("new_map", {"discard_changes": True})
+    for low, high in ROOM:
+        client.call("create_block", {"mins": low, "maxs": high, "material": "dev/dev_measuregeneric01"})
+    client.call("create_entity", {"classname": "info_player_terrorist", "origin": [0, 0, 8]})
+    client.call("create_entity", {"classname": "light", "origin": [0, 0, 160], "properties": {"_light": "255 255 255 200"}})
+    helpers = [int(client.call("create_entity", {"classname":"func_instance", "origin":[x, 0, 0], "properties":{"file":child.name}})["id"].split(":")[-1]) for x in [-96, 96]]
+    parent = output / "origin-parent.vmf"
+    client.call("save_map", {"path": str(parent)})
+    parent_hash = hashlib.sha256(parent.read_bytes()).hexdigest()
+    compile_map(client, output, "instance-origins.bsp", "direct_ldr")
+    before = client.call("get_map_info")
+    reports = []
+    for helper in helpers:
+        source = {"kind":"instance", "instance":helper, "file":child.name, "solid":child_shape["solid"], "side":child_top["side"]}
+        report, image = inspection(client, source=source)
+        assert report["build"]["current"] and image
+        assert report["mapping"]["status"] == "available" and report["mapping"]["match_page"]["total"] > 0
+        assert any(origin == source for origin in report["mapping"]["contributors"])
+        reports.append(report)
+    assert {row["face"] for row in reports[0]["mapping"]["matches"]}.isdisjoint(row["face"] for row in reports[1]["mapping"]["matches"])
+    foreign, image = inspection(client, source={**reports[0]["mapping"]["source"], "file":"../unregistered.vmf"})
+    assert foreign["mapping"]["match_page"]["total"] == 0 and image is None
+    child.write_bytes(child_bytes + b"\n// changed child source\n")
+    stale, image = inspection(client, source=reports[0]["mapping"]["source"])
+    assert stale["build"]["status"] == "stale" and image
+    assert stale["mapping"]["contributors"] == reports[0]["mapping"]["contributors"]
+    assert stale["mapping"]["matches"] == reports[0]["mapping"]["matches"]
+    assert any("Instance source/dependencies changed" in issue for issue in stale["build"]["diagnostics"])
+    after = client.call("get_map_info")
+    for key in ["undo", "redo", "camera", "selection", "face_selection", "unsaved_changes"]:
+        assert after[key] == before[key], key
+    assert hashlib.sha256(parent.read_bytes()).hexdigest() == parent_hash
+    if not client.url:
+        assert not after["rendering"]["initialized"]
+    (output / "instance-reports.json").write_text(json.dumps({"siblings":reports, "stale":stale, "unregistered":foreign}, indent=2) + "\n")
+
+
 def validate(client, output):
     checks = []
     with preserved_map(client):
         report, image = inspection(client)
         assert report["build"]["status"] == "unavailable" and image is None
         checks.append("No owned successful build reports unavailable")
+        solids = []
         for low, high in ROOM:
-            client.call("create_block", {"mins": low, "maxs": high, "material": "dev/dev_measuregeneric01"})
+            solids.append(client.call("create_block", {"mins": low, "maxs": high, "material": "dev/dev_measuregeneric01"})["id"])
         client.call("create_entity", {"classname": "info_player_terrorist", "origin": [0, 0, 8]})
         client.call("create_entity", {
             "classname": "light", "origin": [-96, 0, 160],
@@ -94,12 +140,20 @@ def validate(client, output):
         client.call("save_map", {"path": str(source)})
         original_source = source.read_bytes()
         source_hash = hashlib.sha256(original_source).hexdigest()
+        floor = detail(client, [solids[0]])[0]
+        top = next(face for face in floor["faces"] if face["normal"][2] > 0.99)
+        authored = {"kind": "root", "solid": floor["solid"], "side": top["side"]}
+        client.call("select_faces", {"faces": [{key: authored[key] for key in ["solid", "side"]}]})
         before = client.call("get_map_info")
         compile_map(client, output, "fullbright.bsp", "fullbright")
         report, image = inspection(client)
         assert image is None and not any(channel["available"] for channel in report["channels"])
         assert report["diagnostics"]
         checks.append("Fullbright exposes missing lighting diagnostics and no image")
+        unlit_source, image = inspection(client, source=authored)
+        assert unlit_source["mapping"]["status"] == "available" and image is None
+        assert unlit_source["mapping"]["match_page"]["total"] > 0
+        checks.append("Fullbright retains authored origins independently of absent samples")
         path = compile_map(client, output, "hdr.bsp", "direct_ldr_hdr")
         reports = {}
         for channel in ["ldr", "hdr"]:
@@ -123,7 +177,26 @@ def validate(client, output):
         paged, _ = inspection(client, offset=1, limit=2)
         assert [face["face"] for face in paged["faces"]] == [1, 2]
         checks.append("Face pagination preserves compiled indices")
-        for arguments in [{"channel": "unknown"}, {"limit": 33}, {"map_index": 4}]:
+        source_report, source_image = inspection(client, source=authored, limit=1)
+        assert source_report["mapping"]["status"] == "available" and source_image
+        assert source_report["mapping"]["match_page"]["total"] > 0
+        assert len(source_report["mapping"]["matches"]) == 1
+        compiled = source_report["mapping"]["matches"][0]["face"]
+        selected_source, _ = inspection(client, selected_authored_face=True, limit=1)
+        assert selected_source == source_report
+        exact, exact_image = inspection(client, face=compiled, limit=32)
+        assert exact_image == source_image
+        assert any(origin["kind"] == "root" and origin["solid"] == authored["solid"] and origin["side"] == authored["side"] for origin in exact["mapping"]["contributors"])
+        source_hdr, _ = inspection(client, channel="hdr", face=compiled)
+        assert source_hdr["mapping"]["contributors"] == exact["mapping"]["contributors"]
+        no_match, no_image = inspection(client, source={"kind":"root", "solid":4294967295, "side":4294967295})
+        assert no_match["mapping"]["match_page"]["total"] == 0 and no_image is None
+        assert no_match["mapping"]["diagnostics"]
+        past_page, no_image = inspection(client, source=authored, offset=source_report["mapping"]["match_page"]["total"])
+        assert not past_page["mapping"]["matches"] and no_image is None
+        checks.append("Known authored VMF solid/side IDs find exact compiled fragments in both channels with bounded pages and explicit no-match diagnostics")
+
+        for arguments in [{"channel": "unknown"}, {"limit": 33}, {"map_index": 4}, {"face": 0, "source": authored}, {"face":0,"selected_authored_face":True}, {"source":{"kind":"root","solid":1,"side":2,"path":"arbitrary.vmf"}}]:
             client.call("inspect_baked_lightmaps", arguments, error=True)
         client.call("set_compile_settings", {"lighting": "direct_ldr"})
         stale, image = inspection(client)
@@ -132,8 +205,9 @@ def validate(client, output):
         assert inspection(client)[0]["build"]["current"]
         checks.append("Changed settings mark the successful build stale until restored")
         source.write_bytes(original_source + b"\n// external source change\n")
-        stale, image = inspection(client)
+        stale, image = inspection(client, source=authored)
         assert stale["build"]["status"] == "stale" and not stale["build"]["current"] and image
+        assert stale["mapping"]["matches"][0]["face"] == compiled
         source.write_bytes(original_source)
         checks.append("External source change remains inspectable with explicit stale provenance")
         bsp_bytes = path.read_bytes()
@@ -152,6 +226,8 @@ def validate(client, output):
             assert not after["rendering"]["initialized"]
         checks.append("Inspection preserves document state and leaves headless graphics uninitialized")
         (output / "reports.json").write_text(json.dumps({**reports, "styled": styled_report, "stale_source": stale, "changed": changed, "missing": missing}, indent=2) + "\n")
+        validate_instance_origins(client, output)
+        checks.append("Repeated child IDs remain scoped by instance helper and registered file; child changes keep historical origins explicitly stale without graphics or editor mutations")
     result = {"checks": len(checks), "passed": checks, "transport": "http" if client.url else "stdio"}
     (output / "validation.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps({"checks": len(checks), "transport": result["transport"]}))

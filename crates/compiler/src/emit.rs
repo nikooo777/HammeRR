@@ -215,6 +215,7 @@ pub struct Emission {
     pub smoothing_sources: Vec<Option<Arc<crate::faces::SmoothingSource>>>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn build(
     map: &Map,
     models: &[Model],

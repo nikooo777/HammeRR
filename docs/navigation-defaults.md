@@ -32,5 +32,10 @@ Limits:
   report an error; Save does not overwrite malformed storage automatically.
 - The preference file is bounded to 4096 bytes. Symlinks and nonregular targets
   reject. Save, Apply and Reset check the inspected source and current speed;
-  outside changes require another inspection. Independent writers can still
-  race after the final check.
+  outside changes require another inspection. Save and Reset coordinate with
+  other editors through a nonblocking lock. A busy lock preserves the file;
+  Reload before retrying. Changed directories require explicit Reload.
+  Programs that ignore the lock can still race with publication.
+- If a write completes but verification fails, the dialog reports the completed
+  write and its error. Current fly speed stays unchanged; Reload to inspect
+  storage before continuing.

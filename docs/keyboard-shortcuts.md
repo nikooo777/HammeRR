@@ -32,7 +32,13 @@ Limits:
   Save remains disabled until Reload succeeds or you explicitly Reset.
   Outside changes require another inspection. Symlinked/nonregular targets and
   files over 16 KiB reject; malformed storage is never overwritten by ordinary
-  Save. Independent writers can still race after the final source check.
+  Save. Save and Reset coordinate with other editors through a nonblocking
+  lock; a busy lock preserves the file and active bindings. Reload before
+  retrying. Changed directories require explicit Reload. Programs that ignore
+  the lock can still race with publication.
+- If a write completes but verification fails, the dialog reports the completed
+  write and its error. The intended saved bindings remain active; Reload to
+  inspect storage before continuing.
 - Bindings are local preferences. Saving them does not edit the map or Undo
   history. The factory shortcuts in [Editor basics](basics.md) remain useful
   when no saved configuration exists.

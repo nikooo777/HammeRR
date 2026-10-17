@@ -86,15 +86,47 @@ impl Session {
         }
     }
 
+    fn accept_grid_publication(
+        &mut self,
+        grid: Grid,
+        publication: crate::preference_file::Publication,
+    ) {
+        self.grid_preferences.saved = Some(grid);
+        match publication.source {
+            Ok(source) => {
+                self.grid_preferences.source = Some(source);
+                self.grid_preferences.loaded = true;
+                self.grid_preferences.error = None;
+                self.grid_preferences.serial += 1;
+                self.view_serial += 1;
+            }
+            Err(error) => {
+                self.grid_preferences.loaded = false;
+                self.grid_defaults_error(error);
+            }
+        }
+    }
+
     fn check_grid_defaults_source(&mut self) -> Result<(), String> {
         let current = self
             .grid_preferences
             .store
             .as_ref()
             .map_err(Clone::clone)
-            .and_then(Store::read_source);
+            .and_then(|store| match self.grid_preferences.source.as_ref() {
+                Some(expected) => store.read_current(expected),
+                None => store.read_source(),
+            });
         let error = match current {
-            Ok(current) if self.grid_preferences.source.as_ref() == Some(&current) => return Ok(()),
+            Ok(current)
+                if self
+                    .grid_preferences
+                    .source
+                    .as_ref()
+                    .is_some_and(|expected| expected.source == current.source) =>
+            {
+                return Ok(());
+            }
             Ok(current) => {
                 self.grid_preferences.source = Some(current);
                 "Saved grid defaults changed outside this session; Reload defaults before using them".into()
@@ -165,19 +197,25 @@ impl Session {
                     .store
                     .as_ref()
                     .map_err(Clone::clone)
-                    .and_then(|store| store.save(grid, action == "reset"));
-                if let Err(error) = result {
-                    self.grid_preferences.loaded = false;
-                    return Err(self.grid_defaults_error(error));
-                }
+                    .and_then(|store| {
+                        let expected = self
+                            .grid_preferences
+                            .source
+                            .as_ref()
+                            .ok_or("Inspect defaults before writing")?;
+                        store
+                            .save_checked(grid, action == "reset", expected)
+                            .map_err(|error| error.message)
+                    });
+                let publication = match result {
+                    Ok(publication) => publication,
+                    Err(error) => {
+                        self.grid_preferences.loaded = false;
+                        return Err(self.grid_defaults_error(error));
+                    }
+                };
                 write_committed = true;
-                self.grid_preferences.saved = Some(grid);
-                if let Err(error) = self.read_grid_defaults() {
-                    self.log(
-                        actor,
-                        format!("Grid defaults were written but could not reload: {error}"),
-                    );
-                }
+                self.accept_grid_publication(grid, publication);
                 self.log(
                     actor,
                     if action == "reset" {

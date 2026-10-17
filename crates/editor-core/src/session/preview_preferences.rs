@@ -83,15 +83,44 @@ impl Session {
         }
     }
 
+    fn accept_preview_publication(
+        &mut self,
+        preview: Preview,
+        publication: crate::preference_file::Publication,
+    ) {
+        self.preview_preferences.saved = Some(preview);
+        match publication.source {
+            Ok(source) => {
+                self.preview_preferences.source = Some(source);
+                self.preview_preferences.loaded = true;
+                self.preview_preferences.error = None;
+                self.preview_preferences.serial += 1;
+            }
+            Err(error) => {
+                self.preview_preferences.loaded = false;
+                self.preview_defaults_error(error);
+            }
+        }
+    }
+
     fn check_preview_defaults_source(&mut self) -> Result<(), String> {
         let current = self
             .preview_preferences
             .store
             .as_ref()
             .map_err(Clone::clone)
-            .and_then(Store::read_source);
+            .and_then(|store| match self.preview_preferences.source.as_ref() {
+                Some(expected) => store.read_current(expected),
+                None => store.read_source(),
+            });
         let error = match current {
-            Ok(current) if self.preview_preferences.source.as_ref() == Some(&current) => {
+            Ok(current)
+                if self
+                    .preview_preferences
+                    .source
+                    .as_ref()
+                    .is_some_and(|expected| expected.source == current.source) =>
+            {
                 return Ok(());
             }
             Ok(current) => {
@@ -186,19 +215,25 @@ impl Session {
                     .store
                     .as_ref()
                     .map_err(Clone::clone)
-                    .and_then(|store| store.save(preview, action == "reset"));
-                if let Err(error) = result {
-                    self.preview_preferences.loaded = false;
-                    return Err(self.preview_defaults_error(error));
-                }
+                    .and_then(|store| {
+                        let expected = self
+                            .preview_preferences
+                            .source
+                            .as_ref()
+                            .ok_or("Inspect defaults before writing")?;
+                        store
+                            .save_checked(preview, action == "reset", expected)
+                            .map_err(|error| error.message)
+                    });
+                let publication = match result {
+                    Ok(publication) => publication,
+                    Err(error) => {
+                        self.preview_preferences.loaded = false;
+                        return Err(self.preview_defaults_error(error));
+                    }
+                };
                 write_committed = true;
-                self.preview_preferences.saved = Some(preview);
-                if let Err(error) = self.read_preview_defaults() {
-                    self.log(
-                        actor,
-                        format!("Preview defaults were written but could not reload: {error}"),
-                    );
-                }
+                self.accept_preview_publication(preview, publication);
                 self.log(
                     actor,
                     if action == "reset" {

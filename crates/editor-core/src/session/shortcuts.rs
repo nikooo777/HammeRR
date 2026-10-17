@@ -7,14 +7,14 @@ use serde_json::{Value, json};
 use super::{Actor, SelectMode, Session};
 use crate::{
     identity::id_string,
-    preference_file::Source,
+    preference_file::ObservedSource,
     shortcuts::{Bindings, Chord, Command, Store},
 };
 
 pub(super) struct State {
     store: Result<Store, String>,
     current: Bindings,
-    source: Option<Source>,
+    source: Option<ObservedSource>,
     error: Option<String>,
     loaded: bool,
     stored: bool,
@@ -81,15 +81,46 @@ impl Session {
         }
     }
 
+    fn accept_shortcuts_publication(
+        &mut self,
+        current: Bindings,
+        publication: crate::preference_file::Publication,
+    ) {
+        self.shortcuts.current = current;
+        self.shortcuts.stored = true;
+        match publication.source {
+            Ok(source) => {
+                self.shortcuts.source = Some(source);
+                self.shortcuts.loaded = true;
+                self.shortcuts.error = None;
+                self.shortcuts.serial += 1;
+            }
+            Err(error) => {
+                self.shortcuts_error(error);
+            }
+        }
+    }
+
     fn check_shortcuts_source(&mut self) -> Result<(), String> {
         let read = self
             .shortcuts
             .store
             .as_ref()
             .map_err(Clone::clone)
-            .and_then(Store::read_source);
+            .and_then(|store| match self.shortcuts.source.as_ref() {
+                Some(expected) => store.read_current(expected),
+                None => store.read_source(),
+            });
         let error = match read {
-            Ok(source) if self.shortcuts.source.as_ref() == Some(&source) => return Ok(()),
+            Ok(source)
+                if self
+                    .shortcuts
+                    .source
+                    .as_ref()
+                    .is_some_and(|expected| expected.source == source.source) =>
+            {
+                return Ok(());
+            }
             Ok(source) => {
                 self.shortcuts.source = Some(source);
                 "Saved shortcuts changed outside this session; Reload saved or explicitly Reset saved shortcuts".into()
@@ -176,19 +207,22 @@ impl Session {
                     .store
                     .as_ref()
                     .map_err(Clone::clone)
-                    .and_then(|store| store.save(current.clone()));
-                if let Err(error) = result {
-                    return Err(self.shortcuts_error(error));
-                }
+                    .and_then(|store| {
+                        let expected = self
+                            .shortcuts
+                            .source
+                            .as_ref()
+                            .ok_or("Inspect saved shortcuts before writing")?;
+                        store
+                            .save_checked(current.clone(), expected)
+                            .map_err(|error| error.message)
+                    });
+                let publication = match result {
+                    Ok(publication) => publication,
+                    Err(error) => return Err(self.shortcuts_error(error)),
+                };
                 write_committed = true;
-                self.shortcuts.current = current;
-                self.shortcuts.stored = true;
-                if let Err(error) = self.reload_shortcuts() {
-                    self.log(
-                        actor,
-                        format!("Keyboard shortcuts were written but could not reload: {error}"),
-                    );
-                }
+                self.accept_shortcuts_publication(current, publication);
             }
             _ => return Err("Choose save, reload or reset for keyboard shortcuts".into()),
         }

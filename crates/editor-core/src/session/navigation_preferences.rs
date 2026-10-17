@@ -85,15 +85,44 @@ impl Session {
         }
     }
 
+    fn accept_navigation_publication(
+        &mut self,
+        navigation: Navigation,
+        publication: crate::preference_file::Publication,
+    ) {
+        self.navigation_preferences.saved = Some(navigation);
+        match publication.source {
+            Ok(source) => {
+                self.navigation_preferences.source = Some(source);
+                self.navigation_preferences.loaded = true;
+                self.navigation_preferences.error = None;
+                self.navigation_preferences.serial += 1;
+            }
+            Err(error) => {
+                self.navigation_preferences.loaded = false;
+                self.navigation_defaults_error(error);
+            }
+        }
+    }
+
     fn check_navigation_defaults_source(&mut self) -> Result<(), String> {
         let current = self
             .navigation_preferences
             .store
             .as_ref()
             .map_err(Clone::clone)
-            .and_then(Store::read_source);
+            .and_then(|store| match self.navigation_preferences.source.as_ref() {
+                Some(expected) => store.read_current(expected),
+                None => store.read_source(),
+            });
         let error = match current {
-            Ok(current) if self.navigation_preferences.source.as_ref() == Some(&current) => {
+            Ok(current)
+                if self
+                    .navigation_preferences
+                    .source
+                    .as_ref()
+                    .is_some_and(|expected| expected.source == current.source) =>
+            {
                 return Ok(());
             }
             Ok(current) => {
@@ -210,19 +239,25 @@ impl Session {
                     .store
                     .as_ref()
                     .map_err(Clone::clone)
-                    .and_then(|store| store.save(navigation, action == "reset"));
-                if let Err(error) = result {
-                    self.navigation_preferences.loaded = false;
-                    return Err(self.navigation_defaults_error(error));
-                }
+                    .and_then(|store| {
+                        let expected = self
+                            .navigation_preferences
+                            .source
+                            .as_ref()
+                            .ok_or("Inspect defaults before writing")?;
+                        store
+                            .save_checked(navigation, action == "reset", expected)
+                            .map_err(|error| error.message)
+                    });
+                let publication = match result {
+                    Ok(publication) => publication,
+                    Err(error) => {
+                        self.navigation_preferences.loaded = false;
+                        return Err(self.navigation_defaults_error(error));
+                    }
+                };
                 write_committed = true;
-                self.navigation_preferences.saved = Some(navigation);
-                if let Err(error) = self.read_navigation_defaults() {
-                    self.log(
-                        actor,
-                        format!("Navigation defaults were written but could not reload: {error}"),
-                    );
-                }
+                self.accept_navigation_publication(navigation, publication);
                 self.log(
                     actor,
                     if action == "reset" {

@@ -69,17 +69,6 @@ pub(crate) fn read_source(path: &Path, max_file_bytes: u64, label: &str) -> Resu
     })
 }
 
-pub(crate) fn ensure_regular_target(path: &Path) -> Result<(), String> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) if !metadata.is_file() => {
-            Err(format!("{} must be a regular file", path.display()))
-        }
-        Ok(_) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(format!("{}: {error}", path.display())),
-    }
-}
-
 #[derive(Clone, Debug)]
 pub(crate) struct ObservedSource {
     pub source: Source,
@@ -296,6 +285,7 @@ pub(crate) struct CoordinatedFile<'a> {
     pub lock_name: &'static str,
     pub label: &'static str,
     pub reload: &'static str,
+    pub saved_description: &'static str,
     pub max_bytes: u64,
 }
 
@@ -313,6 +303,40 @@ impl CoordinatedFile<'_> {
             directory,
             file_name: self.file_name,
         })
+    }
+
+    fn verify_expected(&self, expected: &ObservedSource) -> Result<(), SaveError> {
+        let label = self.label;
+        let reload = self.reload;
+        if expected.file_name != self.file_name {
+            return Err(SaveError {
+                conflict: true,
+                message: format!("{label} source belongs to a different file; {reload}"),
+            });
+        }
+        if std::path::absolute(self.directory)
+            .map_err(|error| SaveError::failure(error.to_string()))?
+            != expected.directory.requested
+        {
+            return Err(SaveError {
+                conflict: true,
+                message: format!("{label} source belongs to a different directory; {reload}"),
+            });
+        }
+        expected.directory.verify().map_err(|message| SaveError {
+            conflict: true,
+            message,
+        })?;
+        Ok(())
+    }
+
+    pub fn observe_from(&self, expected: &ObservedSource) -> Result<ObservedSource, String> {
+        self.verify_expected(expected)
+            .map_err(|error| error.message)?;
+        let current = self.observe()?;
+        self.verify_expected(expected)
+            .map_err(|error| error.message)?;
+        Ok(current)
     }
 
     pub fn publish(
@@ -337,25 +361,7 @@ impl CoordinatedFile<'_> {
                 self.max_bytes
             )));
         }
-        if expected.file_name != self.file_name {
-            return Err(SaveError {
-                conflict: true,
-                message: format!("{label} source belongs to a different file; {reload}"),
-            });
-        }
-        if std::path::absolute(self.directory)
-            .map_err(|error| SaveError::failure(error.to_string()))?
-            != expected.directory.requested
-        {
-            return Err(SaveError {
-                conflict: true,
-                message: format!("{label} source belongs to a different directory; {reload}"),
-            });
-        }
-        expected.directory.verify().map_err(|message| SaveError {
-            conflict: true,
-            message,
-        })?;
+        self.verify_expected(expected)?;
         let guard = WriteLock::acquire(self.directory, self.lock_name, label, reload)
             .map_err(SaveError::failure)?;
         expected.directory.verify().map_err(|message| SaveError {
@@ -386,9 +392,13 @@ impl CoordinatedFile<'_> {
             })
             .map_err(|error| {
                 format!(
-                    "{label} were written but could not verify the saved list; {reload}: {error}"
+                    "{label} were written but could not verify the {}; {reload}: {error}",
+                    self.saved_description
                 )
             });
         Ok(Publication { source })
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -140,6 +140,7 @@ impl Store {
             lock_name: LOCK_FILE_NAME,
             label: "Material favorites",
             reload: "Reload favorites",
+            saved_description: "saved list",
             max_bytes: MAX_FILE_BYTES,
         }
     }

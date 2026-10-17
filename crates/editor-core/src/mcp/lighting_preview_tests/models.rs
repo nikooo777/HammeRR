@@ -56,7 +56,7 @@ fn model_receiver_mcp_inspection_remains_lazy_and_preserves_owned_geometry_revie
         report["summary"]
             .as_str()
             .unwrap()
-            .contains("model instances")
+            .contains("Model receivers:")
     );
     assert_eq!(
         report["source"]["render_revision"],

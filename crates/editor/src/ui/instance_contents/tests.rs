@@ -80,7 +80,12 @@ fn software_controls_share_visibility_reports_frame_clear_and_preserve_parent() 
         assert_eq!((session.scene_serial(), session.view_serial()), serials);
     }
     let controller = Controller::new(shared.clone()).unwrap();
-    assert!(controller.window.get_summary().contains("1 instances"));
+    assert!(
+        controller
+            .window
+            .get_summary()
+            .contains("1 instance from 1 file")
+    );
     assert!(controller.window.get_owners().contains("child.vmf"));
     assert!(controller.window.get_can_frame());
     controller.window.show().unwrap();

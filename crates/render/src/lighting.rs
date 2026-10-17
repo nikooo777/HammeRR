@@ -183,7 +183,7 @@ impl Report {
     }
     fn model_summary(&self) -> String {
         format!(
-            "{} admitted / {} excluded model instances ({} admitted / {} excluded selected parts; {} admitted / {} excluded drawn triangles)",
+            "Model receivers: {} supported / {} excluded instances (selected parts: {} supported / {} excluded; drawn triangles: {} supported / {} excluded)",
             self.models.admitted_instances,
             self.models.excluded_instances,
             self.models.admitted_parts,

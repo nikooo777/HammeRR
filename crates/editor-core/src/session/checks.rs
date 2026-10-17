@@ -203,7 +203,15 @@ impl Session {
             } else if has_definitions && !classname.is_empty() {
                 result.add(Severity::Warning, "unknown_class", &location, format!("{classname} is not declared in the loaded FGD. Custom classes are preserved; verify support in the game."), None);
             }
-            if compiler::map::unsupported_entity_class(classname) && !entity.hidden {
+            if let Some(diagnostic) = compiler::map::unresolved_instance_diagnostic(entity) {
+                result.add(
+                    Severity::Error,
+                    "compiler_entity",
+                    &location,
+                    diagnostic.message,
+                    None,
+                );
+            } else if compiler::map::unsupported_entity_class(classname) && !entity.hidden {
                 result.add(
                     Severity::Warning,
                     "compiler_entity",

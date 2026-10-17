@@ -690,13 +690,22 @@ fn build(
     control: &Control,
 ) -> Result<(), String> {
     options.validate()?;
+    control.advance(Stage::Loading)?;
+    for entity in &vmf.entities {
+        control.checkpoint()?;
+        if let Some(diagnostic) = map::unresolved_instance_diagnostic(entity) {
+            output.report.diagnostics.push(diagnostic);
+        }
+    }
+    if output.report.has_errors() {
+        return Ok(());
+    }
     if options.generate_reflections && context.is_none() {
         return Err("Generate reflections requires an explicit output CompileContext".into());
     }
     if options.generate_reflections {
         cubemap_assets::binding::capture_preflight(vmf)?;
     }
-    control.advance(Stage::Loading)?;
     let prepared = cordons::prepare(vmf, fs, &mut output.report, control)?;
     output.stats.compile_region = prepared.region;
     let vmf = prepared.vmf.as_ref();

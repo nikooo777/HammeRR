@@ -53,12 +53,32 @@ fn bounds_error(object: String) -> Diagnostic {
 /// Entities that the compiler consumes instead of passing to the game.
 const CONSUMED: &[&str] = &["func_detail"];
 /// Entities whose compile support doesn't exist yet; dropped with a warning.
-const UNSUPPORTED: &[&str] = &["func_viscluster", "func_instance"];
+const UNSUPPORTED: &[&str] = &["func_viscluster"];
 
-pub fn unsupported_entity_class(classname: &str) -> bool {
-    UNSUPPORTED
+pub fn unresolved_instance_class(classname: &str) -> bool {
+    ["func_instance", "func_instance_parms"]
         .iter()
         .any(|name| name.eq_ignore_ascii_case(classname))
+}
+
+pub fn unresolved_instance_diagnostic(entity: &Entity) -> Option<Diagnostic> {
+    let classname = entity.classname()?;
+    (!entity.hidden && unresolved_instance_class(classname)).then(|| {
+        Diagnostic::error(
+            format!(
+                "{classname} requires referenced-map instance expansion, which is not implemented; resolve it into ordinary map content or hide/remove the helper before building"
+            ),
+            Some(format!("entity:{}", entity.id)),
+            entity.origin().filter(|point| within_compile_bounds(*point)),
+        )
+    })
+}
+
+pub fn unsupported_entity_class(classname: &str) -> bool {
+    unresolved_instance_class(classname)
+        || UNSUPPORTED
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(classname))
 }
 
 #[derive(Debug, Clone)]
@@ -236,6 +256,10 @@ impl<'a> Map<'a> {
             control.checkpoint()?;
             if entity.hidden {
                 hidden += 1;
+                continue;
+            }
+            if let Some(diagnostic) = unresolved_instance_diagnostic(entity) {
+                report.diagnostics.push(diagnostic);
                 continue;
             }
             let classname = entity.classname().unwrap_or("").to_owned();

@@ -16,7 +16,7 @@ const MAX_SIDES: usize = 65_536;
 const MAX_SIDES_PER_BRUSH: usize = 128;
 const SHELL_MATERIAL: &str = "tools/toolsblack";
 const BOUNDARY_LIGHTMAP_SCALE: u32 = 256;
-const UNSUPPORTED: &[&str] = &["func_instance", "func_viscluster"];
+const UNSUPPORTED: &[&str] = &["func_viscluster"];
 
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct RegionSummary {
@@ -216,6 +216,9 @@ pub(super) fn prepare<'a>(
     for entity in source.entities.iter().filter(|entity| !entity.hidden) {
         control.checkpoint()?;
         let classname = entity.classname().unwrap_or("");
+        if let Some(diagnostic) = crate::map::unresolved_instance_diagnostic(entity) {
+            return Err(format!("{} (entity:{})", diagnostic.message, entity.id));
+        }
         if UNSUPPORTED
             .iter()
             .any(|name| classname.eq_ignore_ascii_case(name))

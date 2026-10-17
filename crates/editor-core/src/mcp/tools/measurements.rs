@@ -3,7 +3,7 @@ use super::super::*;
 #[tool_router(router = measurement_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
-        description = "Inspect persistent named measurement guides and the shared owned preview, including exact world endpoints, Euclidean distance and signed XYZ components in Hammer units. Includes snapshot, visibility, limits and explicit malformed-import errors. Invalid metadata is preserved and blocks edits; no measurement is silently repaired or dropped. Guides appear in UI and render_view, are never pickable, ignore object visibility, and never enter BSP geometry or entities. UI: Measurements….",
+        description = "Inspect persistent named measurement guides and the shared owned preview, including exact resolved world endpoints, Euclidean distance and signed XYZ components in Hammer units. Endpoint attachments identify authored point-entity origins by stable ID, with availability and errors; unavailable references return null resolved points/distance, retain stored_start/stored_end and suppress guides. Includes snapshot, visibility, limits and malformed-import errors. Invalid metadata is preserved and blocks edits; no measurement is silently repaired or dropped. Guides appear in UI and render_view, are never pickable, ignore object visibility, and never enter BSP geometry or entities. UI: Measurements….",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_measurements(&self) -> ToolResult {
@@ -11,7 +11,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Manage Measurements through the same owned Session draft as the UI. action=preview requires name, exact start/end [x,y,z] and latest get_measurements.snapshot; optional id edits a saved measurement. Up to 128 measurements, case-insensitively unique names of 1–80 characters, distinct finite endpoints within ±65536. Preview changes no map/history; invalid requests preserve the draft. Review with token explicitly transfers ownership and returns a new token; Apply revalidates and stores editor-only VMF metadata in one Undo step. Cancel accepts only its matching owned token, including stale cleanup. Foreign/replaced tokens reject. Delete requires id and snapshot with no open measurement draft. Frame requires exactly one id or preview token, snapshot and optional aspect from 0.01 to 100 (default 16/9), and changes only the camera. View toggles show_guides using snapshot. action=begin_pick requires owned token, endpoint start|end, exact width/height (1–8192), latest get_measurements.pick_snapshot, and optional temporary camera matching render_view. It returns a new token and captures the scene, camera and viewport. action=pick_ray requires token and finite ray_origin/ray_direction; pick_pixel requires token, integer x/y and the captured width/height and uses the pixel center. Both pick the first visible brush, terrain triangle or supported model mesh, retain double precision world coordinates, and return a new token with last_pick provenance. Misses, hidden/helper-only targets, stale scene/camera/viewport and coincident endpoints reject without changing the draft; no plane fallback or snapping. Apply rejects while picking. cancel_pick stops only endpoint picking, preserves endpoints and accepts owned stale cleanup. Numeric coordinates remain exact, unsnapped and unattached; later object changes do not move them. Geometry previews must be applied or cancelled before changing measurements. UI: Measurements… → Preview / Review preview / Apply / Cancel / Delete / Frame / Pick start / Pick end / Cancel picking / Show guides."
+        description = "Manage Measurements through the same owned Session draft as the UI. action=preview requires name, exact start/end [x,y,z] and latest get_measurements.snapshot; optional id edits a saved measurement. Up to 128 measurements, case-insensitively unique names of 1–80 characters, distinct finite endpoints within ±65536. Preview changes no map/history; invalid requests preserve the draft. Review with token explicitly transfers ownership and returns a new token; Apply revalidates and stores editor-only VMF metadata in one Undo step. Cancel accepts only its matching owned token, including stale cleanup. Foreign/replaced tokens reject. attach_origin requires owned token, endpoint start|end and object entity:<id>; it attaches exactly to an existing point entity's authored finite origin. References follow origin changes; duplication leaves the reference on the original. Missing/deleted, invalid-origin and brush-entity targets remain unavailable without freezing or detaching; Apply and Frame reject. detach_origin freezes a resolvable origin as an exact world point. world_endpoint requires owned token, endpoint and exact point [x,y,z], explicitly replacing even an unavailable reference. Attachment actions return a new token without map/history edits. Preview preserves attachments and rejects numeric changes to attached endpoints; detach or world_endpoint first. Delete requires id and snapshot with no open measurement draft. Frame requires exactly one id or preview token, snapshot and optional aspect from 0.01 to 100 (default 16/9), and changes only the camera. View toggles show_guides using snapshot. begin_pick requires owned token, unattached endpoint, exact width/height (1–8192), latest pick_snapshot and optional temporary camera matching render_view. pick_ray uses finite ray_origin/ray_direction; pick_pixel uses integer x/y and captured width/height at pixel center. Both pick the first visible brush, terrain triangle or supported model mesh, retain exact world coordinates and return a new token with last_pick provenance. Misses, stale context and coincident endpoints preserve the draft; no plane fallback or snapping. Apply rejects while picking. cancel_pick preserves endpoints and accepts owned stale cleanup. Surface picks and ordinary numeric endpoints stay world points. Brush/surface/local-offset attachments are unsupported. Geometry previews must be applied or cancelled first. UI: Measurements… → Preview / Review preview / Attach start origin / Attach end origin / Detach start / Detach end / Use start world / Use end world / Apply / Cancel / Delete / Frame / Pick start / Pick end / Cancel picking / Show guides."
     )]
     pub(in crate::mcp) fn set_measurement(
         &self,
@@ -20,6 +20,29 @@ impl EditorServer {
         run(|| {
             let mut session = self.session();
             match args {
+                MeasurementArgs::AttachOrigin {
+                    token,
+                    endpoint,
+                    object,
+                } => session.attach_measurement_origin(
+                    Actor::Agent,
+                    token,
+                    endpoint,
+                    parse_id(&object)?,
+                ),
+                MeasurementArgs::DetachOrigin { token, endpoint } => {
+                    session.detach_measurement_origin(Actor::Agent, token, endpoint)
+                }
+                MeasurementArgs::WorldEndpoint {
+                    token,
+                    endpoint,
+                    point,
+                } => session.set_measurement_world_endpoint(
+                    Actor::Agent,
+                    token,
+                    endpoint,
+                    vec3(point),
+                ),
                 MeasurementArgs::BeginPick {
                     token,
                     endpoint,

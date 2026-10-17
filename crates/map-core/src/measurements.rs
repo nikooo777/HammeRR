@@ -8,6 +8,9 @@ use source_formats::vmf::{Vmf, parse_vec3};
 
 use crate::{EditError, Transaction};
 
+mod origins;
+pub use origins::{Endpoint, entity_origin};
+
 pub const KEY: &str = "hammerr_measurements";
 pub const MAX_MEASUREMENTS: usize = 128;
 pub const MAX_NAME_CHARS: usize = 80;
@@ -38,13 +41,11 @@ impl Measurement {
             ));
         }
         for point in [self.start, self.end] {
-            if !point.is_finite() || point.abs().max_element() > MAX_COORDINATE {
-                return Err(format!(
-                    "Measurement endpoints need finite coordinates within ±{MAX_COORDINATE}"
-                ));
-            }
+            validate_point(point)?;
         }
-        if self.start == self.end {
+        let start_origin = self.origin_reference(Endpoint::Start)?;
+        let end_origin = self.origin_reference(Endpoint::End)?;
+        if self.start == self.end && start_origin.is_none() && end_origin.is_none() {
             return Err("Measurement endpoints must be distinct".into());
         }
         if self
@@ -75,10 +76,40 @@ impl Measurement {
         fields.extend(self.extra.clone());
         Node::block("measurement", fields)
     }
+
+    fn preserving_node(&self, original: &Self, node: &Node) -> Node {
+        let mut remaining = self.to_node().children().unwrap().to_vec();
+        let mut fields = Vec::new();
+        for previous in node.children().unwrap() {
+            let Some(index) = remaining.iter().position(|field| field.key == previous.key) else {
+                continue;
+            };
+            let current = remaining.remove(index);
+            let unchanged = match previous.key.as_str() {
+                "id" => self.id == original.id,
+                "name_base64" => self.name == original.name,
+                "start" => self.start == original.start,
+                "end" => self.end == original.end,
+                _ => current == *previous,
+            };
+            fields.push(if unchanged { previous.clone() } else { current });
+        }
+        fields.extend(remaining);
+        Node::block("measurement", fields)
+    }
 }
 
 fn exact_point(point: DVec3) -> String {
     format!("{} {} {}", point.x, point.y, point.z)
+}
+
+fn validate_point(point: DVec3) -> Result<(), String> {
+    if !point.is_finite() || point.abs().max_element() > MAX_COORDINATE {
+        return Err(format!(
+            "Measurement endpoints need finite coordinates within ±{MAX_COORDINATE}"
+        ));
+    }
+    Ok(())
 }
 
 fn field<'a>(nodes: &'a [Node], key: &str) -> Result<&'a str, String> {
@@ -197,14 +228,42 @@ impl Measurements {
     }
 
     pub fn write(self, tx: &mut Transaction) -> Result<(), EditError> {
-        Self::parse(tx.vmf()).map_err(EditError::Invalid)?;
+        let previous = Self::parse(tx.vmf()).map_err(EditError::Invalid)?;
         self.validate().map_err(EditError::Invalid)?;
         let node = if self.measurements.is_empty() && self.extra.is_empty() {
             None
         } else {
-            let mut nodes = vec![Node::string("version", "1")];
-            nodes.extend(self.measurements.iter().map(Measurement::to_node));
-            nodes.extend(self.extra);
+            let original = tx.vmf().extra.iter().find(|node| node.key == KEY);
+            let original_fields = original.and_then(Node::children).unwrap_or_default();
+            let mut pending = self.measurements.clone();
+            let mut pending_extra = self.extra;
+            let mut nodes = Vec::new();
+            for node in original_fields {
+                if node.key == "version" {
+                    nodes.push(node.clone());
+                } else if node.key == "measurement" {
+                    let id = field(node.children().unwrap(), "id")
+                        .unwrap()
+                        .parse::<u32>()
+                        .unwrap();
+                    if let Some(index) = pending.iter().position(|entry| entry.id == id) {
+                        let measurement = pending.remove(index);
+                        let old = previous
+                            .measurements
+                            .iter()
+                            .find(|entry| entry.id == id)
+                            .unwrap();
+                        nodes.push(measurement.preserving_node(old, node));
+                    }
+                } else if let Some(index) = pending_extra.iter().position(|entry| entry == node) {
+                    nodes.push(pending_extra.remove(index));
+                }
+            }
+            if original.is_none() {
+                nodes.push(Node::string("version", "1"));
+            }
+            nodes.extend(pending.iter().map(Measurement::to_node));
+            nodes.extend(pending_extra);
             Some(Node::block(KEY, nodes))
         };
         tx.set_editor_metadata(KEY, node);

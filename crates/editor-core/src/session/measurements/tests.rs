@@ -3,6 +3,8 @@ use map_core::{Document, query::Ray};
 use render::Projection;
 use source_formats::{keyvalues::Node, vmf::Vmf};
 
+mod origins;
+
 fn request(id: Option<u32>) -> Request {
     Request {
         id,

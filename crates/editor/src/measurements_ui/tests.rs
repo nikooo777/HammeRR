@@ -11,6 +11,88 @@ fn edit(window: &MeasurementsWindow, label: &str, value: &str) {
 }
 
 #[test]
+fn measurement_origin_controls_attach_detach_and_explicitly_repair_missing_origins() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: false,
+        },
+    )))
+    .unwrap();
+    let mut session = Session::new(Err("no assets needed".into()));
+    let object = session
+        .edit(Actor::User, "source entity", |tx| {
+            map_core::edit::create_entity(
+                tx,
+                "logic_relay",
+                Some(DVec3::new(16.125, 32.25, 64.5)),
+                &[],
+                Vec::new(),
+            )
+        })
+        .unwrap();
+    let source = session.document().vmf().clone();
+    let shared = Arc::new(Mutex::new(session));
+    let controller = Controller::new(&shared).unwrap();
+    let window = &controller.window;
+    controller.show(&lock(&shared)).unwrap();
+    edit(window, "Measurement name", "Entity origin clearance");
+    window.invoke_preview();
+    window.set_start_origin_object(crate::identity::id_string(object).into());
+    window.invoke_attach_start_origin();
+    assert!(window.get_ready(), "{}", window.get_message());
+    assert!(window.get_start_attached());
+    assert_eq!(window.get_start_x(), "16.125");
+    assert!(window.get_start_origin_status().contains("follows"));
+    crate::ui::tests::save_ui_snapshot(window.window(), "measurements-origin-attachment");
+    assert_eq!(lock(&shared).document().vmf(), &source);
+    window.invoke_detach_start_origin();
+    assert!(!window.get_start_attached());
+    assert_eq!(window.get_start_x(), "16.125");
+    window.set_start_origin_object(crate::identity::id_string(object).into());
+    window.invoke_attach_start_origin();
+    window.invoke_apply();
+    assert_eq!(lock(&shared).document().undo_labels().count(), 2);
+    lock(&shared)
+        .edit(Actor::Agent, "delete entity", |tx| {
+            map_core::edit::delete(tx, &[object])
+        })
+        .unwrap();
+    window.invoke_choose("1".into());
+    window.invoke_preview();
+    assert!(window.get_start_attached());
+    assert!(!window.get_ready());
+    assert!(window.get_start_origin_status().contains("unavailable"));
+    assert!(window.get_result().contains("Unavailable"));
+    let before = lock(&shared).measurement_state();
+    window.invoke_detach_start_origin();
+    assert!(window.get_message().contains("missing"));
+    assert_eq!(lock(&shared).measurement_state(), before);
+    for label in [
+        "Attach start origin",
+        "Detach start",
+        "Use start world",
+        "Apply",
+        "Cancel",
+    ] {
+        crate::ui::tests::assert_dialog_button_visible(window, label);
+    }
+    window.invoke_world_start();
+    assert!(!window.get_start_attached());
+    assert!(window.get_ready(), "{}", window.get_message());
+    assert_eq!(window.get_start_x(), "16.125");
+    edit(window, "Start X", "-8.125");
+    window.invoke_preview();
+    window.invoke_apply();
+    assert_eq!(
+        lock(&shared).measurement_state()["measurements"][0]["start"],
+        serde_json::json!([-8.125, 32.25, 64.5])
+    );
+    assert!(lock(&shared).measurement_state()["measurements"][0]["attachments"]["start"].is_null());
+}
+
+#[test]
 fn measurement_window_edits_exact_endpoints_previews_saves_frames_deletes_and_cancels() {
     slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
         i_slint_backend_testing::TestingBackendOptions {

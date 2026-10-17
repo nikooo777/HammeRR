@@ -340,7 +340,6 @@ impl EditorServer {
         let preview_issues = rendered.issues.iter().map(|issue| json!({"face":{"solid":issue.face.solid,"side":issue.face.side},"message":issue.message})).collect::<Vec<_>>();
         let working_region = self.session().working_region_summary();
         let rope_preview = self.session().rope_preview_report(view.rope_preview);
-        let sprite_guides = self.session().sprite_guide_preview_state(view);
         let mut rendered_view = view_state(view);
         let extra = json!({"grid_visible": view.grid_visible, "grid_size": view.grid_size,
                 "grid_elevation": view.grid_elevation,
@@ -352,7 +351,7 @@ impl EditorServer {
             .as_object_mut()
             .unwrap()
             .extend(extra.as_object().unwrap().clone());
-        let info = json!({ "working_region":working_region, "camera": camera_json(&camera), "width": size.0, "height": size.1, "skybox":skybox, "fog_preview":fog_preview, "rope_preview":rope_preview, "sprite_guides":sprite_guides, "preview_issues":preview_issues, "normal_maps":{"report":rendered.normal_maps,"limits":render::normal_maps::limits()}, "lighting_preview":{"report":rendered.lighting,"limits":render::lighting::limits()}, "material_reload":material_reload, "view": rendered_view });
+        let info = json!({ "working_region":working_region, "camera": camera_json(&camera), "width": size.0, "height": size.1, "skybox":skybox, "fog_preview":fog_preview, "rope_preview":rope_preview, "sprite_guides":rendered.sprite_guides, "preview_issues":preview_issues, "normal_maps":{"report":rendered.normal_maps,"limits":render::normal_maps::limits()}, "lighting_preview":{"report":rendered.lighting,"limits":render::lighting::limits()}, "material_reload":material_reload, "view": rendered_view });
         Ok(CallToolResult::success(vec![
             ContentBlock::image(data, "image/png"),
             ContentBlock::text(info.to_string()),

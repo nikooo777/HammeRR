@@ -773,6 +773,7 @@ impl Session {
         if self.face_mode {
             Some("faces_mode")
         } else if self.viewport_pick_conflict()
+            || self.measurement_picking()
             || !self.component_selection().is_empty()
             || self.paint_enabled()
             || !std::ptr::eq(self.render_document(), &self.document)

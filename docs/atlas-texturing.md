@@ -22,6 +22,9 @@ Each face keeps its texture direction, rotation and mirroring.
 
 Limits:
 
+- During document shutdown, new inspection, field edits, previews, Apply and
+  material browsing reject. **Cancel** still closes the window without clearing
+  another tool’s preview.
 - Flat world/detail and brush-entity faces are supported. Terrain, collapsed
   projections and edge-on texture axes reject the entire request. Polygon
   corners can leave parts of the rectangle unused. Geometry, lightmap scale

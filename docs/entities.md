@@ -502,4 +502,8 @@ To edit several entities at once, select them and open **Edit selected entity pr
 
 Names are changed through **References and rename…**.
 
+During document shutdown, the Properties dialog and its Color/Material pickers
+reject new reads, edits and Apply actions. Existing staged targets stay exact;
+**Cancel** still closes each window and cannot discard a replacement draft.
+
 ![Property batch with mixed values, defaults and Cancel](images/batch-properties.png)

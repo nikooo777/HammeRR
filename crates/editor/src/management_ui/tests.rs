@@ -160,9 +160,9 @@ fn properties_and_owned_pickers_act_live_then_reject_drain_and_preserve_peer() {
         .invoke_component_edit("vector".into(), 1, "32".into());
     f.parent.invoke_pick_color("tint".into());
     assert!(f.color.window().is_visible());
-    f.color.set_red(255.0);
-    f.color.set_green(0.0);
-    f.color.set_blue(0.0);
+    f.color.set_red(255);
+    f.color.set_green(0);
+    f.color.set_blue(0);
     f.color.invoke_apply();
     assert!(!f.color.window().is_visible());
     assert!(lock(&f.shared).property_draft().unwrap().changes.iter().any(|change|matches!(change,PropertyChange::Component{key,index:0,value} if key=="tint" && *value==1.0)));

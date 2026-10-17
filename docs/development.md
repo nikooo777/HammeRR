@@ -2652,6 +2652,9 @@ cargo test -p editor hollow_ui::tests
 cargo test -p editor carve_ui::admission_tests
 cargo test -p editor merge_ui::admission_tests
 cargo test -p editor lighting_ui::admission_tests
+cargo test -p editor ui::materials::surface_admission_tests
+cargo test -p editor atlas_ui::admission_tests
+cargo test -p editor management_ui::tests
 ```
 
 Publication cases exercise retained parent descriptors, source symlinks and
@@ -2693,6 +2696,9 @@ Hollow, Carve, Merge and face-lighting cases retain actual owned previews across
 drain, reject foreign tokens, preserve live peers and keep local dismissal.
 Nested opening, cutter and group edits call borrowed bodies within one operation;
 barrier cases check final recovery cannot pass their complete action.
+Surface/Atlas cases retain exact face contexts, asset reviews and foreign-preview
+ownership. Properties covers its staged token and owned Color/Material/Sky
+windows, including real drain, rejected forwarding and weak parent release.
 
 The optional GPU resource-release case uses software windows and an offscreen
 adapter, without desktop input:

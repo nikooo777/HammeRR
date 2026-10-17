@@ -88,6 +88,10 @@ even after a model switches to a different existing candidate.
 Use **Fit atlas region…** in the same window to fit faces into a pixel rectangle
 of the material image. See [Atlas-region texturing](atlas-texturing.md).
 
+During document shutdown, texture previews, Apply and material/atlas browsing
+reject new actions. **Cancel** still closes the dialog; rejected cleanup cannot
+clear another tool’s preview.
+
 For surface detail under editor shading, see [Normal-map preview](normal-maps.md).
 
 

@@ -3348,6 +3348,6 @@ mod ownership_tests;
 
 pub(crate) use entities::property_row;
 pub(crate) use materials::{
-    bind_material_reload, common_face_number, preview_image, refresh_material_catalog,
+    bind_material_reload_with_access, common_face_number, preview_image, refresh_material_catalog,
     refresh_material_window, review_material_choice,
 };

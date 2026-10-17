@@ -19,7 +19,12 @@
 
 The editor UI and the MCP server call the same session operations, so every feature behaves identically for people and agents. New features need both a UI control and an MCP tool.
 
-Shared session locking and compile/game workers live in `editor-core/src/runtime.rs`; object-ID parsing and formatting live in `identity.rs`. Both executables use `startup::Application` for content mounting, recovery and shutdown. MCP tool groups and parameters live under `editor-core/src/mcp/`, while desktop composition and feature bindings live under `editor/src/ui/` and the feature-specific UI modules.
+Shared session locking and compile/game workers live in `editor-core/src/runtime.rs`; object-ID parsing and formatting live in `identity.rs`. Both executables use `startup::Application` for content mounting, recovery and shutdown.
+Application owns concrete Favorites and Recent maps authorities; deliberately
+attached Sessions share their lists, storage observations, errors and revisions. Independently
+constructed Sessions keep their own authority. Recovery reconfiguration cannot
+rebind an attached authority. Material catalog and preview updates publish one
+owned Favorites snapshot without locking another Session. MCP tool groups and parameters live under `editor-core/src/mcp/`, while desktop composition and feature bindings live under `editor/src/ui/` and the feature-specific UI modules.
 
 `Session` owns geometry-preview state through `session/previews.rs`. Rendering, picking and tool-texture filtering share its displayed-document selector. Feature modules validate replacement drafts before clearing competitors through the coordinator; their own payloads and ownership tokens remain local.
 
@@ -2320,3 +2325,36 @@ owned transform review without starting graphics. Software callbacks cover
 page clamping, selected material/filter retention, independent status recovery
 and an unavailable catalog. The existing explicit UI ownership test includes
 retained-child toggle and Reload callbacks after their owner is dropped.
+
+
+### Shared Favorites authority
+
+```sh
+cargo test -p editor-core --features mcp session::favorites::authority_tests
+cargo test -p editor-core --features mcp attached_mcp_sessions_observe_one_favorites_authority
+cargo test -p editor software_browser_observes_attached_session_changes -- --test-threads=1
+```
+
+These checks cover two explicitly attached Sessions, concurrent writes, shared
+Reload/error/revision state, independent recovery directories and document
+history/drafts/cameras. The UI fixture interleaves an owned old catalog snapshot
+with another Session's write, then checks coherent publication and ordinary
+visible-window refresh. The existing retained-child resource check still covers
+owner release. This is a persistence seam; multiple open documents and document
+targeting are separate work.
+
+
+### Shared Recent maps authority
+
+```sh
+cargo test -p editor-core --features mcp session::recent::authority_tests
+cargo test -p editor-core --features mcp mcp::tools::files::recent_tests
+cargo test -p editor recent_maps_ui::tests -- --test-threads=1
+python3 -B scripts/validate_recent_maps.py --binary target/debug/hammerr-headless --output /tmp/hammerr-recent-maps-check
+```
+
+These checks cover attached Sessions, concurrent remembering, shared errors and
+Reload, compatible idle build restoration and incompatible/compiling documents.
+Primary map Open/Save remain successful on history-storage failure. Other
+Sessions' history, cameras, selection and owned reviews remain independent.
+Existing separate-process writer checks retain their explicit Reload policy.

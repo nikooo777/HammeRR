@@ -3,7 +3,13 @@ use super::*;
 fn fixture() -> (tempfile::TempDir, Application, PathBuf) {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("recovery");
-    let mut state = Session::new(Err("No content required".into()));
+    let material_favorites = material_favorites::Authority::configured(Ok(path.clone()));
+    let recent_maps = recent_maps::Authority::configured(recent_maps::directory(Ok(path.clone())));
+    let mut state = Session::with_material_favorites(
+        Err("No content required".into()),
+        material_favorites.clone(),
+    );
+    state.use_application_recent_maps(recent_maps.clone());
     state.configure_recovery(Ok(path.clone()));
     state
         .create_block(
@@ -22,6 +28,8 @@ fn fixture() -> (tempfile::TempDir, Application, PathBuf) {
             drained: false,
         },
         _recovery_worker: worker,
+        material_favorites,
+        recent_maps,
         session,
         open_message: None,
         finished: None,

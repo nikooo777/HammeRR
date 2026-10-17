@@ -556,8 +556,11 @@ values into this session, `reload` rereads storage, and `reset` explicitly saves
 factory values without applying them. Only grid size, snapping and visibility
 persist; ordinary `set_spatial_settings` calls stay temporary. Stale storage or
 write failures preserve the current grid and map/history. A completed write with
-failed readback reports `write_committed: true` and an explicit error; inspect
-readiness before continuing. See [Grid defaults](basics.md#grid-and-snapping).
+failed verification reports `write_committed: true` and an explicit error; inspect
+readiness before continuing. Save/Reset compare the retained source under a
+stable nonblocking Linux lock; Apply checks its original directory. A busy lock
+preserves current values and disk bytes. Changed directories require Reload;
+nonparticipating writers remain outside that guarantee. See [Grid defaults](basics.md#grid-and-snapping).
 
 `set_view` and `render_view` accept `selection_outlines` (factory default true).
 `get_map_info.view` and render metadata report the effective value. Disabling
@@ -612,7 +615,10 @@ without applying; `reset` explicitly writes factory speed without applying.
 Only Save/Reset write. Malformed/unavailable storage, outside changes and stale
 speed snapshots reject with current valid state preserved; inspect readiness
 and `write_committed` after errors. Files are bounded to 4096 bytes, with
-symlink/nonregular rejection and existing atomic persistence guards.
+symlink/nonregular rejection and retained directory/source guards. Save/Reset
+coordinate participating Linux writers through a stable nonblocking lock;
+contention preserves saved bytes and current speed. Changed directories require
+explicit Reload; programs ignoring the lock remain outside this guarantee.
 
 No action moves the camera, edits source/history/selection or invalidates owned
 map reviews/picks. Camera positions and other sensitivities remain separate.
@@ -645,7 +651,9 @@ The versioned `shortcuts.json` file lives beside grid/preview preferences and
 caps at 16 KiB. Save is blocked after storage errors until Reload succeeds or
 explicit Reset. Writes compare inspected identity/bytes; nonregular targets
 and final-file symlinks reject. `write_committed:true` reports a completed write
-even if readback failed. Independent writers do not lock storage. Configuration
+even if verification failed. Save/Reset compare the retained source under a stable,
+nonblocking Linux lock. Changed directories require explicit Reload. Programs
+that ignore the lock remain outside this guarantee. Configuration
 changes preserve map/history/selection/camera and active drafts.
 
 `execute_editor_command` accepts `command` using the same five identifiers.
@@ -684,8 +692,12 @@ Save/Apply/Reset recheck inspected file identity and bytes. Invalid, unsupported
 or oversized files remain untouched and block Save/Apply until Reload succeeds
 or Reset is explicitly requested; files cap at 4096 bytes. Nonregular targets
 and final-file symlinks reject even on Reset. Only Save/Reset write. A completed
-write followed by a failed readback returns `write_committed:true` with an error;
-inspect readiness before continuing. Independent writers do not lock the file.
+write followed by failed verification returns `write_committed:true` with an error;
+inspect readiness before continuing. Save/Reset compare the retained source
+under a stable, nonblocking Linux lock. Apply checks the original directory;
+changed directories require explicit Reload. Nonparticipating writers remain
+outside the locking guarantee. Coordinated publication requires Linux; other
+platforms reject writes.
 Apply preserves unrelated view settings, source/history/selection/camera and
 rejects active geometry/measurement previews, viewport tools, builds or launches.
 Save/Reload/Reset leave the view and pending viewport contexts unchanged.

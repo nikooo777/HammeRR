@@ -16,6 +16,7 @@ mod history;
 mod linked_path;
 mod materials;
 mod measurements;
+mod navigation_preferences;
 mod overlay;
 mod particles;
 mod partitions;

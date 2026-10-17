@@ -41,6 +41,7 @@ struct Ui {
     seen_scene: render::SceneKey,
     seen_camera: u64,
     seen_view: u64,
+    seen_navigation: u64,
     brush_drag: Option<BrushDrag>,
     clip_drag: Option<BrushDrag>,
     interaction: interaction::Interaction,
@@ -110,6 +111,7 @@ struct Ui {
     measurements: Option<measurements_ui::Controller>,
     grid_defaults: Option<grid_defaults_ui::Controller>,
     preview_defaults: Option<preview_defaults_ui::Controller>,
+    navigation_defaults: Option<navigation_defaults_ui::Controller>,
     shortcuts: Option<shortcuts_ui::Controller>,
     material_for_group: bool,
     material_for_atlas: bool,
@@ -432,6 +434,7 @@ pub(super) fn run(
         seen_scene: render::ViewOptions::default().scene_key(0),
         seen_camera: 0,
         seen_view: 0,
+        seen_navigation: u64::MAX,
         brush_drag: None,
         clip_drag: None,
         interaction: interaction::Interaction::default(),
@@ -501,6 +504,7 @@ pub(super) fn run(
         measurements: None,
         grid_defaults: None,
         preview_defaults: None,
+        navigation_defaults: None,
         shortcuts: None,
         material_for_group: false,
         material_for_atlas: false,
@@ -652,6 +656,30 @@ pub(super) fn run(
                 }
             }
             if let Err(error) = ui.grid_defaults.as_ref().unwrap().show(&lock(&ui.session)) {
+                app.unwrap().set_message(error.to_string().into());
+            }
+        }
+    });
+    navigation_defaults_ui::bind_speed(&app, &session_of(&ui));
+    app.on_navigation_defaults({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let mut ui = ui.borrow_mut();
+            if ui.navigation_defaults.is_none() {
+                match navigation_defaults_ui::Controller::new(&ui.session) {
+                    Ok(controller) => ui.navigation_defaults = Some(controller),
+                    Err(error) => {
+                        app.unwrap().set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            if let Err(error) = ui
+                .navigation_defaults
+                .as_ref()
+                .unwrap()
+                .show(&lock(&ui.session))
+            {
                 app.unwrap().set_message(error.to_string().into());
             }
         }
@@ -2671,6 +2699,23 @@ pub(super) fn run(
             let height = app.get_viewport_height().max(1.0);
             let ndc = (x * 2.0 / width - 1.0, 1.0 - y * 2.0 / height);
             let mut ui = ui.borrow_mut();
+            let speed_change = navigation_defaults_ui::wheel_speed(
+                &mut lock(&ui.session),
+                ui.viewport.camera.projection,
+                ui.viewport.looking(),
+                delta,
+            );
+            match speed_change {
+                Ok(true) => {
+                    navigation_defaults_ui::refresh_speed(&app, &lock(&ui.session));
+                    return;
+                }
+                Err(error) => {
+                    app.set_message(error.into());
+                    return;
+                }
+                Ok(false) => {}
+            }
             ui.object_cycle.cancel();
             if ui.interaction.active() {
                 let shared = ui.session.clone();
@@ -2740,11 +2785,17 @@ pub(super) fn run(
             last_tick = now;
 
             let ui = &mut *ui.borrow_mut();
-            ui.viewport.update(dt);
+            let fly_speed = lock(&ui.session).fly_speed();
+            ui.viewport.update(dt, fly_speed);
             let mut panel_dirty = false;
             {
                 let mut session = lock(&ui.session);
                 session.poll_game();
+                let navigation_serial = session.navigation_preferences_serial();
+                if navigation_serial != ui.seen_navigation {
+                    ui.seen_navigation = navigation_serial;
+                    navigation_defaults_ui::refresh_speed(&app, &session);
+                }
                 app.set_compile_label(session.compile_label().into());
                 app.set_compile_token(
                     session
@@ -3232,6 +3283,11 @@ pub(super) fn run(
                 {
                     controller.refresh(&lock(&ui.session));
                 }
+                if let Some(controller) = &ui.navigation_defaults
+                    && controller.window.window().is_visible()
+                {
+                    controller.refresh(&lock(&ui.session));
+                }
                 if let Some(controller) = &ui.preview_defaults
                     && controller.window.window().is_visible()
                 {
@@ -3324,30 +3380,30 @@ pub(super) fn run(
             );
             if let Some(frame) = ui.viewport.render(&ui.ctx, size, scale) {
                 app.set_frame(frame);
-                let c = &ui.viewport.camera;
-                let status = if c.projection == Projection::Perspective {
-                    format!(
-                        "{:.0} {:.0} {:.0}  yaw {:.0}° pitch {:.0}°  speed {:.0}",
-                        c.position.x,
-                        c.position.y,
-                        c.position.z,
-                        c.yaw_degrees,
-                        c.pitch_degrees,
-                        ui.viewport.speed
-                    )
-                } else {
-                    let center = c.position + c.forward() * render::Camera::ORTHO_DISTANCE;
-                    format!(
-                        "{} view · center {:.1} {:.1} {:.1} · {:.1} units tall",
-                        c.projection.name(),
-                        center.x,
-                        center.y,
-                        center.z,
-                        c.ortho_height
-                    )
-                };
-                app.set_camera(status.into());
             }
+            let c = &ui.viewport.camera;
+            let status = if c.projection == Projection::Perspective {
+                format!(
+                    "{:.0} {:.0} {:.0}  yaw {:.0}° pitch {:.0}°  speed {:.0}",
+                    c.position.x,
+                    c.position.y,
+                    c.position.z,
+                    c.yaw_degrees,
+                    c.pitch_degrees,
+                    fly_speed
+                )
+            } else {
+                let center = c.position + c.forward() * render::Camera::ORTHO_DISTANCE;
+                format!(
+                    "{} view · center {:.1} {:.1} {:.1} · {:.1} units tall",
+                    c.projection.name(),
+                    center.x,
+                    center.y,
+                    center.z,
+                    c.ortho_height
+                )
+            };
+            app.set_camera(status.into());
         }
     });
 

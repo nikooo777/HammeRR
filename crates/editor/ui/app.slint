@@ -3,6 +3,7 @@ export { AtlasWindow } from "atlas.slint";
 export { SkyAssetsWindow, SkyAssetFaceRow } from "sky-assets.slint";
 export { HistoryWindow, HistoryRow } from "history.slint";
 export { GridDefaultsWindow } from "grid-defaults.slint";
+export { NavigationDefaultsWindow } from "navigation-defaults.slint";
 export { PreviewDefaultsWindow, PreviewDefaultRow } from "preview-defaults.slint";
 export { ShortcutsWindow, ShortcutRow } from "shortcuts.slint";
 export { WorkingRegionWindow } from "working-region.slint";
@@ -1808,6 +1809,7 @@ export component AppWindow inherits Window {
     in property <string> workplane-axis: "Z";
     in property <string> brush-preview;
     in-out property <string> grid-size: "16";
+    in-out property <string> fly-speed: "600";
     in-out property <bool> grid-visible: true;
     in-out property <bool> snap-grid: true;
     in-out property <bool> drawing-block;
@@ -1968,6 +1970,9 @@ export component AppWindow inherits Window {
     callback measurements();
     callback grid-defaults();
     in property <bool> grid-defaults-error;
+    callback navigation-defaults();
+    callback fly-speed-changed();
+    in property <bool> navigation-defaults-error;
     callback preview-defaults();
     in property <bool> preview-defaults-error;
     callback keyboard-shortcuts();
@@ -2570,6 +2575,13 @@ export component AppWindow inherits Window {
                         text: "VIEWPORT";
                     }
                     Button { text: root.grid-defaults-error ? "Grid defaults… · needs attention" : "Grid defaults…"; clicked => { root.grid-defaults(); } }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text { text: "Fly speed"; vertical-alignment: center; }
+                        LineEdit { horizontal-stretch: 1; text <=> root.fly-speed; input-type: decimal; accessible-label: "Fly speed"; accepted => { root.fly-speed-changed(); } }
+                        Text { text: "units/s"; vertical-alignment: center; }
+                    }
+                    Button { text: root.navigation-defaults-error ? "Navigation defaults… · needs attention" : "Navigation defaults…"; clicked => { root.navigation-defaults(); } }
                     Button { text: root.preview-defaults-error ? "Preview defaults… · needs attention" : "Preview defaults…"; clicked => { root.preview-defaults(); } }
                     Button { text: root.shortcuts-error ? "Keyboard shortcuts… · needs attention" : "Keyboard shortcuts…"; clicked => { root.keyboard-shortcuts(); } }
                     ComboBox {

@@ -58,6 +58,7 @@ mod model_attachments;
 pub mod model_browser;
 pub mod models;
 mod native_capture;
+pub mod navigation_preferences;
 pub mod object_picking;
 pub mod overlay;
 pub mod paint;
@@ -233,6 +234,7 @@ pub struct Session {
     spatial: spatial::Settings,
     grid_preferences: grid_preferences::State,
     preview_preferences: preview_preferences::State,
+    navigation_preferences: navigation_preferences::State,
     shortcuts: shortcuts::State,
     saved_cameras: [Option<Camera>; 4],
     block_preview: Option<(DVec3, DVec3)>,
@@ -356,6 +358,7 @@ impl Session {
             spatial: spatial::Settings::default(),
             grid_preferences: grid_preferences::State::default(),
             preview_preferences: preview_preferences::State::default(),
+            navigation_preferences: navigation_preferences::State::default(),
             shortcuts: shortcuts::State::default(),
             saved_cameras: [None; 4],
             block_preview: None,

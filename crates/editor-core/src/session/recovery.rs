@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -6,19 +7,21 @@ use source_formats::keyvalues::WriteOptions;
 use source_formats::vmf::Vmf;
 
 use super::{Actor, Document, Session, Snapshot};
-use crate::recovery::{Entry, Kind, Listing, Settings, Store};
+use crate::recovery::{
+    Authority, Entry, Kind, Listing, Settings, SettingsSnapshot, SettingsUpdate, Store,
+};
 
 pub(super) struct State {
     store: Option<Store>,
-    settings: Settings,
-    settings_revision: u64,
+    settings: Binding,
+    observer: RefCell<Observer>,
     document_key: String,
     source_path: Option<PathBuf>,
     title: String,
     last_attempt: Instant,
     captured: Option<Snapshot>,
     last_entry: Option<Entry>,
-    settings_error: Option<String>,
+    storage_error: Option<String>,
     snapshot_error: Option<String>,
     retention_error: Option<String>,
     drain_error: Option<String>,
@@ -30,15 +33,15 @@ impl Default for State {
     fn default() -> Self {
         Self {
             store: None,
-            settings: Settings::default(),
-            settings_revision: 0,
+            settings: Binding::Independent(Authority::default()),
+            observer: RefCell::new(Observer::default()),
             document_key: format!("untitled:{}", crate::recovery::unique_id()),
             source_path: None,
             title: "Untitled map".into(),
             last_attempt: Instant::now(),
             captured: None,
             last_entry: None,
-            settings_error: None,
+            storage_error: None,
             snapshot_error: None,
             retention_error: None,
             drain_error: None,
@@ -49,7 +52,14 @@ impl Default for State {
 }
 
 impl State {
-    fn error(&self) -> Option<String> {
+    fn changed(&mut self) {
+        self.serial = self
+            .serial
+            .checked_add(1)
+            .expect("Recovery serial exhausted");
+    }
+
+    fn error(&self, settings_error: Option<&str>) -> Option<String> {
         let mut errors: Vec<&str> = Vec::new();
         for (error, prefix) in [
             (self.drain_error.as_deref(), None),
@@ -61,7 +71,8 @@ impl State {
                 self.retention_error.as_deref(),
                 Some("Exit recovery snapshot saved, but recovery cleanup failed: "),
             ),
-            (self.settings_error.as_deref(), None),
+            (self.storage_error.as_deref(), None),
+            (settings_error, None),
         ] {
             let Some(error) = error else { continue };
             let wrapped = prefix.is_some_and(|prefix| {
@@ -76,6 +87,57 @@ impl State {
         }
         (!errors.is_empty()).then(|| errors.join("; "))
     }
+}
+
+enum Binding {
+    Independent(Authority),
+    Application(Authority),
+}
+
+impl Binding {
+    fn authority(&self) -> &Authority {
+        match self {
+            Self::Independent(authority) | Self::Application(authority) => authority,
+        }
+    }
+}
+
+#[derive(Default)]
+struct Observer {
+    observed: Option<(u64, SettingsStamp)>,
+    serial: u64,
+}
+
+#[derive(PartialEq, Eq)]
+struct SettingsStamp {
+    revision: u64,
+    error: Option<String>,
+}
+
+impl Observer {
+    fn observe(&mut self, local: u64, settings: SettingsSnapshot) -> u64 {
+        let observed = (
+            local,
+            SettingsStamp {
+                revision: settings.revision,
+                error: settings.error,
+            },
+        );
+        if self.observed.as_ref() != Some(&observed) {
+            self.serial = self
+                .serial
+                .checked_add(1)
+                .expect("Recovery observer serial exhausted");
+            self.observed = Some(observed);
+        }
+        self.serial
+    }
+}
+
+pub(super) struct RecoveryBackup {
+    entry: Entry,
+    store: Store,
+    keep: usize,
 }
 
 pub(crate) struct RecoveryCompletion {
@@ -132,45 +194,66 @@ impl Session {
         self.configure_navigation_preferences(directory.clone());
         self.configure_shortcuts(directory.clone());
         self.configure_recent_maps(crate::recent_maps::directory(directory.clone()));
-        let store = match directory {
-            Ok(directory) => Store { directory },
-            Err(error) => {
-                self.recovery.settings_error = Some(error);
-                self.recovery.serial += 1;
-                return;
-            }
-        };
-        match store.load_settings() {
-            Ok(settings) => {
-                self.recovery.settings = settings;
-                self.recovery.settings_error = None;
-            }
-            Err(error) => {
-                self.recovery.settings.enabled = false;
-                self.recovery.settings_error = Some(error.clone());
-                self.log(
-                    Actor::System,
-                    format!("Recovery settings could not load: {error}"),
-                );
-            }
+        if let Binding::Independent(authority) = &self.recovery.settings
+            && let Err(error) = authority.configure(directory.clone())
+        {
+            self.log(
+                Actor::System,
+                format!("Recovery settings could not load: {error}"),
+            );
         }
-        self.recovery.store = Some(store);
-        self.recovery.settings_revision += 1;
-        self.recovery.serial += 1;
+        match directory {
+            Ok(directory) => {
+                self.recovery.store = Some(Store { directory });
+                self.recovery.storage_error = None;
+            }
+            Err(error) if matches!(self.recovery.settings, Binding::Application(_)) => {
+                self.recovery.storage_error = Some(error);
+            }
+            Err(_) => {}
+        }
+        self.recovery.changed();
+    }
+
+    pub fn with_recovery_settings(
+        game: Result<source_formats::gamefs::GameFs, String>,
+        authority: Authority,
+    ) -> Self {
+        let mut session = Self::new(game);
+        session.use_application_recovery_settings(authority);
+        session
+    }
+
+    pub(crate) fn use_application_recovery_settings(&mut self, authority: Authority) {
+        self.recovery.settings = Binding::Application(authority);
+        self.recovery.changed();
+        if let Some(error) = self.recovery_settings_snapshot().error {
+            self.log(
+                Actor::System,
+                format!("Recovery settings could not load: {error}"),
+            );
+        }
     }
 
     pub(crate) fn report_recovery_worker_error(&mut self, error: String) {
         self.recovery.drain_error = Some(error.clone());
-        self.recovery.serial += 1;
+        self.recovery.changed();
         self.log(Actor::System, format!("Recovery shutdown failed: {error}"));
     }
 
     pub fn recovery_serial(&self) -> u64 {
-        self.recovery.serial
+        self.recovery
+            .observer
+            .borrow_mut()
+            .observe(self.recovery.serial, self.recovery_settings_snapshot())
     }
 
-    pub fn recovery_settings(&self) -> &Settings {
-        &self.recovery.settings
+    pub fn recovery_settings_snapshot(&self) -> SettingsSnapshot {
+        self.recovery.settings.authority().snapshot()
+    }
+
+    pub fn recovery_settings(&self) -> Settings {
+        self.recovery_settings_snapshot().settings
     }
 
     pub fn recovery_busy(&self) -> bool {
@@ -178,10 +261,21 @@ impl Session {
     }
 
     pub fn recovery_settings_revision(&self) -> u64 {
-        self.recovery.settings_revision
+        self.recovery_settings_snapshot().revision
     }
 
     pub fn recovery_status(&self) -> Value {
+        let settings = self.recovery_settings_snapshot();
+        self.recovery_status_with_settings(&settings)
+    }
+
+    pub fn recovery_status_snapshot(&self) -> (SettingsSnapshot, Value) {
+        let settings = self.recovery_settings_snapshot();
+        let status = self.recovery_status_with_settings(&settings);
+        (settings, status)
+    }
+
+    fn recovery_status_with_settings(&self, settings: &SettingsSnapshot) -> Value {
         let pending = self.document.is_dirty()
             && !self
                 .recovery
@@ -190,13 +284,14 @@ impl Session {
                 .is_some_and(|s| self.current_snapshot(s));
         json!({
             "generation": self.document_generation, "revision": self.document.revision(),
-            "available": self.recovery.store.is_some(), "settings": self.recovery.settings,
-            "settings_revision": self.recovery.settings_revision,
+            "available": self.recovery.store.is_some(), "settings": settings.settings,
+            "settings_revision": settings.revision,
             "directory": self.recovery.store.as_ref().map(|store| &store.directory),
             "busy": self.recovery.busy, "pending_changes": pending,
-            "next_autosave_seconds": (pending && self.recovery.store.is_some() && self.recovery.settings.enabled && !self.recovery.busy && !self.closing).then(|| Duration::from_secs(self.recovery.settings.interval_seconds).saturating_sub(self.recovery.last_attempt.elapsed()).as_secs()),
-            "last_snapshot": self.recovery.last_entry, "error": self.recovery.error(),
-            "settings_error": self.recovery.settings_error, "snapshot_error": self.recovery.snapshot_error,
+            "next_autosave_seconds": (pending && self.recovery.store.is_some() && settings.settings.enabled && !self.recovery.busy && !self.closing).then(|| Duration::from_secs(settings.settings.interval_seconds).saturating_sub(self.recovery.last_attempt.elapsed()).as_secs()),
+            "last_snapshot": self.recovery.last_entry, "error": self.recovery.error(settings.error.as_deref()),
+            "settings_error": settings.error, "storage_error": self.recovery.storage_error,
+            "snapshot_error": self.recovery.snapshot_error,
             "retention_error": self.recovery.retention_error, "drain_error": self.recovery.drain_error,
             "document_key": self.recovery.document_key,
         })
@@ -208,28 +303,23 @@ impl Session {
         settings: Settings,
         expected_revision: Option<u64>,
     ) -> Result<(), String> {
-        if expected_revision.is_some_and(|version| version != self.recovery.settings_revision) {
-            return Err(
-                "Recovery settings changed elsewhere; reload the settings before applying".into(),
-            );
-        }
-        let saved = self
+        self.update_recovery_settings(actor, settings.into(), expected_revision)
+            .map(|_| ())
+    }
+
+    pub fn update_recovery_settings(
+        &mut self,
+        actor: Actor,
+        update: SettingsUpdate,
+        expected_revision: Option<u64>,
+    ) -> Result<Value, String> {
+        let settings = self
             .recovery
-            .store
-            .as_ref()
-            .ok_or_else(|| "Recovery storage is unavailable".to_owned())
-            .and_then(|store| store.save_settings(&settings));
-        if let Err(error) = saved {
-            self.recovery.settings_error = Some(error.clone());
-            self.recovery.serial += 1;
-            return Err(error);
-        }
-        self.recovery.settings = settings;
-        self.recovery.settings_revision += 1;
-        self.recovery.settings_error = None;
-        self.recovery.serial += 1;
+            .settings
+            .authority()
+            .update(update, expected_revision)?;
         self.log(actor, "updated autosave and recovery settings");
-        Ok(())
+        Ok(self.recovery_status_with_settings(&settings))
     }
 
     pub fn reload_recovery_settings(
@@ -237,33 +327,17 @@ impl Session {
         actor: Actor,
         expected_revision: Option<u64>,
     ) -> Result<Value, String> {
-        if expected_revision.is_some_and(|version| version != self.recovery.settings_revision) {
-            return Err(
-                "Recovery settings changed elsewhere; reload the settings before applying".into(),
-            );
-        }
-        let loaded = self
-            .recovery
-            .store
-            .as_ref()
-            .ok_or_else(|| "Recovery storage is unavailable".to_owned())
-            .and_then(Store::load_settings);
+        let loaded = self.recovery.settings.authority().reload(expected_revision);
         match loaded {
             Ok(settings) => {
-                self.recovery.settings = settings;
-                self.recovery.settings_revision += 1;
-                self.recovery.settings_error = None;
-                self.recovery.serial += 1;
                 self.log(actor, "Reloaded saved recovery settings");
-                Ok(self.recovery_status())
+                Ok(self.recovery_status_with_settings(&settings))
             }
-            Err(error) => {
-                let error = format!("Recovery settings could not reload: {error}");
-                self.recovery.settings_error = Some(error.clone());
-                self.recovery.serial += 1;
+            Err(crate::recovery::ReloadError::Storage(error)) => {
                 self.log(actor, &error);
                 Err(error)
             }
+            Err(crate::recovery::ReloadError::Stale(error)) => Err(error),
         }
     }
 
@@ -276,13 +350,17 @@ impl Session {
     }
 
     pub fn autosave_due(&self) -> bool {
+        self.autosave_due_with_settings(&self.recovery_settings())
+    }
+
+    fn autosave_due_with_settings(&self, settings: &Settings) -> bool {
         self.recovery.store.is_some()
-            && self.recovery.settings.enabled
+            && settings.enabled
             && !self.recovery.busy
             && !self.closing
             && self.document.is_dirty()
             && self.recovery.last_attempt.elapsed()
-                >= Duration::from_secs(self.recovery.settings.interval_seconds)
+                >= Duration::from_secs(settings.interval_seconds)
             && !self
                 .recovery
                 .captured
@@ -290,7 +368,47 @@ impl Session {
                 .is_some_and(|s| self.current_snapshot(s))
     }
 
+    pub(crate) fn begin_due_recovery_snapshot(&mut self) -> Option<RecoveryRequest> {
+        let settings = self.recovery_settings();
+        self.autosave_due_with_settings(&settings)
+            .then(|| {
+                self.begin_recovery_snapshot_with_settings(Kind::Autosave, settings)
+                    .ok()
+            })
+            .flatten()
+    }
+
+    pub(crate) fn begin_exit_recovery_snapshot(
+        &mut self,
+    ) -> Result<Option<RecoveryRequest>, String> {
+        let settings = self.recovery_settings();
+        let pending = self.document.is_dirty()
+            && !self
+                .recovery
+                .captured
+                .as_ref()
+                .is_some_and(|snapshot| self.current_snapshot(snapshot));
+        if !settings.enabled || !pending {
+            return Ok(None);
+        }
+        if self.recovery.store.is_none() {
+            return Err("Exit recovery storage is unavailable".into());
+        }
+        self.begin_recovery_snapshot_with_settings(Kind::Autosave, settings)
+            .map(Some)
+            .map_err(|error| format!("Exit recovery snapshot failed: {error}"))
+    }
+
     pub fn begin_recovery_snapshot(&mut self, kind: Kind) -> Result<RecoveryRequest, String> {
+        let settings = self.recovery_settings();
+        self.begin_recovery_snapshot_with_settings(kind, settings)
+    }
+
+    fn begin_recovery_snapshot_with_settings(
+        &mut self,
+        kind: Kind,
+        settings: Settings,
+    ) -> Result<RecoveryRequest, String> {
         if self.closing && kind != Kind::Autosave {
             return Err("The editor is closing".into());
         }
@@ -304,7 +422,7 @@ impl Session {
             .ok_or("Recovery storage is unavailable")?;
         self.recovery.busy = true;
         self.recovery.last_attempt = Instant::now();
-        self.recovery.serial += 1;
+        self.recovery.changed();
         Ok(RecoveryRequest {
             store,
             snapshot: Snapshot {
@@ -316,7 +434,7 @@ impl Session {
             title: self.recovery.title.clone(),
             kind,
             vmf: self.document.vmf().clone(),
-            keep: self.recovery.settings.keep_per_map,
+            keep: settings.keep_per_map,
         })
     }
 
@@ -338,7 +456,7 @@ impl Session {
     ) -> Result<RecoveryCompletion, String> {
         self.recovery.busy = false;
         self.recovery.last_attempt = Instant::now();
-        self.recovery.serial += 1;
+        self.recovery.changed();
         match result {
             Ok(entry) => {
                 self.recovery.snapshot_error = None;
@@ -396,7 +514,7 @@ impl Session {
             self.recovery.last_entry = None;
             self.recovery.captured = None;
         }
-        self.recovery.serial += 1;
+        self.recovery.changed();
         self.log(actor, "deleted recovery snapshot");
         Ok(())
     }
@@ -447,7 +565,7 @@ impl Session {
         self.recovery.last_attempt = Instant::now();
         self.recovery.captured = None;
         self.recovery.last_entry = None;
-        self.recovery.serial += 1;
+        self.recovery.changed();
         self.update_recovery_path();
     }
 
@@ -460,14 +578,18 @@ impl Session {
                 .unwrap_or_default()
                 .to_string_lossy()
                 .into();
-            self.recovery.serial += 1;
+            self.recovery.changed();
         }
     }
 
-    pub(super) fn backup_before_save(&mut self, path: &Path) -> Result<Option<Entry>, String> {
-        let Some(store) = self.recovery.store.as_ref() else {
+    pub(super) fn backup_before_save(
+        &mut self,
+        path: &Path,
+    ) -> Result<Option<RecoveryBackup>, String> {
+        let Some(store) = self.recovery.store.clone() else {
             return Ok(None);
         };
+        let keep = self.recovery_settings().keep_per_map;
         let data = match std::fs::read(path) {
             Ok(data) => data,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -478,8 +600,8 @@ impl Session {
         let title = path.file_name().unwrap_or_default().to_string_lossy();
         let result = store
             .write(&key, Some(&source), &title, Kind::BeforeSave, &data)
-            .map(Some);
-        self.recovery.serial += 1;
+            .map(|entry| Some(RecoveryBackup { entry, store, keep }));
+        self.recovery.changed();
         if let Err(error) = &result {
             self.recovery.snapshot_error = Some(error.clone());
         }
@@ -488,18 +610,18 @@ impl Session {
 
     pub(super) fn finish_save_backup(
         &mut self,
-        entry: Option<&Entry>,
+        backup: Option<&RecoveryBackup>,
         saved: bool,
     ) -> Result<(), String> {
-        let (Some(store), Some(entry)) = (self.recovery.store.as_ref(), entry) else {
+        let Some(backup) = backup else {
             return Ok(());
         };
         let result = if saved {
-            store.prune(&entry.document_key, self.recovery.settings.keep_per_map)
+            backup.store.prune(&backup.entry.document_key, backup.keep)
         } else {
-            store.delete(&entry.id)
+            backup.store.delete(&backup.entry.id)
         };
-        self.recovery.serial += 1;
+        self.recovery.changed();
         if let Err(error) = &result {
             self.recovery.retention_error = Some(error.clone());
         }
@@ -509,6 +631,9 @@ impl Session {
 
 #[cfg(test)]
 mod error_domain_tests;
+
+#[cfg(test)]
+mod authority_tests;
 
 #[cfg(test)]
 mod tests {
@@ -941,9 +1066,9 @@ mod tests {
                 .set_recovery_settings(Actor::User, Settings::default(), Some(version))
                 .is_err()
         );
-        assert_eq!(session.recovery_settings(), &settings);
+        assert_eq!(session.recovery_settings(), settings);
         let mut reopened = Session::new(Err("no assets needed".into()));
         reopened.configure_recovery(Ok(directory.path().join("recovery")));
-        assert_eq!(reopened.recovery_settings(), &settings);
+        assert_eq!(reopened.recovery_settings(), settings);
     }
 }

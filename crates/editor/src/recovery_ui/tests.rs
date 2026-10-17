@@ -13,8 +13,11 @@ fn recovery_warning_keeps_error_domains_with_listing_failures_and_skipped_entrie
     .unwrap();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("recovery");
-    let mut state = Session::new(Err("no assets".into()));
+    let authority = recovery::Authority::configured(Ok(path.clone()));
+    let mut state = Session::with_recovery_settings(Err("no assets".into()), authority.clone());
     state.configure_recovery(Ok(path.clone()));
+    let mut peer = Session::with_recovery_settings(Err("no assets".into()), authority);
+    peer.configure_recovery(Ok(directory.path().join("peer")));
     std::fs::create_dir_all(path.join("settings.json")).unwrap();
     let settings_error = state
         .set_recovery_settings(Actor::User, Settings::default(), None)
@@ -52,10 +55,26 @@ fn recovery_warning_keeps_error_domains_with_listing_failures_and_skipped_entrie
     window.invoke_apply_settings();
     assert!(lock(&shared).recovery_status()["settings_error"].is_null());
     assert!(window.get_warning().contains("snapshot write failed"));
+    let peer_source = peer.document().vmf().clone();
+    peer.update_recovery_settings(
+        Actor::Agent,
+        recovery::SettingsUpdate {
+            keep_per_map: Some(8),
+            ..Default::default()
+        },
+        None,
+    )
+    .unwrap();
     window.set_interval_seconds(180);
     window.set_keep_count(12);
     window.set_autosave_enabled(false);
     window.set_settings_dirty(true);
+    window.invoke_apply_settings();
+    assert!(window.get_message().contains("changed elsewhere"));
+    assert!(window.get_settings_dirty());
+    assert_eq!(window.get_interval_seconds(), 180);
+    assert_eq!(window.get_keep_count(), 12);
+    assert_eq!(peer.recovery_settings().keep_per_map, 8);
     std::fs::write(path.join("settings.json"), b"broken").unwrap();
     window.invoke_reload_settings();
     assert!(window.get_settings_dirty());
@@ -63,6 +82,11 @@ fn recovery_warning_keeps_error_domains_with_listing_failures_and_skipped_entrie
     assert_eq!(window.get_keep_count(), 12);
     assert!(!window.get_autosave_enabled());
     assert!(window.get_message().contains("could not reload"));
+    assert_eq!(
+        peer.recovery_status()["settings_error"],
+        lock(&shared).recovery_status()["settings_error"]
+    );
+    assert!(peer.recovery_status()["snapshot_error"].is_null());
     assert!(window.get_warning().contains("snapshot write failed"));
     window.show().unwrap();
     crate::ui::tests::save_ui_snapshot(window.window(), "recovery-settings-reload");
@@ -82,6 +106,9 @@ fn recovery_warning_keeps_error_domains_with_listing_failures_and_skipped_entrie
     assert_eq!(window.get_keep_count(), 3);
     assert!(window.get_autosave_enabled());
     assert!(window.get_warning().contains("snapshot write failed"));
+    assert_eq!(peer.recovery_settings(), replacement);
+    assert!(peer.recovery_status()["settings_error"].is_null());
+    assert_eq!(peer.document().vmf(), &peer_source);
     window.invoke_cancel();
     let state = lock(&shared);
     assert_eq!(state.document().vmf(), &source);

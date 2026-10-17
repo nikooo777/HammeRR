@@ -3,10 +3,13 @@ use super::super::*;
 #[cfg(test)]
 mod error_domain_tests;
 
+#[cfg(test)]
+mod authority_tests;
+
 #[tool_router(router = recovery_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
-        description = "Inspect autosave settings, pending changes, settings/snapshot/retention/drain errors, their compatible combined error, storage location and retained recovery snapshots (newest first). Successful settings Save clears only settings errors; successful snapshots clear only snapshot and retention errors. Snapshots contain committed map data, not editor previews. Default page 50, maximum 200; current_map_only filters by the current document key.",
+        description = "Inspect autosave settings, pending changes, settings/storage/snapshot/retention/drain errors, their compatible combined error, storage location and retained recovery snapshots (newest first). Application-attached Sessions share settings, settings revision and settings errors; storage, snapshots, clocks and capture errors remain local. Successful settings Save clears only settings errors; successful snapshots clear only snapshot and retention errors. Snapshots contain committed map data, not editor previews. Default page 50, maximum 200; current_map_only filters by the current document key.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_recovery(
@@ -39,31 +42,27 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Configure persistent autosave settings through the same operation as Recovery settings. enabled controls periodic/exit autosaves; manual snapshots and previous-file backups remain available. Interval is 30–3600 seconds, retention 1–50 snapshots per map. Omitted values keep the current setting. Changes do not edit the map."
+        description = "Configure persistent autosave settings through the same operation as Recovery settings. enabled controls periodic/exit autosaves; manual snapshots and previous-file backups remain available. Interval is 30–3600 seconds, retention 1–50 snapshots per map. Omitted values merge with the latest settings under the shared Application authority lock. expected_revision rejects forms made stale by any attached Session. Changes do not edit the map."
     )]
     pub(in crate::mcp) fn set_recovery_settings(
         &self,
         Parameters(args): Parameters<RecoverySettingsArgs>,
     ) -> ToolResult {
         run(|| {
-            let mut session = self.session();
-            let mut settings = session.recovery_settings().clone();
-            if let Some(value) = args.enabled {
-                settings.enabled = value;
-            }
-            if let Some(value) = args.interval_seconds {
-                settings.interval_seconds = value;
-            }
-            if let Some(value) = args.keep_per_map {
-                settings.keep_per_map = value;
-            }
-            session.set_recovery_settings(Actor::Agent, settings, args.expected_revision)?;
-            Ok(session.recovery_status())
+            self.session().update_recovery_settings(
+                Actor::Agent,
+                crate::recovery::SettingsUpdate {
+                    enabled: args.enabled,
+                    interval_seconds: args.interval_seconds,
+                    keep_per_map: args.keep_per_map,
+                },
+                args.expected_revision,
+            )
         })
     }
 
     #[tool(
-        description = "Reload recovery/settings.json through the same Session operation as Recovery -> Reload settings. Reads a regular target up to 32768 bytes; valid regular-file symlinks are followed and an absent file supplies factory defaults. Optional expected_revision rejects stale settings requests before reading. Failed read/validation preserves current settings and revision, retaining a settings_error. Success adopts saved settings and advances settings_revision; snapshot/retention/drain errors, requests, map/history/camera and previews remain unchanged. Does not write storage, reset the autosave clock, initialize graphics or coordinate writers."
+        description = "Reload recovery/settings.json through the same Session operation as Recovery -> Reload settings. Reads a regular target up to 32768 bytes; valid regular-file symlinks are followed and an absent file supplies factory defaults. Optional expected_revision rejects stale settings requests before reading. Failed read/validation preserves current settings and revision, retaining a settings_error. Success adopts saved settings and advances settings_revision; storage/snapshot/retention/drain errors, requests, map/history/camera and previews remain unchanged. Does not write storage, reset the autosave clock, initialize graphics or coordinate separate processes or outside writers."
     )]
     pub(in crate::mcp) fn reload_recovery_settings(
         &self,

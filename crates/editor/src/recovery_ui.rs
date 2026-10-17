@@ -37,7 +37,7 @@ fn append_warning(window: &RecoveryWindow, warning: &str) {
 }
 
 pub fn refresh(window: &RecoveryWindow, session: &Session) {
-    let status = session.recovery_status();
+    let (settings, status) = session.recovery_status_snapshot();
     window.set_busy(session.recovery_busy());
     window.set_available(status["available"].as_bool().unwrap_or(false));
     window.set_dirty_map(session.document().is_dirty());
@@ -49,17 +49,16 @@ pub fn refresh(window: &RecoveryWindow, session: &Session) {
         window.set_map_revision(revision.into());
     }
     if !window.get_settings_dirty() {
-        let settings = session.recovery_settings();
-        window.set_autosave_enabled(settings.enabled);
-        window.set_interval_seconds(settings.interval_seconds as i32);
-        window.set_keep_count(settings.keep_per_map as i32);
-        window.set_settings_revision(session.recovery_settings_revision().to_string().into());
+        window.set_autosave_enabled(settings.settings.enabled);
+        window.set_interval_seconds(settings.settings.interval_seconds as i32);
+        window.set_keep_count(settings.settings.keep_per_map as i32);
+        window.set_settings_revision(settings.revision.to_string().into());
     }
     let state = if session.recovery_busy() {
         "Writing a recovery snapshot…"
     } else if status["error"].is_string() {
         "Recovery needs attention"
-    } else if !session.recovery_settings().enabled {
+    } else if !settings.settings.enabled {
         "Automatic snapshots are off"
     } else if status["pending_changes"] == true {
         "Unsaved changes · autosave is scheduled"

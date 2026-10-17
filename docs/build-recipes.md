@@ -28,7 +28,15 @@ Build recipes recall a complete set of native compiler settings. Use the built-i
 4. To change only its name, choose the recipe, edit **Recipe name**, then click **Rename recipe**. To remove it, click **Delete recipe**; current compiler settings remain available.
 5. Click **Cancel recipe edit** to discard the pending name and selection edits. Settings already applied or changed with the individual controls remain in effect.
 
-Custom recipes save on this computer separately from VMF files and map undo. The status text reports session-only storage or storage failures. Restart to reload recipes after another editor changes their storage file. A failed write keeps the previous registry and file intact; correct a write error and retry. Writes preserve existing file permissions and follow valid file symlinks. A load error blocks custom changes until storage is corrected and the editor restarts. Built-in recipes remain available.
+Custom recipes save on this computer separately from VMF files and map undo. The status text reports session-only storage or storage failures. A failed write keeps the previous registry and file intact; correct a write error and retry. Writes preserve existing file permissions and follow valid file symlinks. Built-in recipes remain available when custom storage is blocked.
+
+## Reload saved recipes
+
+1. Open **Build settings…** or **Build details…**, then click **Reload recipes** after another editor changes the saved list or after repairing its storage file.
+2. Review the refreshed list and storage status. A failed Reload keeps the previous valid list and current recipe label, displays the error, and blocks custom changes until a successful Reload. **Reload recipes** stays available for repair while no build is active.
+3. Choose a recipe and click **Apply recipe** when you want its settings. Reload itself preserves current compiler settings, map history, camera and pending reviews. It keeps an active recipe label, including a changed name, only when that same saved recipe still matches current values; removed or changed recipes clear the label to **Custom settings**.
+
+Reload is unavailable for session-only storage and while a build runs or the editor closes. Completed jobs keep their captured recipe name and settings. Existing registry revisions reject actions prepared before a Reload; review the refreshed list before retrying a stale action.
 
 Both built-in recipes disable sky packing and reflection generation. Missing booleans in older custom recipes default to off; a disabled packing field remains omitted from stored version-1 records. See [Pack portable sky assets](compile-and-play.md#pack-portable-sky-assets).
 
@@ -47,4 +55,4 @@ Builds freeze their settings and recipe identity at start. Recipe changes are bl
 - Custom recipes store supported native compiler settings. Geometry and output publication remain required. Lighting can be disabled with **Fullbright**, physics with **No physics bodies**. Arbitrary executables, shell commands, extra compiler stages, stage reordering, and output-path recipes are unavailable.
 - Loading recipes does not apply one automatically. New sessions begin with **Fast preview** settings. A recipe name is current only while its applied values remain unchanged.
 - **Final lighting** retains Direct LDR and the compiler's existing lighting, visibility, collision and budget limits. Custom recipes may retain **Direct LDR + HDR**; baked prop lightmaps and broader engine support remain unavailable.
-- Cross-process changes detected before a write are rejected; simultaneous writes are not coordinated with a shared lock. Recipe storage is local to this computer and is not embedded in the map.
+- Cross-process changes detected before a write are rejected; use **Reload recipes** before retrying. Simultaneous writes are not coordinated with a shared lock, and each Session retains its own recipe registry. Reload reads the complete saved list; it does not merge unsaved registry changes. Recipe storage is local to this computer and is not embedded in the map.

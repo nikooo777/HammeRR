@@ -62,6 +62,19 @@ impl EditorServer {
     }
 
     #[tool(
+        description = "Reload the complete saved build recipe list through the same Session operation as Reload recipes in Build settings/Build details. Failed bounded read or validation preserves the valid list and active identity, exposes an error and blocks custom writes until repair and successful Reload. Optional revision rejects stale requests; active builds and closing block Reload. Current compiler options, map/history/camera, pending reviews and captured jobs are unchanged. Active identity is retained with its saved name only if the same recipe still matches current options. Does not apply settings, initialize graphics, coordinate writers or share recipe state across Sessions."
+    )]
+    pub(in crate::mcp) fn reload_build_recipes(
+        &self,
+        Parameters(args): Parameters<ReloadBuildRecipesArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session()
+                .reload_build_recipes(Actor::Agent, args.revision)
+        })
+    }
+
+    #[tool(
         description = "Save current shared compiler settings as a named custom recipe, or replace an existing custom recipe with replace_id. Names are unique ignoring case and at most 80 UTF-8 bytes. Built-ins are immutable. Atomic bounded persistence leaves preferences unchanged on failure. Active builds block edits; VMF and undo remain unchanged."
     )]
     pub(in crate::mcp) fn save_build_recipe(

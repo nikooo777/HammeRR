@@ -623,6 +623,12 @@ pub struct BuildRecipeIdArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct ReloadBuildRecipesArgs {
+    pub revision: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CompileSettingsArgs {
     /// Pack the exact complete authored sky family and supported LDR/HDR dependencies; default false. Incomplete or unsupported families fail during compilation without automatic family fallback.
     pub pack_sky_assets: Option<bool>,

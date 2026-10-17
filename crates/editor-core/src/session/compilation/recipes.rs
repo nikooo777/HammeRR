@@ -14,6 +14,7 @@ const VERSION: u32 = 1;
 const MAX_RECIPES: usize = 32;
 const MAX_NAME_BYTES: usize = 80;
 const MAX_FILE_BYTES: usize = 65_536;
+const MAX_ERROR_BYTES: usize = 512;
 
 #[derive(Clone, Serialize)]
 pub(super) struct Identity {
@@ -183,6 +184,16 @@ fn read(path: &Path) -> Result<Option<Vec<u8>>, String> {
     Ok(Some(bytes))
 }
 
+fn load(path: &Path) -> Result<(File, Option<Vec<u8>>), String> {
+    let disk = read(path)?;
+    let file = match &disk {
+        Some(bytes) => serde_json::from_slice(bytes).map_err(|error| error.to_string())?,
+        None => File::default(),
+    };
+    validate(&file)?;
+    Ok((file, disk))
+}
+
 impl Session {
     pub fn configure_build_recipes(&mut self, directory: Result<PathBuf, String>) {
         let path = match std::env::var_os("HAMMERR_BUILD_RECIPES") {
@@ -196,15 +207,10 @@ impl Session {
     }
 
     fn configure_build_recipes_at(&mut self, path: Result<PathBuf, String>) {
-        let loaded = path.as_ref().map_err(Clone::clone).and_then(|path| {
-            let disk = read(path)?;
-            let file = match &disk {
-                Some(bytes) => serde_json::from_slice(bytes).map_err(|error| error.to_string())?,
-                None => File::default(),
-            };
-            validate(&file)?;
-            Ok((file, disk))
-        });
+        let loaded = path
+            .as_ref()
+            .map_err(Clone::clone)
+            .and_then(|path| load(path));
         let state = &mut self.compilation.recipes;
         state.path = path.ok();
         state.revision += 1;
@@ -250,6 +256,58 @@ impl Session {
         })
     }
 
+    pub fn reload_build_recipes(
+        &mut self,
+        actor: Actor,
+        expected_revision: Option<u64>,
+    ) -> Result<Value, String> {
+        self.check_build_recipe_edit(expected_revision)?;
+        let path =
+            self.compilation.recipes.path.as_deref().ok_or(
+                "Build recipe storage is unavailable; session-only recipes remain editable",
+            )?;
+        let loaded = load(path);
+        let options = self.compilation.options;
+        let state = &mut self.compilation.recipes;
+        state.revision += 1;
+        match loaded {
+            Ok((file, disk)) => {
+                state.active = state.active.as_ref().and_then(|active| {
+                    builtins()
+                        .into_iter()
+                        .chain(file.recipes.iter().cloned())
+                        .find(|recipe| {
+                            recipe.id == active.id
+                                && recipe
+                                    .settings
+                                    .options()
+                                    .is_ok_and(|saved| saved == options)
+                        })
+                        .map(|recipe| recipe.identity())
+                });
+                state.file = file;
+                state.disk = disk;
+                state.load_failed = false;
+                state.error = None;
+                self.log(
+                    actor,
+                    "Reloaded build recipes; current build settings are unchanged",
+                );
+                Ok(self.build_recipes())
+            }
+            Err(error) => {
+                state.load_failed = true;
+                let error = map_core::entity_helpers::bounded_preview(
+                    &format!("Build recipes could not reload: {error}"),
+                    MAX_ERROR_BYTES,
+                );
+                state.error = Some(error.clone());
+                self.log(actor, &error);
+                Err(error)
+            }
+        }
+    }
+
     fn check_build_recipe_edit(&self, expected_revision: Option<u64>) -> Result<(), String> {
         if self.closing {
             return Err("The editor is closing".into());
@@ -280,7 +338,7 @@ impl Session {
         let state = &mut self.compilation.recipes;
         let result: Result<(), String> = (|| {
             if state.load_failed {
-                return Err("Build recipes did not load; fix storage and restart before editing custom recipes".into());
+                return Err("Build recipes did not load; fix storage and Reload recipes before editing custom recipes".into());
             }
             let bytes = serde_json::to_vec_pretty(&file).map_err(|error| error.to_string())?;
             if bytes.len() > MAX_FILE_BYTES {
@@ -289,7 +347,7 @@ impl Session {
             if let Some(path) = &state.path {
                 if read(path)? != state.disk {
                     return Err(
-                        "Build recipes changed on disk; restart to reload before editing".into(),
+                        "Build recipes changed on disk; Reload recipes before editing".into(),
                     );
                 }
                 let directory = path
@@ -426,6 +484,9 @@ impl Session {
         Ok(self.build_recipes())
     }
 }
+
+#[cfg(test)]
+mod reload_tests;
 
 #[cfg(test)]
 mod tests {

@@ -98,6 +98,8 @@ appearance parity are not evaluated by this preview.
    display and lighting admission refresh together. Use **Reload models** for
    changed geometry.
 
+![Authored point lights on differently scaled model meshes](images/model-lighting-preview.png)
+
 Models use the same bounded unshadowed point/spot lights as brushes and terrain.
 Selected bodygroups and skins, supported uniform scale, rotated world normals,
 RGB tint and selection tint are included. Only opaque single-base

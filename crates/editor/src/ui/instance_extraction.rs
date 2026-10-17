@@ -74,11 +74,12 @@ impl Controller {
     }
 
     fn cancel(&self) {
-        if let Some(token) = self.token.get() {
-            if let Err(error) = lock(&self.shared).cancel_instance_extraction(Actor::User, token) {
-                self.window.set_message(error.into());
-                return;
-            }
+        if self.window.get_owned()
+            && let Some(token) = self.token.get()
+            && let Err(error) = lock(&self.shared).cancel_instance_extraction(Actor::User, token)
+        {
+            self.window.set_message(error.into());
+            return;
         }
         self.refresh();
         let _ = self.window.hide();

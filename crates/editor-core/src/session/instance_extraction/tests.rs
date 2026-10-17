@@ -43,13 +43,16 @@ fn instance_extraction_roundtrips_ids_uvs_and_world_detail_geometry_in_one_paren
         assert_eq!(session.document.undo_labels().count(), 1);
         let exported = Vmf::parse(&std::fs::read_to_string(&child).unwrap()).unwrap();
         let world = original.world.solids.last().unwrap();
-        assert_eq!(exported.world.solids, [world.clone()]);
+        assert_eq!(
+            exported.world.solids.as_slice(),
+            std::slice::from_ref(world)
+        );
         let detail = original
             .entities
             .iter()
             .find(|entity| entity.classname() == Some("func_detail"))
             .unwrap();
-        assert_eq!(exported.entities, [detail.clone()]);
+        assert_eq!(exported.entities.as_slice(), std::slice::from_ref(detail));
         for corner in [DVec3::new(32.0, 40.0, 8.0), DVec3::new(48.0, 56.0, 24.0)] {
             let uv = map_core::texel_uv(&exported.world.solids[0].sides[0], corner);
             assert_eq!(uv.x, corner.dot(DVec3::new(1.0, 0.5, 0.0)) / -0.25 + 7.5);

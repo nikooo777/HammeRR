@@ -186,7 +186,7 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 | Authored lighting preview |
 | --- |
 | ![Warm point light and cool spotlight in an editor room](docs/images/authored-lighting-preview.png) |
-| Preview unshadowed point and spot lights on brushes and terrain, with quality and exposure. |
+| Preview unshadowed point and spot lights on brushes, terrain and models, with quality and exposure. |
 
 [Authored lighting preview →](docs/lighting-preview.md)
 
@@ -277,7 +277,7 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | Prefab library | Referenced brush assemblies |
 | --- | --- |
 | ![Selected prefab with an isolated textured thumbnail](docs/images/prefab-textured-thumbnail.png) | ![Resolved brush instance geometry](docs/images/instance-reference-contents.png) |
-| Browse flat or textured assembly previews, then place rotated or brush-scaled copies. | Place, preview and compile reusable world/detail VMFs with guarded dependencies. |
+| Browse flat or textured assembly previews, then place rotated or brush-scaled copies. | Extract, place, preview and compile reusable world/detail VMFs with guarded dependencies. |
 
 | Transaction history |
 | --- |

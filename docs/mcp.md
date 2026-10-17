@@ -112,6 +112,31 @@ with instances rejects; nested/runtime-name expansion remains unavailable. The
 explicitly refreshed flat reference layer is separate from compilation. `run_map_checks` performs only pure helper-field/path-state
 admission, leaving child reads and complete validation to compilation.
 
+## Extract a brush assembly
+
+`get_instance_extraction {}` inspects the shared owned review, token, readiness,
+source/selection, relative child filename, world/detail/side counts, child bytes
+and SHA-256, validation policy and explicit errors. It initializes no graphics.
+
+`set_instance_extraction` accepts these actions:
+
+1. `prepare` requires a new relative `file` ending in `.vmf`. Select supported
+   visible world-brush suffixes and whole neutral `func_detail` suffix owners
+   first. Preparation freezes the in-memory parent and validates a private child
+   through serialized parsing and the real compiler resolver, outside the lock.
+2. `extract` requires the owned `token`. It rechecks exact source/stage bytes
+   off-lock, then publishes without overwriting after fallible map edits/cleanup.
+   Successful publication and the parent replacement complete as one Undo step.
+3. `review` transfers a ready/failed review to a fresh token. `cancel` requires
+   the current owned token and removes only owned private staging. Late Cancel
+   after successful publication reports completion and retains the child.
+
+`prepare` and `extract` optionally accept `background: true`; inspect until ready,
+completed or failed. Their default waits for bounded off-lock work. No automatic
+Refresh/display change occurs. Undo restores parent objects but retains the child
+file; Redo changes only the parent. Linux, world-origin pivot, exact ordering,
+path, metadata and resource restrictions are in [Extract brush assemblies](instance-extraction.md).
+
 ## Instance reference tools
 
 `get_instance_reference` inspects the owned authoring form without loading child
@@ -153,7 +178,7 @@ for source, geometry and memory limits.
 
 ## Tools by task
 
-The shared desktop and private stdio server register 404 tools. `tools/list`
+The shared desktop and private stdio server register 406 tools. `tools/list`
 returns their current schemas and descriptions.
 
 | Task | Tools |
@@ -173,6 +198,7 @@ returns their current schemas and descriptions.
 | Measurement guides | `get_measurements`, `set_measurement` |
 | Overlapping objects | `get_object_hit_candidates`, `cycle_object_hit` |
 | Instance reference authoring | `get_instance_reference`, `set_instance_reference` |
+| Extract brush assemblies | `get_instance_extraction`, `set_instance_extraction` |
 | Instance contents preview | `inspect_instance_contents`, `set_instance_contents` |
 | Prefab library | `get_prefabs`, `inspect_prefab_thumbnail`, `render_prefab_thumbnail`, `save_prefab`, `preview_prefab`, `rename_prefab`, `delete_prefab`; placement uses `apply_paste` / `cancel_paste` |
 | Layers | `get_layers`, `begin_layer_edit`, `update_layer_edit`, `apply_layer_edit`, `cancel_layer_edit`, `select_layer_members`, `set_layer_visibility` |
@@ -702,8 +728,8 @@ camera, selection, source/history and owned editing reviews.
 
 `get_lighting_preview {}` uses the shared CPU scene without graphics startup.
 It returns admitted/excluded emitters, flat receiver polygons and separate
-`report.terrain` surface/drawn-triangle counts, bounded
-diagnostics, limits, summary and the captured document/render/region/material
+`report.terrain` surface/drawn-triangle counts and `report.models` admitted/excluded
+instance, selected-part and drawn-triangle counts, bounded diagnostics, limits, summary and the captured document/render/region/material
 source stamp. `render_view.lighting_preview.report` belongs to the scene that
 was rendered; temporary overrides leave shared settings unchanged.
 
@@ -711,7 +737,16 @@ Only visible constant unnamed style-0 `light`/`light_spot` entities and opaque
 flat LightmappedGeneric brush receivers or supported power-2/3/4 world/detail
 terrain are admitted. Terrain uses checked sewn LOD normals, no declared
 bump/blend/detail effects and the same cached opaque base/material identity;
-outline-only or suppressed tool/sky sheets count zero drawn triangles. The 32-light or summed
+outline-only or suppressed tool/sky sheets count zero drawn triangles. Models
+require whole-selected-instance opaque single-base VertexLitGeneric admission,
+Normal render mode and safe transformed world normals within ±16384. Selected
+bodygroups/skins, supported scale and RGB tint use the same evaluator. Unsupported
+selected model material declarations exclude the entire instance with an entity/
+material reason. Hidden meshes and helper guides do not enter model counts; tool-
+suppressed batches contribute zero drawn triangles. The same cached material and
+base image determine admission until `reload_material_assets`; no fresh VMT is
+paired with old pixels. See [Models](models.md#preview-authored-lighting).
+The 32-light or summed
 radiance limit disables the whole preview with a reason. Zero admitted lights
 make supported receivers black. Excluded surfaces retain ordinary display.
 There are no shadows, sun, ambient, bounce, animation or native brightness

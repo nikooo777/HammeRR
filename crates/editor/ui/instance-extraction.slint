@@ -16,6 +16,9 @@ export component InstanceExtractionWindow inherits Window {
     callback extract();
     callback review();
     callback cancel();
+    forward-focus: keys;
+    keys := FocusScope {
+      key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
     VerticalLayout {
         padding: 20px;
         spacing: 14px;
@@ -32,7 +35,8 @@ export component InstanceExtractionWindow inherits Window {
             Button { text: "Review shared extraction"; enabled: root.active && !root.owned && !root.busy; clicked => { root.review(); } }
             Rectangle { horizontal-stretch: 1; background: transparent; }
             Button { text: "Extract"; enabled: root.ready && root.owned && !root.busy; clicked => { root.extract(); } }
-            Button { text: "Cancel"; enabled: !root.active || root.owned; clicked => { root.cancel(); } }
+            Button { text: "Cancel"; clicked => { root.cancel(); } }
         }
+    }
     }
 }

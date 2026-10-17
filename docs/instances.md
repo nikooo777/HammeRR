@@ -5,6 +5,8 @@
 Reuse a saved VMF's world and detail brushes at several positions and rotations.
 Compilation expands the referenced geometry. The editor can resolve a separate,
 explicitly refreshed [flat reference preview](instance-contents.md).
+Use [Extract selection to instance…](instance-extraction.md) to create a child
+from supported brushes already in the parent.
 
 1. Save the parent map. Save a child VMF inside the same directory tree, such as
    `parts/arch.vmf`. Keep the child's visible contents to world brushes and
@@ -56,8 +58,8 @@ Limits:
   and pointfile. A successful build retains its dependency identities separately
   from later failed jobs. External mutation after final verification remains a
   filesystem race; the editor does not lock referenced files.
-- Extraction, in-context editing, automatic search and nested/runtime-name
-  expansion remain unavailable. Compiler calls without
+- In-context editing, automatic search and nested/runtime-name expansion
+  remain unavailable. Compiler calls without
   a saved source context continue to reject unresolved instances.
 
 MCP uses the same `create_entity`, `set_entity_properties`, transforms,

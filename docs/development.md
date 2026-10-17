@@ -2244,3 +2244,35 @@ cargo test -j8 -p editor --bin editor ui::ownership_tests::child_callbacks_work_
 It checks live child callbacks, harmless callbacks after owner teardown and
 release of the UI, Session, child windows and cached assets. App/frame ownership
 and finite native-dialog lifetimes remain separate from these child callbacks.
+
+### Authored lighting on model receivers
+
+```sh
+python3 -B scripts/validate_model_lighting_preview.py --binary target/debug/hammerr-headless --output /tmp/hammerr-model-lighting-check
+cargo test -p editor-core --lib session::lighting_preview::tests::models
+cargo test -p render --lib models::tests::lighting_tests
+cargo test -p editor-core --lib model_authored_lighting_gpu_matches_compiler_fast_detail_scaled_world_normals_and_tint -- --ignored --test-threads=1
+cargo test -p editor-core --lib model_receiver_mcp_retains_actual_uploaded_counts_across_temporary_visibility_cache_and_reload -- --ignored --test-threads=1
+```
+
+The private MCP validator requires a fresh output directory and synthetic assets.
+It captures Off/Detail/Fast pixels and metadata, whole-model material rejection,
+asset reload, cached reports, temporary tool visibility and owned-draft retention.
+The two explicit GPU checks compare transformed world-normal contributions with
+the compiler evaluator and verify actual uploaded MCP receiver counts. They run
+without a desktop window, game or input.
+
+### Extract brush assemblies
+
+```sh
+python3 -B scripts/validate_instance_extraction.py --binary target/debug/hammerr-headless --output /tmp/hammerr-instance-extraction-check
+cargo test -p editor-core --features mcp instance_extraction
+cargo test -p editor software_instance_extraction -- --test-threads=1
+```
+
+These checks exercise exact serialized child/compiler plane and UV agreement,
+compiled geometry/texinfo invariance, source and destination identity guards,
+allocator exhaustion, owned staging cleanup after directory changes, cross-
+Session request identity, cancellation, finalizer rollback, parent Undo/Redo and
+software UI/shared MCP operations. Set `HAMMERR_UI_SNAPSHOTS` to an existing
+directory to capture the prepared software window without desktop interaction.

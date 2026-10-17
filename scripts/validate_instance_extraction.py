@@ -159,6 +159,7 @@ def validate(client, binary, output, gameinfo, result):
     client.call("undo")
     client.call("select", {"ids": selected})
     original = source_state(client, parent)
+    result["undo_expected_dirty"] = original["map"]["unsaved_changes"]
     check(True, "Inbound selected-face bindings and late document edits reject without stripping metadata, changing another edit, or retaining stale staging")
 
     manual_path = output / "flattened-control.bsp"
@@ -233,7 +234,8 @@ def validate(client, binary, output, gameinfo, result):
     child_bytes = child.read_bytes()
     client.call("undo")
     assert detail(client, [row["id"] for row in original["objects"]]) == original["objects"]
-    assert child.read_bytes() == child_bytes and not client.call("get_map_info")["unsaved_changes"]
+    assert child.read_bytes() == child_bytes
+    assert client.call("get_map_info")["unsaved_changes"] == original["map"]["unsaved_changes"]
     client.call("redo")
     assert dict(detail(client, [helper])[0]["properties"]) == props and child.read_bytes() == child_bytes
     assert parent.with_suffix(".bsp").read_bytes() == b"previous parent BSP"

@@ -31,9 +31,12 @@ Limits:
   supported single-base world/detail terrain receive lighting. Terrain uses its
   prepared sewn LOD normals, excludes declared bump/blend/detail effects, and
   reports surfaces/drawn triangles separately; see [Terrain](terrain.md#preview-authored-lighting).
-  Models, sprites, helpers, tools, missing images,
-  translucent/alpha-tested materials and effect/proxy/fallback materials keep
-  their ordinary display and are outside this preview's coverage.
+  Supported opaque single-base `VertexLitGeneric` model meshes also receive
+  lighting, with selected skins/bodygroups, uniform scale, rotated normals and
+  tint; see [Models](models.md#preview-authored-lighting). One unsupported
+  selected material excludes the entire model, with separate instance/part/drawn-
+  triangle counts. Sprites, helpers, tools, missing images, translucent/alpha-
+  tested materials and unsupported effects keep their ordinary display.
 - There are no shadows, sunlight, ambient light, bounce or animation. Lights
   shine through blockers. The preview does not establish native game brightness
   or tone-map parity; compile to inspect the final lighting.

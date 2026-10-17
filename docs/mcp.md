@@ -178,7 +178,7 @@ for source, geometry and memory limits.
 
 ## Tools by task
 
-The shared desktop and private stdio server register 409 tools. `tools/list`
+The shared desktop and private stdio server register 410 tools. `tools/list`
 returns their current schemas and descriptions.
 
 | Task | Tools |
@@ -243,7 +243,7 @@ returns their current schemas and descriptions.
 | Object report and visibility | `get_object_report`, `select_object_report`, `set_object_visibility` |
 | Map checks | `run_map_checks`, `get_map_checks`, `select_map_issue`, `preview_map_fixes`, `apply_map_fixes`, `cancel_map_fixes` |
 | Design notes | `get_context_state`, `list_context_notes`, `get_context_note`, `get_context`, `begin_context_edit`, `update_context_edit`, `apply_context_edit`, `cancel_context_edit`, `delete_context_note`, `set_context_view`, `focus_context` |
-| Recovery | `get_recovery`, `set_recovery_settings`, `create_recovery_snapshot`, `restore_recovery_snapshot`, `delete_recovery_snapshot` |
+| Recovery | `get_recovery`, `set_recovery_settings`, `reload_recovery_settings`, `create_recovery_snapshot`, `restore_recovery_snapshot`, `delete_recovery_snapshot` |
 | Camera and visual checks | `get_camera`, `set_camera`, `frame_selection`, `set_view`, `render_view`, `pick_at_pixel`, `raycast` |
 | Working region | `get_working_region`, `set_working_region` |
 | Fog preview | `get_fog_preview`, `set_fog_preview`; temporary overrides through `render_view` |
@@ -1905,7 +1905,7 @@ required assets fail the build without replacing prior output. Prop vertex/
 lightmap baking and animated props remain unavailable. See
 [Static-prop shadows](prop-shadows.md).
 
-Create `func_occluder` through the existing brush-entity operations, set `StartActive`, and author its Activate/Deactivate/Toggle connections through the existing entity tools. Compiles report `occluders`, `occluder_polygons` and `occluder_vertex_refs` with the same entity-linked diagnostics as the human build panel. Each helper supports 1–16 visible convex brushes in one unambiguous world area. Pairwise world bounds must be separated on an axis by more than 0.01 units; touching/overlapping bounds require separate entities until CSG support. Combined limits are 256 input sides/polygons and 4096 polygon vertices. Native records, activation indices and Activate/Deactivate/Toggle control runtime culling. See [Occluders](occluders.md).
+Create `func_occluder` through the existing brush-entity operations, set `StartActive`, and author its Activate/Deactivate/Toggle connections through the existing entity tools. Compiles report `occluders`, `occluder_polygons` and `occluder_vertex_refs` with the same entity-linked diagnostics as the human build panel. Each helper supports 1–16 visible convex brushes in one unambiguous visibility area. Separated brushes, exact face contacts and overlapping volumes produce a bounded union boundary; gaps and concave outlines remain. Edge-only/point-only contacts, thin or ambiguous contacts and collapsed fragments reject with diagnostics. Combined inputs are bounded to 256 sides and 4096 polygon vertices; boundary output and total union work have separate limits. Native records, activation indices and Activate/Deactivate/Toggle control runtime culling. See [Occluders](occluders.md).
 
 ### Cut, copy and paste
 
@@ -2216,6 +2216,32 @@ when their grids cannot be built, with no replacement shading.
 `run_map_checks` / `get_map_checks` expose the underlying errors without a GPU;
 shared-normal failures use `terrain_preview`. Checking and rendering preserve
 imported data and history.
+
+### Recovery settings and errors
+
+`get_recovery.status` includes `settings_revision` and independent
+`settings_error`, `snapshot_error`, `retention_error` and `drain_error` fields.
+Its combined `error` retains unresolved causes for existing clients. Saving
+settings clears only settings errors; successful capture clears snapshot and
+retention errors. Terminal drain failures remain visible. Snapshot-list warnings
+are reported separately and do not replace these causes.
+
+`reload_recovery_settings {expected_revision?: u64}` reads the saved complete
+settings through the same Session operation as **Recovery… → Reload settings**.
+Pass the current `settings_revision` to reject a stale request before disk access.
+A successful Reload adopts validated settings, advances that revision and clears
+only settings errors. A failed Reload retains current settings and their
+revision, reports its settings error and preserves snapshot/retention/drain
+errors, pending requests, map/history/camera and owned reviews. Human inputs are
+replaced only after success. Reload neither captures nor prunes snapshots.
+
+`settings.json` is limited to **32 KiB** and must resolve to a regular file;
+valid regular-file symlinks remain supported. An absent file loads factory
+settings. Startup load errors disable autosave with a visible settings error;
+manual snapshots and previous-file backups remain available. Explicit validated
+Apply can repair the file. Settings publication retains its existing atomic
+write behavior; independent writers have no shared lock or automatic merge.
+See [Autosave and recovery](map-tools.md#autosave-and-recovery).
 
 ### Recovery shutdown
 

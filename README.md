@@ -262,7 +262,7 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | Object report | Autosave and recovery |
 | --- | --- |
 | ![Object search with visibility actions](docs/images/object-report.png) | ![Recovery snapshots and settings](docs/images/recovery.png) |
-| Find, select, frame, hide and isolate objects. | Periodic snapshots, manual checkpoints and save backups, opened as safe copies. |
+| Find, select, frame, hide and isolate objects. | Keep automatic snapshots, manual checkpoints and save backups; reload settings and recover safe copies. |
 
 | Map statistics | Leak tracing |
 | --- | --- |

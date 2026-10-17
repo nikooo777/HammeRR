@@ -99,4 +99,6 @@ To reload settings after repairing or changing the saved file outside the editor
 
 ![Autosave settings, snapshots and recovery controls](images/recovery.png)
 
+![Failed Reload keeps typed recovery settings and existing snapshot errors](images/recovery-settings-reload.png)
+
 Reload does not capture a snapshot or write the map. An absent settings file restores the two-minute interval, ten snapshots per map and enabled autosave. Settings files must resolve to a regular file no larger than **32 KiB**; valid regular-file symlinks remain supported. Each Session keeps its own settings, and simultaneous writers remain uncoordinated.

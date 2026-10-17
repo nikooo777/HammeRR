@@ -74,3 +74,84 @@ fn reload_saved_list_callback_recovers_a_conflict_and_preserves_the_owned_review
     assert_eq!(state.document().undo_labels().count(), 0);
     window.invoke_cancel();
 }
+
+#[test]
+fn recent_map_callbacks_share_the_list_without_changing_the_other_document() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: false,
+        },
+    )))
+    .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let authority =
+        editor_core::recent_maps::Authority::configured(Ok(directory.path().to_owned()));
+    let first = Arc::new(Mutex::new(Session::with_recent_maps(
+        Err("no assets".into()),
+        authority.clone(),
+    )));
+    let second = Arc::new(Mutex::new(Session::with_recent_maps(
+        Err("no assets".into()),
+        authority,
+    )));
+    let a = directory.path().join("a.vmf");
+    let b = directory.path().join("b.vmf");
+    for (session, path) in [(&first, &a), (&second, &b)] {
+        std::fs::write(path, "world { id 1 classname worldspawn }").unwrap();
+        lock(session).open(Actor::User, path, false).unwrap();
+    }
+    {
+        let mut session = lock(&second);
+        let stamp = session.measurement_stamp();
+        session
+            .preview_measurement(
+                Actor::Agent,
+                editor_core::session::measurements::Request {
+                    id: None,
+                    name: "Owned clearance".into(),
+                    start: glam::DVec3::ZERO,
+                    end: glam::DVec3::X,
+                },
+                &stamp,
+            )
+            .unwrap();
+    }
+    let source = lock(&second).document().vmf().clone();
+    let history = lock(&second).history_snapshot();
+    let draft = lock(&second).measurement_state()["draft"].clone();
+    let camera = lock(&second).camera();
+    let options = lock(&second).compile_options();
+    let window = RecentMapsWindow::new().unwrap();
+    bind(&window, &first);
+    refresh(&window, &lock(&first));
+    assert_eq!(window.get_rows().row_count(), 2);
+    window.set_selected_path(b.display().to_string().into());
+    window.invoke_remove_selected();
+    assert_eq!(window.get_rows().row_count(), 1);
+    assert_eq!(lock(&second).recent_maps_snapshot().entries.len(), 1);
+    assert_eq!(lock(&second).path(), Some(b.as_path()));
+    let revision = lock(&second).recent_maps_serial();
+    let saved = std::fs::read(directory.path().join(crate::recent_maps::FILE_NAME)).unwrap();
+    std::fs::write(
+        directory.path().join(crate::recent_maps::FILE_NAME),
+        b"broken",
+    )
+    .unwrap();
+    window.invoke_refresh();
+    assert!(!window.get_writable());
+    assert!(lock(&second).recent_maps_serial() > revision);
+    assert_eq!(lock(&second).recent_maps()["persistence"], "blocked");
+    std::fs::write(directory.path().join(crate::recent_maps::FILE_NAME), saved).unwrap();
+    window.invoke_refresh();
+    assert!(window.get_writable());
+    assert!(lock(&second).recent_maps()["error"].is_null());
+    let session = lock(&second);
+    assert_eq!(session.document().vmf(), &source);
+    assert_eq!(session.history_snapshot(), history);
+    assert_eq!(session.measurement_state()["draft"], draft);
+    assert_eq!(session.camera(), camera);
+    assert_eq!(session.compile_options(), options);
+    window.invoke_cancel();
+}

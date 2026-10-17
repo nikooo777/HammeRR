@@ -17,6 +17,7 @@ struct Fixture {
     entity: EntityWindow,
     color: ColorWindow,
     color_target: ColorTarget,
+    picker_owner: Option<Rc<()>>,
     placement: Rc<entity_placement_ui::Controller>,
     opens: Rc<Cell<usize>>,
     solid: ObjectId,
@@ -60,7 +61,11 @@ fn fixture() -> Fixture {
     let access = DocumentAccess::for_document(document.clone());
     let app = AppWindow::new().unwrap();
     let entity = EntityWindow::new().unwrap();
-    bind_entity_actions(&entity, &app, &access);
+    let picker_owner = Rc::new(());
+    bind_entity_actions(&entity, &app, &access, {
+        let owner = Rc::downgrade(&picker_owner);
+        move || owner.upgrade().is_some()
+    });
     entity.set_classname("fixture".into());
     entity.set_origin_x("16".into());
     entity.set_origin_y("32".into());
@@ -97,6 +102,7 @@ fn fixture() -> Fixture {
         entity,
         color,
         color_target,
+        picker_owner: Some(picker_owner),
         placement,
         opens,
         solid,
@@ -360,9 +366,12 @@ fn retained_entity_family_windows_release_document_owners_and_vanished_origins_a
     let cold = EntityWindow::new().unwrap();
     let vanished = cold.as_weak();
     drop(cold);
-    with_entity(&vanished, &f.access.downgrade(), |_, _| {
-        panic!("vanished entity picker accessed document")
-    });
+    with_entity(
+        &vanished,
+        &f.access.downgrade(),
+        || panic!("vanished entity picker checked its parent"),
+        |_, _| panic!("vanished entity picker accessed document"),
+    );
     let cold = ColorWindow::new().unwrap();
     let vanished = cold.as_weak();
     drop(cold);
@@ -404,6 +413,27 @@ fn retained_entity_family_windows_release_document_owners_and_vanished_origins_a
     entity.invoke_cancel();
     color.invoke_cancel();
     placement.invoke_cancel();
+}
+
+#[test]
+fn retained_entity_actions_abandon_a_lost_picker_owner_while_the_document_stays_live() {
+    software();
+    let mut f = fixture();
+    let owner = Rc::downgrade(f.picker_owner.as_ref().unwrap());
+    f.entity.set_filter("missing".into());
+    f.entity
+        .set_definition("Retained parent-owned definition".into());
+    let before = (state(&f.shared), form(&f));
+    drop(f.picker_owner.take());
+    assert!(owner.upgrade().is_none());
+    f.entity.invoke_filter_changed();
+    f.entity.invoke_class_selected();
+    f.entity.invoke_create();
+    assert_eq!((state(&f.shared), form(&f)), before);
+    assert_eq!(f.document.lifecycle(), DocumentLifecycle::Live);
+    f.color.invoke_apply();
+    assert_ne!(state(&f.shared), before.0);
+    f.document.shutdown().unwrap();
 }
 
 #[test]

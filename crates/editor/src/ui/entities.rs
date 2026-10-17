@@ -367,9 +367,13 @@ pub(super) fn load_fgd(app: &AppWindow, ui: &SharedUi) {
 fn with_entity<R>(
     window: &slint::Weak<EntityWindow>,
     access: &DocumentContinuation,
+    alive: impl FnOnce() -> bool,
     body: impl FnOnce(&EntityWindow, &SharedSession) -> R,
 ) -> Option<R> {
     let window = window.upgrade()?;
+    if !alive() {
+        return None;
+    }
     match access
         .upgrade()
         .and_then(|access| access.with_shared(|shared| Ok(body(&window, shared))))
@@ -382,8 +386,14 @@ fn with_entity<R>(
     }
 }
 
-fn bind_entity_actions(window: &EntityWindow, app: &AppWindow, access: &DocumentAccess) {
+fn bind_entity_actions(
+    window: &EntityWindow,
+    app: &AppWindow,
+    access: &DocumentAccess,
+    alive: impl Fn() -> bool + 'static,
+) {
     let access = access.downgrade();
+    let alive = Rc::new(alive);
     window.on_cancel({
         let window = window.as_weak();
         move || {
@@ -393,68 +403,88 @@ fn bind_entity_actions(window: &EntityWindow, app: &AppWindow, access: &Document
         }
     });
     window.on_filter_changed({
-        let (window, access) = (window.as_weak(), access.clone());
+        let (window, access, alive) = (window.as_weak(), access.clone(), alive.clone());
         move || {
-            with_entity(&window, &access, |window, shared| {
-                refresh_entity_window(window, &lock(shared));
-            });
+            with_entity(
+                &window,
+                &access,
+                || alive(),
+                |window, shared| {
+                    refresh_entity_window(window, &lock(shared));
+                },
+            );
         }
     });
     window.on_class_selected({
-        let (window, access) = (window.as_weak(), access.clone());
+        let (window, access, alive) = (window.as_weak(), access.clone(), alive.clone());
         move || {
-            with_entity(&window, &access, |window, shared| {
-                refresh_entity_window(window, &lock(shared));
-            });
+            with_entity(
+                &window,
+                &access,
+                || alive(),
+                |window, shared| {
+                    refresh_entity_window(window, &lock(shared));
+                },
+            );
         }
     });
     window.on_create({
-        let (window, app, access) = (window.as_weak(), app.as_weak(), access.clone());
+        let (window, app, access, alive) = (
+            window.as_weak(),
+            app.as_weak(),
+            access.clone(),
+            alive.clone(),
+        );
         move || {
-            with_entity(&window, &access, |window, shared| {
-                let mut session = lock(shared);
-                let result = if window.get_brush_mode() {
-                    let ids = session.selected_ids();
-                    session.tie_to_entity(
-                        Actor::User,
-                        &ids,
-                        &window.get_classname(),
-                        BTreeMap::new(),
-                    )
-                } else {
-                    let position = format!(
-                        "{} {} {}",
-                        window.get_origin_x(),
-                        window.get_origin_y(),
-                        window.get_origin_z()
-                    );
-                    source_formats::fgd::vector(&position, 3)
-                        .ok_or_else(|| "position expects three finite coordinates".into())
-                        .and_then(|values| {
-                            session.create_entity(
-                                Actor::User,
-                                &window.get_classname(),
-                                Some(DVec3::new(values[0], values[1], values[2])),
-                                BTreeMap::new(),
-                            )
-                        })
-                };
-                match result {
-                    Ok(_) => {
-                        if let Err(error) = window.hide()
-                            && let Some(app) = app.upgrade()
-                        {
-                            app.set_message(error.to_string().into());
+            with_entity(
+                &window,
+                &access,
+                || alive() && app.upgrade().is_some(),
+                |window, shared| {
+                    let mut session = lock(shared);
+                    let result = if window.get_brush_mode() {
+                        let ids = session.selected_ids();
+                        session.tie_to_entity(
+                            Actor::User,
+                            &ids,
+                            &window.get_classname(),
+                            BTreeMap::new(),
+                        )
+                    } else {
+                        let position = format!(
+                            "{} {} {}",
+                            window.get_origin_x(),
+                            window.get_origin_y(),
+                            window.get_origin_z()
+                        );
+                        source_formats::fgd::vector(&position, 3)
+                            .ok_or_else(|| "position expects three finite coordinates".into())
+                            .and_then(|values| {
+                                session.create_entity(
+                                    Actor::User,
+                                    &window.get_classname(),
+                                    Some(DVec3::new(values[0], values[1], values[2])),
+                                    BTreeMap::new(),
+                                )
+                            })
+                    };
+                    match result {
+                        Ok(_) => {
+                            if let Err(error) = window.hide()
+                                && let Some(app) = app.upgrade()
+                            {
+                                app.set_message(error.to_string().into());
+                            }
+                        }
+                        Err(error) => {
+                            window.set_message(error.clone().into());
+                            if let Some(app) = app.upgrade() {
+                                app.set_message(error.into());
+                            }
                         }
                     }
-                    Err(error) => {
-                        window.set_message(error.clone().into());
-                        if let Some(app) = app.upgrade() {
-                            app.set_message(error.into());
-                        }
-                    }
-                }
-            });
+                },
+            );
         }
     });
 }
@@ -467,7 +497,12 @@ fn bind_entity_pick_surface(
     window.on_pick_surface({
         let (window, access) = (window.as_weak(), access.downgrade());
         move || {
-            with_entity(&window, &access, |window, shared| open(window, shared));
+            with_entity(
+                &window,
+                &access,
+                || true,
+                |window, shared| open(window, shared),
+            );
         }
     });
 }
@@ -482,7 +517,10 @@ pub(super) fn show_entity_window(app: &AppWindow, ui: &SharedUi, brush_mode: boo
             }
         };
         let access = file_access(ui);
-        bind_entity_actions(&window, app, &access);
+        bind_entity_actions(&window, app, &access, {
+            let owner = Rc::downgrade(ui);
+            move || owner.upgrade().is_some()
+        });
         bind_entity_pick_surface(&window, &access, {
             let (app, ui) = (app.as_weak(), Rc::downgrade(ui));
             move |window, shared| {

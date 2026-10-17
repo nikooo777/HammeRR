@@ -16,6 +16,80 @@ def launch(binary, output, library):
         return Client(None, binary, output)
 
 
+def validate_directory_binding(args, check):
+    output = args.output / "directory-binding"
+    output.mkdir()
+    game = output / "game"
+    game.mkdir()
+    gameinfo = game / "gameinfo.txt"
+    gameinfo.write_text('GameInfo { FileSystem { SearchPaths { game "|gameinfo_path|." } } }\n')
+    original = output / "original" / "library"
+    replacement = output / "replacement" / "library"
+    original.mkdir(parents=True)
+    replacement.mkdir(parents=True)
+    alias = output / "bound"
+    alias.symlink_to(original.parent, target_is_directory=True)
+    env = {
+        "HAMMERR_PREFABS_DIR": str(alias / "library"),
+        "HAMMERR_RECENT_MAPS_DIR": str(output / "recent-maps"),
+        "HAMMERR_BUILD_RECIPES": str(output / "recipes.json"),
+        "XDG_CONFIG_HOME": str(output / "config"),
+        "XDG_STATE_HOME": str(output / "state"),
+    }
+    with patch.dict("os.environ", env):
+        client = Client(None, args.binary, output, gameinfo=gameinfo)
+    try:
+        brush = client.call("create_block", {"mins": [0, 0, 0], "maxs": [16, 16, 16], "material": "audit/no-assets-needed"})["id"]
+        note = client.call("begin_context_edit", {"scope": brush})["draft"]["token"]
+        client.call("update_context_edit", {"token": note, "summary": "Retained private draft"})
+        draft = client.call("get_context_state")
+        initial = report(client)
+        check(initial["total"] == 0, "Private directory-binding probe starts with an existing empty library")
+        before = client.call("get_map_info")
+        clipboard = client.call("get_clipboard")
+        camera = client.call("get_camera")
+        alias.unlink()
+        alias.symlink_to(replacement.parent, target_is_directory=True)
+        retargeted = report(client)
+        check(retargeted["snapshot"] != initial["snapshot"], "Empty library snapshots distinguish a parent alias retarget to another physical directory")
+        client.call("save_prefab", {"name": "Directory retarget probe", "ids": [brush], "snapshot": initial["snapshot"]}, error=True)
+        check(not list(original.iterdir()) and not list(replacement.iterdir()), "The exact old empty-library snapshot rejects Save and writes to neither physical library")
+        after = client.call("get_map_info")
+        check(after["undo"] == before["undo"] and after["world_brushes"] == before["world_brushes"] and client.call("get_clipboard") == clipboard, "Rejected directory retarget preserves map history, geometry and clipboard")
+        check(client.call("get_camera") == camera and client.call("get_context_state") == draft, "Rejected directory retarget preserves the camera and independent note draft")
+        client.call("cancel_context_edit", {"token": note})
+        saved = client.call("save_prefab", {"name": "Directory retarget probe", "ids": [brush], "snapshot": report(client)["snapshot"]})
+        file = replacement / "Directory retarget probe.vmf"
+        check(file.is_file() and not list(original.iterdir()), "Explicitly refreshing a stable parent alias admits Save into its reviewed library")
+        renamed = client.call("rename_prefab", {"name": "Directory retarget probe", "new_name": "Bound probe", "snapshot": saved["snapshot"]})
+        preview = client.call("preview_prefab", {"name": "Bound probe", "snapshot": renamed["snapshot"]})
+        client.call("delete_prefab", {"name": "Bound probe", "snapshot": report(client)["snapshot"]})
+        client.call("apply_paste", {"token": preview["paste"]["preview"]["token"]})
+        check(client.call("get_map_info")["world_brushes"] == 2 and not list(replacement.iterdir()), "Stable alias Rename/Delete preserve intentional detached Paste after file deletion")
+
+        reviewed = report(client)
+        displaced = replacement.with_name("displaced-library")
+        replacement.rename(displaced)
+        replacement.mkdir()
+        replaced = report(client)
+        check(replaced["snapshot"] != reviewed["snapshot"], "Same-path empty directory replacement changes the prefab snapshot")
+        client.call("save_prefab", {"name": "Physical replacement probe", "ids": [brush], "snapshot": reviewed["snapshot"]}, error=True)
+        check(not list(displaced.iterdir()) and not list(replacement.iterdir()), "Physical replacement rejects an old Save without writing into either directory")
+        check(not client.call("get_map_info")["rendering"]["initialized"], "Private directory-binding validation keeps graphics lazy")
+        receipt = {
+            "original_snapshot": initial["snapshot"],
+            "retargeted_snapshot": retargeted["snapshot"],
+            "replacement_snapshot": replaced["snapshot"],
+            "original_files": [path.name for path in original.iterdir()],
+            "replacement_files": [path.name for path in replacement.iterdir()],
+            "displaced_files": [path.name for path in displaced.iterdir()],
+            "desktop_input": False,
+        }
+        (output / "directory-binding.json").write_text(json.dumps(receipt, indent=2) + "\n")
+    finally:
+        client.close()
+
+
 def validate(args):
     checks = []
 
@@ -23,6 +97,7 @@ def validate(args):
         assert value, label
         checks.append(label)
 
+    validate_directory_binding(args, check)
     library = args.output / "library"
     source = launch(args.binary, args.output / "source", library)
     destination = launch(args.binary, args.output / "destination", library)

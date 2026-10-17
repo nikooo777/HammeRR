@@ -8,6 +8,8 @@ use std::{
     path::PathBuf,
     time::SystemTime,
 };
+mod directory;
+use directory::Directory;
 pub const MAX_ENTRIES: usize = 128;
 pub const MAX_SCAN: usize = 512;
 pub const MAX_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
@@ -19,6 +21,7 @@ pub struct Entry {
     modified: SystemTime,
     #[cfg(unix)]
     identity: (u64, u64),
+    directory: directory::SourceDirectory,
 }
 impl Entry {
     fn same_file(&self, other: &Self) -> bool {
@@ -38,6 +41,11 @@ pub struct Snapshot {
     pub stamp: String,
     pub bytes: u64,
     scanned: usize,
+    directory: Directory,
+}
+#[derive(Debug)]
+pub struct Mutation {
+    pub warning: Option<String>,
 }
 pub struct Store {
     pub directory: PathBuf,
@@ -69,7 +77,8 @@ impl Store {
                     .into(),
             );
         }
-        match fs::symlink_metadata(path) {
+        let leaf: PathBuf = path.components().collect();
+        match fs::symlink_metadata(leaf) {
             Ok(meta) if meta.is_dir() => Ok(true),
             Ok(_) => Err("Prefab storage must be a regular directory, not a symlink".into()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
@@ -77,20 +86,18 @@ impl Store {
         }
     }
     pub fn snapshot(&self) -> Result<Snapshot, String> {
+        self.root()?;
+        let directory = Directory::capture(&self.directory)?;
         let mut entries = Vec::new();
         let mut bytes = 0u64;
         let mut scanned = 0;
-        if self.root()? {
-            for (index, entry) in fs::read_dir(&self.directory)
-                .map_err(|error| error.to_string())?
-                .enumerate()
-            {
+        if directory.is_present() {
+            for (index, filename) in directory.names()?.into_iter().enumerate() {
                 scanned = index + 1;
                 if index >= MAX_SCAN {
                     return Err("Prefab storage exceeds 512 directory entries".into());
                 }
-                let entry = entry.map_err(|error| error.to_string())?;
-                let path = entry.path();
+                let path = PathBuf::from(&filename);
                 if path.extension().and_then(|ext| ext.to_str()) != Some("vmf") {
                     continue;
                 }
@@ -99,7 +106,7 @@ impl Store {
                     .and_then(|name| name.to_str())
                     .ok_or("Prefab filenames must be UTF-8")?;
                 name(stem)?;
-                let meta = fs::symlink_metadata(&path).map_err(|error| error.to_string())?;
+                let meta = directory.metadata(&filename)?;
                 if !meta.is_file() || meta.len() > map_core::transfer::MAX_BYTES as u64 {
                     return Err(format!(
                         "Prefab {stem} must be a regular VMF file of at most 8 MiB"
@@ -115,6 +122,7 @@ impl Store {
                     modified: meta.modified().map_err(|error| error.to_string())?,
                     #[cfg(unix)]
                     identity: (meta.dev(), meta.ino()),
+                    directory: directory.source()?,
                 });
             }
         }
@@ -126,6 +134,8 @@ impl Store {
         });
         let mut hash = DefaultHasher::new();
         self.directory.hash(&mut hash);
+        directory.binding.hash(&mut hash);
+        directory.is_present().hash(&mut hash);
         for entry in &entries {
             entry.name.hash(&mut hash);
             entry.bytes.hash(&mut hash);
@@ -133,11 +143,13 @@ impl Store {
             #[cfg(unix)]
             entry.identity.hash(&mut hash);
         }
+        directory.verify()?;
         Ok(Snapshot {
             entries,
             bytes,
             scanned,
             stamp: format!("{:016x}", hash.finish()),
+            directory,
         })
     }
     fn checked(&self, stamp: &str) -> Result<Snapshot, String> {
@@ -148,7 +160,11 @@ impl Store {
         Ok(snapshot)
     }
     pub(crate) fn check_preview(&self, source: &Entry) -> Result<(), String> {
+        source.directory.verify()?;
         let snapshot = self.snapshot()?;
+        if source.directory.binding != snapshot.directory.binding {
+            return Err("Prefab library directory changed; preview it again".into());
+        }
         if let Some(current) = snapshot
             .entries
             .iter()
@@ -169,7 +185,7 @@ impl Store {
         }
         Ok(())
     }
-    pub fn rename(&self, value: &str, new_name: &str, stamp: &str) -> Result<(), String> {
+    pub fn rename(&self, value: &str, new_name: &str, stamp: &str) -> Result<Mutation, String> {
         name(value)?;
         name(new_name)?;
         let snapshot = self.checked(stamp)?;
@@ -185,23 +201,11 @@ impl Store {
             return Err("A prefab with that name already exists; choose another name".into());
         }
         self.checked(stamp)?;
-        #[cfg(target_os = "linux")]
-        {
-            rustix::fs::renameat_with(
-                rustix::fs::CWD,
-                self.directory.join(format!("{value}.vmf")),
-                rustix::fs::CWD,
-                self.directory.join(format!("{new_name}.vmf")),
-                rustix::fs::RenameFlags::NOREPLACE,
-            )
-            .map_err(|error| {
-                format!("Cannot rename prefab without replacing another entry: {error}")
-            })
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            Err("Atomic prefab renaming is supported on Linux only".into())
-        }
+        snapshot.directory.verify()?;
+        snapshot
+            .directory
+            .rename(&format!("{value}.vmf"), &format!("{new_name}.vmf"))?;
+        Ok(snapshot.directory.publication("renamed"))
     }
     pub fn read(&self, value: &str, stamp: &str) -> Result<String, String> {
         name(value)?;
@@ -211,8 +215,8 @@ impl Store {
             .iter()
             .find(|entry| entry.name == value)
             .ok_or("Prefab no longer exists")?;
-        let path = self.directory.join(format!("{value}.vmf"));
-        let file = File::open(path).map_err(|error| error.to_string())?;
+        let filename = format!("{value}.vmf");
+        let file = snapshot.directory.open(filename.as_ref())?;
         let meta = file.metadata().map_err(|error| error.to_string())?;
         #[cfg(unix)]
         if (meta.dev(), meta.ino()) != entry.identity {
@@ -232,11 +236,12 @@ impl Store {
             return Err("Prefab changed size while reading".into());
         }
         self.checked(stamp)?;
+        snapshot.directory.verify()?;
         String::from_utf8(bytes).map_err(|_| "Prefab VMF must contain UTF-8 text".into())
     }
-    pub fn save(&self, value: &str, text: &str, stamp: &str) -> Result<(), String> {
+    pub fn save(&self, value: &str, text: &str, stamp: &str) -> Result<Mutation, String> {
         name(value)?;
-        let snapshot = self.checked(stamp)?;
+        let mut snapshot = self.checked(stamp)?;
         if snapshot
             .entries
             .iter()
@@ -251,34 +256,285 @@ impl Store {
         {
             return Err("Prefab exceeds the 8 MiB file, 128-entry or 64 MiB library limit".into());
         }
-        fs::create_dir_all(&self.directory).map_err(|error| error.to_string())?;
-        self.root()?;
-        self.checked(stamp)?;
-        let mut file =
-            tempfile::NamedTempFile::new_in(&self.directory).map_err(|error| error.to_string())?;
-        file.write_all(text.as_bytes())
-            .map_err(|error| error.to_string())?;
-        file.as_file()
-            .sync_all()
-            .map_err(|error| error.to_string())?;
-        file.persist_noclobber(self.directory.join(format!("{value}.vmf")))
-            .map_err(|error| error.error.to_string())?;
-        Ok(())
+        snapshot.directory.create()?;
+        self.check_entries(&snapshot)?;
+        let mut stage = snapshot.directory.stage()?;
+        stage.write(text)?;
+        self.check_entries(&snapshot)?;
+        snapshot.directory.verify()?;
+        stage.publish(&format!("{value}.vmf"))?;
+        drop(stage);
+        Ok(snapshot.directory.publication("saved"))
     }
-    pub fn remove(&self, value: &str, stamp: &str) -> Result<(), String> {
+    fn check_entries(&self, expected: &Snapshot) -> Result<(), String> {
+        expected.directory.verify()?;
+        let current = self.snapshot()?;
+        if current.entries != expected.entries {
+            return Err("Prefab library changed; refresh it before continuing".into());
+        }
+        expected.directory.verify()
+    }
+    pub fn remove(&self, value: &str, stamp: &str) -> Result<Mutation, String> {
         name(value)?;
         let snapshot = self.checked(stamp)?;
         if !snapshot.entries.iter().any(|entry| entry.name == value) {
             return Err("Prefab no longer exists".into());
         }
-        fs::remove_file(self.directory.join(format!("{value}.vmf")))
-            .map_err(|error| error.to_string())
+        self.checked(stamp)?;
+        snapshot.directory.verify()?;
+        snapshot.directory.remove(&format!("{value}.vmf"))?;
+        Ok(snapshot.directory.publication("deleted"))
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
+
+    fn retarget(alias: &std::path::Path, target: &std::path::Path) {
+        if fs::symlink_metadata(alias).is_ok() {
+            fs::remove_file(alias).unwrap();
+        }
+        std::os::unix::fs::symlink(target, alias).unwrap();
+    }
+
+    #[test]
+    fn empty_catalog_stamps_bind_parent_alias_and_physical_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let original = directory.path().join("original/library");
+        let replacement = directory.path().join("replacement/library");
+        fs::create_dir_all(&original).unwrap();
+        fs::create_dir_all(&replacement).unwrap();
+        let alias = directory.path().join("bound");
+        retarget(&alias, original.parent().unwrap());
+        let store = Store {
+            directory: alias.join("library"),
+        };
+        let reviewed = store.snapshot().unwrap();
+        retarget(&alias, replacement.parent().unwrap());
+        assert_ne!(reviewed.stamp, store.snapshot().unwrap().stamp);
+        assert!(store.save("Probe", "world {}", &reviewed.stamp).is_err());
+        assert_eq!(fs::read_dir(&original).unwrap().count(), 0);
+        assert_eq!(fs::read_dir(&replacement).unwrap().count(), 0);
+
+        let reviewed = store.snapshot().unwrap();
+        let displaced = replacement.with_file_name("displaced");
+        fs::rename(&replacement, &displaced).unwrap();
+        fs::create_dir(&replacement).unwrap();
+        assert_ne!(reviewed.stamp, store.snapshot().unwrap().stamp);
+        assert!(store.save("Probe", "world {}", &reviewed.stamp).is_err());
+        assert_eq!(fs::read_dir(&displaced).unwrap().count(), 0);
+        assert_eq!(fs::read_dir(&replacement).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn stable_parent_alias_supports_first_save_read_rename_delete_and_detachment() {
+        let directory = tempfile::tempdir().unwrap();
+        let original = directory.path().join("original");
+        fs::create_dir(&original).unwrap();
+        let alias = directory.path().join("bound");
+        retarget(&alias, &original);
+        let store = Store {
+            directory: alias.join("nested/library"),
+        };
+        let missing = store.snapshot().unwrap();
+        assert!(!original.join("nested").exists());
+        assert!(
+            store
+                .save("Alpha", "world {}", &missing.stamp)
+                .unwrap()
+                .warning
+                .is_none()
+        );
+        let saved = store.snapshot().unwrap();
+        assert_eq!(store.read("Alpha", &saved.stamp).unwrap(), "world {}");
+        assert!(
+            store
+                .rename("Alpha", "Beta", &saved.stamp)
+                .unwrap()
+                .warning
+                .is_none()
+        );
+        let renamed = store.snapshot().unwrap();
+        let source = renamed.entries[0].clone();
+        assert!(
+            store
+                .remove("Beta", &renamed.stamp)
+                .unwrap()
+                .warning
+                .is_none()
+        );
+        store.check_preview(&source).unwrap();
+        let replacement = directory.path().join("replacement");
+        fs::create_dir_all(replacement.join("nested/library")).unwrap();
+        retarget(&alias, &replacement);
+        assert!(store.check_preview(&source).is_err());
+    }
+
+    #[test]
+    fn independently_created_missing_library_rejects_old_stamp() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = Store {
+            directory: directory.path().join("library"),
+        };
+        let missing = store.snapshot().unwrap();
+        fs::create_dir(&store.directory).unwrap();
+        let present = store.snapshot().unwrap();
+        assert_ne!(missing.stamp, present.stamp);
+        assert!(store.save("Old", "world {}", &missing.stamp).is_err());
+        assert!(
+            store
+                .save("New", "world {}", &present.stamp)
+                .unwrap()
+                .warning
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn retained_directory_publication_survives_retarget_with_committed_warning() {
+        let directory = tempfile::tempdir().unwrap();
+        let original = directory.path().join("original/library");
+        let replacement = directory.path().join("replacement/library");
+        fs::create_dir_all(&original).unwrap();
+        fs::create_dir_all(&replacement).unwrap();
+        let alias = directory.path().join("bound");
+        retarget(&alias, original.parent().unwrap());
+        let store = Store {
+            directory: alias.join("library"),
+        };
+        let reviewed = store.snapshot().unwrap();
+        let mut stage = reviewed.directory.stage().unwrap();
+        stage.write("owned").unwrap();
+        reviewed.directory.verify().unwrap();
+        retarget(&alias, replacement.parent().unwrap());
+        stage.publish("Alpha.vmf").unwrap();
+        drop(stage);
+        assert!(reviewed.directory.publication("saved").warning.is_some());
+        assert_eq!(
+            fs::read_to_string(original.join("Alpha.vmf")).unwrap(),
+            "owned"
+        );
+        assert_eq!(fs::read_dir(&original).unwrap().count(), 1);
+        assert_eq!(fs::read_dir(&replacement).unwrap().count(), 0);
+
+        fs::write(replacement.join("Alpha.vmf"), "unrelated").unwrap();
+        retarget(&alias, original.parent().unwrap());
+        let reviewed = store.snapshot().unwrap();
+        reviewed.directory.verify().unwrap();
+        retarget(&alias, replacement.parent().unwrap());
+        reviewed.directory.rename("Alpha.vmf", "Beta.vmf").unwrap();
+        assert!(reviewed.directory.publication("renamed").warning.is_some());
+        assert_eq!(
+            fs::read_to_string(original.join("Beta.vmf")).unwrap(),
+            "owned"
+        );
+        assert_eq!(
+            fs::read_to_string(replacement.join("Alpha.vmf")).unwrap(),
+            "unrelated"
+        );
+        assert!(!replacement.join("Beta.vmf").exists());
+
+        retarget(&alias, original.parent().unwrap());
+        let reviewed = store.snapshot().unwrap();
+        reviewed.directory.verify().unwrap();
+        retarget(&alias, replacement.parent().unwrap());
+        reviewed.directory.remove("Beta.vmf").unwrap();
+        assert!(reviewed.directory.publication("deleted").warning.is_some());
+        assert_eq!(fs::read_dir(&original).unwrap().count(), 0);
+        assert_eq!(
+            fs::read_to_string(replacement.join("Alpha.vmf")).unwrap(),
+            "unrelated"
+        );
+    }
+
+    #[test]
+    fn stale_alias_requests_preserve_both_nonempty_libraries() {
+        let directory = tempfile::tempdir().unwrap();
+        let original = directory.path().join("original/library");
+        let replacement = directory.path().join("replacement/library");
+        fs::create_dir_all(&original).unwrap();
+        fs::create_dir_all(&replacement).unwrap();
+        fs::write(original.join("Alpha.vmf"), "original").unwrap();
+        fs::write(replacement.join("Alpha.vmf"), "replacement").unwrap();
+        let alias = directory.path().join("bound");
+        retarget(&alias, original.parent().unwrap());
+        let store = Store {
+            directory: alias.join("library"),
+        };
+        let reviewed = store.snapshot().unwrap();
+        retarget(&alias, replacement.parent().unwrap());
+        assert!(store.read("Alpha", &reviewed.stamp).is_err());
+        assert!(store.rename("Alpha", "Beta", &reviewed.stamp).is_err());
+        assert!(store.remove("Alpha", &reviewed.stamp).is_err());
+        assert_eq!(
+            fs::read_to_string(original.join("Alpha.vmf")).unwrap(),
+            "original"
+        );
+        assert_eq!(
+            fs::read_to_string(replacement.join("Alpha.vmf")).unwrap(),
+            "replacement"
+        );
+        assert!(!original.join("Beta.vmf").exists());
+        assert!(!replacement.join("Beta.vmf").exists());
+    }
+
+    #[test]
+    fn leaf_symlinks_and_fifos_are_rejected_without_following_or_waiting() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("library");
+        fs::create_dir(&root).unwrap();
+        let alias = directory.path().join("alias");
+        retarget(&alias, &root);
+        for path in [alias.clone(), alias.join(""), alias.join(".")] {
+            assert!(Store { directory: path }.snapshot().is_err());
+        }
+        let store = Store {
+            directory: root.clone(),
+        };
+        let reviewed = store.snapshot().unwrap();
+        let outside = directory.path().join("outside.vmf");
+        fs::write(&outside, "outside").unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("Link.vmf")).unwrap();
+        assert!(reviewed.directory.open("Link.vmf".as_ref()).is_err());
+        assert!(store.snapshot().is_err());
+        fs::remove_file(root.join("Link.vmf")).unwrap();
+        rustix::fs::mkfifoat(
+            rustix::fs::CWD,
+            root.join("Pipe.vmf"),
+            rustix::fs::Mode::RUSR,
+        )
+        .unwrap();
+        assert!(
+            !reviewed
+                .directory
+                .open("Pipe.vmf".as_ref())
+                .unwrap()
+                .metadata()
+                .unwrap()
+                .is_file()
+        );
+        assert!(store.snapshot().is_err());
+        assert_eq!(fs::read_to_string(outside).unwrap(), "outside");
+    }
+
+    #[test]
+    fn metadata_catalog_retains_unreadable_entries_for_rename_and_delete() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("Alpha.vmf");
+        fs::write(&file, "retained").unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0)).unwrap();
+        let store = Store {
+            directory: directory.path().into(),
+        };
+        let snapshot = store.snapshot().unwrap();
+        assert_eq!(snapshot.entries.len(), 1);
+        store.rename("Alpha", "Beta", &snapshot.stamp).unwrap();
+        let snapshot = store.snapshot().unwrap();
+        store.remove("Beta", &snapshot.stamp).unwrap();
+        assert!(store.snapshot().unwrap().entries.is_empty());
+    }
     #[cfg(target_os = "linux")]
     #[test]
     fn atomic_rename_preserves_bytes_and_both_entries_on_invalid_or_stale_requests() {

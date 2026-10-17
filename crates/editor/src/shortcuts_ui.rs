@@ -1,6 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
-use editor_core::shortcuts::{Bindings, Chord, Command};
+use editor_core::shortcuts::{Bindings, Chord, Command, Snapshot};
 use slint::{ComponentHandle, VecModel, platform::Key};
 
 use crate::{
@@ -62,6 +62,10 @@ fn load_selected(window: &ShortcutsWindow, form: &Form) {
 }
 
 fn refresh(window: &ShortcutsWindow, session: &Session, form: &RefCell<Form>) {
+    refresh_with_snapshot(window, &session.keyboard_shortcuts_snapshot(), form);
+}
+
+fn refresh_with_snapshot(window: &ShortcutsWindow, snapshot: &Snapshot, form: &RefCell<Form>) {
     let current = form.borrow();
     let factory = Bindings::default();
     let rows = Command::ALL.map(|command| ShortcutRow {
@@ -75,8 +79,8 @@ fn refresh(window: &ShortcutsWindow, session: &Session, form: &RefCell<Form>) {
         factory: factory.label(command).into(),
     });
     window.set_commands(Rc::new(VecModel::from(rows.to_vec())).into());
-    let state = session.keyboard_shortcuts_state();
-    let stale = current.snapshot != session.shortcuts_stamp();
+    let state = snapshot.report();
+    let stale = current.snapshot != snapshot.stamp();
     let validation = current.bindings.clone().validated();
     window.set_can_save(current.dirty && !stale && state["ready"] == true && validation.is_ok());
     window.set_storage(
@@ -86,7 +90,7 @@ fn refresh(window: &ShortcutsWindow, session: &Session, form: &RefCell<Form>) {
         )
         .into(),
     );
-    window.set_status(if let Some(error) = session.shortcuts_error_message() {
+    window.set_status(if let Some(error) = &snapshot.error {
         format!("Saved shortcuts unavailable: {error}. Current valid bindings remain active. Reload saved must succeed or explicitly Reset saved shortcuts before Save.")
     } else if stale {
         "Shortcuts changed in another editor. Reload saved discards this form and loads the current saved bindings.".into()
@@ -100,13 +104,14 @@ fn refresh(window: &ShortcutsWindow, session: &Session, form: &RefCell<Form>) {
 }
 
 fn adopt(window: &ShortcutsWindow, session: &Session, form: &RefCell<Form>) {
+    let snapshot = session.keyboard_shortcuts_snapshot();
     let mut current = form.borrow_mut();
-    current.bindings = session.shortcut_bindings().clone();
-    current.snapshot = session.shortcuts_stamp();
+    current.bindings = snapshot.current.clone();
+    current.snapshot = snapshot.stamp();
     current.dirty = false;
     load_selected(window, &current);
     drop(current);
-    refresh(window, session, form);
+    refresh_with_snapshot(window, &snapshot, form);
 }
 
 fn read_slot(window: &ShortcutsWindow, alternate: bool) -> Option<Chord> {
@@ -310,10 +315,11 @@ pub fn route_viewport_key(
 }
 
 pub fn refresh_hint(app: &AppWindow, session: &Session) {
-    app.set_shortcuts_error(session.shortcuts_error_message().is_some());
+    let snapshot = session.keyboard_shortcuts_snapshot();
+    app.set_shortcuts_error(snapshot.error.is_some());
     app.set_frame_shortcut(
-        session
-            .shortcut_bindings()
+        snapshot
+            .current
             .slots(Command::FrameSelection)
             .iter()
             .flatten()

@@ -2,6 +2,9 @@ use std::{collections::BTreeSet, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+mod authority;
+pub use authority::{Authority, Snapshot};
+
 use crate::preference_file::{CoordinatedFile, ObservedSource, Publication, SaveError, Source};
 
 pub const FILE_NAME: &str = "shortcuts.json";

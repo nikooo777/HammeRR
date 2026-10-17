@@ -21,6 +21,87 @@ fn software_backend() {
     .unwrap();
 }
 
+#[test]
+fn attached_shortcut_forms_and_viewport_hints_observe_shared_activation_errors_and_reset() {
+    software_backend();
+    let directory = tempfile::tempdir().unwrap();
+    let authority = editor_core::shortcuts::Authority::configured(Ok(directory.path().to_owned()));
+    let first = Arc::new(Mutex::new(Session::with_keyboard_shortcuts(
+        Err("no assets".into()),
+        authority.clone(),
+    )));
+    let mut second_session = Session::with_keyboard_shortcuts(Err("no assets".into()), authority);
+    second_session
+        .create_block(
+            Actor::User,
+            DVec3::splat(1000.),
+            DVec3::splat(1064.),
+            "second",
+            true,
+        )
+        .unwrap();
+    let second = Arc::new(Mutex::new(second_session));
+    let first_form = Controller::new(&first).unwrap();
+    let second_form = Controller::new(&second).unwrap();
+    first_form.show(&lock(&first)).unwrap();
+    second_form.show(&lock(&second)).unwrap();
+    first_form.window.invoke_choose("frame_selection".into());
+    first_form.window.set_primary_key(key_index("F8"));
+    first_form.window.set_primary_control(false);
+    first_form.window.set_primary_shift(false);
+    first_form.window.invoke_edited();
+    first_form.window.invoke_save();
+    second_form.refresh(&lock(&second));
+    assert!(second_form.window.get_status().contains("another editor"));
+    let app = AppWindow::new().unwrap();
+    app.show().unwrap();
+    app.window().set_size(slint::PhysicalSize::new(1600, 1000));
+    app.window().take_snapshot().unwrap();
+    refresh_hint(&app, &lock(&second));
+    assert_eq!(app.get_frame_shortcut(), "F8");
+    assert!(!app.get_shortcuts_error());
+    let first_camera = lock(&first).camera();
+    let second_camera = lock(&second).camera();
+    assert!(route_viewport_key(
+        &app,
+        &second,
+        ViewportKey {
+            text: &key_text(Key::F8),
+            down: true,
+            control: false,
+            shift: false,
+            alt: false,
+            meta: false
+        },
+        |_, _, _| false,
+        |_, _| false
+    ));
+    assert_eq!(lock(&first).camera(), first_camera);
+    assert_ne!(lock(&second).camera(), second_camera);
+    std::fs::write(
+        directory.path().join(editor_core::shortcuts::FILE_NAME),
+        b"broken",
+    )
+    .unwrap();
+    second_form.window.invoke_reload();
+    first_form.refresh(&lock(&first));
+    refresh_hint(&app, &lock(&first));
+    assert!(app.get_shortcuts_error());
+    assert_eq!(app.get_frame_shortcut(), "F8");
+    assert!(
+        first_form
+            .window
+            .get_status()
+            .contains("Saved shortcuts unavailable")
+    );
+    first_form.window.invoke_reset();
+    second_form.refresh(&lock(&second));
+    refresh_hint(&app, &lock(&second));
+    assert!(!app.get_shortcuts_error());
+    assert_eq!(app.get_frame_shortcut(), "F");
+    assert_eq!(lock(&second).shortcut_bindings(), Bindings::default());
+}
+
 fn dispatch_chord(app: &AppWindow, modifiers: &[Key], text: &str) {
     for key in modifiers {
         app.window().dispatch_event(WindowEvent::KeyPressed {
@@ -77,7 +158,7 @@ fn shortcut_controls_save_atomically_report_conflicts_and_preserve_text_field_ed
     controller.window.set_primary_shift(true);
     controller.window.invoke_edited();
     assert!(controller.window.get_can_save());
-    assert_eq!(lock(&shared).shortcut_bindings(), &Bindings::default());
+    assert_eq!(lock(&shared).shortcut_bindings(), Bindings::default());
     controller.window.invoke_save();
     assert_eq!(
         lock(&shared).resolve_editor_shortcut("F6", false, true, false, false),
@@ -107,7 +188,7 @@ fn shortcut_controls_save_atomically_report_conflicts_and_preserve_text_field_ed
     assert!(!controller.window.get_can_save());
     assert!(controller.window.get_status().contains("another editor"));
     controller.window.invoke_save();
-    assert_eq!(lock(&shared).shortcut_bindings(), &Bindings::default());
+    assert_eq!(lock(&shared).shortcut_bindings(), Bindings::default());
     controller.window.invoke_reload();
     assert_eq!(controller.window.get_primary_key(), key_index("Z"));
     std::fs::write(
@@ -123,7 +204,7 @@ fn shortcut_controls_save_atomically_report_conflicts_and_preserve_text_field_ed
             .get_status()
             .contains("Saved shortcuts unavailable")
     );
-    assert_eq!(lock(&shared).shortcut_bindings(), &Bindings::default());
+    assert_eq!(lock(&shared).shortcut_bindings(), Bindings::default());
     controller.window.invoke_reset();
     assert!(lock(&shared).shortcuts_error_message().is_none());
     controller.window.invoke_cancel();

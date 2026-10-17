@@ -860,19 +860,39 @@ impl Session {
             })
             .unwrap_or_default();
         let summary = ready.map_or_else(
-            || format!("Instance contents {stored}"),
+            || match stored {
+                "loading" => "Refreshing instance contents…",
+                "cancelled" => "Instance refresh cancelled",
+                "stale" => "Instance contents changed; refresh to display them",
+                "failed" => "Instance refresh failed",
+                "empty" => "No visible instances to display",
+                _ => "Instance contents have not been refreshed",
+            }.to_owned(),
             |ready| {
+                if ready.stats.instances == 0 {
+                    return "No visible instances to display".into();
+                }
+                let display = if displayed {
+                    "displayed"
+                } else if !enabled {
+                    "display is off"
+                } else if !available {
+                    "no displayable brushes"
+                } else if suppression.is_some() {
+                    "temporarily hidden"
+                } else {
+                    "outside the visible working region"
+                };
                 format!(
-                    "{} instances from {} files: {} world and {} detail brushes · {}",
+                    "{} instance{} from {} file{} · {} world brush{} and {} detail brush{} · {display}",
                     ready.stats.instances,
+                    if ready.stats.instances == 1 { "" } else { "s" },
                     ready.stats.files,
+                    if ready.stats.files == 1 { "" } else { "s" },
                     ready.stats.world_brushes,
+                    if ready.stats.world_brushes == 1 { "" } else { "es" },
                     ready.stats.detail_brushes,
-                    if displayed {
-                        "displayed"
-                    } else {
-                        "not displayed"
-                    }
+                    if ready.stats.detail_brushes == 1 { "" } else { "es" },
                 )
             },
         );

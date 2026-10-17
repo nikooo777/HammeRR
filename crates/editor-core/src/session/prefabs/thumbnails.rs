@@ -9,6 +9,25 @@ use source_formats::vtf::RgbaImage;
 use super::{Session, prefabs};
 use crate::model_preview::PreviewRenderer;
 
+mod textures;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ThumbnailStyle {
+    #[default]
+    Flat,
+    Textured,
+}
+
+impl ThumbnailStyle {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Flat => "flat_geometry",
+            Self::Textured => "textured",
+        }
+    }
+}
+
 const WIDTH: u32 = 320;
 const HEIGHT: u32 = 240;
 const MAX_CACHE: usize = 8;
@@ -30,6 +49,8 @@ pub struct Thumbnail {
 }
 
 struct Cached {
+    style: ThumbnailStyle,
+    assets: textures::Assets,
     source: prefabs::Entry,
     text: String,
     epoch: (u64, u64),
@@ -49,6 +70,7 @@ struct Source {
 }
 
 struct Prepared {
+    assets: textures::Assets,
     mesh: SceneMesh,
     materials: MaterialLibrary,
     camera: Camera,
@@ -56,7 +78,7 @@ struct Prepared {
 }
 
 fn limits() -> Value {
-    json!({"source_bytes":MAX_SOURCE_BYTES,"brushes":MAX_BRUSHES,"sides":MAX_SIDES,"sides_per_brush":MAX_BRUSH_SIDES,"displacement_vertices":MAX_DISPLACEMENT_VERTICES,"model_paths":MAX_MODEL_PATHS,"model_instances":MAX_MODEL_INSTANCES,"vertices":MAX_VERTICES,"indices":MAX_INDICES,"materials":MAX_MATERIALS,"cached_images":MAX_CACHE})
+    json!({"source_bytes":MAX_SOURCE_BYTES,"brushes":MAX_BRUSHES,"sides":MAX_SIDES,"sides_per_brush":MAX_BRUSH_SIDES,"displacement_vertices":MAX_DISPLACEMENT_VERTICES,"model_paths":MAX_MODEL_PATHS,"model_instances":MAX_MODEL_INSTANCES,"vertices":MAX_VERTICES,"indices":MAX_INDICES,"materials":MAX_MATERIALS,"cached_images":MAX_CACHE,"textured":textures::limits()})
 }
 
 fn geometry_bounds(mesh: &SceneMesh) -> Result<(Vec3, Vec3), String> {
@@ -109,7 +131,11 @@ impl Session {
         })
     }
 
-    fn cached_thumbnail(&self, source: &Source) -> Option<Thumbnail> {
+    fn cached_thumbnail(
+        &self,
+        source: &Source,
+        style: ThumbnailStyle,
+    ) -> Result<Option<Thumbnail>, String> {
         let epoch = (self.content_epoch, self.definitions_serial);
         let mut cache = self.prefabs.thumbnails.cache.borrow_mut();
         cache.retain(|cached| {
@@ -117,17 +143,30 @@ impl Session {
                 && (cached.source.name != source.entry.name
                     || (cached.source == source.entry && cached.text == source.text))
         });
-        let index = cache
-            .iter()
-            .position(|cached| cached.source == source.entry && cached.text == source.text)?;
-        let cached = cache.remove(index)?;
+        let Some(index) = cache.iter().position(|cached| {
+            cached.style == style && cached.source == source.entry && cached.text == source.text
+        }) else {
+            return Ok(None);
+        };
+        let cached = cache.remove(index).expect("located cache entry");
+        textures::verify(&self.game, &cached.assets)?;
+        let current = self.thumbnail_source(&source.entry.name)?;
+        if current.entry != source.entry || current.text != source.text {
+            return Err(
+                "Prefab changed while checking its cached thumbnail; refresh and retry".into(),
+            );
+        }
         let mut thumbnail = cached.thumbnail.clone();
         thumbnail.report["cached"] = json!(true);
         cache.push_back(cached);
-        Some(thumbnail)
+        Ok(Some(thumbnail))
     }
 
-    fn prepare_prefab_thumbnail(&self, source: &Source) -> Result<Prepared, String> {
+    fn prepare_prefab_thumbnail(
+        &self,
+        source: &Source,
+        style: ThumbnailStyle,
+    ) -> Result<Prepared, String> {
         let nodes = source_formats::keyvalues::parse_bounded(
             &source.text,
             transfer::MAX_DEPTH,
@@ -258,12 +297,28 @@ impl Session {
         if names.len() > MAX_MATERIALS {
             return Err("Prefab thumbnail exceeds 64 material bindings".into());
         }
-        let mut materials = MaterialLibrary::flat(names);
+        let (mut materials, assets, texture_report) = match style {
+            ThumbnailStyle::Flat => (
+                MaterialLibrary::flat(names),
+                textures::Assets::default(),
+                Value::Null,
+            ),
+            ThumbnailStyle::Textured => textures::load(&self.game, names)?,
+        };
         let empty = std::collections::HashSet::new();
         let helpers = self.fgd_helper_appearances(&document, &models);
+        let no_assets = source_formats::gamefs::GameFs {
+            game_dir: Default::default(),
+            base_dir: Default::default(),
+            mounts: Vec::new(),
+        };
         let mesh = SceneMesh::build_with_helpers_filtered(
             document.vmf(),
-            &self.game,
+            if style == ThumbnailStyle::Textured {
+                &no_assets
+            } else {
+                &self.game
+            },
             &mut materials,
             (&empty, &std::collections::HashSet::new()),
             &[],
@@ -279,6 +334,19 @@ impl Session {
         if mesh.vertices.len() > MAX_VERTICES || mesh.indices.len() > MAX_INDICES {
             return Err("Prefab thumbnail exceeds 200000 vertices or 600000 indices".into());
         }
+        if style == ThumbnailStyle::Textured
+            && (mesh.stats.missing_materials != 0
+                || materials.len() > MAX_MATERIALS + 2
+                || (0..materials.len()).any(|id| {
+                    let material = materials.get(id);
+                    material.missing || material.error.is_some()
+                }))
+        {
+            return Err(
+                "Textured prefab thumbnail contains an unapproved or unavailable material binding"
+                    .into(),
+            );
+        }
         let (mins, maxs) = geometry_bounds(&mesh)?;
         let camera = Camera::framing(
             mins,
@@ -287,8 +355,10 @@ impl Session {
             45.0,
             WIDTH as f32 / HEIGHT as f32,
         );
-        let report = json!({"name":source.entry.name,"width":WIDTH,"height":HEIGHT,"style":"flat_geometry","textures_loaded":false,"hidden_objects_included":hidden,"objects":payload.ids().len(),"brushes":brushes,"sides":sides,"model_instances":models.instances.len(),"point_helpers":mesh.stats.point_entities - mesh.stats.model_entities,"bounds":[mins.to_array(),maxs.to_array()],"vertices":mesh.vertices.len(),"indices":mesh.indices.len(),"cached":false,"limits":limits()});
+        let textures_loaded = (0..materials.len()).any(|id| materials.get(id).base.is_some());
+        let report = json!({"name":source.entry.name,"width":WIDTH,"height":HEIGHT,"style":style.label(),"textures_loaded":textures_loaded,"texture_assets":texture_report,"normal_maps":false,"authored_lighting":false,"hidden_objects_included":hidden,"objects":payload.ids().len(),"brushes":brushes,"sides":sides,"model_instances":models.instances.len(),"point_helpers":mesh.stats.point_entities - mesh.stats.model_entities,"bounds":[mins.to_array(),maxs.to_array()],"vertices":mesh.vertices.len(),"indices":mesh.indices.len(),"cached":false,"limits":limits()});
         Ok(Prepared {
+            assets,
             mesh,
             materials,
             camera,
@@ -297,11 +367,16 @@ impl Session {
     }
 
     pub fn prefab_thumbnail_report(&self, name: &str) -> Value {
+        self.prefab_thumbnail_report_with_style(name, ThumbnailStyle::Flat)
+    }
+
+    pub fn prefab_thumbnail_report_with_style(&self, name: &str, style: ThumbnailStyle) -> Value {
         let result = self.thumbnail_source(name).and_then(|source| {
-            if let Some(thumbnail) = self.cached_thumbnail(&source) {
+            if let Some(thumbnail) = self.cached_thumbnail(&source, style)? {
                 return Ok(thumbnail.report);
             }
-            let prepared = self.prepare_prefab_thumbnail(&source)?;
+            let prepared = self.prepare_prefab_thumbnail(&source, style)?;
+            textures::verify(&self.game, &prepared.assets)?;
             let current = self.thumbnail_source(name)?;
             if current.entry != source.entry || current.text != source.text {
                 return Err(
@@ -315,16 +390,24 @@ impl Session {
                 .thumbnails
                 .cache
                 .borrow_mut()
-                .retain(|cached| cached.source.name != name);
-            json!({"name":name,"error":error,"limits":limits()})
+                .retain(|cached| cached.source.name != name || cached.style != style);
+            json!({"name":name,"style":style.label(),"error":error,"limits":limits()})
         });
         report["graphics"] = json!({"initialized":self.prefabs.thumbnails.renderer.initialized(),"error":self.prefabs.thumbnails.error});
         report
     }
 
     pub fn cached_prefab_thumbnail(&self, name: &str) -> Result<Option<Thumbnail>, String> {
+        self.cached_prefab_thumbnail_with_style(name, ThumbnailStyle::Flat)
+    }
+
+    pub fn cached_prefab_thumbnail_with_style(
+        &self,
+        name: &str,
+        style: ThumbnailStyle,
+    ) -> Result<Option<Thumbnail>, String> {
         match self.thumbnail_source(name) {
-            Ok(source) => Ok(self.cached_thumbnail(&source)),
+            Ok(source) => self.cached_thumbnail(&source, style),
             Err(error) => {
                 self.prefabs
                     .thumbnails
@@ -337,37 +420,54 @@ impl Session {
     }
 
     pub fn prefab_thumbnail(&mut self, name: &str, refresh: bool) -> Result<Thumbnail, String> {
+        self.prefab_thumbnail_with_style(name, refresh, ThumbnailStyle::Flat)
+    }
+
+    pub fn prefab_thumbnail_with_style(
+        &mut self,
+        name: &str,
+        refresh: bool,
+        style: ThumbnailStyle,
+    ) -> Result<Thumbnail, String> {
         if refresh {
             self.prefabs
                 .thumbnails
                 .cache
                 .borrow_mut()
-                .retain(|cached| cached.source.name != name);
+                .retain(|cached| cached.source.name != name || cached.style != style);
         }
-        let result = self.render_prefab_thumbnail(name);
+        let result = self.render_prefab_thumbnail(name, style);
         self.prefabs.thumbnails.error = result.as_ref().err().cloned();
         if result.is_err() {
             self.prefabs
                 .thumbnails
                 .cache
                 .borrow_mut()
-                .retain(|cached| cached.source.name != name);
+                .retain(|cached| cached.source.name != name || cached.style != style);
         }
         result
     }
 
-    fn render_prefab_thumbnail(&mut self, name: &str) -> Result<Thumbnail, String> {
+    fn render_prefab_thumbnail(
+        &mut self,
+        name: &str,
+        style: ThumbnailStyle,
+    ) -> Result<Thumbnail, String> {
         let source = self.thumbnail_source(name)?;
-        if let Some(thumbnail) = self.cached_thumbnail(&source) {
+        if let Some(thumbnail) = self.cached_thumbnail(&source, style)? {
             return Ok(thumbnail);
         }
-        let prepared = self.prepare_prefab_thumbnail(&source)?;
+        let prepared = self.prepare_prefab_thumbnail(&source, style)?;
         let pixels = self.prefabs.thumbnails.renderer.render_scene(
             &prepared.mesh,
             &prepared.materials,
             &prepared.camera,
             &ViewOptions {
-                surface: SurfaceView::Flat,
+                surface: match style {
+                    ThumbnailStyle::Flat => SurfaceView::Flat,
+                    ThumbnailStyle::Textured => SurfaceView::Textured,
+                },
+                normal_maps: false,
                 grid_visible: false,
                 leak_path: false,
                 selection_outlines: false,
@@ -376,6 +476,7 @@ impl Session {
             WIDTH,
             HEIGHT,
         )?;
+        textures::verify(&self.game, &prepared.assets)?;
         let current = self.thumbnail_source(name)?;
         if current.entry != source.entry || current.text != source.text {
             return Err("Prefab changed while rendering its thumbnail; refresh and retry".into());
@@ -393,6 +494,8 @@ impl Session {
             cache.pop_front();
         }
         cache.push_back(Cached {
+            style,
+            assets: prepared.assets,
             source: source.entry,
             text: source.text,
             epoch: (self.content_epoch, self.definitions_serial),
@@ -404,3 +507,5 @@ impl Session {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod textured_tests;

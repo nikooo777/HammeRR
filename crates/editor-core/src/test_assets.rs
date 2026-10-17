@@ -142,6 +142,8 @@ pub use crate::session::clipboard::fixtures::fixture as clipboard;
 
 pub use crate::session::prefabs::fixtures::fixture as prefabs;
 
+pub use crate::session::prefabs::fixtures::textured_fixture as textured_prefabs;
+
 pub use crate::session::placement::fixtures::fixture as placement;
 
 pub use crate::session::sounds::fixtures::fixture as sounds;

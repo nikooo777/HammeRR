@@ -13,6 +13,7 @@ export component PrefabsWindow inherits Window {
     in property <bool> has-thumbnail;
     in property <bool> can-render-thumbnail;
     in property <string> thumbnail-status;
+    in-out property <int> thumbnail-style;
     in property <bool> previous;
     in property <bool> next;
     in property <bool> saving;
@@ -49,6 +50,7 @@ export component PrefabsWindow inherits Window {
     callback rename();
     callback preview();
     callback render-thumbnail();
+    callback thumbnail-style-changed();
     callback cancel();
     callback close-dialog();
     forward-focus:keys;
@@ -104,12 +106,14 @@ export component PrefabsWindow inherits Window {
                         Rectangle {
                             height:240px;horizontal-stretch:1;background:#202733;border-radius:8px;
                             if root.has-thumbnail: Image {source:root.thumbnail;image-fit:contain;}
-                            if !root.has-thumbnail: Text {text:root.selected==""?"Choose a prefab to inspect its shape":"Render a flat geometry thumbnail";horizontal-alignment:center;vertical-alignment:center;wrap:word-wrap;color:#919aaa;}
+                            if !root.has-thumbnail: Text {text:root.selected==""?"Choose a prefab to inspect its shape":root.thumbnail-style==0?"Render a flat geometry thumbnail":"Render a textured thumbnail";horizontal-alignment:center;vertical-alignment:center;wrap:word-wrap;color:#919aaa;}
                         }
                         HorizontalLayout {
                             spacing:8px;
-                            Text {text:"Flat geometry · 320 × 240";color:#bac2ce;vertical-alignment:center;horizontal-stretch:1;}
-                            Button {text:root.has-thumbnail?"Refresh thumbnail":"Render thumbnail";enabled:root.can-render-thumbnail;clicked=>{root.render-thumbnail();}}
+                            Text {text:"Thumbnail";color:#bac2ce;vertical-alignment:center;}
+                            ComboBox {model:["Flat","Textured"];current-index<=>root.thumbnail-style;accessible-label:"Thumbnail style";selected(index)=>{root.thumbnail-style=index;root.thumbnail-style-changed();}}
+                            Text {text:"320 × 240";color:#bac2ce;vertical-alignment:center;horizontal-stretch:1;}
+                            Button {text:root.has-thumbnail?"Refresh thumbnail":"Render thumbnail";enabled:root.can-render-thumbnail||(root.thumbnail-style==1&&root.selected!="");clicked=>{root.render-thumbnail();}}
                         }
                         Text {text:root.thumbnail-status;wrap:word-wrap;color:#bac2ce;}
                         Text {text:root.detail;wrap:word-wrap;color:#bac2ce;}

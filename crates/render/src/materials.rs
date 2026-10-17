@@ -94,33 +94,41 @@ impl MaterialInfo {
                     .ok_or_else(|| format!("Blend texture {path} was not found"))
             })
             .transpose()?;
+        Ok(Self::from_resolved(name, material.as_ref(), base, blend, display_texture))
+    }
+
+    fn from_resolved(
+        name: &str,
+        material: Option<&Material>,
+        base: Option<Vtf>,
+        blend: Option<Vtf>,
+        display_texture: Option<String>,
+    ) -> Self {
         let (width, height) = base
             .as_ref()
             .map_or((FALLBACK_SIZE, FALLBACK_SIZE), |v| (v.width, v.height));
-        let sky = material.as_ref().is_some_and(|material| {
+        let sky = material.is_some_and(|material| {
             material.compile_semantics().surface & source_formats::bsp::surf::SKY != 0
         }) || matches!(name, "tools/toolsskybox" | "tools/toolsskybox2d");
 
-        Ok(Self {
-            material_identity: material.as_ref().map(material_identity),
-            lighting_error: material
-                .as_ref()
-                .map_or_else(|| Some("No resolved material".into()), lighting_error),
+        Self {
+            material_identity: material.map(material_identity),
+            lighting_error: material.map_or_else(|| Some("No resolved material".into()), lighting_error),
             display_texture,
             normal: None,
             helper: None,
             error: None,
             missing: base.is_none(),
-            alpha_test: material.as_ref().is_some_and(Material::alpha_test),
-            translucent: material.as_ref().is_some_and(Material::translucent),
-            tool: sky || material.as_ref().is_some_and(Material::is_tool),
+            alpha_test: material.is_some_and(Material::alpha_test),
+            translucent: material.is_some_and(Material::translucent),
+            tool: sky || material.is_some_and(Material::is_tool),
             sky,
             name: name.to_owned(),
             base,
             blend,
             width,
             height,
-        })
+        }
     }
 
     /// A flat-colored material for editor helpers such as entity boxes.
@@ -416,6 +424,29 @@ impl MaterialLibrary {
         self.materials.push(material);
         self.by_name.insert(key, id);
         Ok(id)
+    }
+
+    pub fn insert_base_texture(
+        &mut self,
+        name: &str,
+        material: &Material,
+        base: Vtf,
+        display_texture: String,
+    ) -> MaterialId {
+        let key = name.to_ascii_lowercase();
+        if let Some(&id) = self.by_name.get(&key) {
+            return id;
+        }
+        let id = self.materials.len();
+        self.materials.push(MaterialInfo::from_resolved(
+            &key,
+            Some(material),
+            Some(base),
+            None,
+            Some(display_texture),
+        ));
+        self.by_name.insert(key, id);
+        id
     }
 
     pub fn find(&self, name: &str) -> Option<&MaterialInfo> {

@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use std::path::PathBuf;
 
 mod thumbnails;
-pub use thumbnails::Thumbnail;
+pub use thumbnails::{Thumbnail, ThumbnailStyle};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Placement {

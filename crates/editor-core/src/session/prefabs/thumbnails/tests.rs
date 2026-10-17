@@ -15,8 +15,12 @@ fn saved() -> (Session, tempfile::TempDir) {
 }
 
 fn seed_cache(session: &Session, name: &str) -> Arc<RgbaImage> {
+    seed_style_cache(session, name, ThumbnailStyle::Flat)
+}
+
+fn seed_style_cache(session: &Session, name: &str, style: ThumbnailStyle) -> Arc<RgbaImage> {
     let source = session.thumbnail_source(name).unwrap();
-    let report = session.prepare_prefab_thumbnail(&source).unwrap().report;
+    let prepared = session.prepare_prefab_thumbnail(&source, style).unwrap();
     let image = Arc::new(RgbaImage {
         width: WIDTH,
         height: HEIGHT,
@@ -28,12 +32,14 @@ fn seed_cache(session: &Session, name: &str) -> Arc<RgbaImage> {
         .cache
         .borrow_mut()
         .push_back(Cached {
+            style,
+            assets: prepared.assets,
             source: source.entry,
             text: source.text,
             epoch: (session.content_epoch, session.definitions_serial),
             thumbnail: Thumbnail {
                 image: image.clone(),
-                report,
+                report: prepared.report,
             },
         });
     image
@@ -179,7 +185,9 @@ fn thumbnail_source_errors_are_explicit_and_never_initialize_graphics() {
 fn thumbnail_flat_scene_uses_real_geometry_without_external_texture_reads() {
     let (session, _directory) = saved();
     let source = session.thumbnail_source("Fixture").unwrap();
-    let prepared = session.prepare_prefab_thumbnail(&source).unwrap();
+    let prepared = session
+        .prepare_prefab_thumbnail(&source, ThumbnailStyle::Flat)
+        .unwrap();
     assert_eq!(prepared.mesh.stats.brushes, 1);
     assert_eq!(prepared.mesh.stats.missing_materials, 0);
     assert!(prepared.mesh.skybox.is_none());
@@ -271,7 +279,10 @@ fn thumbnail_real_models_use_shared_instances_without_texture_assets_or_helper_s
     assert_eq!(report["point_helpers"], 0);
     assert!(report["vertices"].as_u64().unwrap() > 24);
     let prepared = session
-        .prepare_prefab_thumbnail(&session.thumbnail_source("Real model").unwrap())
+        .prepare_prefab_thumbnail(
+            &session.thumbnail_source("Real model").unwrap(),
+            ThumbnailStyle::Flat,
+        )
         .unwrap();
     assert_eq!(prepared.mesh.stats.model_entities, 1);
     for id in 0..prepared.materials.len() {
@@ -286,7 +297,9 @@ fn thumbnail_real_models_use_shared_instances_without_texture_assets_or_helper_s
 fn thumbnail_framing_ignores_inactive_bodygroup_vertices_and_disabled_rope_batches() {
     let (session, _directory) = saved();
     let source = session.thumbnail_source("Fixture").unwrap();
-    let mut prepared = session.prepare_prefab_thumbnail(&source).unwrap();
+    let mut prepared = session
+        .prepare_prefab_thumbnail(&source, ThumbnailStyle::Flat)
+        .unwrap();
     let expected = geometry_bounds(&prepared.mesh).unwrap();
     let mut inactive = prepared.mesh.vertices[0];
     inactive.position = [32768.0; 3];
@@ -391,7 +404,9 @@ fn thumbnail_point_helpers_share_fgd_geometry_color_and_reload_invalidation() {
     let source = session.thumbnail_source("Sized helper").unwrap();
     let document = session.document().vmf().clone();
     let history = session.history_snapshot();
-    let prepared = session.prepare_prefab_thumbnail(&source).unwrap();
+    let prepared = session
+        .prepare_prefab_thumbnail(&source, ThumbnailStyle::Flat)
+        .unwrap();
     assert_eq!(prepared.mesh.stats.point_entities, 1);
     assert_eq!(prepared.mesh.stats.brushes, 0);
     assert_eq!(
@@ -426,7 +441,9 @@ fn thumbnail_point_helpers_share_fgd_geometry_color_and_reload_invalidation() {
             .unwrap()
             .is_none()
     );
-    let reloaded = session.prepare_prefab_thumbnail(&source).unwrap();
+    let reloaded = session
+        .prepare_prefab_thumbnail(&source, ThumbnailStyle::Flat)
+        .unwrap();
     assert_eq!(
         geometry_bounds(&reloaded.mesh).unwrap(),
         (

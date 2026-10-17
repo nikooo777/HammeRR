@@ -1,5 +1,5 @@
-pub mod build_settings;
 pub mod build_recipes;
+pub mod build_settings;
 pub mod game;
 pub mod grid_preferences;
 pub mod identity;

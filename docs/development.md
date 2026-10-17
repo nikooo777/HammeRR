@@ -27,7 +27,11 @@ rebind an attached authority. Material catalog and preview updates publish one
 owned Favorites snapshot without locking another Session. Application also owns
 active shortcuts and a SavedDefaults bundle whose three typed stores share one
 storage-state implementation. Current grid, preview switches and fly speed stay
-Session-local; applying saved values acts only on the originating Session. MCP tool groups and parameters live under `editor-core/src/mcp/`, while desktop composition and feature bindings live under `editor/src/ui/` and the feature-specific UI modules.
+Session-local; applying saved values acts only on the originating Session. The
+concrete Build recipes authority owns the saved list and storage state; local
+compiler options, applied IDs and captured jobs stay with each Session. Its
+action revision observes shared-list and local-settings changes without packing
+numeric revision fields. MCP tool groups and parameters live under `editor-core/src/mcp/`, while desktop composition and feature bindings live under `editor/src/ui/` and the feature-specific UI modules.
 
 `Session` owns geometry-preview state through `session/previews.rs`. Rendering, picking and tool-texture filtering share its displayed-document selector. Feature modules validate replacement drafts before clearing competitors through the coordinator; their own payloads and ownership tokens remain local.
 
@@ -2392,3 +2396,21 @@ Reload retention, stale actions and owned-review/GPU-lazy state. Session checks
 cover busy/closing admission, unchanged compiler values, applied recipe identity,
 captured jobs and session-only storage. Software callbacks capture the existing
 build window and keep its Reload action available for configured storage errors.
+
+### Shared Build recipes authority
+
+```sh
+cargo test -p editor-core --features mcp session::compilation::recipes::authority_tests
+cargo test -p editor-core --features mcp high_registry_revisions_and_under_lock_guards
+cargo test -p editor-core --features mcp attached_servers_share_recipe_registry
+cargo test -p editor recipe_callbacks_preserve_typed_names -- --test-threads=1
+```
+
+These checks exercise two explicitly attached Sessions and MCP servers, shared
+list/error/Reload state, startup no-rebind, concurrent additions without an
+expected token, high registry revisions and local value/identity changes back to
+an earlier value. Busy origin guards preserve captured job names while peers
+rename or delete saved recipes. Software callbacks preserve a typed name across
+human setting changes and display all updated settings before a stale action can
+be retried. The existing private Build recipe validator also covers independent
+process storage and explicit Reload; it does not imply cross-process locking.

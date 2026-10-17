@@ -13,9 +13,12 @@ use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::{
     TerrainTriangleRow, TerrainTrianglesWindow,
-    runtime::{SharedSession, lock},
+    runtime::{DocumentAccess, DocumentContinuation},
     session::{Actor, Session},
 };
+
+#[cfg(test)]
+use crate::runtime::SharedSession;
 
 struct Target {
     context: crate::face_edit_ui::Context,
@@ -214,103 +217,100 @@ fn edited(
     Ok(())
 }
 
+fn with_session<R>(
+    window: &slint::Weak<TerrainTrianglesWindow>,
+    continuation: &DocumentContinuation,
+    body: impl FnOnce(&TerrainTrianglesWindow, &mut Session) -> R,
+) -> Option<R> {
+    let window = window.upgrade()?;
+    let result = continuation.upgrade().and_then(|access| {
+        access.with_session(|session| {
+            #[cfg(test)]
+            {
+                let hook = BEFORE_ACTION.with(|slot| slot.borrow_mut().take());
+                if let Some(hook) = hook {
+                    hook();
+                }
+            }
+            Ok(body(&window, session))
+        })
+    });
+    match result {
+        Ok(result) => Some(result),
+        Err(error) => {
+            window.set_message(error.into());
+            None
+        }
+    }
+}
+
 impl Controller {
+    #[cfg(test)]
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
+        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
+    }
+
+    pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let window = TerrainTrianglesWindow::new()?;
         let target = Rc::new(RefCell::new(None::<Target>));
         let picking = Rc::new(Cell::new(false));
         window.on_kind_changed({
-            let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
+            let (window, continuation, target) =
+                (window.as_weak(), access.downgrade(), target.clone());
             move || {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
-                if let Some(target) = target.borrow_mut().as_mut() {
-                    let result = target.check(&session).and_then(|_| {
-                        target.cancel(&mut session);
-                        target.selected.clear();
-                        target.vertices = window.get_kind_index() == 1;
-                        edited(&window, &mut session, target)
-                    });
-                    if let Err(error) = result {
-                        window.set_message(error.into());
+                with_session(&window, &continuation, |window, session| {
+                    if let Some(target) = target.borrow_mut().as_mut() {
+                        let result = target.check(session).and_then(|_| {
+                            target.cancel(session);
+                            target.selected.clear();
+                            target.vertices = window.get_kind_index() == 1;
+                            edited(window, session, target)
+                        });
+                        if let Err(error) = result {
+                            window.set_message(error.into());
+                        }
                     }
-                }
+                });
             }
         });
         window.on_edited({
-            let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
+            let (window, continuation, target) =
+                (window.as_weak(), access.downgrade(), target.clone());
             move || {
-                let window = window.unwrap();
-                if let Some(target) = target.borrow_mut().as_mut()
-                    && let Err(error) = edited(&window, &mut lock(&shared), target)
-                {
-                    window.set_message(error.into());
-                }
+                with_session(&window, &continuation, |window, session| {
+                    if let Some(target) = target.borrow_mut().as_mut()
+                        && let Err(error) = edited(window, session, target)
+                    {
+                        window.set_message(error.into());
+                    }
+                });
             }
         });
         window.on_face_changed({
-            let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
+            let (window, continuation, target) =
+                (window.as_weak(), access.downgrade(), target.clone());
             move || {
-                let window = window.unwrap();
-                if let Some(target) = target.borrow().as_ref()
-                    && let Err(error) = populate(&window, &lock(&shared), target)
-                {
-                    window.set_message(error.into());
-                }
+                with_session(&window, &continuation, |window, session| {
+                    if let Some(target) = target.borrow().as_ref()
+                        && let Err(error) = populate(window, session, target)
+                    {
+                        window.set_message(error.into());
+                    }
+                });
             }
         });
         window.on_toggle_triangle({
-            let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
+            let (window, continuation, target) =
+                (window.as_weak(), access.downgrade(), target.clone());
             move |id, selected| {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
-                let mut target = target.borrow_mut();
-                let Some(target) = target.as_mut() else {
-                    return;
-                };
-                let result = target.check(&session).and_then(|_| {
-                    let face = face(&window, target)?;
-                    let valid = if target.vertices {
-                        session.terrain_grids(&[face], false)?[0]
-                            .mesh
-                            .positions
-                            .len()
-                    } else {
-                        session.terrain_triangles(&[face], false)?[0]
-                            .triangles
-                            .len()
+                with_session(&window, &continuation, |window, session| {
+                    let mut target = target.borrow_mut();
+                    let Some(target) = target.as_mut() else {
+                        return;
                     };
-                    let id = usize::try_from(id).map_err(|_| "Choose a valid terrain component")?;
-                    if id >= valid {
-                        return Err("Choose a valid terrain component".into());
-                    }
-                    let ids = target.selected.entry(face).or_default();
-                    if selected {
-                        ids.insert(id);
-                    } else {
-                        ids.remove(&id);
-                    }
-                    target.highlight(&mut session)?;
-                    edited(&window, &mut session, target)
-                });
-                if let Err(error) = result {
-                    window.set_message(error.into());
-                }
-            }
-        });
-        window.on_select_all({
-            let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
-            move |selected| {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
-                let mut target = target.borrow_mut();
-                let Some(target) = target.as_mut() else {
-                    return;
-                };
-                let result = target.check(&session).and_then(|_| {
-                    if selected {
-                        let face = face(&window, target)?;
-                        let count = if target.vertices {
+                    let result = target.check(session).and_then(|_| {
+                        let face = face(window, target)?;
+                        let valid = if target.vertices {
                             session.terrain_grids(&[face], false)?[0]
                                 .mesh
                                 .positions
@@ -320,200 +320,272 @@ impl Controller {
                                 .triangles
                                 .len()
                         };
-                        target.selected.insert(face, (0..count).collect());
-                    } else {
-                        target.selected.clear();
-                    }
-                    target.highlight(&mut session)?;
-                    edited(&window, &mut session, target)
-                });
-                if let Err(error) = result {
-                    window.set_message(error.into());
-                }
-            }
-        });
-        window.on_pick_triangle({
-            let (window, shared, target, picking) = (
-                window.as_weak(),
-                shared.clone(),
-                target.clone(),
-                picking.clone(),
-            );
-            move || {
-                let window = window.unwrap();
-                let result = target
-                    .borrow()
-                    .as_ref()
-                    .ok_or("Reopen terrain triangles".into())
-                    .and_then(|target| target.check(&lock(&shared)));
-                match result {
-                    Ok(()) => {
-                        picking.set(true);
-                        let _ = window.hide();
-                    }
-                    Err(error) => window.set_message(error.into()),
-                }
-            }
-        });
-        window.on_frame_selected({
-            let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
-            move || {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
-                if let Some(target) = target.borrow().as_ref() {
-                    let result = target.check(&session).and_then(|_| {
-                        let frame = if target.vertices {
-                            Session::frame_terrain_vertices
+                        let id =
+                            usize::try_from(id).map_err(|_| "Choose a valid terrain component")?;
+                        if id >= valid {
+                            return Err("Choose a valid terrain component".into());
+                        }
+                        let ids = target.selected.entry(face).or_default();
+                        if selected {
+                            ids.insert(id);
                         } else {
-                            Session::frame_terrain_triangles
-                        };
-                        frame(
-                            &mut session,
-                            Actor::User,
-                            &target.targets(),
-                            window.get_aspect(),
-                        )
+                            ids.remove(&id);
+                        }
+                        target.highlight(session)?;
+                        edited(window, session, target)
                     });
                     if let Err(error) = result {
                         window.set_message(error.into());
                     }
-                }
+                });
+            }
+        });
+        window.on_select_all({
+            let (window, continuation, target) =
+                (window.as_weak(), access.downgrade(), target.clone());
+            move |selected| {
+                with_session(&window, &continuation, |window, session| {
+                    let mut target = target.borrow_mut();
+                    let Some(target) = target.as_mut() else {
+                        return;
+                    };
+                    let result = target.check(session).and_then(|_| {
+                        if selected {
+                            let face = face(window, target)?;
+                            let count = if target.vertices {
+                                session.terrain_grids(&[face], false)?[0]
+                                    .mesh
+                                    .positions
+                                    .len()
+                            } else {
+                                session.terrain_triangles(&[face], false)?[0]
+                                    .triangles
+                                    .len()
+                            };
+                            target.selected.insert(face, (0..count).collect());
+                        } else {
+                            target.selected.clear();
+                        }
+                        target.highlight(session)?;
+                        edited(window, session, target)
+                    });
+                    if let Err(error) = result {
+                        window.set_message(error.into());
+                    }
+                });
+            }
+        });
+        window.on_pick_triangle({
+            let (window, continuation, target, picking) = (
+                window.as_weak(),
+                access.downgrade(),
+                target.clone(),
+                picking.clone(),
+            );
+            move || {
+                with_session(&window, &continuation, |window, session| {
+                    let result = target
+                        .borrow()
+                        .as_ref()
+                        .ok_or("Reopen terrain triangles".into())
+                        .and_then(|target| target.check(session));
+                    match result {
+                        Ok(()) => {
+                            picking.set(true);
+                            let _ = window.hide();
+                        }
+                        Err(error) => window.set_message(error.into()),
+                    }
+                });
+            }
+        });
+        window.on_frame_selected({
+            let (window, continuation, target) =
+                (window.as_weak(), access.downgrade(), target.clone());
+            move || {
+                with_session(&window, &continuation, |window, session| {
+                    if let Some(target) = target.borrow().as_ref() {
+                        let result = target.check(session).and_then(|_| {
+                            let frame = if target.vertices {
+                                Session::frame_terrain_vertices
+                            } else {
+                                Session::frame_terrain_triangles
+                            };
+                            frame(session, Actor::User, &target.targets(), window.get_aspect())
+                        });
+                        if let Err(error) = result {
+                            window.set_message(error.into());
+                        }
+                    }
+                });
             }
         });
         window.on_preview_edit({
-            let (window,shared,target)=(window.as_weak(),shared.clone(),target.clone());
+            let (window, continuation, target) =
+                (window.as_weak(), access.downgrade(), target.clone());
             move || {
-                let window=window.unwrap();let mut session=lock(&shared);let mut target=target.borrow_mut();let Some(target)=target.as_mut() else {return};
-                let result=target.check(&session).and_then(|_| {
-                    if target.vertices { return Err("Use selection to retain vertices; classification edits require Triangles mode".into()); }
-                    session.preview_terrain_triangle_tags(Actor::User,&target.targets(),Settings {walkable:choice(window.get_walkable_index())?,buildable:choice(window.get_buildable_index())?})
+                with_session(&window, &continuation, |window, session| {
+                    let mut target = target.borrow_mut();
+                    let Some(target) = target.as_mut() else {
+                        return;
+                    };
+                    let result = target.check(session).and_then(|_| {
+                        if target.vertices {
+                            return Err("Use selection to retain vertices; classification edits require Triangles mode".into());
+                        }
+                        session.preview_terrain_triangle_tags(
+                            Actor::User,
+                            &target.targets(),
+                            Settings {
+                                walkable: choice(window.get_walkable_index())?,
+                                buildable: choice(window.get_buildable_index())?,
+                            },
+                        )
+                    });
+                    match result {
+                        Ok(count) => {
+                            target.preview = session.face_preview_token();
+                            if let Err(error) = populate(window, session, target) {
+                                window.set_message(error.into());
+                                return;
+                            }
+                            window.set_ready(true);
+                            window.set_message(format!("Preview changes {count} terrain surfaces. Apply keeps one undo step.").into());
+                        }
+                        Err(error) => window.set_message(error.into()),
+                    }
                 });
-                match result {Ok(count)=>{target.preview=session.face_preview_token();if let Err(error)=populate(&window,&session,target) {window.set_message(error.into());return;}window.set_ready(true);window.set_message(format!("Preview changes {count} terrain surfaces. Apply keeps one undo step.").into());},Err(error)=>window.set_message(error.into())}
             }
         });
         window.on_select_volume({
-            let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
+            let (window, continuation, target) =
+                (window.as_weak(), access.downgrade(), target.clone());
             move || {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
-                let mut target = target.borrow_mut();
-                let Some(target) = target.as_mut() else {
-                    return;
-                };
-                let result = target.check(&session).and_then(|_| {
-                    let token = session
-                        .volume_preview()
-                        .ok_or("Preview a box with Select a volume… first")?
-                        .token;
-                    let select = if target.vertices {
-                        Session::select_terrain_vertices_in_volume
-                    } else {
-                        Session::select_terrain_triangles_in_volume
+                with_session(&window, &continuation, |window, session| {
+                    let mut target = target.borrow_mut();
+                    let Some(target) = target.as_mut() else {
+                        return;
                     };
-                    let selected = select(&mut session, Actor::User, &target.context.faces, token)?;
-                    target.highlight = Some(selected.token);
-                    target.selected = selected
-                        .targets
-                        .into_iter()
-                        .map(|(face, ids)| (face, ids.into_iter().collect()))
-                        .collect();
-                    edited(&window, &mut session, target)
+                    let result = target.check(session).and_then(|_| {
+                        let token = session
+                            .volume_preview()
+                            .ok_or("Preview a box with Select a volume… first")?
+                            .token;
+                        let select = if target.vertices {
+                            Session::select_terrain_vertices_in_volume
+                        } else {
+                            Session::select_terrain_triangles_in_volume
+                        };
+                        let selected = select(session, Actor::User, &target.context.faces, token)?;
+                        target.highlight = Some(selected.token);
+                        target.selected = selected
+                            .targets
+                            .into_iter()
+                            .map(|(face, ids)| (face, ids.into_iter().collect()))
+                            .collect();
+                        edited(window, session, target)
+                    });
+                    if let Err(error) = result {
+                        window.set_message(error.into());
+                    }
                 });
-                if let Err(error) = result {
-                    window.set_message(error.into());
-                }
             }
         });
         window.on_use_selection({
-            let (window, shared, target, picking) = (
+            let (window, continuation, target, picking) = (
                 window.as_weak(),
-                shared.clone(),
+                access.downgrade(),
                 target.clone(),
                 picking.clone(),
             );
             move || {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
-                let mut target = target.borrow_mut();
-                let Some(target) = target.as_mut() else {
-                    return;
-                };
-                let result = target.check(&session).and_then(|_| {
-                    if target.targets().is_empty() {
-                        return Err(
-                            "Select terrain triangles or vertices before using a brush mask".into(),
-                        );
+                with_session(&window, &continuation, |window, session| {
+                    let mut target = target.borrow_mut();
+                    let Some(target) = target.as_mut() else {
+                        return;
+                    };
+                    let result = target.check(session).and_then(|_| {
+                        if target.targets().is_empty() {
+                            return Err(
+                                "Select terrain triangles or vertices before using a brush mask"
+                                    .into(),
+                            );
+                        }
+                        target.cancel_preview(session);
+                        target.highlight(session)?;
+                        target.highlight = None;
+                        Ok(())
+                    });
+                    match result {
+                        Ok(()) => {
+                            picking.set(false);
+                            window.set_ready(false);
+                            let _ = window.hide();
+                        }
+                        Err(error) => window.set_message(error.into()),
                     }
-                    target.cancel_preview(&mut session);
-                    target.highlight(&mut session)?;
-                    target.highlight = None;
-                    Ok(())
                 });
-                match result {
-                    Ok(()) => {
-                        picking.set(false);
-                        window.set_ready(false);
-                        let _ = window.hide();
-                    }
-                    Err(error) => window.set_message(error.into()),
-                }
             }
         });
         window.on_apply({
-            let (window, shared, target, picking) = (
+            let (window, continuation, target, picking) = (
                 window.as_weak(),
-                shared.clone(),
+                access.downgrade(),
                 target.clone(),
                 picking.clone(),
             );
             move || {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
-                let mut target = target.borrow_mut();
-                let Some(target) = target.as_mut() else {
-                    return;
-                };
-                let result = target.check(&session).and_then(|_| {
-                    let token = target
-                        .preview
-                        .ok_or("Preview selected triangles before applying")?;
-                    session.check_face_preview_token(Some(token))?;
-                    session.commit_face_preview(Actor::User)
-                });
-                match result {
-                    Ok(_) => {
-                        target.preview = None;
-                        target.clear_highlight(&mut session);
-                        picking.set(false);
-                        window.set_ready(false);
-                        let _ = window.hide();
+                with_session(&window, &continuation, |window, session| {
+                    let mut target = target.borrow_mut();
+                    let Some(target) = target.as_mut() else {
+                        return;
+                    };
+                    let result = target.check(session).and_then(|_| {
+                        let token = target
+                            .preview
+                            .ok_or("Preview selected triangles before applying")?;
+                        session.check_face_preview_token(Some(token))?;
+                        session.commit_face_preview(Actor::User)
+                    });
+                    match result {
+                        Ok(_) => {
+                            target.preview = None;
+                            target.clear_highlight(session);
+                            picking.set(false);
+                            window.set_ready(false);
+                            let _ = window.hide();
+                        }
+                        Err(error) => window.set_message(error.into()),
                     }
-                    Err(error) => window.set_message(error.into()),
-                }
+                });
             }
         });
         window.on_cancel({
-            let (window, shared, target, picking) = (
+            let (window, continuation, target, picking) = (
                 window.as_weak(),
-                shared.clone(),
+                access.downgrade(),
                 target.clone(),
                 picking.clone(),
             );
             move || {
-                if let Some(target) = target.borrow_mut().as_mut() {
-                    target.cancel(&mut lock(&shared));
-                }
-                picking.set(false);
-                let _ = window.unwrap().hide();
+                let Some(window) = window.upgrade() else {
+                    return;
+                };
+                with_session(&window.as_weak(), &continuation, |_, session| {
+                    if let Some(target) = target.borrow_mut().as_mut() {
+                        target.cancel(session);
+                    }
+                    picking.set(false);
+                });
+                let _ = window.hide();
             }
         });
         window.window().on_close_requested({
-            let (shared, target, picking) = (shared.clone(), target.clone(), picking.clone());
+            let window = window.as_weak();
             move || {
-                if let Some(target) = target.borrow_mut().as_mut() {
-                    target.cancel(&mut lock(&shared));
+                if let Some(window) = window.upgrade() {
+                    window.invoke_cancel();
                 }
-                picking.set(false);
                 slint::CloseRequestResponse::HideWindow
             }
         });
@@ -640,3 +712,11 @@ impl Controller {
         }
     }
 }
+
+#[cfg(test)]
+std::thread_local! {
+    static BEFORE_ACTION: RefCell<Option<Box<dyn FnOnce()>>> = const { RefCell::new(None) };
+}
+
+#[cfg(test)]
+mod admission_tests;

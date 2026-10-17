@@ -4,7 +4,9 @@ use std::rc::Rc;
 use slint::ComponentHandle;
 
 use crate::TerrainWindow;
-use crate::runtime::{SharedSession, lock};
+#[cfg(test)]
+use crate::runtime::SharedSession;
+use crate::runtime::{DocumentAccess, DocumentContinuation};
 use crate::session::{Actor, Session};
 
 struct Target {
@@ -186,140 +188,174 @@ fn resize(window: &TerrainWindow) {
     ));
 }
 
+fn with_session<R>(
+    window: &slint::Weak<TerrainWindow>,
+    continuation: &DocumentContinuation,
+    body: impl FnOnce(&TerrainWindow, &mut Session) -> R,
+) -> Option<R> {
+    let window = window.upgrade()?;
+    let result = continuation.upgrade().and_then(|access| {
+        access.with_session(|session| {
+            #[cfg(test)]
+            {
+                let hook = BEFORE_ACTION.with(|slot| slot.borrow_mut().take());
+                if let Some(hook) = hook {
+                    hook();
+                }
+            }
+            Ok(body(&window, session))
+        })
+    });
+    match result {
+        Ok(result) => Some(result),
+        Err(error) => {
+            window.set_message(error.into());
+            None
+        }
+    }
+}
+
 impl Controller {
+    #[cfg(test)]
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
+        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
+    }
+
+    pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let window = TerrainWindow::new()?;
         let target = Rc::new(RefCell::new(None::<Target>));
         let picking = Rc::new(Cell::new(false));
         let stroking = Rc::new(Cell::new(false));
         let dragging = Rc::new(Cell::new(false));
         window.on_move_handles({
-            let (window, shared, target, picking, dragging) = (
+            let (window, continuation, target, picking, dragging) = (
                 window.as_weak(),
-                shared.clone(),
+                access.downgrade(),
                 target.clone(),
                 picking.clone(),
                 dragging.clone(),
             );
             move || {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
-                if let Some(target) = target.borrow_mut().as_mut() {
-                    let result = target.check(&session).and_then(|_| {
-                        let mask = target
-                            .mask_token
-                            .ok_or("Retain terrain vertices before using handles")?;
-                        target.cancel(&mut session);
-                        session.enable_terrain_move_handles(
-                            Actor::User,
-                            &target.context.faces,
-                            mask,
-                        )
-                    });
-                    match result {
-                        Ok(token) => {
-                            target.handles = Some(token);
-                            picking.set(false);
-                            dragging.set(false);
-                            window.set_ready(false);
-                            let _ = window.hide();
+                with_session(&window, &continuation, |window, session| {
+                    if let Some(target) = target.borrow_mut().as_mut() {
+                        let result = target.check(session).and_then(|_| {
+                            let mask = target
+                                .mask_token
+                                .ok_or("Retain terrain vertices before using handles")?;
+                            target.cancel(session);
+                            session.enable_terrain_move_handles(
+                                Actor::User,
+                                &target.context.faces,
+                                mask,
+                            )
+                        });
+                        match result {
+                            Ok(token) => {
+                                target.handles = Some(token);
+                                picking.set(false);
+                                dragging.set(false);
+                                window.set_ready(false);
+                                let _ = window.hide();
+                            }
+                            Err(error) => window.set_message(error.into()),
                         }
-                        Err(error) => window.set_message(error.into()),
                     }
-                }
+                });
             }
         });
         window.on_draw_stroke({
-            let (window, shared, target, stroking, dragging, picking) = (
+            let (window, continuation, target, stroking, dragging, picking) = (
                 window.as_weak(),
-                shared.clone(),
+                access.downgrade(),
                 target.clone(),
                 stroking.clone(),
                 dragging.clone(),
                 picking.clone(),
             );
             move || {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
-                if let Some(target) = target.borrow_mut().as_mut() {
-                    let result = target.check(&session).and_then(|_| {
-                        let operation = operation(&window)?;
-                        let mask =
-                            if window.get_use_mask() {
+                with_session(&window, &continuation, |window, session| {
+                    if let Some(target) = target.borrow_mut().as_mut() {
+                        let result = target.check(session).and_then(|_| {
+                            let operation = operation(window)?;
+                            let mask = if window.get_use_mask() {
                                 Some(target.mask_token.ok_or(
                                     "Retain a terrain selection and reopen terrain editing",
                                 )?)
                             } else {
                                 None
                             };
-                        target.cancel(&mut session);
-                        session.begin_terrain_stroke(
-                            Actor::User,
-                            &target.context.faces,
-                            operation,
-                            mask,
-                        )
-                    });
-                    match result {
-                        Ok(token) => {
-                            target.stroke = Some(token);
-                            stroking.set(true);
-                            dragging.set(false);
-                            picking.set(false);
-                            window.set_ready(false);
-                            let _ = window.hide();
+                            target.cancel(session);
+                            session.begin_terrain_stroke(
+                                Actor::User,
+                                &target.context.faces,
+                                operation,
+                                mask,
+                            )
+                        });
+                        match result {
+                            Ok(token) => {
+                                target.stroke = Some(token);
+                                stroking.set(true);
+                                dragging.set(false);
+                                picking.set(false);
+                                window.set_ready(false);
+                                let _ = window.hide();
+                            }
+                            Err(error) => window.set_message(error.into()),
                         }
-                        Err(error) => window.set_message(error.into()),
                     }
-                }
+                });
             }
         });
         window.on_pick_center({
-            let (window, shared, target, picking) = (
+            let (window, continuation, target, picking) = (
                 window.as_weak(),
-                shared.clone(),
+                access.downgrade(),
                 target.clone(),
                 picking.clone(),
             );
             move || {
-                let window = window.unwrap();
-                let session = lock(&shared);
-                let result = target
-                    .borrow()
-                    .as_ref()
-                    .ok_or("Reopen terrain editing".to_owned())
-                    .and_then(|target| target.check(&session));
-                match result {
-                    Ok(()) => {
-                        picking.set(true);
-                        let _ = window.hide();
+                with_session(&window, &continuation, |window, session| {
+                    let result = target
+                        .borrow()
+                        .as_ref()
+                        .ok_or("Reopen terrain editing".to_owned())
+                        .and_then(|target| target.check(session));
+                    match result {
+                        Ok(()) => {
+                            picking.set(true);
+                            let _ = window.hide();
+                        }
+                        Err(error) => window.set_message(error.into()),
                     }
-                    Err(error) => window.set_message(error.into()),
-                }
+                });
             }
         });
         window.on_edited({
-            let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
+            let (window, continuation, target) =
+                (window.as_weak(), access.downgrade(), target.clone());
             move || {
-                if let Some(target) = target.borrow_mut().as_mut() {
-                    target.cancel(&mut lock(&shared));
-                }
-                let window = window.unwrap();
-                sync_sliders(&window);
-                resize(&window);
-                window.set_ready(false);
-                window.set_message("Preview the edited terrain before applying.".into());
+                with_session(&window, &continuation, |window, session| {
+                    if let Some(target) = target.borrow_mut().as_mut() {
+                        target.cancel(session);
+                    }
+                    sync_sliders(window);
+                    resize(window);
+                    window.set_ready(false);
+                    window.set_message("Preview the edited terrain before applying.".into());
+                });
             }
         });
         window.on_preview_edit({
-            let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
+            let (window, continuation, target) = (window.as_weak(), access.downgrade(), target.clone());
             move || {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
+                with_session(&window, &continuation, |window, session| {
                 if let Some(target) = target.borrow_mut().as_mut() {
-                    let result = target.check(&session).and_then(|_| {
+                    let result = target.check(session).and_then(|_| {
                         if window.get_operation_index() == 12 {
-                            session.preview_terrain_subdivision(Actor::User, &target.context.faces).map(|result|result.summary())
+                            session
+                                .preview_terrain_subdivision(Actor::User, &target.context.faces)
+                                .map(|result| result.summary())
                         } else if window.get_operation_index() == 9 {
                             session
                                 .preview_terrain_sew(
@@ -329,11 +365,22 @@ impl Controller {
                                 )
                                 .map(|result| result.summary())
                         } else if window.get_operation_index() == 11 {
-                            let offset=glam::DVec3::new(number(window.get_vertex_x(),"world X offset")?,number(window.get_vertex_y(),"world Y offset")?,number(window.get_vertex_z(),"world Z offset")?);
-                            let changed=session.preview_terrain_vertex_move(Actor::User,&target.context.faces,offset,target.mask_token.ok_or("Retain a terrain vertex selection and reopen terrain editing")?)?;
+                            let offset = glam::DVec3::new(
+                                number(window.get_vertex_x(), "world X offset")?,
+                                number(window.get_vertex_y(), "world Y offset")?,
+                                number(window.get_vertex_z(), "world Z offset")?,
+                            );
+                            let changed = session.preview_terrain_vertex_move(
+                                Actor::User,
+                                &target.context.faces,
+                                offset,
+                                target.mask_token.ok_or(
+                                    "Retain a terrain vertex selection and reopen terrain editing",
+                                )?,
+                            )?;
                             Ok(format!("Preview moves selected vertices on {changed} surfaces. Apply to keep one Undo step."))
                         } else {
-                            let operation = operation(&window)?;
+                            let operation = operation(window)?;
                             let count = if window.get_use_mask()
                                 && (1..=7).contains(&window.get_operation_index())
                             {
@@ -366,60 +413,60 @@ impl Controller {
                         Err(error) => window.set_message(error.into()),
                     }
                 }
+                });
             }
         });
         window.on_apply({
-            let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
+            let (window, continuation, target) =
+                (window.as_weak(), access.downgrade(), target.clone());
             move || {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
-                if let Some(target) = target.borrow_mut().as_mut() {
-                    let result = target.check(&session).and_then(|_| {
-                        let token = target.preview.ok_or("Preview terrain before applying")?;
-                        session.check_face_preview_token(Some(token))?;
-                        session.commit_face_preview(Actor::User)
-                    });
-                    match result {
-                        Ok(_) => {
-                            target.preview = None;
-                            window.set_ready(false);
-                            let _ = window.hide();
+                with_session(&window, &continuation, |window, session| {
+                    if let Some(target) = target.borrow_mut().as_mut() {
+                        let result = target.check(session).and_then(|_| {
+                            let token = target.preview.ok_or("Preview terrain before applying")?;
+                            session.check_face_preview_token(Some(token))?;
+                            session.commit_face_preview(Actor::User)
+                        });
+                        match result {
+                            Ok(_) => {
+                                target.preview = None;
+                                window.set_ready(false);
+                                let _ = window.hide();
+                            }
+                            Err(error) => window.set_message(error.into()),
                         }
-                        Err(error) => window.set_message(error.into()),
                     }
-                }
+                });
             }
         });
         window.on_cancel({
-            let (window, shared, target, stroking, dragging) = (
+            let (window, continuation, target, stroking, dragging) = (
                 window.as_weak(),
-                shared.clone(),
+                access.downgrade(),
                 target.clone(),
                 stroking.clone(),
                 dragging.clone(),
             );
             move || {
-                if let Some(target) = target.borrow_mut().as_mut() {
-                    target.cancel(&mut lock(&shared));
-                }
-                stroking.set(false);
-                dragging.set(false);
-                let _ = window.unwrap().hide();
+                let Some(window) = window.upgrade() else {
+                    return;
+                };
+                with_session(&window.as_weak(), &continuation, |_, session| {
+                    if let Some(target) = target.borrow_mut().as_mut() {
+                        target.cancel(session);
+                    }
+                    stroking.set(false);
+                    dragging.set(false);
+                });
+                let _ = window.hide();
             }
         });
         window.window().on_close_requested({
-            let (shared, target, stroking, dragging) = (
-                shared.clone(),
-                target.clone(),
-                stroking.clone(),
-                dragging.clone(),
-            );
+            let window = window.as_weak();
             move || {
-                if let Some(target) = target.borrow_mut().as_mut() {
-                    target.cancel(&mut lock(&shared));
+                if let Some(window) = window.upgrade() {
+                    window.invoke_cancel();
                 }
-                stroking.set(false);
-                dragging.set(false);
                 slint::CloseRequestResponse::HideWindow
             }
         });
@@ -779,3 +826,11 @@ impl Controller {
         }
     }
 }
+
+#[cfg(test)]
+std::thread_local! {
+    static BEFORE_ACTION: RefCell<Option<Box<dyn FnOnce()>>> = const { RefCell::new(None) };
+}
+
+#[cfg(test)]
+mod admission_tests;

@@ -18,11 +18,20 @@ fn atlas_dialog_preview_apply_cancel_and_material_reload_share_session_guards() 
     let (directory, game) = crate::test_assets::game();
     std::fs::write(
         directory.path().join("materials/test/checker.vmt"),
-        "LightmappedGeneric { $basetexture test/checker $bumpmap test/checker }",
+        "LightmappedGeneric { $basetexture test/checker $bumpmap test/atlas_normal }",
     )
     .unwrap();
     let texture = directory.path().join("materials/test/checker.vtf");
     let mut bytes = std::fs::read(&texture).unwrap();
+    let mut normal = bytes.clone();
+    for pixel in normal[80..].chunks_exact_mut(4) {
+        pixel.copy_from_slice(&[128, 128, 255, 255]);
+    }
+    std::fs::write(
+        directory.path().join("materials/test/atlas_normal.vtf"),
+        normal,
+    )
+    .unwrap();
     for y in 0..32 {
         for x in 0..64 {
             let rgba = match (x < 32, y < 16) {
@@ -83,9 +92,10 @@ fn atlas_dialog_preview_apply_cancel_and_material_reload_share_session_guards() 
         let mut view = session.view();
         view.normal_maps = true;
         session.set_view(view);
+        let normals = session.normal_map_preview_state();
         assert_eq!(
-            session.normal_map_preview_state()["report"]["materials"][0]["state"],
-            "ready"
+            normals["report"]["materials"][0]["state"], "ready",
+            "{normals}"
         );
     }
     assert_ne!(lock(&shared).materials().generation(), generation);

@@ -362,6 +362,32 @@ on separate private displays, requiring a visible projection and no runtime
 accessor. The fixture uses a graffiti material on a floor to isolate transition
 record loading; water-edge appearance remains material-dependent.
 
+### Baked BSP lightmap inspection
+
+```sh
+cargo test -p editor-core --features mcp --lib baked_lightmap
+cargo test -p editor --bin editor baked_lightmap_controls
+python3 -B scripts/validate_baked_lightmaps.py --binary target/debug/hammerr-headless --output /tmp/hammerr-baked-lightmaps-check
+```
+
+The validator performs real Fullbright and independent LDR/HDR builds, compares
+selected decoded intensities and byte ranges against raw BSP data, selects a
+nonzero style, checks pagination/strict arguments and exercises stale settings/
+source plus changed/missing outputs. It verifies unchanged history, camera,
+selection and uninitialized headless graphics. CPU images are at most 128 pixels
+per side and use the documented inspection display conversion; linear statistics
+are separate from screen brightness. Core fixtures add directional map offsets,
+corrupt sample ranges, extreme exponents, 128 MiB input/provenance limits and
+output replacement before publication. Software callbacks write
+`baked-lightmaps.png` through `HAMMERR_UI_SNAPSHOTS`.
+
+Use a fresh private output directory and compatible mounted game content;
+`--gameinfo` overrides content discovery. Optional `--url` targets a clean
+isolated HTTP Session with no existing successful build. The validator launches
+no game and requires no graphics adapter. It adds no authored VMF face mapping,
+viewport baked-lighting mode, arbitrary BSP path API or native tone-mapping/
+channel-selection claim.
+
 ### Water underside materials
 
 ```sh
@@ -715,6 +741,28 @@ python3 -B scripts/validate_model_attachments.py --output /tmp/hammerr-model-att
 ```
 
 Checks real named attachment positions under Source entity rotation, shared guide renders and clearing, source/history preservation, camera framing, invalid/stale/foreign tokens, hidden entities, geometry-preview guards and save/reopen. Format and renderer fixtures independently check parent composition without inverse binds and native world-aligned orientation. The software model-details test exercises attachment choice, guides, framing, reload and ownership-preserving Cancel.
+
+### Dynamic-model Texture opacity
+
+```sh
+cargo test -p source-formats --lib render_color
+cargo test -p render --lib opacity
+cargo test -p render --lib rendered_model_opacity_preserves_texture_alpha_depth_and_sorted_overlap -- --ignored --test-threads=1
+cargo test -p editor-core --features mcp --lib session::models::tests
+python3 -B scripts/validate_model_opacity.py --binary target/debug/hammerr-headless --output /tmp/hammerr-model-opacity-check
+```
+
+The private stdio validator needs mounted
+`models/props_junk/wood_crate001a.mdl` and a graphics adapter. It checks inspector
+Render mode/Opacity/Tint controls and structured appearance reports, actual
+Texture images at several amounts, Normal amount bypass, zero-opacity bounds,
+unsupported mode/FX helpers, exact Undo pixels, temporary camera isolation and
+VMF reopen. Render fixtures separately check opaque/translucent VMT alpha,
+alpha-test cutoffs, depth occlusion and camera-dependent batch ordering; compiler
+fixtures retain static-prop mode/tint rejection and previous output on failure.
+Use a private output directory. It launches no game or desktop input. This
+preview does not establish triangle-level/intersecting transparency, animation,
+runtime fades/proxies or native game appearance parity.
 
 ### Sound exploration
 
@@ -1184,6 +1232,7 @@ cargo test -p compiler --test overlay_fit --test overlays --test region_overlays
 cargo test -p editor --bin editor overlay_ui::tests
 python3 -B scripts/validate_overlay_authoring.py --binary target/debug/hammerr-headless --output /tmp/hammerr-overlay-authoring-check --render --runtime
 python3 -B scripts/validate_overlay_corners.py --binary target/debug/hammerr-headless --output /tmp/hammerr-overlay-corners-check --render
+python3 -B scripts/validate_overlay_corner_handles.py --binary target/debug/hammerr-headless --output /tmp/hammerr-overlay-corner-handles-check --render
 python3 -B scripts/validate_overlay_corners.py --binary target/debug/hammerr-headless --output /tmp/hammerr-overlay-corners-native --runtime
 ```
 
@@ -1200,6 +1249,17 @@ native-precision failures, ownership/stale tokens, Undo and save/reopen. `--rend
 uses offscreen shared guides; `--runtime` compares edited native projections with
 baseline/visible controls and accessor identity on a private display. Software
 callbacks capture `overlay-corners.png` through `HAMMERR_UI_SNAPSHOTS`.
+
+`validate_overlay_corner_handles` exercises the production inspect/begin/pick/
+move/finish/cancel lifecycle on tilted world and detail bindings. It checks
+relative unsnapped plane motion, rejected invalid moves, exact pre-handle Cancel,
+raw-field preservation, stale camera/viewport and ownership tokens, one-step
+Apply and Undo/Redo. Optional `--render` writes shared handle-guide PNGs; it
+launches no game. Session/software fixtures also cover foreign/stale desktop
+input recovery and User-owned stale cleanup. The existing overlay UI fixture
+writes `overlay-corner-handles.png` through `HAMMERR_UI_SNAPSHOTS`. Handles keep
+the numeric-corner single-face contract; they add no terrain/multiface authoring
+or projected viewport materials.
 
 ### Compile-region shell experiment
 
@@ -1350,6 +1410,7 @@ cargo test -p compiler --test measurement_metadata
 cargo test -p editor --bin editor measurement_window
 cargo test -p editor --bin editor measurement_surface_controls_
 python3 -B scripts/validate_measurement_picking.py --binary target/debug/hammerr-headless --output /tmp/hammerr-measurement-picking-check --render
+python3 -B scripts/validate_measurement_origins.py --binary target/debug/hammerr-headless --output /tmp/hammerr-measurement-origins-check
 mkdir -p /tmp/hammerr-measurement-renders
 HAMMERR_MEASUREMENT_SNAPSHOTS=/tmp/hammerr-measurement-renders cargo test -p editor-core --features mcp --lib measurement_offscreen_mcp_renders_preview_saved_hidden_and_undo_in_all_projections -- --ignored --test-threads=1
 ```
@@ -1367,6 +1428,18 @@ The stdio fixture launches a private Session; `--render` captures the shared gui
 and `--skip-models` omits the installed-model case when assets are unavailable.
 The software callback captures `measurements-surface-picked.png` and checks that
 numeric edits retain their precision after surface picking.
+
+`validate_measurement_origins` attaches owned endpoints through MCP
+`attach_origin`, follows real point-origin transforms, preserves original
+metadata, checks duplicate/delete/Undo lifecycle and explicitly repairs missing
+origins through `world_endpoint`. It covers resolvable `detach_origin`, rejected
+brush/coincident/foreign/stale operations, save/reopen and unchanged
+source/history while drafts remain pending. No game or desktop input is used.
+Core/compiler checks retain exact legacy metadata and identical BSP bytes even
+for unavailable attachments. Software callbacks write
+`measurements-origin-attachment.png`. Origin references use committed source for
+inspection and displayed documents for guide rendering; they add no brush,
+surface, bone or arbitrary local-offset anchors.
 
 ### Static rope previews
 
@@ -1409,6 +1482,26 @@ Set `HAMMERR_UI_SNAPSHOTS` to an existing directory for `grid-defaults.png`,
 `grid-defaults-error.png`, `selection-outlines.png`, `material-source.png` and
 `entity-catalog-mapsize.png`. Scripts require fresh output directories and never
 launch a game or send desktop input.
+
+### Saved preview defaults
+
+```sh
+cargo test -p editor-core --features mcp --lib preview_preferences
+cargo test -p editor --bin editor preview_defaults_window
+python3 -B scripts/validate_preview_defaults.py --binary target/debug/hammerr-headless --output /tmp/hammerr-preview-defaults-check
+```
+
+Use a fresh private output directory. The script starts isolated stdio sessions
+and exercises Save/Apply/Reload/Reset, all five booleans, ordinary versus
+explicit persistence, restart, temporary render overrides, active-preview
+guards, outside writes, malformed-file recovery, failed writes and nonregular
+targets. Save/Reload/Reset preserve active viewport contexts; only successful
+Apply/startup changes the view. Storage fixtures cover all 32 boolean
+combinations, strict version/field/type/size admission, stale byte/file identity
+and symlink preservation. No map metadata, camera, sky channel/exposure, fog,
+rendering mode, grid or tool state is stored. `HAMMERR_UI_SNAPSHOTS` captures
+`preview-defaults.png` and `preview-defaults-error.png`. The validator renders
+only through the private offscreen server and launches no game or visible editor.
 
 ### FGD size and color helpers
 
@@ -1598,6 +1691,39 @@ The software panel test exposes the shared provenance/error summary without
 starting the viewport renderer or authoring properties. Set
 `HAMMERR_UI_SNAPSHOTS` to an existing directory for
 `fgd-icon-sprite-inspector.png`.
+
+### Static Sprite resource guides
+
+```sh
+cargo test -p editor-core --features mcp --lib sprite_resource
+cargo test -p editor-core --features mcp --lib session::fgd_helpers::sprites::tests
+cargo test -p editor-core --features mcp --lib full_virtual_source_filename_retains_nested_materials_directory
+cargo test -p render --lib icons::tests
+cargo test -p editor --bin editor ui::materials::sprite_tests -- --test-threads=1
+python3 -B scripts/validate_sprite_resources.py --binary target/debug/hammerr-headless --output /tmp/hammerr-sprite-resources-check
+```
+
+The validator creates private ordered mounts and static RGBA Sprite fixtures.
+It checks lazy source classification without false MDL bounds errors, exact
+legacy/full-virtual identities and provenance, scale availability, ordinary
+spatial targets, alpha-hole/opaque controls, physical size changes, all
+orthographic projections, two live perspective cameras, displayed transform
+drafts, working regions, explicit unevaluated runtime fields, malformed winning
+assets, failure caching and reload. PNG controls include `sprite-ring.png`,
+`sprite-opaque-control.png`, `sprite-half-scale.png` and `sprite-restored.png`.
+Use a fresh output directory and a graphics adapter; no game or desktop input
+is used.
+
+Optional `--installed-gameinfo /path/to/cstrike/gameinfo.txt` adds a read-only,
+lazy installed `sprites/glow01.spr` probe: exact winning VMT/VTF origins,
+64×64 pixels and Scale 0.25 producing 16×16 Source units. The software picker
+fixture invokes production Choose/Cancel bindings for legacy initialization,
+root/nested/nested-materials choices, dotted-filename rejection, stale maps and
+ordinary material spelling, and writes `sprite-name-material-picker.png` via
+`HAMMERR_UI_SNAPSHOTS`. Strict literal-icon pixel behavior, shared 64-entry/
+32-MiB asset budgets and the 256-visible-image limit remain independent checks.
+These editor-image controls establish no native animation, blend/FX, glow, fog,
+HDR or orientation parity and do not broaden native reflection capture.
 
 ### Literal FGD model guides
 

@@ -60,7 +60,7 @@ When an agent connects, the server tells it how HammeRR works, so you don't need
 
 - **Units and axes**: Hammer units with Z up. A player is 32 × 32 × 72 units. Each tool reports its coordinate limits.
 - **IDs**: `solid:<id>` for world brushes and `entity:<id>` for entities. Tools act on the current selection when IDs are left out, and creation tools select what they create.
-- **Materials**: paths under `materials/` without the extension, such as `tools/toolsnodraw`. `search_materials` finds more.
+- **Materials**: ordinary material names omit `materials/` and the extension, such as `tools/toolsnodraw`. `search_materials` finds more. Sprite Name choices use full virtual `materials/<name>.vmt` references.
 - **Previews**: most edit tools accept `preview: true` and return a `token`. Pass it to the matching commit or cancel tool, so a preview someone else replaced can't be applied by mistake.
 - **Stale-state guards**: inspection tools return a `snapshot`, `stamp`, or `generation` and `revision`. Passing them back makes a call fail safely if the map changed in between.
 - **Checking work**: `render_view` returns a PNG from any camera without moving yours, `pick_at_pixel` identifies the object and face at a pixel, and `raycast` finds the first surface along a ray.
@@ -96,7 +96,7 @@ To build the map, set the build options once, then compile:
 
 ## Tools by task
 
-The shared desktop and private stdio server register 385 tools. `tools/list`
+The shared desktop and private stdio server register 389 tools. `tools/list`
 returns their current schemas and descriptions.
 
 | Task | Tools |
@@ -104,9 +104,11 @@ returns their current schemas and descriptions.
 | Files and inspection | `new_map`, `open_map`, `save_map`, `get_map_info`, `get_map_statistics`, `find_objects`, `get_objects` |
 | Recent maps | `get_recent_maps`, `open_recent_map`, `remove_recent_map`, `clear_recent_maps` |
 | Grid defaults | `get_grid_defaults`, `set_grid_defaults` |
+| Preview defaults | `get_preview_defaults`, `set_preview_defaults` |
 | Entity definitions | `get_entity_definitions`, `load_entity_definitions`, `search_entity_classes`, `get_entity_class` |
 | Material source | `get_material_source` |
 | Sky asset inspection | `inspect_sky_assets` |
+| Baked lightmap inspection | `inspect_baked_lightmaps` |
 | Selection and history | `select`, `get_selection`, `set_selection_mode`, `undo`, `redo`, `get_history`, `navigate_history` |
 | Measurement guides | `get_measurements`, `set_measurement` |
 | Overlapping objects | `get_object_hit_candidates`, `cycle_object_hit` |
@@ -118,7 +120,7 @@ returns their current schemas and descriptions.
 | Brush drawing and transforms | `set_spatial_settings`, `draw_block`, `cancel_block_preview`, `create_block`, `transform_objects` |
 | Transform handles | `set_transform_tool`, `get_transform_handles`, `begin_transform_drag`, `update_transform_drag`, `commit_transform_preview`, `cancel_transform_preview` |
 | Absolute grid placement | `preview_snap_to_grid`; inspect and apply/cancel through the transform tools |
-| Overlay authoring | `get_overlay_state`, `browse_overlay_targets`, `preview_overlay`, `preview_overlay_refit`, `preview_overlay_rebind`, `preview_overlay_corners`, `review_overlay`, `apply_overlay`, `cancel_overlay` |
+| Overlay authoring | `get_overlay_state`, `browse_overlay_targets`, `preview_overlay`, `preview_overlay_refit`, `preview_overlay_rebind`, `preview_overlay_corners`, `overlay_corner_handles`, `review_overlay`, `apply_overlay`, `cancel_overlay` |
 | Surface placement | `preview_surface_placement`, `begin_surface_placement_pick`, `pick_surface_placement`, `get_surface_placement`, `apply_surface_placement`, `cancel_surface_placement` |
 | New entities on surfaces | `get_entity_placement`, `begin_entity_placement`, `pick_entity_placement`, `review_entity_placement`, `apply_entity_placement`, `cancel_entity_placement` |
 | Rope preview | `get_rope_preview`, `set_view`; `render_view` and `pick_at_pixel` accept `rope_preview` overrides |
@@ -349,7 +351,8 @@ At most 256 transactions can be traversed in one request. See [History](history.
 
 `get_measurements` reports saved rulers, the owned draft, limits, errors and a
 snapshot. `set_measurement` supports `preview`, `review`, `apply`, `cancel`,
-`delete`, `frame`, `view`, `begin_pick`, `pick_ray`, `pick_pixel` and `cancel_pick`.
+`delete`, `frame`, `view`, `attach_origin`, `detach_origin`, `world_endpoint`,
+`begin_pick`, `pick_ray`, `pick_pixel` and `cancel_pick`.
 Rulers use editor-only metadata and the shared guide mesh, with no BSP output.
 
 Preview first. `begin_pick` requires its owned `token`, `endpoint: "start"|"end"`,
@@ -364,8 +367,32 @@ map/scene/camera/pixel dimensions preserve the draft. Successful picks return a
 new token and `last_pick: {endpoint, target, solid, side, point, normal}`; brush
 IDs are null for model hits. `cancel_pick` stops only the owned pending pick,
 including stale cleanup, and returns a new token with both endpoints retained.
-Apply rejects while picking. Numeric edits remain exact and unsnapped; endpoints
-do not follow later object changes. See [Measurement guides](measurements.md).
+Apply rejects while picking. Numeric edits and surface-picked endpoints remain
+exact unsnapped world points.
+
+To attach an owned preview endpoint to a point entity, call `set_measurement`
+with `action:"attach_origin"`, its `token`, `endpoint:"start"|"end"` and
+`object:"entity:<id>"`. The endpoint references that entity's authored origin
+by stable ID. `detach_origin` takes `token` and `endpoint` and freezes a resolvable
+origin into a world point. `world_endpoint` takes those fields plus exact
+`point:[x,y,z]`, explicitly replacing even an unavailable reference. Each
+successful action returns a new token without changing the map/history;
+Apply resolves again and saves one Undo step. Numeric Preview preserves
+attachments and rejects implicit coordinate changes; detach or use
+`world_endpoint` before numeric edits or surface picking.
+
+Measurement rows report resolved `start`/`end`, `distance`, `components`,
+`available`, `error`, original `stored_start`/`stored_end` and per-endpoint
+`attachments` with kind, object ID and availability/error. Inspection resolves
+against `coordinate_source:"committed_document"`; rendered guides follow the
+displayed transform draft. Missing/deleted entities, duplicate IDs/origins,
+invalid origins, brush entities and coincident resolved endpoints remain
+unavailable, draw no guide and reject Frame/Apply. References never silently
+freeze, detach or retarget; duplication keeps the original target. Explicit
+world replacement can repair an unavailable endpoint. Target visibility does not
+hide an otherwise available ruler. Brush/surface/local-offset attachments and
+3D workplanes are unavailable.
+See [Measurement guides](measurements.md).
 
 `get_entity_placement` reports the current snapshot and owned draft.
 `begin_entity_placement` takes that snapshot, a point `classname`, optional
@@ -397,18 +424,18 @@ write failures preserve the current grid and map/history. A completed write with
 failed readback reports `write_committed: true` and an explicit error; inspect
 readiness before continuing. See [Grid defaults](basics.md#grid-and-snapping).
 
-`set_view` and `render_view` accept `selection_outlines` (default true).
+`set_view` and `render_view` accept `selection_outlines` (factory default true).
 `get_map_info.view` and render metadata report the effective value. Disabling
 outlines retains selection tints, geometry, picking, diagnostic lines and tool
 guides. Temporary render overrides do not change the shared view. See
 [Selection outlines](basics.md#selection-outlines).
 
 `set_view` and `render_view` also accept optional booleans `entity_images` and
-`entity_model_guides`, both default true. Shared `get_map_info.view` and render
-metadata expose the effective flags. The human controls are **Entity images**
+`entity_model_guides`, both true under factory defaults. Shared
+`get_map_info.view` and render metadata expose the effective flags. The human controls are **Entity images**
 and **Entity model guides**. They independently control literal FGD
-`iconsprite(material)` images and `studio`/`studioprop` editor meshes. Disabling
-either retains the ordinary editable FGD box, including bounds, picking,
+`iconsprite(material)`/static Sprite resource images and `studio`/`studioprop`
+editor meshes respectively. Disabling either retains the ordinary editable FGD box, including bounds, picking,
 contact, selection and framing. Authored model entities, specialized lights,
 ropes and other guides retain their existing behavior.
 
@@ -429,9 +456,45 @@ message. Model state is `not_loaded`, with `declaration_supported:true`, null
 visual bounds/pose/skin/body and no asset error. Structural, hidden and
 working-region suppression retains precedence; unsupported declarations still
 report their pure declaration errors. Disabled reports do not establish asset
-readiness. Toggling visibility never clears an existing successful or failed
-asset cache entry. After external repairs, use `reload_material_assets` for
-icons or `reload_model_assets` for model guides.
+readiness. Valid Sprite inputs report `state:"suppressed"` and `image:null`
+while disabled; unavailable scale/dispatch still reports its input error.
+Toggling visibility never clears an existing successful or failed asset cache
+entry. After external repairs, use `reload_material_assets` for icons/Sprite
+resources or `reload_model_assets` for model guides.
+
+### Saved preview defaults
+
+`get_preview_defaults` reports `current`, `saved`, effective `defaults`,
+`factory_defaults`, `stored`, `ready`, storage `path`, errors and an action
+`snapshot`. It reads no guide assets and starts no renderer. The five stored
+booleans are `selection_outlines`, `entity_images`, `entity_model_guides`,
+`rope_preview` and `sky_preview`; the first three factory defaults are true,
+and rope/sky are false.
+
+`set_preview_defaults` accepts only `snapshot` and `action`:
+
+| Action | Behavior |
+| --- | --- |
+| `save` | Explicitly write the current five booleans as startup defaults. |
+| `apply` | Restore saved defaults into this session without writing. |
+| `reload` | Reread storage without changing the view. |
+| `reset` | Explicitly write factory defaults without applying them. |
+
+The UI is **Preview defaults… → Save current as defaults / Apply saved defaults /
+Reload defaults / Reset saved defaults**. Ordinary viewport toggles, `set_view`
+and temporary `render_view` overrides never save automatically. Sky channel and
+exposure, fog, rendering mode, tool filters, camera, grids and active tools stay
+outside this format. See [Preview defaults](preview-defaults.md).
+
+Save/Apply/Reset recheck inspected file identity and bytes. Invalid, unsupported
+or oversized files remain untouched and block Save/Apply until Reload succeeds
+or Reset is explicitly requested; files cap at 4096 bytes. Nonregular targets
+and final-file symlinks reject even on Reset. Only Save/Reset write. A completed
+write followed by a failed readback returns `write_committed:true` with an error;
+inspect readiness before continuing. Independent writers do not lock the file.
+Apply preserves unrelated view settings, source/history/selection/camera and
+rejects active geometry/measurement previews, viewport tools, builds or launches.
+Save/Reload/Reset leave the view and pending viewport contexts unchanged.
 
 ### Material source and FGD preferences
 
@@ -459,7 +522,8 @@ precedence. Invalid/ambiguous size declarations expose an amber marker and
 `invalid_fgd_size`; working-region bounds remain unresolved with an explicit
 error. Picking, framing, area/volume selection and placement use the same valid
 bounds. Helper forms outside the box/color, property-sphere, literal-line,
-literal-icon, literal-model and admitted frustum scopes remain listed and unevaluated. Catalog source
+literal-icon, static Sprite resource, literal-model and admitted frustum scopes
+remain listed and unevaluated. Catalog source
 paths are available; individual inherited helpers lack file/line provenance.
 FGD reload changes no source values or Undo history.
 
@@ -727,8 +791,66 @@ display selected or unselected and follow displayed transform previews.
 Ordinary FGD helper boxes retain bounds, picking, area/volume selection,
 placement, framing and working-region inclusion; image extents do not become
 selection targets. Read/render operations preserve source, history and camera.
-Animated icons, generic `sprite()` helpers, runtime `env_sprite` behavior and
-native Sprite rendering modes remain outside this feature.
+Animated icons, runtime `env_sprite` behavior and native Sprite rendering modes
+remain outside this icon policy. Static resource guides use the separate policy
+below.
+
+### Static Sprite resource guides
+
+`get_entity_inspector.helpers.sprite_resource` reports one zero-argument
+`sprite()` declaration on an eligible point class with `model(sprite)`.
+`model` and `scale` inputs retain bounded raw values, truncation flags and
+`value_source` (`authored`, `fgd_default` or `missing`). The report includes
+`source_kind`, `declaration_supported`, `resolved_vmt`, native `scale_value`,
+physical `world_size`, `state`, `displayed`, suppression/error information and
+an `image` report containing winning VMT/VTF origins and pixel dimensions.
+`helpers.sprite_resource_limits` exposes the complete policy. Sprite-valued
+model fields are classified before MDL loading; `inspect_entity_model` directs
+these sources to the Sprite report.
+
+Resource identity follows these explicit dispatch rules:
+
+| Authored Sprite Name | Resolved VMT |
+| --- | --- |
+| `sprites/glow01.spr` | `materials/sprites/glow01.vmt` |
+| `glow01.vmt` | `materials/sprites/glow01.vmt` |
+| `materials/glow01.vmt` | `materials/glow01.vmt` |
+| `materials/materials/foo.vmt` | `materials/materials/foo.vmt` |
+
+Extensionless model values, legacy `.spr` references outside
+`sprites/<basename>.spr` and dots in filename stems are unsupported. Dots in
+relative directory names are allowed; traversal is rejected. Inspection and
+opening/cancelling **Sprite Name → Browse…** preserve the exact stored reference.
+An explicit catalog choice authors `materials/<catalog-relative-name>.vmt`
+through the existing `set_entity_properties` operation. Thus catalog name
+`materials/foo` produces `materials/materials/foo.vmt`; no prefix is repeatedly
+removed. Sprite Name uses the material control and **FX Color** keeps its FGD
+label.
+
+The guide's width/height are admitted texture dimensions multiplied by one
+positive finite authored or labeled FGD Scale. Missing, blank, zero, negative,
+malformed, nonfinite or native-unrepresentable sizing stays unavailable, without
+an inferred default. Native dimensions/vertices must remain finite with relative
+corner extents within ±65536. Literal icons keep their independent 32-unit policy.
+Both use the strict direct centered `Sprite`/static LDR admission above and share
+the 64 success/failure entries, 32 MiB encoded budget and 256 visible images in
+entity-ID order. `reload_material_assets` clears both successes and failures;
+a malformed winning mount never selects a lower substitute.
+
+`entity_images` gates admission and drawing, including temporary `render_view`
+overrides. Ready images replace only marker fill, face the actual draw camera
+and use `unlit_rgba_editor_image_no_fog` with `texture_pixels_times_positive_scale`.
+Ordinary FGD boxes retain bounds, selection outlines, picks, placement, framing
+and working-region membership. Failures retain editable diagnostic markers.
+Oriented/parented sprites, nonzero angles/legacy angle, brush sources, loaded
+MDLs, studio/model helpers, specialized lights and ropes are excluded.
+`runtime_fields_evaluated:false` and `unevaluated_runtime_fields` explicitly
+exclude Render Mode, FX Color/Amount, Render FX, HDRColorScale, glow visibility,
+animation, enable state and I/O. This independent editor image does not establish
+native sprite parity or extend native reflection-capture eligibility.
+See [Sprite resource guides](sprite-guides.md).
+
+### Literal FGD model guides
 
 `get_entity_inspector.helpers.model_guide` reports one literal
 `studio("models/*.mdl")` or `studioprop("models/*.mdl")` declaration from the
@@ -924,6 +1046,34 @@ For point/spot/sun lights, HDR selects `_lightHDR`, then `_light`; eight-number 
 
 HammeRR limits are 16 MiB of samples, 8,192 world lights and 65,536 probes per channel, 32 MiB total samples and one cancellable 100-million-work budget covering preparation and both passes. A shared 512 MiB live channel-allocation budget also applies; source assets retain their separate reader limits. Authored HDR sky families retain the native material path; `pack_sky_assets` admits and embeds supported complete material/VTF dependencies. Native sky shader/exposure parity and baked prop lightmaps remain unavailable; explicit editor HDR sky preview uses the separate preview policy below. Paired cubemap capture uses **Generate reflections** and the guarded workflow above. See [Compile and play](compile-and-play.md#hdr-channels).
 
+### Baked lightmap inspection
+
+`inspect_baked_lightmaps` reads this Session's last successful owned BSP without
+starting graphics or a game. The human entry is **Build status → Inspect baked
+lightmaps…**. Optional arguments are `channel:"ldr"|"hdr"` (default `ldr`),
+zero-based compiled `face`, `style_index` (slot 0–3, default 0), `map_index`
+(0 base or 1–3 directional maps, default 0), `offset` (default 0) and `limit`
+(1–32, default 32). An omitted face selects the first valid lit face in the
+requested channel. No path argument or authored VMF face mapping is provided.
+
+The JSON report contains build provenance/status, both channel availabilities,
+paginated compiled-face summaries, selected dimensions/styles/sample byte ranges,
+linear RGBExp32 minimum/mean/maximum, the stored base-map average and diagnostics.
+An available selection also returns a PNG content block at most 128 pixels per
+side. For display, each channel uses `(v/(1+v))^(1/2.2)` with
+`v = linear intensity/255` and nearest sample reduction; statistics retain the
+original linear intensities. This display does not establish native tone mapping,
+exposure or actual game LDR/HDR channel selection.
+
+Build status distinguishes `current`, `stale` and `unavailable`. Changed source,
+map revision, settings or content make the retained build explicitly stale but
+readable. Missing/replaced/unverifiable BSP bytes produce no image. Reads and
+identity checks cap each source/BSP at 128 MiB. Missing lighting, Fullbright,
+unsupported/corrupt face ranges and absent channels return diagnostics without
+an invented image. Inspection preserves source/history/selection/camera; it adds
+no viewport baked-lighting mode, prop relighting or arbitrary BSP browsing.
+See [Baked lightmaps](baked-lightmaps.md).
+
 ### Water material binding
 
 Use `create_block`, `select_faces` and `edit_faces` to author horizontal structural-world water with a top VMT declaring `$bottommaterial`. Existing `compile_map`, `start_compile` and `run_map` calls resolve material patches and bind that material to clipped below-water surface faces. The underside keeps the top's texture/lightmap vectors and surface flags, belongs to submerged leaves and receives no overlays attached to the authored top. The top material remains the water-fog reference; connected lowest-depth metadata and fluid physics retain their existing behavior. `$bottommaterial` names the surface viewed from below, rather than the pool-floor material; `$underwateroverlay` remains a runtime setting of the top material.
@@ -1079,9 +1229,38 @@ particle simulation, animation and viewport rendering are not. See
 
 ### Model tint
 
-`get_entity_inspector` exposes dynamic-model `rendercolor` as the common **Tint** color control. Use the existing `set_entity_color` with `id`, `key: "rendercolor"` and byte `color: [r,g,b]`; omit `intensity`. This RGB edit preserves an authored fourth component and commits in one Undo step. `set_entity_component` and `set_entity_properties` retain their existing generic access. `render_view` shows the same modulation as the viewport, and `inspect_entity_model.tint` reports RGB bytes for supported model instances (`null` when unavailable). `opacity_preview: false` distinguishes the current RGB-only support. Asset-only browser images keep their untinted source materials.
+`get_entity_inspector` exposes dynamic-model `rendercolor` as **Tint**. Use
+`set_entity_color` with `id`, `key:"rendercolor"` and byte `color:[r,g,b]`;
+omit `intensity`. RGB edits preserve an authored fourth component and commit
+one Undo step. That fourth component does not set opacity.
 
-Tint fields use three integer channels from 0 to 255 with an optional preserved fourth component. White/default static props are unchanged. The current static-prop writer has no color field, so nonwhite static tints return helper diagnostics and fail compilation without replacing an earlier BSP. Opacity/render modes and scaling remain separate gaps.
+#### Texture opacity
+
+Use existing `set_entity_properties` for `rendermode`, `renderamt` and `renderfx`:
+
+```json
+{"id":"entity:12","set":{"rendermode":"2","renderamt":"128","renderfx":"0"}}
+```
+
+The inspector's **Render mode** choices are **Normal** (`0`) and **Texture ·
+opacity** (`2`); **Opacity** is an integer slider from 0 to 255. In Textured views,
+Texture multiplies material alpha by `renderamt/255`, even for opaque VMTs.
+Normal retains material alpha and ignores the amount. Render FX must be None
+(`0`); missing mode/amount/FX defaults are 0/255/0. Texture batches depth-test
+without depth writes and sort back-to-front by each transformed batch center
+under the actual render camera. Zero opacity keeps ordinary bounds, triangle
+picking, selection and outlines. Flat/diagnostic/wireframe views keep their
+ordinary presentation; asset-only browser images keep original materials.
+
+`inspect_entity_model.appearance` returns `supported`, `state`
+(`normal`, `texture` or `unsupported`), `render_mode`, `render_amount`, effective
+`opacity`, raw authored mode/amount/FX, `error` and limits. `opacity_preview`
+identifies an instance using the Texture policy; `tint` retains RGB inspection.
+Unsupported mode/FX or malformed appearance values keep a diagnostic helper.
+Static props require white tint and Normal mode with no FX; unsupported values
+also reject compilation without replacing prior output. This editor preview
+does not evaluate native game appearance, animation, runtime fades, material
+proxies, intersecting/cyclic transparency, other modes or scaling.
 
 ### Surface placement
 
@@ -1475,6 +1654,7 @@ See [Prefab library](prefabs.md).
 | `preview_overlay_refit` | Latest `snapshot` and optional overlay `id` (defaults to selection); previews refitting its one existing visible world/detail quad binding. Keeps identity, raw settings and metadata. |
 | `preview_overlay_corners` | Latest `snapshot`, optional overlay `id` (single selected overlay by default) and exactly four local world-unit `corners: [[u,v],…]` in perimeter order. Previews updating its existing single-face projection. |
 | `preview_overlay_rebind` | Latest `snapshot`, existing overlay `id: "entity:<id>"` and a different destination `source:{solid,side}`. Both bindings must be eligible visible world/detail quads. Returns `operation: "rebind"`, same entity and `previous_source`; preserves raw settings and metadata. |
+| `overlay_corner_handles` | Tagged `inspect`, `begin`, `pick`, `move`, `finish` or `cancel` action for an owned corner draft; captured viewport motion returns fresh tokens without map/history edits. |
 | `review_overlay` | A valid draft `token`; transfers ownership and issues a fresh token without editing the map. |
 | `apply_overlay` | Current owned `token`; one Undo step. `operation: "create"` returns `created`; `refit`, `rebind` and `corners` return `updated` for the same entity. |
 | `cancel_overlay` | Matching owned `token`; discards only that draft, including a stale owned draft. |
@@ -1509,8 +1689,33 @@ Undo step. Corners must be finite, noncollapsed, convex and perimeter ordered,
 with complete world extents within ±16384 on the current projection plane,
 including native float precision. They may extend past the bound face; native rendering clips to that surface. Map/selection/token
 changes reject; invalid input preserves the previous valid draft. The shared
-Review/Apply/Cancel ownership rules still apply. Viewport corner dragging,
-terrain/model/multiside corner editing and new basis authoring remain unavailable.
+Review/Apply/Cancel ownership rules still apply. Terrain/model/multiside corner
+editing and new basis authoring remain unavailable.
+
+For viewport dragging, first own a valid corners draft using
+`preview_overlay_corners` or `review_overlay`. Call
+`overlay_corner_handles {"action":"inspect"}` for `handle_snapshot`, then
+`action:"begin"` with the corner `token`, that value as `snapshot`,
+`width`/`height` (1–8192) and optional `camera` matching `render_view`.
+`draft.handles` reports captured dimensions, projected `pixels`, active
+zero-based corner, validity/rejection and an 11-pixel pick radius.
+
+`action:"pick"` and `"move"` require the current `token`, finite `x`/`y`
+pixel positions and the captured `width`/`height`. These are pointer positions
+without an implicit half-pixel offset. Pick chooses the nearest projected corner;
+Move applies relative unsnapped motion on the fixed projection plane. Every
+successful gesture action returns a new token. Misses, crossed/collapsed corners,
+native-invalid values and stale map/view/camera/selection/viewport preserve the last
+valid draft. After a successful Pick, `finish` takes its token and returns to
+ordinary Apply/Cancel review. Apply rejects active handles and remains one Undo. `cancel` restores the exact
+pre-handle draft, including owned stale cleanup. Foreign/replaced tokens reject.
+Review ends handles and transfers the latest valid corner draft to its reviewer.
+
+UI: **Overlay… → Edit selected corners → Preview corners → Viewport handles**,
+then drag a cyan square and use **Apply corners**. **Cancel handles** restores
+the pre-handle draft. Escape/focus cleanup affects only a current interactive
+User-owned gesture; foreign/stale handles leave ordinary desktop input available.
+Single visible world/`func_detail` quad, no snapping or projected material preview.
 See [Overlays](overlays.md).
 
 ### Compile regions

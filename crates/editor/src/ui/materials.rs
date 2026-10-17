@@ -1387,7 +1387,7 @@ fn reload_material_window(window: &MaterialWindow, session: &mut Session) {
     refresh_material_window(window, session);
 }
 
-fn bind_material_reload_with_access(window: &MaterialWindow, access: &DocumentAccess) {
+pub(crate) fn bind_material_reload_with_access(window: &MaterialWindow, access: &DocumentAccess) {
     window.on_reload_material_assets({
         let window = window.as_weak();
         let target = access.downgrade();
@@ -1399,6 +1399,7 @@ fn bind_material_reload_with_access(window: &MaterialWindow, access: &DocumentAc
     });
 }
 
+#[cfg(test)]
 pub(crate) fn bind_material_reload(window: &MaterialWindow, shared: SharedSession) {
     window.on_reload_material_assets({
         let window = window.as_weak();

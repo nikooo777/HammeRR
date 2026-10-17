@@ -4,7 +4,7 @@ use std::rc::Rc;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::identity::parse_id;
-use crate::runtime::{SharedSession, lock};
+use crate::runtime::{DocumentAccess, DocumentContinuation, SharedSession, lock};
 use crate::session::{Actor, ObjectFilter, PropertyChange, PropertyTarget, SelectMode, Session};
 use crate::{
     ColorWindow, ManagedFieldRow, MaterialWindow, ObjectReportRow, PropertiesWindow, ReportWindow,
@@ -114,64 +114,126 @@ pub fn refresh_properties(window: &PropertiesWindow, session: &Session) {
     window.set_fields(ModelRc::new(VecModel::from(rows)));
 }
 
-fn stage(window: &PropertiesWindow, shared: &SharedSession, change: PropertyChange) {
-    let mut session = lock(shared);
+fn stage(window: &PropertiesWindow, session: &mut Session, change: PropertyChange) {
     let result = token(window).and_then(|token| session.append_property_change(token, change));
-    refresh_properties(window, &session);
+    refresh_properties(window, session);
     if let Err(error) = result {
         window.set_message(error.into());
     }
 }
 
+fn with_properties<R>(
+    window: &slint::Weak<PropertiesWindow>,
+    access: &DocumentContinuation,
+    body: impl FnOnce(&PropertiesWindow, &mut Session) -> R,
+) -> Option<R> {
+    let window = window.upgrade()?;
+    match access
+        .upgrade()
+        .and_then(|access| access.with_session(|session| Ok(body(&window, session))))
+    {
+        Ok(result) => Some(result),
+        Err(error) => {
+            window.set_message(error.into());
+            None
+        }
+    }
+}
+
+fn with_color<R>(
+    window: &slint::Weak<ColorWindow>,
+    access: &DocumentContinuation,
+    body: impl FnOnce(&ColorWindow, &mut Session) -> R,
+) -> Option<R> {
+    let window = window.upgrade()?;
+    match access
+        .upgrade()
+        .and_then(|access| access.with_session(|session| Ok(body(&window, session))))
+    {
+        Ok(result) => Some(result),
+        Err(error) => {
+            window.set_message(error.into());
+            None
+        }
+    }
+}
+
+fn with_material<R>(
+    window: &slint::Weak<MaterialWindow>,
+    access: &DocumentContinuation,
+    body: impl FnOnce(&MaterialWindow, &mut Session) -> R,
+) -> Option<R> {
+    let window = window.upgrade()?;
+    match access
+        .upgrade()
+        .and_then(|access| access.with_session(|session| Ok(body(&window, session))))
+    {
+        Ok(result) => Some(result),
+        Err(error) => {
+            window.set_detail(error.into());
+            None
+        }
+    }
+}
+
+#[cfg(test)]
 pub fn bind_properties(
     window: &PropertiesWindow,
     shared: &SharedSession,
 ) -> Result<(), slint::PlatformError> {
+    bind_properties_with_access(window, &DocumentAccess::unmanaged(shared.clone()))
+}
+
+pub fn bind_properties_with_access(
+    window: &PropertiesWindow,
+    access: &DocumentAccess,
+) -> Result<(), slint::PlatformError> {
     window.on_search({
-        let (window, shared) = (window.as_weak(), shared.clone());
-        move || refresh_properties(&window.unwrap(), &lock(&shared))
+        let (window, access) = (window.as_weak(), access.downgrade());
+        move || {
+            with_properties(&window, &access, |window, session| {
+                refresh_properties(window, session)
+            });
+        }
     });
     window.on_edit({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.downgrade());
         move |key, value| {
-            stage(
-                &window.unwrap(),
-                &shared,
-                PropertyChange::Set {
-                    key: key.into(),
-                    value: value.into(),
-                },
-            )
+            with_properties(&window, &access, |window, session| {
+                stage(
+                    window,
+                    session,
+                    PropertyChange::Set {
+                        key: key.into(),
+                        value: value.into(),
+                    },
+                )
+            });
         }
     });
     window.on_reset({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.downgrade());
         move |key| {
-            stage(
-                &window.unwrap(),
-                &shared,
-                PropertyChange::Default { key: key.into() },
-            )
+            with_properties(&window, &access, |window, session| {
+                stage(window, session, PropertyChange::Default { key: key.into() })
+            });
         }
     });
     window.on_remove({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.downgrade());
         move |key| {
-            stage(
-                &window.unwrap(),
-                &shared,
-                PropertyChange::Remove { key: key.into() },
-            )
+            with_properties(&window, &access, |window, session| {
+                stage(window, session, PropertyChange::Remove { key: key.into() })
+            });
         }
     });
     window.on_flag_edit({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.downgrade());
         move |key, flag, enabled| {
-            let window = window.unwrap();
-            match flag.parse() {
+            with_properties(&window, &access, |window, session| match flag.parse() {
                 Ok(flag) => stage(
-                    &window,
-                    &shared,
+                    window,
+                    session,
                     PropertyChange::Flag {
                         key: key.into(),
                         flag,
@@ -179,17 +241,16 @@ pub fn bind_properties(
                     },
                 ),
                 Err(_) => window.set_message("Choose a valid flag".into()),
-            }
+            });
         }
     });
     window.on_component_edit({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.downgrade());
         move |key, index, value| {
-            let window = window.unwrap();
-            match value.parse() {
+            with_properties(&window, &access, |window, session| match value.parse() {
                 Ok(value) if index >= 0 => stage(
-                    &window,
-                    &shared,
+                    window,
+                    session,
                     PropertyChange::Component {
                         key: key.into(),
                         index: index as usize,
@@ -197,228 +258,262 @@ pub fn bind_properties(
                     },
                 ),
                 _ => window.set_message("Enter a finite number".into()),
-            }
+            });
         }
     });
     window.on_apply({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.downgrade());
         move || {
-            let window = window.unwrap();
-            let result = token(&window)
-                .and_then(|token| lock(&shared).commit_property_edit(Actor::User, token));
-            match result {
-                Ok(()) => {
-                    let _ = window.hide();
+            with_properties(&window, &access, |window, session| {
+                match token(window)
+                    .and_then(|token| session.commit_property_edit(Actor::User, token))
+                {
+                    Ok(()) => {
+                        let _ = window.hide();
+                    }
+                    Err(error) => window.set_message(error.into()),
                 }
-                Err(error) => window.set_message(error.into()),
-            }
+            });
         }
     });
     window.on_cancel({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.downgrade());
         move || {
-            let window = window.unwrap();
-            if let Ok(token) = token(&window) {
-                let _ = lock(&shared).cancel_property_edit(token);
-            }
-            let _ = window.hide();
+            let Some(owner) = window.upgrade() else {
+                return;
+            };
+            with_properties(&window, &access, |window, session| {
+                if let Ok(token) = token(window) {
+                    let _ = session.cancel_property_edit(token);
+                }
+            });
+            let _ = owner.hide();
         }
     });
     window.window().on_close_requested({
         let window = window.as_weak();
         move || {
-            window.unwrap().invoke_cancel();
+            if let Some(window) = window.upgrade() {
+                window.invoke_cancel();
+            }
             slint::CloseRequestResponse::HideWindow
         }
     });
-    bind_color(window, shared)?;
-    crate::sky_assets_ui::bind(window, shared.clone());
-    bind_material(window, shared)
+    bind_color(window, access)?;
+    crate::sky_assets_ui::bind_with_access(window, access);
+    bind_material(window, access)?;
+    Ok(())
 }
 
 fn bind_color(
     parent: &PropertiesWindow,
-    shared: &SharedSession,
-) -> Result<(), slint::PlatformError> {
+    access: &DocumentAccess,
+) -> Result<ColorWindow, slint::PlatformError> {
     let window = ColorWindow::new()?;
     let target = Rc::new(RefCell::new(None::<(u64, String, bool)>));
     parent.on_pick_color({
-        let (parent, window, shared, target) = (
+        let (parent, window, access, target) = (
             parent.as_weak(),
             window.clone_strong(),
-            shared.clone(),
+            access.downgrade(),
             target.clone(),
         );
         move |key| {
-            let session = lock(&shared);
-            let result = token(&parent.unwrap()).and_then(|token| {
-                session.check_property_draft(token)?;
-                let property = session
-                    .preview_property_edit()?
-                    .properties
-                    .into_iter()
-                    .find(|property| property.field.key == key.as_str())
-                    .ok_or("Property is no longer available")?;
-                let field = property.field;
-                let color = field.color.ok_or("Property is not a color")?;
-                *target.borrow_mut() = Some((token, key.into(), field.kind == "color1"));
-                window.set_field_label(field.label.into());
-                window.set_red(color[0].into());
-                window.set_green(color[1].into());
-                window.set_blue(color[2].into());
-                window.set_has_intensity(false);
-                window.set_message(
-                    "Color applies to every target. Brightness stays unchanged.".into(),
-                );
-                window.show().map_err(|error| error.to_string())
+            with_properties(&parent, &access, |parent, session| {
+                let result = token(parent).and_then(|token| {
+                    session.check_property_draft(token)?;
+                    let property = session
+                        .preview_property_edit()?
+                        .properties
+                        .into_iter()
+                        .find(|property| property.field.key == key.as_str())
+                        .ok_or("Property is no longer available")?;
+                    let field = property.field;
+                    let color = field.color.ok_or("Property is not a color")?;
+                    *target.borrow_mut() = Some((token, key.into(), field.kind == "color1"));
+                    window.set_field_label(field.label.into());
+                    window.set_red(color[0].into());
+                    window.set_green(color[1].into());
+                    window.set_blue(color[2].into());
+                    window.set_has_intensity(false);
+                    window.set_message(
+                        "Color applies to every target. Brightness stays unchanged.".into(),
+                    );
+                    window.show().map_err(|error| error.to_string())
+                });
+                if let Err(error) = result {
+                    parent.set_message(error.into());
+                }
             });
-            if let Err(error) = result {
-                parent.unwrap().set_message(error.into());
-            }
         }
     });
     window.on_apply({
-        let (window, shared, target, parent) = (
+        let (window, access, target, parent) = (
             window.as_weak(),
-            shared.clone(),
+            access.downgrade(),
             target.clone(),
             parent.as_weak(),
         );
         move || {
-            let window = window.unwrap();
-            let Some((token, key, normalized)) = target.borrow().clone() else {
-                return;
-            };
-            let mut session = lock(&shared);
-            let result = session.check_property_draft(token).and_then(|()| {
-                let mut changes = session.property_draft().unwrap().changes.clone();
-                for (index, value) in [window.get_red(), window.get_green(), window.get_blue()]
-                    .into_iter()
-                    .enumerate()
-                {
-                    changes.push(PropertyChange::Component {
-                        key: key.clone(),
-                        index,
-                        value: f64::from(value) / if normalized { 255.0 } else { 1.0 },
-                    });
+            with_color(&window, &access, |window, session| {
+                let Some(parent) = parent.upgrade() else {
+                    return;
+                };
+                let Some((token, key, normalized)) = target.borrow().clone() else {
+                    return;
+                };
+                let result = session.check_property_draft(token).and_then(|()| {
+                    let mut changes = session.property_draft().unwrap().changes.clone();
+                    for (index, value) in [window.get_red(), window.get_green(), window.get_blue()]
+                        .into_iter()
+                        .enumerate()
+                    {
+                        changes.push(PropertyChange::Component {
+                            key: key.clone(),
+                            index,
+                            value: f64::from(value) / if normalized { 255.0 } else { 1.0 },
+                        });
+                    }
+                    session.update_property_edit(token, changes)
+                });
+                match result {
+                    Ok(()) => {
+                        refresh_properties(&parent, session);
+                        let _ = window.hide();
+                    }
+                    Err(error) => window.set_message(error.into()),
                 }
-                session.update_property_edit(token, changes)
             });
-            match result {
-                Ok(()) => {
-                    refresh_properties(&parent.unwrap(), &session);
-                    let _ = window.hide();
-                }
-                Err(error) => window.set_message(error.into()),
-            }
         }
     });
     window.on_cancel({
         let window = window.as_weak();
         move || {
-            let _ = window.unwrap().hide();
+            if let Some(window) = window.upgrade() {
+                let _ = window.hide();
+            }
         }
     });
-    Ok(())
+    window
+        .window()
+        .on_close_requested(|| slint::CloseRequestResponse::HideWindow);
+    Ok(window)
 }
 
 fn bind_material(
     parent: &PropertiesWindow,
-    shared: &SharedSession,
-) -> Result<(), slint::PlatformError> {
+    access: &DocumentAccess,
+) -> Result<MaterialWindow, slint::PlatformError> {
     let window = MaterialWindow::new()?;
-    crate::ui::bind_material_reload(&window, shared.clone());
+    crate::ui::bind_material_reload_with_access(&window, access);
     let target = Rc::new(RefCell::new(None::<(u64, String)>));
     parent.on_pick_material({
-        let (parent, window, shared, target) = (
+        let (parent, window, access, target) = (
             parent.as_weak(),
             window.clone_strong(),
-            shared.clone(),
+            access.downgrade(),
             target.clone(),
         );
         move |key| {
-            let mut session = lock(&shared);
-            let result = token(&parent.unwrap()).and_then(|token| {
-                session.check_property_draft(token)?;
-                let property = session
-                    .preview_property_edit()?
-                    .properties
-                    .into_iter()
-                    .find(|property| property.field.key == key.as_str())
-                    .ok_or("Property is no longer available")?;
-                *target.borrow_mut() = Some((token, key.into()));
-                window.set_material(property.field.value.into());
-                window.set_filter("".into());
-                window.set_group("all".into());
-                window.set_offset(0);
-                crate::ui::refresh_material_catalog(&window, &mut session);
-                crate::ui::refresh_material_window(&window, &mut session);
-                window.show().map_err(|error| error.to_string())
+            with_properties(&parent, &access, |parent, session| {
+                let result = token(parent).and_then(|token| {
+                    session.check_property_draft(token)?;
+                    let property = session
+                        .preview_property_edit()?
+                        .properties
+                        .into_iter()
+                        .find(|property| property.field.key == key.as_str())
+                        .ok_or("Property is no longer available")?;
+                    *target.borrow_mut() = Some((token, key.into()));
+                    window.set_material(property.field.value.into());
+                    window.set_filter("".into());
+                    window.set_group("all".into());
+                    window.set_offset(0);
+                    crate::ui::refresh_material_catalog(&window, session);
+                    crate::ui::refresh_material_window(&window, session);
+                    window.show().map_err(|error| error.to_string())
+                });
+                if let Err(error) = result {
+                    parent.set_message(error.into());
+                }
             });
-            if let Err(error) = result {
-                parent.unwrap().set_message(error.into());
-            }
         }
     });
     window.on_search({
-        let (window, shared) = (window.as_weak(), shared.clone());
-        move || crate::ui::refresh_material_catalog(&window.unwrap(), &mut lock(&shared))
+        let (window, access) = (window.as_weak(), access.downgrade());
+        move || {
+            with_material(&window, &access, |window, session| {
+                crate::ui::refresh_material_catalog(window, session)
+            });
+        }
     });
     window.on_preview_material({
-        let (window, shared) = (window.as_weak(), shared.clone());
-        move || crate::ui::refresh_material_window(&window.unwrap(), &mut lock(&shared))
+        let (window, access) = (window.as_weak(), access.downgrade());
+        move || {
+            with_material(&window, &access, |window, session| {
+                crate::ui::refresh_material_window(window, session)
+            });
+        }
     });
     window.on_toggle_favorite({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.downgrade());
         move || {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            if let Err(error) =
-                session.favorite_material(&window.get_material(), !window.get_favorite())
-            {
-                window.set_detail(error.into());
-            }
-            crate::ui::refresh_material_catalog(&window, &mut session);
+            with_material(&window, &access, |window, session| {
+                if let Err(error) =
+                    session.favorite_material(&window.get_material(), !window.get_favorite())
+                {
+                    window.set_detail(error.into());
+                }
+                crate::ui::refresh_material_catalog(window, session);
+            });
         }
     });
     window.on_use_material({
-        let (window, shared, target, parent) = (
+        let (window, access, target, parent) = (
             window.as_weak(),
-            shared.clone(),
+            access.downgrade(),
             target.clone(),
             parent.as_weak(),
         );
         move || {
-            let window = window.unwrap();
-            let Some((token, key)) = target.borrow().clone() else {
-                return;
-            };
-            let mut session = lock(&shared);
-            if !crate::ui::review_material_choice(&window, &mut session) {
-                return;
-            }
-            match session.append_property_change(
-                token,
-                PropertyChange::Set {
-                    key,
-                    value: window.get_material().into(),
-                },
-            ) {
-                Ok(()) => {
-                    refresh_properties(&parent.unwrap(), &session);
-                    let _ = window.hide();
+            with_material(&window, &access, |window, session| {
+                let Some(parent) = parent.upgrade() else {
+                    return;
+                };
+                let Some((token, key)) = target.borrow().clone() else {
+                    return;
+                };
+                if !crate::ui::review_material_choice(window, session) {
+                    return;
                 }
-                Err(error) => window.set_detail(error.into()),
-            }
+                match session.append_property_change(
+                    token,
+                    PropertyChange::Set {
+                        key,
+                        value: window.get_material().into(),
+                    },
+                ) {
+                    Ok(()) => {
+                        refresh_properties(&parent, session);
+                        let _ = window.hide();
+                    }
+                    Err(error) => window.set_detail(error.into()),
+                }
+            });
         }
     });
     window.on_cancel({
         let window = window.as_weak();
         move || {
-            let _ = window.unwrap().hide();
+            if let Some(window) = window.upgrade() {
+                let _ = window.hide();
+            }
         }
     });
-    Ok(())
+    window
+        .window()
+        .on_close_requested(|| slint::CloseRequestResponse::HideWindow);
+    Ok(window)
 }
 
 fn filter(window: &ReportWindow) -> Result<ObjectFilter, String> {
@@ -596,3 +691,6 @@ pub fn bind_report(window: &ReportWindow, shared: &SharedSession) {
         }
     });
 }
+
+#[cfg(test)]
+mod tests;

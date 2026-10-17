@@ -596,7 +596,7 @@ pub(super) fn show_properties_window(app: &AppWindow, ui: &SharedUi, world: bool
     };
     if ui.borrow().properties_window.is_none() {
         let result = PropertiesWindow::new().and_then(|window| {
-            management_ui::bind_properties(&window, &shared)?;
+            management_ui::bind_properties_with_access(&window, &file_access(ui))?;
             Ok(window)
         });
         match result {

@@ -4,6 +4,8 @@ use std::rc::Rc;
 use editor_core::sky_assets::{SkyAssetSource, SkyAssetsReport, SkyChannelReport};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
+use crate::runtime::{DocumentAccess, DocumentContinuation};
+#[cfg(test)]
 use crate::runtime::{SharedSession, lock};
 use crate::session::Session;
 use crate::{PropertiesWindow, SkyAssetFaceRow, SkyAssetsWindow};
@@ -199,57 +201,96 @@ fn present(window: &SkyAssetsWindow, report: SkyAssetsReport) {
     ).into());
 }
 
+fn with_sky<R>(
+    window: &slint::Weak<SkyAssetsWindow>,
+    access: &DocumentContinuation,
+    body: impl FnOnce(&SkyAssetsWindow, &Session) -> R,
+) -> Option<R> {
+    let window = window.upgrade()?;
+    match access
+        .upgrade()
+        .and_then(|access| access.with_session(|session| Ok(body(&window, session))))
+    {
+        Ok(result) => Some(result),
+        Err(error) => {
+            window.set_issues(error.into());
+            None
+        }
+    }
+}
+
 impl Controller {
-    pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
+    pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let window = SkyAssetsWindow::new()?;
         window.on_refresh_assets({
-            let (window, shared) = (window.as_weak(), shared.clone());
-            move || present(&window.unwrap(), lock(&shared).inspect_sky_assets())
+            let (window, access) = (window.as_weak(), access.downgrade());
+            move || {
+                with_sky(&window, &access, |window, session| {
+                    present(window, session.inspect_sky_assets())
+                });
+            }
         });
         window.on_close_dialog({
             let window = window.as_weak();
             move || {
-                let _ = window.unwrap().hide();
+                if let Some(window) = window.upgrade() {
+                    let _ = window.hide();
+                }
             }
         });
-        window.window().on_close_requested({
-            let window = window.as_weak();
-            move || {
-                window.unwrap().invoke_close_dialog();
-                slint::CloseRequestResponse::HideWindow
-            }
-        });
+        window
+            .window()
+            .on_close_requested(|| slint::CloseRequestResponse::HideWindow);
         Ok(Self { window })
     }
 
-    pub fn show(&self, session: &Session) -> Result<(), slint::PlatformError> {
+    fn show(&self, session: &Session) -> Result<(), slint::PlatformError> {
         present(&self.window, session.inspect_sky_assets());
         self.window.show()
     }
 }
 
+#[cfg(test)]
 pub(crate) fn bind(
     parent: &PropertiesWindow,
     shared: SharedSession,
 ) -> Rc<RefCell<Option<Controller>>> {
+    bind_with_access(parent, &DocumentAccess::unmanaged(shared))
+}
+
+pub(crate) fn bind_with_access(
+    parent: &PropertiesWindow,
+    access: &DocumentAccess,
+) -> Rc<RefCell<Option<Controller>>> {
     let controller = Rc::new(RefCell::new(None::<Controller>));
     parent.on_inspect_sky_assets({
-        let (parent, controller) = (parent.as_weak(), controller.clone());
+        let (parent, controller, target) =
+            (parent.as_weak(), controller.clone(), access.downgrade());
         move || {
-            if !parent.unwrap().get_world_settings() {
+            let Some(parent) = parent.upgrade() else {
                 return;
-            }
-            if controller.borrow().is_none() {
-                match Controller::new(&shared) {
-                    Ok(window) => *controller.borrow_mut() = Some(window),
-                    Err(error) => {
-                        parent.unwrap().set_message(error.to_string().into());
-                        return;
+            };
+            let result = target.upgrade().and_then(|access| {
+                access.with_session(|session| {
+                    if !parent.get_world_settings() {
+                        return Ok(());
                     }
-                }
-            }
-            if let Err(error) = controller.borrow().as_ref().unwrap().show(&lock(&shared)) {
-                parent.unwrap().set_message(error.to_string().into());
+                    if controller.borrow().is_none() {
+                        *controller.borrow_mut() = Some(
+                            Controller::new_with_access(&access)
+                                .map_err(|error| error.to_string())?,
+                        );
+                    }
+                    controller
+                        .borrow()
+                        .as_ref()
+                        .unwrap()
+                        .show(session)
+                        .map_err(|error| error.to_string())
+                })
+            });
+            if let Err(error) = result {
+                parent.set_message(error.into());
             }
         }
     });

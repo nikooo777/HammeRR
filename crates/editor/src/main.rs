@@ -62,7 +62,7 @@ use editor_core::{
 };
 use mcp::EditorServer;
 use render::GpuContext;
-use runtime::{SharedSession, lock};
+use runtime::{DocumentHandle, SharedSession, lock};
 use session::{Actor, Session};
 use std::net::{Ipv4Addr, SocketAddr};
 const BLOCK_SIZE: f64 = 128.0;
@@ -71,17 +71,20 @@ const ACTIVITY_SHOWN: usize = 30;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse()?;
     let application = Application::open(&args)?;
-    let session = application.session.clone();
+    let document = application.document();
     let result = (|| {
         if args.headless {
             if let Some(Err(message)) = &application.open_message {
                 eprintln!("{message}");
             }
-            return Ok(mcp::serve_stdio(EditorServer::new(session.clone(), None))?);
+            return Ok(mcp::serve_stdio(EditorServer::for_document(
+                document.clone(),
+                None,
+            ))?);
         }
 
         let ctx = GpuContext::new()?;
-        let server = EditorServer::new(session.clone(), Some(ctx.clone()));
+        let server = EditorServer::for_document(document.clone(), Some(ctx.clone()));
 
         let mcp_status = match args.mcp_port {
             Some(port) => {
@@ -93,7 +96,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             None => "MCP off".into(),
         };
 
-        ui::run(session, ctx, mcp_status, application.open_message.clone())
+        ui::run(document, ctx, mcp_status, application.open_message.clone())
     })();
     application.finish(result)
 }

@@ -82,8 +82,12 @@ fn accepted_context_apply_finishes_before_real_shutdown_final_recovery() {
     let entries = store.list().unwrap().entries;
     assert_eq!(entries.len(), 1);
     let recovered = store.read(&entries[0].id).unwrap().1;
-    assert!(recovered.contains("Accepted before shutdown"));
-    assert!(recovered.contains("Final recovery must include this admitted note."));
+    let recovered_map = source_formats::vmf::Vmf::parse(&recovered).unwrap();
+    assert_eq!(&recovered_map, lock(&shared).document().vmf());
+    let metadata = map_core::context::Metadata::parse(&recovered_map).unwrap();
+    let note = metadata.notes.get(&map_core::context::Scope::Map).unwrap();
+    assert_eq!(note.summary, "Accepted before shutdown");
+    assert_eq!(note.body, "Final recovery must include this admitted note.");
     let before = lock(&shared).context_state();
     window.invoke_apply();
     assert_eq!(window.get_message(), "the document is closed");

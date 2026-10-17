@@ -108,6 +108,21 @@ other applications.
 The generated `editor-ui` crate has no tests; the `editor` tests compile its
 bindings. Skip a standalone `editor-ui --all-targets` test pass.
 
+### Document-bound UI actions
+
+```sh
+cargo test -p editor --all-targets
+```
+
+The software UI fixtures invoke actual root and child callbacks against fixed
+documents, including real draining and terminal states. They cover exact preview
+ownership, stale forms, local dismissal, independent peers and final recovery.
+The ignored `ui::ownership_tests::child_callbacks_work_then_release_ui_session_and_cached_resources`
+fixture additionally uses an offscreen GPU for the Surface, material browser
+and Atlas workflow and resource release. Run it directly from the compiled
+editor test executable with `--ignored --exact` and that full name; it opens no
+desktop windows and sends no desktop input.
+
 ### Content paths and safe saves
 
 ```sh

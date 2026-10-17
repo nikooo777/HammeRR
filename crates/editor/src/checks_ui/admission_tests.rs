@@ -272,8 +272,21 @@ fn checks_and_context_live_actions_reject_real_drain_and_finished_without_touchi
         directory: f.directory.path().join("recovery"),
     };
     let recovered = store.read(&entries[0].id).unwrap().1;
-    assert!(recovered.contains("Attached brush context"));
-    assert!(!recovered.contains("Retained pending context"));
+    let recovered_map = source_formats::vmf::Vmf::parse(&recovered).unwrap();
+    assert_eq!(recovered_map, saved);
+    let metadata = map_core::context::Metadata::parse(&recovered_map).unwrap();
+    assert!(
+        metadata
+            .notes
+            .values()
+            .any(|note| note.summary == "Attached brush context")
+    );
+    assert!(
+        metadata
+            .notes
+            .values()
+            .all(|note| note.body != "Retained pending context")
+    );
     assert_eq!(state(&peer.shared), peer_before);
     assert_eq!(forms(&peer), peer_form);
     peer.checks.invoke_apply_repair();

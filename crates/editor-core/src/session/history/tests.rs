@@ -192,7 +192,8 @@ fn navigation_rejects_stale_branch_document_job_and_preview_targets_atomically()
     let revision = session.document.revision();
     for busy in 0..3 {
         session.compiling = busy == 0;
-        session.launching = busy == 1;
+        session.pending_launch =
+            (busy == 1).then(|| LaunchOrigin::new(session.document_generation));
         session.closing = busy == 2;
         assert!(report(&session).navigation_blocked.is_some());
         assert!(
@@ -204,7 +205,7 @@ fn navigation_rejects_stale_branch_document_job_and_preview_targets_atomically()
         assert_eq!(session.document.revision(), revision);
     }
     session.compiling = false;
-    session.launching = false;
+    session.pending_launch = None;
     session.closing = false;
     session.block_preview = Some((DVec3::ZERO, DVec3::splat(64.0)));
     assert!(report(&session).navigation_blocked.is_some());

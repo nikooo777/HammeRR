@@ -512,7 +512,7 @@ impl Session {
         if self.compiling {
             return Err("a map compilation is already running".into());
         }
-        if self.launching {
+        if self.launching() {
             return Err("wait for CS:S to finish launching".into());
         }
         let path = path

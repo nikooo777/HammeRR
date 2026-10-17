@@ -230,9 +230,6 @@ impl EditorServer {
             Ok(Err(error)) => fail(error),
             Err(error) => {
                 let error = error.to_string();
-                let _ = self
-                    .session()
-                    .finish_launch(Actor::Agent, Err(error.clone()));
                 fail(error)
             }
         }

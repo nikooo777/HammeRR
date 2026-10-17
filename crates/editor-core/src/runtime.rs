@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use serde_json::Value;
 
 use crate::game;
-use crate::session::{Actor, Session};
+use crate::session::{Actor, LaunchRequest, Session};
 
 mod document;
 pub use document::DocumentHandle;
@@ -15,6 +15,14 @@ pub fn lock(session: &Mutex<Session>) -> MutexGuard<'_, Session> {
 }
 
 pub fn launch(session: &SharedSession, actor: Actor) -> Result<game::Log, String> {
+    launch_with(session, actor, LaunchRequest::run)
+}
+
+fn launch_with(
+    session: &SharedSession,
+    actor: Actor,
+    run: impl FnOnce(LaunchRequest) -> Result<game::Run, String>,
+) -> Result<game::Log, String> {
     let request = {
         let mut state = lock(session);
         match state.begin_launch(actor) {
@@ -25,25 +33,37 @@ pub fn launch(session: &SharedSession, actor: Actor) -> Result<game::Log, String
             }
         }
     };
-    let result = request.run();
-    lock(session).finish_launch(actor, result)
+    let origin = request.origin();
+    let result = run(request);
+    lock(session).finish_launch(actor, &origin, result)
 }
 
 pub fn start_launch(session: &SharedSession, actor: Actor) -> Result<(), String> {
+    start_launch_with(session, actor, LaunchRequest::run).map(drop)
+}
+
+fn start_launch_with(
+    session: &SharedSession,
+    actor: Actor,
+    run: impl FnOnce(LaunchRequest) -> Result<game::Run, String> + Send + 'static,
+) -> Result<std::thread::JoinHandle<()>, String> {
     let request = lock(session).begin_launch(actor)?;
+    let origin = request.origin();
+    let worker_origin = origin.clone();
     let worker_session = session.clone();
-    if let Err(error) = std::thread::Builder::new()
+    match std::thread::Builder::new()
         .name("game-launch".into())
         .spawn(move || {
-            let result = request.run();
-            let _ = lock(&worker_session).finish_launch(actor, result);
-        })
-    {
-        let error = error.to_string();
-        let _ = lock(session).finish_launch(actor, Err(error.clone()));
-        return Err(error);
+            let result = run(request);
+            let _ = lock(&worker_session).finish_launch(actor, &worker_origin, result);
+        }) {
+        Ok(worker) => Ok(worker),
+        Err(error) => {
+            let error = error.to_string();
+            let _ = lock(session).finish_launch(actor, &origin, Err(error.clone()));
+            Err(error)
+        }
     }
-    Ok(())
 }
 
 pub(crate) fn finish_compile_worker(
@@ -51,6 +71,16 @@ pub(crate) fn finish_compile_worker(
     actor: Actor,
     result: &Result<crate::session::compilation::CompileResult, String>,
     play: bool,
+) -> Result<Option<game::Log>, String> {
+    finish_compile_worker_with(session, actor, result, play, LaunchRequest::run)
+}
+
+fn finish_compile_worker_with(
+    session: &SharedSession,
+    actor: Actor,
+    result: &Result<crate::session::compilation::CompileResult, String>,
+    play: bool,
+    run: impl FnOnce(LaunchRequest) -> Result<game::Run, String>,
 ) -> Result<Option<game::Log>, String> {
     let launch_request = {
         let mut state = lock(session);
@@ -76,11 +106,15 @@ pub(crate) fn finish_compile_worker(
     };
     launch_request
         .map(|request| {
-            let result = request.run();
-            lock(session).finish_launch(actor, result)
+            let origin = request.origin();
+            let result = run(request);
+            lock(session).finish_launch(actor, &origin, result)
         })
         .transpose()
 }
+
+#[cfg(test)]
+mod launch_tests;
 
 pub fn start_compile(
     session: &SharedSession,

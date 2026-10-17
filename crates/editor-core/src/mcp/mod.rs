@@ -453,9 +453,6 @@ impl EditorServer {
                 let error = error.to_string();
                 let mut session = self.session();
                 session.finish_compile(Actor::Agent, &Err(error.clone()));
-                if play {
-                    let _ = session.finish_launch(Actor::Agent, Err(error.clone()));
-                }
                 Err(error)
             }
         };

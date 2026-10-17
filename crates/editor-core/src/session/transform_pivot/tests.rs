@@ -372,7 +372,8 @@ fn admission_preserves_active_geometry_and_rejects_stale_or_invalid_capture() {
         .unwrap();
     for flag in ["build", "launch"] {
         session.compiling = flag == "build";
-        session.launching = flag == "launch";
+        session.pending_launch = (flag == "launch")
+            .then(|| crate::session::LaunchOrigin::new(session.document_generation));
         assert!(
             session
                 .begin_transform_pivot_pick(

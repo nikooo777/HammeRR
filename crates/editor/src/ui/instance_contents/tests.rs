@@ -29,15 +29,54 @@ fn software_controls_share_visibility_reports_frame_clear_and_preserve_parent() 
     super::super::bind_view_controls(&app, shared.clone());
     super::super::refresh_view_controls(&app, &lock(&shared));
     assert!(!app.get_instance_contents());
-    let serials = {
+    let (serials, mut displayed_key, mut draw_options) = {
         let session = lock(&shared);
-        (session.scene_serial(), session.view_serial())
+        (
+            (session.scene_serial(), session.view_serial()),
+            session.render_scene_key(session.view()),
+            session.view(),
+        )
     };
     app.set_instance_contents(true);
     app.invoke_options_changed();
     assert!(lock(&shared).view().instance_contents);
     {
-        let session = lock(&shared);
+        let mut session = lock(&shared);
+        displayed_key =
+            super::super::prepare_scene_refresh(&mut session, displayed_key, &mut draw_options)
+                .expect("Reference-only enable must refresh the production viewport route");
+        assert!(draw_options.instance_contents);
+        assert!(
+            !session
+                .build_scene_for_view(draw_options)
+                .reference_lines
+                .is_empty()
+        );
+        assert_eq!((session.scene_serial(), session.view_serial()), serials);
+        assert!(
+            super::super::prepare_scene_refresh(&mut session, displayed_key, &mut draw_options,)
+                .is_none()
+        );
+    }
+    for enabled in [false, true] {
+        let mut session = lock(&shared);
+        let view = session
+            .resolve_view_update(session::ViewUpdate {
+                instance_contents: Some(enabled),
+                ..Default::default()
+            })
+            .unwrap();
+        session.set_view(view);
+        displayed_key =
+            super::super::prepare_scene_refresh(&mut session, displayed_key, &mut draw_options)
+                .expect("Shared visibility changes must update retained draw options");
+        assert_eq!(draw_options.instance_contents, enabled);
+        let mesh = session.build_scene_for_view(draw_options);
+        assert_eq!(!mesh.reference_lines.is_empty(), enabled);
+        assert_eq!(
+            session.instance_contents_rendered_report()["displayed"],
+            enabled
+        );
         assert_eq!((session.scene_serial(), session.view_serial()), serials);
     }
     let controller = Controller::new(shared.clone()).unwrap();

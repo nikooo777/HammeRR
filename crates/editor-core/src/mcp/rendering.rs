@@ -6,6 +6,7 @@ pub(in crate::mcp) struct Offscreen {
     pub(in crate::mcp) scene: Option<(render::SceneKey, GpuScene)>,
     pub(in crate::mcp) issues: Vec<render::scene::SceneIssue>,
     pub(in crate::mcp) normal_maps: render::normal_maps::Report,
+    pub(in crate::mcp) lighting: render::lighting::Report,
 }
 
 impl Offscreen {
@@ -16,6 +17,7 @@ impl Offscreen {
             scene: None,
             issues: Vec::new(),
             normal_maps: Default::default(),
+            lighting: Default::default(),
         }
     }
 }
@@ -28,6 +30,7 @@ pub(in crate::mcp) struct OffscreenState {
 
 pub(in crate::mcp) struct RenderedView {
     pub(in crate::mcp) normal_maps: render::normal_maps::Report,
+    pub(in crate::mcp) lighting: render::lighting::Report,
     pub(in crate::mcp) png: Vec<u8>,
     pub(in crate::mcp) issues: Vec<render::scene::SceneIssue>,
 }
@@ -103,6 +106,7 @@ impl EditorServer {
             scene,
             issues,
             normal_maps,
+            lighting,
         } = offscreen
             .renderer
             .as_mut()
@@ -114,6 +118,7 @@ impl EditorServer {
                 let mesh = session.build_scene_for_view(view);
                 *issues = mesh.issues.clone();
                 *normal_maps = mesh.normal_maps.clone();
+                *lighting = mesh.lighting.report.clone();
                 *scene = Some((key, renderer.upload(ctx, &mesh, session.materials())));
             }
         }
@@ -129,6 +134,7 @@ impl EditorServer {
             .map_err(|error| format!("Could not encode render: {error}"))?;
         Ok(RenderedView {
             normal_maps: normal_maps.clone(),
+            lighting: lighting.clone(),
             png,
             issues: issues.clone(),
         })

@@ -13,6 +13,7 @@ mod details;
 mod falloff;
 mod models;
 mod normals;
+pub mod preview;
 mod probes;
 mod props;
 mod radiance;

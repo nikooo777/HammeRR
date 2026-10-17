@@ -163,7 +163,7 @@ pub struct FacePreviewArgs {
 }
 
 pub(in crate::mcp) fn view_state(view: ViewOptions) -> Value {
-    json!({"normal_maps":view.normal_maps,"tool_textures":view.tool_textures,"sky_preview":view.sky_preview,"sky_channel":view.sky_channel.name(),"sky_exposure_ev":view.sky_exposure_ev,"rope_preview":view.rope_preview,"selection_outlines":view.selection_outlines,"entity_images":view.entity_images,"entity_model_guides":view.entity_model_guides,"fog":fog_parameters(view),"leak_path":view.leak_path,"surface":view.surface.name(),"smoothing_group":view.smoothing_group})
+    json!({"lighting_preview":view.lighting_preview,"lighting_quality":view.lighting_quality.name(),"lighting_exposure_ev":view.lighting_exposure_ev,"normal_maps":view.normal_maps,"tool_textures":view.tool_textures,"sky_preview":view.sky_preview,"sky_channel":view.sky_channel.name(),"sky_exposure_ev":view.sky_exposure_ev,"rope_preview":view.rope_preview,"selection_outlines":view.selection_outlines,"entity_images":view.entity_images,"entity_model_guides":view.entity_model_guides,"fog":fog_parameters(view),"leak_path":view.leak_path,"surface":view.surface.name(),"smoothing_group":view.smoothing_group})
 }
 
 pub(in crate::mcp) fn fog_parameters(view: ViewOptions) -> Value {
@@ -266,7 +266,14 @@ pub struct BeginSurfacePlacementPickArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SetViewArgs {
-    /// Opt-in fixed directional shading from supported flat-brush normal maps; no authored lighting. Defaults off.
+    /// Unshadowed authored constant point/spot diffuse preview; defaults off. No sun/ambient/bounce/shadows.
+    pub lighting_preview: Option<bool>,
+    /// fast interpolates vertex lighting; detail evaluates fragments (default) and supports normal maps.
+    pub lighting_quality: Option<String>,
+    /// Editor exposure -8..8 EV (default 0), followed by per-channel Reinhard; no native tone-map claim.
+    pub lighting_exposure_ev: Option<f64>,
+
+    /// Opt-in flat-brush normals under fixed editor light or Detail authored-light preview. Defaults off.
     pub normal_maps: Option<bool>,
     /// Show selected object/face edges and model brackets. Defaults on; selection, picking and tool guides remain active.
     pub selection_outlines: Option<bool>,
@@ -294,6 +301,13 @@ pub struct SetViewArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct RenderArgs {
+    /// Unshadowed authored constant point/spot diffuse preview; defaults off. No sun/ambient/bounce/shadows.
+    pub lighting_preview: Option<bool>,
+    /// fast interpolates vertex lighting; detail evaluates fragments (default) and supports normal maps.
+    pub lighting_quality: Option<String>,
+    /// Editor exposure -8..8 EV (default 0), followed by per-channel Reinhard; no native tone-map claim.
+    pub lighting_exposure_ev: Option<f64>,
+
     /// Temporary flat-brush normal-map preview; never changes shared settings. Textured only, no terrain/models.
     pub normal_maps: Option<bool>,
     /// Temporary selected-edge/model-bracket visibility override; leaves shared settings and picking unchanged.
@@ -394,6 +408,9 @@ macro_rules! view_update {
         impl $args {
             pub(in crate::mcp) fn view_update(&self) -> crate::session::ViewUpdate<'_> {
                 crate::session::ViewUpdate {
+                    lighting_preview: self.lighting_preview,
+                    lighting_quality: self.lighting_quality.as_deref(),
+                    lighting_exposure_ev: self.lighting_exposure_ev,
                     normal_maps: self.normal_maps,
                     surface: self.surface.as_deref(),
                     smoothing_group: self.smoothing_group,

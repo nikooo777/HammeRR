@@ -129,6 +129,8 @@ struct Globals {
     right: [f32; 4],
     up: [f32; 4],
     sky_params: [f32; 4],
+    lighting_settings: [f32; 4],
+    lighting_lights: [crate::lighting::Light; crate::lighting::MAX_LIGHTS],
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -208,6 +210,9 @@ pub struct PaintGuide {
 /// View filters and resource admission options.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ViewOptions {
+    pub lighting_preview: bool,
+    pub lighting_quality: crate::lighting::Quality,
+    pub lighting_exposure_ev: f32,
     pub normal_maps: bool,
     pub surface: SurfaceView,
     pub smoothing_group: u32,
@@ -237,6 +242,9 @@ impl Default for ViewOptions {
         Self {
             surface: SurfaceView::Textured,
             normal_maps: false,
+            lighting_preview: false,
+            lighting_quality: crate::lighting::Quality::Detail,
+            lighting_exposure_ev: 0.0,
             smoothing_group: 1,
             tool_textures: true,
             sky_preview: false,
@@ -261,7 +269,7 @@ impl Default for ViewOptions {
     }
 }
 
-pub type SceneKey = (u64, crate::sky::Channel, bool, bool, bool, bool);
+pub type SceneKey = (u64, crate::sky::Channel, bool, bool, bool, bool, bool, bool);
 
 impl ViewOptions {
     pub fn scene_key(self, serial: u64) -> SceneKey {
@@ -272,6 +280,8 @@ impl ViewOptions {
             self.entity_model_guides,
             self.normal_maps,
             self.normal_maps && self.surface == SurfaceView::Textured,
+            self.lighting_preview,
+            self.lighting_preview && self.surface == SurfaceView::Textured,
         )
     }
 }
@@ -313,6 +323,7 @@ struct IconDraw {
 
 /// Geometry uploaded by a [`Renderer`]; draw it with the same renderer.
 pub struct GpuScene {
+    lighting: crate::lighting::Preview,
     icons: Option<wgpu::Buffer>,
     icon_draws: Vec<IconDraw>,
     vertices: wgpu::Buffer,
@@ -496,6 +507,7 @@ impl Renderer {
                             6 => Float32,
                             7 => Uint32,
                             8 => Float32x4,
+                            9 => Uint32,
                         ],
                     })],
                 },
@@ -804,6 +816,7 @@ impl Renderer {
                 })
         });
         GpuScene {
+            lighting: mesh.lighting.clone(),
             icons,
             icon_draws,
             skybox,
@@ -1043,7 +1056,26 @@ impl Renderer {
             })
             .map(crate::fog::Fog::uniforms)
             .unwrap_or(([0.0; 4], [0.0; 4]));
+        let mut lighting_lights = [crate::lighting::Light::default(); crate::lighting::MAX_LIGHTS];
+        let lighting_active = options.lighting_preview
+            && options.surface == SurfaceView::Textured
+            && scene.lighting.report.active
+            && scene.lighting.lights.len() <= crate::lighting::MAX_LIGHTS;
+        if lighting_active {
+            lighting_lights[..scene.lighting.lights.len()].copy_from_slice(&scene.lighting.lights);
+        }
         let globals = Globals {
+            lighting_settings: [
+                scene.lighting.lights.len() as f32,
+                if options.lighting_quality == crate::lighting::Quality::Fast {
+                    0.0
+                } else {
+                    1.0
+                },
+                if lighting_active { 1.0 } else { 0.0 },
+                2f32.powf(options.lighting_exposure_ev) / 255.0,
+            ],
+            lighting_lights,
             view_proj: camera.view_projection(aspect).to_cols_array_2d(),
             light_dir: light.extend(0.0).to_array(),
             eye: camera.position.extend(1.0).to_array(),

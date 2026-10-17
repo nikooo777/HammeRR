@@ -45,6 +45,7 @@ pub mod groups;
 pub mod history;
 pub mod hollowing;
 pub mod layers;
+mod lighting_preview;
 pub mod linked_path;
 mod management;
 pub mod material_assets;
@@ -1515,6 +1516,9 @@ impl Session {
         without_resource_changes.entity_images = previous.entity_images;
         without_resource_changes.entity_model_guides = previous.entity_model_guides;
         without_resource_changes.normal_maps = previous.normal_maps;
+        without_resource_changes.lighting_preview = previous.lighting_preview;
+        without_resource_changes.lighting_quality = previous.lighting_quality;
+        without_resource_changes.lighting_exposure_ev = previous.lighting_exposure_ev;
         if without_resource_changes == previous {
             self.view = view;
             self.view_serial += 1;
@@ -2136,7 +2140,8 @@ impl Session {
         let evaluation = self.working_evaluation(document);
         let icons = self.fgd_icon_instances(document, &evaluation, view.entity_images);
         let model_guides = self.fgd_model_guides(document, &evaluation, view.entity_model_guides);
-        let mut mesh = SceneMesh::build_with_normal_maps_filtered(
+        let mut lighting = lighting_preview::prepare(document.vmf(), &evaluation.objects, view);
+        let mut mesh = SceneMesh::build_with_previews_filtered(
             document.vmf(),
             &self.game,
             &mut self.materials,
@@ -2146,9 +2151,36 @@ impl Session {
             (&icons, &model_guides),
             skybox,
             view.normal_maps && view.surface == render::SurfaceView::Textured,
+            view.lighting_preview && view.surface == render::SurfaceView::Textured,
             |id| evaluation.objects.contains(&id),
         );
         mesh.normal_maps.requested = view.normal_maps;
+        lighting.report.admitted_receivers = mesh.lighting.report.admitted_receivers;
+        lighting.report.excluded_receivers = mesh.lighting.report.excluded_receivers;
+        for diagnostic in mesh.lighting.report.diagnostics {
+            lighting.report.diagnostic(
+                diagnostic.entity,
+                diagnostic.material.as_deref(),
+                &diagnostic.reason,
+            );
+        }
+        lighting.report.diagnostics_truncated |= mesh.lighting.report.diagnostics_truncated;
+        if !lighting.report.active {
+            lighting.report.excluded_receivers += lighting.report.admitted_receivers;
+            lighting.report.admitted_receivers = 0;
+            for vertex in &mut mesh.vertices {
+                vertex.lighting_receiver = 0;
+            }
+        }
+        lighting.report.source = Some(render::lighting::Source {
+            document_generation: self.document_generation,
+            revision: self.document.revision(),
+            render_revision: self.render_document().revision(),
+            scene_serial: self.scene_serial,
+            working_region_stamp: self.working_region_stamp(),
+            material_generation: self.materials.generation(),
+        });
+        mesh.lighting = lighting;
         if let Some(points) = self.pointfile_points() {
             mesh.set_leak_path(points);
         }

@@ -145,6 +145,15 @@ fn session_of(ui: &SharedUi) -> SharedSession {
 
 fn refresh_view_controls(app: &AppWindow, session: &Session) {
     app.set_normal_maps(session.view().normal_maps);
+    app.set_lighting_preview(session.view().lighting_preview);
+    app.set_lighting_quality(
+        if session.view().lighting_quality == render::lighting::Quality::Fast {
+            0
+        } else {
+            1
+        },
+    );
+    app.set_lighting_exposure_ev(session.view().lighting_exposure_ev.to_string().into());
     app.set_show_tools(session.view().tool_textures);
     app.set_show_leak(session.view().leak_path);
     app.set_sky_preview(session.view().sky_preview);
@@ -200,12 +209,30 @@ fn bind_view_controls(app: &AppWindow, shared: SharedSession) {
         move || {
             let app = app.unwrap();
             let mut session = lock(&shared);
+            let lighting_exposure = match app.get_lighting_exposure_ev().parse::<f64>() {
+                Ok(value) => value,
+                Err(_) => {
+                    app.set_lighting_error(
+                        "Lighting exposure must be finite and between -8 and 8 EV".into(),
+                    );
+                    refresh_view_controls(&app, &session);
+                    return;
+                }
+            };
             let mut view = match session.resolve_view_update(editor_core::session::ViewUpdate {
+                lighting_preview: Some(app.get_lighting_preview()),
+                lighting_quality: Some(if app.get_lighting_quality() == 0 {
+                    "fast"
+                } else {
+                    "detail"
+                }),
+                lighting_exposure_ev: Some(lighting_exposure),
                 normal_maps: Some(app.get_normal_maps()),
                 ..Default::default()
             }) {
                 Ok(view) => view,
                 Err(error) => {
+                    app.set_lighting_error(error.clone().into());
                     app.set_message(error.into());
                     refresh_view_controls(&app, &session);
                     return;
@@ -238,6 +265,7 @@ fn bind_view_controls(app: &AppWindow, shared: SharedSession) {
                 }
             };
             app.set_sky_preview_error("".into());
+            app.set_lighting_error("".into());
             session.set_view(view);
             refresh_view_controls(&app, &session);
             refresh_sky_preview_status(&app, &mut session);
@@ -2796,6 +2824,7 @@ pub(super) fn run(
                     ui.seen_scene = scene_key;
                     let mesh = session.build_scene();
                     app.set_normal_map_status(mesh.normal_maps.summary().into());
+                    app.set_lighting_status(mesh.lighting.report.summary().into());
                     let mut preview_error = mesh.issue_summary();
                     if let Some(report) = session.material_reload_report()
                         && report.failed > 0

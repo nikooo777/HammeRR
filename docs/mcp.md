@@ -141,7 +141,9 @@ admission, leaving child reads and complete validation to compilation.
 
 `get_instance_extraction {}` inspects the shared owned review, token, readiness,
 source/selection, relative child filename, world/detail/side counts, child bytes
-and SHA-256, validation policy and explicit errors. It initializes no graphics.
+and SHA-256, validation policy and explicit errors. `worker_active` reports
+physical worker/result cleanup independently of the review status. It initializes
+no graphics.
 
 `set_instance_extraction` accepts these actions:
 
@@ -183,6 +185,9 @@ loading child bytes or initializing graphics. `offset` and `limit` page at most
 `background:true`; poll inspection for completion. Refresh resolves the current
 immutable parent outside the Session lock and evicts any earlier effective layer.
 One missing or unsupported visible child fails the complete layer.
+Inspection's `worker_active` remains true until the owned request/result retires;
+`loading` retains its existing pending-request meaning. Cancellation and buffer
+replacement do not permit a second worker while physical cleanup is active.
 
 `cancel`, `clear` and `frame` require the current contents token. Frame optionally
 takes root `ids` and a positive `aspect`; omitted IDs use selection, and empty
@@ -203,7 +208,7 @@ for source, geometry and memory limits.
 
 ## Tools by task
 
-The shared desktop and private stdio server register 410 tools. `tools/list`
+The shared desktop and private stdio server register 411 tools. `tools/list`
 returns their current schemas and descriptions.
 
 | Task | Tools |
@@ -285,6 +290,12 @@ These details aren't obvious from the tool list.
 **Extended entity definitions**
 
 `load_entity_definitions` resolves includes and inheritance, then applies ordered `@ExtendClass` declarations to existing classes. `get_entity_class`, inspector controls and connection suggestions share the resulting catalog. Existing stored values, custom keys, connections and map history remain intact; a failed load retains the previous definitions. See [Entity definitions](entities.md#load-extended-entity-definitions) for replacement rules and unsupported directives.
+
+Loading uses the same owned Session request as **Load FGD…**, outside the UI/
+Session lock. One load is admitted at a time. Closing cancels it and waits for
+result cleanup; superseded results cannot replace newer definitions. Root and
+included sources must be regular files (16 MiB each, 64 MiB total, 256 sources),
+with bounded parsing and inheritance work. Valid canonical aliases are supported.
 
 **Overlapping objects**
 
@@ -2301,6 +2312,10 @@ nonzero process status and reports its cause on stderr. If the primary UI or
 transport also failed, the final error retains both causes. Shared manual and
 automatic recovery completion records capture failure and clears busy state,
 including a caught capture-worker panic.
+
+Shutdown also cancels instance Contents/Extraction work and FGD loading, and waits
+for their owned result/staging cleanup before final recovery. Instance cleanup diagnostics remain
+in their instance reports; they do not become recovery failures.
 
 ### Coordinated material favorites
 

@@ -28,6 +28,10 @@ Preparation checks the serialized child through the same resolver used by
    **Review shared extraction** transfers a ready or failed review to a new token.
    A stale review must be cancelled and prepared again.
 
+Cancellation releases owned staging after any active worker finishes. Normal
+exit cancels extraction and waits for worker/staging cleanup before the final
+recovery snapshot. Cleanup failures remain visible in the extraction report.
+
 ![Prepared extraction with selected IDs and child hash](images/instance-extraction.png)
 
 **Pivot: World origin (0, 0, 0)** is the only pivot. Child plane points and texture

@@ -1200,7 +1200,9 @@ cc -shared -fPIC -std=c11 -O2 -Wall -Wextra -Werror -fvisibility=hidden scripts/
 python3 -B scripts/validate_rotating_removal_recovery.py --binary target/debug/hammerr-headless --output /tmp/hammerr-contact-observer-client --runtime --reuse-fixture /tmp/hammerr-rotating-removal-check/compile.json --contact-observer-library target/debug/hammerr_contact_observer.so
 python3 -B scripts/validate_rotating_removal_recovery.py --binary target/debug/hammerr-headless --output /tmp/hammerr-disable-contact-client --runtime --release-mode disable --contact-observer-library target/debug/hammerr_contact_observer.so
 python3 -B scripts/validate_rotating_removal_recovery.py --binary target/debug/hammerr-headless --output /tmp/hammerr-initial-contact-profile --runtime --release-mode disable --contact-observer-library target/debug/hammerr_contact_observer.so --contact-initial-profile
+python3 -B scripts/validate_rotating_removal_recovery.py --binary target/debug/hammerr-headless --output /tmp/hammerr-contact-trigger-state --runtime --release-mode disable --contact-observer-library target/debug/hammerr_contact_observer.so --contact-trigger-state
 python3 -B scripts/validate_rotating_removal_recovery.py --binary target/debug/hammerr-headless --output /tmp/hammerr-refresh-contact-client --runtime --release-mode disable-refresh --contact-observer-library target/debug/hammerr_contact_observer.so
+python3 -B -m unittest discover -s scripts -p test_contact_runtime_observer.py
 ```
 
 `--contact-observer-library` loads the plugin only into the owned private game.
@@ -1226,6 +1228,20 @@ combined with `disable-refresh`. Initial profiles have separate telemetry
 acceptance; a pure Disable recovery failure remains a failed gameplay result.
 These are initialized-object observations, not creation-hook arguments or a
 reference-compiler comparison.
+
+`--contact-trigger-state` adds public `IsTrigger` observations for each contact's
+bound source/partner pair. It requires the native library and cannot accompany
+`disable-refresh`; it can accompany initial profiles. Receipts and start rows
+must agree on the option, and every selected contact row has strict Boolean
+`source_is_trigger` and `other_is_trigger` fields. Unselected captures retain
+their earlier rows and make no added getters. The decoder reports pair-state
+counts separately, including retained brace contacts before retry. Its unittest
+checks protocol admission without launching the game.
+
+False values describe only sampled instants. They cannot exclude an earlier
+transient trigger during Disable, establish recovery, or prove compiler parity.
+Existing authored Kill/Disable/Wake behavior and independent gameplay assertions
+retain their meaning. This probe makes no physics setter or contact-refresh call.
 
 `--release-mode disable` sends only **Disable** to the four braces and queues no
 **Wake**. Its separate fixture receipt prevents reuse of a Kill or Disable/Wake
@@ -2500,3 +2516,35 @@ Its fixed-origin completion ticket checks the unfinished job token before failur
 or success, including spawn/Join errors. Checks cover atomic Play/generation
 admission, cancellation, repeated/foreign completion, preserved initial status,
 and busy rejection through both paths. No compiler queue is introduced.
+
+### Instance worker shutdown cleanup
+
+```sh
+cargo test -p editor-core --features mcp document_shutdown_waits_for_instance_cleanup_before_final_capture_and_leaves_peer_live
+cargo test -p editor-core --features mcp cancelled_contents_keep_one_worker_across_replacement_until_owned_result_retires
+cargo test -p editor-core --features mcp contents_panic_completion_retires_its_ticket_without_stranding_the_session
+cargo test -p editor-core --features mcp extraction_panic_cleans_owned_stage_before_releasing_worker_ticket
+python3 -B scripts/validate_recovery_exit.py --headless-binary target/debug/hammerr-headless --editor-binary target/debug/editor --output /tmp/hammerr-instance-drain-check
+```
+
+These deterministic cases retain actual instance request/result tickets while
+closing an owning document, then check staging cleanup before exact final
+recovery and a live independent peer. Cancellation, dropped results and caught
+panics release physical liveness without changing stale-token admission or
+turning historical instance errors into exit failures.
+
+### Bounded FGD loading and shutdown
+
+```sh
+cargo test -p source-formats fgd::loading
+cargo test -p editor-core --features mcp session::definitions::tests
+cargo test -p editor-core --features mcp shutdown_waits_for_fgd_result_cleanup_before_recovery_and_keeps_peer_live
+cargo test -p editor fgd_worker_finishes_session_without_waiting_for_ui_notification
+```
+
+These cases cover file/include aliases, FIFO and sparse oversized input,
+pre-allocation parser/inheritance budgets, cancellation inside long lexer and
+parser runs, failed/foreign/superseded completion, ordinary map edits, and cleanup
+before final recovery. The UI case closes its software windows without pumping
+notifications and checks that the Session worker still finishes. The loader uses
+cooperative checks; it cannot preempt a filesystem syscall stalled in the kernel.

@@ -32,6 +32,10 @@ Session lock. Unsaved edits in that parent remain authoritative. All visible
 references must resolve successfully together. A missing or unsupported child
 fails the whole layer, including repeated occurrences of that child.
 
+Cancellation requests cleanup; a new refresh waits until that worker and its
+result have retired. Normal exit cancels outstanding instance work and waits
+for its cleanup before the final recovery snapshot.
+
 The layer is available in ordinary **Objects** mode. Faces, components,
 placement, paint, clipping, ruler endpoint picking and active geometry drafts suppress it, with a status
 reason. Child geometry never becomes an editable root face or placement target.

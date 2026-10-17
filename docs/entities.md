@@ -20,6 +20,15 @@ FGD extensions can add or replace property controls, defaults, choices, spawn fl
 
 Reloading definitions preserves existing entity values, custom keys, connections and undo history. It does not rewrite stored values to new defaults. A failed load keeps the previous catalog. Reload the root FGD to pick up later file changes.
 
+Loading runs outside the UI thread, with one active load per Session. Closing
+the editor cancels the load and waits for its owned result cleanup. A failed or
+superseded load preserves the current catalog and map.
+
+Sources must be regular files, at most 16 MiB each and 64 MiB across 256 files.
+Canonical file and directory aliases remain supported. The loader also bounds
+tokens, declarations, individual text fields and inherited-definition work;
+exceeding a limit reports an error instead of truncating definitions.
+
 Limits: FGD inheritance and extension targets match declaration names exactly, including case (`Light` and `light` can be separate classes). An extension whose target is absent is ignored and never creates a class. Extension descriptions are ignored. `base(...)` on `@ExtendClass` is unsupported and reports an error; extend an existing base class or define inheritance on the target class instead. Include and inheritance cycles or excessive nesting reject the load. Other extended directives and helper rendering are not implied by loading their metadata.
 
 ## Inspect FGD map size

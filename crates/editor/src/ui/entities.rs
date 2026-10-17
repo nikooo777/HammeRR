@@ -309,7 +309,7 @@ fn spawn_fgd_load(
     shared: &SharedSession,
     path: &Path,
 ) {
-    let request = match lock(&shared).begin_definitions_load(path) {
+    let request = match lock(shared).begin_definitions_load(path) {
         Ok(request) => request,
         Err(error) => {
             if let Some(app) = app.upgrade() {
@@ -339,7 +339,7 @@ fn spawn_fgd_load(
                 app_for_worker.upgrade_in_event_loop(move |app| app.set_message(message.into()));
         });
     if let Err(error) = spawned {
-        lock(&shared).fail_definitions_load(token);
+        lock(shared).fail_definitions_load(token);
         if let Some(app) = app.upgrade() {
             app.set_message(error.to_string().into());
         }

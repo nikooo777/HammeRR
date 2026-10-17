@@ -160,6 +160,8 @@ fn install_build(session: &mut Session, path: &Path, source: &Path) {
     let source_identity =
         compiler::FileIdentity::capture(source, &compiler::Control::default()).unwrap();
     session.compiled = Some(CompiledMap {
+        instance_dependencies: None,
+        instance_source_path: None,
         path: path.to_owned(),
         snapshot: Snapshot {
             generation: session.document_generation,

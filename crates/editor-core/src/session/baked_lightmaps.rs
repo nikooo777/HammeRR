@@ -160,6 +160,14 @@ impl Session {
                 "Mounted content or capture configuration changed since this build".to_owned(),
             );
         }
+        if let Some(error) = self.instance_dependency_issue(
+            build.instance_dependencies.as_ref(),
+            &build.instance_source_path,
+        ) {
+            diagnostics.push(format!(
+                "Instance source/dependencies changed or cannot be verified: {error}"
+            ));
+        }
         if self.compiling {
             diagnostics
                 .push("A new build is running; this is the previous successful build".to_owned());

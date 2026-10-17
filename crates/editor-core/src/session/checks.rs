@@ -32,6 +32,7 @@ pub struct MapReport {
     pub definitions_revision: u64,
     material_generation: u64,
     map_version: Option<String>,
+    instance_source_path: Option<Option<std::path::PathBuf>>,
     pub elapsed_ms: u128,
     pub result: Report,
 }
@@ -72,6 +73,10 @@ impl Session {
                 || report.material_generation != self.materials.generation()
                 || report.map_version.as_deref()
                     != self.document.vmf().world.properties.get("mapversion")
+                || report
+                    .instance_source_path
+                    .as_ref()
+                    .is_some_and(|path| path != &self.path)
         })
     }
 
@@ -203,7 +208,14 @@ impl Session {
             } else if has_definitions && !classname.is_empty() {
                 result.add(Severity::Warning, "unknown_class", &location, format!("{classname} is not declared in the loaded FGD. Custom classes are preserved; verify support in the game."), None);
             }
-            if let Some(diagnostic) = compiler::map::unresolved_instance_diagnostic(entity) {
+            if !entity.hidden && classname.eq_ignore_ascii_case("func_instance") {
+                let admission=compiler::instances::helper_admission(entity).and_then(|()|self.path.as_ref().map(|_|()).ok_or_else(||"Save the parent VMF before compiling instances; an output BSP path is not a source directory".into()));
+                let (severity,message)=match admission {
+                    Ok(())=>(Severity::Info,"Brush-only instance helper admitted; referenced geometry and dependencies are checked during compilation from the saved parent directory. This check does not load the child or expand the viewport.".into()),
+                    Err(error)=>(Severity::Error,error),
+                };
+                result.add(severity, "compiler_entity", &location, message, None);
+            } else if let Some(diagnostic) = compiler::map::unresolved_instance_diagnostic(entity) {
                 result.add(
                     Severity::Error,
                     "compiler_entity",
@@ -465,6 +477,8 @@ impl Session {
                 .properties
                 .get("mapversion")
                 .map(str::to_owned),
+            instance_source_path: compiler::instances::requires_source(self.document.vmf())
+                .then(|| self.path.clone()),
             elapsed_ms: start.elapsed().as_millis(),
             result,
         });

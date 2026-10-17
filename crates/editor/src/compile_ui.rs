@@ -9,6 +9,8 @@ use crate::session::{Actor, Session};
 
 mod baked_lightmaps;
 mod capture;
+#[cfg(test)]
+mod instance_dependency_tests;
 mod sky_packing;
 
 pub struct Controller {
@@ -661,6 +663,33 @@ impl Controller {
             .as_u64()
             .map(|count| format!("\nCubemap samples: {count}"))
             .unwrap_or_default();
+        let instances = result["stats"]["instances"]
+            .as_object()
+            .map(|_| {
+                let stats = &result["stats"]["instances"];
+                let mut summary = format!(
+                    "\nInstances: {} · Files: {} · World brushes: {} · Detail brushes: {}",
+                    stats["instances"].as_u64().unwrap_or_default(),
+                    stats["files"].as_u64().unwrap_or_default(),
+                    stats["world_brushes"].as_u64().unwrap_or_default(),
+                    stats["detail_brushes"].as_u64().unwrap_or_default()
+                );
+                for dependency in stats["dependencies"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .take(32)
+                {
+                    summary.push_str(&format!(
+                        "\nInstance file: {} · {} bytes · SHA256 {}",
+                        dependency["path"].as_str().unwrap_or_default(),
+                        dependency["bytes"].as_u64().unwrap_or_default(),
+                        dependency["sha256"].as_str().unwrap_or_default()
+                    ));
+                }
+                summary
+            })
+            .unwrap_or_default();
         let reflections = if job["settings"]["generate_reflections"] == true {
             format!(
                 "\n{} reflection capture: {} / {} samples",
@@ -961,7 +990,7 @@ impl Controller {
         };
         self.window.set_details(
             format!(
-                "Output: {}\nRecipe at build start: {}\nCompile scope at build start: {region_label}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nIndirect light: {} · Brush smoothing angle: {}°\nStage: {} · {:.2}s elapsed{packed_sky}{samples}{reflections}{props}{details}{visibility}{hints}{bounce}{areas}{occluders}{terrain}{overlays}{water}{sky}{lighting}{bumps}{model_maps}{styles}{hdr}{smoothing}{physics}\n{}",
+                "Output: {}\nRecipe at build start: {}\nCompile scope at build start: {region_label}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nIndirect light: {} · Brush smoothing angle: {}°\nStage: {} · {:.2}s elapsed{instances}{packed_sky}{samples}{reflections}{props}{details}{visibility}{hints}{bounce}{areas}{occluders}{terrain}{overlays}{water}{sky}{lighting}{bumps}{model_maps}{styles}{hdr}{smoothing}{physics}\n{}",
                 job["path"].as_str().unwrap_or_default(),
                 job["recipe"]["name"].as_str().unwrap_or("Custom settings"),
                 compiler::LightingMode::parse(job["settings"]["lighting"].as_str().unwrap_or_default()).unwrap_or_default().label(),
@@ -973,7 +1002,7 @@ impl Controller {
                 job["stage_label"].as_str().unwrap_or_default(),
                 job["elapsed_ms"].as_u64().unwrap_or_default() as f64 / 1000.0,
                 if job["stale"].as_bool().unwrap_or(false) {
-                    "The map or build settings changed. Compile again before playing."
+                    if job["instance_dependencies"].is_object() {"The map, build settings or instance dependencies changed. Compile again before playing."} else {"The map or build settings changed. Compile again before playing."}
                 } else {
                     "This build uses the current map snapshot. Unsaved VMF edits are included."
                 }

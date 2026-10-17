@@ -133,6 +133,8 @@ struct CompiledMap {
     options: compiler::Options,
     content_epoch: u64,
     lightmap_identity: baked_lightmaps::BuildIdentity,
+    instance_dependencies: Option<compiler::instances::DependencyGuard>,
+    instance_source_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -266,10 +268,19 @@ pub struct Session {
 pub struct LaunchRequest {
     install: game::Install,
     bsp: PathBuf,
+    instance_dependencies: Option<compiler::instances::DependencyGuard>,
 }
 
 impl LaunchRequest {
+    fn verify_instance_dependencies(&self) -> Result<(), String> {
+        if let Some(dependencies) = &self.instance_dependencies {
+            dependencies.verify(&compiler::Control::default()).map_err(|error|format!("Instance source/dependencies changed since compilation; compile again before launching: {error}"))?;
+        }
+        Ok(())
+    }
+
     pub fn run(self) -> Result<game::Run, String> {
+        self.verify_instance_dependencies()?;
         game::Run::launch(&self.install, &self.bsp)
     }
 }
@@ -1781,6 +1792,20 @@ impl Session {
                 "the map changed since compilation; compile it again before launching".into(),
             );
         }
+        if let Some(error) = self.instance_dependency_issue(
+            compiled.instance_dependencies.as_ref(),
+            &compiled.instance_source_path,
+        ) {
+            return Err(format!(
+                "Instance source/dependencies changed since compilation; compile again before launching: {error}"
+            ));
+        }
+        if compiled.instance_dependencies.is_some() && compiled.content_epoch != self.content_epoch
+        {
+            return Err(
+                "Content changed since instance compilation; compile again before launching".into(),
+            );
+        }
         if compiled.options.generate_reflections && compiled.content_epoch != self.content_epoch {
             return Err("Content or native runtime changed since reflection capture; compile again before launching".into());
         }
@@ -1799,6 +1824,10 @@ impl Session {
         let request = LaunchRequest {
             install: game::Install::from_game(&self.game)?,
             bsp,
+            instance_dependencies: self
+                .compiled
+                .as_ref()
+                .and_then(|compiled| compiled.instance_dependencies.clone()),
         };
         self.launching = true;
         self.log(actor, "launching CS:S");

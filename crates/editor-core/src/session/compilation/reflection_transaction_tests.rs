@@ -79,6 +79,7 @@ fn prepared_assets(
             stats: Default::default(),
             cubemap_assets: None,
             sky_assets: None,
+            instance_dependencies: None,
         }
     };
     let pending = output
@@ -99,6 +100,8 @@ fn prepared_assets(
         options: session.compilation.options,
         content_epoch: session.content_epoch,
         lightmap_identity: baked_lightmaps::BuildIdentity::capture(0, &destination, Ok(None), None),
+        instance_dependencies: None,
+        instance_source_path: None,
     });
     let result = CompileResult {
         token: request.token,
@@ -115,6 +118,7 @@ fn prepared_assets(
             pending,
             lease: Some(lease),
             pointfile_lease,
+            pointfile_stamp: None,
             sources: Some(sources),
             published: false,
             committed: false,

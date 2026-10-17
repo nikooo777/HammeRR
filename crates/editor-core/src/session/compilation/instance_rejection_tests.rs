@@ -66,7 +66,20 @@ fn instance_failures_preserve_shared_session_and_regular_or_guarded_outputs() {
         let camera = session.camera();
         session.run_map_checks(actor);
         let issues = session
-            .map_checks_json(Some("error"), "instance expansion", 0, 50)
+            .map_checks_json(
+                Some(if classname.eq_ignore_ascii_case("func_instance") {
+                    "info"
+                } else {
+                    "error"
+                }),
+                if classname.eq_ignore_ascii_case("func_instance") {
+                    "dependencies"
+                } else {
+                    "instance expansion"
+                },
+                0,
+                50,
+            )
             .unwrap();
         assert_eq!(issues["matching"], 1);
         assert_eq!(issues["issues"][0]["code"], "compiler_entity");

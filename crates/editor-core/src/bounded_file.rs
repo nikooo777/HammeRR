@@ -1,4 +1,4 @@
-use std::fs::{self, Metadata, OpenOptions};
+use std::fs::{self, File, Metadata};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
@@ -29,6 +29,25 @@ fn same_metadata(before: &Metadata, after: &Metadata) -> bool {
     same
 }
 
+#[cfg(unix)]
+fn open_target(path: &Path) -> io::Result<File> {
+    use rustix::fs::OFlags;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    fs::OpenOptions::new()
+        .read(true)
+        .custom_flags((OFlags::NONBLOCK | OFlags::NOFOLLOW).bits() as i32)
+        .open(path)
+}
+
+#[cfg(not(unix))]
+fn open_target(_path: &Path) -> io::Result<File> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "Bounded opened-target reads require Unix",
+    ))
+}
+
 impl Source {
     pub(crate) fn capture(path: &Path, limit: u64) -> io::Result<Self> {
         let requested = std::path::absolute(path)?;
@@ -56,15 +75,7 @@ impl Source {
         mut checkpoint: impl FnMut() -> io::Result<()>,
     ) -> io::Result<Vec<u8>> {
         checkpoint()?;
-        let mut options = OpenOptions::new();
-        options.read(true);
-        #[cfg(target_os = "linux")]
-        {
-            use rustix::fs::OFlags;
-            use std::os::unix::fs::OpenOptionsExt;
-            options.custom_flags((OFlags::NONBLOCK | OFlags::NOFOLLOW).bits() as i32);
-        }
-        let file = options.open(&self.target)?;
+        let file = open_target(&self.target)?;
         if !same_metadata(&self.metadata, &file.metadata()?) {
             return Err(io::Error::other("File changed while opening"));
         }

@@ -61,6 +61,8 @@ impl Session {
         {
             return Err("Object picking needs a finite origin and nonzero finite direction".into());
         }
+        self.preflight_instance_contents();
+        let references = self.instance_contents_hits(ray, None);
         let hidden = self.hidden_tool_brushes();
         let document = self.render_document();
         let evaluation = self.working_evaluation(document);
@@ -110,6 +112,9 @@ impl Session {
                     retain(hit);
                 }
             }
+        }
+        for hit in references {
+            retain(hit);
         }
         let index = self.group_selection_index();
         let mut units = BTreeMap::<map_core::groups::Member, Candidate>::new();

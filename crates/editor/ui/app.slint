@@ -1,3 +1,4 @@
+export { InstanceContentsWindow } from "instance-contents.slint";
 export { MaterialSourceWindow } from "material-source.slint";
 export { AtlasWindow } from "atlas.slint";
 export { SkyAssetsWindow, SkyAssetFaceRow } from "sky-assets.slint";
@@ -1921,6 +1922,9 @@ export component AppWindow inherits Window {
     in-out property <int> sky-channel: 0;
     in-out property <string> sky-exposure-ev: "0";
     in property <string> sky-preview-error;
+    in-out property <bool> instance-contents: false;
+    in property <string> instance-contents-status: "Instance contents have not been refreshed";
+    callback inspect-instance-contents();
     in-out property <bool> rope-preview: false;
     in-out property <bool> selection-outlines: true;
     in-out property <bool> entity-images: true;
@@ -2677,6 +2681,13 @@ export component AppWindow inherits Window {
                     }
                     Button { text: "Fog preview…"; clicked => { root.fog-preview(); } }
                     Text { text: root.fog-preview-status; color: #aeb9c8; wrap: word-wrap; font-size: 12px; }
+                    CheckBox {
+                        text: "Instance contents";
+                        checked <=> root.instance-contents;
+                        toggled => { root.options-changed(); }
+                    }
+                    Button { text: "Instance contents…"; clicked => { root.inspect-instance-contents(); } }
+                    if root.instance-contents: Text { text: root.instance-contents-status; color: #aeb9c8; wrap: word-wrap; font-size: 12px; }
                     CheckBox {
                         text: "Rope preview";
                         checked <=> root.rope-preview;

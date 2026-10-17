@@ -19,6 +19,7 @@ pub const MAX_RELOAD_FAILURES: usize = 100;
 
 #[derive(Debug)]
 pub struct MaterialInfo {
+    pub(crate) reference: bool,
     pub lighting_error: Option<String>,
     pub terrain_lighting_error: Option<String>,
     pub normal: Option<Arc<crate::normal_maps::Asset>>,
@@ -119,6 +120,7 @@ impl MaterialInfo {
         }) || matches!(name, "tools/toolsskybox" | "tools/toolsskybox2d");
 
         Self {
+            reference: false,
             material_identity: material.map(material_identity),
             lighting_error: material
                 .map_or_else(|| Some("No resolved material".into()), lighting_error),
@@ -146,6 +148,7 @@ impl MaterialInfo {
     /// A flat-colored material for editor helpers such as entity boxes.
     pub fn untextured(name: &str) -> Self {
         Self {
+            reference: false,
             material_identity: None,
             lighting_error: Some("Editor helper or unavailable material".into()),
             terrain_lighting_error: Some("Editor helper or unavailable material".into()),
@@ -330,7 +333,8 @@ impl MaterialLibrary {
         self.icons.clear();
         self.hdr_skybox = None;
         for (id, material) in self.materials.iter_mut().enumerate().skip(1) {
-            if material.helper.is_some() || Some(id) == self.unavailable_model {
+            if material.reference || material.helper.is_some() || Some(id) == self.unavailable_model
+            {
                 continue;
             }
             *material = MaterialInfo::load(fs, &material.name);
@@ -414,6 +418,22 @@ impl MaterialLibrary {
     /// Flat white, tinted by vertex color: entity boxes and other helpers.
     pub const EDITOR: MaterialId = 0;
     const EDITOR_NAME: &str = "__editor/flat";
+
+    pub(crate) fn reference_geometry(&mut self) -> MaterialId {
+        const NAME: &str = "__editor/instance-reference";
+        if let Some(id) = self
+            .materials
+            .iter()
+            .position(|material| material.reference)
+        {
+            return id;
+        }
+        let mut material = MaterialInfo::untextured(NAME);
+        material.reference = true;
+        let id = self.materials.len();
+        self.materials.push(material);
+        id
+    }
 
     pub(crate) fn light_bulb(&mut self) -> MaterialId {
         const NAME: &str = "__editor/lightbulb";

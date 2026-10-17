@@ -210,6 +210,7 @@ pub struct PaintGuide {
 /// View filters and resource admission options.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ViewOptions {
+    pub instance_contents: bool,
     pub lighting_preview: bool,
     pub lighting_quality: crate::lighting::Quality,
     pub lighting_exposure_ev: f32,
@@ -241,6 +242,7 @@ pub struct ViewOptions {
 impl Default for ViewOptions {
     fn default() -> Self {
         Self {
+            instance_contents: false,
             surface: SurfaceView::Textured,
             normal_maps: false,
             lighting_preview: false,
@@ -271,38 +273,46 @@ impl Default for ViewOptions {
     }
 }
 
-pub type SceneKey = (
-    u64,
-    crate::sky::Channel,
-    bool,
-    bool,
-    bool,
-    bool,
-    bool,
-    bool,
-    bool,
-    bool,
-);
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SceneKey {
+    pub serial: u64,
+    pub instance_contents_serial: u64,
+    sky_channel: crate::sky::Channel,
+    entity_images: bool,
+    entity_model_guides: bool,
+    normal_maps: bool,
+    normal_maps_textured: bool,
+    lighting_preview: bool,
+    lighting_textured: bool,
+    lighting_tool_textures: bool,
+    additive_sprite_guides: bool,
+    instance_contents: bool,
+}
 
 impl ViewOptions {
     pub fn scene_key(self, serial: u64) -> SceneKey {
-        (
+        SceneKey {
             serial,
-            self.sky_channel,
-            self.entity_images,
-            self.entity_model_guides,
-            self.normal_maps,
-            self.normal_maps && self.surface == SurfaceView::Textured,
-            self.lighting_preview,
-            self.lighting_preview && self.surface == SurfaceView::Textured,
-            self.additive_sprite_guides,
-            self.lighting_preview && self.surface == SurfaceView::Textured && self.tool_textures,
-        )
+            instance_contents_serial: 0,
+            sky_channel: self.sky_channel,
+            entity_images: self.entity_images,
+            entity_model_guides: self.entity_model_guides,
+            normal_maps: self.normal_maps,
+            normal_maps_textured: self.normal_maps && self.surface == SurfaceView::Textured,
+            lighting_preview: self.lighting_preview,
+            lighting_textured: self.lighting_preview && self.surface == SurfaceView::Textured,
+            lighting_tool_textures: self.lighting_preview
+                && self.surface == SurfaceView::Textured
+                && self.tool_textures,
+            additive_sprite_guides: self.additive_sprite_guides,
+            instance_contents: self.instance_contents,
+        }
     }
 }
 
 #[derive(Debug, Clone, Copy)]
 struct DrawBatch {
+    reference: bool,
     batch: Batch,
     center: glam::Vec3,
     tool: bool,
@@ -339,6 +349,8 @@ struct IconDraw {
 
 /// Geometry uploaded by a [`Renderer`]; draw it with the same renderer.
 pub struct GpuScene {
+    reference_lines: Option<(wgpu::Buffer, u32)>,
+    reference_selection_ranges: Vec<std::ops::Range<u32>>,
     lighting: crate::lighting::Preview,
     icons: Option<wgpu::Buffer>,
     icon_draws: Vec<IconDraw>,
@@ -763,6 +775,7 @@ impl Renderer {
                 )
             })
         };
+        let reference_lines = wire_buffer("instance reference edges", &mesh.reference_lines);
         let wire_lines = wire_buffer("brush wireframes", &mesh.wire_lines);
         let tool_wire_lines = wire_buffer("tool brush wireframes", &mesh.tool_wire_lines);
         let rope_lines = wire_buffer("rope selection", &mesh.rope_lines);
@@ -778,6 +791,7 @@ impl Renderer {
                     (mins.min(point), maxs.max(point))
                 });
             let draw = DrawBatch {
+                reference: info.reference,
                 batch,
                 center: (mins + maxs) * 0.5,
                 tool: info.tool,
@@ -853,6 +867,8 @@ impl Renderer {
                 })
         });
         GpuScene {
+            reference_lines,
+            reference_selection_ranges: mesh.reference_selection_ranges.clone(),
             lighting: mesh.lighting.clone(),
             icons,
             icon_draws,
@@ -979,7 +995,7 @@ impl Renderer {
             flag(info.translucent),
             flag(untextured),
             flag(info.helper.is_some()),
-            flag(editor || info.sky),
+            flag(editor || info.sky || info.reference),
             flag(normal_asset.is_some()),
             0.0,
             transform[0],
@@ -1193,6 +1209,9 @@ impl Renderer {
                 (&self.translucent_pipeline, translucent.as_ref()),
             ] {
                 for draw in batches {
+                    if draw.reference && !options.instance_contents {
+                        continue;
+                    }
                     if draw.batch.rope && !options.rope_preview {
                         continue;
                     }
@@ -1265,6 +1284,19 @@ impl Renderer {
                     pass.set_pipeline(&self.line_pipeline);
                     pass.set_vertex_buffer(0, lines.0.slice(..));
                     pass.draw(0..lines.1, 0..1);
+                }
+            }
+            if options.instance_contents
+                && let Some((lines, count)) = &scene.reference_lines
+            {
+                pass.set_pipeline(&self.line_pipeline);
+                pass.set_vertex_buffer(0, lines.slice(..));
+                if options.surface == SurfaceView::Wireframe {
+                    pass.draw(0..*count, 0..1);
+                } else if options.selection_outlines {
+                    for range in &scene.reference_selection_ranges {
+                        pass.draw(range.clone(), 0..1);
+                    }
                 }
             }
             if let Some((lines, count)) = &scene.lines {

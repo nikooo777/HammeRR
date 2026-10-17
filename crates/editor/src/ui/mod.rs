@@ -30,6 +30,7 @@ mod materials;
 use materials::*;
 mod navigation;
 use navigation::*;
+mod instance_contents;
 mod object_picking;
 mod transform_pivot;
 use transform_pivot::*;
@@ -163,6 +164,13 @@ fn refresh_view_controls(app: &AppWindow, session: &Session) {
     app.set_selection_outlines(session.view().selection_outlines);
     app.set_entity_images(session.view().entity_images);
     app.set_entity_model_guides(session.view().entity_model_guides);
+    app.set_instance_contents(session.view().instance_contents);
+    app.set_instance_contents_status(
+        session.instance_contents_rendered_report()["summary"]
+            .as_str()
+            .unwrap_or("Instance contents have not been refreshed")
+            .into(),
+    );
     app.set_rope_preview(session.view().rope_preview);
     app.set_sky_channel(if session.view().sky_channel == render::sky::Channel::Hdr {
         1
@@ -223,6 +231,7 @@ fn bind_view_controls(app: &AppWindow, shared: SharedSession) {
                 }
             };
             let mut view = match session.resolve_view_update(editor_core::session::ViewUpdate {
+                instance_contents: Some(app.get_instance_contents()),
                 lighting_preview: Some(app.get_lighting_preview()),
                 lighting_quality: Some(if app.get_lighting_quality() == 0 {
                     "fast"
@@ -1932,6 +1941,7 @@ pub(super) fn run(
     });
     bind_model_guide_reload(&app, session_of(&ui));
     bind_view_controls(&app, session_of(&ui));
+    instance_contents::bind(&app, session_of(&ui));
     app.on_key({
         let (app, ui) = (app.as_weak(), ui.clone());
         move |text, down, control, shift, alt, meta| {
@@ -2859,15 +2869,23 @@ pub(super) fn run(
                 } else {
                     session.publish_camera(ui.viewport.camera);
                 }
-                let scene_key = session.view().scene_key(session.scene_serial());
+                session.preflight_instance_contents();
+                let scene_key = session.render_scene_key(session.view());
                 if scene_key != ui.seen_scene {
-                    if session.scene_serial() != ui.seen_scene.0 {
+                    if session.scene_serial() != ui.seen_scene.serial {
                         ui.brush_drag = None;
                     }
                     ui.seen_scene = scene_key;
+                    app.set_instance_contents(session.view().instance_contents);
                     let mesh = session.build_scene();
                     app.set_normal_map_status(mesh.normal_maps.summary().into());
                     app.set_lighting_status(mesh.lighting.report.summary().into());
+                    app.set_instance_contents_status(
+                        session.instance_contents_rendered_report()["summary"]
+                            .as_str()
+                            .unwrap_or("Instance contents unavailable")
+                            .into(),
+                    );
                     let mut preview_error = mesh.issue_summary();
                     if let Some(report) = session.material_reload_report()
                         && report.failed > 0

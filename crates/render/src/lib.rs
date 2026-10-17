@@ -11,6 +11,7 @@ pub mod lighting;
 pub mod materials;
 pub mod models;
 pub mod normal_maps;
+pub mod references;
 pub mod ropes;
 pub mod scene;
 pub mod sky;

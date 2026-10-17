@@ -1497,7 +1497,16 @@ impl Session {
 
     pub fn set_view(&mut self, view: ViewOptions) {
         let previous = self.view();
+        let mut without_instance_contents = view;
+        without_instance_contents.instance_contents = previous.instance_contents;
+        if view.instance_contents != previous.instance_contents
+            && without_instance_contents == previous
+        {
+            self.view = view;
+            return;
+        }
         let mut without_resource_changes = view;
+        without_resource_changes.instance_contents = previous.instance_contents;
         without_resource_changes.entity_images = previous.entity_images;
         without_resource_changes.additive_sprite_guides = previous.additive_sprite_guides;
         without_resource_changes.entity_model_guides = previous.entity_model_guides;
@@ -1920,6 +1929,17 @@ impl Session {
     }
 
     pub fn pick_with_rope_preview(&mut self, ray: &Ray, rope_preview: Option<bool>) -> Option<Hit> {
+        self.pick_with_previews(ray, rope_preview, None)
+    }
+
+    pub fn pick_with_previews(
+        &mut self,
+        ray: &Ray,
+        rope_preview: Option<bool>,
+        instance_contents: Option<bool>,
+    ) -> Option<Hit> {
+        self.preflight_instance_contents();
+        let references = self.instance_contents_hits(ray, instance_contents);
         let hidden = self.hidden_tool_brushes();
         let document = self.render_document();
         if self.face_mode {
@@ -1969,7 +1989,12 @@ impl Session {
                                 .collect::<Vec<_>>()
                         }),
                 )
-                .min_by(|a, b| a.distance.total_cmp(&b.distance))
+                .chain(references)
+                .min_by(|a, b| {
+                    a.distance
+                        .total_cmp(&b.distance)
+                        .then(a.object.cmp(&b.object))
+                })
         }
     }
 
@@ -2206,6 +2231,24 @@ impl Session {
             material_generation: self.materials.generation(),
         });
         mesh.lighting = lighting;
+        let references = self.instance_contents_preview(view.instance_contents);
+        let mut report = references.report;
+        if let Some(reference_mesh) = references.mesh
+            && let Err(error) = mesh.append_references(
+                &reference_mesh,
+                &mut self.materials,
+                &references.owners,
+                &selected,
+            )
+        {
+            report["displayed"] = serde_json::json!(false);
+            report["status"] = serde_json::json!("failed");
+            report["summary"] = serde_json::json!(format!(
+                "Instance contents unavailable: {error}; ordinary scene retained"
+            ));
+            report["error"] = serde_json::json!(error);
+        }
+        self.retain_instance_contents_render_report(report);
         if let Some(points) = self.pointfile_points() {
             mesh.set_leak_path(points);
         }

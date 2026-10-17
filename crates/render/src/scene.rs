@@ -96,6 +96,8 @@ pub struct SceneStats {
 
 #[derive(Debug)]
 pub struct SceneMesh {
+    pub reference_lines: Vec<LineVertex>,
+    pub reference_selection_ranges: Vec<std::ops::Range<u32>>,
     pub lighting: crate::lighting::Preview,
     pub normal_maps: crate::normal_maps::Report,
     pub issues: Vec<SceneIssue>,
@@ -1400,6 +1402,8 @@ impl SceneMesh {
         }
         stats.missing_materials = missing_materials.len();
         let mut mesh = Self {
+            reference_lines: Vec::new(),
+            reference_selection_ranges: Vec::new(),
             lighting: builder.lighting,
             normal_maps: builder.normal_maps,
             icons: builder.displayed_icons,

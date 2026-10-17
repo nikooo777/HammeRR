@@ -18,7 +18,6 @@ fn instance_failures_preserve_shared_session_and_regular_or_guarded_outputs() {
         let mut hidden = Entity::new(id + 1, "func_instance_parms");
         hidden.hidden = true;
         vmf.entities.push(hidden);
-        vmf.entities.push(Entity::new(id + 2, "func_viscluster"));
         if region {
             vmf.cordon = Some(Node::block(
                 "cordon",
@@ -84,14 +83,6 @@ fn instance_failures_preserve_shared_session_and_regular_or_guarded_outputs() {
         assert_eq!(issues["matching"], 1);
         assert_eq!(issues["issues"][0]["code"], "compiler_entity");
         assert_eq!(issues["issues"][0]["object"], format!("entity:{id}"));
-        let warnings = session
-            .map_checks_json(Some("warning"), "native compiler currently omits", 0, 50)
-            .unwrap();
-        assert_eq!(warnings["matching"], 1);
-        assert_eq!(
-            warnings["issues"][0]["object"],
-            format!("entity:{}", id + 2)
-        );
         let result = session.begin_compile(actor, None).unwrap().run();
         let output = &result.as_ref().unwrap().output;
         assert!(output.bsp.is_none());

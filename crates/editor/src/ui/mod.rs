@@ -3421,6 +3421,8 @@ mod projector_tests;
 
 #[cfg(test)]
 mod icon_tests;
+#[cfg(test)]
+mod viscluster_tests;
 
 #[cfg(test)]
 mod model_guide_tests;

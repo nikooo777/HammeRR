@@ -74,6 +74,34 @@ fn hdr_lighting_details(stats: &serde_json::Value) -> String {
     )
 }
 
+fn visibility_details(stats: &serde_json::Value) -> String {
+    let Some(count) = stats["clusters"].as_u64() else {
+        return String::new();
+    };
+    let solved = stats["visibility_solved_clusters"]
+        .as_u64()
+        .unwrap_or(count);
+    let portals = stats["visibility_portals"].as_u64().unwrap_or_default();
+    let removed = stats["visibility_removed_pairs"]
+        .as_u64()
+        .unwrap_or_default();
+    let workers = stats["visibility_workers"].as_u64().unwrap_or(1);
+    let mut text = format!(
+        "\nVisibility: {count} emitted clusters · {solved} solved leaf clusters · {portals} leaf portals · Workers: {workers} · {removed} leaf-cluster pairs removed before authored grouping"
+    );
+    if stats["viscluster_helpers"].as_u64().unwrap_or_default() > 0 {
+        text += &format!(
+            "\nAuthored visclusters: {} helpers · {} effective groups · {} grouped leaves · Visibility may expand; solver cost is unchanged",
+            stats["viscluster_helpers"].as_u64().unwrap_or_default(),
+            stats["viscluster_groups"].as_u64().unwrap_or_default(),
+            stats["viscluster_grouped_leaves"]
+                .as_u64()
+                .unwrap_or_default()
+        );
+    }
+    text
+}
+
 fn refresh_recipes(window: &CompileWindow, session: &Session, form: &RefCell<RecipeForm>) {
     let state = session.build_recipes();
     let mut form = form.borrow_mut();
@@ -746,19 +774,7 @@ impl Controller {
                 format!("\nDetail props: {count} · Model assets: {models} · Sprite entries: {sprites} · {lighting} · No collision")
             })
             .unwrap_or_default();
-        let visibility = result["stats"]["clusters"]
-            .as_u64()
-            .map(|count| {
-                let portals = result["stats"]["visibility_portals"]
-                    .as_u64()
-                    .unwrap_or_default();
-                let cluster_label = if count == 1 { "cluster" } else { "clusters" };
-                let portal_label = if portals == 1 { "portal" } else { "portals" };
-                let removed = result["stats"]["visibility_removed_pairs"].as_u64().unwrap_or_default();
-                let workers = result["stats"]["visibility_workers"].as_u64().unwrap_or(1);
-                format!("\nVisibility: {count} {cluster_label} · {portals} {portal_label} · Workers: {workers} · {removed} cluster pairs removed")
-            })
-            .unwrap_or_default();
+        let visibility = visibility_details(&result["stats"]);
         let bumps = result["stats"]["bump_faces"]
             .as_u64()
             .filter(|&count| count > 0)
@@ -1061,6 +1077,20 @@ impl Controller {
 mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn visibility_labels_distinguish_solved_work_from_authored_output() {
+        let text = visibility_details(&serde_json::json!({
+            "clusters":3,"visibility_solved_clusters":7,"visibility_portals":8,
+            "visibility_removed_pairs":4,"viscluster_helpers":2,"viscluster_groups":1,
+            "viscluster_grouped_leaves":5,"visibility_workers":2
+        }));
+        assert!(text.contains("3 emitted clusters"));
+        assert!(text.contains("7 solved leaf clusters"));
+        assert!(text.contains("4 leaf-cluster pairs removed before authored grouping"));
+        assert!(text.contains("2 helpers · 1 effective groups · 5 grouped leaves"));
+        assert!(text.contains("Visibility may expand"));
+    }
 
     #[test]
     fn hdr_results_keep_channels_separate_and_explain_empty_native_data() {

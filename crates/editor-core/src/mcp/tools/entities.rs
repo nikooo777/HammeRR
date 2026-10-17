@@ -91,7 +91,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect an entity using the same human-readable labels, common/advanced fields, typed controls, colors, brightness, choices and FGD helper bounds/status/errors as the property panel.",
+        description = "Inspect an entity using the same human-readable labels, common/advanced fields, typed controls, colors, brightness, choices and FGD helper bounds/status/errors as the property panel. helpers.sprite_resource reports static Sprite resource guides, exact resolved VMT/provenance, positive-scale dimensions and unevaluated runtime fields; Entity images controls admission and drawing.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_entity_inspector(

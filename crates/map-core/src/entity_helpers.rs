@@ -10,6 +10,7 @@ pub mod lines;
 pub mod projectors;
 pub mod spheres;
 mod values;
+pub use values::{Value as HelperValue, bounded as bounded_preview};
 
 pub const MAX_HELPER_EXTENT: f64 = 65_536.0;
 

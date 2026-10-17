@@ -768,7 +768,7 @@ impl Renderer {
                     self.material_bind_group_with_sampler(ctx, material, false, &self.icon_sampler);
                 self.icon_bindings.insert(id, binding);
             }
-            let half = instance.asset.report.world_size.map(|size| size * 0.5);
+            let half = instance.world_size.map(|size| size * 0.5);
             let first_vertex = icon_vertices.len() as u32;
             for (offset, uv) in [
                 ([-half[0], half[1]], [0.0, 0.0]),

@@ -52,7 +52,9 @@ pub(crate) fn refresh_material_window(window: &MaterialWindow, session: &mut Ses
             .into(),
     );
     window.set_favorite(session.is_material_favorite(&window.get_material()));
-    match session.material_preview(&window.get_material()) {
+    match material_picker_reference(window, &window.get_material())
+        .and_then(|material| session.material_preview(&material))
+    {
         Ok(preview) => {
             window.set_available(preview.image.is_some());
             window.set_preview(preview_image(&preview));
@@ -588,8 +590,8 @@ pub(crate) fn refresh_material_catalog(window: &MaterialWindow, session: &mut Se
         .entries
         .into_iter()
         .map(|entry| MaterialTile {
-            preview: session
-                .material_preview(&entry.name)
+            preview: material_picker_reference(window, &entry.name)
+                .and_then(|material| session.material_preview(&material))
                 .ok()
                 .map(|preview| preview_image(&preview))
                 .unwrap_or_default(),
@@ -605,6 +607,117 @@ pub(crate) fn refresh_material_catalog(window: &MaterialWindow, session: &mut Se
         .collect::<Vec<_>>();
     window.set_rows(ModelRc::new(VecModel::from(rows)));
     window.set_favorite(session.is_material_favorite(&window.get_material()));
+}
+
+fn bind_material_choice(window: &MaterialWindow, app: &AppWindow, ui: &SharedUi) {
+    window.on_use_material({
+        let (window, app, ui) = (window.as_weak(), app.as_weak(), ui.clone());
+        move || {
+            let window = window.unwrap();
+            let app = app.unwrap();
+            let material = window.get_material();
+            let shared = session_of(&ui);
+            let mut session = lock(&shared);
+            if !review_material_choice(&window, &mut session) {
+                return;
+            }
+            if let Some(target) = ui.borrow().overlay_material_target.clone() {
+                if let Some(controller) = &ui.borrow().overlay
+                    && let Err(error) = controller.choose_material(&mut session, &target, &material)
+                {
+                    window.set_detail(error.into());
+                    return;
+                }
+            } else if let Some(replacement) = ui.borrow().material_for_replace {
+                if let Some(controller) = &ui.borrow().material_replace {
+                    controller.choose_material(&mut session, replacement, &material);
+                }
+            } else if ui.borrow().material_for_clip {
+                app.set_clip_material(material);
+                if let Some(points) = session.clip_points().map(|d| d.points.clone()) {
+                    if let Err(error) = change_clip_points(&app, &mut session, points) {
+                        window.set_detail(error.into());
+                        return;
+                    }
+                } else {
+                    session.cancel_clip_preview();
+                }
+                refresh_clip(&app, &session);
+            } else if ui.borrow().material_for_primitive {
+                if let Some(primitive) = &ui.borrow().primitive_window {
+                    let Some(target) = ui.borrow().primitive_material_target else {
+                        return;
+                    };
+                    if let Err(error) =
+                        primitive_ui::choose_material(primitive, &mut session, target, &material)
+                    {
+                        window.set_detail(error.into());
+                        return;
+                    }
+                }
+            } else if ui.borrow().material_for_polygon {
+                if let Some(polygon) = &ui.borrow().polygon {
+                    let Some(target) = ui.borrow().primitive_material_target else {
+                        return;
+                    };
+                    if let Err(error) = polygon.choose_material(&mut session, target, &material) {
+                        window.set_detail(error.into());
+                        return;
+                    }
+                }
+            } else if ui.borrow().material_for_partition {
+                if let Some(components) = &ui.borrow().components_window {
+                    let Some(target) = ui.borrow().partition_material_target.clone() else {
+                        return;
+                    };
+                    if let Err(error) = components_ui::choose_partition_material(
+                        components,
+                        &mut session,
+                        &target,
+                        Some(material.as_str()),
+                    ) {
+                        window.set_detail(error.into());
+                        return;
+                    }
+                }
+            } else if ui.borrow().material_for_extrusion {
+                if let Some(components) = &ui.borrow().components_window {
+                    let Some(target) = ui.borrow().extrusion_material_target else {
+                        return;
+                    };
+                    if let Err(error) = components_ui::choose_extrusion_material(
+                        components,
+                        &mut session,
+                        target,
+                        &material,
+                    ) {
+                        window.set_detail(error.into());
+                        return;
+                    }
+                }
+            } else if ui.borrow().material_for_group {
+                if let Some(controller) = &ui.borrow().surface_group {
+                    controller.choose_material(&mut session, &material);
+                }
+            } else if ui.borrow().material_for_faces {
+                if let Some(surface) = &ui.borrow().surface_window {
+                    surface.set_material(material.clone());
+                    surface.set_preview(
+                        session
+                            .material_preview(&material)
+                            .ok()
+                            .map(|preview| preview_image(&preview))
+                            .unwrap_or_default(),
+                    );
+                }
+            } else {
+                app.set_material(material);
+                refresh_material_preview(&app, &mut session);
+            }
+            drop(session);
+            let _ = window.hide();
+        }
+    });
 }
 
 pub(super) fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
@@ -623,12 +736,7 @@ pub(super) fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
                 refresh_material_catalog(&window, &mut lock(&session_of(&ui)));
             }
         });
-        window.on_cancel({
-            let window = window.as_weak();
-            move || {
-                let _ = window.unwrap().hide();
-            }
-        });
+        bind_material_cancel(&window);
         window.on_toggle_favorite({
             let (window, ui) = (window.as_weak(), ui.clone());
             move || {
@@ -649,134 +757,6 @@ pub(super) fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
         });
         bind_material_reload(&window, session_of(ui));
         material_source_ui::bind(&window, session_of(ui));
-        window.on_use_material({
-            let (window, app, ui) = (window.as_weak(), app.as_weak(), ui.clone());
-            move || {
-                let window = window.unwrap();
-                let app = app.unwrap();
-                let material = window.get_material();
-                let target = ui.borrow().material_target.clone();
-                let shared = session_of(&ui);
-                let mut session = lock(&shared);
-                if !review_material_choice(&window, &mut session) {
-                    return;
-                }
-                if let Some((entity, key, generation)) = target {
-                    if session.document_generation() != generation {
-                        window.set_detail("Map changed. Open this picker again.".into());
-                        return;
-                    }
-                    let result = session.set_entity_properties(
-                        Actor::User,
-                        entity,
-                        &[(key, Some(material.to_string()))],
-                    );
-                    if let Err(error) = result {
-                        window.set_detail(error.into());
-                        return;
-                    }
-                } else if let Some(target) = ui.borrow().overlay_material_target.clone() {
-                    if let Some(controller) = &ui.borrow().overlay
-                        && let Err(error) =
-                            controller.choose_material(&mut session, &target, &material)
-                    {
-                        window.set_detail(error.into());
-                        return;
-                    }
-                } else if let Some(replacement) = ui.borrow().material_for_replace {
-                    if let Some(controller) = &ui.borrow().material_replace {
-                        controller.choose_material(&mut session, replacement, &material);
-                    }
-                } else if ui.borrow().material_for_clip {
-                    app.set_clip_material(material);
-                    if let Some(points) = session.clip_points().map(|d| d.points.clone()) {
-                        if let Err(error) = change_clip_points(&app, &mut session, points) {
-                            window.set_detail(error.into());
-                            return;
-                        }
-                    } else {
-                        session.cancel_clip_preview();
-                    }
-                    refresh_clip(&app, &session);
-                } else if ui.borrow().material_for_primitive {
-                    if let Some(primitive) = &ui.borrow().primitive_window {
-                        let Some(target) = ui.borrow().primitive_material_target else {
-                            return;
-                        };
-                        if let Err(error) = primitive_ui::choose_material(
-                            primitive,
-                            &mut session,
-                            target,
-                            &material,
-                        ) {
-                            window.set_detail(error.into());
-                            return;
-                        }
-                    }
-                } else if ui.borrow().material_for_polygon {
-                    if let Some(polygon) = &ui.borrow().polygon {
-                        let Some(target) = ui.borrow().primitive_material_target else {
-                            return;
-                        };
-                        if let Err(error) = polygon.choose_material(&mut session, target, &material)
-                        {
-                            window.set_detail(error.into());
-                            return;
-                        }
-                    }
-                } else if ui.borrow().material_for_partition {
-                    if let Some(components) = &ui.borrow().components_window {
-                        let Some(target) = ui.borrow().partition_material_target.clone() else {
-                            return;
-                        };
-                        if let Err(error) = components_ui::choose_partition_material(
-                            components,
-                            &mut session,
-                            &target,
-                            Some(material.as_str()),
-                        ) {
-                            window.set_detail(error.into());
-                            return;
-                        }
-                    }
-                } else if ui.borrow().material_for_extrusion {
-                    if let Some(components) = &ui.borrow().components_window {
-                        let Some(target) = ui.borrow().extrusion_material_target else {
-                            return;
-                        };
-                        if let Err(error) = components_ui::choose_extrusion_material(
-                            components,
-                            &mut session,
-                            target,
-                            &material,
-                        ) {
-                            window.set_detail(error.into());
-                            return;
-                        }
-                    }
-                } else if ui.borrow().material_for_group {
-                    if let Some(controller) = &ui.borrow().surface_group {
-                        controller.choose_material(&mut session, &material);
-                    }
-                } else if ui.borrow().material_for_faces {
-                    if let Some(surface) = &ui.borrow().surface_window {
-                        surface.set_material(material.clone());
-                        surface.set_preview(
-                            session
-                                .material_preview(&material)
-                                .ok()
-                                .map(|preview| preview_image(&preview))
-                                .unwrap_or_default(),
-                        );
-                    }
-                } else {
-                    app.set_material(material);
-                    refresh_material_preview(&app, &mut session);
-                }
-                drop(session);
-                let _ = window.hide();
-            }
-        });
         ui.borrow_mut().material_window = Some(window);
     }
     let shared = session_of(ui);
@@ -903,17 +883,103 @@ pub(super) fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
             })
             .unwrap_or_else(|| app.get_material().to_string())
     };
-    ui.borrow_mut().material_target = target;
+    let sprite_target = target.as_ref().is_some_and(|(id, key, _)| {
+        key.eq_ignore_ascii_case("model")
+            && session.document().entity(*id).is_some_and(|entity| {
+                editor_core::sprite_resource::is_source(
+                    entity
+                        .classname()
+                        .and_then(|name| session.definitions().class(name)),
+                )
+            })
+    });
+    let (material, initial_error) = if sprite_target {
+        match editor_core::sprite_resource::picker_name(&material) {
+            Ok(material) => (material, None),
+            Err(error) => (String::new(), Some(error)),
+        }
+    } else {
+        (material, None)
+    };
+    ui.borrow_mut().material_target = target.clone();
     let window = ui.borrow().material_window.as_ref().unwrap().clone_strong();
+    window.set_sprite_resource(sprite_target);
+    if let Some(target) = ui.borrow().material_target.clone() {
+        bind_entity_material_choice(&window, shared.clone(), target);
+    } else {
+        bind_material_choice(&window, app, ui);
+    }
     window.set_filter("".into());
     window.set_material(material.into());
     window.set_group("all".into());
     window.set_offset(0);
     refresh_material_catalog(&window, &mut session);
     refresh_material_window(&window, &mut session);
+    if let Some(error) = initial_error {
+        window.set_detail(error.into());
+    }
     drop(session);
     if let Err(error) = window.show() {
         app.set_message(error.to_string().into());
+    }
+}
+
+fn bind_material_cancel(window: &MaterialWindow) {
+    window.on_cancel({
+        let window = window.as_weak();
+        move || {
+            let _ = window.unwrap().hide();
+        }
+    });
+}
+
+fn bind_entity_material_choice(
+    window: &MaterialWindow,
+    shared: SharedSession,
+    target: (u32, String, u64),
+) {
+    window.on_use_material({
+        let window = window.as_weak();
+        move || {
+            let window = window.unwrap();
+            let mut session = lock(&shared);
+            if session.document_generation() != target.2 {
+                window.set_detail("Map changed. Open this picker again.".into());
+                return;
+            }
+            let material = match material_picker_reference(&window, &window.get_material()) {
+                Ok(material) => material,
+                Err(error) => {
+                    window.set_detail(error.into());
+                    return;
+                }
+            };
+            if !review_material_choice(&window, &mut session) {
+                return;
+            }
+            let result = session.set_entity_properties(
+                Actor::User,
+                target.0,
+                &[(target.1.clone(), Some(material))],
+            );
+            if let Err(error) = result {
+                window.set_detail(error.into());
+                return;
+            }
+            drop(session);
+            let _ = window.hide();
+        }
+    });
+}
+
+pub(crate) fn material_picker_reference(
+    window: &MaterialWindow,
+    material: &str,
+) -> Result<String, String> {
+    if window.get_sprite_resource() {
+        editor_core::sprite_resource::browse_reference(material)
+    } else {
+        Ok(material.into())
     }
 }
 
@@ -955,3 +1021,7 @@ pub(crate) fn review_material_choice(window: &MaterialWindow, session: &mut Sess
 #[cfg(test)]
 #[path = "materials_vectors_tests.rs"]
 mod vectors_tests;
+
+#[cfg(test)]
+#[path = "materials_sprite_tests.rs"]
+mod sprite_tests;

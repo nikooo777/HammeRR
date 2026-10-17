@@ -179,11 +179,22 @@ pub(crate) fn bind(
                     }
                 }
             }
+            let material = if window.get_sprite_resource() {
+                match editor_core::sprite_resource::browse_reference(&window.get_material()) {
+                    Ok(material) => material,
+                    Err(error) => {
+                        window.set_detail(error.into());
+                        return;
+                    }
+                }
+            } else {
+                window.get_material().to_string()
+            };
             if let Err(error) = controller
                 .borrow()
                 .as_ref()
                 .unwrap()
-                .show(&lock(&shared), &window.get_material())
+                .show(&lock(&shared), &material)
             {
                 window.set_detail(error.to_string().into());
             }

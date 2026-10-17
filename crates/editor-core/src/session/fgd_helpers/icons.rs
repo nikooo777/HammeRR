@@ -7,24 +7,46 @@ use render::icons::{Instance, Report};
 
 use super::super::{Session, working_region::Evaluation};
 
+struct Row {
+    icon: Option<Report>,
+    sprite: Option<super::sprites::Report>,
+    instance: Option<Instance>,
+}
+
 impl Session {
-    fn icon_rows(
+    fn image_rows(
         &self,
         document: &Document,
         evaluation: &Evaluation,
         inspected: Option<u32>,
         enabled: bool,
-    ) -> BTreeMap<u32, (Report, Option<Instance>)> {
+    ) -> BTreeMap<u32, Row> {
         let context = super::classification::Context::new(evaluation, self.selection());
         let entities = context.entities(document, inspected, false);
         let mut displayed = 0;
         let mut rows = BTreeMap::new();
         for (id, entity) in entities {
+            if inspected.is_some_and(|target| id > target) {
+                break;
+            }
             let Some(class) = entity
                 .classname()
                 .and_then(|name| self.definitions().class(name))
             else {
                 continue;
+            };
+            let (sprite, sprite_instance) = if crate::sprite_resource::is_source(Some(class))
+                || class.helpers.iter().any(|helper| helper.name == "sprite")
+            {
+                let facts = context.facts(entity, class);
+                let (report, instance) =
+                    super::sprites::row(self, class, entity, &facts, enabled, displayed);
+                if report.displayed {
+                    displayed += 1;
+                }
+                (Some(report), instance)
+            } else {
+                (None, None)
             };
             let declarations = class
                 .helpers
@@ -33,6 +55,16 @@ impl Session {
                 .take(2)
                 .collect::<Vec<_>>();
             if declarations.is_empty() {
+                if sprite.is_some() && (inspected == Some(id) || inspected.is_none()) {
+                    rows.insert(
+                        id,
+                        Row {
+                            icon: None,
+                            sprite,
+                            instance: sprite_instance,
+                        },
+                    );
+                }
                 continue;
             }
             let facts = context.facts(entity, class);
@@ -66,6 +98,16 @@ impl Session {
                 None
             };
             if reason.is_some() && inspected != Some(id) {
+                if sprite.is_some() && inspected.is_none() {
+                    rows.insert(
+                        id,
+                        Row {
+                            icon: None,
+                            sprite,
+                            instance: sprite_instance,
+                        },
+                    );
+                }
                 continue;
             }
             let (mut report, asset) = if declarations.len() != 1
@@ -105,13 +147,21 @@ impl Session {
             let instance = if reason.is_none() {
                 asset.map(|asset| Instance {
                     center: entity.origin().unwrap().as_vec3().to_array(),
+                    world_size: report.world_size,
                     asset,
                 })
             } else {
                 None
             };
             if inspected == Some(id) || inspected.is_none() {
-                rows.insert(id, (report, instance));
+                rows.insert(
+                    id,
+                    Row {
+                        icon: Some(report),
+                        sprite,
+                        instance: sprite_instance.or(instance),
+                    },
+                );
             }
             if inspected == Some(id) {
                 break;
@@ -119,12 +169,15 @@ impl Session {
         }
         rows
     }
-    pub(super) fn inspected_icon(&self, id: u32) -> Option<Report> {
+    pub(super) fn inspected_images(
+        &self,
+        id: u32,
+    ) -> (Option<Report>, Option<super::sprites::Report>) {
         let document = self.render_document();
         let evaluation = self.working_evaluation(document);
-        self.icon_rows(document, &evaluation, Some(id), self.view().entity_images)
+        self.image_rows(document, &evaluation, Some(id), self.view().entity_images)
             .remove(&id)
-            .map(|(report, _)| report)
+            .map_or((None, None), |row| (row.icon, row.sprite))
     }
     pub(in crate::session) fn fgd_icon_instances(
         &self,
@@ -135,9 +188,9 @@ impl Session {
         if !enabled {
             return BTreeMap::new();
         }
-        self.icon_rows(document, evaluation, None, enabled)
+        self.image_rows(document, evaluation, None, enabled)
             .into_iter()
-            .filter_map(|(id, (_, instance))| instance.map(|instance| (id, instance)))
+            .filter_map(|(id, row)| row.instance.map(|instance| (id, instance)))
             .collect()
     }
 }

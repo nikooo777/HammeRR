@@ -286,3 +286,29 @@ fn material_source_refuses_dangling_higher_priority_paths_instead_of_showing_low
     assert!(report.error.unwrap().contains("dangling"));
     assert!(report.resolved.is_none());
 }
+
+#[test]
+fn full_virtual_source_filename_retains_nested_materials_directory() {
+    let (root, session) = fixture();
+    let nested = root.path().join("first/materials/materials");
+    std::fs::create_dir_all(&nested).unwrap();
+    std::fs::write(
+        nested.join("foo.vmt"),
+        "Sprite { $basetexture test/nested }",
+    )
+    .unwrap();
+    std::fs::write(
+        root.path().join("first/materials/foo.vmt"),
+        "Sprite { $basetexture test/root }",
+    )
+    .unwrap();
+    let report = session
+        .inspect_material_source("materials/materials/foo.vmt")
+        .unwrap();
+    assert_eq!(report.material, "materials/foo");
+    assert_eq!(report.vmt_path, "materials/materials/foo.vmt");
+    assert_eq!(
+        report.raw_source.as_deref(),
+        Some("Sprite { $basetexture test/nested }")
+    );
+}

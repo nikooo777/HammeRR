@@ -141,7 +141,11 @@ fn path(name: &str) -> Result<(String, String), String> {
     if material.is_empty() {
         return Err("Choose a material path first".into());
     }
-    let vmt = material_path(material);
+    let vmt = if relative.starts_with("materials/") && relative.ends_with(".vmt") {
+        relative.clone()
+    } else {
+        material_path(material)
+    };
     if vmt.len() > MAX_PATH_BYTES {
         return Err(format!("Material VMT path exceeds {MAX_PATH_BYTES} bytes"));
     }

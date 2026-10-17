@@ -77,6 +77,13 @@ impl Session {
             .iter()
             .filter(|entity| !entity.hidden && entity.solids.is_empty())
         {
+            if crate::sprite_resource::is_source(
+                entity
+                    .classname()
+                    .and_then(|name| self.definitions().class(name)),
+            ) {
+                continue;
+            }
             let Some(path) = entity
                 .properties
                 .get("model")
@@ -172,6 +179,13 @@ impl Session {
         let entity = document
             .entity(id)
             .ok_or("Select an existing model entity")?;
+        if crate::sprite_resource::is_source(
+            entity
+                .classname()
+                .and_then(|name| self.definitions().class(name)),
+        ) {
+            return Err("Sprite resource source; inspect get_entity_inspector.helpers.sprite_resource for the shared image policy and resource status".into());
+        }
         let path = entity
             .properties
             .get("model")

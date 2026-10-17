@@ -3,7 +3,7 @@ use source_formats::{
     vmf::Entity,
 };
 
-pub(super) fn bounded(value: &str, limit: usize) -> String {
+pub fn bounded(value: &str, limit: usize) -> String {
     let mut end = value.len().min(limit);
     while !value.is_char_boundary(end) {
         end -= 1;
@@ -29,20 +29,15 @@ pub(super) enum Error {
     Invalid(String),
 }
 
-pub(super) struct Value<'a> {
-    pub(super) property: Option<&'a Property>,
-    pub(super) raw: Option<&'a str>,
-    pub(super) duplicate: bool,
-    pub(super) source: &'static str,
+pub struct Value<'a> {
+    pub property: Option<&'a Property>,
+    pub raw: Option<&'a str>,
+    pub duplicate: bool,
+    pub source: &'static str,
 }
 
 impl<'a> Value<'a> {
-    pub(super) fn resolve(
-        class: &'a Class,
-        entity: &'a Entity,
-        key: &'a str,
-        defaults: bool,
-    ) -> Self {
+    pub fn resolve(class: &'a Class, entity: &'a Entity, key: &'a str, defaults: bool) -> Self {
         let property = class.property(key);
         let mut authored = entity.properties.get_all(key);
         let first = authored.next();

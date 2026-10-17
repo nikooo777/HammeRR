@@ -782,6 +782,7 @@ impl Session {
                     .map(|job| job.inspection_source.clone())
                     .unwrap_or_else(|| Err("Build source identity is unavailable".into()));
                 self.compiled = Some(CompiledMap {
+                    face_origins: result.output.face_origins.clone(),
                     path: result.path.clone(),
                     snapshot,
                     options: result.options,

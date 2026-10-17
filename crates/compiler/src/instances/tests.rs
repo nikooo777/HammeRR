@@ -221,6 +221,36 @@ fn source_matrix_uvs_detail_and_repeated_ids_match_manual_flattening() {
     let actual = compiled(&parent, &game, &context);
     let expected = crate::compile(&manual, &game);
     assert!(actual.bsp.is_some(), "{:?}", actual.report);
+    let origins = actual.face_origins.as_ref().unwrap();
+    let child_sources: std::collections::BTreeSet<_> = child
+        .solids()
+        .flat_map(|solid| solid.sides.iter().map(move |side| (solid.id, side.id)))
+        .collect();
+    for helper in parent.entities.iter().filter(|entity| {
+        entity
+            .classname()
+            .is_some_and(|class| class.eq_ignore_ascii_case("func_instance"))
+    }) {
+        let retained: Vec<_> = (0..origins.len())
+            .flat_map(|face| origins.contributors(face).unwrap())
+            .filter_map(|origin| match origin {
+                crate::face_origins::Origin::Instance {
+                    instance,
+                    file,
+                    solid,
+                    side,
+                } if *instance == helper.id => Some((file, *solid, *side)),
+                _ => None,
+            })
+            .collect();
+        assert!(!retained.is_empty());
+        assert!(
+            retained
+                .iter()
+                .all(|(file, solid, side)| file.as_str() == "child.vmf"
+                    && child_sources.contains(&(*solid, *side)))
+        );
+    }
     assert_eq!(
         (
             actual.stats.brushes,

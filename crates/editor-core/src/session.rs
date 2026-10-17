@@ -128,6 +128,7 @@ struct Snapshot {
 }
 
 struct CompiledMap {
+    face_origins: Result<std::sync::Arc<compiler::face_origins::FaceOrigins>, String>,
     path: PathBuf,
     snapshot: Snapshot,
     options: compiler::Options,

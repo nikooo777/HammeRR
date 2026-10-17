@@ -395,13 +395,18 @@ pub(crate) struct Prepared<'a> {
     pub vmf: Cow<'a, Vmf>,
     pub dependencies: Option<DependencyGuard>,
     pub stats: Option<InstanceStats>,
-    provenance: BTreeMap<String, (u32, String, u32)>,
+    provenance: BTreeMap<String, (u32, String, u32, Option<u32>)>,
 }
 
 impl Prepared<'_> {
+    pub fn face_origin(&self, side: u32) -> Option<(u32, &str, u32, u32)> {
+        let (owner, file, side, solid) = self.provenance.get(&format!("side:{side}"))?;
+        Some((*owner, file, (*solid)?, *side))
+    }
+
     pub fn annotate(&self, report: &mut Report) {
         for diagnostic in &mut report.diagnostics {
-            if let Some((owner, path, original)) = diagnostic
+            if let Some((owner, path, original, _)) = diagnostic
                 .object
                 .as_ref()
                 .and_then(|object| self.provenance.get(object))
@@ -596,14 +601,19 @@ pub(crate) fn prepare<'a>(
                         solid.editor = None;
                         prepared.provenance.insert(
                             format!("solid:{}", solid.id),
-                            (helper.id, relative.clone(), original.id),
+                            (helper.id, relative.clone(), original.id, None),
                         );
                         for side in &mut solid.sides {
                             let original_side = side.id;
                             side.id = tx.new_side_id()?;
                             prepared.provenance.insert(
                                 format!("side:{}", side.id),
-                                (helper.id, relative.clone(), original_side),
+                                (
+                                    helper.id,
+                                    relative.clone(),
+                                    original_side,
+                                    Some(original.id),
+                                ),
                             );
                         }
                         let id = if *is_detail {
@@ -612,7 +622,7 @@ pub(crate) fn prepare<'a>(
                             detail.solids.push(solid);
                             prepared.provenance.insert(
                                 format!("entity:{id}"),
-                                (helper.id, relative.clone(), original.id),
+                                (helper.id, relative.clone(), original.id, None),
                             );
                             stats.detail_brushes += 1;
                             tx.add_entity(detail)?

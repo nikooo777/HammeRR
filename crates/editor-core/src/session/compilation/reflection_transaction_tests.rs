@@ -70,6 +70,7 @@ fn prepared_assets(
         output
     } else {
         compiler::Output {
+            face_origins: Err("Fixture has no retained source mapping".into()),
             bsp: (!leak).then(Bsp::new),
             report: Default::default(),
             leak: leak.then(|| compiler::Leak {
@@ -92,6 +93,7 @@ fn prepared_assets(
     )
     .unwrap();
     session.compiled = Some(CompiledMap {
+        face_origins: Err("Fixture has no retained source mapping".into()),
         path: destination.clone(),
         snapshot: Snapshot {
             generation: session.document_generation,

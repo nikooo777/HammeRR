@@ -70,6 +70,28 @@ fn merged_subdivided_faces_retain_source_sides_and_hidden_sources_disappear() {
             .iter()
             .all(|face| face.source_sides.windows(2).all(|ids| ids[0] < ids[1]))
     );
+    let compiled = compiler::compile(&vmf, &common::empty_game());
+    assert!(!compiled.report.has_errors(), "{:?}", compiled.report);
+    let origins = compiled.face_origins.as_ref().unwrap();
+    let shared_emitted: Vec<_> = (0..origins.len())
+        .filter(|&face| {
+            let sides: Vec<_> = origins
+                .contributors(face)
+                .unwrap()
+                .filter_map(|origin| match origin {
+                    compiler::face_origins::Origin::Root { side, .. } => Some(*side),
+                    _ => None,
+                })
+                .collect();
+            sides == tops
+        })
+        .collect();
+    assert!(shared_emitted.len() >= 8, "{shared_emitted:?}");
+    assert!(
+        shared_emitted
+            .iter()
+            .all(|&face| origins.model(face) == Some(0))
+    );
     let mut hidden = vmf.clone();
     let brush = hidden
         .entities
@@ -85,5 +107,9 @@ fn merged_subdivided_faces_retain_source_sides_and_hidden_sources_disappear() {
             .iter()
             .all(|id| !hidden_sides.contains(id))
     }));
+    let compiled = compiler::compile(&hidden, &common::empty_game());
+    assert!(!compiled.report.has_errors(), "{:?}", compiled.report);
+    let origins = compiled.face_origins.as_ref().unwrap();
+    assert!((0..origins.len()).all(|face| origins.contributors(face).unwrap().all(|origin| !matches!(origin, compiler::face_origins::Origin::Root { side, .. } if hidden_sides.contains(side)))));
     assert_eq!(document.vmf(), &vmf);
 }

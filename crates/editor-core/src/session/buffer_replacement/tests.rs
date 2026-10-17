@@ -192,7 +192,12 @@ fn replacement_reviews_reject_foreign_sessions_and_partition_only_changes() {
     use map_core::subobject::{self, Component};
 
     let (directory, mut session, path, recovery_id) = fixture();
-    let foreign = Session::new(Err("no assets needed".into())).buffer_replacement_review();
+    let mut other = Session::new(Err("no assets needed".into()));
+    other.open(Actor::User, &path, false).unwrap();
+    assert_eq!(other.document_generation(), session.document_generation());
+    assert_eq!(other.document().revision(), session.document().revision());
+    assert_eq!(other.history_save_serial, session.history_save_serial);
+    let foreign = other.buffer_replacement_review();
     assert!(session.ensure_buffer_replacement_review(&foreign).is_err());
     assert!(
         session
@@ -220,6 +225,9 @@ fn replacement_reviews_reject_foreign_sessions_and_partition_only_changes() {
         .id;
     let edges = subobject::crease_pairs(source, side).unwrap()[0].edges;
     session
+        .save(Actor::User, Some(&directory.path().join("saved.vmf")))
+        .unwrap();
+    session
         .set_component_picking(
             Some(component_picking::Kind::Face),
             &[id],
@@ -235,9 +243,6 @@ fn replacement_reviews_reject_foreign_sessions_and_partition_only_changes() {
             SelectMode::Replace,
             &session.component_stamp(),
         )
-        .unwrap();
-    session
-        .save(Actor::User, Some(&directory.path().join("saved.vmf")))
         .unwrap();
     let revision = session.document().revision();
     let review = session.buffer_replacement_review();

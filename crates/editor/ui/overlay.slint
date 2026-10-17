@@ -35,6 +35,7 @@ export component OverlayWindow inherits Window {
     in property <bool> can-rebind;
     in property <bool> can-edit-corners;
     in property <bool> can-preview-corners;
+    in property <bool> can-handle-corners;
     in property <bool> corners-mode;
     in property <string> corner-frame;
     in-out property <string> corner-0-u;
@@ -58,6 +59,7 @@ export component OverlayWindow inherits Window {
     callback rebind();
     callback edit-corners();
     callback preview-corners();
+    callback handle-corners();
     callback corners-edited();
     callback edited();
     callback browse-material();
@@ -171,6 +173,8 @@ export component OverlayWindow inherits Window {
                         }
                         Text { text: root.corner-frame; wrap: word-wrap; color: #bac2ce; font-size: 12px; }
                         Button { text: "Preview corners"; enabled: root.can-preview-corners; clicked => { root.preview-corners(); } }
+                        Button { text: "Viewport handles"; enabled: root.can-handle-corners; clicked => { root.handle-corners(); } }
+                        Text { text: "Preview corners, then drag a cyan corner in the viewport. Release to review with Apply corners. Escape or Cancel handles restores the draft from before the drag. Motion is unsnapped in the fixed projection plane."; wrap: word-wrap; color: #bac2ce; }
                     }
                     Text { text: "Material"; font-weight: 600; }
                     HorizontalLayout {

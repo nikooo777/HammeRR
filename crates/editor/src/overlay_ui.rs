@@ -1,4 +1,7 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 use glam::{DVec2, DVec3};
 use map_core::{overlay::Options, surface::FaceId};
@@ -8,7 +11,7 @@ use slint::{ComponentHandle, ModelRc, VecModel};
 use crate::{
     OverlayTargetRow, OverlayWindow,
     runtime::{SharedSession, lock},
-    session::{Actor, Session, overlay::Request},
+    session::{Actor, Pointer, Session, overlay::Request},
     ui::preview_image,
 };
 
@@ -40,6 +43,7 @@ pub struct MaterialTarget {
 pub struct Controller {
     pub window: OverlayWindow,
     form: Rc<RefCell<Form>>,
+    viewport: Rc<Cell<(u32, u32)>>,
 }
 
 fn number(text: &str) -> Result<f32, String> {
@@ -390,8 +394,10 @@ fn refresh(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
             && draft["valid"] == true
             && form.reviewed.is_some()
             && fields(window).ok().as_ref() == form.reviewed.as_ref()
-            && corner_form_matches(window, &form),
+            && corner_form_matches(window, &form)
+            && draft["handles"].is_null(),
     );
+    window.set_can_handle_corners(form.corners && window.get_ready());
     window.set_draft_label(if draft.is_null() {
         "No overlay draft · Fit / Preview leaves the map unchanged".into()
     } else if draft["valid"] != true {
@@ -650,6 +656,7 @@ impl Controller {
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
         let window = OverlayWindow::new()?;
         let form = Rc::new(RefCell::new(Form::default()));
+        let viewport = Rc::new(Cell::new((1024, 576)));
         window.on_edited({
             let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
             move || edited(&window.unwrap(), &mut lock(&shared), &form)
@@ -692,6 +699,36 @@ impl Controller {
         window.on_preview_corners({
             let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
             move || preview_corners(&window.unwrap(), &mut lock(&shared), &form)
+        });
+        window.on_handle_corners({
+            let (window, shared, form, viewport) = (window.as_weak(), shared.clone(), form.clone(), viewport.clone());
+            move || {
+                let window = window.unwrap();
+                let mut session = lock(&shared);
+                let result = {
+                    let current = form.borrow();
+                    if !current.corners
+                        || current.reviewed.is_none()
+                        || fields(&window).ok().as_ref() != current.reviewed.as_ref()
+                        || !corner_form_matches(&window, &current)
+                    {
+                        Err("Preview corners before starting viewport handles".to_string())
+                    } else {
+                        current.token.ok_or_else(|| "Preview or Review the corner draft first".to_string()).and_then(|token| {
+                            session.begin_overlay_corner_handles(Actor::User, token, session.camera(), viewport.get(), &session.overlay_corner_handle_stamp())
+                        })
+                    }
+                };
+                match result {
+                    Ok(state) => {
+                        adopt(&window, &state, &form);
+                        window.set_message("Drag one cyan corner in the viewport. Release to review; Escape or Cancel handles restores this draft.".into());
+                        let _ = window.hide();
+                    }
+                    Err(error) => window.set_message(error.into()),
+                }
+                refresh(&window, &session, &form);
+            }
         });
         window.on_corners_edited({
             let (window, form) = (window.as_weak(), form.clone());
@@ -792,7 +829,61 @@ impl Controller {
                 slint::CloseRequestResponse::HideWindow
             }
         });
-        Ok(Self { window, form })
+        Ok(Self {
+            window,
+            form,
+            viewport,
+        })
+    }
+
+    pub fn set_viewport(&self, size: (u32, u32)) {
+        self.viewport.set(size);
+    }
+
+    fn handle_token(&self) -> Result<u64, String> {
+        self.form
+            .borrow()
+            .token
+            .ok_or_else(|| "Review the overlay corner draft before using its handles".into())
+    }
+
+    pub fn pick_handle(&self, session: &mut Session, pointer: Pointer) -> Result<(), String> {
+        let state =
+            session.pick_overlay_corner_handle(Actor::User, self.handle_token()?, pointer)?;
+        adopt(&self.window, &state, &self.form);
+        refresh(&self.window, session, &self.form);
+        Ok(())
+    }
+
+    pub fn move_handle(&self, session: &mut Session, pointer: Pointer) -> Result<(), String> {
+        let state =
+            session.move_overlay_corner_handle(Actor::User, self.handle_token()?, pointer)?;
+        adopt(&self.window, &state, &self.form);
+        refresh(&self.window, session, &self.form);
+        Ok(())
+    }
+
+    pub fn finish_handles(&self, session: &mut Session) -> Result<(), String> {
+        let state = session.finish_overlay_corner_handles(Actor::User, self.handle_token()?)?;
+        adopt(&self.window, &state, &self.form);
+        self.window.set_message("Review the cyan outline and local U/V values, then Apply corners or Cancel. Undo restores the previous projection.".into());
+        refresh(&self.window, session, &self.form);
+        self.window.show().map_err(|error| error.to_string())
+    }
+
+    pub fn cancel_handles(&self, session: &mut Session) -> Result<(), String> {
+        self.discard_handles(session)?;
+        self.window.show().map_err(|error| error.to_string())
+    }
+
+    pub fn discard_handles(&self, session: &mut Session) -> Result<(), String> {
+        let state = session.cancel_overlay_corner_handles(Actor::User, self.handle_token()?)?;
+        adopt(&self.window, &state, &self.form);
+        self.window.set_message(
+            "Viewport handles cancelled. The exact pre-handle corner draft is restored.".into(),
+        );
+        refresh(&self.window, session, &self.form);
+        Ok(())
     }
 
     pub fn show(&self, session: &mut Session, material: &str) -> Result<(), slint::PlatformError> {
@@ -1440,6 +1531,75 @@ mod tests {
             crate::ui::tests::assert_dialog_button_visible(&corners.window, label);
         }
         crate::ui::tests::save_ui_snapshot(corners.window.window(), "overlay-corners");
+        assert!(corners.window.get_can_handle_corners());
+        let origin =
+            serde_json::from_value::<[f64; 3]>(draft["draft"]["basis_origin"].clone()).unwrap();
+        lock(&shared).set_camera(render::Camera::planar(
+            render::Projection::Top,
+            DVec3::from_array(origin).as_vec3(),
+            200.0,
+        ));
+        corners.set_viewport((900, 700));
+        for cancel in [true, false] {
+            let pre_handle = lock(&shared).get_overlay_state()["draft"]["local_corners"].clone();
+            corners.window.invoke_handle_corners();
+            assert!(!corners.window.window().is_visible());
+            let state = lock(&shared).get_overlay_state();
+            assert_eq!(state["draft"]["handles"]["valid"], true);
+            assert!(!corners.window.get_ready());
+            if cancel {
+                let app = crate::AppWindow::new().unwrap();
+                app.set_overlay_handling(true);
+                app.show().unwrap();
+                app.window().set_size(slint::PhysicalSize::new(1600, 900));
+                crate::ui::tests::assert_dialog_button_visible(&app, "Cancel handles");
+                app.hide().unwrap();
+            }
+            let start = Pointer {
+                position: DVec2::new(
+                    state["draft"]["handles"]["pixels"][0][0].as_f64().unwrap(),
+                    state["draft"]["handles"]["pixels"][0][1].as_f64().unwrap(),
+                ),
+                size: (900, 700),
+            };
+            corners.pick_handle(&mut lock(&shared), start).unwrap();
+            corners
+                .move_handle(
+                    &mut lock(&shared),
+                    Pointer {
+                        position: start.position + DVec2::new(-12.0, 8.0),
+                        ..start
+                    },
+                )
+                .unwrap();
+            assert_eq!(lock(&shared).document().vmf(), &before_corners);
+            assert_eq!(
+                lock(&shared).document().undo_labels().count(),
+                history_corners
+            );
+            if cancel {
+                corners.cancel_handles(&mut lock(&shared)).unwrap();
+                assert_eq!(
+                    lock(&shared).get_overlay_state()["draft"]["local_corners"],
+                    pre_handle
+                );
+            } else {
+                corners.finish_handles(&mut lock(&shared)).unwrap();
+                assert_ne!(
+                    lock(&shared).get_overlay_state()["draft"]["local_corners"],
+                    pre_handle
+                );
+                assert_eq!(
+                    serde_json::to_value(corner_fields(&corners.window).unwrap()).unwrap(),
+                    lock(&shared).get_overlay_state()["draft"]["local_corners"]
+                );
+            }
+            assert!(corners.window.window().is_visible());
+            assert!(corners.window.get_ready());
+            assert!(!lock(&shared).overlay_corner_handles_active());
+        }
+        crate::ui::tests::assert_dialog_button_visible(&corners.window, "Viewport handles");
+        crate::ui::tests::save_ui_snapshot(corners.window.window(), "overlay-corner-handles");
         corners.window.invoke_apply();
         assert_eq!(
             lock(&shared).document().undo_labels().count(),

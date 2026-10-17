@@ -5,6 +5,8 @@ use serde_json::{Value, json};
 
 use super::{Actor, SelectMode, Session};
 
+mod handles;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Request {
     pub source: FaceId,
@@ -33,6 +35,7 @@ struct Draft {
     source: FaceId,
     definition: Definition,
     operation: Operation,
+    handles: Option<handles::Handles>,
 }
 
 #[derive(Clone, Copy)]
@@ -200,6 +203,7 @@ impl Session {
                 "corners":draft.definition.corners(),"bounds":bounds_json(&draft.definition),
                 "basis_origin":draft.definition.basis_origin,"basis_normal":draft.definition.basis_normal,
                 "basis_u":draft.definition.basis_u,"basis_v":draft.definition.basis_v,
+                "handles":self.overlay_corner_handles_report(),
             })
         });
         json!({
@@ -339,6 +343,7 @@ impl Session {
             source,
             definition,
             operation,
+            handles: None,
         });
         self.view_serial += 1;
         self.log(
@@ -354,11 +359,16 @@ impl Session {
     }
 
     pub fn review_overlay(&mut self, actor: Actor, token: u64) -> Result<Value, String> {
-        self.checked_overlay(token)?;
+        let draft = self.checked_overlay(token)?;
+        let had_handles = draft.handles.is_some();
         self.overlay.serial += 1;
         let draft = self.overlay.draft.as_mut().unwrap();
         draft.token = self.overlay.serial;
         draft.owner = actor;
+        draft.handles = None;
+        if had_handles {
+            self.scene_serial += 1;
+        }
         self.view_serial += 1;
         self.log(actor, "Review overlay");
         Ok(self.get_overlay_state())
@@ -368,6 +378,9 @@ impl Session {
         let draft = self.checked_overlay(token)?;
         if draft.owner != actor {
             return Err("Review the current overlay draft before applying it".into());
+        }
+        if draft.handles.is_some() {
+            return Err("Finish or cancel viewport corner handles before Apply corners".into());
         }
         let source = draft.source;
         let options = draft.definition.options.clone();
@@ -441,6 +454,7 @@ impl Session {
                 });
             }
         }
+        self.append_overlay_corner_handles(mesh);
     }
 }
 

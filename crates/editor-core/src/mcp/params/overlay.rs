@@ -51,9 +51,76 @@ pub struct OverlayCornersArgs {
     pub corners: [[f64; 2]; 4],
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(extend("type" = "object"))]
+pub enum OverlayCornerHandleArgs {
+    Inspect,
+    Begin {
+        token: u64,
+        width: u32,
+        height: u32,
+        camera: Option<CameraSpec>,
+        snapshot: String,
+    },
+    Pick {
+        token: u64,
+        x: f64,
+        y: f64,
+        width: u32,
+        height: u32,
+    },
+    Move {
+        token: u64,
+        x: f64,
+        y: f64,
+        width: u32,
+        height: u32,
+    },
+    Finish {
+        token: u64,
+    },
+    Cancel {
+        token: u64,
+    },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn corner_handle_requests_require_typed_actions_tokens_and_pointer_dimensions() {
+        let begin =
+            json!({"action":"begin","token":1,"width":900,"height":700,"snapshot":"current"});
+        assert!(serde_json::from_value::<OverlayCornerHandleArgs>(begin.clone()).is_ok());
+        for field in ["token", "width", "height", "snapshot"] {
+            let mut missing = begin.clone();
+            missing.as_object_mut().unwrap().remove(field);
+            assert!(serde_json::from_value::<OverlayCornerHandleArgs>(missing).is_err());
+        }
+        let pointer =
+            json!({"action":"move","token":1,"x":25.5,"y":12.25,"width":900,"height":700});
+        assert!(serde_json::from_value::<OverlayCornerHandleArgs>(pointer.clone()).is_ok());
+        for field in [
+            "corner",
+            "ray_origin",
+            "corners",
+            "source",
+            "material",
+            "uv0",
+        ] {
+            let mut invalid = pointer.clone();
+            invalid[field] = json!("replacement");
+            assert!(serde_json::from_value::<OverlayCornerHandleArgs>(invalid).is_err());
+        }
+        assert!(
+            serde_json::from_value::<OverlayCornerHandleArgs>(json!({"action":"inspect"})).is_ok()
+        );
+        assert!(
+            serde_json::from_value::<OverlayCornerHandleArgs>(json!({"action":"finish"})).is_err()
+        );
+    }
 
     #[test]
     fn overlay_requests_require_an_explicit_source_and_reject_derived_projection_fields() {

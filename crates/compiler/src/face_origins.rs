@@ -380,8 +380,8 @@ fn geometry_digest(bsp: &Bsp) -> Result<[u8; 32], String> {
         hash.update((index as u32).to_le_bytes());
         hash.update((data.len() as u64).to_le_bytes());
         if index == lump::DISPINFO {
-            let records = data.chunks_exact(size_of::<bsp::DisplacementInfo>());
-            if !records.remainder().is_empty() {
+            let (records, remainder) = data.as_chunks::<{ size_of::<bsp::DisplacementInfo>() }>();
+            if !remainder.is_empty() {
                 return Err("Invalid emitted displacement geometry records".into());
             }
             for record in records {

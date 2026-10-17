@@ -135,13 +135,12 @@ pending draft stale. Preview it again before applying.
   and pass the normal asset, transform, bounds, leaf and lighting checks. Their
   geometry is never clipped or moved inward. Visible invalid origins reject before
   selection. Outside and hidden sprites are omitted before card and atlas validation.
-- Visible `func_instance` and `func_instance_parms` stop both full-map and region
-  builds before geometry is processed, including helpers outside the region.
-  Referenced-map expansion is unavailable; resolve instances into ordinary map
-  content before building, or hide/remove the helpers. Hidden helpers are excluded.
-  Visibility clusters, retained slime, detail/model water and boundary-crossing
-  water or terrain remain unsupported in region builds. These failures preserve
-  the previous BSP and pointfile.
+- Supported [world/detail brush instances](instances.md) expand before region
+  selection. Intersecting child geometry remains eligible even when its helper
+  origin is outside. Missing/unsupported children and visible parameter helpers
+  reject before publication; hidden helpers are excluded. Visibility clusters,
+  retained slime, detail/model water and boundary-crossing water or terrain remain
+  unsupported in region builds. Failures preserve the previous BSP and pointfile.
 - At most 16,384 source objects, 65,536 source sides and 128 sides per brush.
   Bounds, source IDs and the mounted solid rendering `tools/toolsblack` material
   must be valid. Missing or incompatible boundary assets stop the build.

@@ -18,7 +18,7 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | [Measurement guides](measurements.md) | Named persistent rulers, surface endpoint picks, exact distances and axis components |
 | [Selecting](selection.md) | Click, area, volume and paint selection |
 | [Cut, copy and paste](clipboard.md) | Detached object transfer, placement previews, native VMF text and safe references |
-| [Prefab library](prefabs.md) | Save, search, inspect flat thumbnails and place reusable brush/entity assemblies |
+| [Prefab library](prefabs.md) | Save, search, inspect Flat/Textured thumbnails and place reusable assemblies |
 | [Layers](layers.md) | Nested colored layers, membership, scoped selection and map visibility |
 | [Object groups](groups.md) | Nested groups, membership editing, group selection and temporary bypass |
 | [Brushes and transforms](brushes.md) | Drawing brushes, handles, exact transforms, surface-picked pivots, mirror, shear, brush shapes |
@@ -52,6 +52,7 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | [Compile and play](compile-and-play.md) | Building BSPs, portable sky assets, lighting, physics, leaks and launching Counter-Strike: Source |
 | [Baked lightmaps](baked-lightmaps.md) | Actual compiled LDR/HDR face samples, style and directional-map inspection |
 | [Water](water.md) | Flat world pools, underwater materials, fog and floating objects |
+| [Referenced instances](instances.md) | Compile saved world/detail assemblies with guarded dependencies |
 | [Compile regions](compile-regions.md) | Previewing and saving bounds for sealed partial-map builds |
 | [Physics and mass](physics.md) | Engine collision bodies and material-derived brush-model masses |
 | [Static props](static-props.md) | Model placement, collision choices and rotated visibility bounds |
@@ -60,6 +61,7 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | [Material detail scattering](material-detail-scattering.md) | Generate decorative models and sprites from ground materials when building |
 | [Static-prop shadows](prop-shadows.md) | Opaque and requested alpha-test model blockers, shadow flags and material limits |
 | [Occluders](occluders.md) | Compiling static visibility blockers and their native activation records |
+| [Visibility clusters](visclusters.md) | Group dry open leaves conservatively without merging geometry or ambient samples |
 | [Build recipes](build-recipes.md) | Recalling Fast preview, Final lighting and named custom compiler settings |
 
 ## AI agents

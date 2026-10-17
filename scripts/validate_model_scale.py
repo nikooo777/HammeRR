@@ -8,7 +8,6 @@ from pathlib import Path
 from validate_face_lighting import DEFAULT_BINARY, Client
 from validate_visibility import ROOM
 
-
 CRATE = "models/props_junk/wood_crate001a.mdl"
 REFERENCE = "models/kleiner.mdl"
 ORIGIN = [100, 120, 20]

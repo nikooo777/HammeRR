@@ -68,6 +68,13 @@ fn solid_class_picker_and_shared_tie_operation_accept_visclusters() {
     );
 
     let (directory, game) = crate::test_assets::game();
+    let materials = directory.path().join("materials/dev");
+    std::fs::create_dir_all(&materials).unwrap();
+    std::fs::write(
+        materials.join("dev_measuregeneric01.vmt"),
+        "LightmappedGeneric { $basetexture test/checker }",
+    )
+    .unwrap();
     let path = directory.path().join("visclusters.vmf");
     let mut document = map_core::Document::new(crate::test_assets::room());
     document
@@ -113,16 +120,12 @@ fn solid_class_picker_and_shared_tie_operation_accept_visclusters() {
     assert!(details.contains("emitted clusters"));
     assert!(details.contains("solved leaf clusters"));
     assert!(details.contains("1 helpers · 1 effective groups"));
-    controller
-        .window
-        .window()
-        .set_size(slint::PhysicalSize::new(1040, 1120));
     controller.window.window().take_snapshot().unwrap();
     controller
         .window
         .window()
         .dispatch_event(slint::platform::WindowEvent::PointerScrolled {
-            position: slint::LogicalPosition::new(520.0, 560.0),
+            position: slint::LogicalPosition::new(360.0, 450.0),
             delta_x: 0.0,
             delta_y: -10000.0,
         });

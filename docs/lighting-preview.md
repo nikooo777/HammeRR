@@ -27,8 +27,11 @@ Limits:
   admitted. Parenting, patterns, switching, initial darkness and other light
   classes are unsupported. Exceeding the supported-light or radiance budget
   disables the whole preview with an explanation.
-- Only opaque flat `LightmappedGeneric` world/detail/brush-entity surfaces
-  receive lighting. Terrain, models, sprites, helpers, tools, missing images,
+- Opaque flat `LightmappedGeneric` world/detail/brush-entity surfaces and
+  supported single-base world/detail terrain receive lighting. Terrain uses its
+  prepared sewn LOD normals, excludes declared bump/blend/detail effects, and
+  reports surfaces/drawn triangles separately; see [Terrain](terrain.md#preview-authored-lighting).
+  Models, sprites, helpers, tools, missing images,
   translucent/alpha-tested materials and effect/proxy/fallback materials keep
   their ordinary display and are outside this preview's coverage.
 - There are no shadows, sunlight, ambient light, bounce or animation. Lights

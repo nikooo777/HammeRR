@@ -216,7 +216,7 @@ fn tool_terrain_temporary_visibility_rebuilds_retained_lighting_counts_and_pixel
     session
         .edit(Actor::User, "mixed-parent tool terrain", |tx| {
             for side in &mut tx.solid_mut(solid)?.sides {
-                assert_eq!(side.material, "test/checker");
+                assert!(side.material.eq_ignore_ascii_case("test/checker"));
                 if side.id == face.side {
                     side.material = "test/terrain-tool".into();
                 }

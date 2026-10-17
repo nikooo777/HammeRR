@@ -186,7 +186,7 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 | Authored lighting preview |
 | --- |
 | ![Warm point light and cool spotlight in an editor room](docs/images/authored-lighting-preview.png) |
-| Preview unshadowed point and spot lights with quality, exposure and supported normal maps. |
+| Preview unshadowed point and spot lights on brushes and terrain, with quality and exposure. |
 
 [Authored lighting preview →](docs/lighting-preview.md)
 
@@ -274,10 +274,10 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Paste placement and link handling](docs/images/clipboard-paste.png) |
 | Transfer brushes and entities between maps with previewed placement, groups, notes and checked links. |
 
-| Prefab library |
-| --- |
-| ![Selected prefab with an isolated textured thumbnail](docs/images/prefab-textured-thumbnail.png) |
-| Browse flat or textured assembly previews, then place rotated or brush-scaled copies. |
+| Prefab library | Referenced brush assemblies |
+| --- | --- |
+| ![Selected prefab with an isolated textured thumbnail](docs/images/prefab-textured-thumbnail.png) | ![Compiled instance counts and dependency identities](docs/images/build-instance-dependencies.png) |
+| Browse flat or textured assembly previews, then place rotated or brush-scaled copies. | Compile reusable world/detail VMFs with rotation, attached textures and guarded dependencies. |
 
 | Transaction history |
 | --- |
@@ -316,7 +316,7 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | Baked lightmaps |
 | --- |
 | ![Baked face lightmap inspection](docs/images/baked-lightmaps.png) |
-| Inspect compiled LDR/HDR face samples, styles, directional maps and decoded intensity statistics. |
+| Inspect baked samples and trace compiled fragments to their retained authored contributors. |
 
 [Baked lightmaps →](docs/baked-lightmaps.md)
 
@@ -346,6 +346,11 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | --- | --- |
 | ![Model browser and bodygroup preview](docs/images/bodygroup-model-browser.png) | ![Dynamic model opacity preview](docs/images/model-opacity.png) |
 | Browse models, skins and named bodygroups with reference poses and dynamic-model tints. | Preview Texture render mode with authored opacity while retaining texture alpha and depth. |
+
+| Dynamic model scale |
+| --- |
+| ![Dynamic models with authored uniform scales](docs/images/model-scale.png) |
+| Resize supported dynamic meshes with matching picks, bounds, framing and reference attachments. |
 
 [Source models →](docs/models.md)
 
@@ -405,10 +410,10 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Continuous light across rotated terrain patches](docs/images/terrain-seams.png) |
 | Matching full edges share smooth lighting normals in the viewport and compiled map. |
 
-| Visibility quality |
-| --- |
-| ![Detailed portal clipping selected in Build settings](docs/images/build-settings.png) |
-| Build conservative or tighter visibility with parallel portal processing. |
+| Visibility quality | Authored visibility clusters |
+| --- | --- |
+| ![Detailed portal clipping selected in Build settings](docs/images/build-settings.png) | ![Build details with solved leaf and emitted cluster counts](docs/images/build-visclusters.png) |
+| Build conservative or tighter visibility with parallel portal processing. | Group dry open leaves while retaining conservative visibility and separate ambient samples. |
 
 | Brush smoothing |
 | --- |
@@ -484,7 +489,7 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 The editor covers most everyday brush work. Notable gaps:
 
 - **Terrain**: creation, resolution edits, live sculpt/blend strokes, vertex handles and full/half-edge subdivision work; other fractional edge tools remain planned.
-- **Models**: static meshes, reference poses, skins, bodygroups and visual browsing work; animation and scaling remain planned.
+- **Models**: static meshes, reference poses, skins, bodygroups and visual browsing work; animation remains planned.
 - **Compiler**: Fast and Detailed visibility, independent LDR/HDR lighting, diffuse bounces and reflection generation are available; exposure and prop lighting remain planned.
 
 The full picture is in [Status and roadmap](docs/status.md).

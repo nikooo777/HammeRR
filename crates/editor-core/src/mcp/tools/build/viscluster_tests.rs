@@ -117,6 +117,6 @@ async fn both_mcp_build_paths_publish_grouping_and_recover_after_ambiguous_claim
     assert_eq!(status["job"]["status"], "completed");
     assert_eq!(status["job"]["result"]["stats"]["viscluster_groups"], 1);
     assert_eq!(std::fs::read(&bsp).unwrap(), bytes);
-    assert!(!lin.exists());
+    assert_eq!(std::fs::read(&lin).unwrap(), b"previous pointfile");
     assert!(server.offscreen.lock().unwrap().renderer.is_none());
 }

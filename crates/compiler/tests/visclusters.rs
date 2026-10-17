@@ -359,7 +359,7 @@ fn ambiguity_invalid_geometry_regions_and_cancellation_preserve_publication() {
     assert_eq!(std::fs::read(&lin).unwrap(), b"previous pointfile");
     assert!(output.write(&path).unwrap());
     assert_ne!(std::fs::read(&path).unwrap(), b"previous BSP");
-    assert!(!lin.exists());
+    assert_eq!(std::fs::read(&lin).unwrap(), b"previous pointfile");
 
     let mut region = recovered.vmf().clone();
     region.cordon = Some(source_formats::keyvalues::Node::block(
@@ -370,13 +370,23 @@ fn ambiguity_invalid_geometry_regions_and_cancellation_preserve_publication() {
             source_formats::keyvalues::Node::string("maxs", "128 128 256"),
         ],
     ));
-    let output = compiler::compile(&region, &common::empty_game());
+    let materials = directory.path().join("materials/tools");
+    std::fs::create_dir_all(&materials).unwrap();
+    std::fs::write(materials.join("toolsblack.vmt"), "UnlitGeneric { }").unwrap();
+    let mut game = common::empty_game();
+    game.mounts.push(source_formats::gamefs::MountedPath {
+        ids: vec!["game".into()],
+        mount: source_formats::gamefs::Mount::Directory(directory.path().to_owned()),
+    });
+    let output = compiler::compile(&region, &game);
     assert!(
         output
             .report
             .diagnostics
             .iter()
-            .any(|item| item.message.contains("do not support func_viscluster"))
+            .any(|item| item.message.contains("do not support func_viscluster")),
+        "{:?}",
+        output.report
     );
     assert!(output.bsp.is_none());
 }

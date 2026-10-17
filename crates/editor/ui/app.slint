@@ -34,6 +34,7 @@ export {SoundBrowserWindow, SoundChoiceRow} from "sounds.slint";
 export {ParticleBrowserWindow, ParticleChoiceRow} from "particles.slint";
 export {PlacementWindow} from "placement.slint";
 export {EntityPlacementWindow} from "entity-placement.slint";
+export {InstanceReferenceWindow} from "instance-reference.slint";
 export {PolygonWindow,PolygonCorner} from "polygon.slint";
 export {RepeatWindow} from "repeat.slint";
 export {PrefabsWindow,PrefabRow} from "prefabs.slint";
@@ -1925,6 +1926,9 @@ export component AppWindow inherits Window {
     in-out property <bool> instance-contents: false;
     in property <string> instance-contents-status: "Instance contents have not been refreshed";
     callback inspect-instance-contents();
+    callback create-instance-reference();
+    callback edit-instance-reference();
+    in property <bool> can-edit-instance-reference;
     in-out property <bool> rope-preview: false;
     in-out property <bool> selection-outlines: true;
     in-out property <bool> entity-images: true;
@@ -2761,6 +2765,9 @@ export component AppWindow inherits Window {
                         Button { text: "Entity…"; clicked => { root.place-entity(); } }
                         Button { text: "Tie to entity…"; enabled: root.can-tie; clicked => { root.tie-entity(); } }
                     }
+
+                    Button { text: "Instance reference…"; clicked => { root.create-instance-reference(); } }
+                    if root.can-edit-instance-reference: Button { text: "Edit instance reference…"; clicked => { root.edit-instance-reference(); } }
 
                     if root.brush-entity-selected: Button {
                         text: "Move to world";

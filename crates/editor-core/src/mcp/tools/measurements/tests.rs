@@ -20,6 +20,96 @@ fn preview(server: &EditorServer, id: Option<u32>) -> Value {
 }
 
 #[test]
+fn mcp_origin_actions_share_human_drafts_and_preserve_missing_references_until_explicit_repair() {
+    let mut session = Session::new(Err("no assets needed".into()));
+    let object = session
+        .edit(Actor::User, "source entity", |tx| {
+            map_core::edit::create_entity(
+                tx,
+                "logic_relay",
+                Some(DVec3::new(16.125, -32.25, 64.5)),
+                &[],
+                Vec::new(),
+            )
+        })
+        .unwrap();
+    let object_text = id_string(object);
+    let source = session.document().vmf().clone();
+    let shared = Arc::new(Mutex::new(session));
+    let server = EditorServer::new(shared.clone(), None);
+    let draft = preview(&server, None);
+    let attached = action(
+        &server,
+        json!({"action":"attach_origin", "token":draft["draft"]["token"], "endpoint":"start", "object":object_text}),
+    );
+    assert_eq!(
+        attached["draft"]["measurement"]["start"],
+        json!([16.125, -32.25, 64.5])
+    );
+    assert_eq!(lock(&shared).document().vmf(), &source);
+    let reviewed = lock(&shared)
+        .review_measurement(Actor::User, attached["draft"]["token"].as_u64().unwrap())
+        .unwrap();
+    let user_token = reviewed["draft"]["token"].as_u64().unwrap();
+    assert!(server.set_measurement(Parameters(serde_json::from_value(json!({"action":"world_endpoint", "token":user_token, "endpoint":"start", "point":[1,2,3]})).unwrap())).unwrap().is_error.unwrap_or(false));
+    lock(&shared)
+        .apply_measurement(Actor::User, user_token)
+        .unwrap();
+    assert_eq!(lock(&shared).document().undo_labels().count(), 2);
+    lock(&shared)
+        .edit(Actor::User, "delete entity", |tx| {
+            map_core::edit::delete(tx, &[object])
+        })
+        .unwrap();
+    let missing = value(server.get_measurements());
+    assert_eq!(missing["measurements"][0]["available"], false);
+    assert!(missing["measurements"][0]["start"].is_null());
+    assert_eq!(
+        missing["measurements"][0]["attachments"]["start"]["object"],
+        object_text
+    );
+    let state = action(
+        &server,
+        json!({"action":"preview", "id":1, "name":"Doorway clearance", "start":missing["measurements"][0]["stored_start"], "end":missing["measurements"][0]["end"], "snapshot":missing["snapshot"]}),
+    );
+    let token = state["draft"]["token"].clone();
+    for args in [
+        json!({"action":"detach_origin", "token":token, "endpoint":"start"}),
+        json!({"action":"apply", "token":token}),
+        json!({"action":"attach_origin", "token":token, "endpoint":"start", "object":"solid:999"}),
+    ] {
+        assert!(
+            server
+                .set_measurement(Parameters(serde_json::from_value(args).unwrap()))
+                .unwrap()
+                .is_error
+                .unwrap_or(false)
+        );
+        assert_eq!(value(server.get_measurements()), state);
+    }
+    let repaired = action(
+        &server,
+        json!({"action":"world_endpoint", "token":token, "endpoint":"start", "point":[-1.125,2.25,3.5]}),
+    );
+    action(
+        &server,
+        json!({"action":"apply", "token":repaired["draft"]["token"]}),
+    );
+    let saved = value(server.get_measurements());
+    assert_eq!(
+        saved["measurements"][0]["start"],
+        json!([-1.125, 2.25, 3.5])
+    );
+    assert!(saved["measurements"][0]["attachments"]["start"].is_null());
+    lock(&shared).undo(Actor::User).unwrap();
+    assert_eq!(
+        value(server.get_measurements())["measurements"],
+        missing["measurements"]
+    );
+    assert!(server.offscreen.lock().unwrap().renderer.is_none());
+}
+
+#[test]
 fn mcp_and_human_measurements_share_preview_ownership_persistence_and_undo() {
     let shared = Arc::new(Mutex::new(Session::new(Err("no assets needed".into()))));
     let original = lock(&shared).document().vmf().clone();

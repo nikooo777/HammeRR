@@ -5,9 +5,9 @@ export struct MeasurementRow { id: string, name: string, detail: string }
 export component MeasurementsWindow inherits Window {
     title: "Measurements - HammeRR";
     preferred-width: 860px;
-    preferred-height: 800px;
+    preferred-height: 940px;
     min-width: 760px;
-    min-height: 740px;
+    min-height: 880px;
     in property <[MeasurementRow]> measurements;
     in property <string> selected-id;
     in-out property <string> measurement-name;
@@ -17,6 +17,13 @@ export component MeasurementsWindow inherits Window {
     in-out property <string> end-x: "64";
     in-out property <string> end-y: "0";
     in-out property <string> end-z: "0";
+    in-out property <string> start-origin-object;
+    in-out property <string> end-origin-object;
+    in property <string> start-origin-status;
+    in property <string> end-origin-status;
+    in property <bool> start-attached;
+    in property <bool> end-attached;
+    in property <bool> can-attach;
     in-out property <bool> show-guides: true;
     in property <bool> editable;
     in property <bool> can-preview;
@@ -40,6 +47,12 @@ export component MeasurementsWindow inherits Window {
     callback pick-start();
     callback pick-end();
     callback cancel-pick();
+    callback attach-start-origin();
+    callback attach-end-origin();
+    callback detach-start-origin();
+    callback detach-end-origin();
+    callback world-start();
+    callback world-end();
     callback view-changed();
     callback cancel();
     forward-focus: dialog-focus;
@@ -58,7 +71,7 @@ export component MeasurementsWindow inherits Window {
                 Rectangle { horizontal-stretch: 1; }
                 CheckBox { text: "Show guides"; checked <=> root.show-guides; toggled => { root.view-changed(); } }
             }
-            Text { text: "Persistent world-space rulers · exact endpoints in Hammer units · X red, Y green, Z blue"; color: #b6c1cf; wrap: word-wrap; }
+            Text { text: "Persistent rulers · exact world points or point-entity origins · X red, Y green, Z blue"; color: #b6c1cf; wrap: word-wrap; }
             Rectangle {
                 background: #191f28;
                 border-radius: 6px;
@@ -105,21 +118,37 @@ export component MeasurementsWindow inherits Window {
             HorizontalLayout {
                 spacing: 10px;
                 Text { text: "Start"; width: 50px; vertical-alignment: center; }
-                LineEdit { enabled: root.editable; text <=> root.start-x; accessible-label: "Start X"; edited => { root.edited(); } }
-                LineEdit { enabled: root.editable; text <=> root.start-y; accessible-label: "Start Y"; edited => { root.edited(); } }
-                LineEdit { enabled: root.editable; text <=> root.start-z; accessible-label: "Start Z"; edited => { root.edited(); } }
+                LineEdit { enabled: root.editable && !root.start-attached; text <=> root.start-x; accessible-label: "Start X"; edited => { root.edited(); } }
+                LineEdit { enabled: root.editable && !root.start-attached; text <=> root.start-y; accessible-label: "Start Y"; edited => { root.edited(); } }
+                LineEdit { enabled: root.editable && !root.start-attached; text <=> root.start-z; accessible-label: "Start Z"; edited => { root.edited(); } }
             }
             HorizontalLayout {
                 spacing: 10px;
                 Text { text: "End"; width: 50px; vertical-alignment: center; }
-                LineEdit { enabled: root.editable; text <=> root.end-x; accessible-label: "End X"; edited => { root.edited(); } }
-                LineEdit { enabled: root.editable; text <=> root.end-y; accessible-label: "End Y"; edited => { root.edited(); } }
-                LineEdit { enabled: root.editable; text <=> root.end-z; accessible-label: "End Z"; edited => { root.edited(); } }
+                LineEdit { enabled: root.editable && !root.end-attached; text <=> root.end-x; accessible-label: "End X"; edited => { root.edited(); } }
+                LineEdit { enabled: root.editable && !root.end-attached; text <=> root.end-y; accessible-label: "End Y"; edited => { root.edited(); } }
+                LineEdit { enabled: root.editable && !root.end-attached; text <=> root.end-z; accessible-label: "End Z"; edited => { root.edited(); } }
             }
             HorizontalLayout {
+                spacing: 8px;
+                LineEdit { text <=> root.start-origin-object; placeholder-text: "entity:<id> or selection"; accessible-label: "Start origin object"; enabled: root.can-attach; }
+                Button { text: "Attach start origin"; enabled: root.can-attach; clicked => { root.attach-start-origin(); } }
+                Button { text: "Detach start"; enabled: root.can-attach && root.start-attached; clicked => { root.detach-start-origin(); } }
+                Button { text: "Use start world"; enabled: root.can-attach && root.start-attached; clicked => { root.world-start(); } }
+            }
+            Text { text: root.start-origin-status; color: #b6c1cf; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: 8px;
+                LineEdit { text <=> root.end-origin-object; placeholder-text: "entity:<id> or selection"; accessible-label: "End origin object"; enabled: root.can-attach; }
+                Button { text: "Attach end origin"; enabled: root.can-attach; clicked => { root.attach-end-origin(); } }
+                Button { text: "Detach end"; enabled: root.can-attach && root.end-attached; clicked => { root.detach-end-origin(); } }
+                Button { text: "Use end world"; enabled: root.can-attach && root.end-attached; clicked => { root.world-end(); } }
+            }
+            Text { text: root.end-origin-status; color: #b6c1cf; wrap: word-wrap; }
+            HorizontalLayout {
                 spacing: 10px;
-                Button { text: "Pick start"; enabled: root.can-pick; clicked => { root.pick-start(); } }
-                Button { text: "Pick end"; enabled: root.can-pick; clicked => { root.pick-end(); } }
+                Button { text: "Pick start"; enabled: root.can-pick && !root.start-attached; clicked => { root.pick-start(); } }
+                Button { text: "Pick end"; enabled: root.can-pick && !root.end-attached; clicked => { root.pick-end(); } }
                 if root.picking: Button { text: "Cancel picking"; clicked => { root.cancel-pick(); } }
                 Rectangle { horizontal-stretch: 1; }
                 Text { text: "Preview first · visible surfaces · no snapping"; color: #b6c1cf; wrap: word-wrap; }

@@ -4,7 +4,7 @@ use std::{
 };
 
 use glam::DVec3;
-use map_core::measurements::Measurement;
+use map_core::measurements::{Endpoint as StoredEndpoint, Measurement};
 use serde_json::Value;
 use slint::{ComponentHandle, VecModel};
 
@@ -63,6 +63,24 @@ fn load(window: &MeasurementsWindow, measurement: &Measurement) {
     window.set_end_x(measurement.end.x.to_string().into());
     window.set_end_y(measurement.end.y.to_string().into());
     window.set_end_z(measurement.end.z.to_string().into());
+    window.set_start_origin_object(
+        measurement
+            .origin_reference(StoredEndpoint::Start)
+            .ok()
+            .flatten()
+            .map(|id| format!("entity:{id}"))
+            .unwrap_or_default()
+            .into(),
+    );
+    window.set_end_origin_object(
+        measurement
+            .origin_reference(StoredEndpoint::End)
+            .ok()
+            .flatten()
+            .map(|id| format!("entity:{id}"))
+            .unwrap_or_default()
+            .into(),
+    );
 }
 
 fn result(measurement: &Measurement) -> String {
@@ -93,7 +111,14 @@ fn refresh(window: &MeasurementsWindow, session: &Session, form: &RefCell<Form>)
     window.set_editable(editable);
     window.set_can_preview(editable && (draft.is_null() || draft["owner"] == Actor::User.label()));
     window.set_can_review(editable && valid && (!reviewed || form.dirty));
-    window.set_ready(editable && reviewed && !form.dirty && !picking);
+    window.set_ready(
+        editable
+            && reviewed
+            && !form.dirty
+            && !picking
+            && draft["measurement"]["available"] == true,
+    );
+    window.set_can_attach(editable && reviewed && !form.dirty && !picking);
     window.set_can_pick(editable && reviewed && !form.dirty);
     window.set_picking(picking && reviewed);
     window.set_can_delete(editable && draft.is_null() && form.selected.is_some());
@@ -101,6 +126,41 @@ fn refresh(window: &MeasurementsWindow, session: &Session, form: &RefCell<Form>)
         current && !picking && ((reviewed && !form.dirty) || form.selected.is_some()),
     );
     window.set_show_guides(state["show_guides"] == true);
+    let displayed = if form.owned_token.is_some() && form.owned_token == form.displayed_token {
+        Some(&draft["measurement"])
+    } else {
+        state["measurements"].as_array().and_then(|entries| {
+            entries
+                .iter()
+                .find(|entry| entry["id"].as_u64() == form.selected.map(u64::from))
+        })
+    };
+    for endpoint in [Endpoint::Start, Endpoint::End] {
+        let name = match endpoint {
+            Endpoint::Start => "start",
+            Endpoint::End => "end",
+        };
+        let attachment = displayed.map(|data| &data["attachments"][name]);
+        let attached = attachment.is_some_and(|data| !data.is_null());
+        let status = attachment.filter(|data|!data.is_null()).map(|data| {
+            let object = data["object"].as_str().unwrap_or("entity");
+            match data["error"].as_str() {
+                Some(error) if !current => format!("{name}: {object} origin unavailable — {error}. Select the ruler again to review stored coordinates."),
+                Some(error) => format!("{name}: {object} origin unavailable — {error}. Stored coordinates shown; Use {name} world explicitly replaces this reference."),
+                None => format!("{name}: follows {object} origin. Detach freezes its current exact world point."),
+            }
+        }).unwrap_or_else(||format!("{name}: exact world point. Enter an entity ID or leave blank to use the selected point entity."));
+        match endpoint {
+            Endpoint::Start => {
+                window.set_start_attached(attached);
+                window.set_start_origin_status(status.into());
+            }
+            Endpoint::End => {
+                window.set_end_attached(attached);
+                window.set_end_origin_status(status.into());
+            }
+        }
+    }
     let entries = session
         .measurements()
         .map(|metadata| {
@@ -108,18 +168,23 @@ fn refresh(window: &MeasurementsWindow, session: &Session, form: &RefCell<Form>)
                 .measurements
                 .into_iter()
                 .map(|measurement| {
-                    let delta = measurement.components();
+                    let detail = match measurement.resolved(session.document().vmf()) {
+                        Ok(resolved) => {
+                            let delta = resolved.components();
+                            format!(
+                                "{:.3} units · ΔX {:+.3} · ΔY {:+.3} · ΔZ {:+.3}",
+                                resolved.distance(),
+                                delta.x,
+                                delta.y,
+                                delta.z
+                            )
+                        }
+                        Err(error) => format!("Unavailable: {error}"),
+                    };
                     MeasurementRow {
                         id: measurement.id.to_string().into(),
                         name: measurement.name.clone().into(),
-                        detail: format!(
-                            "{:.3} units · ΔX {:+.3} · ΔY {:+.3} · ΔZ {:+.3}",
-                            measurement.distance(),
-                            delta.x,
-                            delta.y,
-                            delta.z
-                        )
-                        .into(),
+                        detail: detail.into(),
                     }
                 })
                 .collect::<Vec<_>>()
@@ -143,6 +208,10 @@ fn refresh(window: &MeasurementsWindow, session: &Session, form: &RefCell<Form>)
             "Preview by {}. Review preview loads its endpoints and takes ownership.",
             draft["owner"].as_str().unwrap_or("another editor")
         )
+    } else if let Some(error) = draft["measurement"]["error"].as_str() {
+        format!(
+            "Ruler unavailable: {error}. Attach a valid origin or explicitly use a world endpoint before Apply."
+        )
     } else if form.dirty {
         "Endpoints or name changed. Preview again before Apply.".into()
     } else if picking {
@@ -153,22 +222,26 @@ fn refresh(window: &MeasurementsWindow, session: &Session, form: &RefCell<Form>)
         "Preview is current. Apply stores the measurement in one Undo step.".into()
     };
     window.set_preview_status(status.into());
-    let readout = request(window, form.selected)
-        .and_then(|request| {
-            let measurement = Measurement {
-                id: request.id.unwrap_or(1),
-                name: request.name,
-                start: request.start,
-                end: request.end,
-                extra: Vec::new(),
-            };
-            if measurement.start.is_finite() && measurement.end.is_finite() {
-                Ok(result(&measurement))
-            } else {
-                Err("Enter finite endpoint coordinates".into())
-            }
-        })
-        .unwrap_or_else(|error| error);
+    let readout = if let Some(error) = displayed.and_then(|data| data["error"].as_str()) {
+        format!("Unavailable: {error}")
+    } else {
+        request(window, form.selected)
+            .and_then(|request| {
+                let measurement = Measurement {
+                    id: request.id.unwrap_or(1),
+                    name: request.name,
+                    start: request.start,
+                    end: request.end,
+                    extra: Vec::new(),
+                };
+                if measurement.start.is_finite() && measurement.end.is_finite() {
+                    Ok(result(&measurement))
+                } else {
+                    Err("Enter finite endpoint coordinates".into())
+                }
+            })
+            .unwrap_or_else(|error| error)
+    };
     window.set_result(readout.into());
 }
 
@@ -187,7 +260,12 @@ fn adopt(
     let draft = &state["draft"];
     let data = &draft["measurement"];
     let point = |name: &str| -> Result<DVec3, String> {
-        let values = serde_json::from_value::<[f64; 3]>(data[name].clone())
+        let value = if data[name].is_null() {
+            &data[format!("stored_{name}")]
+        } else {
+            &data[name]
+        };
+        let values = serde_json::from_value::<[f64; 3]>(value.clone())
             .map_err(|_| "Invalid measurement preview endpoints")?;
         Ok(DVec3::from_array(values))
     };
@@ -203,8 +281,19 @@ fn adopt(
         end: point("end")?,
         extra: Vec::new(),
     };
-    measurement.validate()?;
     load(window, &measurement);
+    window.set_start_origin_object(
+        data["attachments"]["start"]["object"]
+            .as_str()
+            .unwrap_or("")
+            .into(),
+    );
+    window.set_end_origin_object(
+        data["attachments"]["end"]["object"]
+            .as_str()
+            .unwrap_or("")
+            .into(),
+    );
     let mut form = form.borrow_mut();
     form.selected = (draft["replace"] == true).then_some(measurement.id);
     form.owned_token = draft["token"].as_u64();
@@ -219,11 +308,93 @@ fn cancel_owned(session: &mut Session, form: &RefCell<Form>) {
     }
 }
 
+#[derive(Clone, Copy)]
+enum OriginAction {
+    Attach,
+    Detach,
+    World,
+}
+
+fn change_origin(
+    window: &MeasurementsWindow,
+    session: &mut Session,
+    form: &RefCell<Form>,
+    endpoint: Endpoint,
+    action: OriginAction,
+) -> Result<Value, String> {
+    let form = form.borrow();
+    if form.dirty {
+        return Err(
+            "Preview the changed name or world coordinates before changing attachments".into(),
+        );
+    }
+    let token = form
+        .owned_token
+        .ok_or("Preview or Review the measurement before changing attachments")?;
+    match action {
+        OriginAction::Attach => {
+            let text = match endpoint {
+                Endpoint::Start => window.get_start_origin_object(),
+                Endpoint::End => window.get_end_origin_object(),
+            };
+            let object = if text.trim().is_empty() {
+                if session.selection().len() != 1 {
+                    return Err("Enter entity:<id> or select exactly one point entity".into());
+                }
+                *session.selection().first().unwrap()
+            } else {
+                crate::identity::parse_id(&text)?
+            };
+            session.attach_measurement_origin(Actor::User, token, endpoint, object)
+        }
+        OriginAction::Detach => session.detach_measurement_origin(Actor::User, token, endpoint),
+        OriginAction::World => {
+            let request = request(window, form.selected)?;
+            let point = match endpoint {
+                Endpoint::Start => request.start,
+                Endpoint::End => request.end,
+            };
+            session.set_measurement_world_endpoint(Actor::User, token, endpoint, point)
+        }
+    }
+}
+
 impl Controller {
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
         let window = MeasurementsWindow::new()?;
         let form = Rc::new(RefCell::new(Form::default()));
         let viewport = Rc::new(Cell::new((1024, 576)));
+        for endpoint in [Endpoint::Start, Endpoint::End] {
+            for action in [
+                OriginAction::Attach,
+                OriginAction::Detach,
+                OriginAction::World,
+            ] {
+                let (window_ref, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+                let callback = move || {
+                    let window = window_ref.unwrap();
+                    let mut session = lock(&shared);
+                    match change_origin(&window, &mut session, &form, endpoint, action)
+                        .and_then(|state|adopt(&window, &session, &form, &state)) {
+                        Ok(()) => window.set_message("Endpoint preview updated. Check the ruler, then Apply to save in one Undo step.".into()),
+                        Err(error) => window.set_message(error.into()),
+                    }
+                    refresh(&window, &session, &form);
+                };
+                match (endpoint, action) {
+                    (Endpoint::Start, OriginAction::Attach) => {
+                        window.on_attach_start_origin(callback)
+                    }
+                    (Endpoint::End, OriginAction::Attach) => window.on_attach_end_origin(callback),
+                    (Endpoint::Start, OriginAction::Detach) => {
+                        window.on_detach_start_origin(callback)
+                    }
+                    (Endpoint::End, OriginAction::Detach) => window.on_detach_end_origin(callback),
+                    (Endpoint::Start, OriginAction::World) => window.on_world_start(callback),
+                    (Endpoint::End, OriginAction::World) => window.on_world_end(callback),
+                }
+            }
+        }
         for endpoint in [Endpoint::Start, Endpoint::End] {
             let (pick_window, shared, form, viewport) = (
                 window.as_weak(),
@@ -316,7 +487,15 @@ impl Controller {
                 });
                 match result {
                     Ok(measurement) => {
-                        load(&window, &measurement);
+                        let mut displayed = measurement.clone();
+                        for endpoint in [StoredEndpoint::Start, StoredEndpoint::End] {
+                            if let Ok(point) =
+                                measurement.resolve_endpoint(session.document().vmf(), endpoint)
+                            {
+                                displayed.set_stored_endpoint(endpoint, point);
+                            }
+                        }
+                        load(&window, &displayed);
                         let mut form = form.borrow_mut();
                         form.selected = Some(measurement.id);
                         form.dirty = false;

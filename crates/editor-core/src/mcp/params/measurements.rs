@@ -34,6 +34,20 @@ pub enum MeasurementArgs {
     CancelPick {
         token: u64,
     },
+    AttachOrigin {
+        token: u64,
+        endpoint: crate::session::measurements::Endpoint,
+        object: String,
+    },
+    DetachOrigin {
+        token: u64,
+        endpoint: crate::session::measurements::Endpoint,
+    },
+    WorldEndpoint {
+        token: u64,
+        endpoint: crate::session::measurements::Endpoint,
+        point: [f64; 3],
+    },
     Review {
         token: u64,
     },

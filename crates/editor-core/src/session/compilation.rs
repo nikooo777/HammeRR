@@ -916,14 +916,15 @@ impl Session {
         origin: &CompileOrigin,
         result: &Result<CompileResult, String>,
     ) -> bool {
-        if self
-            .compilation
-            .job
+        if self.compilation.job.as_ref().is_none_or(|job| {
+            !job.origin.same(origin)
+                || job.finished.is_some()
+                || result
+                    .as_ref()
+                    .is_ok_and(|result| job.token != result.token)
+        }) || result
             .as_ref()
-            .is_none_or(|job| !job.origin.same(origin) || job.finished.is_some())
-            || result
-                .as_ref()
-                .is_ok_and(|result| !result.origin.same(origin))
+            .is_ok_and(|result| !result.origin.same(origin))
         {
             return false;
         }
@@ -933,12 +934,11 @@ impl Session {
 
     pub fn finish_compile(&mut self, actor: Actor, result: &Result<CompileResult, String>) {
         if let Ok(result) = result {
-            if self
-                .compilation
-                .job
-                .as_ref()
-                .is_none_or(|job| !job.origin.same(&result.origin) || job.finished.is_some())
-            {
+            if self.compilation.job.as_ref().is_none_or(|job| {
+                !job.origin.same(&result.origin)
+                    || job.token != result.token
+                    || job.finished.is_some()
+            }) {
                 return;
             }
             if result.options.requires_guarded_publication()

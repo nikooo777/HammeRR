@@ -68,6 +68,7 @@ fn managed_mcp_background_awaited_and_play_share_queue_without_runtime_or_waiter
     let mut queue = crate::runtime::CompileQueue::isolated().unwrap();
     let mut documents = Vec::new();
     let mut directories = Vec::new();
+    let mut previous_outputs = Vec::new();
     for _ in 0..4 {
         let (directory, game, _) = crate::test_assets::game_process(false);
         let source = directory.path().join("source.vmf");
@@ -83,6 +84,7 @@ fn managed_mcp_background_awaited_and_play_share_queue_without_runtime_or_waiter
             crate::runtime::DocumentHandle::start_managed(Arc::new(Mutex::new(session)), &queue)
                 .unwrap(),
         );
+        previous_outputs.push(std::fs::read(directory.path().join("source.bsp")).unwrap());
         directories.push(directory);
     }
     let (entered, started) = std::sync::mpsc::sync_channel(1);
@@ -143,8 +145,11 @@ fn managed_mcp_background_awaited_and_play_share_queue_without_runtime_or_waiter
         assert!(!lock(document.session()).game_running());
         assert!(!lock(document.session()).launching());
     }
-    for directory in &directories[1..] {
-        assert!(!directory.path().join("source.bsp").exists());
+    for (directory, previous) in directories[1..].iter().zip(&previous_outputs[1..]) {
+        assert_eq!(
+            std::fs::read(directory.path().join("source.bsp")).unwrap(),
+            *previous
+        );
         assert!(!directory.path().join("source.lin").exists());
     }
     release.send(()).unwrap();

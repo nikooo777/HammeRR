@@ -1,6 +1,8 @@
 use slint::{ComponentHandle, ModelRc, VecModel};
 
-use crate::runtime::{SharedSession, lock};
+#[cfg(test)]
+use crate::runtime::SharedSession;
+use crate::runtime::{DocumentAccess, DocumentContinuation};
 use crate::session::{Actor, Session};
 use crate::{CheckIssueRow, ChecksWindow};
 
@@ -207,138 +209,168 @@ fn describe_repair(change: &serde_json::Value) -> String {
     lines.join("\n")
 }
 
+fn with_session<R>(
+    window: &slint::Weak<ChecksWindow>,
+    access: &DocumentContinuation,
+    body: impl FnOnce(&ChecksWindow, &mut Session) -> R,
+) -> Option<R> {
+    let window = window.upgrade()?;
+    match access
+        .upgrade()
+        .and_then(|access| access.with_session(|session| Ok(body(&window, session))))
+    {
+        Ok(result) => Some(result),
+        Err(error) => {
+            window.set_message(error.into());
+            None
+        }
+    }
+}
+
+#[cfg(test)]
 pub fn bind(window: &ChecksWindow, shared: &SharedSession) {
+    bind_with_access(window, &DocumentAccess::unmanaged(shared.clone()));
+}
+
+pub fn bind_with_access(window: &ChecksWindow, access: &DocumentAccess) {
     window.on_run_checks({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.downgrade());
         move || {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            session.run_map_checks(Actor::User);
-            window.set_page(0);
-            window.set_message("".into());
-            refresh(&window, &session);
+            with_session(&window, &access, |window, session| {
+                session.run_map_checks(Actor::User);
+                window.set_page(0);
+                window.set_message("".into());
+                refresh(window, session);
+            });
         }
     });
     window.on_filter({
-        let (window, shared) = (window.as_weak(), shared.clone());
-        move || refresh(&window.unwrap(), &lock(&shared))
+        let (window, access) = (window.as_weak(), access.downgrade());
+        move || {
+            with_session(&window, &access, |window, session| refresh(window, session));
+        }
     });
     window.on_inspect({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.downgrade());
         move |id| {
-            let window = window.unwrap();
-            window.set_selected_id(id);
-            window.set_message("".into());
-            refresh(&window, &lock(&shared));
+            with_session(&window, &access, |window, session| {
+                window.set_selected_id(id);
+                window.set_message("".into());
+                refresh(window, session);
+            });
         }
     });
     window.on_navigate({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.downgrade());
         move |frame| {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            let result = window
-                .get_report_token()
-                .parse()
-                .map_err(|_| "Run map checks first".to_string())
-                .and_then(|report| {
-                    window
-                        .get_selected_id()
-                        .parse()
-                        .map_err(|_| "Choose an issue".to_string())
-                        .and_then(|issue| {
-                            session.select_map_issue(
-                                Actor::User,
-                                report,
-                                issue,
-                                frame,
-                                window.get_aspect(),
-                            )
-                        })
-                });
-            refresh(&window, &session);
-            window.set_message(
-                result
-                    .map_or_else(
-                        |error| error,
-                        |()| {
-                            if frame {
-                                "Issue selected and framed".into()
-                            } else {
-                                "Issue selected".into()
-                            }
-                        },
-                    )
-                    .into(),
-            );
+            with_session(&window, &access, |window, session| {
+                let result = window
+                    .get_report_token()
+                    .parse()
+                    .map_err(|_| "Run map checks first".to_string())
+                    .and_then(|report| {
+                        window
+                            .get_selected_id()
+                            .parse()
+                            .map_err(|_| "Choose an issue".to_string())
+                            .and_then(|issue| {
+                                session.select_map_issue(
+                                    Actor::User,
+                                    report,
+                                    issue,
+                                    frame,
+                                    window.get_aspect(),
+                                )
+                            })
+                    });
+                refresh(window, session);
+                window.set_message(
+                    result
+                        .map_or_else(
+                            |error| error,
+                            |()| {
+                                if frame {
+                                    "Issue selected and framed".into()
+                                } else {
+                                    "Issue selected".into()
+                                }
+                            },
+                        )
+                        .into(),
+                );
+            });
         }
     });
     window.on_review_repair({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.downgrade());
         move || {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            let result = window
-                .get_report_token()
-                .parse()
-                .map_err(|_| "Run map checks first".to_string())
-                .and_then(|report| {
-                    window
-                        .get_selected_id()
-                        .parse()
-                        .map_err(|_| "Choose an issue".to_string())
-                        .and_then(|issue| session.preview_map_fixes(report, &[issue]))
-                });
-            refresh(&window, &session);
-            window.set_message(result.err().unwrap_or_default().into());
+            with_session(&window, &access, |window, session| {
+                let result = window
+                    .get_report_token()
+                    .parse()
+                    .map_err(|_| "Run map checks first".to_string())
+                    .and_then(|report| {
+                        window
+                            .get_selected_id()
+                            .parse()
+                            .map_err(|_| "Choose an issue".to_string())
+                            .and_then(|issue| session.preview_map_fixes(report, &[issue]))
+                    });
+                refresh(window, session);
+                window.set_message(result.err().unwrap_or_default().into());
+            });
         }
     });
     window.on_apply_repair({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.downgrade());
         move || {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            let result = window
-                .get_preview_token()
-                .parse()
-                .map_err(|_| "Review a repair first".to_string())
-                .and_then(|token| session.apply_map_fixes(Actor::User, token));
-            refresh(&window, &session);
-            window.set_message(
-                result
-                    .map_or_else(
-                        |error| error,
-                        |count| {
-                            format!("Repaired {count} issue(s). Undo restores the previous values.")
-                        },
-                    )
-                    .into(),
-            );
+            with_session(&window, &access, |window, session| {
+                let result = window
+                    .get_preview_token()
+                    .parse()
+                    .map_err(|_| "Review a repair first".to_string())
+                    .and_then(|token| session.apply_map_fixes(Actor::User, token));
+                refresh(window, session);
+                window.set_message(
+                    result
+                        .map_or_else(
+                            |error| error,
+                            |count| {
+                                format!(
+                                    "Repaired {count} issue(s). Undo restores the previous values."
+                                )
+                            },
+                        )
+                        .into(),
+                );
+            });
         }
     });
     window.on_cancel_repair({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.downgrade());
         move || {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            let result = window
-                .get_preview_token()
-                .parse()
-                .map_err(|_| "Repair preview already closed".to_string())
-                .and_then(|token| session.cancel_map_fixes(token));
-            refresh(&window, &session);
-            window.set_message(result.err().unwrap_or_default().into());
+            with_session(&window, &access, |window, session| {
+                let result = window
+                    .get_preview_token()
+                    .parse()
+                    .map_err(|_| "Repair preview already closed".to_string())
+                    .and_then(|token| session.cancel_map_fixes(token));
+                refresh(window, session);
+                window.set_message(result.err().unwrap_or_default().into());
+            });
         }
     });
     window.on_cancel({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.downgrade());
         move || {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            if let Ok(token) = window.get_preview_token().parse() {
-                let _ = session.cancel_map_fixes(token);
+            with_session(&window, &access, |window, session| {
+                if let Ok(token) = window.get_preview_token().parse() {
+                    let _ = session.cancel_map_fixes(token);
+                }
+            });
+            if let Some(window) = window.upgrade() {
+                let _ = window.hide();
             }
-            let _ = window.hide();
         }
     });
     window.window().on_close_requested({
@@ -351,3 +383,6 @@ pub fn bind(window: &ChecksWindow, shared: &SharedSession) {
         }
     });
 }
+
+#[cfg(test)]
+mod admission_tests;

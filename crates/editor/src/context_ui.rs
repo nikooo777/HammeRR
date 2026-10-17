@@ -3,7 +3,9 @@ use map_core::context::{self, Scope};
 use serde_json::Value;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
-use crate::runtime::{SharedSession, lock};
+#[cfg(test)]
+use crate::runtime::SharedSession;
+use crate::runtime::{DocumentAccess, DocumentContinuation};
 use crate::session::context::{Fields, Query};
 use crate::session::{Actor, Session};
 use crate::{ContextRow, ContextWindow};
@@ -276,122 +278,151 @@ fn result(window: &ContextWindow, session: &Session, result: Result<(), String>)
     refresh(window, session);
 }
 
-fn cancel(window: &ContextWindow, shared: &SharedSession) -> bool {
-    let mut session = lock(shared);
+fn cancel(window: &ContextWindow, session: &mut Session) -> bool {
     if window.get_token().is_empty() {
         return true;
     }
     let result = token(window).and_then(|token| session.cancel_context_edit(token));
     let okay = result.is_ok();
-    self::result(window, &session, result);
+    self::result(window, session, result);
     okay
 }
 
+fn with_session<R>(
+    window: &slint::Weak<ContextWindow>,
+    access: &DocumentContinuation,
+    body: impl FnOnce(&ContextWindow, &mut Session) -> R,
+) -> Option<R> {
+    let window = window.upgrade()?;
+    match access.upgrade().and_then(|access| {
+        access.with_session(|session| {
+            #[cfg(test)]
+            admission_tests::before_action();
+            Ok(body(&window, session))
+        })
+    }) {
+        Ok(result) => Some(result),
+        Err(error) => {
+            window.set_message(error.into());
+            None
+        }
+    }
+}
+
+#[cfg(test)]
 pub fn bind(window: &ContextWindow, shared: &SharedSession) {
+    bind_with_access(window, &DocumentAccess::unmanaged(shared.clone()));
+}
+
+pub fn bind_with_access(window: &ContextWindow, access: &DocumentAccess) {
     window.on_filter({
-        let (window, shared) = (window.as_weak(), shared.clone());
-        move || refresh(&window.unwrap(), &lock(&shared))
+        let (window, access) = (window.as_weak(), access.downgrade());
+        move || {
+            with_session(&window, &access, |window, session| refresh(window, session));
+        }
     });
     window.on_begin({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.downgrade());
         move |scope| {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            let scope = match scope.as_str() {
-                "new_region" => Ok(None),
-                "selection" => session
-                    .selected_context_scope()
-                    .map(Some)
-                    .ok_or_else(|| "Select one object first".to_owned()),
-                _ => Scope::parse(&scope).map(Some),
-            };
-            let operation = scope.and_then(|scope| session.begin_context_edit(scope));
-            result(&window, &session, operation);
+            with_session(&window, &access, |window, session| {
+                let scope = match scope.as_str() {
+                    "new_region" => Ok(None),
+                    "selection" => session
+                        .selected_context_scope()
+                        .map(Some)
+                        .ok_or_else(|| "Select one object first".to_owned()),
+                    _ => Scope::parse(&scope).map(Some),
+                };
+                let operation = scope.and_then(|scope| session.begin_context_edit(scope));
+                result(window, session, operation);
+            });
         }
     });
     window.on_edit({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.downgrade());
         move || {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            let operation = token(&window)
-                .and_then(|token| session.update_context_edit(token, fields(&window)));
-            result(&window, &session, operation);
+            with_session(&window, &access, |window, session| {
+                let operation = token(window)
+                    .and_then(|token| session.update_context_edit(token, fields(window)));
+                result(window, session, operation);
+            });
         }
     });
     window.on_apply({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.downgrade());
         move || {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            let operation = token(&window)
-                .and_then(|token| session.apply_context_edit(Actor::User, token))
-                .map(|_| ());
-            result(&window, &session, operation);
+            with_session(&window, &access, |window, session| {
+                let operation = token(window)
+                    .and_then(|token| session.apply_context_edit(Actor::User, token))
+                    .map(|_| ());
+                result(window, session, operation);
+            });
         }
     });
     window.on_cancel_edit({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.downgrade());
         move || {
-            cancel(&window.unwrap(), &shared);
+            with_session(&window, &access, cancel);
         }
     });
     window.on_delete_note({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.downgrade());
         move || {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            let operation = token(&window).and_then(|token| {
-                let draft = session
-                    .context_draft()
-                    .filter(|draft| draft.token == token)
-                    .ok_or("Context edit was closed or replaced")?
-                    .clone();
-                if !window.get_confirm_delete() {
-                    return Err("Confirm note removal first".into());
-                }
-                session.delete_context_note(
-                    Actor::User,
-                    draft.scope,
-                    draft.generation,
-                    draft.revision,
-                )
+            with_session(&window, &access, |window, session| {
+                let operation = token(window).and_then(|token| {
+                    let draft = session
+                        .context_draft()
+                        .filter(|draft| draft.token == token)
+                        .ok_or("Context edit was closed or replaced")?
+                        .clone();
+                    if !window.get_confirm_delete() {
+                        return Err("Confirm note removal first".into());
+                    }
+                    session.delete_context_note(
+                        Actor::User,
+                        draft.scope,
+                        draft.generation,
+                        draft.revision,
+                    )
+                });
+                result(window, session, operation);
             });
-            result(&window, &session, operation);
         }
     });
     window.on_focus_note({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.downgrade());
         move || {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            let operation = Scope::parse(&window.get_scope())
-                .and_then(|scope| session.focus_context(Actor::User, scope, window.get_aspect()));
-            result(&window, &session, operation);
+            with_session(&window, &access, |window, session| {
+                let operation = Scope::parse(&window.get_scope()).and_then(|scope| {
+                    session.focus_context(Actor::User, scope, window.get_aspect())
+                });
+                result(window, session, operation);
+            });
         }
     });
     window.on_toggle_regions({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.downgrade());
         move || {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            session.set_context_view(window.get_show_regions());
-            refresh(&window, &session);
+            with_session(&window, &access, |window, session| {
+                session.set_context_view(window.get_show_regions());
+                refresh(window, session);
+            });
         }
     });
     window.on_cancel({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.downgrade());
         move || {
-            let window = window.unwrap();
-            if cancel(&window, &shared) {
+            if with_session(&window, &access, cancel).unwrap_or(true)
+                && let Some(window) = window.upgrade()
+            {
                 let _ = window.hide();
             }
         }
     });
     window.window().on_close_requested({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.downgrade());
         move || {
-            if cancel(&window.unwrap(), &shared) {
+            if with_session(&window, &access, cancel).unwrap_or(true) {
                 slint::CloseRequestResponse::HideWindow
             } else {
                 slint::CloseRequestResponse::KeepWindowShown
@@ -399,3 +430,6 @@ pub fn bind(window: &ContextWindow, shared: &SharedSession) {
         }
     });
 }
+
+#[cfg(test)]
+mod admission_tests;

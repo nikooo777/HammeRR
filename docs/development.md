@@ -2161,3 +2161,55 @@ state. Add `--cpu-only` to the prefab script for inspection without a GPU.
 The ordinary workspace suite covers shared navigation settings/defaults and
 unresolved-instance rejection across compiler, Session and blocking/background
 MCP paths. Software UI tests cover their controls without desktop input.
+
+### Referenced brush assemblies
+
+```sh
+python3 -B scripts/validate_brush_instances.py --binary target/debug/hammerr-headless --output /tmp/hammerr-brush-instances-check
+```
+
+Use a fresh private directory. This checks actual blocking/background BSP
+publication, child identities, an independently flattened geometry control,
+unsaved-parent preservation, child-only staleness and failed-build BSP/LIN
+preservation. Its Play request is made only after verified dependency staleness;
+the private game placeholder cannot run Steam or the game. Compiler tests also
+cover Source transforms/UVs, region ordering, budgets, source/output aliases and
+cancellation; Session tests cover dependency guards for both actors.
+
+### Authored terrain lighting preview
+
+```sh
+python3 -B scripts/validate_terrain_lighting_preview.py --binary target/debug/hammerr-headless --output /tmp/hammerr-terrain-lighting-check
+```
+
+Use a fresh output directory. The private MCP workflow checks actual Off/Fast/
+Detail terrain pixels, receiver/material policy, shared/temporary reports,
+reload and preserved source/review state. The explicit GPU test
+`terrain_authored_lighting_gpu_matches_compiler_fast_detail_and_independent_normals`
+compares both qualities with compiler lighting and independent prepared normals.
+Neither operation needs desktop input or a game launch.
+
+### Authored model scale and baked face origins
+
+```sh
+python3 -B scripts/validate_model_scale.py --binary target/debug/hammerr-headless --output /tmp/hammerr-model-scale-check
+python3 -B scripts/validate_baked_lightmaps.py --binary target/debug/hammerr-headless --output /tmp/hammerr-baked-origins-check
+```
+
+Both use private stdio sessions and fresh directories. Model scale checks exact
+unit/default images, scaled silhouette coverage, independent rotated bounds and
+ray distances, reference attachments, Undo/reload and raw BSP property retention.
+It reads installed CS:S model assets and does not launch the game. The explicit
+GPU test `rendered_model_scale_keeps_default_pixels_and_changes_silhouette_coverage`
+checks unit pixels and scale coverage independently of the UI.
+
+The baked inspector script checks known authored IDs, source/match/contributor
+pages, Fullbright metadata, both lightmap channels, repeated child IDs and stale
+child dependencies without graphics startup. Compiler regressions cover exact
+emission contributors, split/merged/generated/terrain origins, geometry identity
+and metadata bounds. Software UI tests exercise local list choices and preserve
+editor selection and owned reviews.
+
+`tool_terrain_temporary_visibility_rebuilds_retained_lighting_counts_and_pixels`
+is an explicit GPU/MCP regression for retained reports across temporary Tool
+textures overrides; hidden tool terrain must report zero drawn triangles.

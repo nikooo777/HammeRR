@@ -99,7 +99,7 @@ fn model_scale_native_float_admission_and_writer_boundaries_are_explicit() {
             .contains("FGD model guides")
     );
     let mut outside = entity(Some("64"));
-    outside.properties.set("origin", "65535 20 30");
+    outside.properties.set("origin", "10 65535 30");
     assert!(
         Instance::new(&outside, offset_asset(false))
             .err()
@@ -405,8 +405,10 @@ fn rendered_model_scale_keeps_default_pixels_and_changes_silhouette_coverage() {
     let blank = opacity_pixels(&context, &mut renderer, &mut materials, &game, &[]);
     let coverage = |pixels: &[u8]| {
         pixels
-            .chunks_exact(4)
-            .zip(blank.chunks_exact(4))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(blank.as_chunks::<4>().0.iter())
             .filter(|(a, b)| a != b)
             .count()
     };

@@ -94,11 +94,23 @@ To build the map, set the build options once, then compile:
 
 `start_compile` returns a job token right away; poll `get_compile_status` and stop with `cancel_compile`. `compile_map` and `run_map` wait for the build to finish. `launch_game` does the same as **Play built map**.
 
-Visible `func_instance` and `func_instance_parms` fail both full-map and region
-builds before region selection or geometry processing, with entity-specific
-errors and unchanged previous BSP/pointfile bytes. Hidden helpers are excluded.
-`run_map_checks` reports the visible helpers as errors. Referenced-map resolution
-and expansion are unavailable; `run_map` does not launch after this build failure.
+A saved parent can compile bounded single-level world/detail brush instances;
+see [Referenced brush assemblies](instances.md). `create_entity` uses
+`classname: "func_instance"`, an origin and string properties `file` (relative
+`.vmf`) and optional `angles` (Source pitch/yaw/roll). The current in-memory parent
+is authoritative. Unsaved untitled parents, unsupported contents and visible
+`func_instance_parms` reject; hidden helpers are excluded.
+
+`compile_map`, `start_compile` and `run_map` use the same automatic expansion
+before region selection. Optional `stats.instances` contains occurrence/file/
+world/detail counts and dependency paths, bytes and SHA256. Completed instance
+jobs report `instance_dependencies.current/error`; `stale`, launch readiness
+and baked inspection include the retained build's dependencies. Launch verifies
+exact contents in its worker. Source/settings changes, dependency failures and
+cancellation preserve previous BSP/pointfile bytes. **Generate reflections**
+with instances rejects; viewport expansion and nested/runtime-name expansion
+remain unavailable. `run_map_checks` performs only pure helper-field/path-state
+admission, leaving child reads and complete validation to compilation.
 
 ## Tools by task
 
@@ -276,6 +288,19 @@ These details aren't obvious from the tool list.
 
 - `set_compile_settings` takes `lighting` (`fullbright`, `direct_ldr` or `direct_ldr_hdr`), `physics` (`none` or `engine`), `visibility` (`fast` or `detailed`), `sky_quality` (`fast`, `balanced` or `detailed`), `bounces` (whole counts `0`–`4`), `smoothing_angle` (whole degrees `0`–`90`), `pack_sky_assets` and `generate_reflections` (booleans, both default `false`). Packing works with every lighting mode; reflection generation requires `direct_ldr` or `direct_ldr_hdr`. Omitted/null fields retain their values, unknown arguments reject, and invalid combinations leave every setting unchanged.
 - `get_compile_settings.visibility_choices` exposes **Fast (conservative)** and **Detailed (portal clipping)**, shown under **Visibility quality** in Build settings. `visibility` freezes in each job's captured settings and changing it stales prior output. Detailed clips source/pass portal apertures; PAS includes the refined visible rows. Statistics expose `visibility_mode`, `visibility_work`, `visibility_removed_pairs` (directed PVS entries removed from the broad result) and `visibility_workers` for the largest actual worker count across the base and flow stages. Larger jobs parallelize base-facing rows on at most eight available CPUs; Detailed also parallelizes separator flow. Source portals retain their order, and workers share one exact global work budget. Invalid apertures and exceeded work/allocation budgets fail without publishing output. The former `visibility_fallbacks` statistic is removed because clipping is no longer abandoned.
+
+Authored `func_viscluster` uses `create_block` then `tie_to_entity` with that
+classname. Ordinary compile paths group dry open leaves whose exact convex
+intersection exceeds 10% of leaf volume, subject to bounded numerical admission.
+Up to 16 single-convex-brush helpers are supported; ambiguous overlapping claims,
+liquid/portal/area crossings and active compile regions reject. Geometry is not
+merged. The compiler coarsens already solved source/destination PVS groups and
+recomputes PAS, preserving baseline visibility and individual ambient leaves.
+Stats distinguish `visibility_solved_clusters` from emitted `clusters`, plus
+`viscluster_helpers`, `viscluster_groups` and `viscluster_grouped_leaves`. Removed-pair
+statistics refer to the pre-grouping solve. There is no claim of reduced VIS
+work, compressed size or native float parity. See [Visibility clusters](visclusters.md).
+
 - `get_compile_settings` returns the current choices, including `sky_choices` with their labels and direction counts (32, 128 and 512). These tools work before the first build, like the toolbar's **Build settings…**. The UI calls `sky_quality` **Sampling quality**; it affects sky ambient, soft sun, model ambient and bounce rays in either lit mode.
 - `get_compile_settings.bounce_choices` exposes **Direct only** (`bounces: 0`, default) and **One diffuse bounce**, **Two diffuse bounces**, **Three diffuse bounces** or **Four diffuse bounces** (`bounces: 1`–`4`), shown under **Indirect light**. It gathers reflected light per source style from immutable previous-pass world/detail/terrain lightmaps into world, terrain and brush-model receivers using 32/128/512 cosine-weighted rays per receiver per pass. Each pass rebuilds receivers from the original direct maps. Model rays check their own geometry before accepting a world hit; unrelated models stay separate. Source albedo must be between zero and one; sky/backfaces do not supply bounce energy. Stats expose actual `bounces`, `bounce_rays`, `bounce_samples` (final-pass receivers with positive indirect light) and `bounce_work`, within the shared lighting budget. Fullbright retains the setting and reports zero bounce work.
 - `edit_faces` (including `preview: true`), `commit_face_preview` and `cancel_face_preview` drive the same authored brush smoothing as **Face lighting…**. Shared groups 1–24 blend; shared groups 25–32 keep hard edges and take priority. Both lit modes apply checked world/detail and brush-model corner normals, including eligible corners inside neighboring source edges. Original fan centers and source fans remain stable across lightmap subdivision. Stats expose `smoothed_faces`, `smoothed_corners` and `normal_work` (construction work; receiver interpolation also counts toward `lighting_work`). Unassigned faces stay flat at angle zero; terrain, world coordinates and each model's local coordinates remain separate. Source/corner limits and the shared lighting budget preserve prior output on rejection.
@@ -635,13 +660,17 @@ Fast plus normal maps rejects atomically. These resource settings preserve
 camera, selection, source/history and owned editing reviews.
 
 `get_lighting_preview {}` uses the shared CPU scene without graphics startup.
-It returns admitted/excluded emitters and flat receiver polygons, bounded
+It returns admitted/excluded emitters, flat receiver polygons and separate
+`report.terrain` surface/drawn-triangle counts, bounded
 diagnostics, limits, summary and the captured document/render/region/material
 source stamp. `render_view.lighting_preview.report` belongs to the scene that
 was rendered; temporary overrides leave shared settings unchanged.
 
 Only visible constant unnamed style-0 `light`/`light_spot` entities and opaque
-flat LightmappedGeneric brush receivers are admitted. The 32-light or summed
+flat LightmappedGeneric brush receivers or supported power-2/3/4 world/detail
+terrain are admitted. Terrain uses checked sewn LOD normals, no declared
+bump/blend/detail effects and the same cached opaque base/material identity;
+outline-only or suppressed tool/sky sheets count zero drawn triangles. The 32-light or summed
 radiance limit disables the whole preview with a reason. Zero admitted lights
 make supported receivers black. Excluded surfaces retain ordinary display.
 There are no shadows, sun, ambient, bounce, animation or native brightness
@@ -1265,7 +1294,16 @@ lightmaps…**. Optional arguments are `channel:"ldr"|"hdr"` (default `ldr`),
 zero-based compiled `face`, `style_index` (slot 0–3, default 0), `map_index`
 (0 base or 1–3 directional maps, default 0), `offset` (default 0) and `limit`
 (1–32, default 32). An omitted face selects the first valid lit face in the
-requested channel. No path argument or authored VMF face mapping is provided.
+requested channel. There is no arbitrary path argument.
+
+Instead of `face`, pass `source:{"kind":"root","solid":123,"side":456}`,
+`source:{"kind":"instance","instance":789,"file":"child.vmf","solid":12,"side":34}`,
+or `selected_authored_face:true`. These selectors are mutually exclusive. Root
+IDs and child-scoped origins are the exact retained compiler contributors;
+source matches are paginated with `offset`/`limit`. `contributor_offset` pages
+contributors of the inspected compiled face. Choosing inspection rows leaves
+editor selection/camera and owned drafts unchanged. Instance filenames only
+match retained origins and authorize no file lookup.
 
 The JSON report contains build provenance/status, both channel availabilities,
 paginated compiled-face summaries, selected dimensions/styles/sample byte ranges,
@@ -1283,6 +1321,14 @@ identity checks cap each source/BSP at 128 MiB. Missing lighting, Fullbright,
 unsupported/corrupt face ranges and absent channels return diagnostics without
 an invented image. Inspection preserves source/history/selection/camera; it adds
 no viewport baked-lighting mode, prop relighting or arbitrary BSP browsing.
+`mapping` reports retained contributors, source matches and their page totals.
+It preserves many-to-many relationships, explicit generated/unknown labels and
+original child solid/side IDs scoped by root helper and registered file. The
+mapping is capped at 65,536 faces, 262,144 references and 8 MiB; explicit mapping
+failure preserves ordinary compiled-face inspection. Geometry fingerprints reject
+mismatched channel/face layouts. Explicit inspection checks exact root/output and
+instance-child bytes. `build.render_context` separately marks displayed drafts as
+not baked; stale numeric IDs cannot become current merely by existing again.
 See [Baked lightmaps](baked-lightmaps.md).
 
 ### Water material binding
@@ -1471,7 +1517,24 @@ Unsupported mode/FX or malformed appearance values keep a diagnostic helper.
 Static props require white tint and Normal mode with no FX; unsupported values
 also reject compilation without replacing prior output. This editor preview
 does not evaluate native game appearance, animation, runtime fades, material
-proxies, intersecting/cyclic transparency, other modes or scaling.
+proxies, intersecting/cyclic transparency or other modes.
+
+#### Uniform model scale
+
+`set_entity_properties` writes the string `modelscale`, matching **Model scale**.
+Absent means 1. Generic eligible MDL point entities share positive uniform
+origin-relative scaling, triangle picks, bounds, framing, region/volume tests and
+reference-pose attachments. `inspect_entity_model.model_scale` reports the raw
+value, effective native-float value, admission/applied status, errors and limits.
+Ordinary attachment axes scale; world-aligned attachments retain their axes and
+scale their position. Browser asset previews and cached meshes stay at unit scale.
+
+The editor accepts native-float values from 1/64 through 64, with at most 64 UTF-8
+bytes and transformed mesh bounds within ±65536. Unsupported imported values
+remain visible with a helper diagnostic, never clamped. Static props, native
+detail records and literal FGD guides remain unit-only. Dynamic BSP entities retain
+the raw property; native class behavior, collision scaling, animation and timed
+scale inputs are not established by the editor preview. See [Models](models.md#scale-a-dynamic-model).
 
 ### Surface placement
 
@@ -1980,7 +2043,7 @@ Imported regular overlays and water transitions retain their complete definition
 regardless of marker origin; every target must resolve to an emitted
 world/detail/terrain surface. Missing window render targets and ordinary helper
 validation errors retain prior output.
-Crossing terrain/water, detail/model water, slime, instances and visclusters
+Crossing terrain/water, detail/model water, slime and visclusters
 reject before publication.
 Runtime-model terrain remains unsupported by the normal compiler too.
 Sun and water LOD controllers retain original origins/settings even outside

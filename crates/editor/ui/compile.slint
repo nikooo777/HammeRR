@@ -1,4 +1,4 @@
-import { Button, CheckBox, ComboBox, LineEdit, ScrollView, Slider, SpinBox, TextEdit } from "std-widgets.slint";
+import { Button, CheckBox, ComboBox, LineEdit, ListView, ScrollView, Slider, SpinBox, TextEdit } from "std-widgets.slint";
 
 export component CompileWindow inherits Window {
     title: "Build status - HammeRR";
@@ -232,9 +232,10 @@ export component BakedLightmapsWindow inherits Window {
     forward-focus: keys;
     keys := FocusScope {
       key-pressed(event) => { if event.text == Key.Escape { root.close-dialog(); accept } else { reject } }
+      VerticalLayout {
+        spacing: 0px;
       ScrollView {
-        width: 100%;
-        height: 100%;
+        content-width: self.width;
         VerticalLayout {
           padding: 24px;
           spacing: 12px;
@@ -300,10 +301,12 @@ export component BakedLightmapsWindow inherits Window {
               for row[i] in root.match-rows: Button { text: row; clicked => { root.inspect-match(i); } }
           }
           TextEdit { text: root.diagnostics; read-only: true; min-height: 70px; max-height: 110px; }
-          HorizontalLayout {
-              Rectangle { horizontal-stretch: 1; }
-              Button { text: "Close"; clicked => { root.close-dialog(); } }
-          }
+        }
+      }
+        HorizontalLayout {
+            padding: 16px;
+            Rectangle { horizontal-stretch: 1; }
+            Button { text: "Close"; clicked => { root.close-dialog(); } }
         }
       }
     }

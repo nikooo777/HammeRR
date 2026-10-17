@@ -1,3 +1,5 @@
+[← Manual](README.md)
+
 # Authored visibility clusters
 
 `func_viscluster` combines selected BSP leaves into one visibility cluster.
@@ -26,7 +28,7 @@ center do not decide membership. Helper boundaries do not cut the BSP tree.
 Near-threshold numerical uncertainty rejects the build and asks you to move
 the boundary; it does not lower the overlap threshold.
 
-Support is limited to full-map builds, 16 helpers and one visible convex brush
+Limits: full-map builds, 16 helpers and one visible convex brush
 per helper, with at most 64 authored sides. The combined leaf/helper intersection
 is limited to 128 planes and 2,048 polygon points. Geometry and grouping share
 the bounded visibility work allowance. These are compiler admission limits.

@@ -73,6 +73,8 @@ model guides keep their independent flat editor appearance.
    value when it rereads changed model files. The isolated browser preview stays
    at scale **1**; choosing a different model preserves the entity’s scale.
 
+![Dynamic meshes with authored uniform model scale](images/model-scale.png)
+
 The absent value is **1**. Values are evaluated at native float precision while
 the original property string is preserved. The range, 64-byte property limit
 and transformed mesh bounds within ±65536 are editor numeric limits. Imported

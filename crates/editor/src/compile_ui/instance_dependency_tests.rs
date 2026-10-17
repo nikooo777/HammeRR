@@ -10,7 +10,18 @@ fn instance_dependency_build_details_share_counts_hashes_and_stale_launch_status
         },
     )))
     .unwrap();
-    let (_directory, game, source, child) = editor_core::test_assets::instance_map(false);
+    let (directory, mut game, source, child) = editor_core::test_assets::instance_map(false);
+    let materials = directory.path().join("materials/dev");
+    std::fs::create_dir_all(&materials).unwrap();
+    std::fs::write(
+        materials.join("dev_measuregeneric01.vmt"),
+        "UnlitGeneric { }",
+    )
+    .unwrap();
+    game.mounts.push(source_formats::gamefs::MountedPath {
+        ids: vec!["game".into()],
+        mount: source_formats::gamefs::Mount::Directory(directory.path().to_owned()),
+    });
     let mut session = Session::new(Ok(game));
     session.open(Actor::User, &source, true).unwrap();
     let before = session.document().vmf().clone();

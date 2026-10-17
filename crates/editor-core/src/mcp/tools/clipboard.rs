@@ -145,28 +145,33 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect a prefab's isolated flat-geometry thumbnail without initializing graphics. Returns actual geometry counts, bounds, point-helper/model counts, cache state and resource limits, or an explicit source/model/instance/geometry error. Uses the same detached Session preparation as Prefabs… → Render thumbnail. Textures and sky assets are not loaded; authored hidden objects are included. Missing/invalid model geometry and func_instance reject instead of silently omitting content. Revalidates exact bounded source bytes, including on cache hits. No map, selection, clipboard, camera, draft or history changes.",
+        description = "Inspect a prefab thumbnail without initializing graphics. Optional style: flat (default, no texture reads) or textured (static opaque single-base LightmappedGeneric/UnlitGeneric/VertexLitGeneric, identity UV transform, no proxies/detail/second layers/display substitution). Returns actual geometry/bounds, style, asset fingerprints, cache state and resource limits or explicit diagnostics. Textured reads are bounded to 1 MiB per VMT/Patch, 16 MiB per VTF, 64 MiB per admission/revalidation pass and decoded mips, an 80 MiB initial identity-guard read bound, 256 sources and 2048-pixel axes. Shares detached Session preparation with Prefabs… thumbnail controls. Includes authored hidden geometry; excludes sky, normal maps and authored lighting. Exact prefab bytes and Textured asset bytes/winning sources are checked on cache retrieval. Textured failure never substitutes Flat. No map, selection, clipboard, camera, draft or history changes.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn inspect_prefab_thumbnail(
         &self,
         Parameters(args): Parameters<InspectPrefabThumbnailArgs>,
     ) -> ToolResult {
-        run(|| Ok(self.session().prefab_thumbnail_report(&args.name)))
+        run(|| {
+            Ok(self
+                .session()
+                .prefab_thumbnail_report_with_style(&args.name, args.style.unwrap_or_default()))
+        })
     }
 
     #[tool(
-        description = "Render one library prefab as a 320×240 PNG with the same shared Session operation, isolated scene, framing and lazy recoverable renderer as Prefabs… → Render thumbnail / Refresh thumbnail. Flat shaded real brush, terrain and model geometry plus normal editor point helpers; textures/sky are omitted and authored hidden objects are included. inspect_prefab_thumbnail provides CPU-only diagnostics. Unsupported instances, unavailable models, invalid geometry and source changes return explicit failures without an image. At most eight images are cached; each retrieval checks exact source bytes and content/FGD epochs. refresh:true regenerates pixels. No map, clipboard, selection, camera, draft or history changes.",
+        description = "Render one prefab as a 320×240 PNG through Prefabs… → Render thumbnail / Refresh thumbnail's shared Session renderer. Optional style: flat (default) or textured; inspect_prefab_thumbnail reports exact admission limits. Both use detached real geometry/helpers and include hidden objects. Textured admits bounded static opaque base images with fixed editor shading; no normal maps, authored lighting, sky or native pixel-parity claim. Unsupported or missing assets return an error without an image or automatic Flat substitution; choose flat explicitly. Eight cached images total are keyed by source and style, rechecked against exact prefab/asset bytes, winning mounted sources and content/FGD epochs. refresh:true regenerates the requested style with current assets. No map, clipboard, selection, camera, draft or history changes.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn render_prefab_thumbnail(
         &self,
         Parameters(args): Parameters<RenderPrefabThumbnailArgs>,
     ) -> ToolResult {
-        let thumbnail = match self
-            .session()
-            .prefab_thumbnail(&args.name, args.refresh.unwrap_or(false))
-        {
+        let thumbnail = match self.session().prefab_thumbnail_with_style(
+            &args.name,
+            args.refresh.unwrap_or(false),
+            args.style.unwrap_or_default(),
+        ) {
             Ok(thumbnail) => thumbnail,
             Err(error) => return fail(error),
         };

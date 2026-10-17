@@ -1254,6 +1254,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "sha2",
  "source-formats",
  "tempfile",
  "tokio",

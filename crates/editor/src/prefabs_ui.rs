@@ -1,3 +1,4 @@
+use crate::session::prefabs::ThumbnailStyle;
 use crate::{
     PrefabRow, PrefabsWindow, clipboard_ui,
     runtime::{SharedSession, lock},
@@ -116,32 +117,64 @@ fn thumbnail_image(window: &PrefabsWindow, thumbnail: &crate::session::prefabs::
     window.set_has_thumbnail(true);
 }
 
+fn thumbnail_style(window: &PrefabsWindow) -> Result<ThumbnailStyle, String> {
+    match window.get_thumbnail_style() {
+        0 => Ok(ThumbnailStyle::Flat),
+        1 => Ok(ThumbnailStyle::Textured),
+        _ => Err("Choose Flat or Textured thumbnails".into()),
+    }
+}
+
+fn thumbnail_error(style: ThumbnailStyle, error: &str) -> String {
+    match style {
+        ThumbnailStyle::Flat => error.to_owned(),
+        ThumbnailStyle::Textured => format!(
+            "Textured unavailable: {error} Repair assets and retry Render thumbnail, or choose Flat explicitly to omit textures."
+        ),
+    }
+}
+
 fn refresh_thumbnail(window: &PrefabsWindow, session: &Session, selected: Option<&str>) {
     window.set_has_thumbnail(false);
     window.set_thumbnail(Default::default());
     window.set_can_render_thumbnail(false);
+    let style = match thumbnail_style(window) {
+        Ok(style) => style,
+        Err(error) => {
+            window.set_thumbnail_status(error.into());
+            return;
+        }
+    };
     let Some(name) = selected else {
         window.set_thumbnail_status(
             "Textures stay external. Rendering starts only when requested.".into(),
         );
         return;
     };
-    match session.cached_prefab_thumbnail(name) {
+    let policy = match style {
+        ThumbnailStyle::Flat => {
+            "Real assembly geometry and editor point helpers. Textures are omitted; authored hidden objects are included."
+        }
+        ThumbnailStyle::Textured => {
+            "Static opaque base textures with fixed editor shading. No normal maps, authored lighting or sky. Refresh checks external assets. Unsupported materials show an error; Flat is a separate choice."
+        }
+    };
+    match session.cached_prefab_thumbnail_with_style(name, style) {
         Ok(Some(thumbnail)) => {
             thumbnail_image(window, &thumbnail);
             window.set_can_render_thumbnail(true);
-            window.set_thumbnail_status("Real assembly geometry and editor point helpers. Textures are omitted; authored hidden objects are included.".into());
+            window.set_thumbnail_status(policy.into());
         }
         Ok(None) => {
-            let report = session.prefab_thumbnail_report(name);
+            let report = session.prefab_thumbnail_report_with_style(name, style);
             if let Some(error) = report["error"].as_str() {
-                window.set_thumbnail_status(error.into());
+                window.set_thumbnail_status(thumbnail_error(style, error).into());
             } else {
                 window.set_can_render_thumbnail(true);
-                window.set_thumbnail_status("Ready to render real assembly geometry and editor point helpers. Textures are omitted; authored hidden objects are included.".into());
+                window.set_thumbnail_status(format!("Ready to render. {policy}").into());
             }
         }
-        Err(error) => window.set_thumbnail_status(error.into()),
+        Err(error) => window.set_thumbnail_status(thumbnail_error(style, &error).into()),
     }
 }
 fn refresh(window: &PrefabsWindow, session: &Session, state: &RefCell<Form>, force: bool) {
@@ -231,6 +264,24 @@ fn refresh(window: &PrefabsWindow, session: &Session, state: &RefCell<Form>, for
         .into()
     });
 }
+fn finish_thumbnail_render(
+    window: &PrefabsWindow,
+    session: &Session,
+    form: &RefCell<Form>,
+    result: Result<crate::session::prefabs::Thumbnail, String>,
+) {
+    refresh(window, session, form, true);
+    if let Err(error) = result {
+        window.set_has_thumbnail(false);
+        window.set_thumbnail(Default::default());
+        window.set_thumbnail_status(
+            thumbnail_style(window)
+                .map_or(error.clone(), |style| thumbnail_error(style, &error))
+                .into(),
+        );
+    }
+}
+
 impl Controller {
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
         let window = PrefabsWindow::new()?;
@@ -424,16 +475,20 @@ impl Controller {
                     .selected
                     .as_deref()
                     .ok_or_else(|| "Choose a prefab first".to_string())
-                    .and_then(|name| session.prefab_thumbnail(name, true));
-                refresh(&window, &session, &form, true);
-                match result {
-                    Ok(thumbnail) => thumbnail_image(&window, &thumbnail),
-                    Err(error) => {
-                        window.set_has_thumbnail(false);
-                        window.set_thumbnail(Default::default());
-                        window.set_thumbnail_status(error.into());
-                    }
-                }
+                    .and_then(|name| {
+                        session.prefab_thumbnail_with_style(name, true, thumbnail_style(&window)?)
+                    });
+                finish_thumbnail_render(&window, &session, &form, result);
+            }
+        });
+        window.on_thumbnail_style_changed({
+            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            move || {
+                refresh_thumbnail(
+                    &window.unwrap(),
+                    &lock(&shared),
+                    form.borrow().selected.as_deref(),
+                )
             }
         });
         Ok(Self {
@@ -493,6 +548,24 @@ mod tests {
         );
         controller.window.invoke_preview();
         let rendered = lock(&shared).render_document().vmf().clone();
+        let clipboard = lock(&shared).clipboard_report();
+        assert_eq!(controller.window.get_thumbnail_style(), 0);
+        controller.window.set_thumbnail_style(1);
+        controller.window.invoke_thumbnail_style_changed();
+        assert!(!controller.window.get_has_thumbnail());
+        assert!(!controller.window.get_can_render_thumbnail());
+        assert!(controller.window.get_thumbnail_status().contains("missing"));
+        controller.window.invoke_render_thumbnail();
+        assert!(!controller.window.get_has_thumbnail());
+        assert_eq!(lock(&shared).render_document().vmf(), &rendered);
+        assert_eq!(lock(&shared).clipboard_report(), clipboard);
+        crate::ui::tests::save_ui_snapshot(
+            controller.window.window(),
+            "prefab-textured-thumbnail-error",
+        );
+        controller.window.set_thumbnail_style(0);
+        controller.window.invoke_thumbnail_style_changed();
+        assert!(controller.window.get_can_render_thumbnail());
         std::fs::write(directory.path().join("Visual fixture.vmf"), "invalid VMF").unwrap();
         let clipboard = lock(&shared).clipboard_report();
         controller.window.invoke_refresh();
@@ -524,7 +597,7 @@ mod tests {
             },
         )))
         .unwrap();
-        let (session, directory, _) = crate::test_assets::prefabs();
+        let (session, directory, assets, _) = crate::test_assets::textured_prefabs();
         let source = session.document().vmf().clone();
         let history = session.history_snapshot();
         let clipboard = session.clipboard_report();
@@ -568,6 +641,54 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(!Arc::ptr_eq(&first.image, &refreshed.image));
+        controller.window.set_thumbnail_style(1);
+        controller.window.invoke_thumbnail_style_changed();
+        assert!(!controller.window.get_has_thumbnail());
+        assert!(controller.window.get_can_render_thumbnail());
+        controller.window.invoke_render_thumbnail();
+        assert!(
+            controller.window.get_has_thumbnail(),
+            "{}",
+            controller.window.get_thumbnail_status()
+        );
+        let textured = lock(&shared)
+            .cached_prefab_thumbnail_with_style("Visual brush assembly", ThumbnailStyle::Textured)
+            .unwrap()
+            .unwrap();
+        assert_ne!(textured.image.pixels, first.image.pixels);
+        crate::ui::tests::save_ui_snapshot(controller.window.window(), "prefab-textured-thumbnail");
+        let texture = assets.path().join("materials/test/checker.vtf");
+        let original_texture = std::fs::read(&texture).unwrap();
+        let mut changed = original_texture.clone();
+        changed[80] ^= 0xff;
+        std::fs::write(&texture, changed).unwrap();
+        finish_thumbnail_render(
+            &controller.window,
+            &lock(&shared),
+            &controller.form,
+            Ok(textured),
+        );
+        assert!(!controller.window.get_has_thumbnail());
+        assert!(
+            controller
+                .window
+                .get_thumbnail_status()
+                .contains("source changed")
+        );
+        std::fs::write(texture, original_texture).unwrap();
+        controller.window.invoke_render_thumbnail();
+        assert!(controller.window.get_has_thumbnail());
+        controller.window.set_thumbnail_style(0);
+        controller.window.invoke_thumbnail_style_changed();
+        assert!(controller.window.get_has_thumbnail());
+        assert!(Arc::ptr_eq(
+            &refreshed.image,
+            &lock(&shared)
+                .cached_prefab_thumbnail("Visual brush assembly")
+                .unwrap()
+                .unwrap()
+                .image
+        ));
         std::fs::remove_file(directory.path().join("Visual brush assembly.vmf")).unwrap();
         controller.window.invoke_refresh();
         assert!(!controller.window.get_has_thumbnail());

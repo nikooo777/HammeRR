@@ -370,12 +370,15 @@ pub struct PrefabsArgs {
 #[serde(deny_unknown_fields)]
 pub struct InspectPrefabThumbnailArgs {
     pub name: String,
+    /// flat (default) omits textures; textured admits bounded static opaque base textures.
+    pub style: Option<crate::session::prefabs::ThumbnailStyle>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RenderPrefabThumbnailArgs {
     pub name: String,
+    pub style: Option<crate::session::prefabs::ThumbnailStyle>,
     /// Rebuild pixels even when the exact source and content settings are cached.
     pub refresh: Option<bool>,
 }

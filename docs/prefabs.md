@@ -21,17 +21,26 @@ files; placement uses the same checked preview, naming and Undo behavior as Past
 
 1. Choose an entry in **Prefab library**. Counts and source diagnostics are
    available immediately, including when graphics are unavailable.
-2. Click **Render thumbnail**. **Flat geometry · 320 × 240** shows the actual
-   brush, terrain and model shape with the normal editor helpers for point
-   entities. The isolated preview includes authored hidden objects and omits
-   textures and sky. It does not change the map, selection, clipboard, camera,
-   active placement review or Undo.
-3. Click **Refresh thumbnail** to regenerate pixels. **Refresh library** checks
-   external VMF edits; changed, removed or invalid sources clear the old image
-   and show a diagnostic. Missing models and referenced instances produce an
+2. Leave **Thumbnail** set to **Flat**, then click **Render thumbnail**. The
+   320 × 240 image shows actual brush, terrain and model geometry with editor
+   point helpers. Flat includes authored hidden objects and omits textures and
+   sky. Inspection and rendering preserve the map, selection, clipboard, camera,
+   active placement review and Undo.
+3. Choose **Textured** to inspect supported base textures. The image clears when
+   the mode changes; click **Render thumbnail** to request that mode's pixels.
+   Textured uses fixed editor shading and includes hidden geometry. It excludes
+   normal maps, authored lighting, sky and material effects. Missing or unsupported
+   assets show a diagnostic and no image. Repair the assets and retry **Render
+   thumbnail**, or choose **Flat** explicitly to inspect geometry without them.
+4. Click **Refresh thumbnail** to regenerate the current mode's pixels from
+   current assets. Cached Flat and Textured images are separate. **Refresh library**
+   checks external VMF edits; changed, removed or invalid sources clear the old
+   image and show a diagnostic. Missing models and referenced instances produce an
    explicit error without a substitute image.
 
 ![Isolated flat geometry thumbnail beside prefab search and placement](images/prefab-thumbnail.png)
+
+![Explicit Textured mode showing the assembly's base textures](images/prefab-textured-thumbnail.png)
 
 ## Place an assembly
 
@@ -123,18 +132,34 @@ operations are separate from map Undo.
 - Assets remain external references. Mount the required game/custom content;
   the library does not package textures or models.
 - Thumbnails render one selected entry on request and cache at most eight
-  320 × 240 images. Every retrieval rechecks exact source bytes, file identity
-  and content/FGD settings. Limits are 2 MiB source text, 128 brushes, 1024 sides,
+  320 × 240 images across both modes. Every retrieval rechecks exact source bytes,
+  file identity and content/FGD settings. Limits are 2 MiB source text, 128 brushes, 1024 sides,
   64 sides per brush, 65536 displacement vertices, eight model paths, sixteen
   model instances, 64 material bindings, 200000 vertices and 600000 indices.
   Larger valid assemblies can still use ordinary placement. Use **Model details…**
   → **Reload models** after repairing external model files. Graphics
   failures retain CPU inspection and can be retried with **Render thumbnail**.
+- Textured supports opaque single-base LightmappedGeneric, UnlitGeneric and
+  VertexLitGeneric materials with an identity base transform. Proxies/fallback
+  blocks, detail/second layers, tint, tool/sky and translucent/alpha-test materials,
+  and substituted editor images are unsupported. Textures must have one 2D LDR
+  frame, opaque pixels and axes no larger than 2048. Supported formats are RGB,
+  BGR, RGBA, BGRA8888 and DXT1/3/5. Point/clamp/border, normal/SSBump, procedural
+  and render-target textures are refused. Normal/specular and other material
+  effects are not evaluated; the image does not claim native game pixel parity.
+- Textured reads at most 1 MiB per VMT/Patch and 16 MiB per VTF, with a 64 MiB
+  admission/revalidation read budget per pass, 64 MiB of decoded mip data,
+  256 asset sources and 1024 physical source paths. Initial source-identity
+  verification has a separate 80 MiB read bound. Cached images check SHA-256,
+  winning mounted sources and backing-file identities, including Patch includes.
+  External source changes clear the affected Textured image and require a new
+  render. Flat remains independent. Model geometry retains the existing explicit
+  **Reload models** policy.
 - Rename requires Linux and a filesystem supporting atomic no-replace rename;
   unsupported operations fail without a copy/delete fallback. Independent writers
   can still race source-file changes after snapshot validation; existing targets
   are never overwritten. Preview source identity/size/mtime changes are checked
   before Apply, including changes made by another Session.
-- Thumbnail grids, textured thumbnails, direct replacement from selection,
+- Thumbnail grids, direct replacement from selection,
   local-frame placement, referenced instances and linked editing are unavailable.
   Applied copies can be transformed independently through the normal controls.

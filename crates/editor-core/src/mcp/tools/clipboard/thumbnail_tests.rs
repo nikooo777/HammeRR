@@ -22,6 +22,7 @@ fn prefab_thumbnail_mcp_inspection_and_failed_render_are_headless_and_strict() {
     let result = server
         .inspect_prefab_thumbnail(Parameters(InspectPrefabThumbnailArgs {
             name: "Fixture".into(),
+            style: None,
         }))
         .unwrap();
     assert!(!result.is_error.unwrap_or(false));
@@ -29,10 +30,47 @@ fn prefab_thumbnail_mcp_inspection_and_failed_render_are_headless_and_strict() {
     assert_eq!(report, lock(&shared).prefab_thumbnail_report("Fixture"));
     assert_eq!(report["graphics"]["initialized"], false);
     assert_eq!(result.content.len(), 1);
+    for style in [json!("invalid"), json!(1), json!(true)] {
+        assert!(
+            serde_json::from_value::<InspectPrefabThumbnailArgs>(
+                json!({"name":"Fixture","style":style})
+            )
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<RenderPrefabThumbnailArgs>(
+                json!({"name":"Fixture","style":style})
+            )
+            .is_err()
+        );
+    }
+    let textured = server
+        .inspect_prefab_thumbnail(Parameters(
+            serde_json::from_value(json!({"name":"Fixture","style":"textured"})).unwrap(),
+        ))
+        .unwrap();
+    let report: Value = serde_json::from_str(&textured.content[0].as_text().unwrap().text).unwrap();
+    assert_eq!(report["style"], "textured");
+    assert!(report["error"].is_string());
+    assert_eq!(report["graphics"]["initialized"], false);
+    let failed = server
+        .render_prefab_thumbnail(Parameters(
+            serde_json::from_value(json!({"name":"Fixture","style":"textured"})).unwrap(),
+        ))
+        .unwrap();
+    assert!(failed.is_error.unwrap_or(false));
+    assert!(
+        failed
+            .content
+            .iter()
+            .all(|block| block.as_image().is_none())
+    );
+    assert!(lock(&shared).prefab_thumbnail_report("Fixture")["error"].is_null());
     std::fs::write(directory.path().join("Fixture.vmf"), "invalid source").unwrap();
     let result = server
         .render_prefab_thumbnail(Parameters(RenderPrefabThumbnailArgs {
             name: "Fixture".into(),
+            style: None,
             refresh: Some(true),
         }))
         .unwrap();
@@ -69,6 +107,7 @@ fn prefab_thumbnail_mcp_png_contains_shared_cached_pixels_and_isolated_state() {
     let result = server
         .render_prefab_thumbnail(Parameters(RenderPrefabThumbnailArgs {
             name: "Fixture".into(),
+            style: None,
             refresh: None,
         }))
         .unwrap();

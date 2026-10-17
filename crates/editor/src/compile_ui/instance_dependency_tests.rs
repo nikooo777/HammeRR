@@ -1,0 +1,45 @@
+use super::*;
+
+#[test]
+fn instance_dependency_build_details_share_counts_hashes_and_stale_launch_status() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: false,
+        },
+    )))
+    .unwrap();
+    let (_directory, game, source, child) = editor_core::test_assets::instance_map(false);
+    let mut session = Session::new(Ok(game));
+    session.open(Actor::User, &source, true).unwrap();
+    let before = session.document().vmf().clone();
+    let history = session.history_snapshot();
+    let result = session.begin_compile(Actor::User, None).unwrap().run();
+    assert!(result.as_ref().unwrap().output.bsp.is_some());
+    session.finish_compile(Actor::User, &result);
+    let shared = std::sync::Arc::new(std::sync::Mutex::new(session));
+    let controller = Controller::new(&shared).unwrap();
+    controller.refresh(&lock(&shared));
+    assert!(controller.window.get_launch_ready());
+    assert!(
+        controller
+            .window
+            .get_details()
+            .contains("Instances: 1 · Files: 1 · World brushes: 1 · Detail brushes: 1")
+    );
+    assert!(controller.window.get_details().contains("child.vmf"));
+    assert!(controller.window.get_details().contains("SHA256"));
+    std::fs::remove_file(&child).unwrap();
+    controller.refresh(&lock(&shared));
+    assert!(!controller.window.get_launch_ready());
+    assert!(controller.window.get_summary().contains("dependencies"));
+    assert!(
+        controller
+            .window
+            .get_details()
+            .contains("instance dependencies changed")
+    );
+    assert_eq!(lock(&shared).document().vmf(), &before);
+    assert_eq!(lock(&shared).history_snapshot(), history);
+}

@@ -4,6 +4,8 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 #[cfg(test)]
+mod instance_dependency_tests;
+#[cfg(test)]
 mod instance_rejection_tests;
 mod recipes;
 #[cfg(test)]
@@ -37,6 +39,7 @@ struct Job {
     finished: Option<Duration>,
     status: &'static str,
     result: Option<Value>,
+    instance_dependencies: Option<compiler::instances::DependencyGuard>,
 }
 
 pub struct CompileRequest {
@@ -53,6 +56,8 @@ pub struct CompileRequest {
     environment: Option<native_runtime::CaptureEnvironment>,
     source_path: Option<PathBuf>,
     source_stamp: Option<compiler::FileStamp>,
+    instance_source: Option<compiler::instances::SourceContext>,
+    pointfile_stamp: Option<compiler::FileStamp>,
     destination_stamp: Option<compiler::FileStamp>,
 }
 
@@ -74,6 +79,7 @@ struct Publication {
     pending: Option<compiler::PreparedWrite>,
     lease: Option<compiler::OutputLease>,
     pointfile_lease: Option<compiler::OutputLease>,
+    pointfile_stamp: Option<compiler::FileStamp>,
     sources: Option<compiler::asset_sources::OutputAssetSourceGuard>,
     published: bool,
     committed: bool,
@@ -105,24 +111,34 @@ impl CompileRequest {
 
     fn run_inner(self) -> Result<CompileResult, String> {
         self.control.checkpoint()?;
+        let instances = compiler::instances::requires_source(&self.vmf);
+        let guarded = self.options.requires_guarded_publication() || instances;
         let mut lease = None;
         let mut source = None;
         let mut pointfile_lease = None;
         if self.options.generate_reflections {
             native_runtime::preflight_vmf(&self.vmf).map_err(|e| e.to_string())?;
         }
-        if self.options.requires_guarded_publication() {
-            if let Some(stamp) = &self.source_stamp {
-                stamp.verify_metadata().map_err(|e| e.to_string())?;
-            }
-            if let Some(path) = &self.source_path {
-                source = Some(
-                    compiler::FileIdentity::capture(path, &self.control)
-                        .map_err(|e| e.to_string())?,
-                );
-            }
-            if let (Some(stamp), Some(identity)) = (&self.source_stamp, &source) {
-                stamp.verify_identity(identity).map_err(|e| e.to_string())?;
+        if guarded {
+            if !instances {
+                if let Some(stamp) = &self.source_stamp {
+                    stamp.verify_metadata().map_err(|e| e.to_string())?;
+                }
+                if let Some(path) = &self.source_path {
+                    source = Some(
+                        compiler::FileIdentity::capture(path, &self.control)
+                            .map_err(|e| e.to_string())?,
+                    );
+                }
+                if let (Some(stamp), Some(identity)) = (&self.source_stamp, &source) {
+                    stamp.verify_identity(identity).map_err(|e| e.to_string())?;
+                }
+            } else {
+                self.instance_source
+                    .as_ref()
+                    .ok_or("Instance source context missing")?
+                    .verify(&self.control)
+                    .map_err(|error| error.to_string())?;
             }
             let stamp = self
                 .destination_stamp
@@ -141,20 +157,35 @@ impl CompileRequest {
             .as_ref()
             .map(|lease| lease.path().to_owned())
             .unwrap_or_else(|| self.path.clone());
-        let reservation = self
-            .options
-            .requires_guarded_publication()
+        let reservation = guarded
             .then(|| compiler::WriteReservation::new(&path, &self.control))
             .transpose()
             .map_err(|e| e.to_string())?;
-        let mut output = compiler::compile_with_context_controlled(
-            &self.vmf,
-            &self.game,
-            self.options,
-            self.context.as_ref(),
-            &self.control,
-        );
+        let mut output = if instances {
+            compiler::compile_with_source_controlled(
+                &self.vmf,
+                &self.game,
+                self.options,
+                self.context.as_ref(),
+                self.instance_source.as_ref(),
+                &self.control,
+            )
+        } else {
+            compiler::compile_with_context_controlled(
+                &self.vmf,
+                &self.game,
+                self.options,
+                self.context.as_ref(),
+                &self.control,
+            )
+        };
         self.control.checkpoint()?;
+        if instances
+            && (output.bsp.is_some() || output.leak.is_some())
+            && output.instance_dependencies.is_none()
+        {
+            return Err("Instance output is missing its retained dependency guard".into());
+        }
         if self.options.generate_reflections && output.bsp.is_some() {
             output = compiler::finalize_reflections(
                 output,
@@ -180,12 +211,24 @@ impl CompileRequest {
             return Err("Sky packing did not return its retained asset plan".into());
         }
         let mut sources = None;
-        let (pending, published, committed) = if self.options.requires_guarded_publication() {
+        let (pending, published, committed) = if guarded {
             if output.bsp.is_none() && output.leak.is_some() {
+                if let Some(stamp) = &self.pointfile_stamp {
+                    stamp.verify_metadata().map_err(|error| error.to_string())?;
+                }
                 pointfile_lease = Some(
                     compiler::OutputLease::acquire(&path.with_extension("lin"), &self.control)
                         .map_err(|e| e.to_string())?,
                 );
+                if let Some(stamp) = &self.pointfile_stamp {
+                    stamp
+                        .verify_lease(
+                            pointfile_lease
+                                .as_ref()
+                                .ok_or("Guarded pointfile lease missing")?,
+                        )
+                        .map_err(|error| error.to_string())?;
+                }
             }
             let pending = output
                 .prepare_write_reserved(
@@ -203,6 +246,11 @@ impl CompileRequest {
             );
             if let Some(source) = &source {
                 source.verify(&self.control).map_err(|e| e.to_string())?;
+            }
+            if let Some(dependencies) = &output.instance_dependencies {
+                dependencies
+                    .verify(&self.control)
+                    .map_err(|error| error.to_string())?;
             }
             lease
                 .as_ref()
@@ -231,6 +279,7 @@ impl CompileRequest {
                 pending,
                 lease,
                 pointfile_lease,
+                pointfile_stamp: self.pointfile_stamp,
                 sources,
                 published,
                 committed,
@@ -274,6 +323,21 @@ pub struct BuildSettingsUpdate<'a> {
 }
 
 impl Session {
+    pub(super) fn instance_dependency_issue(
+        &self,
+        dependencies: Option<&compiler::instances::DependencyGuard>,
+        source_path: &Option<PathBuf>,
+    ) -> Option<String> {
+        let dependencies = dependencies?;
+        if source_path != &self.path {
+            return Some("The source map path changed since instance compilation".into());
+        }
+        dependencies
+            .verify_metadata()
+            .err()
+            .map(|error| error.to_string())
+    }
+
     pub fn binding_output_namespace(&self) -> Result<Option<String>, String> {
         let path = self
             .compilation
@@ -465,7 +529,32 @@ impl Session {
             return Err(error.clone());
         }
         let control = compiler::Control::default();
+        let instances = compiler::instances::requires_source(self.document.vmf());
+        if instances && self.path.is_none() {
+            return Err("Save the parent VMF before compiling instances; the BSP output path is not a source directory".into());
+        }
         let generating = self.compilation.options.generate_reflections;
+        if instances && generating {
+            return Err("Generate reflections with instances is unsupported; resolve the instances before capturing reflections".into());
+        }
+        let instance_source = if instances {
+            let source = self
+                .path
+                .as_deref()
+                .ok_or("Save the parent VMF before compiling instances")?;
+            Some(
+                compiler::instances::SourceContext::capture(source, &control)
+                    .map_err(|error| error.to_string())?,
+            )
+        } else {
+            None
+        };
+        let pointfile_stamp = instances
+            .then(|| {
+                compiler::FileStamp::capture(&path.with_extension("lin"))
+                    .map_err(|error| error.to_string())
+            })
+            .transpose()?;
         let (context, environment) = if generating {
             if self.game_running() {
                 return Err("Close CS:S before capturing reflections".into());
@@ -477,10 +566,10 @@ impl Session {
             (None, None)
         };
         let (source_stamp, destination_stamp) =
-            if self.compilation.options.requires_guarded_publication() {
-                let source_stamp = self
-                    .path
-                    .as_ref()
+            if self.compilation.options.requires_guarded_publication() || instances {
+                let source_stamp = (!instances)
+                    .then_some(self.path.as_ref())
+                    .flatten()
                     .map(|path| compiler::FileStamp::capture(path).map_err(|e| e.to_string()))
                     .transpose()?;
                 let destination_stamp =
@@ -490,11 +579,14 @@ impl Session {
                 (None, None)
             };
         self.compilation.serial += 1;
-        let inspection_source = self
-            .path
-            .as_ref()
-            .map(|path| baked_lightmaps::BuildIdentity::source(path, &control))
-            .transpose();
+        let inspection_source = if let Some(source) = &instance_source {
+            Ok(Some(source.root_identity().clone()))
+        } else {
+            self.path
+                .as_ref()
+                .map(|path| baked_lightmaps::BuildIdentity::source(path, &control))
+                .transpose()
+        };
         self.compilation.job = Some(Job {
             token: self.compilation.serial,
             control: control.clone(),
@@ -514,6 +606,7 @@ impl Session {
             finished: None,
             status: "running",
             result: None,
+            instance_dependencies: None,
         });
         let request = CompileRequest {
             token: self.compilation.serial,
@@ -529,6 +622,8 @@ impl Session {
             environment,
             source_path: self.path.clone(),
             source_stamp,
+            instance_source,
+            pointfile_stamp,
             destination_stamp,
         };
         self.compiling = true;
@@ -547,6 +642,8 @@ impl Session {
         let outcome: Result<(), String> = (|| {
             let activity = if result.options.generate_reflections {
                 "reflection capture"
+            } else if result.output.instance_dependencies.is_some() {
+                "instance compilation"
             } else {
                 "sky asset packing"
             };
@@ -592,12 +689,20 @@ impl Session {
                     if let Some(source) = &result.source {
                         source.verify_metadata()?;
                     }
+                    if let Some(dependencies) = &result.output.instance_dependencies {
+                        dependencies.verify_metadata()?;
+                    }
                     publication
                         .sources
                         .as_ref()
                         .ok_or_else(|| std::io::Error::other("Guarded asset sources missing"))?
                         .verify_metadata()?;
                     if let Some(stamp) = &result.destination_stamp {
+                        stamp.verify_metadata()?;
+                    }
+                    if publication.pointfile_lease.is_some()
+                        && let Some(stamp) = &publication.pointfile_stamp
+                    {
                         stamp.verify_metadata()?;
                     }
                     Ok(())
@@ -628,12 +733,17 @@ impl Session {
                 self.log(actor, "Discarded completion from a replaced compile job");
                 return;
             }
-            if result.options.requires_guarded_publication() {
+            if result.options.requires_guarded_publication()
+                || result.output.instance_dependencies.is_some()
+            {
                 let _ = self.commit_guarded_output(result);
             }
         }
         self.compiling = false;
         if let Some(job) = &mut self.compilation.job {
+            if let Ok(result) = result {
+                job.instance_dependencies = result.output.instance_dependencies.clone();
+            }
             job.control.finish();
             job.finished = Some(job.started.elapsed());
             job.status = if job.control.cancelled() {
@@ -674,6 +784,15 @@ impl Session {
                     snapshot,
                     options: result.options,
                     content_epoch: result.content_epoch,
+                    instance_dependencies: result.output.instance_dependencies.clone(),
+                    instance_source_path: result.output.instance_dependencies.as_ref().and_then(
+                        |_| {
+                            self.compilation
+                                .job
+                                .as_ref()
+                                .and_then(|job| job.source_path.clone())
+                        },
+                    ),
                     lightmap_identity: baked_lightmaps::BuildIdentity::capture(
                         result.token,
                         &result.path,
@@ -741,12 +860,15 @@ impl Session {
     pub fn compile_status(&self) -> Value {
         let job = self.compilation.job.as_ref().map(|job| {
             let progress = job.control.progress();
-            json!({"token":job.token.to_string(),"status":if job.status=="running" && progress.cancel_requested {"cancelling"} else {job.status},
+            let dependency_issue=self.instance_dependency_issue(job.instance_dependencies.as_ref(),&job.source_path);
+            let mut status=json!({"token":job.token.to_string(),"status":if job.status=="running" && progress.cancel_requested {"cancelling"} else {job.status},
                 "stage":progress.stage.name(),"stage_label":progress.stage.label(),"cancellable":job.status=="running" && progress.cancellable && !progress.cancel_requested,
                 "elapsed_ms":job.finished.unwrap_or_else(||job.started.elapsed()).as_millis(),
                 "path":job.path.display().to_string(),"generation":job.snapshot.generation,"revision":job.snapshot.revision,
                 "compile_region":job.region,"recipe":job.recipe,"native_runtime":job.native_runtime,"reflections":{"channel":if job.options.lighting==compiler::LightingMode::DirectLdrHdr {"ldr_hdr"} else {"ldr"},"samples_complete":progress.reflection_samples_complete,"samples_total":progress.reflection_samples_total},"settings":{"pack_sky_assets":job.options.pack_sky_assets,"generate_reflections":job.options.generate_reflections,"smoothing_angle":job.options.smoothing_angle,"bounces":job.options.bounces,"lighting":job.options.lighting.name(),"physics":job.options.physics.name(),"sky_quality":job.options.sky_quality.name(),"visibility":job.options.visibility.name()},
-                "stale":!self.current_snapshot(&job.snapshot) || job.options != self.compilation.options || (job.options.requires_guarded_publication() && job.content_epoch != self.content_epoch),"result":job.result})
+                "stale":!self.current_snapshot(&job.snapshot) || job.options != self.compilation.options || ((job.options.requires_guarded_publication() || job.instance_dependencies.is_some()) && job.content_epoch != self.content_epoch) || dependency_issue.is_some(),"result":job.result});
+            if job.instance_dependencies.is_some() { status["instance_dependencies"]=json!({"current":dependency_issue.is_none(),"error":dependency_issue}); }
+            status
         });
         let launch = match self.launch_readiness() {
             Ok(path) => json!({"ready":true,"bsp":path.display().to_string(),"reason":null}),
@@ -785,8 +907,20 @@ impl Session {
             "completed" => format!(
                 "Compiled in {:.2}s{}",
                 job.finished.unwrap_or_default().as_secs_f64(),
-                if self.current_snapshot(&job.snapshot) && job.options == self.compilation.options {
+                if self.current_snapshot(&job.snapshot)
+                    && job.options == self.compilation.options
+                    && self
+                        .instance_dependency_issue(
+                            job.instance_dependencies.as_ref(),
+                            &job.source_path
+                        )
+                        .is_none()
+                    && !(job.instance_dependencies.is_some()
+                        && job.content_epoch != self.content_epoch)
+                {
                     ""
+                } else if job.instance_dependencies.is_some() {
+                    " · earlier map snapshot, build settings or dependencies"
                 } else {
                     " · earlier map snapshot or build settings"
                 }

@@ -138,6 +138,52 @@ echo launcher-output
     (directory, fs, bsp)
 }
 
+pub fn instance_map(leak: bool) -> (tempfile::TempDir, GameFs, PathBuf, PathBuf) {
+    use glam::DVec3;
+    use map_core::{Document, edit};
+    use source_formats::vmf::Entity;
+    let (directory, game, _) = game_process(false);
+    let source = directory.path().join("instances.vmf");
+    let child_path = directory.path().join("child.vmf");
+    let mut child = Document::empty();
+    child
+        .edit("instance brushes", |tx| {
+            edit::create_block(
+                tx,
+                DVec3::new(0.0, 0.0, 32.0),
+                DVec3::new(16.0, 16.0, 48.0),
+                "dev/dev_measuregeneric01",
+            )?;
+            edit::create_block(
+                tx,
+                DVec3::new(24.0, 0.0, 32.0),
+                DVec3::new(40.0, 16.0, 48.0),
+                "dev/dev_measuregeneric01",
+            )
+        })
+        .unwrap();
+    let mut child = child.vmf().clone();
+    let detail_id = child.object_ids().chain(child.side_ids()).max().unwrap() + 1;
+    let mut detail = Entity::new(detail_id, "func_detail");
+    detail.solids.push(child.world.solids.pop().unwrap());
+    child.entities.push(detail);
+    std::fs::write(&child_path, child.write(&Default::default())).unwrap();
+    let mut parent = room();
+    if leak {
+        parent.world.solids.pop();
+    }
+    let id = parent.object_ids().chain(parent.side_ids()).max().unwrap() + 1;
+    let mut instance = Entity::new(id, "func_instance");
+    instance.properties.set("file", "child.vmf");
+    instance.properties.set("origin", "0 0 0");
+    instance.properties.set("angles", "0 0 0");
+    parent.entities.push(instance);
+    std::fs::write(&source, parent.write(&Default::default())).unwrap();
+    std::fs::write(source.with_extension("bsp"), b"previous BSP").unwrap();
+    std::fs::write(source.with_extension("lin"), b"previous pointfile").unwrap();
+    (directory, game, source, child_path)
+}
+
 pub use crate::session::clipboard::fixtures::fixture as clipboard;
 
 pub use crate::session::prefabs::fixtures::fixture as prefabs;

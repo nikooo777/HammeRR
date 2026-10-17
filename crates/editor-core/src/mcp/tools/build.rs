@@ -1,6 +1,8 @@
 use super::super::*;
 
 #[cfg(test)]
+mod instance_dependency_tests;
+#[cfg(test)]
 mod instance_rejection_tests;
 #[cfg(test)]
 mod reflection_settings_tests;
@@ -138,7 +140,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Start a background compile of the current map snapshot and return its job token immediately. Poll get_compile_status, or cancel_compile with that token. Does not launch the game or save the VMF. Visible func_instance and func_instance_parms fail before region selection or geometry processing because referenced-map expansion is unavailable. Completed output is published atomically; failed or cancelled builds preserve the previous BSP and pointfile."
+        description = "Start a background compile of the current map snapshot and return its job token immediately. Poll get_compile_status, or cancel_compile with that token. Does not launch the game or save the VMF. Saved maps support bounded single-level func_instance world/func_detail brushes from checked relative VMFs inside the saved parent directory. No recursive/runtime-entity expansion or viewport instance preview; func_instance_parms, unsupported helpers and Generate reflections with instances reject. Instance builds retain exact source/dependency guards for atomic BSP/LIN publication, stale status, baked inspection and background launch verification. Stats.instances reports bounded files/counts and hashes. Failed, changed or cancelled builds preserve previous outputs."
     )]
     pub(in crate::mcp) fn start_compile(
         &self,
@@ -155,7 +157,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect the latest compile job: token, state, current stage, elapsed time, output path, snapshot freshness and terminal diagnostics/statistics. Job diagnostics include the first 100 messages and the total count. Shared with the editor's build status."
+        description = "Inspect the latest compile job: token, state, current stage, elapsed time, output path, snapshot/dependency freshness and terminal diagnostics/statistics. Instance jobs report bounded stats.instances counts/files/hashes and instance_dependencies.current/error from cheap metadata/alias checks; launch verifies exact dependencies in its background worker. Job diagnostics include the first 100 messages and the total count. Shared with the editor's build status."
     )]
     pub(in crate::mcp) fn get_compile_status(&self) -> ToolResult {
         ok(self.session().compile_status())

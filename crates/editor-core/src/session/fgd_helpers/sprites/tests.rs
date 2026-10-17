@@ -276,7 +276,6 @@ fn labeled_fgd_defaults_and_excluded_orientations_remain_explicit() {
         ("angles", "0 0 1"),
         ("angle", "90"),
         ("parentname", "parent"),
-        ("angles", "NaN 0 0"),
     ] {
         session
             .set_entity_properties(Actor::Agent, id, &[(key.into(), Some(raw.into()))])
@@ -302,6 +301,70 @@ fn labeled_fgd_defaults_and_excluded_orientations_remain_explicit() {
         .unwrap();
     assert_eq!(color.label, "FX Color");
     assert!(!color.description.contains("model textures"));
+}
+
+#[test]
+fn malformed_imported_angles_keep_sprite_unavailable_without_mutation() {
+    for actor in [Actor::User, Actor::Agent] {
+        let (directory, mut session, id) = fixture(actor);
+        for raw in ["NaN 0 0", "inf 0 0", "0 0", "0 0 0 0"] {
+            let source = session.document().vmf().clone();
+            let history = session.document().undo_labels().count();
+            let error = session
+                .set_entity_properties(actor, id, &[("angles".into(), Some(raw.into()))])
+                .unwrap_err();
+            assert_eq!(error, "angles expects three finite coordinates");
+            assert_eq!(session.document().vmf(), &source);
+            assert_eq!(session.document().undo_labels().count(), history);
+
+            let path = directory.path().join("malformed-sprite-angles.vmf");
+            let text = format!(
+                r#"world {{ "id" "1" "classname" "worldspawn" }}
+entity {{ "id" "{id}" "classname" "env_sprite" "origin" "0 0 0"
+"model" "sprites/glow01.spr" "scale" "1" "angles" "{raw}" }}
+"#
+            );
+            std::fs::write(&path, &text).unwrap();
+            session.open(actor, &path, true).unwrap();
+            let source = session.document().vmf().clone();
+            let history = session.document().undo_labels().count();
+            let camera = session.camera();
+            let selection = session.selected_ids();
+            assert_eq!(
+                session
+                    .document()
+                    .entity(id)
+                    .unwrap()
+                    .properties
+                    .get("angles"),
+                Some(raw)
+            );
+            let guide = report(&session, id);
+            assert_eq!(guide.state, "unavailable");
+            assert!(!guide.displayed && guide.image.is_none());
+            assert!(guide.error.as_deref().unwrap().contains("angles"));
+            assert!(session.build_scene().icons.is_empty());
+            assert!(
+                session
+                    .model_instances(session.document())
+                    .issues
+                    .is_empty()
+            );
+            assert_eq!(session.document().vmf(), &source);
+            assert_eq!(session.document().undo_labels().count(), history);
+            assert_eq!(session.camera(), camera);
+            assert_eq!(session.selected_ids(), selection);
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+
+            session
+                .set_entity_properties(actor, id, &[("angles".into(), Some("0 0 0".into()))])
+                .unwrap();
+            assert!(report(&session, id).displayed);
+            session.undo(actor).unwrap();
+            assert_eq!(session.document().vmf(), &source);
+            assert!(!report(&session, id).displayed);
+        }
+    }
 }
 
 #[test]

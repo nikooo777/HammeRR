@@ -7,6 +7,33 @@ use source_formats::{
 use crate::test_common as common;
 
 #[test]
+fn region_preparation_rejects_visible_instance_helpers_before_origin_selection() {
+    let (_directory, game, mut source) = fixture();
+    let baseline = prepare(&source, &game, &mut Report::default(), &Control::default())
+        .unwrap()
+        .vmf
+        .into_owned();
+    for classname in ["FuNc_InStAnCe", "FUNC_INSTANCE_PARMS"] {
+        let id = source.object_ids().chain(source.side_ids()).max().unwrap() + 1;
+        let mut entity = Entity::new(id, classname);
+        entity.properties.set("origin", "4096 0 64");
+        source.entities.push(entity);
+        let before = source.clone();
+        let error = prepare(&source, &game, &mut Report::default(), &Control::default())
+            .err()
+            .unwrap();
+        assert!(error.contains(classname));
+        assert!(error.contains("instance expansion"));
+        assert!(!error.contains("disable the region"));
+        assert_eq!(source, before);
+        source.entities.last_mut().unwrap().hidden = true;
+    }
+    let prepared = prepare(&source, &game, &mut Report::default(), &Control::default()).unwrap();
+    assert_eq!(prepared.vmf.entities, baseline.entities);
+    assert_eq!(prepared.vmf.world.solids.len(), baseline.world.solids.len());
+}
+
+#[test]
 fn detail_prop_origins_use_inclusive_regions_and_preserve_authored_records() {
     let (_directory, game, mut source) = fixture();
     let mut retained = Vec::new();

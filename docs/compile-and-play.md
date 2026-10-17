@@ -36,6 +36,13 @@ HammeRR includes its own native compiler, so it builds Counter-Strike: Source ma
 
 Builds run in the background, and closing Build details leaves them running. Scroll the window to inspect settings, statistics and **Diagnostics**; the build controls and **Close** stay at the bottom. Output is written in one step at the end: a failed or cancelled build never replaces the previous BSP or pointfile. Use [Baked lightmaps](baked-lightmaps.md) to inspect actual samples after a lit build.
 
+Visible `func_instance` and `func_instance_parms` fail the build with an
+entity-specific error before region selection or geometry processing. Referenced
+maps are not expanded. Resolve them into ordinary map content before building,
+or hide/remove the helpers. **Run Map** does not launch after this failure;
+the previous BSP and pointfile remain intact. **Map checks** reports these visible
+helpers as errors. Hidden helpers remain excluded from builds.
+
 ![Build settings, statistics, stage, output and diagnostics](images/build-status.png)
 
 ## Build settings

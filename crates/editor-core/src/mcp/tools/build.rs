@@ -1,6 +1,8 @@
 use super::super::*;
 
 #[cfg(test)]
+mod instance_rejection_tests;
+#[cfg(test)]
 mod reflection_settings_tests;
 #[cfg(test)]
 mod sky_packing_settings_tests;
@@ -136,7 +138,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Start a background compile of the current map snapshot and return its job token immediately. Poll get_compile_status, or cancel_compile with that token. Does not launch the game or save the VMF. Completed output is published atomically; cancelled builds preserve previous output."
+        description = "Start a background compile of the current map snapshot and return its job token immediately. Poll get_compile_status, or cancel_compile with that token. Does not launch the game or save the VMF. Visible func_instance and func_instance_parms fail before region selection or geometry processing because referenced-map expansion is unavailable. Completed output is published atomically; failed or cancelled builds preserve the previous BSP and pointfile."
     )]
     pub(in crate::mcp) fn start_compile(
         &self,

@@ -94,6 +94,12 @@ To build the map, set the build options once, then compile:
 
 `start_compile` returns a job token right away; poll `get_compile_status` and stop with `cancel_compile`. `compile_map` and `run_map` wait for the build to finish. `launch_game` does the same as **Play built map**.
 
+Visible `func_instance` and `func_instance_parms` fail both full-map and region
+builds before region selection or geometry processing, with entity-specific
+errors and unchanged previous BSP/pointfile bytes. Hidden helpers are excluded.
+`run_map_checks` reports the visible helpers as errors. Referenced-map resolution
+and expansion are unavailable; `run_map` does not launch after this build failure.
+
 ## Tools by task
 
 The shared desktop and private stdio server register 396 tools. `tools/list`

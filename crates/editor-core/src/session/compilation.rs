@@ -3,6 +3,8 @@ use serde_json::{Value, json};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+#[cfg(test)]
+mod instance_rejection_tests;
 mod recipes;
 #[cfg(test)]
 mod reflection_settings_tests;

@@ -70,7 +70,7 @@ impl Directory {
             .map_err(io::Error::other)?;
         let ancestor = Arc::new(File::from(rustix::fs::open(
             binding.physical_ancestor(),
-            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+            OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
             Mode::empty(),
         )?));
         if !binding.matches_ancestor(&ancestor.metadata()?) {
@@ -139,7 +139,7 @@ impl Directory {
             file = Arc::new(File::from(rustix::fs::openat(
                 &file,
                 component.as_os_str(),
-                OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+                OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
                 Mode::empty(),
             )?));
         }
@@ -318,7 +318,7 @@ impl BoundDestination {
         } else {
             referring.clone()
         };
-        let existing = Observation::capture(&directory, &leaf, policy == Policy::FollowSource)?;
+        let existing = Observation::capture(&directory, &leaf, false)?;
         if let Some(existing) = &existing {
             let metadata = existing.file.metadata()?;
             if !metadata.is_file()
@@ -389,12 +389,8 @@ impl BoundDestination {
         #[cfg(unix)]
         {
             use std::os::unix::fs::FileExt;
-            let reader = if self.policy == Policy::FollowSource {
-                existing.clone()
-            } else {
-                Observation::capture(&self.directory, &self.leaf, true)?
-                    .ok_or_else(|| io::Error::other("File destination disappeared while reading"))?
-            };
+            let reader = Observation::capture(&self.directory, &self.leaf, true)?
+                .ok_or_else(|| io::Error::other("File destination disappeared while reading"))?;
             if reader.stamp != existing.stamp {
                 return Err(io::Error::other("File destination changed while opening"));
             }

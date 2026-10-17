@@ -116,6 +116,48 @@ fn source_capture_reads_readonly_files_but_staging_and_invalid_targets_fail() {
 }
 
 #[test]
+fn source_publication_retains_write_only_file_permissions_without_requiring_a_reader() {
+    use std::os::unix::fs::FileExt;
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("source.vmf");
+    fs::write(&path, b"old source").unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o200)).unwrap();
+    let readable = File::open(&path).is_ok();
+    let destination = BoundDestination::capture(&path, Policy::FollowSource).unwrap();
+    assert_eq!(destination.read_existing().is_ok(), readable);
+    let receipt = stage(&destination, b"published").commit().unwrap();
+    assert!(receipt.warning.is_none());
+    assert_eq!(fs::metadata(&path).unwrap().mode() & 0o777, 0o200);
+    let mut bytes = [0; 9];
+    receipt
+        .destination
+        .existing
+        .as_ref()
+        .unwrap()
+        .file
+        .read_exact_at(&mut bytes, 0)
+        .unwrap();
+    assert_eq!(&bytes, b"published");
+}
+
+#[test]
+fn searchable_writable_parent_does_not_require_directory_read_permission() {
+    let root = tempfile::tempdir().unwrap();
+    let parent = root.path().join("private");
+    fs::create_dir(&parent).unwrap();
+    let path = parent.join("source.vmf");
+    fs::write(&path, b"old source").unwrap();
+    fs::set_permissions(&parent, fs::Permissions::from_mode(0o300)).unwrap();
+    let destination = BoundDestination::capture(&path, Policy::FollowSource).unwrap();
+    assert_eq!(destination.read_existing().unwrap().unwrap(), b"old source");
+    let receipt = stage(&destination, b"published").commit().unwrap();
+    assert!(receipt.warning.is_none());
+    assert_eq!(fs::read(&path).unwrap(), b"published");
+    assert_eq!(fs::metadata(&parent).unwrap().mode() & 0o777, 0o300);
+    fs::set_permissions(&parent, fs::Permissions::from_mode(0o700)).unwrap();
+}
+
+#[test]
 fn absent_parent_keeps_ancestor_suffix_without_creating_directories() {
     let (_root, original, replacement, alias) = aliased_directories();
     let destination =

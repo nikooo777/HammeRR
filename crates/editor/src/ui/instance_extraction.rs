@@ -203,11 +203,6 @@ impl Controller {
     }
 }
 
-#[cfg(test)]
-pub(super) fn bind(app: &AppWindow, shared: SharedSession) {
-    bind_with_access(app, &DocumentAccess::unmanaged(shared));
-}
-
 pub(super) fn bind_with_access(app: &AppWindow, access: &DocumentAccess) {
     match Controller::new_with_access(access) {
         Ok(controller) => bind_controller(app, controller),

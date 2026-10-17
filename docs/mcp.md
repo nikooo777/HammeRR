@@ -119,6 +119,20 @@ To build the map, set the build options once, then compile:
 
 `start_compile` returns a job token right away; poll `get_compile_status` and stop with `cancel_compile`. `compile_map` and `run_map` wait for the build to finish. `launch_game` does the same as **Play built map**.
 
+Managed builds share one compiler worker. Treat `queued`, `running` and
+`cancelling` as active job states; terminal states are `completed`, `cancelled`
+and `failed`. `job.queue` exposes `position`, `admitted`, `limit` and
+`waiting_ms`.
+The queue admits at most four jobs in total and one per document, reserving
+capacity before replacing its current job. Multiple public documents remain
+unavailable.
+
+Queued cancellation retires that captured request without waiting for the active
+build. Cancelling a running build waits for its normal cleanup. Dropping a
+waiting `compile_map` or `run_map` call detaches the reply; use `cancel_compile`
+to request cancellation. The same frozen map/settings and output reservations
+serve background and awaited builds.
+
 Standalone launch captures its exact Session, map generation and build before
 worker scheduling. Queued work cannot choose a replacement map later. Abandoned
 or cancelled pending work retires only its own launch, after request/process
@@ -2341,6 +2355,33 @@ including a caught capture-worker panic.
 Shutdown also cancels instance Contents/Extraction work and FGD loading, and waits
 for their owned result/staging cleanup before final recovery. Instance cleanup diagnostics remain
 in their instance reports; they do not become recovery failures.
+
+The owning desktop and stdio servers reject new document tool calls once
+shutdown begins. Already admitted calls and their queued workers retain their
+original document until cleanup completes. Tool discovery remains available;
+there is no new document-target parameter or multiple-document API.
+
+### Source and build destinations
+
+`open_map`, `save_map`, `start_compile`, `compile_map` and `run_map` use the same
+physical-file reservations as the desktop. Source maps, BSPs and derived `.lin`
+files cannot overlap through path aliases or hard links, including cross-role
+aliases owned by the same document. Rebuilding the same output role is allowed.
+Conflicts preserve the previous source, outputs and build status.
+
+Omitting `save_map.path` retains the source observation captured at Open or the
+last Save. Supplying a path explicitly chooses a fresh Save As destination,
+even when it spells the current filename. Use that explicit choice after
+repairing or intentionally retargeting a stale source alias. Saving preserves
+valid source symlinks and target permissions; ordinary compiler output replaces
+the final directory entry. Guarded instance/reflection builds retain their
+stricter output-symlink checks.
+
+Save/compiler publication requires Linux. A successful build can include a
+`warning` when the committed file's path could not be verified;
+the write has already happened. Manual writers and separate processes are not
+covered by the application's reservations. Launch checks the retained output
+binding and metadata, without a new post-build byte-rehash guarantee.
 
 ### Coordinated material favorites
 

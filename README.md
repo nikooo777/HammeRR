@@ -294,10 +294,10 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Nested object groups and membership controls](docs/images/object-groups.png) |
 | Organize brushes and entities into nested groups, select them together and edit membership with Undo. |
 
-| Recent maps |
-| --- |
-| ![Recent map paths and retained build settings](docs/images/recent-maps.png) |
-| Reopen recent maps with retained compatible build settings. |
+| Recent maps | Save as |
+| --- | --- |
+| ![Recent map paths and retained build settings](docs/images/recent-maps.png) | ![Save as and reachable file, build and editing controls](docs/images/save-as-controls.png) |
+| Reopen recent maps with retained compatible build settings. | Choose another source file with the toolbar or Ctrl+Shift+S. |
 
 [Organizing and checking maps →](docs/map-tools.md)
 

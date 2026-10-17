@@ -21,6 +21,7 @@ from private_runtime_config import (
 )
 from reflection_validation import difference, fake_install, ppm, protected_files
 from validate_bump_lighting import texture
+from validate_compile_jobs import ACTIVE_JOB_STATUSES
 from validate_face_lighting import DEFAULT_BINARY, Client, detail
 from validate_visibility import ROOM
 
@@ -159,7 +160,7 @@ def author(args):
         job = None
         while time.monotonic() - started < args.timeout:
             job = client.call("get_compile_status")["job"]
-            if job["status"] not in ["running", "cancelling"]:
+            if job["status"] not in ACTIVE_JOB_STATUSES:
                 break
             time.sleep(0.2)
         require(job and job["status"] == "completed" and job["result"]["published"] is True, job)
@@ -203,12 +204,12 @@ def author(args):
     finally:
         try:
             status = client.call("get_compile_status")["job"]
-            if status and status["status"] in ["running", "cancelling"]:
+            if status and status["status"] in ACTIVE_JOB_STATUSES:
                 if status["cancellable"]:
                     client.call("cancel_compile", {"token": status["token"]})
                 deadline = time.monotonic() + 240
                 while time.monotonic() < deadline:
-                    if client.call("get_compile_status")["job"]["status"] not in ["running", "cancelling"]:
+                    if client.call("get_compile_status")["job"]["status"] not in ACTIVE_JOB_STATUSES:
                         break
                     time.sleep(0.25)
                 else:

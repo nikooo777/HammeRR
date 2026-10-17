@@ -228,11 +228,19 @@ fn autosave_exit_and_backup_capture_one_policy_before_shared_settings_changes() 
             None,
         )
         .unwrap();
+    let destination = source_formats::file_publication::BoundDestination::capture(
+        &map,
+        source_formats::file_publication::Policy::FollowSource,
+    )
+    .unwrap();
     for _ in 0..2 {
-        let backup = first.backup_before_save(&map).unwrap();
+        let backup = first.backup_before_save(&map, &destination).unwrap();
         first.finish_save_backup(backup.as_ref(), true).unwrap();
     }
-    let backup = first.backup_before_save(&map).unwrap().unwrap();
+    let backup = first
+        .backup_before_save(&map, &destination)
+        .unwrap()
+        .unwrap();
     second
         .update_recovery_settings(
             Actor::Agent,

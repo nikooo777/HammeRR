@@ -805,13 +805,40 @@ pub(crate) fn clipping_controls_preview_apply_cancel_and_escape_without_desktop_
         );
     }
     save_ui_snapshot(app.window(), "clipping-controls");
-    for label in ["Preview plane", "Apply cut", "Cancel cut"] {
+    let labels = ["Preview plane", "Apply cut", "Cancel cut"];
+    let panel =
+        i_slint_backend_testing::ElementHandle::find_by_element_type_name(&app, "Rectangle")
+            .filter(|panel| {
+                labels.into_iter().all(|label| {
+                    panel
+                        .query_descendants()
+                        .match_predicate(move |element| {
+                            element
+                                .accessible_label()
+                                .is_some_and(|value| value == label)
+                        })
+                        .find_first()
+                        .is_some()
+                })
+            })
+            .min_by(|first, second| {
+                let first = first.size();
+                let second = second.size();
+                (first.width * first.height).total_cmp(&(second.width * second.height))
+            })
+            .unwrap();
+    let position = panel.absolute_position();
+    let size = panel.size();
+    for label in labels {
         assert_dialog_button_visible(&app, label);
         let button = i_slint_backend_testing::ElementHandle::find_by_accessible_label(&app, label)
             .next()
             .unwrap();
-        assert!(button.absolute_position().x + button.size().width <= 752.5);
-        assert!(button.absolute_position().y + button.size().height <= 342.5);
+        let button_position = button.absolute_position();
+        let button_size = button.size();
+        assert!(button_position.x >= position.x && button_position.y >= position.y);
+        assert!(button_position.x + button_size.width <= position.x + size.width + 0.5);
+        assert!(button_position.y + button_size.height <= position.y + size.height + 0.5);
     }
     i_slint_backend_testing::ElementHandle::find_by_accessible_label(&app, "Cancel cut")
         .next()

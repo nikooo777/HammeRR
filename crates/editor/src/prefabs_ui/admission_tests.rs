@@ -309,6 +309,7 @@ fn vanished_prefab_window_abandons_admission_and_releases_nested_paste() {
     let window = fixture.controller.window.as_weak();
     let paste = fixture.controller.paste.window.as_weak();
     let continuation = fixture.access.downgrade();
+    fixture.controller.window.hide().unwrap();
     drop(fixture.controller);
     assert!(window.upgrade().is_none());
     assert!(paste.upgrade().is_none());

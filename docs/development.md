@@ -19,7 +19,7 @@
 
 The editor UI and the MCP server call the same session operations, so every feature behaves identically for people and agents. New features need both a UI control and an MCP tool.
 
-Shared session locking and compile/game workers live in `editor-core/src/runtime.rs`; object-ID parsing and formatting live in `identity.rs`. Both executables use `startup::Application` for content mounting, recovery and shutdown. Its retained `runtime::DocumentHandle` owns the fixed Session, recovery worker and terminal shutdown result; production UI and both MCP entry points retain the same handle. Shutdown waits and joins outside Session guards. This ownership does not provide operation leases or multiple-document admission.
+Shared session locking and compile/game workers live in `editor-core/src/runtime.rs`; object-ID parsing and formatting live in `identity.rs`. Both executables use `startup::Application` for content mounting, recovery and shutdown. Its retained `runtime::DocumentHandle` owns the fixed Session, recovery worker and terminal shutdown result; production UI and both MCP entry points retain the same handle. `DocumentAccess` admits operations on that fixed document; idle callbacks retain weak continuations and renew admission when invoked. Shutdown closes admission and waits outside Session guards. Raw Session access remains possible, and public multiple-document admission and routing remain unavailable.
 Application owns concrete Favorites and Recent maps authorities; deliberately
 attached Sessions share their lists, storage observations, errors and revisions. Independently
 constructed Sessions keep their own authority. Recovery reconfiguration cannot
@@ -96,10 +96,17 @@ On the development desktop, serialize Cargo work with eight jobs and a 24 GiB me
 
 ```sh
 mkdir -p target
-systemd-run --user --scope --quiet -p MemoryMax=24G -p MemorySwapMax=0 \
+systemd-run --user --scope --quiet -p MemoryMax=24G -p MemoryHigh=16G -p MemorySwapMax=0 \
   env CARGO_BUILD_JOBS=8 flock target/hammerr-cargo.lock \
   cargo test -p editor-core --no-default-features --lib
 ```
+
+For broad checks on this desktop, test packages sequentially in that same
+scope and lock. Eight Cargo jobs still apply within each package; compiling
+all workspace test binaries together can exceed the memory available beside
+other applications.
+The generated `editor-ui` crate has no tests; the `editor` tests compile its
+bindings. Skip a standalone `editor-ui --all-targets` test pass.
 
 ### Content paths and safe saves
 
@@ -2526,7 +2533,8 @@ UI/background and synchronous MCP compilation share `runtime::CompileSubmission`
 Its fixed-origin completion ticket checks the unfinished job token before failure
 or success, including spawn/Join errors. Checks cover atomic Play/generation
 admission, cancellation, repeated/foreign completion, preserved initial status,
-and busy rejection through both paths. No compiler queue is introduced.
+and busy rejection through both paths. Managed application submissions also use
+the bounded shared compiler queue described below.
 
 ### Instance worker shutdown cleanup
 
@@ -2609,3 +2617,83 @@ aliases, changed files and sparse oversized inputs; they check captured-size
 allocation and preserve prior overlays or owned games. Launch cases use fake
 clients and inspect process/staging cleanup. Filesystem syscalls have no hard
 deadline; nonblocking admission applies on Unix.
+
+### Bound source/output publication and document admission
+
+```sh
+cargo test -p source-formats file_publication::tests
+cargo test -p editor-core --features mcp,test-support session::file_claim_tests
+cargo test -p editor-core --features mcp,test-support runtime::document::admission_tests
+cargo test -p editor-core --features mcp,test-support mcp::admission_tests
+cargo test -p editor-core --features mcp,test-support session::compilation::ownership_tests
+cargo test -p editor ui::files::admission_tests
+cargo test -p editor ui::admission::tests
+cargo test -p editor ui::root_callbacks::tests
+cargo test -p editor ui::admission::binder_tests
+cargo test -p editor admission_tests
+cargo test -p editor fixed_contents_root_child_and_timer
+cargo test -p editor fixed_reference_root_child_picker_and_timer
+cargo test -p editor fixed_extraction
+cargo test -p editor compile_ui::admission_tests
+cargo test -p editor retained_capture_folder_completion
+cargo test -p editor material_replace_ui::tests
+cargo test -p editor model_ui::tests
+cargo test -p editor model_browser_ui::tests
+cargo test -p editor recent_maps_ui::tests
+cargo test -p editor recovery_ui::tests
+cargo test -p editor prefabs_ui::admission_tests
+```
+
+Publication cases exercise retained parent descriptors, source symlinks and
+permissions, absent parents, changed destination entries and displaced staging
+names. Session cases cover actual source/BSP/LIN ownership and publication,
+hard-link conflicts, explicit Save As repair and preservation of older outputs.
+Admission cases pin the real document through queued work, reject terminal
+requests, preserve failed shutdown results and abandon missing-window file
+continuations. Software windows and fake workers require no desktop input.
+Compile ownership cases retain real request/results across cancellation, panic,
+foreign completion and terminal drain. They check physical cleanup before idle
+and release accepted artifact reservations after buffer replacement. The toolbar
+case checks control geometry at 1280 and 1600 pixels and exercises **Save as…**
+without opening a native picker; `HAMMERR_UI_SNAPSHOTS` captures its software image.
+Viewport/frame and root callback cases exercise weak ownership, actual software
+dispatch and final-capture barriers. Dialog cases cover History, Pointfile,
+saved defaults/shortcuts, sounds/particles and Groups/Layers/Paste, including
+retained forms, local Cancel, vanished windows and live peers after real drain.
+Instance controller cases also exercise real visible and hidden timer ticks,
+retained picker completions and release of controller, Session and document
+owners. Existing instance worker tests cover their physical cleanup.
+Compile-dialog cases cover retained settings/recipe/inspection controls,
+capture chooser completion and final recovery waiting for a complete callback.
+Remaining root binders cover clipping, transforms, terrain, pivot picking,
+fly speed and region clearing. Material replacement and model dialogs cover
+their exact draft/choice ownership and local dismissal after terminal drain.
+Recent Maps and Recovery cover complete retained actions, reviewed replacement,
+snapshot scheduling and terminal results. Prefab cases cover catalog writes,
+gallery rendering, shared-library peers and the owned Paste preview.
+
+The optional GPU resource-release case uses software windows and an offscreen
+adapter, without desktop input:
+
+```sh
+cargo test -p editor ui::ownership_tests::child_callbacks_work_then_release_ui_session_and_cached_resources -- --ignored --exact
+```
+
+It exercises ordinary child actions before dropping Ui and checking release of
+its Session and cached render resources. It does not establish visible-window
+teardown acknowledgement for an owned document.
+
+### Managed compiler queue
+
+```sh
+cargo test -p editor-core --features mcp,test-support runtime::compile_queue::tests
+cargo test -p editor-core --features mcp,test-support managed_mcp_background_awaited_and_play_share_queue
+python3 -B scripts/validate_compile_jobs.py --binary target/debug/hammerr-headless --output /tmp/hammerr-managed-build-jobs
+```
+
+Deterministic gates cover capacity before Session admission, FIFO/frozen builds,
+queued cancellation across enqueue, dropped waiters, per-document recovery
+drain behind a busy peer, exact scheduling failures and an actual worker unwind.
+Managed MCP consumers use the same queue without parking a Tokio worker while
+waiting. Background validation polls queued/running/cancelling through the
+shared `ACTIVE_JOB_STATUSES` helper.

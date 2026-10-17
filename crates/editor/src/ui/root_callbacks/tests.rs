@@ -1,4 +1,3 @@
-use super::root_callback;
 use crate::AppWindow;
 use crate::runtime::{DocumentAccess, DocumentLifecycle, SharedSession, lock};
 use crate::session::{Actor, Session};

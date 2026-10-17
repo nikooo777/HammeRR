@@ -234,7 +234,7 @@ fn instance_source_context_rejects_untitled_maps_and_source_changes_before_worke
         std::fs::read(source.with_extension("bsp")).unwrap(),
         b"previous BSP"
     );
-    session.path = None;
+    session.replace_document(Document::new(session.document.vmf().clone()), None);
     assert!(
         session
             .begin_compile(Actor::Agent, Some(&directory.path().join("untitled.bsp")))

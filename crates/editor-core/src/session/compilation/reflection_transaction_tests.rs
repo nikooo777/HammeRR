@@ -405,6 +405,19 @@ fn packed_output_in_a_content_mount_uses_no_native_runtime_and_commits_once() {
             let vmf = session.document.vmf().clone();
             let revision = session.document.revision();
             let history: Vec<_> = session.document.undo_labels().map(str::to_owned).collect();
+            let status = session.compile_status();
+            assert!(
+                session
+                    .begin_compile(actor, Some(&destination))
+                    .err()
+                    .unwrap()
+                    .contains("regular file")
+            );
+            assert_eq!(session.compile_status(), status);
+            assert!(pointfile.is_dir());
+            assert_eq!(std::fs::read(&destination).unwrap(), b"previous BSP");
+            std::fs::remove_dir(&pointfile).unwrap();
+            std::fs::write(&pointfile, b"previous pointfile").unwrap();
             let request = session.begin_compile(actor, Some(&destination)).unwrap();
             assert!(request.context.is_none() && request.environment.is_none());
             assert_eq!(request.source_stamp.is_some(), named);
@@ -428,7 +441,7 @@ fn packed_output_in_a_content_mount_uses_no_native_runtime_and_commits_once() {
             session.finish_compile(actor, &outcome);
             let result = outcome.as_ref().unwrap();
             assert!(result.published(), "{:?}", result.publication_error());
-            assert!(pointfile.is_dir());
+            assert_eq!(std::fs::read(&pointfile).unwrap(), b"previous pointfile");
             assert_eq!(session.document.vmf(), &vmf);
             assert_eq!(session.document.revision(), revision);
             assert_eq!(

@@ -44,6 +44,7 @@ fn raw_abandoned_request_retires_under_session_guard_and_keeps_exact_terminal_st
     let shared = Arc::new(Mutex::new(state));
     let (send, receive) = mpsc::channel();
     let worker_session = shared.clone();
+    let worker_path = path.clone();
     let thread = std::thread::spawn(move || {
         let mut state = lock(&worker_session);
         assert!(state.compiling());
@@ -65,7 +66,9 @@ fn raw_abandoned_request_retires_under_session_guard_and_keeps_exact_terminal_st
         let token = state.compile_token().unwrap();
         assert!(state.cancel_compile(Actor::User, token).is_err());
         assert_eq!(state.compile_settings()["editable"], true);
-        let newer = state.begin_compile(Actor::Agent, Some(&path)).unwrap();
+        let newer = state
+            .begin_compile(Actor::Agent, Some(&worker_path))
+            .unwrap();
         let running = stable(&state);
         assert!(!state.finish_compile_for_origin(
             Actor::Agent,

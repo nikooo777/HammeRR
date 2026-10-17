@@ -36,6 +36,23 @@ HammeRR includes its own native compiler, so it builds Counter-Strike: Source ma
 
 Builds run in the background, and closing Build details leaves them running. Scroll the window to inspect settings, statistics and **Diagnostics**; the build controls and **Close** stay at the bottom. Output is written in one step at the end: a failed or cancelled build never replaces the previous BSP or pointfile. Use [Baked lightmaps](baked-lightmaps.md) to inspect actual samples after a lit build.
 
+The BSP and its matching `.lin` pointfile are reserved before a build starts.
+Either destination conflicting with an owned source map or another output is
+rejected before replacing the current build status. A directory or special-file
+entry at either path blocks admission, including the matching `.lin` path.
+Publication requires Linux
+and keeps the chosen physical directory bound through the final rename. The
+writer rechecks the destination before publication; a warning after a completed rename means
+the output was written but its path needs inspection. Reservations coordinate
+writes within this application; separate processes and manual writers remain
+outside that coordination.
+
+Builds share one compiler worker. **Queued · Waiting to compile** means the
+captured build has not started; **Cancel build** can retire it immediately.
+Running builds stop at their existing cancellation checkpoints and keep their
+output reservations until cleanup completes. Closing Build details keeps the
+build owned by the editor.
+
 **Play built map** captures its current map/build before scheduling the launch.
 Switching maps while it starts cannot attach that late process to the replacement
 map. Launch stays busy until owned process cleanup completes.

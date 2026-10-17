@@ -125,7 +125,7 @@ fn reload_guards_busy_closing_and_retains_captured_job_identity() {
     session
         .save_build_recipe(Actor::Agent, "Captured", None, None)
         .unwrap();
-    let _request = session.begin_compile(Actor::Agent, None).unwrap();
+    let request = session.begin_compile(Actor::Agent, None).unwrap();
     let before = session.build_recipes();
     let captured = session.compile_status()["job"]["recipe"].clone();
     assert!(
@@ -139,6 +139,15 @@ fn reload_guards_busy_closing_and_retains_captured_job_identity() {
         Actor::Agent,
         &Err("fixture stopped before execution".into()),
     );
+    assert!(session.compiling());
+    assert!(
+        session
+            .reload_build_recipes(Actor::User, None)
+            .unwrap_err()
+            .contains("active compile")
+    );
+    drop(request);
+    assert!(!session.compiling());
     let mut file: File = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     file.recipes[0].name = "Later name".into();
     fs::write(&path, serde_json::to_vec(&file).unwrap()).unwrap();

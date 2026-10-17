@@ -39,10 +39,37 @@ Saving increments the VMF's map version and uses standard VMF formatting while r
 
 Saving through a file symlink updates its target and preserves the link and target permissions. Broken or looping links are refused. Failed saves preserve unsaved changes; repair the path or choose another destination and save again.
 
+Open maps and build outputs reserve their physical files inside the application,
+including aliases and hard links. A conflicting Open, Save or Compile fails
+without replacing the current map or output. If a source file or its directory
+changes outside HammeRR, an ordinary Save rejects the stale path. Use **Save as…**
+to choose the intended destination again, including the same filename.
+
+Opening, saving and compiler publication require Linux. Writes retain the destination
+directory while writing; manual writers and separate application processes do
+not participate in the application's reservations. A warning after publication
+means the file was written but its path could not be verified; inspect the
+destination before choosing it again.
+
 Discard confirmations apply to the map state you reviewed. If the map changes
 before New, Open, Recent maps or recovery replaces it, the action asks you to
 review again. Save and Compile file choosers also reject a buffer replaced while
 the chooser was open; edits within the same buffer remain allowed.
+
+## Save to another file
+
+1. Click **Save as…** in the toolbar, or press **Ctrl+Shift+S**.
+2. Choose a folder and filename in **Save map as**. The chooser starts with the
+   current filename and folder; unnamed maps start with `untitled.vmf`.
+3. Confirm the destination. It becomes the current source file for later
+   **Save** / **Ctrl+S**. Cancel leaves the map and current source unchanged.
+
+![Save as and the two toolbar rows](images/save-as-controls.png)
+
+Choosing a destination again does not merge external edits. A chooser opened
+before New or Open replaces the buffer cannot save the replacement map.
+
+## Launch options
 
 | Option | Purpose |
 | --- | --- |

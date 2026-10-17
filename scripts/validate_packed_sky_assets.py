@@ -23,7 +23,7 @@ from private_runtime_config import (
     verify_private_launch,
 )
 from reflection_validation import ppm
-from validate_compile_jobs import wait_job
+from validate_compile_jobs import ACTIVE_JOB_STATUSES, wait_job
 from validate_face_lighting import DEFAULT_BINARY, Client, detail
 from validate_sky_preview import set_sky
 
@@ -246,7 +246,7 @@ def wait_native_job(client, timeout):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         job = client.call("get_compile_status")["job"]
-        if job["status"] not in ["running", "cancelling"]:
+        if job["status"] not in ACTIVE_JOB_STATUSES:
             return job
         time.sleep(0.2)
     raise TimeoutError("Native reflection build exceeded its bounded deadline")
@@ -400,7 +400,7 @@ def author(args):
     finally:
         try:
             job = client.call("get_compile_status")["job"]
-            if job and job["status"] in ["running", "cancelling"]:
+            if job and job["status"] in ACTIVE_JOB_STATUSES:
                 if job["cancellable"]:
                     client.call("cancel_compile", {"token": job["token"]})
                 wait_native_job(client, 240)

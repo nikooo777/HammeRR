@@ -8,12 +8,14 @@ from pathlib import Path
 from validate_face_lighting import DEFAULT_BINARY, Client
 from validate_material_replacement import preserved_map
 
+ACTIVE_JOB_STATUSES = frozenset(("queued", "running", "cancelling"))
+
 
 def wait_job(client):
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
         job = client.call("get_compile_status")["job"]
-        if job["status"] not in ["running", "cancelling"]:
+        if job["status"] not in ACTIVE_JOB_STATUSES:
             return job
         time.sleep(0.01)
     raise AssertionError("Compile job did not finish within 30 seconds")
@@ -25,7 +27,7 @@ def stopped_on_exit(client):
         yield
     finally:
         job = client.call("get_compile_status")["job"]
-        if job and job["status"] in ["running", "cancelling"]:
+        if job and job["status"] in ACTIVE_JOB_STATUSES:
             if job["cancellable"]:
                 client.call("cancel_compile", {"token": job["token"]})
             wait_job(client)
@@ -105,8 +107,8 @@ def validate(client, output):
         try:
             launch = client.call("get_compile_status")["launch"]
             check(
-                not launch["ready"] and "missing" in launch["reason"],
-                "Missing BSP disables play with a readable reason",
+                not launch["ready"] and "output binding changed" in launch["reason"],
+                "Missing BSP disables play through the retained output binding",
             )
             client.call("launch_game", error=True)
             check(
@@ -178,7 +180,14 @@ def validate(client, output):
         started = client.call("start_compile", {"path": str(bsp)})["job"]
         client.call("cancel_compile", {"token": old_token}, error=True)
         client.call("start_compile", {"path": str(bsp)}, error=True)
-        observed = client.call("get_compile_status")["job"]
+        deadline = time.monotonic() + 30
+        while True:
+            observed = client.call("get_compile_status")["job"]
+            if observed["status"] != "queued":
+                break
+            if time.monotonic() >= deadline:
+                raise AssertionError("Compile job did not leave the queue within 30 seconds")
+            time.sleep(0.01)
         check(
             observed["status"] == "running" and observed["stage"] != "queued",
             "Active compiler exposes a real stage",

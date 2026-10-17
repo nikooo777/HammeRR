@@ -226,7 +226,9 @@ impl EditorServer {
         })
     }
 
-    #[tool(description = "Save the map as .vmf, to its current file or a new path.")]
+    #[tool(
+        description = "Save the map as .vmf. Omit path to use the retained current source binding; supply path for an explicit Save as choice that captures its current destination, even for the same filename. Changed implicit bindings and owned source/output conflicts reject before publication."
+    )]
     pub(in crate::mcp) fn save_map(&self, Parameters(args): Parameters<SaveMapArgs>) -> ToolResult {
         run(|| {
             let path = self.session().save_for_generation(

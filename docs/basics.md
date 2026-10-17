@@ -6,7 +6,7 @@
 
 The window has four parts:
 
-- **Toolbar** (top): file actions, Compile, Run Map, Game Log, Undo/Redo, brush creation, Delete, the **Tool textures** and **Leak path** toggles, and the MCP address.
+- **Toolbar** (top): the first row contains file actions, **Save as…**, build settings, Compile, Run Map and Game Log. The second row contains Undo/Redo, brush creation, Delete, the **Tool textures** and **Leak path** toggles, and the MCP address.
 - **Viewport toolbar**: projection, framing, saved views, grid and snapping, and the active viewport tool.
 - **Inspector** (right): viewport mode, selection mode, and the tools and properties for whatever is selected.
 - **Activity** (bottom right): recent edits, each labeled **you** or **agent**.

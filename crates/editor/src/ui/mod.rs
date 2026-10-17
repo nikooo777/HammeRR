@@ -43,7 +43,7 @@ use transform_pivot::*;
 struct Ui {
     ctx: GpuContext,
     session: SharedSession,
-    _document: Option<DocumentHandle>,
+    document_access: runtime::DocumentAccess,
     viewport: Viewport,
     seen_scene: render::SceneKey,
     seen_camera: u64,
@@ -140,25 +140,35 @@ struct Ui {
 
 impl Ui {
     fn document_access(&self) -> runtime::DocumentAccess {
-        match &self._document {
-            Some(document) => runtime::DocumentAccess::for_document(document.clone()),
-            None => runtime::DocumentAccess::unmanaged(self.session.clone()),
-        }
+        self.document_access.clone()
     }
 
     fn for_document(document: DocumentHandle, ctx: GpuContext) -> Self {
-        let mut ui = Self::new(document.session().clone(), ctx);
-        ui._document = Some(document);
-        ui
+        let session = document.session().clone();
+        Self::new_with_access(
+            session,
+            ctx,
+            runtime::DocumentAccess::for_document(document),
+        )
     }
 
+    #[cfg(test)]
     fn new(session: SharedSession, ctx: GpuContext) -> Self {
+        let access = runtime::DocumentAccess::unmanaged(session.clone());
+        Self::new_with_access(session, ctx, access)
+    }
+
+    fn new_with_access(
+        session: SharedSession,
+        ctx: GpuContext,
+        document_access: runtime::DocumentAccess,
+    ) -> Self {
         let camera = lock(&session).camera();
         Self {
             viewport: Viewport::new(&ctx, camera),
             ctx,
             session,
-            _document: None,
+            document_access,
             seen_scene: render::ViewOptions::default().scene_key(0),
             seen_camera: 0,
             seen_view: 0,
@@ -647,7 +657,7 @@ pub(super) fn run(
     root_callback!(app, ui, on_history, |app| {
         let mut ui = ui.borrow_mut();
         if ui.history.is_none() {
-            match history_ui::Controller::new(&ui.session) {
+            match history_ui::Controller::new_with_access(&ui.document_access()) {
                 Ok(controller) => ui.history = Some(controller),
                 Err(error) => {
                     app.unwrap().set_message(error.to_string().into());
@@ -697,7 +707,7 @@ pub(super) fn run(
     root_callback!(app, ui, on_grid_defaults, |app| {
         let mut ui = ui.borrow_mut();
         if ui.grid_defaults.is_none() {
-            match grid_defaults_ui::Controller::new(&ui.session) {
+            match grid_defaults_ui::Controller::new_with_access(&ui.document_access()) {
                 Ok(controller) => ui.grid_defaults = Some(controller),
                 Err(error) => {
                     app.unwrap().set_message(error.to_string().into());
@@ -709,11 +719,11 @@ pub(super) fn run(
             app.unwrap().set_message(error.to_string().into());
         }
     });
-    navigation_defaults_ui::bind_speed(&app, &session_of(&ui));
+    navigation_defaults_ui::bind_speed_with_access(&app, &file_access(&ui));
     root_callback!(app, ui, on_navigation_defaults, |app| {
         let mut ui = ui.borrow_mut();
         if ui.navigation_defaults.is_none() {
-            match navigation_defaults_ui::Controller::new(&ui.session) {
+            match navigation_defaults_ui::Controller::new_with_access(&ui.document_access()) {
                 Ok(controller) => ui.navigation_defaults = Some(controller),
                 Err(error) => {
                     app.unwrap().set_message(error.to_string().into());
@@ -733,7 +743,7 @@ pub(super) fn run(
     root_callback!(app, ui, on_preview_defaults, |app| {
         let mut ui = ui.borrow_mut();
         if ui.preview_defaults.is_none() {
-            match preview_defaults_ui::Controller::new(&ui.session) {
+            match preview_defaults_ui::Controller::new_with_access(&ui.document_access()) {
                 Ok(controller) => ui.preview_defaults = Some(controller),
                 Err(error) => {
                     app.unwrap().set_message(error.to_string().into());
@@ -753,7 +763,7 @@ pub(super) fn run(
     root_callback!(app, ui, on_keyboard_shortcuts, |app| {
         let mut ui = ui.borrow_mut();
         if ui.shortcuts.is_none() {
-            match shortcuts_ui::Controller::new(&ui.session) {
+            match shortcuts_ui::Controller::new_with_access(&ui.document_access()) {
                 Ok(controller) => ui.shortcuts = Some(controller),
                 Err(error) => {
                     app.unwrap().set_message(error.to_string().into());
@@ -783,7 +793,7 @@ pub(super) fn run(
     root_callback!(app, ui, on_build_status, |app| {
         let mut ui = ui.borrow_mut();
         if ui.compile_status.is_none() {
-            match compile_ui::Controller::new(&ui.session) {
+            match compile_ui::Controller::new_with_access(&ui.session, ui.document_access()) {
                 Ok(controller) => ui.compile_status = Some(controller),
                 Err(error) => {
                     app.unwrap().set_message(error.to_string().into());
@@ -796,14 +806,13 @@ pub(super) fn run(
         }
     });
     root_callback!(app, ui, on_cancel_build, |app| {
-        let session = session_of(&ui);
-        let mut session = lock(&session);
+        let access = file_access(&ui);
         if let Ok(token) = app.unwrap().get_compile_token().parse() {
             report(
                 &app.unwrap(),
-                session
+                access
                     .cancel_compile(Actor::User, token)
-                    .map(|()| "Cancelling compilation".into()),
+                    .map(|_| "Cancelling compilation".into()),
             );
         }
     });
@@ -857,9 +866,9 @@ pub(super) fn run(
         &app.unwrap(),
         &ui
     ));
-    bind_clip_controls(&app, session_of(&ui));
-    bind_manipulation_controls(&app, session_of(&ui));
-    bind_pivot_pick_controls(&app, session_of(&ui));
+    bind_clip_controls_with_access(&app, &file_access(&ui));
+    bind_manipulation_controls_with_access(&app, &file_access(&ui));
+    bind_pivot_pick_controls_with_access(&app, &file_access(&ui));
     root_callback!(app, ui, on_place_entity, |app| show_entity_window(
         &app.unwrap(),
         &ui,
@@ -1002,7 +1011,7 @@ pub(super) fn run(
         if ui.borrow().pointfile_window.is_none() {
             match PointfileWindow::new() {
                 Ok(window) => {
-                    pointfile_ui::bind(&window, &session_of(&ui));
+                    pointfile_ui::bind_with_access(&window, &file_access(&ui));
                     ui.borrow_mut().pointfile_window = Some(window);
                 }
                 Err(error) => {
@@ -1300,7 +1309,7 @@ pub(super) fn run(
     root_callback!(app, ui, on_replace_materials, |app| {
         let shared = session_of(&ui);
         if ui.borrow().material_replace.is_none() {
-            match material_replace_ui::Controller::new(&shared) {
+            match material_replace_ui::Controller::new_with_access(&file_access(&ui)) {
                 Ok(controller) => {
                     controller.window.on_browse({
                         let browse = material_browser(app.clone(), Rc::downgrade(&ui));
@@ -1325,7 +1334,7 @@ pub(super) fn run(
         controller.initialize(&mut lock(&shared), &app.unwrap().get_material());
         let _ = controller.window.show();
     });
-    bind_terrain_controls(&app, session_of(&ui));
+    bind_terrain_controls_with_access(&app, &file_access(&ui));
     root_callback!(app, ui, on_cancel_terrain_center_pick, |app| {
         if let Some(controller) = &ui.borrow().terrain {
             controller.cancel_center_pick();
@@ -1458,7 +1467,7 @@ pub(super) fn run(
     root_callback!(app, ui, on_paste_objects, |app| {
         let shared = session_of(&ui);
         if ui.borrow().clipboard.is_none() {
-            match clipboard_ui::Controller::new(&shared) {
+            match clipboard_ui::Controller::new_with_access(&file_access(&ui)) {
                 Ok(controller) => ui.borrow_mut().clipboard = Some(controller),
                 Err(error) => {
                     app.unwrap().set_message(error.to_string().into());
@@ -1494,7 +1503,7 @@ pub(super) fn run(
     root_callback!(app, ui, on_object_groups, |app| {
         let mut ui = ui.borrow_mut();
         if ui.object_groups.is_none() {
-            match groups_ui::Controller::new(&ui.session) {
+            match groups_ui::Controller::new_with_access(&ui.document_access()) {
                 Ok(controller) => ui.object_groups = Some(controller),
                 Err(error) => {
                     app.unwrap().set_message(error.to_string().into());
@@ -1527,7 +1536,7 @@ pub(super) fn run(
             app.unwrap().set_message(error.to_string().into());
         }
     });
-    working_region_ui::bind_clear(&app, session_of(&ui));
+    working_region_ui::bind_clear_with_access(&app, &file_access(&ui));
     root_callback!(app, ui, on_compile_region, |app| {
         let shared = session_of(&ui);
         if ui.borrow().compile_region.is_none() {
@@ -1551,7 +1560,7 @@ pub(super) fn run(
     root_callback!(app, ui, on_layers, |app| {
         let mut ui = ui.borrow_mut();
         if ui.layers.is_none() {
-            match layers_ui::Controller::new(&ui.session) {
+            match layers_ui::Controller::new_with_access(&ui.document_access()) {
                 Ok(controller) => ui.layers = Some(controller),
                 Err(error) => {
                     app.unwrap().set_message(error.to_string().into());
@@ -1566,7 +1575,7 @@ pub(super) fn run(
     root_callback!(app, ui, on_prefabs, |app| {
         let mut ui = ui.borrow_mut();
         if ui.prefabs.is_none() {
-            match prefabs_ui::Controller::new(&ui.session) {
+            match prefabs_ui::Controller::new_with_access(&ui.session, &ui.document_access()) {
                 Ok(controller) => ui.prefabs = Some(controller),
                 Err(error) => {
                     app.unwrap().set_message(error.to_string().into());
@@ -1605,7 +1614,7 @@ pub(super) fn run(
     root_callback!(app, ui, on_browse_particle, |app| {
         let shared = session_of(&ui);
         if ui.borrow().particles.is_none() {
-            match particles_ui::Controller::new(&shared) {
+            match particles_ui::Controller::new_with_access(&file_access(&ui)) {
                 Ok(controller) => ui.borrow_mut().particles = Some(controller),
                 Err(error) => {
                     app.unwrap().set_message(error.to_string().into());
@@ -1631,7 +1640,7 @@ pub(super) fn run(
     root_callback!(app, ui, on_browse_sound, |app; key| {
         let shared = session_of(&ui);
         if ui.borrow().sounds.is_none() {
-            match sounds_ui::Controller::new(&shared) {
+            match sounds_ui::Controller::new_with_access(&file_access(&ui)) {
                 Ok(controller) => ui.borrow_mut().sounds = Some(controller),
                 Err(error) => {
                     app.unwrap().set_message(error.to_string().into());
@@ -1657,7 +1666,7 @@ pub(super) fn run(
     root_callback!(app, ui, on_browse_model, |app| {
         let shared = session_of(&ui);
         if ui.borrow().model_browser.is_none() {
-            match model_browser_ui::Controller::new(&shared) {
+            match model_browser_ui::Controller::new_with_access(&file_access(&ui)) {
                 Ok(controller) => ui.borrow_mut().model_browser = Some(controller),
                 Err(error) => {
                     app.unwrap().set_message(error.to_string().into());
@@ -1782,7 +1791,7 @@ pub(super) fn run(
     root_callback!(app, ui, on_inspect_model, |app| {
         let shared = session_of(&ui);
         if ui.borrow().model.is_none() {
-            match model_ui::Controller::new(&shared) {
+            match model_ui::Controller::new_with_access(&file_access(&ui)) {
                 Ok(controller) => ui.borrow_mut().model = Some(controller),
                 Err(error) => {
                     app.unwrap().set_message(error.to_string().into());
@@ -1807,9 +1816,9 @@ pub(super) fn run(
     root_callback!(app, ui, on_options_changed, |app| {
         apply_view_controls(app.unwrap(), &session_of(&ui));
     });
-    instance_contents::bind(&app, session_of(&ui));
-    instance_reference::bind(&app, session_of(&ui));
-    instance_extraction::bind(&app, session_of(&ui));
+    instance_contents::bind_with_access(&app, &file_access(&ui));
+    instance_reference::bind_with_access(&app, &file_access(&ui));
+    instance_extraction::bind_with_access(&app, &file_access(&ui));
     app.on_key({
         let scope = admission::Callback::new(&app, &ui, &file_access(&ui));
         move |text, down, control, shift, alt, meta| {

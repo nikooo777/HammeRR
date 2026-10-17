@@ -595,10 +595,11 @@ impl EditorServer {
         run(|| {
             let mut session = self.session();
             session.favorite_material(&args.material, args.favorite)?;
+            let favorites = session.material_favorites_snapshot();
             Ok(
                 json!({"material": crate::material_favorites::canonical_name(&args.material)?,
-                "favorite": session.is_material_favorite(&args.material),
-                "favorites": session.material_favorite_status()}),
+                "favorite": favorites.contains(&args.material),
+                "favorites": favorites.status}),
             )
         })
     }

@@ -7,6 +7,9 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+mod authority;
+pub use authority::{Authority, Snapshot};
+
 pub const MAX_FAVORITES: usize = 512;
 pub const MAX_MATERIAL_BYTES: usize = 256;
 pub const MAX_FILE_BYTES: u64 = 192 * 1024;
@@ -14,6 +17,8 @@ pub const FILE_NAME: &str = "material-favorites.json";
 const FORMAT_VERSION: u32 = 1;
 const LOCK_FILE_NAME: &str = ".material-favorites.lock";
 pub const MAX_ERROR_BYTES: usize = 512;
+pub(crate) const RELOAD_UNAVAILABLE: &str =
+    "Material favorites storage is unavailable; session-only favorites remain editable";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -23,7 +28,7 @@ pub enum Persistence {
     Blocked,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct Status {
     pub persistence: Persistence,
     pub directory: Option<PathBuf>,

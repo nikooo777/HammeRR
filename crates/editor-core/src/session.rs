@@ -234,8 +234,7 @@ pub struct Session {
     interaction_epoch: u64,
     material_index: Option<Vec<String>>,
     material_reload: Option<material_assets::Report>,
-    material_favorites: BTreeSet<String>,
-    favorite_preferences: favorites::State,
+    material_favorites: favorites::Binding,
     material_recent: VecDeque<String>,
     camera: Camera,
     view: ViewOptions,
@@ -367,8 +366,7 @@ impl Session {
             interaction_epoch: 0,
             material_index: None,
             material_reload: None,
-            material_favorites: BTreeSet::new(),
-            favorite_preferences: favorites::State::default(),
+            material_favorites: favorites::Binding::default(),
             material_recent: VecDeque::new(),
             camera: Camera::looking_at(
                 DVec3::new(-512.0, -512.0, 384.0).as_vec3(),
@@ -514,6 +512,18 @@ impl Session {
         offset: usize,
         limit: usize,
     ) -> Result<crate::materials::Catalog, String> {
+        let favorites = self.material_favorites_snapshot();
+        self.material_catalog_with_favorites(query, group, offset, limit, &favorites)
+    }
+
+    pub fn material_catalog_with_favorites(
+        &mut self,
+        query: &str,
+        group: &str,
+        offset: usize,
+        limit: usize,
+        favorites: &crate::material_favorites::Snapshot,
+    ) -> Result<crate::materials::Catalog, String> {
         if self.material_index.is_none() {
             self.material_index = Some(self.search_materials("", usize::MAX)?);
         }
@@ -530,13 +540,13 @@ impl Session {
         let mut catalog = crate::materials::browse(
             self.material_index.as_ref().unwrap(),
             &used,
-            &self.material_favorites,
+            &favorites.materials,
             &self.material_recent,
             query,
             group,
             (offset, limit),
         )?;
-        catalog.favorites = self.material_favorite_status();
+        catalog.favorites = favorites.status.clone();
         Ok(catalog)
     }
 

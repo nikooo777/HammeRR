@@ -70,7 +70,7 @@ pub struct Request {
     identity: Arc<()>,
     control: compiler::Control,
     key: Key,
-    vmf: Vmf,
+    vmf: Option<Vmf>,
     location: Option<SourceLocation>,
 }
 
@@ -220,6 +220,20 @@ impl Request {
 
     fn prepare(&self) -> Result<Ready, String> {
         self.control.checkpoint()?;
+        let Some(vmf) = self.vmf.as_ref() else {
+            return Ok(Ready {
+                mesh: Arc::new(Mesh::default()),
+                key: self.key.clone(),
+                owners: Vec::new(),
+                brushes: Vec::new(),
+                dependencies: None,
+                stats: InstanceStats::default(),
+                diagnostics: Vec::new(),
+                diagnostics_truncated: false,
+                cpu_bytes: 0,
+                gpu_bytes: 0,
+            });
+        };
         let source = self
             .location
             .clone()
@@ -227,10 +241,9 @@ impl Request {
             .transpose()
             .map_err(|error| bounded(&error.to_string()))?;
         let mut report = compiler::Report::default();
-        let prepared = instances::resolve(&self.vmf, source.as_ref(), &self.control, &mut report)
+        let prepared = instances::resolve(vmf, source.as_ref(), &self.control, &mut report)
             .map_err(|error| bounded(&error.message))?;
-        let mut owners = self
-            .vmf
+        let mut owners = vmf
             .entities
             .iter()
             .filter(|entity| {
@@ -484,8 +497,24 @@ impl Session {
         self.instance_contents.ready = None;
         self.instance_contents.error = None;
         self.invalidate_instance_contents_render();
+        let has_instances = instances::requires_source(self.document.vmf());
         let admission = (|| {
             let vmf = self.document.vmf();
+            if !has_instances {
+                if let Some(diagnostic) = vmf
+                    .entities
+                    .iter()
+                    .filter(|entity| {
+                        entity
+                            .classname()
+                            .is_some_and(|class| class.eq_ignore_ascii_case("func_instance_parms"))
+                    })
+                    .find_map(compiler::map::unresolved_instance_diagnostic)
+                {
+                    return Err(bounded(&diagnostic.message));
+                }
+                return Ok(None);
+            }
             if vmf.object_ids().take(instances::MAX_OBJECTS + 1).count() > instances::MAX_OBJECTS
                 || vmf.side_ids().take(instances::MAX_SIDES + 1).count() > instances::MAX_SIDES
             {
@@ -548,7 +577,7 @@ impl Session {
             identity,
             control,
             key,
-            vmf: self.document.vmf().clone(),
+            vmf: has_instances.then(|| self.document.vmf().clone()),
             location,
         })
     }

@@ -361,6 +361,64 @@ fn failure_tokens_single_worker_and_empty_untitled_maps_remain_explicit() {
 }
 
 #[test]
+fn large_no_reference_maps_return_empty_without_clone_or_filesystem_admission() {
+    use source_formats::vmf::Entity;
+    for dimension in ["objects", "sides"] {
+        let mut vmf = Document::empty().into_vmf();
+        if dimension == "objects" {
+            for index in 0..instances::MAX_OBJECTS {
+                vmf.entities
+                    .push(Entity::new(index as u32 + 2, "info_target"));
+            }
+        } else {
+            let template = crate::test_assets::room().world.solids.remove(0);
+            for index in 0..=instances::MAX_SIDES / 6 {
+                let mut solid = template.clone();
+                solid.id = index as u32 + 2;
+                for (side_index, side) in solid.sides.iter_mut().enumerate() {
+                    side.id = (index * 6 + side_index + 1) as u32;
+                }
+                vmf.world.solids.push(solid);
+            }
+        }
+        vmf.validate_ids().unwrap();
+        let mut hidden = Entity::new(vmf.object_ids().max().unwrap() + 1, "func_instance");
+        hidden.hidden = true;
+        hidden.properties.set("file", "../missing.vmf");
+        vmf.entities.push(hidden);
+        let mut session = Session::new(Err("no assets".into()));
+        session.document = Document::try_new(vmf).unwrap();
+        session.path = Some(PathBuf::from(
+            "/nonexistent-instance-preview-parent/missing.vmf",
+        ));
+        let source = session.document.vmf().clone();
+        let request = session
+            .begin_instance_contents_refresh(Actor::Agent)
+            .unwrap();
+        assert!(request.vmf.is_none() && request.location.is_none());
+        let report = session
+            .finish_instance_contents_refresh(Actor::Agent, request.run())
+            .unwrap();
+        assert_eq!(report["state"], "empty", "{dimension}");
+        assert_eq!(report["stats"]["instances"], 0);
+        assert_eq!(session.document.vmf(), &source);
+        let id = session.document.vmf().object_ids().max().unwrap() + 1;
+        session
+            .document
+            .edit("unsupported parameter helper", |tx| {
+                tx.add_entity(Entity::new(id, "FuNc_InStAnCe_PaRmS"))?;
+                Ok(())
+            })
+            .unwrap();
+        assert!(
+            session
+                .begin_instance_contents_refresh(Actor::Agent)
+                .is_err()
+        );
+    }
+}
+
+#[test]
 fn foreign_worker_result_cannot_finish_an_equal_numbered_request() {
     let (_directory, mut left, source, _child, _owner) = opened(Actor::Agent);
     let mut right = Session::new(Err("no assets".into()));

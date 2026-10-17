@@ -4,6 +4,36 @@ use slint::ComponentHandle;
 
 use crate::AppWindow;
 use crate::runtime::{DocumentAccess, DocumentContinuation};
+use crate::session::Session;
+
+pub(super) struct SessionCallback {
+    window: slint::Weak<AppWindow>,
+    target: DocumentContinuation,
+}
+
+impl SessionCallback {
+    pub(super) fn new(window: &AppWindow, target: &DocumentAccess) -> Self {
+        Self {
+            window: window.as_weak(),
+            target: target.downgrade(),
+        }
+    }
+
+    pub(super) fn input(&self, body: impl FnOnce(AppWindow, &mut Session)) {
+        let Some(window) = self.window.upgrade() else {
+            return;
+        };
+        let result = self.target.upgrade().and_then(|target| {
+            target.with_session(|session| {
+                body(window.clone_strong(), session);
+                Ok(())
+            })
+        });
+        if let Err(error) = result {
+            window.set_message(error.into());
+        }
+    }
+}
 
 pub(super) struct Callback<Owner> {
     window: slint::Weak<AppWindow>,
@@ -68,3 +98,6 @@ impl<Owner> Callback<Owner> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod binder_tests;

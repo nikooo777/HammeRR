@@ -290,181 +290,193 @@ pub(super) fn refresh_terrain_controls(app: &AppWindow, session: &Session) {
     );
 }
 
+#[cfg(test)]
 pub(super) fn bind_terrain_controls(app: &AppWindow, shared: SharedSession) {
+    bind_terrain_controls_with_access(app, &runtime::DocumentAccess::unmanaged(shared));
+}
+
+pub(super) fn bind_terrain_controls_with_access(app: &AppWindow, access: &runtime::DocumentAccess) {
     app.on_create_terrain({
-        let shared = shared.clone();
-        let app = app.as_weak();
+        let callback = admission::SessionCallback::new(app, access);
         move |power, corner| {
-            let mut session = lock(&shared);
-            let faces = session.selected_faces();
-            let result = u32::try_from(power)
-                .map_err(|_| "Invalid terrain power".to_owned())
-                .and_then(|power| {
-                    let corner = u32::try_from(corner)
-                        .map_err(|_| "Invalid terrain start corner".to_owned())?;
-                    session.create_terrain(Actor::User, &faces, power, corner)
-                });
-            let app = app.unwrap();
-            refresh_terrain_controls(&app, &session);
-            app.set_message(
-                match result {
-                    Ok(count) => format!(
-                        "Created {count} terrain surface{}",
-                        if count == 1 { "" } else { "s" }
-                    ),
-                    Err(error) => error,
-                }
-                .into(),
-            );
+            callback.input(|app, session| {
+                let faces = session.selected_faces();
+                let result = u32::try_from(power)
+                    .map_err(|_| "Invalid terrain power".to_owned())
+                    .and_then(|power| {
+                        let corner = u32::try_from(corner)
+                            .map_err(|_| "Invalid terrain start corner".to_owned())?;
+                        session.create_terrain(Actor::User, &faces, power, corner)
+                    });
+                refresh_terrain_controls(&app, session);
+                app.set_message(
+                    match result {
+                        Ok(count) => format!(
+                            "Created {count} terrain surface{}",
+                            if count == 1 { "" } else { "s" }
+                        ),
+                        Err(error) => error,
+                    }
+                    .into(),
+                );
+            })
         }
     });
     app.on_remove_terrain({
-        let app = app.as_weak();
+        let callback = admission::SessionCallback::new(app, access);
         move || {
-            let mut session = lock(&shared);
-            let faces = session.selected_faces();
-            let result = session.remove_terrain(Actor::User, &faces);
-            let app = app.unwrap();
-            refresh_terrain_controls(&app, &session);
-            app.set_message(
-                match result {
-                    Ok(count) => format!(
-                        "Removed {count} terrain surface{}",
-                        if count == 1 { "" } else { "s" }
-                    ),
-                    Err(error) => error,
-                }
-                .into(),
-            );
+            callback.input(|app, session| {
+                let faces = session.selected_faces();
+                let result = session.remove_terrain(Actor::User, &faces);
+                refresh_terrain_controls(&app, session);
+                app.set_message(
+                    match result {
+                        Ok(count) => format!(
+                            "Removed {count} terrain surface{}",
+                            if count == 1 { "" } else { "s" }
+                        ),
+                        Err(error) => error,
+                    }
+                    .into(),
+                );
+            })
         }
     });
 }
 
+#[cfg(test)]
 pub(super) fn bind_manipulation_controls(app: &AppWindow, shared: SharedSession) {
+    bind_manipulation_controls_with_access(app, &runtime::DocumentAccess::unmanaged(shared));
+}
+
+pub(super) fn bind_manipulation_controls_with_access(
+    app: &AppWindow,
+    access: &runtime::DocumentAccess,
+) {
     app.on_preview_snap_to_grid({
-        let (app, shared) = (app.as_weak(), shared.clone());
+        let callback = admission::SessionCallback::new(app, access);
         move || {
-            let app = app.unwrap();
-            let mut session = lock(&shared);
-            let ids = session.selected_ids();
-            if let Err(error) = session.preview_snap_to_grid(Actor::User, &ids) {
-                app.set_message(error.into());
-            }
-            refresh_panel(&app, &mut session);
-            refresh_interaction(&app, &session);
+            callback.input(|app, session| {
+                let ids = session.selected_ids();
+                if let Err(error) = session.preview_snap_to_grid(Actor::User, &ids) {
+                    app.set_message(error.into());
+                }
+                refresh_panel(&app, session);
+                refresh_interaction(&app, session);
+            })
         }
     });
     app.on_transform_tool_changed({
-        let (app, shared) = (app.as_weak(), shared.clone());
+        let callback = admission::SessionCallback::new(app, access);
         move || {
-            let app = app.unwrap();
-            let mut session = lock(&shared);
-            let result = transform_tool_from_controls(&app)
-                .and_then(|tool| session.set_transform_tool(Actor::User, tool))
-                .and_then(|()| {
-                    session.set_paint_operation(
-                        Actor::User,
-                        app.get_handles_mode_index() >= 4,
-                        f64::from(app.get_paint_radius()),
-                        paint_operation_from_controls(&app),
-                    )
-                });
-            if let Err(error) = result {
-                app.set_message(error.into());
-            }
-            refresh_spatial(&app, &session);
-        }
-    });
-    app.on_paint_settings_changed({
-        let (app, shared) = (app.as_weak(), shared.clone());
-        move || {
-            let app = app.unwrap();
-            let mut session = lock(&shared);
-            if let Err(error) = session.set_paint_operation(
-                Actor::User,
-                app.get_handles_mode_index() >= 4,
-                f64::from(app.get_paint_radius()),
-                paint_operation_from_controls(&app),
-            ) {
-                app.set_message(error.into());
-            }
-            refresh_interaction(&app, &session);
-        }
-    });
-    app.on_area_settings_changed({
-        let (app, shared) = (app.as_weak(), shared.clone());
-        move || {
-            let app = app.unwrap();
-            let mut session = lock(&shared);
-            let rule = if app.get_area_rule_index() == 1 {
-                map_core::region::Match::Contained
-            } else {
-                map_core::region::Match::Intersecting
-            };
-            let mode = match app.get_area_mode_index() {
-                1 => SelectMode::Add,
-                2 => SelectMode::Remove,
-                3 => SelectMode::Toggle,
-                _ => SelectMode::Replace,
-            };
-            session.cancel_area_selection();
-            session.set_area_settings(rule, mode);
-            refresh_interaction(&app, &session);
-        }
-    });
-    app.on_apply_transform_preview({
-        let (app, shared) = (app.as_weak(), shared.clone());
-        move || {
-            let app = app.unwrap();
-            let mut session = lock(&shared);
-            if let Err(error) = session.commit_transform_preview(Actor::User) {
-                app.set_message(error.into());
-            }
-            refresh_panel(&app, &mut session);
-            refresh_interaction(&app, &session);
-        }
-    });
-    app.on_apply_area_selection({
-        let (app, shared) = (app.as_weak(), shared.clone());
-        move || {
-            let app = app.unwrap();
-            let mut session = lock(&shared);
-            let result = if app.get_has_paint_preview() {
-                app.get_paint_token()
-                    .parse()
-                    .map_err(|_| "Paint preview changed; refresh it".to_string())
-                    .and_then(|token| session.commit_active_stroke(Actor::User, token))
-                    .map(|_| ())
-            } else {
-                session.commit_area_selection().map(|_| ())
-            };
-            if let Err(error) = result {
-                app.set_message(error.into());
-            }
-            refresh_panel(&app, &mut session);
-            refresh_interaction(&app, &session);
-        }
-    });
-    app.on_cancel_interaction({
-        let app = app.as_weak();
-        move || {
-            let app = app.unwrap();
-            let mut session = lock(&shared);
-            if session.paint_stroke().is_some() {
-                let result = app
-                    .get_paint_token()
-                    .parse()
-                    .map_err(|_| "Paint preview changed; refresh it".to_string())
-                    .and_then(|token| session.cancel_paint_selection(token));
+            callback.input(|app, session| {
+                let result = transform_tool_from_controls(&app)
+                    .and_then(|tool| session.set_transform_tool(Actor::User, tool))
+                    .and_then(|()| {
+                        session.set_paint_operation(
+                            Actor::User,
+                            app.get_handles_mode_index() >= 4,
+                            f64::from(app.get_paint_radius()),
+                            paint_operation_from_controls(&app),
+                        )
+                    });
                 if let Err(error) = result {
                     app.set_message(error.into());
                 }
-            } else {
-                session.cancel_transform_preview();
+                refresh_spatial(&app, session);
+            })
+        }
+    });
+    app.on_paint_settings_changed({
+        let callback = admission::SessionCallback::new(app, access);
+        move || {
+            callback.input(|app, session| {
+                if let Err(error) = session.set_paint_operation(
+                    Actor::User,
+                    app.get_handles_mode_index() >= 4,
+                    f64::from(app.get_paint_radius()),
+                    paint_operation_from_controls(&app),
+                ) {
+                    app.set_message(error.into());
+                }
+                refresh_interaction(&app, session);
+            })
+        }
+    });
+    app.on_area_settings_changed({
+        let callback = admission::SessionCallback::new(app, access);
+        move || {
+            callback.input(|app, session| {
+                let rule = if app.get_area_rule_index() == 1 {
+                    map_core::region::Match::Contained
+                } else {
+                    map_core::region::Match::Intersecting
+                };
+                let mode = match app.get_area_mode_index() {
+                    1 => SelectMode::Add,
+                    2 => SelectMode::Remove,
+                    3 => SelectMode::Toggle,
+                    _ => SelectMode::Replace,
+                };
                 session.cancel_area_selection();
-                session.clear_volume_selection();
-            }
-            refresh_interaction(&app, &session);
+                session.set_area_settings(rule, mode);
+                refresh_interaction(&app, session);
+            })
+        }
+    });
+    app.on_apply_transform_preview({
+        let callback = admission::SessionCallback::new(app, access);
+        move || {
+            callback.input(|app, session| {
+                if let Err(error) = session.commit_transform_preview(Actor::User) {
+                    app.set_message(error.into());
+                }
+                refresh_panel(&app, session);
+                refresh_interaction(&app, session);
+            })
+        }
+    });
+    app.on_apply_area_selection({
+        let callback = admission::SessionCallback::new(app, access);
+        move || {
+            callback.input(|app, session| {
+                let result = if app.get_has_paint_preview() {
+                    app.get_paint_token()
+                        .parse()
+                        .map_err(|_| "Paint preview changed; refresh it".to_string())
+                        .and_then(|token| session.commit_active_stroke(Actor::User, token))
+                        .map(|_| ())
+                } else {
+                    session.commit_area_selection().map(|_| ())
+                };
+                if let Err(error) = result {
+                    app.set_message(error.into());
+                }
+                refresh_panel(&app, session);
+                refresh_interaction(&app, session);
+            })
+        }
+    });
+    app.on_cancel_interaction({
+        let callback = admission::SessionCallback::new(app, access);
+        move || {
+            callback.input(|app, session| {
+                if session.paint_stroke().is_some() {
+                    let result = app
+                        .get_paint_token()
+                        .parse()
+                        .map_err(|_| "Paint preview changed; refresh it".to_string())
+                        .and_then(|token| session.cancel_paint_selection(token));
+                    if let Err(error) = result {
+                        app.set_message(error.into());
+                    }
+                } else {
+                    session.cancel_transform_preview();
+                    session.cancel_area_selection();
+                    session.clear_volume_selection();
+                }
+                refresh_interaction(&app, session);
+            })
         }
     });
 }

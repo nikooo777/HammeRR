@@ -44,32 +44,40 @@ pub(super) fn refresh_pivot_pick_controls(
     });
 }
 
+#[cfg(test)]
 pub(super) fn bind_pivot_pick_controls(app: &AppWindow, shared: SharedSession) {
+    bind_pivot_pick_controls_with_access(app, &runtime::DocumentAccess::unmanaged(shared));
+}
+
+pub(super) fn bind_pivot_pick_controls_with_access(
+    app: &AppWindow,
+    access: &runtime::DocumentAccess,
+) {
     app.on_pick_transform_pivot({
-        let (app, shared) = (app.as_weak(), shared.clone());
+        let callback = admission::SessionCallback::new(app, access);
         move || {
-            let app = app.unwrap();
-            let mut session = lock(&shared);
-            let camera = session.camera();
-            let snapshot = session.transform_pivot_pick_stamp();
-            let result = session.begin_transform_pivot_pick(
-                Actor::User,
-                camera,
-                viewport_size(&app),
-                &snapshot,
-            );
-            if let Err(error) = result {
-                app.set_message(error.into());
-            }
-            refresh_pivot_pick_controls(&app, &session, session.camera());
+            callback.input(|app, session| {
+                let camera = session.camera();
+                let snapshot = session.transform_pivot_pick_stamp();
+                let result = session.begin_transform_pivot_pick(
+                    Actor::User,
+                    camera,
+                    viewport_size(&app),
+                    &snapshot,
+                );
+                if let Err(error) = result {
+                    app.set_message(error.into());
+                }
+                refresh_pivot_pick_controls(&app, session, session.camera());
+            })
         }
     });
     app.on_cancel_transform_pivot_pick({
-        let app = app.as_weak();
+        let callback = admission::SessionCallback::new(app, access);
         move || {
-            let app = app.unwrap();
-            let mut session = lock(&shared);
-            cancel_pivot_pick(&app, &mut session);
+            callback.input(|app, session| {
+                cancel_pivot_pick(&app, session);
+            })
         }
     });
 }

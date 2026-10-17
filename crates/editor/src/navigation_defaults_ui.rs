@@ -4,9 +4,12 @@ use slint::ComponentHandle;
 
 use crate::{
     AppWindow, NavigationDefaultsWindow,
-    runtime::{DocumentAccess, SharedSession, lock},
+    runtime::DocumentAccess,
     session::{Actor, Session},
 };
+
+#[cfg(test)]
+use crate::runtime::{SharedSession, lock};
 
 pub struct Controller {
     pub window: NavigationDefaultsWindow,
@@ -18,22 +21,41 @@ pub fn refresh_speed(app: &AppWindow, session: &Session) {
     app.set_navigation_defaults_error(session.navigation_preferences_error().is_some());
 }
 
+#[cfg(test)]
 pub fn bind_speed(app: &AppWindow, shared: &SharedSession) {
-    refresh_speed(app, &lock(shared));
+    bind_speed_with_access(app, &DocumentAccess::unmanaged(shared.clone()));
+}
+
+pub fn bind_speed_with_access(app: &AppWindow, access: &DocumentAccess) {
+    if let Err(error) = access.with_session(|session| {
+        refresh_speed(app, session);
+        Ok(())
+    }) {
+        app.set_message(error.into());
+    }
     app.on_fly_speed_changed({
-        let (app, shared) = (app.as_weak(), shared.clone());
+        let (app, target) = (app.as_weak(), access.downgrade());
         move || {
-            let app = app.unwrap();
-            let mut session = lock(&shared);
-            let result = app
-                .get_fly_speed()
-                .parse::<f32>()
-                .map_err(|_| "Enter a valid fly speed".to_string())
-                .and_then(|speed| session.set_fly_speed(speed));
+            let Some(app) = app.upgrade() else {
+                return;
+            };
+            let result = target.upgrade().and_then(|access| {
+                access.with_session(|session| {
+                    let result = app
+                        .get_fly_speed()
+                        .parse::<f32>()
+                        .map_err(|_| "Enter a valid fly speed".to_string())
+                        .and_then(|speed| session.set_fly_speed(speed));
+                    if let Err(error) = result {
+                        app.set_message(error.into());
+                    }
+                    refresh_speed(&app, session);
+                    Ok(())
+                })
+            });
             if let Err(error) = result {
                 app.set_message(error.into());
             }
-            refresh_speed(&app, &session);
         }
     });
 }

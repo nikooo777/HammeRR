@@ -147,126 +147,131 @@ pub(super) fn change_clip_points(
     )
 }
 
+#[cfg(test)]
 pub(super) fn bind_clip_controls(app: &AppWindow, shared: SharedSession) {
+    bind_clip_controls_with_access(app, &runtime::DocumentAccess::unmanaged(shared));
+}
+
+pub(super) fn bind_clip_controls_with_access(app: &AppWindow, access: &runtime::DocumentAccess) {
     app.on_clip_handles_changed({
-        let (app, shared) = (app.as_weak(), shared.clone());
+        let callback = admission::SessionCallback::new(app, access);
         move || {
-            let app = app.unwrap();
-            let mut session = lock(&shared);
-            let snapshot = session.clip_point_stamp();
-            let result = app
-                .get_clip_angle_step()
-                .parse::<f64>()
-                .map_err(|_| "Enter a rotation step in degrees".to_owned())
-                .and_then(|angle_step| {
-                    session.set_clip_handle_options(
-                        session::clip_drag::Options {
-                            mode: match app.get_clip_handles_mode() {
-                                1 => Some(render::handles::Mode::Move),
-                                2 => Some(render::handles::Mode::Rotate),
-                                _ => None,
+            callback.input(|app, session| {
+                let snapshot = session.clip_point_stamp();
+                let result = app
+                    .get_clip_angle_step()
+                    .parse::<f64>()
+                    .map_err(|_| "Enter a rotation step in degrees".to_owned())
+                    .and_then(|angle_step| {
+                        session.set_clip_handle_options(
+                            session::clip_drag::Options {
+                                mode: match app.get_clip_handles_mode() {
+                                    1 => Some(render::handles::Mode::Move),
+                                    2 => Some(render::handles::Mode::Rotate),
+                                    _ => None,
+                                },
+                                snap: app.get_clip_handles_snap(),
+                                angle_step,
                             },
-                            snap: app.get_clip_handles_snap(),
-                            angle_step,
-                        },
-                        &snapshot,
-                    )
-                });
-            app.set_message(result.err().unwrap_or_default().into());
-            refresh_clip(&app, &session);
+                            &snapshot,
+                        )
+                    });
+                app.set_message(result.err().unwrap_or_default().into());
+                refresh_clip(&app, session);
+            })
         }
     });
     app.on_cancel_clip_positioning({
-        let (app, shared) = (app.as_weak(), shared.clone());
+        let callback = admission::SessionCallback::new(app, access);
         move || {
-            let app = app.unwrap();
-            let mut session = lock(&shared);
-            if let Some(token) = session.clip_drag().map(|d| d.token) {
-                let result = session.cancel_clip_drag(token);
-                app.set_message(result.err().unwrap_or_default().into());
-            }
-            refresh_clip(&app, &session);
+            callback.input(|app, session| {
+                if let Some(token) = session.clip_drag().map(|d| d.token) {
+                    let result = session.cancel_clip_drag(token);
+                    app.set_message(result.err().unwrap_or_default().into());
+                }
+                refresh_clip(&app, session);
+            })
         }
     });
     app.on_clip_points_action({
-        let (app, shared) = (app.as_weak(), shared.clone());
+        let callback = admission::SessionCallback::new(app, access);
         move |action| {
-            let app = app.unwrap();
-            let mut session = lock(&shared);
-            if action == 3 {
-                session.cancel_clip_preview();
-                refresh_clip(&app, &session);
-                return;
-            }
-            let mut points = session
-                .clip_points()
-                .map_or_else(Vec::new, |d| d.points.clone());
-            if action == 1 {
-                points.pop();
-            } else {
-                points.clear();
-            }
-            let result = change_clip_points(&app, &mut session, points);
-            app.set_message(result.err().unwrap_or_default().into());
-            refresh_clip(&app, &session);
+            callback.input(|app, session| {
+                if action == 3 {
+                    session.cancel_clip_preview();
+                    refresh_clip(&app, session);
+                    return;
+                }
+                let mut points = session
+                    .clip_points()
+                    .map_or_else(Vec::new, |d| d.points.clone());
+                if action == 1 {
+                    points.pop();
+                } else {
+                    points.clear();
+                }
+                let result = change_clip_points(&app, session, points);
+                app.set_message(result.err().unwrap_or_default().into());
+                refresh_clip(&app, session);
+            })
         }
     });
     app.on_start_clip({
-        let (app, shared) = (app.as_weak(), shared.clone());
+        let callback = admission::SessionCallback::new(app, access);
         move || {
-            let app = app.unwrap();
-            let mut session = lock(&shared);
-            if let Err(error) = session.set_clip_tool(Actor::User, true) {
-                app.set_message(error.into());
-            }
-            refresh_spatial(&app, &session);
+            callback.input(|app, session| {
+                if let Err(error) = session.set_clip_tool(Actor::User, true) {
+                    app.set_message(error.into());
+                }
+                refresh_spatial(&app, session);
+            })
         }
     });
     app.on_preview_clip_plane({
-        let (app, shared) = (app.as_weak(), shared.clone());
-        move || preview_clip_plane(&app.unwrap(), &mut lock(&shared))
+        let callback = admission::SessionCallback::new(app, access);
+        move || callback.input(|app, session| preview_clip_plane(&app, session))
     });
     app.on_clip_settings_changed({
-        let (app, shared) = (app.as_weak(), shared.clone());
+        let callback = admission::SessionCallback::new(app, access);
         move || {
-            let app = app.unwrap();
-            let mut session = lock(&shared);
-            if let Some(points) = session.clip_points().map(|d| d.points.clone()) {
-                let result = change_clip_points(&app, &mut session, points);
-                app.set_message(result.err().unwrap_or_default().into());
-                refresh_clip(&app, &session);
-                return;
-            }
-            if let Some(plane) = session.clip_preview().map(|preview| preview.plane)
-                && let Err(error) = preview_clip(&app, &mut session, plane)
-            {
-                session.cancel_clip_preview();
-                refresh_clip(&app, &session);
-                app.set_message(error.into());
-            }
+            callback.input(|app, session| {
+                if let Some(points) = session.clip_points().map(|d| d.points.clone()) {
+                    let result = change_clip_points(&app, session, points);
+                    app.set_message(result.err().unwrap_or_default().into());
+                    refresh_clip(&app, session);
+                    return;
+                }
+                if let Some(plane) = session.clip_preview().map(|preview| preview.plane)
+                    && let Err(error) = preview_clip(&app, session, plane)
+                {
+                    session.cancel_clip_preview();
+                    refresh_clip(&app, session);
+                    app.set_message(error.into());
+                }
+            })
         }
     });
     app.on_clip_inputs_changed({
-        let (app, shared) = (app.as_weak(), shared.clone());
+        let callback = admission::SessionCallback::new(app, access);
         move || {
-            let app = app.unwrap();
-            let mut session = lock(&shared);
-            if let Some(points) = session.clip_points().map(|d| d.points.clone()) {
-                let result = change_clip_points(&app, &mut session, points);
-                app.set_message(result.err().unwrap_or_default().into());
-            } else {
-                session.cancel_clip_preview();
-            }
-            refresh_clip(&app, &session);
+            callback.input(|app, session| {
+                if let Some(points) = session.clip_points().map(|d| d.points.clone()) {
+                    let result = change_clip_points(&app, session, points);
+                    app.set_message(result.err().unwrap_or_default().into());
+                } else {
+                    session.cancel_clip_preview();
+                }
+                refresh_clip(&app, session);
+            })
         }
     });
     app.on_apply_clip({
-        let (app, shared) = (app.as_weak(), shared.clone());
-        move || apply_clip(&app.unwrap(), &mut lock(&shared))
+        let callback = admission::SessionCallback::new(app, access);
+        move || callback.input(|app, session| apply_clip(&app, session))
     });
     app.on_cancel_clip({
-        let app = app.as_weak();
-        move || cancel_clip(&app.unwrap(), &mut lock(&shared))
+        let callback = admission::SessionCallback::new(app, access);
+        move || callback.input(|app, session| cancel_clip(&app, session))
     });
 }
 

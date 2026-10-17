@@ -7,7 +7,7 @@ use source_formats::vmf::format_number;
 
 use crate::{
     AppWindow, WorkingRegionWindow,
-    runtime::{SharedSession, lock},
+    runtime::{DocumentAccess, SharedSession, lock},
     session::{Actor, Session, working_region::Action},
 };
 
@@ -74,16 +74,30 @@ fn refresh(
     }
 }
 
+#[cfg(test)]
 pub fn bind_clear(app: &AppWindow, shared: SharedSession) {
+    bind_clear_with_access(app, &DocumentAccess::unmanaged(shared));
+}
+
+pub fn bind_clear_with_access(app: &AppWindow, access: &DocumentAccess) {
     app.on_clear_working_region({
-        let app = app.as_weak();
+        let (app, target) = (app.as_weak(), access.downgrade());
         move || {
-            let app = app.unwrap();
-            let mut session = lock(&shared);
-            let snapshot = session.working_region_stamp();
-            match session.set_working_region(Actor::User, Action::Clear, &snapshot) {
-                Ok(_) => app.set_working_region_active(false),
-                Err(error) => app.set_message(error.into()),
+            let Some(app) = app.upgrade() else {
+                return;
+            };
+            let result = target.upgrade().and_then(|access| {
+                access.with_session(|session| {
+                    let snapshot = session.working_region_stamp();
+                    match session.set_working_region(Actor::User, Action::Clear, &snapshot) {
+                        Ok(_) => app.set_working_region_active(false),
+                        Err(error) => app.set_message(error.into()),
+                    }
+                    Ok(())
+                })
+            });
+            if let Err(error) = result {
+                app.set_message(error.into());
             }
         }
     });

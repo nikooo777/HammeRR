@@ -1,9 +1,12 @@
 use super::super::*;
 
+#[cfg(test)]
+mod error_domain_tests;
+
 #[tool_router(router = recovery_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
-        description = "Inspect autosave settings, pending changes, errors, storage location and retained recovery snapshots (newest first). Snapshots contain committed map data, not editor previews. Default page 50, maximum 200; current_map_only filters by the current document key.",
+        description = "Inspect autosave settings, pending changes, settings/snapshot/retention/drain errors, their compatible combined error, storage location and retained recovery snapshots (newest first). Successful settings Save clears only settings errors; successful snapshots clear only snapshot and retention errors. Snapshots contain committed map data, not editor previews. Default page 50, maximum 200; current_map_only filters by the current document key.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_recovery(

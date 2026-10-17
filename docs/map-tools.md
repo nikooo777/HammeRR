@@ -89,4 +89,6 @@ Recovery files live in `$XDG_STATE_HOME/hammerr/recovery`, or `~/.local/state/ha
 
 Normal exit waits for in-flight recovery, then captures outstanding committed changes once when autosave is enabled. A failed exit snapshot or recovery-worker drain is reported on stderr and returns a failing process exit status, including both headless modes. If another application error also occurred, the final error retains both causes. The original map is never treated as saved by an exit snapshot.
 
+Recovery retains settings, snapshot, retention and shutdown failures separately. Saving settings clears only settings errors; a successful snapshot clears only snapshot and retention errors. Recovery displays unresolved causes together with listing warnings, and MCP reports the same causes separately as well as in its combined error. A settings warning alone does not turn a successful exit snapshot into a shutdown failure.
+
 ![Autosave settings, snapshots and recovery controls](images/recovery.png)

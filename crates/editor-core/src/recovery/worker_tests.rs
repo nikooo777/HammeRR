@@ -134,3 +134,24 @@ fn recovery_worker_join_panic_is_reported_even_when_final_snapshot_succeeds() {
     drop(worker);
     assert_eq!(Store { directory: path }.list().unwrap().entries.len(), 1);
 }
+
+#[test]
+fn recovery_worker_drain_uses_its_capture_outcome_despite_retained_settings_warning() {
+    let (_directory, session, path) = fixture(true);
+    std::fs::create_dir_all(path.join("settings.json")).unwrap();
+    let warning = lock(&session)
+        .set_recovery_settings(Actor::User, Settings::default(), None)
+        .unwrap_err();
+    assert_eq!(lock(&session).recovery_status()["settings_error"], warning);
+    let mut worker = Worker::start(&session).unwrap();
+    let entry = worker.drain().unwrap().unwrap();
+    assert_eq!(worker.drain().unwrap().unwrap().id, entry.id);
+    let status = lock(&session).recovery_status();
+    assert_eq!(status["error"], warning);
+    assert_eq!(status["settings_error"], warning);
+    assert!(status["snapshot_error"].is_null());
+    assert!(status["retention_error"].is_null());
+    assert!(status["drain_error"].is_null());
+    assert_eq!(status["pending_changes"], false);
+    assert_eq!(Store { directory: path }.list().unwrap().entries.len(), 1);
+}

@@ -96,6 +96,7 @@ pub use clipping::ClipPreview;
 #[cfg(test)]
 use compilation::CompileResult;
 pub use management::{ObjectFilter, PropertyChange, PropertyDraft, PropertyTarget};
+pub(crate) use recovery::RecoveryCompletion;
 pub use recovery::RecoveryRequest;
 pub use surfaces::GroupProjection;
 mod connections;

@@ -341,9 +341,18 @@ fn complete_capture_with(
     request: &crate::session::RecoveryRequest,
     run: impl FnOnce(&crate::session::RecoveryRequest) -> Result<Entry, String>,
 ) -> Result<Entry, String> {
+    complete_capture_completed_with(session, actor, request, run).map(|completion| completion.entry)
+}
+
+fn complete_capture_completed_with(
+    session: &crate::runtime::SharedSession,
+    actor: crate::session::Actor,
+    request: &crate::session::RecoveryRequest,
+    run: impl FnOnce(&crate::session::RecoveryRequest) -> Result<Entry, String>,
+) -> Result<crate::session::RecoveryCompletion, String> {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(request)))
         .unwrap_or_else(|_| Err("Recovery snapshot worker panicked".into()));
-    crate::runtime::lock(session).finish_recovery_snapshot(actor, request, result)
+    crate::runtime::lock(session).finish_recovery_snapshot_completed(actor, request, result)
 }
 
 type StopSignal = std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>;
@@ -398,11 +407,23 @@ impl Worker {
                 } else if status["available"] != true {
                     Err("Exit recovery storage is unavailable".into())
                 } else {
-                    capture(session,crate::session::Actor::System,Kind::Autosave)
-                        .map(Some).map_err(|error|format!("Exit recovery snapshot failed: {error}"))
-                        .and_then(|entry| {
-                            let status=crate::runtime::lock(session).recovery_status();
-                            if let Some(error)=status["error"].as_str() {Err(format!("Exit recovery snapshot saved, but recovery cleanup failed: {error}"))}else{Ok(entry)}
+                    let request =
+                        crate::runtime::lock(session).begin_recovery_snapshot(Kind::Autosave);
+                    request
+                        .and_then(|request| {
+                            complete_capture_completed_with(
+                                session,
+                                crate::session::Actor::System,
+                                &request,
+                                crate::session::RecoveryRequest::run,
+                            )
+                        })
+                        .map_err(|error| format!("Exit recovery snapshot failed: {error}"))
+                        .and_then(|completion| match completion.retention_error {
+                            Some(error) => Err(format!(
+                                "Exit recovery snapshot saved, but recovery cleanup failed: {error}"
+                            )),
+                            None => Ok(Some(completion.entry)),
                         })
                 }
             }

@@ -119,6 +119,7 @@ def main():
             for fail in [False, True]:
                 case = output / f"{label}-{'failure' if fail else 'success'}"
                 result["cases"].append(validate_case(binary.resolve(), case, fail))
+        result["cases"].append(validate_error_domains(args.headless_binary.resolve(), output / "error-domains"))
         result["status"] = "passed"
     except Exception as error:
         result["status"] = "failed"
@@ -127,6 +128,74 @@ def main():
     finally:
         (output / "validation.json").write_text(json.dumps(result, indent=2) + "\n")
         print(json.dumps({"status": result["status"], "cases": len(result["cases"]), "output": str(output)}))
+
+
+def validate_error_domains(binary, output):
+    output.mkdir()
+    game = output / "game"
+    game.mkdir()
+    gameinfo = game / "gameinfo.txt"
+    gameinfo.write_text('GameInfo { FileSystem { SearchPaths { game "|gameinfo_path|." } } }\n')
+    recovery = output / "recovery"
+    recovery.mkdir()
+    settings = recovery / "settings.json"
+    settings.write_text("malformed settings")
+    env = {"HAMMERR_RECENT_MAPS_DIR": str(output / "recent"),
+           "HAMMERR_BUILD_RECIPES": str(output / "recipes.json"),
+           "HAMMERR_PREFABS_DIR": str(output / "prefabs"),
+           "XDG_CONFIG_HOME": str(output / "config"), "XDG_STATE_HOME": str(output / "state")}
+    client = None
+    result = {"binary": str(binary), "binary_sha256": digest(binary), "case": "error_domains"}
+    try:
+        with patch.dict(os.environ, env):
+            client = Client(None, binary, output, gameinfo=gameinfo)
+        parent = output / "parent.vmf"
+        client.call("save_map", {"path": str(parent)})
+        parent_digest = digest(parent)
+        block = client.call("create_block", {"mins": [0, 0, 0], "maxs": [16, 16, 16], "material": "audit/no-assets-needed"})["id"]
+
+        def protected():
+            return {"object": detail(client, [block]), "history": client.call("get_history"),
+                    "camera": client.call("get_camera"), "selection": client.call("get_selection")}
+
+        original = protected()
+        initial = client.call("get_recovery")["status"]
+        assert initial["settings_error"] and not initial["settings"]["enabled"]
+        client.call("create_recovery_snapshot")
+        captured = client.call("get_recovery")["status"]
+        assert captured["settings_error"] == initial["settings_error"]
+        assert captured["error"] == initial["settings_error"] and captured["snapshot_error"] is None
+        client.call("set_recovery_settings", {"enabled": True})
+        assert client.call("get_recovery")["status"]["error"] is None
+        retained = output / "retained-recovery"
+        recovery.rename(retained)
+        recovery.write_text("temporary directory obstruction")
+        client.call("create_recovery_snapshot", error=True)
+        failed = client.call("get_recovery")["status"]
+        assert failed["snapshot_error"] and not failed["busy"]
+        recovery.unlink()
+        retained.rename(recovery)
+        client.call("set_recovery_settings", {"interval_seconds": 60})
+        repaired = client.call("get_recovery")["status"]
+        assert repaired["settings_error"] is None and repaired["snapshot_error"] == failed["snapshot_error"]
+        assert repaired["error"] == failed["snapshot_error"]
+        client.call("create_recovery_snapshot")
+        final = client.call("get_recovery")["status"]
+        assert all(final[field] is None for field in ["error", "settings_error", "snapshot_error", "retention_error", "drain_error"])
+        assert protected() == original and digest(parent) == parent_digest
+        assert not client.call("get_map_info")["rendering"]["initialized"]
+        code, trailing = close_with_status(client)
+        assert code == 0 and not trailing.strip(), (code, trailing)
+        result.update({"status": "passed", "exit_code": code, "initial": initial,
+                       "captured": captured, "failed": failed, "repaired": repaired, "final": final})
+    except Exception as error:
+        result.update({"status": "failed", "error": f"{type(error).__name__}: {error}"})
+        raise
+    finally:
+        if client is not None and client.process is not None:
+            client.close()
+        (output / "case.json").write_text(json.dumps(result, indent=2) + "\n")
+    return result
 
 
 if __name__ == "__main__":

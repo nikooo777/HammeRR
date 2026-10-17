@@ -10,6 +10,9 @@ use crate::{RecoveryRow, RecoveryWindow};
 
 const PAGE_SIZE: usize = 20;
 
+#[cfg(test)]
+mod tests;
+
 fn age(created_ms: u64) -> String {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -22,6 +25,15 @@ fn age(created_ms: u64) -> String {
         60..=1439 => format!("{} h ago", minutes / 60),
         _ => format!("{} days ago", minutes / 1440),
     }
+}
+
+fn append_warning(window: &RecoveryWindow, warning: &str) {
+    let current = window.get_warning();
+    window.set_warning(if current.is_empty() {
+        warning.into()
+    } else {
+        format!("{current}\n{warning}").into()
+    });
 }
 
 pub fn refresh(window: &RecoveryWindow, session: &Session) {
@@ -65,7 +77,7 @@ pub fn refresh(window: &RecoveryWindow, session: &Session) {
     let listing = match session.recovery_entries() {
         Ok(listing) => listing,
         Err(error) => {
-            window.set_warning(error.into());
+            append_warning(window, &error);
             window.set_rows(ModelRc::default());
             window.set_selected_id("".into());
             return;
@@ -135,13 +147,13 @@ pub fn refresh(window: &RecoveryWindow, session: &Session) {
             .collect::<Vec<_>>(),
     )));
     if !listing.warnings.is_empty() {
-        window.set_warning(
-            format!(
+        append_warning(
+            window,
+            &format!(
                 "{} incomplete or unreadable snapshots were skipped. {}",
                 listing.warnings.len(),
                 listing.warnings[0]
-            )
-            .into(),
+            ),
         );
     }
 }

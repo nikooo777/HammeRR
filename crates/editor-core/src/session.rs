@@ -23,6 +23,8 @@ use crate::spatial;
 pub mod atlas_texturing;
 pub mod baked_lightmaps;
 mod buffer_replacement;
+#[cfg(test)]
+mod launch_origin_tests;
 pub use buffer_replacement::BufferReplacementReview;
 pub mod carving;
 pub mod checks;
@@ -267,7 +269,7 @@ pub struct Session {
     compilation: compilation::State,
     native_capture: native_capture::State,
     content_epoch: u64,
-    launching: bool,
+    pending_launch: Option<LaunchOrigin>,
     compiled: Option<CompiledMap>,
     leak: Option<(Snapshot, compiler::Leak)>,
     game_run: Option<game::Run>,
@@ -279,12 +281,32 @@ pub struct Session {
 }
 
 pub struct LaunchRequest {
+    origin: LaunchOrigin,
     install: game::Install,
     bsp: PathBuf,
     instance_dependencies: Option<compiler::instances::DependencyGuard>,
 }
 
+#[derive(Clone)]
+pub struct LaunchOrigin {
+    generation: u64,
+    ticket: Arc<()>,
+}
+
+impl LaunchOrigin {
+    fn new(generation: u64) -> Self {
+        Self {
+            generation,
+            ticket: Arc::new(()),
+        }
+    }
+}
+
 impl LaunchRequest {
+    pub fn origin(&self) -> LaunchOrigin {
+        self.origin.clone()
+    }
+
     fn verify_instance_dependencies(&self) -> Result<(), String> {
         if let Some(dependencies) = &self.instance_dependencies {
             dependencies.verify(&compiler::Control::default()).map_err(|error|format!("Instance source/dependencies changed since compilation; compile again before launching: {error}"))?;
@@ -293,6 +315,11 @@ impl LaunchRequest {
     }
 
     pub fn run(self) -> Result<game::Run, String> {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.run_inner()))
+            .unwrap_or_else(|_| Err("game launch panicked".into()))
+    }
+
+    fn run_inner(self) -> Result<game::Run, String> {
         self.verify_instance_dependencies()?;
         game::Run::launch(&self.install, &self.bsp)
     }
@@ -403,7 +430,7 @@ impl Session {
             compilation: compilation::State::default(),
             native_capture: native_capture::State::default(),
             content_epoch: 0,
-            launching: false,
+            pending_launch: None,
             compiled: None,
             leak: None,
             game_run: None,
@@ -1802,7 +1829,7 @@ impl Session {
     }
 
     pub fn launching(&self) -> bool {
-        self.launching
+        self.pending_launch.is_some()
     }
 
     fn current_snapshot(&self, snapshot: &Snapshot) -> bool {
@@ -1827,7 +1854,7 @@ impl Session {
         if self.closing {
             return Err("the editor is closing".into());
         }
-        if self.launching || self.game_running() {
+        if self.launching() || self.game_running() {
             return Err(
                 "CS:S is already launching or running; close it before running another map".into(),
             );
@@ -1874,6 +1901,7 @@ impl Session {
     pub fn begin_launch(&mut self, actor: Actor) -> Result<LaunchRequest, String> {
         let bsp = self.launch_readiness()?.to_owned();
         let request = LaunchRequest {
+            origin: LaunchOrigin::new(self.document_generation),
             install: game::Install::from_game(&self.game)?,
             bsp,
             instance_dependencies: self
@@ -1881,7 +1909,7 @@ impl Session {
                 .as_ref()
                 .and_then(|compiled| compiled.instance_dependencies.clone()),
         };
-        self.launching = true;
+        self.pending_launch = Some(request.origin());
         self.log(actor, "launching CS:S");
         Ok(request)
     }
@@ -1889,12 +1917,28 @@ impl Session {
     pub fn finish_launch(
         &mut self,
         actor: Actor,
+        origin: &LaunchOrigin,
         result: Result<game::Run, String>,
     ) -> Result<game::Log, String> {
-        self.launching = false;
+        let matching = self
+            .pending_launch
+            .as_ref()
+            .is_some_and(|pending| Arc::ptr_eq(&pending.ticket, &origin.ticket));
+        if !matching {
+            drop(result);
+            return Err("game launch result does not match the pending launch".into());
+        }
+        self.pending_launch = None;
         if self.closing {
             drop(result);
             return Err("the editor is closing".into());
+        }
+        if origin.generation != self.document_generation {
+            drop(result);
+            let error =
+                "game launch belongs to an earlier map; compile and launch the current map again";
+            self.log(actor, error);
+            return Err(error.into());
         }
         match result {
             Ok(run) => {
@@ -3141,7 +3185,9 @@ mod tests {
         let request = session.begin_launch(Actor::Agent).unwrap();
         assert!(session.begin_launch(Actor::User).is_err());
         assert!(session.begin_compile(Actor::User, None).is_err());
-        session.finish_launch(Actor::Agent, request.run()).unwrap();
+        session
+            .finish_launch(Actor::Agent, &request.origin(), request.run())
+            .unwrap();
         assert!(session.game_running());
         assert!(session.begin_launch(Actor::User).is_err());
         session.stop_game(Actor::Agent).unwrap();
@@ -3166,7 +3212,9 @@ mod tests {
         );
         compile(&mut session);
         let request = session.begin_launch(Actor::Agent).unwrap();
-        let log = session.finish_launch(Actor::Agent, request.run()).unwrap();
+        let log = session
+            .finish_launch(Actor::Agent, &request.origin(), request.run())
+            .unwrap();
         session.shutdown();
         assert!(!Path::new(&format!("/proc/{}", log.pid)).exists());
         assert!(
@@ -3193,11 +3241,16 @@ mod tests {
         );
         compile(&mut session);
         let request = session.begin_launch(Actor::Agent).unwrap();
+        let origin = request.origin();
         session.shutdown();
         assert!(session.launching());
         let run = request.run().unwrap();
         let log = run.log(1).unwrap();
-        assert!(session.finish_launch(Actor::Agent, Ok(run)).is_err());
+        assert!(
+            session
+                .finish_launch(Actor::Agent, &origin, Ok(run))
+                .is_err()
+        );
         assert!(!session.launching() && !session.game_running());
         assert!(!Path::new(&format!("/proc/{}", log.pid)).exists());
         assert!(

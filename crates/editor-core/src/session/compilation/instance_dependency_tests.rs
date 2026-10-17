@@ -70,6 +70,7 @@ fn instance_builds_use_unsaved_snapshots_and_guard_ordinary_publication_and_fres
         assert_eq!(session.compile_status()["job"]["stale"], false);
         assert_eq!(session.baked_lightmap_build_state()["status"], "current");
         let request = session.begin_launch(actor).unwrap();
+        let origin = request.origin();
         request.verify_instance_dependencies().unwrap();
         change_child(&child);
         assert!(request.verify_instance_dependencies().is_err());
@@ -77,7 +78,7 @@ fn instance_builds_use_unsaved_snapshots_and_guard_ordinary_publication_and_fres
         assert!(launch.is_err());
         assert!(
             session
-                .finish_launch(actor, launch)
+                .finish_launch(actor, &origin, launch)
                 .err()
                 .unwrap()
                 .contains("Instance source/dependencies changed")

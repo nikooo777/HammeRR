@@ -102,6 +102,72 @@ fn attached_shortcut_forms_and_viewport_hints_observe_shared_activation_errors_a
     assert_eq!(lock(&second).shortcut_bindings(), Bindings::default());
 }
 
+#[test]
+fn retained_shortcut_form_rejects_after_drain_without_reading_or_writing_shared_storage() {
+    software_backend();
+    let directory = tempfile::tempdir().unwrap();
+    let authority = editor_core::shortcuts::Authority::configured(Ok(directory.path().into()));
+    let shared = Arc::new(Mutex::new(Session::with_keyboard_shortcuts(
+        Err("no assets needed".into()),
+        authority.clone(),
+    )));
+    let peer = Arc::new(Mutex::new(Session::with_keyboard_shortcuts(
+        Err("no assets needed".into()),
+        authority,
+    )));
+    let document = crate::test_assets::document(shared.clone());
+    let peer_document = crate::test_assets::document(peer.clone());
+    let access = DocumentAccess::for_document(document.clone());
+    let controller = Controller::new_with_access(&access).unwrap();
+    controller.show(&lock(&shared)).unwrap();
+    controller.window.invoke_choose("frame_selection".into());
+    controller.window.set_primary_key(key_index("F8"));
+    controller.window.set_primary_control(false);
+    controller.window.set_primary_shift(false);
+    controller.window.invoke_edited();
+    controller.window.invoke_save();
+    assert_eq!(
+        lock(&peer).resolve_editor_shortcut("F8", false, false, false, false),
+        Some(Command::FrameSelection)
+    );
+    controller.window.set_primary_key(key_index("F9"));
+    controller.window.invoke_edited();
+    assert!(controller.window.get_can_save());
+    document.shutdown().unwrap();
+    let path = directory.path().join(editor_core::shortcuts::FILE_NAME);
+    let bytes = b"external malformed shortcuts";
+    std::fs::write(&path, bytes).unwrap();
+    let before = lock(&shared).keyboard_shortcuts_state();
+    let peer_before = lock(&peer).keyboard_shortcuts_state();
+    let source = lock(&shared).document().vmf().clone();
+    let history = lock(&shared).history_snapshot();
+    let log = lock(&shared).log_serial();
+    let display = controller.window.get_status();
+    controller.window.invoke_reload();
+    controller.window.invoke_reset();
+    controller.window.invoke_save();
+    controller.window.invoke_choose("undo".into());
+    controller.window.invoke_edited();
+    assert_eq!(controller.window.get_message(), "the document is closed");
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    assert_eq!(lock(&shared).keyboard_shortcuts_state(), before);
+    assert_eq!(lock(&peer).keyboard_shortcuts_state(), peer_before);
+    assert_eq!(lock(&shared).document().vmf(), &source);
+    assert_eq!(lock(&shared).history_snapshot(), history);
+    assert_eq!(lock(&shared).log_serial(), log);
+    assert_eq!(controller.window.get_status(), display);
+    assert_eq!(controller.window.get_selected(), "frame_selection");
+    assert_eq!(controller.window.get_primary_key(), key_index("F9"));
+    assert!(controller.window.get_can_save());
+    assert_eq!(
+        peer_document.lifecycle(),
+        crate::runtime::DocumentLifecycle::Live
+    );
+    controller.window.invoke_cancel();
+    assert!(!controller.window.window().is_visible());
+    peer_document.shutdown().unwrap();
+}
+
 fn dispatch_chord(app: &AppWindow, modifiers: &[Key], text: &str) {
     for key in modifiers {
         app.window().dispatch_event(WindowEvent::KeyPressed {

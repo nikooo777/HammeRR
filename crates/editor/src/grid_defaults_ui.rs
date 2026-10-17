@@ -5,7 +5,7 @@ use slint::ComponentHandle;
 
 use crate::{
     AppWindow, GridDefaultsWindow,
-    runtime::{SharedSession, lock},
+    runtime::DocumentAccess,
     session::{Actor, Session},
 };
 
@@ -84,12 +84,31 @@ fn act(
 }
 
 impl Controller {
-    pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
+    #[cfg(test)]
+    pub fn new(shared: &crate::runtime::SharedSession) -> Result<Self, slint::PlatformError> {
+        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
+    }
+
+    pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let window = GridDefaultsWindow::new()?;
         let snapshot = Rc::new(RefCell::new(String::new()));
         let callback = |action: &'static str| {
-            let (window, shared, snapshot) = (window.as_weak(), shared.clone(), snapshot.clone());
-            move || act(&window.unwrap(), &mut lock(&shared), &snapshot, action)
+            let (window, target, snapshot) =
+                (window.as_weak(), access.downgrade(), snapshot.clone());
+            move || {
+                let Some(window) = window.upgrade() else {
+                    return;
+                };
+                let result = target.upgrade().and_then(|access| {
+                    access.with_session(|session| {
+                        act(&window, session, &snapshot, action);
+                        Ok(())
+                    })
+                });
+                if let Err(error) = result {
+                    window.set_message(error.into());
+                }
+            }
         };
         window.on_save(callback("save"));
         window.on_apply(callback("apply"));

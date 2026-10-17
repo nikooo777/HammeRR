@@ -5,7 +5,7 @@ use slint::{ComponentHandle, VecModel, platform::Key};
 
 use crate::{
     AppWindow, ShortcutRow, ShortcutsWindow,
-    runtime::{SharedSession, lock},
+    runtime::{DocumentAccess, SharedSession, lock},
     session::{Actor, Session},
     viewport::key_text,
 };
@@ -136,7 +136,12 @@ fn read_slot(window: &ShortcutsWindow, alternate: bool) -> Option<Chord> {
 }
 
 impl Controller {
+    #[cfg(test)]
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
+        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
+    }
+
+    pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let window = ShortcutsWindow::new()?;
         let form = Rc::new(RefCell::new(Form {
             bindings: Bindings::default(),
@@ -154,51 +159,81 @@ impl Controller {
             .into(),
         );
         window.on_choose({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, target, form) = (window.as_weak(), access.downgrade(), form.clone());
             move |command| {
-                let Ok(command) = serde_json::from_value::<Command>(serde_json::Value::String(
-                    command.to_string(),
-                )) else {
+                let Some(window) = window.upgrade() else {
                     return;
                 };
-                form.borrow_mut().selected = command;
-                load_selected(&window.unwrap(), &form.borrow());
-                refresh(&window.unwrap(), &lock(&shared), &form);
+                let result = target.upgrade().and_then(|access| {
+                    access.with_session(|session| {
+                        if let Ok(command) = serde_json::from_value::<Command>(
+                            serde_json::Value::String(command.to_string()),
+                        ) {
+                            form.borrow_mut().selected = command;
+                            load_selected(&window, &form.borrow());
+                            refresh(&window, session, &form);
+                        }
+                        Ok(())
+                    })
+                });
+                if let Err(error) = result {
+                    window.set_message(error.into());
+                }
             }
         });
         window.on_edited({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, target, form) = (window.as_weak(), access.downgrade(), form.clone());
             move || {
-                let window = window.unwrap();
-                let mut current = form.borrow_mut();
-                let command = current.selected;
-                *current.bindings.slots_mut(command) =
-                    [read_slot(&window, false), read_slot(&window, true)];
-                current.dirty = true;
-                drop(current);
-                refresh(&window, &lock(&shared), &form);
+                let Some(window) = window.upgrade() else {
+                    return;
+                };
+                let result = target.upgrade().and_then(|access| {
+                    access.with_session(|session| {
+                        let mut current = form.borrow_mut();
+                        let command = current.selected;
+                        *current.bindings.slots_mut(command) =
+                            [read_slot(&window, false), read_slot(&window, true)];
+                        current.dirty = true;
+                        drop(current);
+                        refresh(&window, session, &form);
+                        Ok(())
+                    })
+                });
+                if let Err(error) = result {
+                    window.set_message(error.into());
+                }
             }
         });
         for action in ["save", "reload", "reset"] {
-            let (callback_window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (callback_window, target, form) =
+                (window.as_weak(), access.downgrade(), form.clone());
             let callback = move || {
-                let window = callback_window.unwrap();
-                let mut session = lock(&shared);
-                let (snapshot, bindings) = if action == "save" {
-                    let current = form.borrow();
-                    (current.snapshot.clone(), Some(current.bindings.clone()))
-                } else {
-                    (session.shortcuts_stamp(), None)
+                let Some(window) = callback_window.upgrade() else {
+                    return;
                 };
-                match session.change_keyboard_shortcuts(Actor::User, &snapshot, action, bindings) {
-                    Ok(state) => {
-                        adopt(&window, &session, &form);
-                        window.set_message(if state["write_committed"] == true && state["ready"] != true { "Shortcuts were written and activated, but saved storage could not reload. Review its error." } else if action == "reload" && state["stored"] != true { "Factory shortcuts activated; no saved file." } else if action == "reload" { "Saved shortcuts loaded and activated." } else { "Keyboard shortcuts saved and activated." }.into());
-                    }
-                    Err(error) => {
-                        window.set_message(error.into());
-                        refresh(&window, &session, &form);
-                    }
+                let result = target.upgrade().and_then(|access| {
+                    access.with_session(|session| {
+                        let (snapshot, bindings) = if action == "save" {
+                            let current = form.borrow();
+                            (current.snapshot.clone(), Some(current.bindings.clone()))
+                        } else {
+                            (session.shortcuts_stamp(), None)
+                        };
+                        match session.change_keyboard_shortcuts(Actor::User, &snapshot, action, bindings) {
+                            Ok(state) => {
+                                adopt(&window, session, &form);
+                                window.set_message(if state["write_committed"] == true && state["ready"] != true { "Shortcuts were written and activated, but saved storage could not reload. Review its error." } else if action == "reload" && state["stored"] != true { "Factory shortcuts activated; no saved file." } else if action == "reload" { "Saved shortcuts loaded and activated." } else { "Keyboard shortcuts saved and activated." }.into());
+                            }
+                            Err(error) => {
+                                window.set_message(error.into());
+                                refresh(&window, session, &form);
+                            }
+                        }
+                        Ok(())
+                    })
+                });
+                if let Err(error) = result {
+                    window.set_message(error.into());
                 }
             };
             match action {

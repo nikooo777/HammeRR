@@ -1,4 +1,5 @@
 use super::*;
+use crate::runtime::lock;
 use std::sync::{Arc, Mutex};
 
 #[test]
@@ -199,4 +200,139 @@ fn shared_saved_grid_errors_refresh_toolbar_and_form_without_invalidating_an_own
         true
     );
     controller.window.invoke_close_dialog();
+}
+
+#[test]
+fn retained_defaults_dialogs_reject_drained_document_without_storage_or_peer_changes() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: false,
+        },
+    )))
+    .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let defaults =
+        editor_core::saved_defaults::SavedDefaults::configured(Ok(directory.path().into()));
+    let peer = Arc::new(Mutex::new(Session::with_saved_defaults(
+        Err("no assets needed".into()),
+        defaults.clone(),
+    )));
+    let peer_document = crate::test_assets::document(peer.clone());
+    let mut state = Session::with_saved_defaults(Err("no assets needed".into()), defaults);
+    state
+        .set_spatial(
+            Actor::User,
+            editor_core::spatial::Update {
+                grid_size: Some(0.25),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    state.set_view(render::ViewOptions {
+        selection_outlines: false,
+        ..state.view()
+    });
+    state.set_fly_speed(987.625).unwrap();
+    let shared = Arc::new(Mutex::new(state));
+    let weak_session = Arc::downgrade(&shared);
+    let document = crate::test_assets::document(shared.clone());
+    let access = DocumentAccess::for_document(document.clone());
+    let grid = Controller::new_with_access(&access).unwrap();
+    let preview = crate::preview_defaults_ui::Controller::new_with_access(&access).unwrap();
+    let navigation = crate::navigation_defaults_ui::Controller::new_with_access(&access).unwrap();
+    grid.show(&lock(&shared)).unwrap();
+    preview.show(&lock(&shared)).unwrap();
+    navigation.show(&lock(&shared)).unwrap();
+    grid.window.invoke_save();
+    preview.window.invoke_save();
+    navigation.window.invoke_save();
+    access
+        .with_session(|session| {
+            session.set_spatial(
+                Actor::User,
+                editor_core::spatial::Update {
+                    grid_size: Some(64.0),
+                    ..Default::default()
+                },
+            )?;
+            session.set_fly_speed(1200.0)?;
+            session.set_view(render::ViewOptions {
+                selection_outlines: true,
+                ..session.view()
+            });
+            Ok(())
+        })
+        .unwrap();
+    grid.refresh(&lock(&shared));
+    preview.refresh(&lock(&shared));
+    navigation.refresh(&lock(&shared));
+    document.shutdown().unwrap();
+    let paths = [
+        editor_core::grid_preferences::FILE_NAME,
+        editor_core::preview_preferences::FILE_NAME,
+        editor_core::navigation_preferences::FILE_NAME,
+    ]
+    .map(|name| directory.path().join(name));
+    std::fs::write(&paths[1], b"external malformed defaults").unwrap();
+    let bytes = paths.each_ref().map(|path| std::fs::read(path).unwrap());
+    let before = defaults_state(&lock(&shared));
+    let peer_before = defaults_state(&lock(&peer));
+    let display = (
+        grid.window.get_current(),
+        preview.window.get_status(),
+        navigation.window.get_current(),
+    );
+    grid.window.invoke_apply();
+    preview.window.invoke_reset();
+    navigation.window.invoke_save();
+    preview.window.invoke_reload();
+    assert_eq!(grid.window.get_message(), "the document is closed");
+    assert_eq!(preview.window.get_message(), "the document is closed");
+    assert_eq!(navigation.window.get_message(), "the document is closed");
+    assert_eq!(defaults_state(&lock(&shared)), before);
+    assert_eq!(defaults_state(&lock(&peer)), peer_before);
+    assert_eq!(
+        paths.each_ref().map(|path| std::fs::read(path).unwrap()),
+        bytes
+    );
+    assert_eq!(
+        (
+            grid.window.get_current(),
+            preview.window.get_status(),
+            navigation.window.get_current(),
+        ),
+        display
+    );
+    assert_eq!(
+        peer_document.lifecycle(),
+        crate::runtime::DocumentLifecycle::Live
+    );
+    grid.window.invoke_close_dialog();
+    preview.window.invoke_close_dialog();
+    navigation.window.invoke_close_dialog();
+    assert!(!grid.window.window().is_visible());
+    assert!(!preview.window.window().is_visible());
+    assert!(!navigation.window.window().is_visible());
+    drop(access);
+    drop(document);
+    drop(shared);
+    assert!(weak_session.upgrade().is_none());
+    grid.window.invoke_save();
+    assert_eq!(grid.window.get_message(), "the document is closed");
+    peer_document.shutdown().unwrap();
+}
+
+fn defaults_state(session: &Session) -> (Value, render::Camera) {
+    (
+        serde_json::json!({
+            "grid": session.grid_preferences_state(),
+            "preview": session.preview_preferences_state(),
+            "navigation": session.navigation_preferences_state(),
+            "history": session.history_snapshot(),
+            "log": session.log_serial(),
+        }),
+        session.camera(),
+    )
 }

@@ -73,6 +73,15 @@ pub struct CameraSpec {
 impl CameraSpec {
     /// Starts from the editor camera and applies the given overrides.
     pub(in crate::mcp) fn resolve(&self, session: &Session, aspect: f32) -> Result<Camera, String> {
+        self.resolve_with_instance_contents(session, aspect, None)
+    }
+
+    pub(in crate::mcp) fn resolve_with_instance_contents(
+        &self,
+        session: &Session,
+        aspect: f32,
+        instance_contents: Option<bool>,
+    ) -> Result<Camera, String> {
         if [self.fov, self.yaw, self.pitch, self.ortho_height]
             .into_iter()
             .flatten()
@@ -106,7 +115,7 @@ impl CameraSpec {
         if let Some(focus) = &self.focus {
             let ids = parse_ids(focus)?;
             let (lo, hi) = session
-                .object_bounds_in(session.render_document(), &ids)
+                .framing_bounds_in(session.render_document(), &ids, instance_contents)
                 .ok_or("focus objects have no bounds")?;
             return Ok(camera.frame_bounds(lo.as_vec3(), hi.as_vec3(), aspect));
         }
@@ -167,7 +176,7 @@ pub struct FacePreviewArgs {
 }
 
 pub(in crate::mcp) fn view_state(view: ViewOptions) -> Value {
-    json!({"lighting_preview":view.lighting_preview,"lighting_quality":view.lighting_quality.name(),"lighting_exposure_ev":view.lighting_exposure_ev,"normal_maps":view.normal_maps,"tool_textures":view.tool_textures,"sky_preview":view.sky_preview,"sky_channel":view.sky_channel.name(),"sky_exposure_ev":view.sky_exposure_ev,"rope_preview":view.rope_preview,"selection_outlines":view.selection_outlines,"entity_images":view.entity_images,"additive_sprite_guides":view.additive_sprite_guides,"entity_model_guides":view.entity_model_guides,"fog":fog_parameters(view),"leak_path":view.leak_path,"surface":view.surface.name(),"smoothing_group":view.smoothing_group})
+    json!({"instance_contents": view.instance_contents,"lighting_preview":view.lighting_preview,"lighting_quality":view.lighting_quality.name(),"lighting_exposure_ev":view.lighting_exposure_ev,"normal_maps":view.normal_maps,"tool_textures":view.tool_textures,"sky_preview":view.sky_preview,"sky_channel":view.sky_channel.name(),"sky_exposure_ev":view.sky_exposure_ev,"rope_preview":view.rope_preview,"selection_outlines":view.selection_outlines,"entity_images":view.entity_images,"additive_sprite_guides":view.additive_sprite_guides,"entity_model_guides":view.entity_model_guides,"fog":fog_parameters(view),"leak_path":view.leak_path,"surface":view.surface.name(),"smoothing_group":view.smoothing_group})
 }
 
 pub(in crate::mcp) fn fog_parameters(view: ViewOptions) -> Value {
@@ -270,6 +279,7 @@ pub struct BeginSurfacePlacementPickArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SetViewArgs {
+    pub instance_contents: Option<bool>,
     /// Unshadowed authored constant point/spot diffuse preview; defaults off. No sun/ambient/bounce/shadows.
     pub lighting_preview: Option<bool>,
     /// fast interpolates vertex lighting; detail evaluates fragments (default) and supports normal maps.
@@ -307,6 +317,7 @@ pub struct SetViewArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct RenderArgs {
+    pub instance_contents: Option<bool>,
     /// Unshadowed authored constant point/spot diffuse preview; defaults off. No sun/ambient/bounce/shadows.
     pub lighting_preview: Option<bool>,
     /// fast interpolates vertex lighting; detail evaluates fragments (default) and supports normal maps.
@@ -351,6 +362,7 @@ pub struct RenderArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct PickArgs {
+    pub instance_contents: Option<bool>,
     /// Pixel column and row in an image rendered with the same camera and size.
     pub x: f32,
     pub y: f32,
@@ -416,6 +428,7 @@ macro_rules! view_update {
         impl $args {
             pub(in crate::mcp) fn view_update(&self) -> crate::session::ViewUpdate<'_> {
                 crate::session::ViewUpdate {
+                    instance_contents: self.instance_contents,
                     lighting_preview: self.lighting_preview,
                     lighting_quality: self.lighting_quality.as_deref(),
                     lighting_exposure_ev: self.lighting_exposure_ev,

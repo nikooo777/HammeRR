@@ -252,7 +252,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Set shared viewport visibility and mode in any projection: lighting_preview enables bounded unshadowed static point/spot diffuse lighting; lighting_quality fast/detail and lighting_exposure_ev -8..8 control its editor display. Inspect get_lighting_preview for admitted/excluded coverage and limits. No sun/ambient/bounce/shadows or native-brightness parity. Modes: textured, flat, wireframe, lightmap_density or smoothing_groups. normal_maps defaults off and previews admitted flat-brush normal maps under fixed editor directional shading in Textured views; inspect get_normal_map_preview for diagnostics and limits. Terrain/models/resource guides are excluded; Detail unshadowed authored lighting composes with admitted normal maps. Flat shading ignores brush textures/transparency; wireframe shows geometry through solids. selection_outlines defaults on and controls selected object/face edges, marker outlines, model brackets and rope centerlines while preserving surfaces, selection tint, picking and diagnostic/tool guides. entity_images and entity_model_guides default on and control literal FGD icons/static Sprite resource images and studio/studioprop editor meshes respectively. Off retains ordinary editable boxes and defers guide asset reads; authored models, lights, ropes and other guides remain independent. Pure resource visibility preserves pending reviews. Helpers, selection and tool filters remain active. rope_preview shows bounded static authored NextKey rope spans with Slack/Width; inspect get_rope_preview for diagnostics and limits. No rope physics, parenting or attachment binding. sky_preview resolves world skyname as six mounted skybox faces selected by sky_channel (ldr default or explicit hdr), with sky_exposure_ev -8..8 applying only to HDR under the documented linear/Reinhard editor policy. This does not select game or build channels. The preview draws on sky surfaces in perspective Textured views with Tool textures enabled; unavailable faces retain the tool surface. No 3D sky-camera transform, fog or material animation; unavailable HDR never falls back to LDR. Choose a smoothing group 1–32; groups 25–32 are hard-edge memberships. Diagnostics inspect authored metadata, not baked lighting or final engine smoothing."
+        description = "Set shared viewport visibility and mode in any projection: instance_contents displays an explicitly refreshed read-only flat reference layer; it never loads files. inspect_instance_contents reports status and set_instance_contents refreshes/cancels/clears/frames it. lighting_preview enables bounded unshadowed static point/spot diffuse lighting; lighting_quality fast/detail and lighting_exposure_ev -8..8 control its editor display. Inspect get_lighting_preview for admitted/excluded coverage and limits. No sun/ambient/bounce/shadows or native-brightness parity. Modes: textured, flat, wireframe, lightmap_density or smoothing_groups. normal_maps defaults off and previews admitted flat-brush normal maps under fixed editor directional shading in Textured views; inspect get_normal_map_preview for diagnostics and limits. Terrain/models/resource guides are excluded; Detail unshadowed authored lighting composes with admitted normal maps. Flat shading ignores brush textures/transparency; wireframe shows geometry through solids. selection_outlines defaults on and controls selected object/face edges, marker outlines, model brackets and rope centerlines while preserving surfaces, selection tint, picking and diagnostic/tool guides. entity_images and entity_model_guides default on and control literal FGD icons/static Sprite resource images and studio/studioprop editor meshes respectively. Off retains ordinary editable boxes and defers guide asset reads; authored models, lights, ropes and other guides remain independent. Pure resource visibility preserves pending reviews. Helpers, selection and tool filters remain active. rope_preview shows bounded static authored NextKey rope spans with Slack/Width; inspect get_rope_preview for diagnostics and limits. No rope physics, parenting or attachment binding. sky_preview resolves world skyname as six mounted skybox faces selected by sky_channel (ldr default or explicit hdr), with sky_exposure_ev -8..8 applying only to HDR under the documented linear/Reinhard editor policy. This does not select game or build channels. The preview draws on sky surfaces in perspective Textured views with Tool textures enabled; unavailable faces retain the tool surface. No 3D sky-camera transform, fog or material animation; unavailable HDR never falls back to LDR. Choose a smoothing group 1–32; groups 25–32 are hard-edge memberships. Diagnostics inspect authored metadata, not baked lighting or final engine smoothing."
     )]
     pub(in crate::mcp) fn set_view(&self, Parameters(args): Parameters<SetViewArgs>) -> ToolResult {
         run(|| {
@@ -280,6 +280,7 @@ impl EditorServer {
     ) -> ToolResult {
         run(|| {
             let mut session = self.session();
+            session.preflight_instance_contents();
             let camera = spec.resolve(&session, 1.0)?;
             session.set_camera(camera);
             session.log(Actor::Agent, "moved the camera");
@@ -288,7 +289,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Render the map to a PNG with the editor's renderer. Textured, flat, wireframe and diagnostic modes work in perspective or planar views, with entity helpers, grid and shared previews. Selection is highlighted in red. Optional surface and camera overrides leave shared settings unchanged; pass camera.focus to frame objects. additive_sprite_guides is an optional authored mode5 LDR editor-image approximation with constrained white/255/FX0 appearance. It requires entity_images, preserves literal icons and reports raw/additive policy and rejected appearance in sprite_guides; no native runtime/color-space parity.",
+        description = "Render the map to a PNG with the editor's renderer. Textured, flat, wireframe and diagnostic modes work in perspective or planar views, with entity helpers, grid and shared previews. Selection is highlighted in red. Optional instance_contents, surface and camera overrides leave shared settings unchanged; the retained instance_contents report describes the exact uploaded reference snapshot; pass camera.focus to frame objects. additive_sprite_guides is an optional authored mode5 LDR editor-image approximation with constrained white/255/FX0 appearance. It requires entity_images, preserves literal icons and reports raw/additive policy and rejected appearance in sprite_guides; no native runtime/color-space parity.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn render_view(
@@ -297,13 +298,17 @@ impl EditorServer {
     ) -> ToolResult {
         let size = render_size(args.width, args.height);
         let (camera, mut view) = {
-            let session = self.session();
+            let mut session = self.session();
+            session.preflight_instance_contents();
             let camera = match args
                 .camera
                 .as_ref()
                 .unwrap_or(&CameraSpec::default())
-                .resolve(&session, size.0 as f32 / size.1 as f32)
-            {
+                .resolve_with_instance_contents(
+                    &session,
+                    size.0 as f32 / size.1 as f32,
+                    args.instance_contents,
+                ) {
                 Ok(camera) => camera,
                 Err(error) => return fail(error),
             };
@@ -354,7 +359,7 @@ impl EditorServer {
             .as_object_mut()
             .unwrap()
             .extend(extra.as_object().unwrap().clone());
-        let info = json!({ "working_region":working_region, "camera": camera_json(&camera), "width": size.0, "height": size.1, "skybox":skybox, "fog_preview":fog_preview, "rope_preview":rope_preview, "sprite_guides":rendered.sprite_guides, "preview_issues":preview_issues, "normal_maps":{"report":rendered.normal_maps,"limits":render::normal_maps::limits()}, "lighting_preview":{"report":rendered.lighting,"limits":render::lighting::limits()}, "material_reload":material_reload, "view": rendered_view });
+        let info = json!({ "working_region":working_region, "camera": camera_json(&camera), "width": size.0, "height": size.1, "skybox":skybox, "fog_preview":fog_preview, "rope_preview":rope_preview, "sprite_guides":rendered.sprite_guides, "instance_contents":rendered.instance_contents, "preview_issues":preview_issues, "normal_maps":{"report":rendered.normal_maps,"limits":render::normal_maps::limits()}, "lighting_preview":{"report":rendered.lighting,"limits":render::lighting::limits()}, "material_reload":material_reload, "view": rendered_view });
         Ok(CallToolResult::success(vec![
             ContentBlock::image(data, "image/png"),
             ContentBlock::text(info.to_string()),
@@ -371,11 +376,16 @@ impl EditorServer {
     ) -> ToolResult {
         run(|| {
             let mut session = self.session();
+            session.preflight_instance_contents();
             let (w, h) = render_size(args.width, args.height);
             let camera = args
                 .camera
                 .unwrap_or_default()
-                .resolve(&session, w as f32 / h as f32)?;
+                .resolve_with_instance_contents(
+                    &session,
+                    w as f32 / h as f32,
+                    args.instance_contents,
+                )?;
             let ndc_x = 2.0 * (args.x + 0.5) / w as f32 - 1.0;
             let ndc_y = 1.0 - 2.0 * (args.y + 0.5) / h as f32;
             let (origin, direction) = camera.ray(ndc_x, ndc_y, w as f32 / h as f32);
@@ -383,7 +393,7 @@ impl EditorServer {
                 origin: origin.as_dvec3(),
                 direction: direction.as_dvec3(),
             };
-            let hit = session.pick_with_rope_preview(&ray, args.rope_preview);
+            let hit = session.pick_with_previews(&ray, args.rope_preview, args.instance_contents);
             Ok(hit.map_or(json!({ "hit": null }), |hit| {
                 hit_json(session.render_document(), &hit)
             }))
@@ -391,7 +401,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Cast a ray and report the first visible object and face hit, e.g. to find the floor below a point.",
+        description = "Cast a ray and report the first visible object and face hit, e.g. to find the floor below a point. Visible referenced contents select their root instance owner with null solid/side; child geometry is never an editable root face.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn raycast(&self, Parameters(args): Parameters<RaycastArgs>) -> ToolResult {

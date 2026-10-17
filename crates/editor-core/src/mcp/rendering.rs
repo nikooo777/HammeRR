@@ -8,6 +8,7 @@ pub(in crate::mcp) struct Offscreen {
     pub(in crate::mcp) normal_maps: render::normal_maps::Report,
     pub(in crate::mcp) lighting: render::lighting::Report,
     pub(in crate::mcp) sprite_guides: Value,
+    pub(in crate::mcp) instance_contents: Value,
 }
 
 impl Offscreen {
@@ -20,6 +21,7 @@ impl Offscreen {
             normal_maps: Default::default(),
             lighting: Default::default(),
             sprite_guides: Value::Null,
+            instance_contents: Value::Null,
         }
     }
 }
@@ -31,6 +33,7 @@ pub(in crate::mcp) struct OffscreenState {
 }
 
 pub(in crate::mcp) struct RenderedView {
+    pub(in crate::mcp) instance_contents: Value,
     pub(in crate::mcp) normal_maps: render::normal_maps::Report,
     pub(in crate::mcp) lighting: render::lighting::Report,
     pub(in crate::mcp) sprite_guides: Value,
@@ -111,19 +114,22 @@ impl EditorServer {
             normal_maps,
             lighting,
             sprite_guides,
+            instance_contents,
         } = offscreen
             .renderer
             .as_mut()
             .expect("renderer was initialized");
         {
             let mut session = self.session();
-            let key = view.scene_key(session.scene_serial());
+            session.preflight_instance_contents();
+            let key = session.render_scene_key(view);
             if scene.as_ref().is_none_or(|(previous, _)| *previous != key) {
                 let mesh = session.build_scene_for_view(view);
                 *issues = mesh.issues.clone();
                 *normal_maps = mesh.normal_maps.clone();
                 *lighting = mesh.lighting.report.clone();
                 *sprite_guides = session.sprite_guide_preview_state(view);
+                *instance_contents = session.instance_contents_rendered_report();
                 *scene = Some((key, renderer.upload(ctx, &mesh, session.materials())));
             }
         }
@@ -138,6 +144,7 @@ impl EditorServer {
             .and_then(|mut w| w.write_image_data(&pixels))
             .map_err(|error| format!("Could not encode render: {error}"))?;
         Ok(RenderedView {
+            instance_contents: instance_contents.clone(),
             normal_maps: normal_maps.clone(),
             lighting: lighting.clone(),
             sprite_guides: sprite_guides.clone(),

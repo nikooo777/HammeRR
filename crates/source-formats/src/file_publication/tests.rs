@@ -468,3 +468,103 @@ fn source_growth_after_reader_admission_rejects_before_collecting_appended_bytes
     assert_eq!(reads.load(std::sync::atomic::Ordering::Relaxed), 1);
     assert_eq!(fs::metadata(path).unwrap().len(), 8 + 128 * 1024);
 }
+
+#[test]
+fn output_retarget_preserves_stage_and_directory_while_adopting_the_lin_observation() {
+    let (_root, original, _, alias) = aliased_directories();
+    let bsp = original.join("output.bsp");
+    let lin = original.join("output.lin");
+    fs::write(&bsp, b"previous BSP").unwrap();
+    fs::write(&lin, b"previous LIN").unwrap();
+    fs::set_permissions(&bsp, fs::Permissions::from_mode(0o400)).unwrap();
+    fs::set_permissions(&lin, fs::Permissions::from_mode(0o200)).unwrap();
+    let first = BoundDestination::capture(&bsp, Policy::ReplaceEntry).unwrap();
+    let next = BoundDestination::capture(&alias.join("output.lin"), Policy::ReplaceEntry).unwrap();
+    let mut staged = stage(&first, b"pointfile");
+    let basename = staged.basename.clone();
+    let opened = staged.file().metadata().unwrap();
+    let parent = EntryStamp::capture(&fs::metadata(&original).unwrap());
+    staged.retarget_output(&next).unwrap();
+    assert_eq!(staged.basename, basename);
+    let retained = staged.file().metadata().unwrap();
+    assert_eq!(
+        (retained.dev(), retained.ino(), retained.mode()),
+        (opened.dev(), opened.ino(), opened.mode())
+    );
+    assert_eq!(
+        EntryStamp::capture(&fs::metadata(&original).unwrap()),
+        parent
+    );
+    assert_eq!(
+        staged.destination.existing.as_ref().unwrap().stamp,
+        next.existing.as_ref().unwrap().stamp
+    );
+    let receipt = staged.commit().unwrap();
+    assert!(receipt.warning.is_none());
+    assert_eq!(
+        receipt.destination.authored_path(),
+        alias.join("output.lin")
+    );
+    assert_eq!(fs::read(&bsp).unwrap(), b"previous BSP");
+    assert_eq!(fs::read(&lin).unwrap(), b"pointfile");
+    assert_eq!(fs::metadata(lin).unwrap().mode(), opened.mode());
+    assert!(!original.join(basename).exists());
+}
+
+#[test]
+fn output_retarget_rejects_foreign_parent_source_policy_and_its_own_staging_name() {
+    let (_root, original, replacement, _) = aliased_directories();
+    let bsp = original.join("output.bsp");
+    fs::write(&bsp, b"previous BSP").unwrap();
+    let first = BoundDestination::capture(&bsp, Policy::ReplaceEntry).unwrap();
+    let mut staged = stage(&first, b"unpublished");
+    let foreign =
+        BoundDestination::capture(&replacement.join("output.lin"), Policy::ReplaceEntry).unwrap();
+    assert!(staged.retarget_output(&foreign).is_err());
+    let source =
+        BoundDestination::capture(&original.join("output.lin"), Policy::FollowSource).unwrap();
+    assert!(staged.retarget_output(&source).is_err());
+    let self_name =
+        BoundDestination::capture(&original.join(&staged.basename), Policy::ReplaceEntry).unwrap();
+    assert!(staged.retarget_output(&self_name).is_err());
+    assert_eq!(staged.destination.authored_path(), bsp);
+    let basename = staged.basename.clone();
+    drop(staged);
+    assert!(!original.join(basename).exists());
+    assert!(!replacement.join("output.lin").exists());
+    assert_eq!(fs::read(bsp).unwrap(), b"previous BSP");
+}
+
+#[test]
+fn output_retarget_rejects_changed_lin_and_preserves_displaced_staging_names() {
+    for displaced in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let bsp = root.path().join("output.bsp");
+        let lin = root.path().join("output.lin");
+        fs::write(&bsp, b"previous BSP").unwrap();
+        fs::write(&lin, b"previous LIN").unwrap();
+        let first = BoundDestination::capture(&bsp, Policy::ReplaceEntry).unwrap();
+        let next = BoundDestination::capture(&lin, Policy::ReplaceEntry).unwrap();
+        let mut staged = stage(&first, b"unpublished");
+        let staging_path = root.path().join(&staged.basename);
+        let moved = root.path().join("displaced");
+        if displaced {
+            fs::rename(&staging_path, &moved).unwrap();
+            fs::write(&staging_path, b"unrelated").unwrap();
+        } else {
+            fs::write(&lin, b"new independent LIN bytes").unwrap();
+        }
+        assert!(staged.retarget_output(&next).is_err());
+        assert_eq!(staged.destination.authored_path(), bsp);
+        drop(staged);
+        if displaced {
+            assert_eq!(fs::read(staging_path).unwrap(), b"unrelated");
+            assert_eq!(fs::read(moved).unwrap(), b"unpublished");
+            assert_eq!(fs::read(&lin).unwrap(), b"previous LIN");
+        } else {
+            assert!(!staging_path.exists());
+            assert_eq!(fs::read(&lin).unwrap(), b"new independent LIN bytes");
+        }
+        assert_eq!(fs::read(bsp).unwrap(), b"previous BSP");
+    }
+}

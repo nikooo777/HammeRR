@@ -439,6 +439,10 @@ impl BoundDestination {
     }
 
     pub fn stage(&self) -> io::Result<StagedFile> {
+        StagedFile::new(self.bind_parent()?)
+    }
+
+    fn bind_parent(&self) -> io::Result<Self> {
         self.verify()?;
         let directory = self.directory.bind()?;
         let mut destination = self.clone();
@@ -451,7 +455,7 @@ impl BoundDestination {
             destination.directory.slot(&destination.leaf)?,
         ];
         destination.verify()?;
-        StagedFile::new(destination)
+        Ok(destination)
     }
 
     fn published(&self, observation: Observation) -> Self {
@@ -546,6 +550,39 @@ impl StagedFile {
 
     pub fn sync_all(&self) -> io::Result<()> {
         self.file().sync_all()
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn retarget_output(&mut self, destination: &BoundDestination) -> io::Result<()> {
+        if self.destination.policy != Policy::ReplaceEntry
+            || destination.policy != Policy::ReplaceEntry
+        {
+            return Err(io::Error::other(
+                "Only output-entry stages can change destination",
+            ));
+        }
+        self.destination.verify()?;
+        let destination = destination.bind_parent()?;
+        let current_parent =
+            FileIdentity::capture(&self.destination.directory.handle()?.metadata()?);
+        let next_parent = FileIdentity::capture(&destination.directory.handle()?.metadata()?);
+        if current_parent != next_parent || destination.leaf == self.basename {
+            return Err(io::Error::other(
+                "Output staging destination must remain in its physical parent",
+            ));
+        }
+        if !self.owned()? {
+            return Err(io::Error::other(
+                "File staging name was replaced; unrelated entry preserved",
+            ));
+        }
+        self.destination = destination;
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn retarget_output(&mut self, _destination: &BoundDestination) -> io::Result<()> {
+        Err(io::Error::other("Bound output retargeting requires Linux"))
     }
 
     #[cfg(target_os = "linux")]

@@ -32,6 +32,9 @@ pub mod winding;
 #[path = "../tests/common/mod.rs"]
 mod test_common;
 
+#[cfg(all(test, target_os = "linux"))]
+mod write_reservation_tests;
+
 use std::io::Write;
 use std::time::{Duration, Instant};
 use std::{io, path::Path};
@@ -535,6 +538,7 @@ pub struct PreparedWrite {
 
 #[derive(Debug)]
 pub struct WriteReservation {
+    staged: source_formats::file_publication::StagedFile,
     destination: source_formats::file_publication::BoundDestination,
     pointfile: source_formats::file_publication::BoundDestination,
     requested: std::path::PathBuf,
@@ -573,7 +577,9 @@ impl WriteReservation {
             ));
         }
         let requested = destination.authored_path().to_owned();
+        let staged = destination.stage()?;
         Ok(Self {
+            staged,
             destination,
             pointfile,
             requested,
@@ -749,7 +755,9 @@ impl Output {
         } else {
             return Ok(None);
         };
-        let mut staged = destination.stage()?;
+        let destination_path = destination.physical_path().to_owned();
+        let mut staged = reservation.staged;
+        staged.retarget_output(destination)?;
         for chunk in bytes.chunks(64 * 1024) {
             control.checkpoint().map_err(io::Error::other)?;
             staged.file_mut().write_all(chunk)?;
@@ -757,7 +765,7 @@ impl Output {
         staged.sync_all()?;
         Ok(Some(PreparedWrite {
             staged,
-            destination: destination.physical_path().to_owned(),
+            destination: destination_path,
             success,
             instance_dependencies: self.instance_dependencies.clone(),
             instance_output_stamp,

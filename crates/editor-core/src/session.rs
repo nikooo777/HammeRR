@@ -348,7 +348,13 @@ impl LaunchRequest {
 
     fn run_inner(self) -> Result<game::Run, String> {
         self.verify_instance_dependencies()?;
-        game::Run::launch(&self.install, &self.bsp)
+        game::Run::launch_controlled(&self.install, &self.bsp, || {
+            if self.origin.cancelled() {
+                Err("game launch cancelled".into())
+            } else {
+                Ok(())
+            }
+        })
     }
 }
 

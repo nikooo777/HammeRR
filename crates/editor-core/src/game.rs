@@ -200,8 +200,23 @@ pub fn stage_map_bytes(bytes: &[u8], map: &str) -> Result<Vec<u8>, String> {
 
 impl Run {
     pub fn launch(install: &Install, bsp: &Path) -> Result<Self, String> {
-        let bytes = std::fs::read(bsp).map_err(|e| format!("{}: {e}", bsp.display()))?;
+        Self::launch_controlled(install, bsp, || Ok(()))
+    }
+
+    pub(crate) fn launch_controlled(
+        install: &Install,
+        bsp: &Path,
+        mut checkpoint: impl FnMut() -> Result<(), String>,
+    ) -> Result<Self, String> {
+        checkpoint()?;
+        let source =
+            crate::bounded_file::Source::capture(bsp, PakLimits::default().max_bsp_bytes as u64)
+                .map_err(|error| format!("{}: {error}", bsp.display()))?;
+        let bytes = source
+            .read_controlled(|| checkpoint().map_err(std::io::Error::other))
+            .map_err(|error| format!("{}: {error}", bsp.display()))?;
         Bsp::parse(&bytes).map_err(|e| format!("{}: {e}", bsp.display()))?;
+        checkpoint()?;
         let maps = install.game.join("maps");
         std::fs::create_dir_all(&maps).map_err(|e| e.to_string())?;
         let mut map_file = temporary(&maps, "hammerr_", ".bsp")?;
@@ -212,6 +227,7 @@ impl Run {
             .ok_or("invalid temporary map filename")?
             .to_owned();
         let bytes = stage_map_bytes(&bytes, &map)?;
+        checkpoint()?;
         map_file.write_all(&bytes).map_err(|e| e.to_string())?;
         map_file.flush().map_err(|e| e.to_string())?;
         let console = Arc::new(temporary(&install.game, "hammerr_console_", ".log")?);
@@ -225,6 +241,7 @@ impl Run {
             library_paths.extend(std::env::split_paths(&paths));
         }
         let libraries = std::env::join_paths(library_paths).map_err(|e| e.to_string())?;
+        checkpoint()?;
         let child = Command::new(&install.executable)
             .current_dir(&install.root)
             .env("LD_LIBRARY_PATH", libraries)
@@ -357,6 +374,9 @@ fn exited(exit: ExitStatus) -> Status {
         success: exit.success(),
     }
 }
+
+#[cfg(test)]
+mod launch_read_tests;
 
 #[cfg(test)]
 mod tests {

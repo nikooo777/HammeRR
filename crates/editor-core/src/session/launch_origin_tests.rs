@@ -205,3 +205,31 @@ fn replacement_also_discards_failed_launch_completion_and_releases_busy_state() 
     assert!(!session.launching() && !session.game_running());
     assert_eq!(session.history_snapshot(), history);
 }
+
+#[test]
+fn cancelled_raw_launch_request_rejects_before_staging_or_process_start() {
+    let (_directory, mut session, game_dir) = fixture();
+    let request = session.begin_launch(Actor::Agent).unwrap();
+    let origin = request.origin();
+    let document = session.document().vmf().clone();
+    let history = session.history_snapshot();
+    origin.cancel();
+    let result = request.run();
+    assert!(result.as_ref().err().unwrap().contains("cancelled"));
+    assert!(
+        session
+            .finish_launch(Actor::Agent, &origin, result)
+            .err()
+            .unwrap()
+            .contains("cancelled")
+    );
+    assert!(!session.launching() && !session.game_running());
+    assert_eq!(session.document().vmf(), &document);
+    assert_eq!(session.history_snapshot(), history);
+    assert_eq!(std::fs::read_dir(game_dir.join("maps")).unwrap().count(), 1);
+    assert_eq!(std::fs::read_dir(&game_dir).unwrap().count(), 1);
+    assert_eq!(
+        std::fs::read(game_dir.join("maps/stock.bsp")).unwrap(),
+        b"stock map"
+    );
+}

@@ -1,11 +1,14 @@
 use crate::session::prefabs::{GalleryReview, MAX_GALLERY_ENTRIES, ThumbnailStyle};
 use crate::{
     PrefabGalleryRow, PrefabRow, PrefabsWindow, clipboard_ui,
-    runtime::{SharedSession, lock},
+    runtime::{DocumentAccess, DocumentContinuation, SharedSession},
     session::{Actor, Session},
 };
 use slint::{ComponentHandle, VecModel};
 use std::{cell::RefCell, rc::Rc};
+
+#[cfg(test)]
+use crate::runtime::lock;
 const PAGE: usize = MAX_GALLERY_ENTRIES;
 type Observation = (u64, u64, u64, u64, u64, u64, u64);
 
@@ -21,6 +24,8 @@ fn observation(session: &Session, registry_revision: u64) -> Observation {
     )
 }
 
+#[cfg(test)]
+mod admission_tests;
 #[cfg(test)]
 mod gallery_tests;
 fn vector(values: [slint::SharedString; 3], label: &str) -> Result<glam::DVec3, String> {
@@ -398,75 +403,129 @@ fn finish_thumbnail_render(
     }
 }
 
+fn callback(
+    window: &slint::Weak<PrefabsWindow>,
+    continuation: &DocumentContinuation,
+    body: impl FnOnce(PrefabsWindow, &mut Session),
+) {
+    let Some(window) = window.upgrade() else {
+        return;
+    };
+    let result = continuation.upgrade().and_then(|access| {
+        access.with_session(|session| {
+            body(window.clone_strong(), session);
+            Ok(())
+        })
+    });
+    if let Err(error) = result {
+        window.set_message(error.into());
+    }
+}
+
 impl Controller {
+    #[cfg(test)]
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
+        Self::new_with_access(shared, &DocumentAccess::unmanaged(shared.clone()))
+    }
+
+    pub fn new_with_access(
+        _shared: &SharedSession,
+        access: &DocumentAccess,
+    ) -> Result<Self, slint::PlatformError> {
+        let continuation = access.downgrade();
         let window = PrefabsWindow::new()?;
         let form = Rc::new(RefCell::new(Form::default()));
-        let paste = Rc::new(clipboard_ui::Controller::new(shared)?);
+        let paste = Rc::new(clipboard_ui::Controller::new_with_access(access)?);
         window.on_choose({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, continuation, form) =
+                (window.as_weak(), continuation.clone(), form.clone());
             move |name| {
-                form.borrow_mut().selected = Some(name.to_string());
-                refresh(&window.unwrap(), &lock(&shared), &form, true);
+                callback(&window, &continuation, |window, session| {
+                    form.borrow_mut().selected = Some(name.to_string());
+                    refresh(&window, session, &form, true);
+                })
             }
         });
         let refresh_callback = || {
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
-            move || refresh(&window.unwrap(), &lock(&shared), &form, true)
+            let (window, continuation, form) =
+                (window.as_weak(), continuation.clone(), form.clone());
+            move || {
+                callback(&window, &continuation, |window, session| {
+                    refresh(&window, session, &form, true)
+                })
+            }
         };
         window.on_refresh(refresh_callback());
         window.on_search({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, continuation, form) =
+                (window.as_weak(), continuation.clone(), form.clone());
             move || {
-                form.borrow_mut().offset = 0;
-                refresh(&window.unwrap(), &lock(&shared), &form, true);
+                callback(&window, &continuation, |window, session| {
+                    form.borrow_mut().offset = 0;
+                    refresh(&window, session, &form, true);
+                })
             }
         });
         window.on_page({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, continuation, form) =
+                (window.as_weak(), continuation.clone(), form.clone());
             move |direction: i32| {
-                let mut state = form.borrow_mut();
-                state.offset = if direction < 0 {
-                    state.offset.saturating_sub(PAGE)
-                } else {
-                    state.offset.saturating_add(PAGE)
-                };
-                drop(state);
-                refresh(&window.unwrap(), &lock(&shared), &form, true);
+                callback(&window, &continuation, |window, session| {
+                    let mut state = form.borrow_mut();
+                    state.offset = if direction < 0 {
+                        state.offset.saturating_sub(PAGE)
+                    } else {
+                        state.offset.saturating_add(PAGE)
+                    };
+                    drop(state);
+                    refresh(&window, session, &form, true);
+                })
             }
         });
         let begin_callback = |action| {
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, continuation, form) =
+                (window.as_weak(), continuation.clone(), form.clone());
             move || {
-                let mut state = form.borrow_mut();
-                let stamp = state.stamp.clone();
-                let source = state.selected.clone();
-                let initial_name = if action == Action::Rename {
-                    source.clone().unwrap_or_default()
-                } else {
-                    String::new()
-                };
-                state.action = Some(Draft {
-                    action,
-                    stamp,
-                    source,
-                });
-                drop(state);
-                window.unwrap().set_prefab_name(initial_name.into());
-                refresh(&window.unwrap(), &lock(&shared), &form, true);
+                callback(&window, &continuation, |window, session| {
+                    let mut state = form.borrow_mut();
+                    let stamp = state.stamp.clone();
+                    let source = state.selected.clone();
+                    let initial_name = if action == Action::Rename {
+                        source.clone().unwrap_or_default()
+                    } else {
+                        String::new()
+                    };
+                    state.action = Some(Draft {
+                        action,
+                        stamp,
+                        source,
+                    });
+                    drop(state);
+                    window.set_prefab_name(initial_name.into());
+                    refresh(&window, session, &form, true);
+                })
             }
         };
         window.on_begin_save(begin_callback(Action::Save));
         window.on_begin_delete(begin_callback(Action::Delete));
         window.on_begin_rename(begin_callback(Action::Rename));
         let cancel_callback = |close| {
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, continuation, form) =
+                (window.as_weak(), continuation.clone(), form.clone());
             move || {
+                let Some(local_window) = window.upgrade() else {
+                    return;
+                };
                 form.borrow_mut().action = None;
-                let window = window.unwrap();
-                refresh(&window, &lock(&shared), &form, true);
+                local_window.set_editing(false);
+                local_window.set_saving(false);
+                local_window.set_deleting(false);
+                local_window.set_renaming(false);
+                callback(&window, &continuation, |window, session| {
+                    refresh(&window, session, &form, true)
+                });
                 if close {
-                    let _ = window.hide();
+                    let _ = local_window.hide();
                 }
             }
         };
@@ -475,62 +534,64 @@ impl Controller {
         window.window().on_close_requested({
             let window = window.as_weak();
             move || {
-                window.unwrap().invoke_close_dialog();
+                if let Some(window) = window.upgrade() {
+                    window.invoke_close_dialog();
+                }
                 slint::CloseRequestResponse::HideWindow
             }
         });
         let write_callback = |action| {
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, continuation, form) =
+                (window.as_weak(), continuation.clone(), form.clone());
             move || {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
-                let result = (|| {
-                    let state = form.borrow();
-                    let draft = state
-                        .action
-                        .as_ref()
-                        .ok_or("Start a library action first")?;
-                    if draft.action != action {
-                        return Err("Library action changed".into());
-                    }
-                    match action {
-                        Action::Delete => session.delete_prefab(
-                            Actor::User,
-                            draft.source.as_deref().ok_or("Choose a prefab first")?,
-                            &draft.stamp,
-                        ),
-                        Action::Rename => session.rename_prefab(
-                            Actor::User,
-                            draft.source.as_deref().ok_or("Choose a prefab first")?,
-                            &window.get_prefab_name(),
-                            &draft.stamp,
-                        ),
-                        Action::Save => {
-                            let ids = session.selected_ids();
-                            session.save_prefab(
+                callback(&window, &continuation, |window, session| {
+                    let result = (|| {
+                        let state = form.borrow();
+                        let draft = state
+                            .action
+                            .as_ref()
+                            .ok_or("Start a library action first")?;
+                        if draft.action != action {
+                            return Err("Library action changed".into());
+                        }
+                        match action {
+                            Action::Delete => session.delete_prefab(
                                 Actor::User,
-                                &window.get_prefab_name(),
-                                &ids,
+                                draft.source.as_deref().ok_or("Choose a prefab first")?,
                                 &draft.stamp,
-                            )
+                            ),
+                            Action::Rename => session.rename_prefab(
+                                Actor::User,
+                                draft.source.as_deref().ok_or("Choose a prefab first")?,
+                                &window.get_prefab_name(),
+                                &draft.stamp,
+                            ),
+                            Action::Save => {
+                                let ids = session.selected_ids();
+                                session.save_prefab(
+                                    Actor::User,
+                                    &window.get_prefab_name(),
+                                    &ids,
+                                    &draft.stamp,
+                                )
+                            }
                         }
-                    }
-                })();
-                match result {
-                    Ok(report) => {
-                        let mut state = form.borrow_mut();
-                        if action == Action::Delete {
-                            state.selected = None;
-                        } else {
-                            state.selected = Some(window.get_prefab_name().to_string());
-                        }
-                        state.action = None;
-                        if action == Action::Rename {
-                            state.offset = 0;
-                            window.set_query("".into());
-                        }
-                        drop(state);
-                        window.set_message(
+                    })();
+                    match result {
+                        Ok(report) => {
+                            let mut state = form.borrow_mut();
+                            if action == Action::Delete {
+                                state.selected = None;
+                            } else {
+                                state.selected = Some(window.get_prefab_name().to_string());
+                            }
+                            state.action = None;
+                            if action == Action::Rename {
+                                state.offset = 0;
+                                window.set_query("".into());
+                            }
+                            drop(state);
+                            window.set_message(
                             match action {
                                 Action::Delete => "Prefab deleted; placed map copies remain.",
                                 Action::Save => "Prefab saved without changing the map.",
@@ -540,135 +601,154 @@ impl Controller {
                             }
                             .into(),
                         );
-                        refresh(&window, &session, &form, true);
-                        if let Some(error) = report["error"].as_str() {
-                            let message =
-                                format!("Library write committed; library unavailable: {error}");
-                            window.set_message(message.clone().into());
-                            form.borrow_mut().library_message = Some(message);
-                        } else if let Some(error) = report["write_error"].as_str() {
-                            let message = format!("Library write committed: {error}");
-                            window.set_message(message.clone().into());
-                            form.borrow_mut().library_message = Some(message);
+                            refresh(&window, session, &form, true);
+                            if let Some(error) = report["error"].as_str() {
+                                let message = format!(
+                                    "Library write committed; library unavailable: {error}"
+                                );
+                                window.set_message(message.clone().into());
+                                form.borrow_mut().library_message = Some(message);
+                            } else if let Some(error) = report["write_error"].as_str() {
+                                let message = format!("Library write committed: {error}");
+                                window.set_message(message.clone().into());
+                                form.borrow_mut().library_message = Some(message);
+                            }
                         }
+                        Err(error) => window.set_message(error.into()),
                     }
-                    Err(error) => window.set_message(error.into()),
-                }
+                })
             }
         };
         window.on_save(write_callback(Action::Save));
         window.on_delete(write_callback(Action::Delete));
         window.on_rename(write_callback(Action::Rename));
         window.on_preview({
-            let (window, shared, form, paste) = (
+            let (window, continuation, form, paste) = (
                 window.as_weak(),
-                shared.clone(),
+                continuation.clone(),
                 form.clone(),
                 paste.clone(),
             );
             move || {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
-                let result = (|| {
-                    let state = form.borrow();
-                    session.preview_prefab_placement(
-                        Actor::User,
-                        state.selected.as_deref().ok_or("Choose a prefab first")?,
-                        placement(&window)?,
-                        window.get_keep_external(),
-                        &state.stamp,
-                    )
-                })();
-                match result {
-                    Ok(_) => {
-                        paste.initialize(&mut session, false);
-                        if let Err(error) = paste.window.show() {
-                            window.set_message(error.to_string().into());
+                callback(&window, &continuation, |window, session| {
+                    let result = (|| {
+                        let state = form.borrow();
+                        session.preview_prefab_placement(
+                            Actor::User,
+                            state.selected.as_deref().ok_or("Choose a prefab first")?,
+                            placement(&window)?,
+                            window.get_keep_external(),
+                            &state.stamp,
+                        )
+                    })();
+                    match result {
+                        Ok(_) => {
+                            paste.initialize(session, false);
+                            if let Err(error) = paste.window.show() {
+                                window.set_message(error.to_string().into());
+                            }
                         }
+                        Err(error) => window.set_message(error.into()),
                     }
-                    Err(error) => window.set_message(error.into()),
-                }
-                refresh(&window, &session, &form, true);
+                    refresh(&window, session, &form, true);
+                })
             }
         });
         window.on_render_gallery({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, continuation, form) =
+                (window.as_weak(), continuation.clone(), form.clone());
             move || {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
-                let (stamp, offset) = {
-                    let state = form.borrow();
-                    (state.stamp.clone(), state.offset)
-                };
-                clear_gallery(&window, &form);
-                window.set_has_thumbnail(false);
-                window.set_thumbnail(Default::default());
-                let result = thumbnail_style(&window).and_then(|style| {
-                    session.render_prefab_gallery(&window.get_query(), offset, PAGE, style, &stamp)
-                });
-                match result {
-                    Ok(gallery) => {
-                        let rendered = gallery
-                            .entries
-                            .iter()
-                            .filter(|entry| entry.thumbnail.is_ok())
-                            .count();
-                        let rows = gallery
-                            .entries
-                            .iter()
-                            .map(|entry| {
-                                let (thumbnail, has_image, status) = match &entry.thumbnail {
-                                    Ok(thumbnail) => (
-                                        thumbnail_pixels(thumbnail),
-                                        true,
-                                        slint::SharedString::default(),
-                                    ),
-                                    Err(error) => {
-                                        (slint::Image::default(), false, error.clone().into())
+                callback(&window, &continuation, |window, session| {
+                    let (stamp, offset) = {
+                        let state = form.borrow();
+                        (state.stamp.clone(), state.offset)
+                    };
+                    clear_gallery(&window, &form);
+                    window.set_has_thumbnail(false);
+                    window.set_thumbnail(Default::default());
+                    let result = thumbnail_style(&window).and_then(|style| {
+                        session.render_prefab_gallery(
+                            &window.get_query(),
+                            offset,
+                            PAGE,
+                            style,
+                            &stamp,
+                        )
+                    });
+                    match result {
+                        Ok(gallery) => {
+                            let rendered = gallery
+                                .entries
+                                .iter()
+                                .filter(|entry| entry.thumbnail.is_ok())
+                                .count();
+                            let rows = gallery
+                                .entries
+                                .iter()
+                                .map(|entry| {
+                                    let (thumbnail, has_image, status) = match &entry.thumbnail {
+                                        Ok(thumbnail) => (
+                                            thumbnail_pixels(thumbnail),
+                                            true,
+                                            slint::SharedString::default(),
+                                        ),
+                                        Err(error) => {
+                                            (slint::Image::default(), false, error.clone().into())
+                                        }
+                                    };
+                                    PrefabRow {
+                                        name: entry.name.clone().into(),
+                                        detail: format!("{} KiB · VMF", entry.bytes.div_ceil(1024))
+                                            .into(),
+                                        thumbnail,
+                                        has_image,
+                                        status,
                                     }
-                                };
-                                PrefabRow {
-                                    name: entry.name.clone().into(),
-                                    detail: format!("{} KiB · VMF", entry.bytes.div_ceil(1024))
-                                        .into(),
-                                    thumbnail,
-                                    has_image,
-                                    status,
-                                }
-                            })
-                            .collect();
-                        set_rows(&window, rows);
-                        window.set_gallery_status(
-                            format!("{rendered} of {} images", gallery.entries.len()).into(),
-                        );
-                        window.set_gallery_rendered(true);
-                        form.borrow_mut().gallery = Some(gallery.review);
+                                })
+                                .collect();
+                            set_rows(&window, rows);
+                            window.set_gallery_status(
+                                format!("{rendered} of {} images", gallery.entries.len()).into(),
+                            );
+                            window.set_gallery_rendered(true);
+                            form.borrow_mut().gallery = Some(gallery.review);
+                        }
+                        Err(error) => window.set_gallery_status(error.into()),
                     }
-                    Err(error) => window.set_gallery_status(error.into()),
-                }
-                refresh(&window, &session, &form, true);
+                    refresh(&window, session, &form, true);
+                })
             }
         });
         window.on_render_thumbnail({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, continuation, form) =
+                (window.as_weak(), continuation.clone(), form.clone());
             move || {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
-                clear_gallery(&window, &form);
-                let result = form
-                    .borrow()
-                    .selected
-                    .as_deref()
-                    .ok_or_else(|| "Choose a prefab first".to_string())
-                    .and_then(|name| {
-                        session.prefab_thumbnail_with_style(name, true, thumbnail_style(&window)?)
-                    });
-                finish_thumbnail_render(&window, &session, &form, result);
+                callback(&window, &continuation, |window, session| {
+                    clear_gallery(&window, &form);
+                    let result = form
+                        .borrow()
+                        .selected
+                        .as_deref()
+                        .ok_or_else(|| "Choose a prefab first".to_string())
+                        .and_then(|name| {
+                            session.prefab_thumbnail_with_style(
+                                name,
+                                true,
+                                thumbnail_style(&window)?,
+                            )
+                        });
+                    finish_thumbnail_render(&window, session, &form, result);
+                })
             }
         });
         window.on_thumbnail_style_changed({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
-            move || refresh(&window.unwrap(), &lock(&shared), &form, true)
+            let (window, continuation, form) =
+                (window.as_weak(), continuation.clone(), form.clone());
+            move || {
+                callback(&window, &continuation, |window, session| {
+                    refresh(&window, session, &form, true)
+                })
+            }
         });
         Ok(Self {
             window,

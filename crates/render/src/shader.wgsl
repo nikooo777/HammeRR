@@ -15,6 +15,7 @@ struct Globals {
 struct MaterialParams {
     flags: vec4<f32>,
     helper: vec4<f32>,
+    normal_transform: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> globals: Globals;
@@ -35,6 +36,7 @@ struct VertexIn {
     @location(5) smoothing: u32,
     @location(6) opacity: f32,
     @location(7) texture_alpha: u32,
+    @location(8) tangent: vec4<f32>,
 }
 
 struct VertexOut {
@@ -47,6 +49,7 @@ struct VertexOut {
     @location(5) @interpolate(flat) smoothing: u32,
     @location(6) opacity: f32,
     @location(7) @interpolate(flat) texture_alpha: u32,
+    @location(8) tangent: vec4<f32>,
 }
 
 @vertex
@@ -61,6 +64,7 @@ fn vs_main(v: VertexIn) -> VertexOut {
     out.smoothing = v.smoothing;
     out.opacity = v.opacity;
     out.texture_alpha = v.texture_alpha;
+    out.tangent = v.tangent;
     return out;
 }
 
@@ -111,7 +115,6 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     // Fixed directional light like Hammer's 3D view: tops brightest,
     // undersides darkest, walls in between depending on facing.
     let n = normalize(in.normal);
-    let shade = 0.55 + 0.45 * clamp(dot(n, globals.light_dir.xyz) * 0.5 + 0.5, 0.0, 1.0);
     let alpha = select(1.0, texel.a, material.flags.z > 0.5 || in.texture_alpha != 0u) * in.opacity;
     if material.helper.x > 0.5 {
         var helper_normal = n;
@@ -135,6 +138,15 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         let highlight = 0.15 * pow(max(dot(helper_normal, halfway), 0.0), 64.0);
         return vec4<f32>(mix(shaded, globe + vec3<f32>(highlight), in.color.a), 1.0);
     }
+    var shading_normal = n;
+    if globals.surface_view.z != 0u && material.helper.z > 0.5 && abs(in.tangent.w) > 0.5 {
+        let uv = in.uv * material.normal_transform.xy + material.normal_transform.zw;
+        let normal = textureSampleGrad(normal_texture, texture_sampler, uv, uv_dx * material.normal_transform.xy, uv_dy * material.normal_transform.xy).xyz * 2.0 - 1.0;
+        let tangent = normalize(in.tangent.xyz);
+        let bitangent = cross(n, tangent) * in.tangent.w;
+        shading_normal = normalize(tangent * normal.x + bitangent * normal.y + n * normal.z);
+    }
+    let shade = 0.55 + 0.45 * clamp(dot(shading_normal, globals.light_dir.xyz) * 0.5 + 0.5, 0.0, 1.0);
     var color = texel.rgb * in.color.rgb * shade;
     if globals.fog_color.a > 0.0 && material.helper.y < 0.5 {
         let depth = dot(in.world_position - globals.eye.xyz, globals.forward.xyz);

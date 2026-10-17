@@ -36,6 +36,20 @@ pub struct SurfaceEdit {
 pub const MAX_LIGHTMAP_SCALE: u32 = 1024;
 pub const HARD_EDGE_GROUPS: u32 = 0xff00_0000;
 
+pub fn texture_tangents(
+    normal: DVec3,
+    s: DVec3,
+    left_handed: bool,
+) -> Result<(DVec3, DVec3, DVec3), String> {
+    let normal = normal
+        .try_normalize()
+        .ok_or("Normal-map lighting needs a finite nonzero sample normal")?;
+    let bitangent = normal.cross(s).try_normalize().ok_or("Normal-map lighting tangent is parallel to its sample normal; adjust face mapping or smoothing")?;
+    let tangent = bitangent.cross(normal).normalize();
+    let bitangent = if left_handed { -bitangent } else { bitangent };
+    Ok((tangent, bitangent, normal))
+}
+
 pub fn smoothing_mask(groups: &[u32]) -> Result<u32, EditError> {
     groups.iter().try_fold(0, |mask, &group| {
         if !(1..=32).contains(&group) {

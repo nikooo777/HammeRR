@@ -208,6 +208,7 @@ pub struct PaintGuide {
 /// View filters and resource admission options.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ViewOptions {
+    pub normal_maps: bool,
     pub surface: SurfaceView,
     pub smoothing_group: u32,
     pub tool_textures: bool,
@@ -235,6 +236,7 @@ impl Default for ViewOptions {
     fn default() -> Self {
         Self {
             surface: SurfaceView::Textured,
+            normal_maps: false,
             smoothing_group: 1,
             tool_textures: true,
             sky_preview: false,
@@ -259,7 +261,7 @@ impl Default for ViewOptions {
     }
 }
 
-pub type SceneKey = (u64, crate::sky::Channel, bool, bool);
+pub type SceneKey = (u64, crate::sky::Channel, bool, bool, bool, bool);
 
 impl ViewOptions {
     pub fn scene_key(self, serial: u64) -> SceneKey {
@@ -268,6 +270,8 @@ impl ViewOptions {
             self.sky_channel,
             self.entity_images,
             self.entity_model_guides,
+            self.normal_maps,
+            self.normal_maps && self.surface == SurfaceView::Textured,
         )
     }
 }
@@ -491,6 +495,7 @@ impl Renderer {
                             5 => Uint32,
                             6 => Float32,
                             7 => Uint32,
+                            8 => Float32x4,
                         ],
                     })],
                 },
@@ -916,6 +921,8 @@ impl Renderer {
             .and_then(|vtf| upload_vtf(ctx, vtf))
             .unwrap_or_else(|| base.clone());
         let flag = |on: bool| if on { 1.0f32 } else { 0.0 };
+        let normal_asset = info.normal.as_ref().filter(|asset| asset.image.is_some());
+        let transform = normal_asset.map_or([1.0, 1.0, 0.0, 0.0], |asset| asset.report.transform);
         let params = [
             flag(info.alpha_test),
             flag(info.blend.is_some()),
@@ -923,8 +930,12 @@ impl Renderer {
             flag(untextured),
             flag(info.helper.is_some()),
             flag(editor || info.sky),
+            flag(normal_asset.is_some()),
             0.0,
-            0.0,
+            transform[0],
+            transform[1],
+            transform[2],
+            transform[3],
         ];
         let params = ctx
             .device
@@ -937,7 +948,12 @@ impl Renderer {
         let blend_view = blend.create_view(&Default::default());
         let normal = info
             .helper
-            .map(|helper| upload_helper_texture(ctx, &helper.normal, false));
+            .map(|helper| upload_helper_texture(ctx, &helper.normal, false))
+            .or_else(|| {
+                normal_asset
+                    .and_then(|asset| asset.image.as_ref())
+                    .map(|image| upload_normal(ctx, image))
+            });
         let surface = info
             .helper
             .map(|helper| upload_helper_texture(ctx, &helper.surface, false));
@@ -1055,7 +1071,7 @@ impl Renderer {
                     SurfaceView::SmoothingGroups => 2,
                 },
                 options.smoothing_group.clamp(1, 32) - 1,
-                0,
+                u32::from(options.normal_maps && options.surface == SurfaceView::Textured),
                 0,
             ],
         };
@@ -1404,6 +1420,26 @@ fn upload_vtf(ctx: &GpuContext, vtf: &Vtf) -> Option<wgpu::Texture> {
         );
     }
     Some(texture)
+}
+
+fn upload_normal(ctx: &GpuContext, image: &source_formats::vtf::RgbaImage) -> wgpu::Texture {
+    let texture = texture_2d(
+        ctx,
+        "brush normal map",
+        (image.width, image.height),
+        1,
+        wgpu::TextureFormat::Rgba8Unorm,
+    );
+    write_mip(
+        ctx,
+        &texture,
+        0,
+        &image.pixels,
+        image.width * 4,
+        image.height,
+        (image.width, image.height),
+    );
+    texture
 }
 
 fn solid_texture(ctx: &GpuContext, rgba: [u8; 4]) -> wgpu::Texture {

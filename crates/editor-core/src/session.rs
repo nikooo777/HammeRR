@@ -1488,6 +1488,7 @@ impl Session {
         let mut without_resource_changes = view;
         without_resource_changes.entity_images = previous.entity_images;
         without_resource_changes.entity_model_guides = previous.entity_model_guides;
+        without_resource_changes.normal_maps = previous.normal_maps;
         if without_resource_changes == previous {
             self.view = view;
             self.view_serial += 1;
@@ -2109,7 +2110,7 @@ impl Session {
         let evaluation = self.working_evaluation(document);
         let icons = self.fgd_icon_instances(document, &evaluation, view.entity_images);
         let model_guides = self.fgd_model_guides(document, &evaluation, view.entity_model_guides);
-        let mut mesh = SceneMesh::build_with_visual_helpers_and_sky_filtered(
+        let mut mesh = SceneMesh::build_with_normal_maps_filtered(
             document.vmf(),
             &self.game,
             &mut self.materials,
@@ -2118,8 +2119,10 @@ impl Session {
             (&evaluation.models.instances, &evaluation.helpers),
             (&icons, &model_guides),
             skybox,
+            view.normal_maps && view.surface == render::SurfaceView::Textured,
             |id| evaluation.objects.contains(&id),
         );
+        mesh.normal_maps.requested = view.normal_maps;
         if let Some(points) = self.pointfile_points() {
             mesh.set_leak_path(points);
         }

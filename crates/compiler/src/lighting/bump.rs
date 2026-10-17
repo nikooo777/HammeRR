@@ -27,16 +27,8 @@ impl Basis {
     }
 
     pub fn normals(&self, normal: DVec3) -> Result<[DVec3; MAPS], String> {
-        let normal = normal
-            .try_normalize()
-            .ok_or("Normal-map lighting needs a finite nonzero sample normal")?;
-        let bitangent = normal.cross(self.s).try_normalize().ok_or("Normal-map lighting tangent is parallel to its sample normal; adjust face mapping or smoothing")?;
-        let tangent = bitangent.cross(normal).normalize();
-        let bitangent = if self.left_handed {
-            -bitangent
-        } else {
-            bitangent
-        };
+        let (tangent, bitangent, normal) =
+            map_core::surface::texture_tangents(normal, self.s, self.left_handed)?;
         let z = (1.0_f64 / 3.0).sqrt();
         let x = (1.0_f64 / 6.0).sqrt();
         let y = (1.0_f64 / 2.0).sqrt();

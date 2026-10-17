@@ -1893,6 +1893,8 @@ export component AppWindow inherits Window {
     changed has-transform-preview => { if root.has-transform-preview { root.refresh-transform-values(); } }
     in-out property <bool> show-tools: true;
     in-out property <bool> sky-preview: false;
+    in-out property <bool> normal-maps: false;
+    in property <string> normal-map-status: "Normal map preview is off";
     in-out property <int> sky-channel: 0;
     in-out property <string> sky-exposure-ev: "0";
     in property <string> sky-preview-error;
@@ -2559,6 +2561,12 @@ export component AppWindow inherits Window {
                         checked <=> root.selection-outlines;
                         toggled => { root.options-changed(); }
                     }
+                    CheckBox {
+                        text: "Normal map preview";
+                        checked <=> root.normal-maps;
+                        toggled => { root.options-changed(); }
+                    }
+                    if root.normal-maps: Text { text: root.normal-map-status + "\nTextured flat brushes · fixed editor light"; color: #aeb9c8; wrap: word-wrap; font-size: 12px; }
                     CheckBox {
                         text: "Entity images";
                         checked <=> root.entity-images;

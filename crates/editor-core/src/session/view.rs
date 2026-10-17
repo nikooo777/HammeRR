@@ -3,6 +3,7 @@ use render::ViewOptions;
 
 #[derive(Default)]
 pub struct ViewUpdate<'a> {
+    pub normal_maps: Option<bool>,
     pub surface: Option<&'a str>,
     pub smoothing_group: Option<u32>,
     pub tool_textures: Option<bool>,
@@ -17,11 +18,19 @@ pub struct ViewUpdate<'a> {
 }
 
 impl Session {
+    pub fn normal_map_preview_state(&mut self) -> serde_json::Value {
+        let report = self.build_scene_for_view(self.view()).normal_maps;
+        serde_json::json!({"enabled":self.view().normal_maps,"summary":report.summary(),"report":report,"limits":render::normal_maps::limits()})
+    }
+
     pub fn resolve_view_update(&self, update: ViewUpdate<'_>) -> Result<ViewOptions, String> {
         let mut view = self.surface_view_options(
             update.surface.map(render::SurfaceView::parse).transpose()?,
             update.smoothing_group,
         )?;
+        if let Some(value) = update.normal_maps {
+            view.normal_maps = value;
+        }
         if let Some(value) = update.tool_textures {
             view.tool_textures = value;
         }

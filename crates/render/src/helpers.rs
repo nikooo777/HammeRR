@@ -47,6 +47,7 @@ pub(crate) fn bulb_model() -> &'static HelperModel {
                     smoothing: 0,
                     opacity: 1.0,
                     texture_alpha: 0,
+                    tangent: [0.0; 4],
                 }
             })
             .collect();

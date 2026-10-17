@@ -2,6 +2,64 @@ use super::*;
 use crate::session::{SelectMode, working_region};
 use map_core::edit;
 
+#[test]
+fn cancelled_contents_keep_one_worker_across_replacement_until_owned_result_retires() {
+    let (_directory, mut session, _source, _child, _owner) = opened(Actor::Agent);
+    let request = session
+        .begin_instance_contents_refresh(Actor::Agent)
+        .unwrap();
+    session.new_map(Actor::User, true).unwrap();
+    assert!(
+        session
+            .begin_instance_contents_refresh(Actor::User)
+            .is_err()
+    );
+    let result = request.run();
+    assert!(result.control.cancelled());
+    assert!(
+        session
+            .begin_instance_contents_refresh(Actor::User)
+            .is_err()
+    );
+    drop(result);
+    let next = session
+        .begin_instance_contents_refresh(Actor::User)
+        .unwrap();
+    drop(next);
+    let result = session
+        .begin_instance_contents_refresh(Actor::User)
+        .unwrap()
+        .run();
+    assert_eq!(
+        session
+            .finish_instance_contents_refresh(Actor::User, result)
+            .unwrap()["state"],
+        "empty"
+    );
+    assert!(!session.instance_workers_busy());
+}
+
+#[test]
+fn contents_panic_completion_retires_its_ticket_without_stranding_the_session() {
+    let mut session = Session::new(Err("no assets".into()));
+    let request = session
+        .begin_instance_contents_refresh(Actor::User)
+        .unwrap();
+    let result = request.run_with(|_| panic!("injected contents worker panic"));
+    assert!(session.instance_workers_busy());
+    assert!(
+        session
+            .begin_instance_contents_refresh(Actor::Agent)
+            .is_err()
+    );
+    let report = session
+        .finish_instance_contents_refresh(Actor::User, result)
+        .unwrap();
+    assert_eq!(report["error"], "Instance contents worker panicked");
+    assert!(!session.instance_workers_busy());
+    assert_eq!(refresh(&mut session, Actor::User)["state"], "empty");
+}
+
 fn opened(actor: Actor) -> (tempfile::TempDir, Session, PathBuf, PathBuf, ObjectId) {
     let (directory, game, source, child) = crate::test_assets::instance_map(false);
     let mut session = Session::new(Ok(game));

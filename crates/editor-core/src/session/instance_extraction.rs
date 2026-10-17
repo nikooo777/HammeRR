@@ -1,7 +1,4 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::Arc;
 
 use compiler::instances::{self, NewReferencePath, SourceContext, SourceLocation};
 use compiler::{Control, FileIdentity};
@@ -9,6 +6,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use source_formats::vmf::{Entity, Vmf};
 
+use super::instance_worker::{Slot, Ticket};
 use super::*;
 
 mod admission;
@@ -26,7 +24,7 @@ pub(super) struct State {
     serial: u64,
     form: Option<Form>,
     last: Value,
-    active: Arc<AtomicBool>,
+    pub(super) worker: Slot,
     completed: Option<(u64, Actor)>,
     cleanup: staging::Cleanup,
 }
@@ -91,14 +89,6 @@ enum Work {
     Publish(Box<Ready>),
 }
 
-struct Worker(Arc<AtomicBool>);
-
-impl Drop for Worker {
-    fn drop(&mut self) {
-        self.0.store(false, Ordering::Release);
-    }
-}
-
 pub struct Request {
     identity: Arc<()>,
     token: u64,
@@ -107,7 +97,7 @@ pub struct Request {
     destination: NewReferencePath,
     work: Work,
     cleanup: staging::Cleanup,
-    worker: Worker,
+    worker: Ticket,
 }
 
 pub struct Completed {
@@ -116,7 +106,7 @@ pub struct Completed {
     key: Key,
     publishing: bool,
     result: Result<Ready, String>,
-    _worker: Worker,
+    _worker: Ticket,
 }
 
 impl Request {
@@ -125,34 +115,16 @@ impl Request {
     }
 
     pub fn run(self) -> Completed {
+        self.run_with(run_work)
+    }
+
+    fn run_with(
+        self,
+        run: impl FnOnce(Work, &NewReferencePath, &Control, staging::Cleanup) -> Result<Ready, String>,
+    ) -> Completed {
         let publishing = matches!(&self.work, Work::Publish(_));
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.control.checkpoint()?;
-            self.destination
-                .verify_metadata()
-                .map_err(|error| error.to_string())?;
-            match self.work {
-                Work::Publish(ready) => {
-                    ready
-                        .source
-                        .verify(&self.control)
-                        .map_err(|error| error.to_string())?;
-                    ready
-                        .identity
-                        .verify(&self.control)
-                        .map_err(|error| error.to_string())?;
-                    ready.stage.verify_owned()?;
-                    self.control.checkpoint()?;
-                    Ok(*ready)
-                }
-                Work::Prepare { plan, location } => prepare(
-                    *plan,
-                    *location,
-                    &self.destination,
-                    &self.control,
-                    self.cleanup,
-                ),
-            }
+            run(self.work, &self.destination, &self.control, self.cleanup)
         }))
         .unwrap_or_else(|_| Err("Instance extraction worker panicked".into()));
         Completed {
@@ -162,6 +134,36 @@ impl Request {
             publishing,
             result,
             _worker: self.worker,
+        }
+    }
+}
+
+fn run_work(
+    work: Work,
+    destination: &NewReferencePath,
+    control: &Control,
+    cleanup: staging::Cleanup,
+) -> Result<Ready, String> {
+    control.checkpoint()?;
+    destination
+        .verify_metadata()
+        .map_err(|error| error.to_string())?;
+    match work {
+        Work::Publish(ready) => {
+            ready
+                .source
+                .verify(control)
+                .map_err(|error| error.to_string())?;
+            ready
+                .identity
+                .verify(control)
+                .map_err(|error| error.to_string())?;
+            ready.stage.verify_owned()?;
+            control.checkpoint()?;
+            Ok(*ready)
+        }
+        Work::Prepare { plan, location } => {
+            prepare(*plan, *location, destination, control, cleanup)
         }
     }
 }
@@ -280,7 +282,16 @@ fn prepare(
 }
 
 impl Session {
+    pub(super) fn shutdown_instance_extraction(&mut self) {
+        if let Some(form) = self.instance_extraction.form.take() {
+            let _ = form.control.cancel();
+        }
+    }
+
     fn instance_extraction_context(&self) -> Result<(), String> {
+        if self.closing {
+            return Err("The editor is closing".into());
+        }
         if self.history_navigation_blocked().is_some()
             || self.property_draft.is_some()
             || self.rename_draft.is_some()
@@ -321,7 +332,7 @@ impl Session {
         file: &str,
     ) -> Result<Request, String> {
         self.instance_extraction_context()?;
-        if self.instance_extraction.active.load(Ordering::Acquire) {
+        if self.instance_extraction.worker.busy() {
             return Err("Wait for the cancelled extraction worker to finish".into());
         }
         if self.instance_extraction.form.is_some() {
@@ -367,12 +378,14 @@ impl Session {
             destination: destination.clone(),
             ready: None,
         });
-        self.instance_extraction
-            .active
-            .store(true, Ordering::Release);
+        let worker = self
+            .instance_extraction
+            .worker
+            .begin()
+            .ok_or("Wait for the cancelled extraction worker to finish")?;
         Ok(Request {
             identity,
-            worker: Worker(self.instance_extraction.active.clone()),
+            worker,
             cleanup: self.instance_extraction.cleanup.clone(),
             token,
             key,
@@ -393,7 +406,7 @@ impl Session {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
         let Some(form) = &self.instance_extraction.form else {
-            return json!({"token":null,"status":"idle","last":self.instance_extraction.last,"cleanup_error":cleanup});
+            return json!({"token":null,"status":"idle","worker_active":self.instance_extraction.worker.busy(),"last":self.instance_extraction.last,"cleanup_error":cleanup});
         };
         let error = self
             .instance_extraction_context()
@@ -410,7 +423,7 @@ impl Session {
                 })
             });
         let ready = form.ready.as_ref();
-        json!({"cleanup_error":cleanup,"token":form.token,"owner":form.owner.label(),"status":if error.is_some(){"blocked"}else{form.status},"error":error,
+        json!({"cleanup_error":cleanup,"worker_active":self.instance_extraction.worker.busy(),"token":form.token,"owner":form.owner.label(),"status":if error.is_some(){"blocked"}else{form.status},"error":error,
             "selected":form.key.selection.iter().copied().map(crate::identity::id_string).collect::<Vec<_>>(),"file":form.destination.relative(),"source":form.key.path.as_ref().map(|path|path.display().to_string()),"pivot":[0,0,0],
             "ready":form.status=="ready"&&error.is_none(),"world_brushes":ready.map(|ready|ready.plan.world_brushes),"detail_brushes":ready.map(|ready|ready.plan.detail_brushes),
             "objects":ready.map(|ready|ready.plan.selected.len()),"sides":ready.map(|ready|ready.plan.sides),"bytes":ready.map(|ready|ready.bytes),"sha256":ready.map(|ready|ready.sha256.as_str()),
@@ -487,17 +500,19 @@ impl Session {
             form.error = Some(error.clone());
             return Err(error);
         }
+        let worker = self
+            .instance_extraction
+            .worker
+            .begin()
+            .ok_or("Wait for the cancelled extraction worker to finish")?;
         let form = self.instance_extraction.form.as_mut().unwrap();
         let ready = form
             .ready
             .take()
             .ok_or("Prepare and validate the extraction first")?;
         form.status = "publishing";
-        self.instance_extraction
-            .active
-            .store(true, Ordering::Release);
         Ok(Request {
-            worker: Worker(self.instance_extraction.active.clone()),
+            worker,
             cleanup: self.instance_extraction.cleanup.clone(),
             identity: form.identity.clone(),
             token,

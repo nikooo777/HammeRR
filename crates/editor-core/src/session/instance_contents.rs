@@ -12,6 +12,7 @@ use render::scene::{LineVertex, Vertex};
 use serde_json::{Value, json};
 use source_formats::vmf::{Vmf, parse_vec3};
 
+use super::instance_worker::{Slot, Ticket};
 use super::{Actor, Session};
 
 const MAX_DIAGNOSTICS: usize = 64;
@@ -55,6 +56,7 @@ struct Pending {
 
 #[derive(Default)]
 pub(super) struct State {
+    pub(super) worker: Slot,
     serial: u64,
     render_serial: u64,
     pending: Option<Pending>,
@@ -72,6 +74,7 @@ pub struct Request {
     key: Key,
     vmf: Option<Vmf>,
     location: Option<SourceLocation>,
+    worker: Ticket,
 }
 
 pub struct RefreshResult {
@@ -80,6 +83,7 @@ pub struct RefreshResult {
     control: compiler::Control,
     key: Key,
     result: Result<Ready, String>,
+    _worker: Ticket,
 }
 
 struct Owner {
@@ -207,7 +211,11 @@ impl Request {
     }
 
     pub fn run(self) -> RefreshResult {
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.prepare()))
+        self.run_with(Self::prepare)
+    }
+
+    fn run_with(self, prepare: impl FnOnce(&Self) -> Result<Ready, String>) -> RefreshResult {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| prepare(&self)))
             .unwrap_or_else(|_| Err("Instance contents worker panicked".into()));
         RefreshResult {
             token: self.token,
@@ -215,6 +223,7 @@ impl Request {
             control: self.control,
             key: self.key,
             result,
+            _worker: self.worker,
         }
     }
 
@@ -490,9 +499,10 @@ impl Session {
         if self.closing {
             return Err("The editor is closing".into());
         }
-        if self.instance_contents.pending.is_some() {
+        if self.instance_contents.worker.busy() {
             return Err("Wait for the active instance contents worker to finish".into());
         }
+        self.instance_contents.pending = None;
         self.instance_contents.serial = self.instance_contents.serial.wrapping_add(1);
         self.instance_contents.ready = None;
         self.instance_contents.error = None;
@@ -560,6 +570,11 @@ impl Session {
                 return Err(error);
             }
         };
+        let worker = self
+            .instance_contents
+            .worker
+            .begin()
+            .ok_or("Wait for the active instance contents worker to finish")?;
         let key = Key::capture(self);
         let control = compiler::Control::default();
         let token = self.instance_contents.serial;
@@ -579,6 +594,7 @@ impl Session {
             key,
             vmf: has_instances.then(|| self.document.vmf().clone()),
             location,
+            worker,
         })
     }
 
@@ -744,9 +760,10 @@ impl Session {
         if token != self.instance_contents.serial {
             return Err("Instance contents snapshot token is expired".into());
         }
-        if self.instance_contents.pending.is_some() {
+        if self.instance_contents.worker.busy() {
             return Err("Cancel and wait for the instance contents worker before Clear".into());
         }
+        self.instance_contents.pending = None;
         self.instance_contents.serial = self.instance_contents.serial.wrapping_add(1);
         self.instance_contents.ready = None;
         self.instance_contents.status = "not_loaded";
@@ -909,6 +926,7 @@ impl Session {
             "token":self.instance_contents.serial,"status":status,"state":stored,"summary":summary,
             "requested":enabled,"displayed":displayed,"available":available,
             "loading":self.instance_contents.pending.is_some(),
+            "worker_active":self.instance_contents.worker.busy(),
             "cancellable":self.instance_contents.pending.as_ref().is_some_and(|pending|!pending.control.cancelled()),
             "suppression_reason":suppression,"error":self.instance_contents.error,
             "source":ready.map(|ready|ready.key.json()),"stats":ready.map(|ready|&ready.stats),

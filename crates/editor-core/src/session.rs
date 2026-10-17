@@ -51,6 +51,7 @@ pub mod hollowing;
 pub mod instance_contents;
 pub mod instance_extraction;
 pub mod instance_reference;
+mod instance_worker;
 pub mod layers;
 mod lighting_preview;
 pub mod linked_path;
@@ -1987,9 +1988,14 @@ impl Session {
     pub fn shutdown(&mut self) {
         self.closing = true;
         self.reset_instance_contents();
+        self.shutdown_instance_extraction();
         self.shutdown_sound_preview();
         self.cancel_compile_on_shutdown();
         self.game_run = None;
+    }
+
+    pub(crate) fn instance_workers_busy(&self) -> bool {
+        self.instance_contents.worker.busy() || self.instance_extraction.worker.busy()
     }
 
     /// The nearest visible object along a ray. Brushes made only of tool

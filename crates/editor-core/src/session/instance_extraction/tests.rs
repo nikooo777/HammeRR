@@ -1,5 +1,57 @@
 use super::*;
 
+#[test]
+fn extraction_panic_cleans_owned_stage_before_releasing_worker_ticket() {
+    let (_directory, mut session, _parent, _ids) = opened();
+    let token = prepared(&mut session, Actor::User, "panic.vmf");
+    let stage = session
+        .instance_extraction
+        .form
+        .as_ref()
+        .unwrap()
+        .ready
+        .as_ref()
+        .unwrap()
+        .stage
+        .path()
+        .to_owned();
+    let request = session
+        .publish_instance_extraction(Actor::User, token)
+        .unwrap();
+    let completed = request.run_with(|_, _, _, _| panic!("injected extraction worker panic"));
+    assert!(!stage.exists());
+    assert!(session.instance_workers_busy());
+    assert_eq!(
+        completed.result.as_ref().err().unwrap(),
+        "Instance extraction worker panicked"
+    );
+    session
+        .finish_instance_extraction(Actor::User, completed)
+        .unwrap_err();
+    assert!(!session.instance_workers_busy());
+    session
+        .cancel_instance_extraction(Actor::User, token)
+        .unwrap();
+    let request = session
+        .begin_instance_extraction(Actor::Agent, "next.vmf")
+        .unwrap();
+    let control = request.control.clone();
+    session.shutdown();
+    assert!(control.cancelled());
+    assert!(
+        session
+            .begin_instance_extraction(Actor::User, "later.vmf")
+            .is_err()
+    );
+    assert!(
+        session
+            .publish_instance_extraction(Actor::Agent, request.token())
+            .is_err()
+    );
+    drop(request);
+    assert!(!session.instance_workers_busy());
+}
+
 fn opened() -> (tempfile::TempDir, Session, PathBuf, Vec<ObjectId>) {
     let (directory, game, parent, selected) = crate::test_assets::instance_extraction_map();
     let mut session = Session::new(Ok(game));

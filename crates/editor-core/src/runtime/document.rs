@@ -20,7 +20,10 @@ impl ShutdownGuard {
         loop {
             let busy = {
                 let session = lock(&self.session);
-                session.launching() || session.recovery_busy() || session.compiling()
+                session.launching()
+                    || session.recovery_busy()
+                    || session.compiling()
+                    || session.instance_workers_busy()
             };
             if !busy {
                 break;

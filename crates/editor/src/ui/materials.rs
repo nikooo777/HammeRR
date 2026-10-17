@@ -621,13 +621,95 @@ pub(super) fn show_surface_window(app: &AppWindow, ui: &SharedUi) {
     }
 }
 
+fn refresh_favorites_status(window: &MaterialWindow, session: &Session) {
+    let status = session.material_favorite_status();
+    window.set_favorites_reload_available(status.reload_available);
+    window.set_favorite(session.is_material_favorite(&window.get_material()));
+    window.set_favorites_status(
+        status
+            .error
+            .as_deref()
+            .unwrap_or(match status.persistence {
+                material_favorites::Persistence::Session => "Favorites last for this session",
+                material_favorites::Persistence::Persistent => "Favorites saved across sessions",
+                material_favorites::Persistence::Blocked => "Favorites storage unavailable",
+            })
+            .into(),
+    );
+}
+
+pub(super) fn refresh_shared_favorites(
+    window: Option<&MaterialWindow>,
+    session: &mut Session,
+    seen: u64,
+) -> u64 {
+    let serial = session.material_favorites_serial();
+    if serial != seen
+        && let Some(window) = window
+        && window.window().is_visible()
+    {
+        refresh_material_catalog(window, session);
+    }
+    serial
+}
+
+pub(super) fn bind_material_favorites(
+    window: &MaterialWindow,
+    shared: SharedSession,
+    alive: impl Fn() -> bool + 'static,
+) {
+    let alive: Rc<dyn Fn() -> bool> = Rc::new(alive);
+    window.on_toggle_favorite({
+        let window = window.as_weak();
+        let shared = shared.clone();
+        let alive = alive.clone();
+        move || {
+            if !alive() {
+                return;
+            }
+            let Some(window) = window.upgrade() else {
+                return;
+            };
+            let mut session = lock(&shared);
+            let _ = session.favorite_material(&window.get_material(), !window.get_favorite());
+            refresh_material_catalog(&window, &mut session);
+        }
+    });
+    window.on_reload_favorites({
+        let window = window.as_weak();
+        move || {
+            if !alive() {
+                return;
+            }
+            let Some(window) = window.upgrade() else {
+                return;
+            };
+            let mut session = lock(&shared);
+            let _ = session.reload_material_favorites();
+            refresh_material_catalog(&window, &mut session);
+        }
+    });
+}
+
 pub(crate) fn refresh_material_catalog(window: &MaterialWindow, session: &mut Session) {
-    let catalog = match session.material_catalog(
-        &window.get_filter(),
-        &window.get_group(),
-        window.get_offset().max(0) as usize,
-        36,
-    ) {
+    refresh_favorites_status(window, session);
+    let loaded = session
+        .material_catalog(
+            &window.get_filter(),
+            &window.get_group(),
+            window.get_offset().max(0) as usize,
+            36,
+        )
+        .and_then(|catalog| {
+            let last_page = catalog.total.saturating_sub(1) / 36 * 36;
+            if catalog.offset > last_page {
+                window.set_offset(last_page as i32);
+                session.material_catalog(&window.get_filter(), &window.get_group(), last_page, 36)
+            } else {
+                Ok(catalog)
+            }
+        });
+    let catalog = match loaded {
         Ok(catalog) => catalog,
         Err(error) => {
             window.set_rows(ModelRc::new(VecModel::from(Vec::<MaterialTileRow>::new())));
@@ -649,18 +731,6 @@ pub(crate) fn refresh_material_catalog(window: &MaterialWindow, session: &mut Se
         })
         .collect::<Vec<_>>();
     window.set_groups(ModelRc::new(VecModel::from(groups)));
-    window.set_favorites_status(
-        catalog
-            .favorites
-            .error
-            .as_deref()
-            .unwrap_or(match catalog.favorites.persistence {
-                material_favorites::Persistence::Session => "Favorites last for this session",
-                material_favorites::Persistence::Persistent => "Favorites saved across sessions",
-                material_favorites::Persistence::Blocked => "Favorites storage unavailable",
-            })
-            .into(),
-    );
     window.set_total(catalog.total as i32);
     window.set_catalog_label(if catalog.total == 0 {
         "No matching materials".into()
@@ -833,22 +903,8 @@ pub(super) fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
             }
         });
         bind_material_cancel(&window);
-        window.on_toggle_favorite({
-            let (window, ui) = (window.as_weak(), Rc::downgrade(ui));
-            move || {
-                let (Some(window), Some(ui)) = (window.upgrade(), ui.upgrade()) else {
-                    return;
-                };
-                let shared = session_of(&ui);
-                let mut session = lock(&shared);
-                if let Err(error) =
-                    session.favorite_material(&window.get_material(), !window.get_favorite())
-                {
-                    window.set_detail(error.into());
-                }
-                refresh_material_catalog(&window, &mut session);
-            }
-        });
+        let owner = Rc::downgrade(ui);
+        bind_material_favorites(&window, session_of(ui), move || owner.upgrade().is_some());
         bind_material_preview(&window, session_of(ui));
         bind_material_reload(&window, session_of(ui));
         material_source_ui::bind(&window, session_of(ui));
@@ -1128,3 +1184,7 @@ mod vectors_tests;
 #[cfg(test)]
 #[path = "materials_sprite_tests.rs"]
 mod sprite_tests;
+
+#[cfg(test)]
+#[path = "materials_favorites_tests.rs"]
+mod favorites_tests;

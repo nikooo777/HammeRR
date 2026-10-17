@@ -28,6 +28,20 @@ to retry. A failed scan is not saved as an empty catalog.
 
 ![Material thumbnails, categories and favorites](images/material-browser.png)
 
+### Keep favorites in sync
+
+1. Select a material and click **Add favorite** or **Remove favorite**.
+2. If another editor changed the saved favorites, click **Reload favorites**. Review the updated **Favorites** group, then repeat the intended change.
+3. If storage is unreadable or malformed, repair it and click **Reload favorites** again. The previous local favorites stay available until a valid list loads.
+
+Favorites reload independently of **Reload material assets**. Reload refreshes
+badges and counts in shared material browsers without changing the selected
+material, map, camera, Undo history or active draft. Files are read only on
+startup or explicit Reload; other editors' changes are never merged silently.
+Persistent writes refuse a stale saved file and use a nonblocking Linux lock.
+A busy lock can be retried after the other writer finishes. Without configured
+storage, favorites remain session-only and **Reload favorites** is unavailable.
+
 ## Reload changed materials
 
 Refresh edited VMT/VTF files without reopening the map.

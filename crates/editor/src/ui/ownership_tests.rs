@@ -98,6 +98,7 @@ fn child_callbacks_work_then_release_ui_session_and_cached_resources() {
     material.set_material("test/checker".into());
     material.set_favorite(false);
     material.invoke_toggle_favorite();
+    material.invoke_reload_favorites();
     assert!(lock(&shared).is_material_favorite("test/checker"));
     material.invoke_use_material();
     assert!(!material.window().is_visible());
@@ -196,7 +197,10 @@ fn child_callbacks_work_then_release_ui_session_and_cached_resources() {
     assert_eq!(material.get_total(), 12345);
     material.set_material("test/checker".into());
     material.set_favorite(true);
+    let favorites_serial = lock(&shared).material_favorites_serial();
     material.invoke_toggle_favorite();
+    material.invoke_reload_favorites();
+    assert_eq!(lock(&shared).material_favorites_serial(), favorites_serial);
     material.invoke_use_material();
     atlas.invoke_browse();
     entity.set_definition("retained child".into());

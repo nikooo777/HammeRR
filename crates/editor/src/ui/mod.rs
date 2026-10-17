@@ -44,6 +44,7 @@ struct Ui {
     seen_scene: render::SceneKey,
     seen_camera: u64,
     seen_view: u64,
+    seen_favorites: u64,
     seen_navigation: u64,
     brush_drag: Option<BrushDrag>,
     clip_drag: Option<BrushDrag>,
@@ -143,6 +144,7 @@ impl Ui {
             seen_scene: render::ViewOptions::default().scene_key(0),
             seen_camera: 0,
             seen_view: 0,
+            seen_favorites: 0,
             seen_navigation: u64::MAX,
             brush_drag: None,
             clip_drag: None,
@@ -3014,6 +3016,11 @@ pub(super) fn run(
                     app.set_show_leak(session.view().leak_path);
                     panel_dirty = true;
                 }
+                ui.seen_favorites = refresh_shared_favorites(
+                    ui.material_window.as_ref(),
+                    &mut session,
+                    ui.seen_favorites,
+                );
                 if session.view_serial() != ui.seen_view {
                     ui.seen_view = session.view_serial();
                     refresh_view_controls(&app, &session);

@@ -12,6 +12,7 @@ fn material_browser_color_alpha_callbacks_retain_source_drafts_and_explicit_fail
     .unwrap();
     let (directory, game) = test_assets::alpha_game();
     let mut session = Session::new(Ok(game));
+    session.configure_recovery(Ok(directory.path().join("state")));
     session
         .begin_property_edit(session::PropertyTarget::World)
         .unwrap();
@@ -21,8 +22,10 @@ fn material_browser_color_alpha_callbacks_retain_source_drafts_and_explicit_fail
     let camera = session.camera();
     let shared = std::sync::Arc::new(std::sync::Mutex::new(session));
     let window = MaterialWindow::new().unwrap();
-    bind_material_preview(&window, shared.clone());
-    bind_material_reload(&window, shared.clone());
+    let document = crate::test_assets::document(shared.clone());
+    let access = DocumentAccess::for_document(document.clone());
+    bind_material_preview_with_access(&window, &access);
+    bind_material_reload_with_access(&window, &access);
     bind_material_cancel(&window);
     window.set_material("test/checker".into());
     refresh_material_catalog(&window, &mut lock(&shared));

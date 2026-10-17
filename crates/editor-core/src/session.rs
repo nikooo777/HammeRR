@@ -79,6 +79,7 @@ pub use view::ViewUpdate;
 mod recovery;
 pub mod repeat;
 pub mod ropes;
+mod saved_defaults;
 pub mod saved_views;
 mod sky_preview;
 pub mod sounds;
@@ -243,6 +244,8 @@ pub struct Session {
     grid_preferences: grid_preferences::State,
     preview_preferences: preview_preferences::State,
     navigation_preferences: navigation_preferences::State,
+    navigation_current: crate::navigation_preferences::Navigation,
+    navigation_local_serial: u64,
     shortcuts: shortcuts::Binding,
     saved_cameras: [Option<Camera>; 4],
     block_preview: Option<(DVec3, DVec3)>,
@@ -378,6 +381,8 @@ impl Session {
             grid_preferences: grid_preferences::State::default(),
             preview_preferences: preview_preferences::State::default(),
             navigation_preferences: navigation_preferences::State::default(),
+            navigation_current: Default::default(),
+            navigation_local_serial: 0,
             shortcuts: shortcuts::Binding::default(),
             saved_cameras: [None; 4],
             block_preview: None,

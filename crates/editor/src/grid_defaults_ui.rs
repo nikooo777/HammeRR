@@ -4,10 +4,14 @@ use serde_json::Value;
 use slint::ComponentHandle;
 
 use crate::{
-    GridDefaultsWindow,
+    AppWindow, GridDefaultsWindow,
     runtime::{SharedSession, lock},
     session::{Actor, Session},
 };
+
+pub fn refresh_status(app: &AppWindow, session: &Session) {
+    app.set_grid_defaults_error(!session.grid_preferences_state()["error"].is_null());
+}
 
 pub struct Controller {
     pub window: GridDefaultsWindow,

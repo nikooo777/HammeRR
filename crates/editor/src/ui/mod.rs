@@ -45,7 +45,7 @@ struct Ui {
     seen_camera: u64,
     seen_view: u64,
     seen_favorites: u64,
-    seen_navigation: u64,
+    seen_navigation: (u64, u64),
     brush_drag: Option<BrushDrag>,
     clip_drag: Option<BrushDrag>,
     interaction: interaction::Interaction,
@@ -145,7 +145,7 @@ impl Ui {
             seen_camera: 0,
             seen_view: 0,
             seen_favorites: 0,
-            seen_navigation: u64::MAX,
+            seen_navigation: (u64::MAX, u64::MAX),
             brush_drag: None,
             clip_drag: None,
             interaction: interaction::Interaction::default(),
@@ -3232,6 +3232,7 @@ pub(super) fn run(
                 {
                     controller.refresh(&lock(&ui.session));
                 }
+                grid_defaults_ui::refresh_status(&app, &lock(&ui.session));
                 app.set_preview_defaults_error(
                     lock(&ui.session).preview_preferences_error().is_some(),
                 );

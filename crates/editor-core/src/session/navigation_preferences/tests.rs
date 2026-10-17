@@ -243,7 +243,7 @@ fn malformed_and_unavailable_storage_never_revert_temporary_speed_or_destroy_dra
     assert!(action(&mut session, "reset").is_err());
     assert_eq!(session.fly_speed(), 1200.0);
     assert_eq!(
-        session.navigation_preferences_error(),
+        session.navigation_preferences_error().as_deref(),
         Some("preferences unavailable")
     );
     assert_eq!(session.block_preview, preview);
@@ -269,10 +269,10 @@ fn committed_verification_failure_keeps_intended_values_and_original_directory_u
     let camera = session.camera();
     let expected = session
         .navigation_preferences
+        .authority()
+        .snapshot()
         .source
-        .as_ref()
-        .unwrap()
-        .clone();
+        .unwrap();
     let intended = Navigation { fly_speed: 1234.5 };
     let data = serde_json::to_vec(&json!({"version":1,"navigation":intended})).unwrap();
     let target = crate::preference_file::CoordinatedFile {

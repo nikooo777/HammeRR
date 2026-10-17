@@ -79,7 +79,7 @@ fn refresh(window: &NavigationDefaultsWindow, session: &Session, snapshot: &RefC
         )
         .into(),
     );
-    window.set_status(session.navigation_preferences_error().unwrap_or("Startup uses these defaults. Apply saved defaults changes only fly speed; active map previews and picks remain available.").into());
+    window.set_status(state["error"].as_str().or(state["storage_error"].as_str()).unwrap_or("Startup uses these defaults. Apply saved defaults changes only fly speed; active map previews and picks remain available.").into());
     window.set_ready(state["ready"] == true);
 }
 

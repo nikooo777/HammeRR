@@ -116,6 +116,10 @@ operations are separate from map Undo.
   another absolute folder. The window reports the active folder. Independent
   editor instances and external writers are not coordinated; changed file
   metadata invalidates older actions. Refresh after edits made outside the editor.
+- Keep the library directory and its parent aliases stable while reviewing an
+  action. Physical directory identity is not included in the current metadata
+  stamp: replacing an empty library or retargeting a parent alias can leave an
+  old action valid for the replacement directory.
 - Capture and placement retain [clipboard limits](clipboard.md#limits), including
   16 top-level sources, checked references, metadata budgets and coordinate bounds.
   Component-only copies, saved partition intents and private Hammer formats remain

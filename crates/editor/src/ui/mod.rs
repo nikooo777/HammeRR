@@ -31,6 +31,8 @@ use materials::*;
 mod navigation;
 use navigation::*;
 mod object_picking;
+mod transform_pivot;
+use transform_pivot::*;
 
 struct Ui {
     ctx: GpuContext,
@@ -739,6 +741,7 @@ pub(super) fn run(
     });
     bind_clip_controls(&app, session_of(&ui));
     bind_manipulation_controls(&app, session_of(&ui));
+    bind_pivot_pick_controls(&app, session_of(&ui));
     app.on_place_entity({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || show_entity_window(&app.unwrap(), &ui, false)
@@ -1886,6 +1889,22 @@ pub(super) fn run(
             if button == 0 && !down && ui.pick_release {
                 ui.pick_release = false;
                 return;
+            }
+            if button == 0 && down {
+                let mut session = lock(&ui.session);
+                let pointer = Pointer {
+                    position: DVec2::new(f64::from(x), f64::from(y)),
+                    size: (
+                        viewport_size.0.round().max(1.0) as u32,
+                        viewport_size.1.round().max(1.0) as u32,
+                    ),
+                };
+                let consumed = pick_pivot_pixel(&app, &mut session, ui.viewport.camera, pointer);
+                drop(session);
+                if consumed {
+                    ui.pick_release = true;
+                    return;
+                }
             }
             if button == 0 && overlay_handles_interactive(&app, &lock(&ui.session), ui.viewport.camera) {
                 let Some(controller) = &ui.overlay else {
@@ -3162,6 +3181,7 @@ pub(super) fn run(
                 ));
             }
             refresh_overlay_handle_controls(&app, &lock(&ui.session), ui.viewport.camera);
+            refresh_pivot_pick_controls(&app, &lock(&ui.session), ui.viewport.camera);
             if let Some(controller) = &ui.linked_path {
                 controller.set_viewport((
                     app.get_viewport_width().round().max(1.0) as u32,

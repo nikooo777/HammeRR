@@ -23,6 +23,7 @@ mod preview_preferences;
 mod recovery;
 mod selection;
 mod terrain;
+mod transform_pivot;
 mod view;
 
 mod working_region;

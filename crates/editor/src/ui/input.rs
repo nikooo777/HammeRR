@@ -81,6 +81,16 @@ pub(super) fn cancel_overlay_handles(app: &AppWindow, ui: &SharedUi) -> bool {
 pub(super) fn cancel_surface_pick(app: &AppWindow, ui: &SharedUi) -> bool {
     let shared = session_of(ui);
     let camera = ui.borrow().viewport.camera;
+    if lock(&shared).transform_pivot_pick_interactive(
+        Actor::User,
+        camera,
+        (
+            app.get_viewport_width().round().max(1.0) as u32,
+            app.get_viewport_height().round().max(1.0) as u32,
+        ),
+    ) {
+        return cancel_pivot_pick(app, &mut lock(&shared));
+    }
     if overlay_handles_interactive(app, &lock(&shared), camera) {
         return cancel_overlay_handles(app, ui);
     }

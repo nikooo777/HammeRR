@@ -576,6 +576,7 @@ impl EditorServer {
             + Self::recovery_tools()
             + Self::selection_tools()
             + Self::terrain_tools()
+            + Self::transform_pivot_tools()
             + Self::view_tools()
             + Self::working_region_tools()
     }

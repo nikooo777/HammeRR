@@ -76,8 +76,8 @@ fn fixture(family: Family) -> Fixture {
     let document = crate::test_assets::document(shared.clone());
     let access = DocumentAccess::for_document(document.clone());
     let surface = surface_group_ui::Controller::new_with_access(&access).unwrap();
-    let volume = volume_ui::Controller::new_with_access(&access, || 16.0 / 9.0).unwrap();
-    let region = Controller::new_with_access(&access, || 16.0 / 9.0).unwrap();
+    let volume = volume_ui::Controller::new_with_access(&access, || Some(16.0 / 9.0)).unwrap();
+    let region = Controller::new_with_access(&access, || Some(16.0 / 9.0)).unwrap();
     surface.initialize(&mut lock(&shared)).unwrap();
     volume.initialize(&mut lock(&shared));
     region.show(&lock(&shared)).unwrap();
@@ -396,7 +396,7 @@ fn failed_region_family_admission_remains_terminal_after_recovery_storage_repair
 fn retained_region_family_windows_release_document_session_and_vanished_origins_abandon_work() {
     software();
     let target = fixture(Family::Region);
-    let cold = Controller::new_with_access(&target.access, || 1.0).unwrap();
+    let cold = Controller::new_with_access(&target.access, || Some(1.0)).unwrap();
     let vanished = cold.window.as_weak();
     drop(cold);
     assert!(vanished.upgrade().is_none());
@@ -421,4 +421,37 @@ fn retained_region_family_windows_release_document_session_and_vanished_origins_
     surface.invoke_cancel();
     volume.invoke_cancel();
     region.invoke_cancel();
+}
+
+#[test]
+fn region_frame_actions_abandon_vanished_originating_parent_without_an_aspect_fallback() {
+    software();
+    let target = fixture(Family::Region);
+    let parent = crate::AppWindow::new().unwrap();
+    let volume = volume_ui::Controller::new_with_access(&target.access, {
+        let parent = parent.as_weak();
+        move || {
+            let parent = parent.upgrade()?;
+            Some(parent.get_viewport_width() / parent.get_viewport_height().max(1.0))
+        }
+    })
+    .unwrap();
+    let region = Controller::new_with_access(&target.access, {
+        let parent = parent.as_weak();
+        move || {
+            let parent = parent.upgrade()?;
+            Some(parent.get_viewport_width() / parent.get_viewport_height().max(1.0))
+        }
+    })
+    .unwrap();
+    volume.initialize(&mut lock(&target.shared));
+    volume.window.invoke_preview_edit();
+    region.show(&lock(&target.shared)).unwrap();
+    region.window.invoke_preview();
+    drop(parent);
+    let before = snapshot(&target);
+    volume.window.invoke_frame();
+    region.window.invoke_frame();
+    assert_eq!(snapshot(&target), before);
+    region.window.hide().unwrap();
 }

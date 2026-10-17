@@ -191,12 +191,14 @@ impl Controller {
         shared: &SharedSession,
         aspect: impl Fn() -> f32 + 'static,
     ) -> Result<Self, slint::PlatformError> {
-        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()), aspect)
+        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()), move || {
+            Some(aspect())
+        })
     }
 
     pub fn new_with_access(
         access: &DocumentAccess,
-        aspect: impl Fn() -> f32 + 'static,
+        aspect: impl Fn() -> Option<f32> + 'static,
     ) -> Result<Self, slint::PlatformError> {
         let window = CompileRegionWindow::new()?;
         let form = Rc::new(RefCell::new(Form::default()));
@@ -286,7 +288,10 @@ impl Controller {
             let (window, document) = (window.as_weak(), access.downgrade());
             move || {
                 callback(&window, &document, |window, session| {
-                    if let Err(error) = session.frame_compile_region(Actor::User, aspect()) {
+                    let Some(aspect) = aspect() else {
+                        return;
+                    };
+                    if let Err(error) = session.frame_compile_region(Actor::User, aspect) {
                         window.set_message(error.into());
                     }
                 });

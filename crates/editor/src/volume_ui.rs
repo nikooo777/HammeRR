@@ -138,12 +138,14 @@ impl Controller {
         shared: &SharedSession,
         aspect: impl Fn() -> f32 + 'static,
     ) -> Result<Self, slint::PlatformError> {
-        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()), aspect)
+        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()), move || {
+            Some(aspect())
+        })
     }
 
     pub fn new_with_access(
         access: &DocumentAccess,
-        aspect: impl Fn() -> f32 + 'static,
+        aspect: impl Fn() -> Option<f32> + 'static,
     ) -> Result<Self, slint::PlatformError> {
         let window = VolumeWindow::new()?;
         let token = Rc::new(Cell::new(None));
@@ -192,7 +194,8 @@ impl Controller {
             move || {
                 callback(&window, &document, |window, session| {
                     if let Some(token) = token.get()
-                        && let Err(error) = session.frame_volume_selection(token, aspect())
+                        && let Some(aspect) = aspect()
+                        && let Err(error) = session.frame_volume_selection(token, aspect)
                     {
                         window.set_message(error.into());
                     }

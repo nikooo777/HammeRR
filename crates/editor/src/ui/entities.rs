@@ -657,11 +657,15 @@ pub(super) fn show_properties_window(app: &AppWindow, ui: &SharedUi, world: bool
     };
     if ui.borrow().properties_window.is_none() {
         let result = PropertiesWindow::new().and_then(|window| {
-            management_ui::bind_properties_with_access(&window, &file_access(ui))?;
-            Ok(window)
+            let pickers = management_ui::bind_properties_with_access(&window, &file_access(ui))?;
+            Ok((window, pickers))
         });
         match result {
-            Ok(window) => ui.borrow_mut().properties_window = Some(window),
+            Ok((window, pickers)) => {
+                let mut ui = ui.borrow_mut();
+                ui.properties_window = Some(window);
+                ui.property_pickers = Some(pickers);
+            }
             Err(error) => {
                 app.set_message(error.to_string().into());
                 return;

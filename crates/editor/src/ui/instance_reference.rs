@@ -5,7 +5,7 @@ use std::cell::Cell;
 use crate::InstanceReferenceWindow;
 use session::instance_reference::Changes;
 
-struct Controller {
+pub(super) struct Controller {
     window: InstanceReferenceWindow,
     target: DocumentContinuation,
     token: Cell<Option<u64>>,
@@ -18,6 +18,24 @@ struct Controller {
 }
 
 impl Controller {
+    #[cfg(test)]
+    pub(super) fn window(&self) -> &InstanceReferenceWindow {
+        &self.window
+    }
+
+    #[cfg(test)]
+    pub(super) fn timer_running(&self) -> bool {
+        self.timer.running()
+    }
+
+    pub(super) fn stop_timer(&self) {
+        self.timer.stop();
+    }
+
+    pub(super) fn hide_window(&self, errors: &mut Vec<String>) {
+        super::hide_window("Instance reference", self.window.window(), errors);
+    }
+
     fn with_shared<R>(
         &self,
         report_error: bool,
@@ -457,22 +475,23 @@ impl Controller {
     }
 }
 
-pub(super) fn bind_with_access(app: &AppWindow, access: &DocumentAccess) {
+pub(super) fn bind_with_access(app: &AppWindow, access: &DocumentAccess) -> Option<Rc<Controller>> {
     let controller = match Controller::new_with_access(access) {
         Ok(controller) => controller,
         Err(error) => {
             app.set_message(format!("Instance reference controls unavailable: {error}").into());
-            return;
+            return None;
         }
     };
-    bind_controller(app, controller);
+    bind_controller(app, controller.clone());
+    Some(controller)
 }
 
 fn bind_controller(app: &AppWindow, controller: Rc<Controller>) {
     app.on_create_instance_reference({
-        let (app, controller) = (app.as_weak(), controller.clone());
+        let (app, controller) = (app.as_weak(), Rc::downgrade(&controller));
         move || {
-            let Some(app) = app.upgrade() else {
+            let (Some(app), Some(controller)) = (app.upgrade(), controller.upgrade()) else {
                 return;
             };
             if controller
@@ -485,8 +504,9 @@ fn bind_controller(app: &AppWindow, controller: Rc<Controller>) {
     });
     app.on_edit_instance_reference({
         let app = app.as_weak();
+        let controller = Rc::downgrade(&controller);
         move || {
-            let Some(app) = app.upgrade() else {
+            let (Some(app), Some(controller)) = (app.upgrade(), controller.upgrade()) else {
                 return;
             };
             if controller

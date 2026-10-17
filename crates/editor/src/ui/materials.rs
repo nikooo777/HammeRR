@@ -1133,8 +1133,10 @@ pub(super) fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
         bind_material_favorites_with_access(&window, &access, move || owner.upgrade().is_some());
         bind_material_preview_with_access(&window, &access);
         bind_material_reload_with_access(&window, &access);
-        material_source_ui::bind_with_access(&window, &file_access(ui));
-        ui.borrow_mut().material_window = Some(window);
+        let source = material_source_ui::bind_with_access(&window, &file_access(ui));
+        let mut ui = ui.borrow_mut();
+        ui.material_window = Some(window);
+        ui.material_source = Some(source);
     }
     let shared = session_of(ui);
     let mut session = lock(&shared);

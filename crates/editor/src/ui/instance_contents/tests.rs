@@ -242,9 +242,9 @@ fn instance_binders_preserve_failed_shutdown_error_and_timer_messages_without_re
     let document = crate::test_assets::document(shared.clone());
     let access = DocumentAccess::for_document(document.clone());
     let app = AppWindow::new().unwrap();
-    bind_with_access(&app, &access);
-    super::super::instance_reference::bind_with_access(&app, &access);
-    super::super::instance_extraction::bind_with_access(&app, &access);
+    let _contents = bind_with_access(&app, &access);
+    let _reference = super::super::instance_reference::bind_with_access(&app, &access);
+    let _extraction = super::super::instance_extraction::bind_with_access(&app, &access);
     let controller = Controller::new_with_access(&access).unwrap();
     controller.window.show().unwrap();
     std::fs::write(&recovery, b"not a directory").unwrap();

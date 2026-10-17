@@ -3,7 +3,7 @@ use crate::InstanceExtractionWindow;
 use crate::runtime::{DocumentAccess, DocumentContinuation};
 use std::cell::Cell;
 
-struct Controller {
+pub(super) struct Controller {
     window: InstanceExtractionWindow,
     target: DocumentContinuation,
     token: Cell<Option<u64>>,
@@ -11,6 +11,24 @@ struct Controller {
 }
 
 impl Controller {
+    #[cfg(test)]
+    pub(super) fn window(&self) -> &InstanceExtractionWindow {
+        &self.window
+    }
+
+    #[cfg(test)]
+    pub(super) fn timer_running(&self) -> bool {
+        self.timer.running()
+    }
+
+    pub(super) fn stop_timer(&self) {
+        self.timer.stop();
+    }
+
+    pub(super) fn hide_window(&self, errors: &mut Vec<String>) {
+        super::hide_window("Instance extraction", self.window.window(), errors);
+    }
+
     fn with_shared<R>(
         &self,
         report_error: bool,
@@ -203,18 +221,24 @@ impl Controller {
     }
 }
 
-pub(super) fn bind_with_access(app: &AppWindow, access: &DocumentAccess) {
-    match Controller::new_with_access(access) {
-        Ok(controller) => bind_controller(app, controller),
-        Err(error) => app.set_message(format!("Instance extraction unavailable: {error}").into()),
-    }
+pub(super) fn bind_with_access(app: &AppWindow, access: &DocumentAccess) -> Option<Rc<Controller>> {
+    let controller = match Controller::new_with_access(access) {
+        Ok(controller) => controller,
+        Err(error) => {
+            app.set_message(format!("Instance extraction unavailable: {error}").into());
+            return None;
+        }
+    };
+    bind_controller(app, controller.clone());
+    Some(controller)
 }
 
 fn bind_controller(app: &AppWindow, controller: Rc<Controller>) {
     app.on_extract_instance({
         let app = app.as_weak();
+        let controller = Rc::downgrade(&controller);
         move || {
-            let Some(app) = app.upgrade() else {
+            let (Some(app), Some(controller)) = (app.upgrade(), controller.upgrade()) else {
                 return;
             };
             if controller

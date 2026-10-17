@@ -184,13 +184,34 @@ pub fn bind_properties(
     window: &PropertiesWindow,
     shared: &SharedSession,
 ) -> Result<(), slint::PlatformError> {
-    bind_properties_with_access(window, &DocumentAccess::unmanaged(shared.clone()))
+    bind_properties_with_access(window, &DocumentAccess::unmanaged(shared.clone())).map(|_| ())
 }
 
-pub fn bind_properties_with_access(
+pub(crate) struct PropertyPickers {
+    pub(crate) color: ColorWindow,
+    pub(crate) material: MaterialWindow,
+    pub(crate) sky: Rc<RefCell<Option<crate::sky_assets_ui::Controller>>>,
+}
+
+impl PropertyPickers {
+    pub(crate) fn hide_windows(&self, errors: &mut Vec<String>) {
+        crate::ui::hide_window("Properties Color", self.color.window(), errors);
+        crate::ui::hide_window("Properties Material", self.material.window(), errors);
+        match self.sky.try_borrow() {
+            Ok(sky) => {
+                if let Some(sky) = sky.as_ref() {
+                    crate::ui::hide_window("Properties Sky", sky.window.window(), errors);
+                }
+            }
+            Err(error) => errors.push(format!("Properties Sky is still borrowed: {error}")),
+        }
+    }
+}
+
+pub(crate) fn bind_properties_with_access(
     window: &PropertiesWindow,
     access: &DocumentAccess,
-) -> Result<(), slint::PlatformError> {
+) -> Result<PropertyPickers, slint::PlatformError> {
     window.on_search({
         let (window, access) = (window.as_weak(), access.downgrade());
         move || {
@@ -302,10 +323,14 @@ pub fn bind_properties_with_access(
             slint::CloseRequestResponse::HideWindow
         }
     });
-    bind_color(window, access)?;
-    crate::sky_assets_ui::bind_with_access(window, access);
-    bind_material(window, access)?;
-    Ok(())
+    let color = bind_color(window, access)?;
+    let sky = crate::sky_assets_ui::bind_with_access(window, access);
+    let material = bind_material(window, access)?;
+    Ok(PropertyPickers {
+        color,
+        material,
+        sky,
+    })
 }
 
 fn bind_color(

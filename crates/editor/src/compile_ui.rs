@@ -387,6 +387,16 @@ fn recipe_action(
 
 impl Controller {
     #[cfg(test)]
+    pub(crate) fn baked_lightmaps_window(&self) -> &crate::BakedLightmapsWindow {
+        self.baked_lightmaps.window()
+    }
+
+    pub(crate) fn hide_windows(&self, errors: &mut Vec<String>) {
+        self.baked_lightmaps.hide_window(errors);
+        crate::ui::hide_window("Compile", self.window.window(), errors);
+    }
+
+    #[cfg(test)]
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
         Self::new_with_access(shared, DocumentAccess::unmanaged(shared.clone()))
     }

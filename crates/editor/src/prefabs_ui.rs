@@ -424,6 +424,16 @@ fn callback(
 
 impl Controller {
     #[cfg(test)]
+    pub(crate) fn paste_window(&self) -> &crate::PasteWindow {
+        &self.paste.window
+    }
+
+    pub(crate) fn hide_windows(&self, errors: &mut Vec<String>) {
+        crate::ui::hide_window("Prefab Paste", self.paste.window.window(), errors);
+        crate::ui::hide_window("Prefabs", self.window.window(), errors);
+    }
+
+    #[cfg(test)]
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
         Self::new_with_access(shared, &DocumentAccess::unmanaged(shared.clone()))
     }

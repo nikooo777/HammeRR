@@ -23,6 +23,9 @@ use entities::*;
 mod files;
 use files::*;
 mod admission;
+mod document_window;
+use document_window::DocumentWindow;
+pub(crate) use document_window::hide_window;
 mod root_callbacks;
 use root_callbacks::root_callback;
 mod input;
@@ -61,6 +64,7 @@ struct Ui {
     connection_window: Option<ConnectionWindow>,
     seen_connections: (u64, u64, u64),
     properties_window: Option<PropertiesWindow>,
+    property_pickers: Option<management_ui::PropertyPickers>,
     report_window: Option<ReportWindow>,
     statistics_window: Option<StatisticsWindow>,
     pointfile_window: Option<PointfileWindow>,
@@ -102,6 +106,7 @@ struct Ui {
     prefabs: Option<prefabs_ui::Controller>,
     color_target: Option<(u32, String, u64)>,
     material_window: Option<MaterialWindow>,
+    material_source: Option<Rc<RefCell<Option<material_source_ui::Controller>>>>,
     material_target: Option<(u32, String, u64)>,
     surface_window: Option<SurfaceWindow>,
     atlas: Option<atlas_ui::Controller>,
@@ -185,6 +190,7 @@ impl Ui {
             connection_window: None,
             seen_connections: (0, 0, 0),
             properties_window: None,
+            property_pickers: None,
             report_window: None,
             statistics_window: None,
             pointfile_window: None,
@@ -226,6 +232,7 @@ impl Ui {
             prefabs: None,
             color_target: None,
             material_window: None,
+            material_source: None,
             material_target: None,
             surface_window: None,
             atlas: None,
@@ -582,6 +589,17 @@ pub(super) fn run(
         })
         .select()?;
 
+    let mut window = create_document_window(document, ctx, mcp_status, open_message)?;
+    let primary = window.app().run().map_err(Into::into);
+    window.finish(primary)
+}
+
+fn create_document_window(
+    document: DocumentHandle,
+    ctx: GpuContext,
+    mcp_status: String,
+    open_message: Option<Result<String, String>>,
+) -> Result<DocumentWindow, Box<dyn std::error::Error>> {
     let app = AppWindow::new()?;
     app.set_mcp_status(mcp_status.into());
     app.set_stats(ctx.adapter.get_info().name.into());
@@ -598,11 +616,13 @@ pub(super) fn run(
     let ui = Rc::new(RefCell::new(Ui::for_document(document, ctx)));
 
     app.window().on_close_requested({
-        let (ui, app) = (ui.clone(), app.as_weak());
+        let (owner, app) = (Rc::downgrade(&ui), app.as_weak());
         move || {
-            let window = app.unwrap();
+            let (Some(ui), Some(window)) = (owner.upgrade(), app.upgrade()) else {
+                return slint::CloseRequestResponse::HideWindow;
+            };
             let app = app.clone();
-            let owner = Rc::downgrade(&ui);
+            let owner = owner.clone();
             confirm_discard(&window, &ui, move |continuation, review| {
                 let (Some(app), Some(_ui)) = (app.upgrade(), owner.upgrade()) else {
                     return;
@@ -1816,9 +1836,9 @@ pub(super) fn run(
     root_callback!(app, ui, on_options_changed, |app| {
         apply_view_controls(app.unwrap(), &session_of(&ui));
     });
-    instance_contents::bind_with_access(&app, &file_access(&ui));
-    instance_reference::bind_with_access(&app, &file_access(&ui));
-    instance_extraction::bind_with_access(&app, &file_access(&ui));
+    let instance_contents = instance_contents::bind_with_access(&app, &file_access(&ui));
+    let instance_reference = instance_reference::bind_with_access(&app, &file_access(&ui));
+    let instance_extraction = instance_extraction::bind_with_access(&app, &file_access(&ui));
     app.on_key({
         let scope = admission::Callback::new(&app, &ui, &file_access(&ui));
         move |text, down, control, shift, alt, meta| {
@@ -3318,8 +3338,14 @@ pub(super) fn run(
         }
     });
 
-    app.run()?;
-    Ok(())
+    Ok(DocumentWindow::new(
+        app,
+        ui,
+        frame_timer,
+        instance_contents,
+        instance_reference,
+        instance_extraction,
+    ))
 }
 
 #[cfg(test)]

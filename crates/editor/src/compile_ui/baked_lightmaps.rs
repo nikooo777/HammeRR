@@ -362,6 +362,10 @@ fn lists_current(
 }
 
 impl Form {
+    pub(super) fn hide_window(&self, errors: &mut Vec<String>) {
+        crate::ui::hide_window("Baked lightmaps", self.window.window(), errors);
+    }
+
     #[cfg(test)]
     pub(super) fn window(&self) -> &BakedLightmapsWindow {
         &self.window

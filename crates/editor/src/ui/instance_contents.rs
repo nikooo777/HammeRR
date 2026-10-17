@@ -4,7 +4,7 @@ use std::cell::Cell;
 
 use crate::InstanceContentsWindow;
 
-struct Controller {
+pub(super) struct Controller {
     window: InstanceContentsWindow,
     target: DocumentContinuation,
     offset: Cell<usize>,
@@ -31,6 +31,24 @@ fn coordinates(value: &serde_json::Value) -> String {
 }
 
 impl Controller {
+    #[cfg(test)]
+    pub(super) fn window(&self) -> &InstanceContentsWindow {
+        &self.window
+    }
+
+    #[cfg(test)]
+    pub(super) fn timer_running(&self) -> bool {
+        self.timer.running()
+    }
+
+    pub(super) fn stop_timer(&self) {
+        self.timer.stop();
+    }
+
+    pub(super) fn hide_window(&self, errors: &mut Vec<String>) {
+        super::hide_window("Instance contents", self.window.window(), errors);
+    }
+
     fn with_shared<R>(
         &self,
         report_error: bool,
@@ -335,22 +353,24 @@ impl Controller {
     }
 }
 
-pub(super) fn bind_with_access(app: &AppWindow, access: &DocumentAccess) {
+pub(super) fn bind_with_access(app: &AppWindow, access: &DocumentAccess) -> Option<Rc<Controller>> {
     let controller = match Controller::new_with_access(access) {
         Ok(controller) => controller,
         Err(error) => {
             app.set_message(format!("Instance controls unavailable: {error}").into());
-            return;
+            return None;
         }
     };
-    bind_controller(app, controller);
+    bind_controller(app, controller.clone());
+    Some(controller)
 }
 
 fn bind_controller(app: &AppWindow, controller: Rc<Controller>) {
     app.on_inspect_instance_contents({
         let app = app.as_weak();
+        let controller = Rc::downgrade(&controller);
         move || {
-            let Some(app) = app.upgrade() else {
+            let (Some(app), Some(controller)) = (app.upgrade(), controller.upgrade()) else {
                 return;
             };
             if controller

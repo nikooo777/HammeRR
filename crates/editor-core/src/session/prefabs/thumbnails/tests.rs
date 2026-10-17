@@ -18,7 +18,11 @@ fn seed_cache(session: &Session, name: &str) -> Arc<RgbaImage> {
     seed_style_cache(session, name, ThumbnailStyle::Flat)
 }
 
-fn seed_style_cache(session: &Session, name: &str, style: ThumbnailStyle) -> Arc<RgbaImage> {
+pub(in crate::session::prefabs) fn seed_style_cache(
+    session: &Session,
+    name: &str,
+    style: ThumbnailStyle,
+) -> Arc<RgbaImage> {
     let source = session.thumbnail_source(name).unwrap();
     let prepared = session.prepare_prefab_thumbnail(&source, style).unwrap();
     let image = Arc::new(RgbaImage {
@@ -42,7 +46,17 @@ fn seed_style_cache(session: &Session, name: &str, style: ThumbnailStyle) -> Arc
                 report: prepared.report,
             },
         });
+    session.prefabs.thumbnails.changed();
     image
+}
+
+pub(in crate::session::prefabs) fn cache_count(session: &Session) -> usize {
+    session.prefabs.thumbnails.cache.borrow().len()
+}
+
+pub(in crate::session::prefabs) fn clear_cache(session: &Session) {
+    session.prefabs.thumbnails.cache.borrow_mut().clear();
+    session.prefabs.thumbnails.changed();
 }
 
 #[test]

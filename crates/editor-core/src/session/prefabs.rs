@@ -9,6 +9,8 @@ use std::path::PathBuf;
 
 mod thumbnails;
 pub use thumbnails::{Thumbnail, ThumbnailStyle};
+mod gallery;
+pub use gallery::{Gallery, GalleryEntry, GalleryReview, MAX_GALLERY_ENTRIES};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Placement {

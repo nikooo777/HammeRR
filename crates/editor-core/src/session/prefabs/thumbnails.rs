@@ -1,4 +1,8 @@
-use std::{cell::RefCell, collections::VecDeque, sync::Arc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::VecDeque,
+    sync::Arc,
+};
 
 use glam::Vec3;
 use map_core::transfer;
@@ -20,7 +24,7 @@ pub enum ThumbnailStyle {
 }
 
 impl ThumbnailStyle {
-    fn label(self) -> &'static str {
+    pub(super) fn label(self) -> &'static str {
         match self {
             Self::Flat => "flat_geometry",
             Self::Textured => "textured",
@@ -30,7 +34,7 @@ impl ThumbnailStyle {
 
 const WIDTH: u32 = 320;
 const HEIGHT: u32 = 240;
-const MAX_CACHE: usize = 8;
+const MAX_CACHE: usize = super::MAX_GALLERY_ENTRIES;
 const MAX_SOURCE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_BRUSHES: usize = 128;
 const MAX_SIDES: usize = 1024;
@@ -62,6 +66,22 @@ pub(super) struct State {
     cache: RefCell<VecDeque<Cached>>,
     renderer: PreviewRenderer,
     error: Option<String>,
+    serial: Cell<u64>,
+}
+
+impl State {
+    fn changed(&self) {
+        self.serial.set(self.serial.get().saturating_add(1));
+    }
+
+    fn retain(&self, predicate: impl FnMut(&Cached) -> bool) {
+        let mut cache = self.cache.borrow_mut();
+        let previous = cache.len();
+        cache.retain(predicate);
+        if cache.len() != previous {
+            self.changed();
+        }
+    }
 }
 
 struct Source {
@@ -110,6 +130,10 @@ fn geometry_bounds(mesh: &SceneMesh) -> Result<(Vec3, Vec3), String> {
 }
 
 impl Session {
+    pub fn prefab_thumbnail_serial(&self) -> u64 {
+        self.prefabs.thumbnails.serial.get()
+    }
+
     fn thumbnail_source(&self, name: &str) -> Result<Source, String> {
         prefabs::name(name)?;
         let (snapshot, _) = self.prefab_snapshot()?;
@@ -138,23 +162,33 @@ impl Session {
     ) -> Result<Option<Thumbnail>, String> {
         let epoch = (self.content_epoch, self.definitions_serial);
         let mut cache = self.prefabs.thumbnails.cache.borrow_mut();
+        let previous_len = cache.len();
         cache.retain(|cached| {
             cached.epoch == epoch
                 && (cached.source.name != source.entry.name
                     || (cached.source == source.entry && cached.text == source.text))
         });
+        if previous_len != cache.len() {
+            self.prefabs.thumbnails.changed();
+        }
         let Some(index) = cache.iter().position(|cached| {
             cached.style == style && cached.source == source.entry && cached.text == source.text
         }) else {
             return Ok(None);
         };
         let cached = cache.remove(index).expect("located cache entry");
-        textures::verify(&self.game, &cached.assets)?;
-        let current = self.thumbnail_source(&source.entry.name)?;
-        if current.entry != source.entry || current.text != source.text {
-            return Err(
-                "Prefab changed while checking its cached thumbnail; refresh and retry".into(),
-            );
+        let verified = textures::verify(&self.game, &cached.assets).and_then(|()| {
+            let current = self.thumbnail_source(&source.entry.name)?;
+            if current.entry != source.entry || current.text != source.text {
+                return Err(
+                    "Prefab changed while checking its cached thumbnail; refresh and retry".into(),
+                );
+            }
+            Ok(())
+        });
+        if let Err(error) = verified {
+            self.prefabs.thumbnails.changed();
+            return Err(error);
         }
         let mut thumbnail = cached.thumbnail.clone();
         thumbnail.report["cached"] = json!(true);
@@ -388,8 +422,6 @@ impl Session {
         let mut report = result.unwrap_or_else(|error| {
             self.prefabs
                 .thumbnails
-                .cache
-                .borrow_mut()
                 .retain(|cached| cached.source.name != name || cached.style != style);
             json!({"name":name,"style":style.label(),"error":error,"limits":limits()})
         });
@@ -411,8 +443,6 @@ impl Session {
             Err(error) => {
                 self.prefabs
                     .thumbnails
-                    .cache
-                    .borrow_mut()
                     .retain(|cached| cached.source.name != name);
                 Err(error)
             }
@@ -432,8 +462,6 @@ impl Session {
         if refresh {
             self.prefabs
                 .thumbnails
-                .cache
-                .borrow_mut()
                 .retain(|cached| cached.source.name != name || cached.style != style);
         }
         let result = self.render_prefab_thumbnail(name, style);
@@ -441,8 +469,6 @@ impl Session {
         if result.is_err() {
             self.prefabs
                 .thumbnails
-                .cache
-                .borrow_mut()
                 .retain(|cached| cached.source.name != name || cached.style != style);
         }
         result
@@ -493,6 +519,7 @@ impl Session {
         while cache.len() >= MAX_CACHE {
             cache.pop_front();
         }
+        self.prefabs.thumbnails.changed();
         cache.push_back(Cached {
             style,
             assets: prepared.assets,
@@ -506,6 +533,6 @@ impl Session {
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;
 #[cfg(test)]
 mod textured_tests;

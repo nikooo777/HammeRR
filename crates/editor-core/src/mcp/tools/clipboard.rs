@@ -1,5 +1,21 @@
 use super::super::*;
 
+fn prefab_png(thumbnail: &crate::session::prefabs::Thumbnail) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    let mut encoder = png::Encoder::new(
+        Cursor::new(&mut bytes),
+        thumbnail.image.width,
+        thumbnail.image.height,
+    );
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder
+        .write_header()
+        .and_then(|mut writer| writer.write_image_data(&thumbnail.image.pixels))
+        .map_err(|error| format!("Could not encode prefab thumbnail: {error}"))?;
+    Ok(bytes)
+}
+
 #[tool_router(router = clipboard_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
@@ -175,20 +191,10 @@ impl EditorServer {
             Ok(thumbnail) => thumbnail,
             Err(error) => return fail(error),
         };
-        let mut bytes = Vec::new();
-        let mut encoder = png::Encoder::new(
-            Cursor::new(&mut bytes),
-            thumbnail.image.width,
-            thumbnail.image.height,
-        );
-        encoder.set_color(png::ColorType::Rgba);
-        encoder.set_depth(png::BitDepth::Eight);
-        let result = encoder
-            .write_header()
-            .and_then(|mut writer| writer.write_image_data(&thumbnail.image.pixels));
-        if let Err(error) = result {
-            return fail(format!("Could not encode prefab thumbnail: {error}"));
-        }
+        let bytes = match prefab_png(&thumbnail) {
+            Ok(bytes) => bytes,
+            Err(error) => return fail(error),
+        };
         Ok(CallToolResult::success(vec![
             ContentBlock::text(thumbnail.report.to_string()),
             ContentBlock::image(
@@ -196,6 +202,56 @@ impl EditorServer {
                 "image/png",
             ),
         ]))
+    }
+
+    #[tool(
+        description = "Render one reviewed prefab library page as up to eight 320×240 PNG cards. Requires get_prefabs.snapshot; query/offset choose that catalog page, limit is1–8 (default8), style is flat (default) or textured. Uses the same lazy Session renderer and eight-image cache as Prefabs… → Render page. Source bytes, assets and final catalog are rechecked before returning. Unsupported or malformed entries have individual errors and no image; Textured never substitutes Flat. A stale catalog rejects the whole page. The first text block contains ordered entries with name and image_content_index into this result's content array, or an error. No map, clipboard, selection, placement review, camera or history changes.",
+        annotations(read_only_hint = true)
+    )]
+    pub(in crate::mcp) fn render_prefab_gallery(
+        &self,
+        Parameters(args): Parameters<RenderPrefabGalleryArgs>,
+    ) -> ToolResult {
+        let gallery = match self.session().render_prefab_gallery(
+            args.query.as_deref().unwrap_or_default(),
+            args.offset.unwrap_or_default(),
+            args.limit
+                .unwrap_or(crate::session::prefabs::MAX_GALLERY_ENTRIES),
+            args.style.unwrap_or_default(),
+            &args.snapshot,
+        ) {
+            Ok(gallery) => gallery,
+            Err(error) => return fail(error),
+        };
+        let mut report = gallery.report;
+        let mut images = Vec::new();
+        for (index, entry) in gallery.entries.into_iter().enumerate() {
+            if let Ok(thumbnail) = entry.thumbnail {
+                match prefab_png(&thumbnail) {
+                    Ok(bytes) => {
+                        report["entries"][index]["image_content_index"] = json!(images.len() + 1);
+                        images.push(ContentBlock::image(
+                            base64::engine::general_purpose::STANDARD.encode(bytes),
+                            "image/png",
+                        ));
+                    }
+                    Err(error) => report["entries"][index]["error"] = json!(error),
+                }
+            }
+        }
+        let mut content = vec![ContentBlock::text(report.to_string())];
+        content.extend(images);
+        if let Err(error) = self.session().validate_prefab_gallery(
+            &gallery.review,
+            args.query.as_deref().unwrap_or_default(),
+            args.offset.unwrap_or_default(),
+            args.limit
+                .unwrap_or(crate::session::prefabs::MAX_GALLERY_ENTRIES),
+            args.style.unwrap_or_default(),
+        ) {
+            return fail(error);
+        }
+        Ok(CallToolResult::success(content))
     }
 
     #[tool(
@@ -264,5 +320,7 @@ impl EditorServer {
 
 #[cfg(test)]
 mod authority_tests;
+#[cfg(test)]
+mod gallery_tests;
 #[cfg(test)]
 mod thumbnail_tests;

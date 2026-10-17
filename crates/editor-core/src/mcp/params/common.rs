@@ -399,6 +399,19 @@ pub struct RenderPrefabThumbnailArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct RenderPrefabGalleryArgs {
+    /// Reviewed get_prefabs.snapshot; stale catalog, selection or clipboard state rejects the page.
+    pub snapshot: String,
+    pub query: Option<String>,
+    pub offset: Option<usize>,
+    /// Number of entries, 1–8; default 8.
+    pub limit: Option<usize>,
+    /// flat (default) or textured; unsupported assets produce per-entry errors without substitution.
+    pub style: Option<crate::session::prefabs::ThumbnailStyle>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SavePrefabArgs {
     pub name: String,
     pub snapshot: String,

@@ -23,6 +23,37 @@ def render(client, name, refresh=False):
     return png, metadata
 
 
+def gallery(client, query="", offset=0, limit=8, style="flat"):
+    result = client.rpc(
+        "tools/call",
+        {
+            "name": "render_prefab_gallery",
+            "arguments": {
+                "snapshot": report(client)["snapshot"],
+                "query": query,
+                "offset": offset,
+                "limit": limit,
+                "style": style,
+            },
+        },
+    )
+    assert not result.get("isError"), result
+    metadata = json.loads(result["content"][0]["text"])
+    images = {}
+    for entry in metadata["entries"]:
+        if "image_content_index" not in entry:
+            assert isinstance(entry.get("error"), str), entry
+            continue
+        block = result["content"][entry["image_content_index"]]
+        assert block["type"] == "image" and block["mimeType"] == "image/png", block
+        png = base64.b64decode(block["data"])
+        assert png.startswith(b"\x89PNG\r\n\x1a\n")
+        assert struct.unpack(">II", png[16:24]) == (320, 240)
+        images[entry["name"]] = png
+    assert len(result["content"]) == len(images) + 1
+    return metadata, images
+
+
 def validate(args):
     checks = []
 
@@ -34,8 +65,8 @@ def validate(args):
     client = launch(args.binary, args.output / "session", library)
     try:
         schemas = {tool["name"]: tool["inputSchema"] for tool in client.rpc("tools/list", {})["tools"]}
-        names = {"inspect_prefab_thumbnail", "render_prefab_thumbnail"}
-        check(names <= schemas.keys(), "Both prefab visual tools are discoverable")
+        names = {"inspect_prefab_thumbnail", "render_prefab_thumbnail", "render_prefab_gallery"}
+        check(names <= schemas.keys(), "Prefab thumbnail and gallery tools are discoverable")
         check(all(schemas[name].get("additionalProperties") is False for name in names), "Thumbnail tools reject unknown settings")
         brush = client.call("create_block", {"mins": [0, 0, 0], "maxs": [96, 32, 12], "material": "dev/missing_a"})["id"]
         upright = client.call("create_block", {"mins": [0, 0, 12], "maxs": [16, 32, 96], "material": "dev/missing_a"})["id"]
@@ -57,6 +88,14 @@ def validate(args):
         camera = client.call("get_camera")
         geometry = detail(client, ids)
 
+        rejected = client.call(
+            "render_prefab_gallery", {"snapshot": report(client)["snapshot"], "limit": 9}, error=True
+        )
+        check(all(block["type"] != "image" for block in rejected["content"]), "Oversized gallery pages reject without images")
+        unsupported, unsupported_images = gallery(client, style="textured")
+        check(not unsupported_images and all(entry.get("error") and entry["style"] == "textured" for entry in unsupported["entries"]), "Unsupported Textured gallery entries report errors without Flat substitution")
+        check(client.call("inspect_prefab_thumbnail", {"name": "Visual assembly"})["graphics"]["initialized"] is False, "Rejected and unsupported gallery requests keep graphics lazy")
+
         if not args.cpu_only:
             png, metadata = render(client, "Visual assembly")
             (args.output / "prefab-thumbnail.png").write_bytes(png)
@@ -65,6 +104,32 @@ def validate(args):
             check(cached["cached"] is True and cached_png == png, "Repeated retrieval returns identical cached PNG pixels")
             refreshed_png, refreshed = render(client, "Visual assembly", refresh=True)
             check(refreshed["cached"] is False and refreshed_png == png, "Explicit refresh regenerates the same geometry image")
+            page, images = gallery(client)
+            check([entry["name"] for entry in page["entries"]] == ["Smaller assembly", "Visual assembly"], "Gallery preserves the reviewed ordered library page")
+            check(set(images) == {"Smaller assembly", "Visual assembly"} and images["Visual assembly"] == png, "Named gallery content indices match actual selected-thumbnail PNGs")
+            filtered, filtered_images = gallery(client, query="Visual", limit=1)
+            check(len(filtered["entries"]) == 1 and set(filtered_images) == {"Visual assembly"}, "Gallery query and limit render only the requested page")
+            broken = library / "A broken.vmf"
+            broken.write_text("invalid source")
+            mixed, mixed_images = gallery(client)
+            check(mixed["entries"][0].get("error") and "image_content_index" not in mixed["entries"][0] and len(mixed_images) == 2, "A failed card has no image while valid sibling cards retain named PNGs")
+            broken.unlink()
+            stale = report(client)["snapshot"]
+            broken.write_text("invalid source")
+            failed = client.call("render_prefab_gallery", {"snapshot": stale}, error=True)
+            check(all(block["type"] != "image" for block in failed["content"]), "A stale gallery review discards the whole image page")
+            broken.unlink()
+            extra = []
+            for index in range(7):
+                path_extra = library / f"Extra {index}.vmf"
+                path_extra.write_bytes((library / "Smaller assembly.vmf").read_bytes())
+                extra.append(path_extra)
+            bounded, bounded_images = gallery(client)
+            check(len(bounded["entries"]) == len(bounded_images) == 8 and bounded["next_offset"] == 8, "Gallery rendering retains the eight-card page bound")
+            for path_extra in extra:
+                path_extra.unlink()
+            primed_png, _ = render(client, "Visual assembly")
+            check(primed_png == png and client.call("inspect_prefab_thumbnail", {"name": "Visual assembly"})["cached"] is True, "Visual source is cached before exact-byte invalidation coverage")
             previous = path.stat()
             changed = original.replace(b"DEV/MISSING_A", b"DEV/MISSING_B")
             check(changed != original and len(changed) == len(original), "Same-size source edit fixture changes real VMF bytes")

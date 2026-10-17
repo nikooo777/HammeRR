@@ -1,9 +1,43 @@
-import {Button,CheckBox,ComboBox,LineEdit,ListView,ScrollView} from "std-widgets.slint";
-export struct PrefabRow {name:string,detail:string}
+import {Button,CheckBox,ComboBox,LineEdit,ScrollView} from "std-widgets.slint";
+export struct PrefabRow {name:string,detail:string,thumbnail:image,has-image:bool,status:string}
+export struct PrefabGalleryRow {first:PrefabRow,second:PrefabRow,has-second:bool}
+component PrefabCard inherits Rectangle {
+    in property <PrefabRow> entry;
+    in property <bool> selected;
+    in property <bool> enabled;
+    callback choose();
+    forward-focus:card-focus;
+    accessible-role:button;
+    accessible-label:root.entry.name;
+    accessible-enabled:root.enabled;
+    accessible-action-default=>{if root.enabled {root.choose();}}
+    height:166px;horizontal-stretch:1;border-radius:8px;
+    background:root.selected?#303e52:touch.has-hover?#252f3e:#1c2430;
+    border-width:1px;border-color:root.selected||card-focus.has-focus?#82b5f7:#354252;
+    VerticalLayout {
+        padding:7px;spacing:5px;
+        Rectangle {
+            height:106px;background:#141c27;border-radius:5px;clip:true;
+            if root.entry.has-image:Image {source:root.entry.thumbnail;image-fit:contain;width:parent.width;height:parent.height;}
+            if !root.entry.has-image:Text {text:root.entry.status==""?"Render page":root.entry.status;width:parent.width;height:parent.height;horizontal-alignment:center;vertical-alignment:center;wrap:word-wrap;color:#95a6bc;font-size:11px;}
+        }
+        Text {text:root.entry.name;overflow:elide;font-size:12px;font-weight:600;color:#e6ecf5;}
+        Text {text:root.entry.detail;overflow:elide;font-size:10px;color:#a4b2c6;}
+    }
+    card-focus:=FocusScope {
+        width:0px;height:0px;enabled:root.enabled;
+        key-pressed(event)=>{if event.text==Key.Space||event.text==Key.Return {root.choose();accept}else{reject}}
+    }
+    touch:=TouchArea {enabled:root.enabled;mouse-cursor:pointer;clicked=>{card-focus.focus();root.choose();}}
+}
 export component PrefabsWindow inherits Window {
     title:"Prefab library - HammeRR";
     preferred-width:1000px;preferred-height:880px;
     in property <[PrefabRow]> entries;
+    in property <[PrefabGalleryRow]> gallery-rows;
+    in property <bool> gallery-rendered;
+    in property <string> gallery-status;
+    in property <bool> can-render-gallery;
     in property <string> selected;
     in property <string> page-label;
     in property <string> detail;
@@ -50,6 +84,7 @@ export component PrefabsWindow inherits Window {
     callback rename();
     callback preview();
     callback render-thumbnail();
+    callback render-gallery();
     callback thumbnail-style-changed();
     callback cancel();
     callback close-dialog();
@@ -72,16 +107,26 @@ export component PrefabsWindow inherits Window {
             HorizontalLayout {
                 spacing:20px;vertical-stretch:1;
                 VerticalLayout {
-                    width:320px;spacing:8px;
+                    width:360px;spacing:8px;
                     LineEdit {text<=>root.query;placeholder-text:"Find a prefab";enabled:!root.editing;edited=>{root.search();}}
-                    ListView {
-                        min-height:220px;
-                        for entry in root.entries: VerticalLayout {
-                            padding-bottom:8px;spacing:4px;
-                            Button {text:(root.selected==entry.name?"● ":"")+entry.name;enabled:!root.editing;clicked=>{root.choose(entry.name);}}
-                            Text {text:entry.detail;font-size:12px;color:#bac2ce;}
+                    HorizontalLayout {
+                        spacing:8px;
+                        ComboBox {model:["Flat","Textured"];current-index<=>root.thumbnail-style;accessible-label:"Gallery style";enabled:!root.editing;selected=>{root.thumbnail-style-changed();}}
+                        Button {text:"Render page";enabled:root.can-render-gallery&&!root.editing;clicked=>{root.render-gallery();}}
+                    }
+                    ScrollView {
+                        min-height:220px;vertical-stretch:1;
+                        VerticalLayout {
+                            spacing:9px;
+                            for row in root.gallery-rows:HorizontalLayout {
+                                spacing:9px;
+                                PrefabCard {entry:row.first;selected:root.selected==row.first.name;enabled:!root.editing;choose=>{root.choose(row.first.name);}}
+                                if row.has-second:PrefabCard {entry:row.second;selected:root.selected==row.second.name;enabled:!root.editing;choose=>{root.choose(row.second.name);}}
+                                if !row.has-second:Rectangle {horizontal-stretch:1;}
+                            }
                         }
                     }
+                    Text {text:root.gallery-status;wrap:word-wrap;color:#a4b2c6;font-size:11px;}
                     HorizontalLayout {
                         spacing:6px;
                         Button {text:"Previous";enabled:root.previous&&!root.editing;clicked=>{root.page(-1);}}
@@ -103,20 +148,14 @@ export component PrefabsWindow inherits Window {
                       vertical-stretch:1;
                       VerticalLayout {
                         spacing:8px;
-                        Rectangle {
+                        if !root.gallery-rendered:Rectangle {
                             height:240px;horizontal-stretch:1;background:#202733;border-radius:8px;
                             if root.has-thumbnail: Image {source:root.thumbnail;image-fit:contain;}
                             if !root.has-thumbnail: Text {text:root.selected==""?"Choose a prefab to inspect its shape":root.thumbnail-style==0?"Render a flat geometry thumbnail":"Render a textured thumbnail";horizontal-alignment:center;vertical-alignment:center;wrap:word-wrap;color:#919aaa;}
                         }
                         HorizontalLayout {
                             spacing:8px;
-                            Text {text:"Thumbnail";color:#bac2ce;vertical-alignment:center;}
-                            ComboBox {
-                                model: ["Flat", "Textured"];
-                                current-index <=> root.thumbnail-style;
-                                accessible-label: "Thumbnail style";
-                                selected => { root.thumbnail-style-changed(); }
-                            }
+                            Text {text:"Selected thumbnail";color:#bac2ce;vertical-alignment:center;}
                             Text {text:"320 × 240";color:#bac2ce;vertical-alignment:center;horizontal-stretch:1;}
                             Button {text:root.has-thumbnail?"Refresh thumbnail":"Render thumbnail";enabled:root.can-render-thumbnail||(root.thumbnail-style==1&&root.selected!="");clicked=>{root.render-thumbnail();}}
                         }

@@ -38,6 +38,153 @@ fn fixture() -> (tempfile::TempDir, GameFs) {
     .unwrap();
     (directory, fs)
 }
+
+fn linear(value: u8) -> f64 {
+    let value = f64::from(value) / 255.0;
+    if value <= 0.04045 {
+        value / 12.92
+    } else {
+        ((value + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+fn encoded(value: f64) -> u8 {
+    let value = if value <= 0.0031308 {
+        value * 12.92
+    } else {
+        1.055 * value.powf(1.0 / 2.4) - 0.055
+    };
+    (value.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
+fn render_icons(
+    context: &crate::GpuContext,
+    renderer: &mut crate::Renderer,
+    mesh: &crate::SceneMesh,
+    materials: &crate::MaterialLibrary,
+    camera: &crate::Camera,
+) -> Vec<u8> {
+    let gpu = renderer.upload(context, mesh, materials);
+    renderer.render_to_rgba(
+        context,
+        &gpu,
+        camera,
+        &crate::ViewOptions {
+            grid_visible: false,
+            ..Default::default()
+        },
+        65,
+        65,
+    )
+}
+
+#[test]
+#[ignore = "requires an offscreen GPU; run explicitly with --ignored"]
+fn additive_sprite_rgb_matches_independent_blend_reference_and_mixed_camera_order() {
+    let (directory, fs) = fixture();
+    let context = crate::GpuContext::new().unwrap();
+    let mut renderer = crate::Renderer::new(&context);
+    let mut materials = crate::MaterialLibrary::default();
+    let document = map_core::Document::empty();
+    let mut mesh =
+        crate::SceneMesh::build(document.vmf(), &fs, &mut materials, &Default::default());
+    let top = crate::Camera::looking_at(glam::Vec3::Z * 96.0, glam::Vec3::ZERO);
+    let bottom = crate::Camera::looking_at(glam::Vec3::NEG_Z * 96.0, glam::Vec3::ZERO);
+    let options = crate::ViewOptions {
+        grid_visible: false,
+        ..Default::default()
+    };
+    let center = (32 * 65 + 32) * 4;
+    let clear = render_icons(&context, &mut renderer, &mesh, &materials, &top);
+    std::fs::write(
+        directory.path().join("materials/icon.vtf"),
+        image(2, 0, &[0, 0, 0, 255, 0, 0, 0, 255]),
+    )
+    .unwrap();
+    let library = Library::default();
+    let black = library.load(&fs, "icon");
+    mesh.icons = vec![Instance {
+        center: [0.0; 3],
+        world_size: [32.0; 2],
+        asset: black.clone(),
+        blend: Blend::Alpha,
+    }];
+    let raw = render_icons(&context, &mut renderer, &mesh, &materials, &top);
+    assert_eq!(&raw[center..center + 3], &[0; 3]);
+    mesh.icons[0].blend = Blend::Additive;
+    assert_eq!(
+        render_icons(&context, &mut renderer, &mesh, &materials, &top),
+        clear
+    );
+    std::fs::write(
+        directory.path().join("materials/icon.vtf"),
+        image(2, 0, &[128, 64, 32, 128, 128, 64, 32, 128]),
+    )
+    .unwrap();
+    let asset = Library::default().load(&fs, "icon");
+    mesh.icons = vec![
+        Instance {
+            center: [0.0, 0.0, 1.0],
+            world_size: [32.0; 2],
+            asset: asset.clone(),
+            blend: Blend::Alpha,
+        },
+        Instance {
+            center: [0.0, 0.0, -1.0],
+            world_size: [32.0; 2],
+            asset: asset.clone(),
+            blend: Blend::Additive,
+        },
+    ];
+    let a = 128.0 / 255.0;
+    let gpu = renderer.upload(&context, &mesh, &materials);
+    for (camera, far_additive) in [(&top, true), (&bottom, false)] {
+        let pixels = renderer.render_to_rgba(&context, &gpu, camera, &options, 65, 65);
+        for (channel, (source, background)) in [128, 64, 32]
+            .into_iter()
+            .zip([0.012, 0.014, 0.018])
+            .enumerate()
+        {
+            let source = linear(source);
+            let expected = if far_additive {
+                (background + source * a) * (1.0 - a) + source * a
+            } else {
+                background * (1.0 - a) + source * a + source * a
+            };
+            assert!(
+                pixels[center + channel].abs_diff(encoded(expected)) <= 2,
+                "camera{far_additive} channel{channel}: {} expected{}",
+                pixels[center + channel],
+                encoded(expected)
+            );
+        }
+        assert_eq!(pixels[center + 3], 255);
+    }
+    mesh.icons[0].center = [0.0; 3];
+    mesh.icons[1].center = [0.0; 3];
+    let tied = render_icons(&context, &mut renderer, &mesh, &materials, &top);
+    mesh.icons.reverse();
+    let reversed = render_icons(&context, &mut renderer, &mesh, &materials, &top);
+    assert_ne!(&tied[center..center + 3], &reversed[center..center + 3]);
+    assert!(Arc::ptr_eq(&mesh.icons[0].asset, &mesh.icons[1].asset));
+    let mut occluder = map_core::Document::empty();
+    occluder
+        .edit("occluder", |tx| {
+            map_core::edit::create_block(
+                tx,
+                glam::DVec3::new(-16.0, -16.0, 1.0),
+                glam::DVec3::new(16.0, 16.0, 2.0),
+                "icon",
+            )
+        })
+        .unwrap();
+    let mut blocked =
+        crate::SceneMesh::build(occluder.vmf(), &fs, &mut materials, &Default::default());
+    let baseline = render_icons(&context, &mut renderer, &blocked, &materials, &top);
+    blocked.icons = mesh.icons;
+    let hidden = render_icons(&context, &mut renderer, &blocked, &materials, &top);
+    assert_eq!(&baseline[center..center + 4], &hidden[center..center + 4]);
+}
 #[test]
 fn static_rgba_icon_retains_alpha_aspect_and_exact_winning_sources() {
     let (directory, fs) = fixture();

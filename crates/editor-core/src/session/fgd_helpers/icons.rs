@@ -20,6 +20,7 @@ impl Session {
         evaluation: &Evaluation,
         inspected: Option<u32>,
         enabled: bool,
+        additive: bool,
     ) -> BTreeMap<u32, Row> {
         let context = super::classification::Context::new(evaluation, self.selection());
         let entities = context.entities(document, inspected, false);
@@ -39,8 +40,14 @@ impl Session {
                 || class.helpers.iter().any(|helper| helper.name == "sprite")
             {
                 let facts = context.facts(entity, class);
-                let (report, instance) =
-                    super::sprites::row(self, class, entity, &facts, enabled, displayed);
+                let (report, instance) = super::sprites::row(
+                    self,
+                    class,
+                    entity,
+                    &facts,
+                    (enabled, additive),
+                    displayed,
+                );
                 if report.displayed {
                     displayed += 1;
                 }
@@ -149,6 +156,7 @@ impl Session {
                     center: entity.origin().unwrap().as_vec3().to_array(),
                     world_size: report.world_size,
                     asset,
+                    blend: render::icons::Blend::Alpha,
                 })
             } else {
                 None
@@ -175,23 +183,54 @@ impl Session {
     ) -> (Option<Report>, Option<super::sprites::Report>) {
         let document = self.render_document();
         let evaluation = self.working_evaluation(document);
-        self.image_rows(document, &evaluation, Some(id), self.view().entity_images)
-            .remove(&id)
-            .map_or((None, None), |row| (row.icon, row.sprite))
+        let view = self.view();
+        self.image_rows(
+            document,
+            &evaluation,
+            Some(id),
+            view.entity_images,
+            view.additive_sprite_guides,
+        )
+        .remove(&id)
+        .map_or((None, None), |row| (row.icon, row.sprite))
     }
     pub(in crate::session) fn fgd_icon_instances(
         &self,
         document: &Document,
         evaluation: &Evaluation,
         enabled: bool,
+        additive: bool,
     ) -> BTreeMap<u32, Instance> {
         if !enabled {
             return BTreeMap::new();
         }
-        self.image_rows(document, evaluation, None, enabled)
+        self.image_rows(document, evaluation, None, enabled, additive)
             .into_iter()
             .filter_map(|(id, row)| row.instance.map(|instance| (id, instance)))
             .collect()
+    }
+
+    pub fn sprite_guide_preview_state(&self, view: render::ViewOptions) -> serde_json::Value {
+        let document = self.render_document();
+        let evaluation = self.working_evaluation(document);
+        let rows = self.image_rows(
+            document,
+            &evaluation,
+            None,
+            view.entity_images,
+            view.additive_sprite_guides,
+        );
+        let mut total = 0;
+        let mut reports = Vec::new();
+        for (id, row) in rows {
+            if let Some(report) = row.sprite {
+                total += 1;
+                if reports.len() < render::icons::MAX_INSTANCES {
+                    reports.push(serde_json::json!({"id":id,"guide":report}));
+                }
+            }
+        }
+        serde_json::json!({"requested":view.additive_sprite_guides,"entity_images":view.entity_images,"total":total,"truncated":total>reports.len(),"guides":reports,"limits":super::sprites::LIMITS})
     }
 }
 

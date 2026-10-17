@@ -102,11 +102,19 @@ pub struct Asset {
     pub report: Report,
     pub material: Option<MaterialInfo>,
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Blend {
+    #[default]
+    Alpha,
+    Additive,
+}
+
 #[derive(Debug, Clone)]
 pub struct Instance {
     pub center: [f32; 3],
     pub world_size: [f32; 2],
     pub asset: Arc<Asset>,
+    pub blend: Blend,
 }
 #[derive(Debug, Default)]
 struct Cache {

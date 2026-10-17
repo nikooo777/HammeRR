@@ -1514,6 +1514,7 @@ impl Session {
         let previous = self.view();
         let mut without_resource_changes = view;
         without_resource_changes.entity_images = previous.entity_images;
+        without_resource_changes.additive_sprite_guides = previous.additive_sprite_guides;
         without_resource_changes.entity_model_guides = previous.entity_model_guides;
         without_resource_changes.normal_maps = previous.normal_maps;
         without_resource_changes.lighting_preview = previous.lighting_preview;
@@ -2138,7 +2139,12 @@ impl Session {
             HashSet::new()
         };
         let evaluation = self.working_evaluation(document);
-        let icons = self.fgd_icon_instances(document, &evaluation, view.entity_images);
+        let icons = self.fgd_icon_instances(
+            document,
+            &evaluation,
+            view.entity_images,
+            view.additive_sprite_guides,
+        );
         let model_guides = self.fgd_model_guides(document, &evaluation, view.entity_model_guides);
         let mut lighting = lighting_preview::prepare(document.vmf(), &evaluation.objects, view);
         let mut mesh = SceneMesh::build_with_previews_filtered(

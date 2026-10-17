@@ -8,9 +8,9 @@ use crate::sprite_resource::{self, MAX_REFERENCE_BYTES, preview};
 
 use super::{super::Session, classification::Facts};
 
-pub(super) const LIMITS: &str = "Sprite resource guide: one zero-argument sprite() on a generic point class with model(sprite). Authored model/scale precede individually labeled FGD defaults. Explicit .vmt or sprites/<basename>.spr only; no dotted filename stems. Full virtual Browse choices retain nested materials/ directories. Direct centered vp_parallel Sprite material and static single-frame LDR texture use the shared strict Entity images cache: 64 success/failure entries, 32 MiB encoded bytes, 64 KiB VMT, 4 MiB VTF, 512 pixels per axis, 256 visible image instances in entity-ID order. Positive finite explicit/FGD scale multiplies texture pixel dimensions; blank/absent/nonpositive/nonfinite scale is unavailable. Native scale, dimensions and vertices must stay finite, with relative corner extents within ±65536. Live draw-camera right/up, independent unlit RGBA alpha and no fog; no native Sprite runtime parity. Render Mode, FX Color/Amount, Render FX, HDRColorScale, glow visibility, animation, enable state and I/O are unevaluated. Oriented sprites, nonzero angles/legacy angle, parents, loaded models, studio/model helpers, lights, ropes and brushes are excluded. Ordinary FGD bounds, selection outlines, picks, placement, framing and working regions remain unchanged. Entity images disables admission and drawing; material reload clears successes and failures.";
+pub(super) const LIMITS: &str = "Sprite resource guide: one zero-argument sprite() on a generic point class with model(sprite). Authored model/scale precede individually labeled FGD defaults. Explicit .vmt or sprites/<basename>.spr only; no dotted filename stems. Full virtual Browse choices retain nested materials/ directories. Direct centered vp_parallel Sprite material and static single-frame LDR texture use the shared strict Entity images cache: 64 success/failure entries, 32 MiB encoded bytes, 64 KiB VMT, 4 MiB VTF, 512 pixels per axis, 256 visible image instances in entity-ID order. Positive finite explicit/FGD scale multiplies texture pixel dimensions; blank/absent/nonpositive/nonfinite scale is unavailable. Native scale, dimensions and vertices must stay finite, with relative corner extents within ±65536. Raw independent live-camera unlit RGBA alpha and no fog remain default. Optional Additive Sprite guides evaluate only explicitly authored Render Mode 5 for an LDR editor guide, constrained by unique authored or labeled FGD-default FX Color 255 255 255, FX Amount 255 and Render FX 0; other requested appearances retain labeled raw RGBA with diagnostics. Additive RGB uses SRC_ALPHA/ONE and preserves destination alpha as an editor policy, with existing scene-depth testing, no depth writes and stable center-depth order across mixed guides. The sRGB editor pipeline, guide depth ordering and no-fog behavior do not establish native Sprite pixel parity. Runtime color/amount/FX, HDRColorScale, glow visibility, animation, enable state and I/O remain unevaluated; HDRColorScale imposes no LDR constraint. Oriented sprites, nonzero angles/legacy angle, parents, loaded models, studio/model helpers, lights, ropes and brushes are excluded. Ordinary FGD bounds, selection outlines, picks, placement, framing and working regions remain unchanged. Entity images disables admission and drawing; material reload clears successes and failures.";
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Input {
     pub property: &'static str,
     pub property_type: Option<String>,
@@ -18,6 +18,116 @@ pub struct Input {
     pub raw_truncated: bool,
     pub value_source: &'static str,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BlendPreview {
+    pub requested: bool,
+    pub appearance_supported: bool,
+    pub applied: bool,
+    pub effective_policy: &'static str,
+    pub rendermode: Input,
+    pub rendercolor: Input,
+    pub renderamt: Input,
+    pub renderfx: Input,
+    pub evaluated_guide_mode: Option<u8>,
+    pub error: Option<String>,
+    pub alpha_policy: &'static str,
+    pub color_policy: &'static str,
+    pub depth_policy: &'static str,
+}
+
+fn byte(input: &Input) -> Result<u8, String> {
+    if let Some(error) = &input.error {
+        return Err(error.clone());
+    }
+    if input
+        .property_type
+        .as_deref()
+        .is_some_and(|kind| !["integer", "choices", "string"].contains(&kind))
+    {
+        return Err(format!(
+            "{} requires an integer, choices or string property",
+            input.property
+        ));
+    }
+    input
+        .raw
+        .as_deref()
+        .and_then(|raw| raw.trim().parse::<u8>().ok())
+        .ok_or_else(|| {
+            format!(
+                "{} requires one explicit or FGD-default integer byte",
+                input.property
+            )
+        })
+}
+
+impl BlendPreview {
+    fn resolve(class: &Class, entity: &Entity, requested: bool) -> Self {
+        let mut report = Self {
+            requested,
+            appearance_supported: false,
+            applied: false,
+            effective_policy: "raw_rgba",
+            rendermode: Input::resolve(class, entity, "rendermode"),
+            rendercolor: Input::resolve(class, entity, "rendercolor"),
+            renderamt: Input::resolve(class, entity, "renderamt"),
+            renderfx: Input::resolve(class, entity, "renderfx"),
+            evaluated_guide_mode: None,
+            error: None,
+            alpha_policy: "preserve_destination_alpha_for_additive",
+            color_policy: "ldr_srgb_editor_image_no_fog_hdrcolorscale_unevaluated",
+            depth_policy: "tested_against_existing_scene_depth_no_depth_writes_sorted_guide_centers",
+        };
+        if !requested {
+            return report;
+        }
+        let result = report.admit();
+        report.appearance_supported = result.is_ok();
+        report.error = result.err();
+        report
+    }
+
+    fn admit(&mut self) -> Result<(), String> {
+        let mode = byte(&self.rendermode)?;
+        if self.rendermode.value_source != "authored" {
+            return Err("Additive guide requires explicitly authored Render Mode 5; an FGD default does not select it".into());
+        }
+        self.evaluated_guide_mode = Some(mode);
+        if mode != 5 {
+            return Err(format!(
+                "Render Mode {mode} is outside the authored Additive guide; raw RGBA retained"
+            ));
+        }
+        if let Some(error) = &self.rendercolor.error {
+            return Err(error.clone());
+        }
+        if self
+            .rendercolor
+            .property_type
+            .as_deref()
+            .is_some_and(|kind| !["color255", "string"].contains(&kind))
+        {
+            return Err("rendercolor requires a color255 or string property".into());
+        }
+        let color = self.rendercolor.raw.as_deref().and_then(|raw| {
+            raw.split_whitespace()
+                .map(str::parse::<u8>)
+                .collect::<Result<Vec<_>, _>>()
+                .ok()
+        });
+        if color.as_deref() != Some(&[255, 255, 255]) {
+            return Err("Additive guide requires FX Color 255 255 255 from authored values or a labeled FGD default; raw RGBA retained".into());
+        }
+        if byte(&self.renderamt)? != 255 {
+            return Err("Additive guide requires FX Amount 255; raw RGBA retained".into());
+        }
+        if byte(&self.renderfx)? != 0 {
+            return Err("Additive guide requires Render FX 0; raw RGBA retained".into());
+        }
+        Ok(())
+    }
 }
 
 impl Input {
@@ -53,6 +163,7 @@ pub struct Report {
     pub scale_value: Option<f32>,
     pub world_size: Option<[f32; 2]>,
     pub image: Option<render::icons::Report>,
+    pub blend_preview: BlendPreview,
     pub state: &'static str,
     pub displayed: bool,
     pub suppression_reason: Option<&'static str>,
@@ -61,7 +172,7 @@ pub struct Report {
     pub rendering_policy: &'static str,
     pub size_policy: &'static str,
     pub runtime_fields_evaluated: bool,
-    pub unevaluated_runtime_fields: [&'static str; 9],
+    pub unevaluated_runtime_fields: Vec<&'static str>,
 }
 
 fn orientation(class: &Class, entity: &Entity) -> Result<(), String> {
@@ -128,12 +239,12 @@ pub(super) fn row(
     class: &Class,
     entity: &Entity,
     facts: &Facts,
-    enabled: bool,
+    view: (bool, bool),
     displayed: usize,
 ) -> (Report, Option<Instance>) {
-    let (report, mut instance) = resolve(session, class, entity, facts, enabled, displayed);
+    let (report, mut instance) = resolve(session, class, entity, facts, view, displayed);
     if instance.is_none()
-        && enabled
+        && view.0
         && facts.point
         && facts.valid_origin
         && !facts.hidden
@@ -156,6 +267,7 @@ pub(super) fn row(
                 report: image,
                 material: None,
             }),
+            blend: render::icons::Blend::Alpha,
         });
     }
     (report, instance)
@@ -166,9 +278,10 @@ fn resolve(
     class: &Class,
     entity: &Entity,
     facts: &Facts,
-    enabled: bool,
+    view: (bool, bool),
     displayed: usize,
 ) -> (Report, Option<Instance>) {
+    let (enabled, additive) = view;
     let declarations = class
         .helpers
         .iter()
@@ -187,6 +300,7 @@ fn resolve(
         scale_value: None,
         world_size: None,
         image: None,
+        blend_preview: BlendPreview::resolve(class, entity, additive),
         state: "unsupported",
         displayed: false,
         suppression_reason: None,
@@ -195,7 +309,7 @@ fn resolve(
         rendering_policy: "unlit_rgba_editor_image_no_fog",
         size_policy: "texture_pixels_times_positive_scale",
         runtime_fields_evaluated: false,
-        unevaluated_runtime_fields: [
+        unevaluated_runtime_fields: vec![
             "rendermode",
             "rendercolor",
             "renderamt",
@@ -207,6 +321,11 @@ fn resolve(
             "io",
         ],
     };
+    if report.blend_preview.evaluated_guide_mode.is_some() {
+        report
+            .unevaluated_runtime_fields
+            .retain(|key| *key != "rendermode");
+    }
     if !supported {
         report.error = Some("Exactly one zero-argument sprite() declaration and model(sprite) property are required".into());
         return (report, None);
@@ -308,6 +427,15 @@ fn resolve(
     }
     report.world_size = Some(size);
     report.displayed = true;
+    let blend = if report.blend_preview.appearance_supported {
+        report.blend_preview.applied = true;
+        report.blend_preview.effective_policy = "authored_additive";
+        report.rendering_policy = "authored_additive_rgb_src_alpha_one_editor_image_no_fog";
+        image.rendering_policy = report.rendering_policy;
+        render::icons::Blend::Additive
+    } else {
+        render::icons::Blend::Alpha
+    };
     image.world_size = size;
     image.displayed = true;
     report.image = Some(image);
@@ -317,6 +445,7 @@ fn resolve(
             center: center.to_array(),
             world_size: size,
             asset,
+            blend,
         }),
     )
 }

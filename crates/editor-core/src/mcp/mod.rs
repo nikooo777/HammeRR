@@ -554,6 +554,9 @@ mod lighting_preview_tests;
 mod normal_map_tests;
 
 #[cfg(test)]
+mod additive_sprite_tests;
+
+#[cfg(test)]
 mod atlas_tests;
 
 impl EditorServer {

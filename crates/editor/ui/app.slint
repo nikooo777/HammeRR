@@ -1910,6 +1910,7 @@ export component AppWindow inherits Window {
     in-out property <bool> rope-preview: false;
     in-out property <bool> selection-outlines: true;
     in-out property <bool> entity-images: true;
+    in-out property <bool> additive-sprite-guides: false;
     in-out property <bool> entity-model-guides: true;
     in property <string> rope-preview-status: "Rope preview is off";
     in property <string> fog-preview-status: "Fog preview is off";
@@ -2603,6 +2604,11 @@ export component AppWindow inherits Window {
                     CheckBox {
                         text: "Entity images";
                         checked <=> root.entity-images;
+                        toggled => { root.options-changed(); }
+                    }
+                    CheckBox {
+                        text: "Additive Sprite guides";
+                        checked <=> root.additive-sprite-guides;
                         toggled => { root.options-changed(); }
                     }
                     CheckBox {

@@ -15,6 +15,7 @@ pub struct ViewUpdate<'a> {
     pub rope_preview: Option<bool>,
     pub selection_outlines: Option<bool>,
     pub entity_images: Option<bool>,
+    pub additive_sprite_guides: Option<bool>,
     pub entity_model_guides: Option<bool>,
     pub sky_channel: Option<&'a str>,
     pub sky_exposure_ev: Option<f64>,
@@ -51,6 +52,9 @@ impl Session {
         }
         if let Some(value) = update.entity_images {
             view.entity_images = value;
+        }
+        if let Some(value) = update.additive_sprite_guides {
+            view.additive_sprite_guides = value;
         }
         if let Some(value) = update.entity_model_guides {
             view.entity_model_guides = value;

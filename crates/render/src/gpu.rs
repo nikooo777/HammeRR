@@ -223,6 +223,7 @@ pub struct ViewOptions {
     pub rope_preview: bool,
     pub selection_outlines: bool,
     pub entity_images: bool,
+    pub additive_sprite_guides: bool,
     pub entity_model_guides: bool,
     pub fog: Option<crate::fog::Fog>,
     pub leak_path: bool,
@@ -253,6 +254,7 @@ impl Default for ViewOptions {
             rope_preview: false,
             selection_outlines: true,
             entity_images: true,
+            additive_sprite_guides: false,
             entity_model_guides: true,
             fog: None,
             leak_path: true,
@@ -269,7 +271,7 @@ impl Default for ViewOptions {
     }
 }
 
-pub type SceneKey = (u64, crate::sky::Channel, bool, bool, bool, bool, bool, bool);
+pub type SceneKey = (u64, crate::sky::Channel, bool, bool, bool, bool, bool, bool, bool);
 
 impl ViewOptions {
     pub fn scene_key(self, serial: u64) -> SceneKey {
@@ -282,6 +284,7 @@ impl ViewOptions {
             self.normal_maps && self.surface == SurfaceView::Textured,
             self.lighting_preview,
             self.lighting_preview && self.surface == SurfaceView::Textured,
+            self.additive_sprite_guides,
         )
     }
 }
@@ -319,6 +322,7 @@ struct IconDraw {
     center: glam::Vec3,
     first_vertex: u32,
     binding: wgpu::BindGroup,
+    blend: crate::icons::Blend,
 }
 
 /// Geometry uploaded by a [`Renderer`]; draw it with the same renderer.
@@ -347,6 +351,7 @@ pub struct Renderer {
     sampler: wgpu::Sampler,
     icon_sampler: wgpu::Sampler,
     icon_pipeline: wgpu::RenderPipeline,
+    additive_icon_pipeline: wgpu::RenderPipeline,
     icon_bindings: std::collections::HashMap<u64, wgpu::BindGroup>,
     opaque_pipeline: wgpu::RenderPipeline,
     translucent_pipeline: wgpu::RenderPipeline,
@@ -551,8 +556,9 @@ impl Renderer {
         );
 
         let icon_shader = device.create_shader_module(wgpu::include_wgsl!("icons.wgsl"));
-        let icon_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("FGD editor icons"),
+        let icon_pipeline = |label, blend| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(label),
             layout: Some(&layout),
             vertex: wgpu::VertexState {
                 module: &icon_shader,
@@ -579,13 +585,30 @@ impl Renderer {
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: COLOR_FORMAT,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    blend: Some(blend),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
             multiview_mask: None,
             cache: None,
-        });
+        })
+        };
+        let additive_icon_pipeline = icon_pipeline(
+            "Authored Additive Sprite guides",
+            wgpu::BlendState {
+                color: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::SrcAlpha,
+                    dst_factor: wgpu::BlendFactor::One,
+                    operation: wgpu::BlendOperation::Add,
+                },
+                alpha: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::Zero,
+                    dst_factor: wgpu::BlendFactor::One,
+                    operation: wgpu::BlendOperation::Add,
+                },
+            },
+        );
+        let icon_pipeline = icon_pipeline("FGD editor icons", wgpu::BlendState::ALPHA_BLENDING);
 
         let line_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("lines"),
@@ -639,6 +662,7 @@ impl Renderer {
             sampler,
             icon_sampler,
             icon_pipeline,
+            additive_icon_pipeline,
             icon_bindings: std::collections::HashMap::new(),
             opaque_pipeline,
             translucent_pipeline,
@@ -805,6 +829,7 @@ impl Renderer {
                 center: instance.center.into(),
                 first_vertex,
                 binding: self.icon_bindings[&id].clone(),
+                blend: instance.blend,
             });
         }
         let icons = (!icon_vertices.is_empty()).then(|| {
@@ -1206,7 +1231,15 @@ impl Renderer {
                 let depth =
                     |draw: &&IconDraw| (draw.center - camera.position).dot(camera.forward());
                 draws.sort_by(|a, b| depth(b).total_cmp(&depth(a)));
+                let mut blend = crate::icons::Blend::Alpha;
                 for draw in draws {
+                    if draw.blend != blend {
+                        pass.set_pipeline(match draw.blend {
+                            crate::icons::Blend::Alpha => &self.icon_pipeline,
+                            crate::icons::Blend::Additive => &self.additive_icon_pipeline,
+                        });
+                        blend = draw.blend;
+                    }
                     pass.set_bind_group(1, &draw.binding, &[]);
                     pass.draw(draw.first_vertex..draw.first_vertex + 6, 0..1);
                 }

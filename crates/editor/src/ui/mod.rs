@@ -154,6 +154,7 @@ fn refresh_view_controls(app: &AppWindow, session: &Session) {
         },
     );
     app.set_lighting_exposure_ev(session.view().lighting_exposure_ev.to_string().into());
+    app.set_additive_sprite_guides(session.view().additive_sprite_guides);
     app.set_show_tools(session.view().tool_textures);
     app.set_show_leak(session.view().leak_path);
     app.set_sky_preview(session.view().sky_preview);
@@ -228,6 +229,7 @@ fn bind_view_controls(app: &AppWindow, shared: SharedSession) {
                 }),
                 lighting_exposure_ev: Some(lighting_exposure),
                 normal_maps: Some(app.get_normal_maps()),
+                additive_sprite_guides: Some(app.get_additive_sprite_guides()),
                 ..Default::default()
             }) {
                 Ok(view) => view,

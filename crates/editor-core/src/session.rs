@@ -61,6 +61,7 @@ pub mod particles;
 pub mod placement;
 pub mod pointfiles;
 pub mod prefabs;
+pub mod preview_preferences;
 pub mod primitives;
 mod recent;
 mod view;
@@ -230,6 +231,7 @@ pub struct Session {
     fog_preview: fog::Selection,
     spatial: spatial::Settings,
     grid_preferences: grid_preferences::State,
+    preview_preferences: preview_preferences::State,
     saved_cameras: [Option<Camera>; 4],
     block_preview: Option<(DVec3, DVec3)>,
     brush_epoch: u64,
@@ -350,6 +352,7 @@ impl Session {
             fog_preview: fog::Selection::default(),
             spatial: spatial::Settings::default(),
             grid_preferences: grid_preferences::State::default(),
+            preview_preferences: preview_preferences::State::default(),
             saved_cameras: [None; 4],
             block_preview: None,
             brush_epoch: 0,

@@ -106,6 +106,7 @@ struct Ui {
     history: Option<history_ui::Controller>,
     measurements: Option<measurements_ui::Controller>,
     grid_defaults: Option<grid_defaults_ui::Controller>,
+    preview_defaults: Option<preview_defaults_ui::Controller>,
     material_for_group: bool,
     overlay_material_target: Option<overlay_ui::MaterialTarget>,
     material_for_replace: Option<bool>,
@@ -452,6 +453,7 @@ pub(super) fn run(
         history: None,
         measurements: None,
         grid_defaults: None,
+        preview_defaults: None,
         material_for_group: false,
         overlay_material_target: None,
         material_for_replace: None,
@@ -601,6 +603,29 @@ pub(super) fn run(
                 }
             }
             if let Err(error) = ui.grid_defaults.as_ref().unwrap().show(&lock(&ui.session)) {
+                app.unwrap().set_message(error.to_string().into());
+            }
+        }
+    });
+    app.on_preview_defaults({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let mut ui = ui.borrow_mut();
+            if ui.preview_defaults.is_none() {
+                match preview_defaults_ui::Controller::new(&ui.session) {
+                    Ok(controller) => ui.preview_defaults = Some(controller),
+                    Err(error) => {
+                        app.unwrap().set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            if let Err(error) = ui
+                .preview_defaults
+                .as_ref()
+                .unwrap()
+                .show(&lock(&ui.session))
+            {
                 app.unwrap().set_message(error.to_string().into());
             }
         }
@@ -2938,6 +2963,9 @@ pub(super) fn run(
 
             if now.duration_since(ui.last_log_refresh) >= Duration::from_millis(500) {
                 ui.last_log_refresh = now;
+                app.set_preview_defaults_error(
+                    lock(&ui.session).preview_preferences_error().is_some(),
+                );
                 if let Some(window) = &ui.hollow_window
                     && window.window().is_visible()
                 {
@@ -3028,6 +3056,11 @@ pub(super) fn run(
                     controller.refresh(&lock(&ui.session));
                 }
                 if let Some(controller) = &ui.grid_defaults
+                    && controller.window.window().is_visible()
+                {
+                    controller.refresh(&lock(&ui.session));
+                }
+                if let Some(controller) = &ui.preview_defaults
                     && controller.window.window().is_visible()
                 {
                     controller.refresh(&lock(&ui.session));

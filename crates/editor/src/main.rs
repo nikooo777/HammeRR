@@ -30,6 +30,7 @@ mod placement_ui;
 mod pointfile_ui;
 mod polygon_ui;
 mod prefabs_ui;
+mod preview_defaults_ui;
 mod primitive_ui;
 mod recent_maps_ui;
 mod recovery_ui;

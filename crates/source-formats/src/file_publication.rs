@@ -554,15 +554,15 @@ impl StagedFile {
     ) -> io::Result<CommittedReceipt> {
         self.sync_all()?;
         self.destination.verify()?;
+        let file = Arc::new(self.file().try_clone()?);
+        let stamp = EntryStamp::capture(&file.metadata()?);
+        let destination = self.destination.published(Observation { file, stamp });
+        after_verify();
         if !self.owned()? {
             return Err(io::Error::other(
                 "File staging name was replaced; unrelated entry preserved",
             ));
         }
-        let file = Arc::new(self.file().try_clone()?);
-        let stamp = EntryStamp::capture(&file.metadata()?);
-        let destination = self.destination.published(Observation { file, stamp });
-        after_verify();
         rustix::fs::renameat(
             self.destination.directory.handle()?,
             &self.basename,

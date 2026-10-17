@@ -281,6 +281,31 @@ fn displaced_stage_name_is_neither_published_nor_removed_on_failure_or_drop() {
 }
 
 #[test]
+fn stage_displacement_after_binding_verification_is_rejected_before_rename() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("output.bsp");
+    fs::write(&path, b"old output").unwrap();
+    let destination = BoundDestination::capture(&path, Policy::ReplaceEntry).unwrap();
+    let stage = stage(&destination, b"owned staging bytes");
+    let staged = root.path().join(&stage.basename);
+    let displaced = root.path().join("displaced");
+    assert!(
+        stage
+            .commit_with(
+                || {
+                    fs::rename(&staged, &displaced).unwrap();
+                    fs::write(&staged, b"unrelated replacement").unwrap();
+                },
+                || {},
+            )
+            .is_err()
+    );
+    assert_eq!(fs::read(staged).unwrap(), b"unrelated replacement");
+    assert_eq!(fs::read(displaced).unwrap(), b"owned staging bytes");
+    assert_eq!(fs::read(path).unwrap(), b"old output");
+}
+
+#[test]
 fn drop_after_parent_retarget_removes_only_its_bound_stage() {
     let (_root, original, replacement, alias) = aliased_directories();
     let destination =

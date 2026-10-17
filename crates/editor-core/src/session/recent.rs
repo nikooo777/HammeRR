@@ -2,69 +2,66 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
-use crate::recent_maps::{self, BuildSettings, Entry, ObservedSource, Store};
+use crate::recent_maps::{self, Authority, BuildSettings, Entry, Snapshot};
 
 use super::{Actor, Session};
 
-#[derive(Default)]
-pub(super) struct State {
-    entries: Vec<Entry>,
-    store: Option<Store>,
-    load_failed: bool,
-    error: Option<String>,
-    serial: u64,
-    source: Option<ObservedSource>,
+pub(super) enum Binding {
+    Independent(Authority),
+    Application(Authority),
+}
+
+impl Default for Binding {
+    fn default() -> Self {
+        Self::Independent(Authority::default())
+    }
+}
+
+impl Binding {
+    fn authority(&self) -> &Authority {
+        match self {
+            Self::Independent(authority) | Self::Application(authority) => authority,
+        }
+    }
 }
 
 impl Session {
-    pub fn configure_recent_maps(&mut self, directory: Result<PathBuf, String>) {
-        let store = directory.map(|directory| Store { directory });
-        let loaded = match &store {
-            Ok(store) => store.load_snapshot(),
-            Err(error) => Err(error.clone()),
-        };
-        self.recent_maps.store = store.ok();
-        match loaded {
-            Ok((entries, source)) => {
-                self.recent_maps.entries = entries;
-                self.recent_maps.source = Some(source);
-                self.recent_maps.load_failed = false;
-                self.recent_maps.error = None;
-                self.recent_maps.serial += 1;
-            }
-            Err(error) => {
-                self.recent_maps.source = None;
-                self.recent_maps.load_failed = true;
-                self.recent_map_error(format!("Recent maps could not load: {error}"));
-            }
+    pub fn with_recent_maps(
+        game: Result<source_formats::gamefs::GameFs, String>,
+        authority: Authority,
+    ) -> Self {
+        let mut session = Self::new(game);
+        session.use_application_recent_maps(authority);
+        session
+    }
+
+    pub(crate) fn use_application_recent_maps(&mut self, authority: Authority) {
+        self.recent_maps = Binding::Application(authority);
+        if let Some(error) = self.recent_maps_snapshot().error {
+            self.log(Actor::System, error);
         }
+    }
+
+    pub fn configure_recent_maps(&mut self, directory: Result<PathBuf, String>) {
+        if let Binding::Independent(authority) = &self.recent_maps
+            && let Err(error) = authority.configure(directory)
+        {
+            self.log(Actor::System, error);
+        }
+    }
+
+    pub fn recent_maps_snapshot(&self) -> Snapshot {
+        self.recent_maps.authority().snapshot()
     }
 
     pub fn recent_maps_serial(&self) -> u64 {
-        self.recent_maps.serial
+        self.recent_maps.authority().serial()
     }
 
     pub fn reload_recent_maps(&mut self) -> Result<Value, String> {
-        let loaded = self
-            .recent_maps
-            .store
-            .as_ref()
-            .ok_or_else(|| "Recent maps storage is unavailable".to_string())
-            .and_then(Store::load_snapshot);
-        match loaded {
-            Ok((entries, source)) => {
-                self.recent_maps.entries = entries;
-                self.recent_maps.source = Some(source);
-                self.recent_maps.load_failed = false;
-                self.recent_maps.error = None;
-                self.recent_maps.serial += 1;
-                Ok(self.recent_maps())
-            }
-            Err(error) => {
-                self.recent_maps.load_failed = true;
-                Err(self.recent_map_error(format!("Recent maps could not reload: {error}")))
-            }
-        }
+        let result = self.recent_maps.authority().reload();
+        self.log_recent_map_result(result)
+            .map(|snapshot| self.recent_maps_with_snapshot(&snapshot))
     }
 
     fn recent_game_directory(&self) -> Option<PathBuf> {
@@ -80,16 +77,20 @@ impl Session {
     }
 
     pub fn recent_maps(&self) -> Value {
+        self.recent_maps_with_snapshot(&self.recent_maps_snapshot())
+    }
+
+    pub fn recent_maps_with_snapshot(&self, snapshot: &Snapshot) -> Value {
         let game_directory = self.recent_game_directory();
         json!({
-            "persistence": if self.recent_maps.load_failed { "blocked" } else if self.recent_maps.store.is_some() { "persistent" } else { "session" },
-            "directory": self.recent_maps.store.as_ref().map(|store| &store.directory),
-            "error": self.recent_maps.error,
-            "reload_available":self.recent_maps.store.is_some(),
+            "persistence": snapshot.persistence(),
+            "directory": snapshot.directory,
+            "error": snapshot.error,
+            "reload_available": snapshot.directory.is_some(),
             "max_maps": recent_maps::MAX_RECENT_MAPS,
             "max_path_bytes": recent_maps::MAX_PATH_BYTES,
             "max_file_bytes": recent_maps::MAX_FILE_BYTES,
-            "entries": self.recent_maps.entries.iter().map(|entry| json!({
+            "entries": snapshot.entries.iter().map(|entry| json!({
                 "path": entry.path,
                 "title": entry.path.file_name().map(|name| name.to_string_lossy()),
                 "available": entry.path.is_file(),
@@ -100,141 +101,54 @@ impl Session {
         })
     }
 
-    fn recent_map_error(&mut self, error: String) -> String {
-        let error = map_core::entity_helpers::bounded_preview(&error, recent_maps::MAX_ERROR_BYTES);
-        self.recent_maps.error = Some(error.clone());
-        self.recent_maps.serial += 1;
-        self.log(Actor::System, &error);
-        error
+    fn log_recent_map_result<T>(&mut self, result: Result<T, String>) -> Result<T, String> {
+        if let Err(error) = &result {
+            self.log(Actor::System, error);
+        }
+        result
     }
 
-    fn ensure_recent_maps_writable(&self) -> Result<(), String> {
-        if self.recent_maps.load_failed {
-            return Err(map_core::entity_helpers::bounded_preview(
-                &format!(
-                    "{}; fix storage and Reload saved list before changing recent maps",
-                    self.recent_maps
-                        .error
-                        .as_deref()
-                        .unwrap_or("Recent maps did not load")
-                ),
-                recent_maps::MAX_ERROR_BYTES,
-            ));
-        }
-        Ok(())
-    }
-
-    fn publish_recent_maps(&mut self, entries: Vec<Entry>) -> Result<(), String> {
-        self.ensure_recent_maps_writable()?;
-        if let Some(store) = &self.recent_maps.store {
-            let expected = self
-                .recent_maps
-                .source
-                .as_ref()
-                .ok_or("Reload saved list before changing recent maps")?;
-            match store.save_checked(&entries, expected) {
-                Ok(publication) => {
-                    self.recent_maps.entries = entries;
-                    match publication.source {
-                        Ok(source) => self.recent_maps.source = Some(source),
-                        Err(error) => {
-                            self.recent_maps.source = None;
-                            self.recent_maps.load_failed = true;
-                            return Err(self.recent_map_error(error));
-                        }
-                    }
-                }
-                Err(error) => {
-                    if error.conflict {
-                        self.recent_maps.load_failed = true;
-                    }
-                    return Err(self.recent_map_error(format!(
-                        "Recent maps could not save: {}",
-                        error.message
-                    )));
-                }
-            }
-        } else {
-            self.recent_maps.entries = entries;
-        }
-        self.recent_maps.error = None;
-        self.recent_maps.serial += 1;
-        Ok(())
+    fn recent_map_error(&mut self, error: String) {
+        let error = self.recent_maps.authority().report_error(error);
+        self.log(Actor::System, error);
     }
 
     pub(super) fn remember_recent_map(&mut self, path: &Path) {
-        self.remember_map(path, true);
+        self.remember_map(path, true, true);
     }
 
     pub(super) fn remember_saved_map(&mut self, path: &Path) {
-        self.remember_map(path, false);
+        self.remember_map(path, true, false);
     }
 
-    fn remember_map(&mut self, path: &Path, preserve_incompatible: bool) {
-        if self.recent_maps.load_failed {
+    fn remember_map(&mut self, path: &Path, reorder: bool, preserve_incompatible: bool) {
+        if self.recent_maps.authority().blocked() {
             return;
         }
-        let result = self.try_remember_recent_map(path, true, preserve_incompatible);
-        if let Err(error) = result
-            && self.recent_maps.error.as_deref() != Some(error.as_str())
-        {
-            self.recent_map_error(error);
-        }
-    }
-
-    fn try_remember_recent_map(
-        &mut self,
-        path: &Path,
-        reorder: bool,
-        preserve_incompatible: bool,
-    ) -> Result<(), String> {
-        self.ensure_recent_maps_writable()?;
-        let path = recent_maps::absolute_path(path)?;
-        let existing = self
-            .recent_maps
-            .entries
-            .iter()
-            .find(|entry| entry.path == path);
-        if !reorder && existing.is_none() {
-            return Ok(());
-        }
-        let entry = if let Some(existing) = existing.filter(|entry| {
-            self.compiling
-                || (preserve_incompatible && entry.game_directory != self.recent_game_directory())
-        }) {
-            existing.clone()
-        } else {
-            Entry {
-                path: path.clone(),
-                game_directory: self.recent_game_directory(),
-                build_settings: BuildSettings::from_options(self.compile_options()),
+        let path = match recent_maps::absolute_path(path) {
+            Ok(path) => path,
+            Err(error) => {
+                self.recent_map_error(error);
+                return;
             }
         };
-        let mut entries = self.recent_maps.entries.clone();
-        if reorder {
-            entries.retain(|entry| entry.path != path);
-            entries.insert(0, entry);
-            entries.truncate(recent_maps::MAX_RECENT_MAPS);
-        } else if let Some(existing) = entries.iter_mut().find(|entry| entry.path == path) {
-            *existing = entry;
-        }
-        if entries == self.recent_maps.entries && self.recent_maps.error.is_none() {
-            return Ok(());
-        }
-        self.publish_recent_maps(entries)
+        let entry = Entry {
+            path,
+            game_directory: self.recent_game_directory(),
+            build_settings: BuildSettings::from_options(self.compile_options()),
+        };
+        let result = self.recent_maps.authority().remember(
+            entry,
+            reorder,
+            preserve_incompatible,
+            self.compiling,
+        );
+        let _ = self.log_recent_map_result(result);
     }
 
     pub(super) fn remember_current_map_context(&mut self) {
-        if self.recent_maps.load_failed {
-            return;
-        }
         if let Some(path) = self.path.clone() {
-            let result = self.try_remember_recent_map(&path, false, false);
-            if let Err(error) = result
-                && self.recent_maps.error.as_deref() != Some(error.as_str())
-            {
-                self.recent_map_error(error);
-            }
+            self.remember_map(&path, false, false);
         }
     }
 
@@ -245,13 +159,7 @@ impl Session {
         let Ok(path) = recent_maps::absolute_path(path) else {
             return;
         };
-        let Some(entry) = self
-            .recent_maps
-            .entries
-            .iter()
-            .find(|entry| entry.path == path)
-            .cloned()
-        else {
+        let Some(entry) = self.recent_maps.authority().entry(&path) else {
             return;
         };
         if entry.game_directory != self.recent_game_directory() {
@@ -261,8 +169,8 @@ impl Session {
             );
             return;
         }
-        let result = self.update_build_settings(Actor::System, entry.build_settings.update());
-        if let Err(error) = result {
+        if let Err(error) = self.update_build_settings(Actor::System, entry.build_settings.update())
+        {
             self.recent_map_error(format!(
                 "Recent map build settings could not restore: {error}"
             ));
@@ -277,30 +185,20 @@ impl Session {
     ) -> Result<String, String> {
         let entry = self
             .recent_maps
-            .entries
-            .iter()
-            .find(|entry| entry.path == path)
+            .authority()
+            .entry(path)
             .ok_or("This map is no longer in Recent maps; refresh the list")?;
-        let path = entry.path.clone();
-        self.open(actor, &path, discard_changes)
+        self.open(actor, &entry.path, discard_changes)
     }
 
     pub fn remove_recent_map(&mut self, path: &Path) -> Result<(), String> {
-        self.ensure_recent_maps_writable()?;
-        let mut entries = self.recent_maps.entries.clone();
-        entries.retain(|entry| entry.path != path);
-        if entries.len() == self.recent_maps.entries.len() {
-            return Err("This map is no longer in Recent maps; refresh the list".into());
-        }
-        self.publish_recent_maps(entries)
+        let result = self.recent_maps.authority().remove(path);
+        self.log_recent_map_result(result)
     }
 
     pub fn clear_recent_maps(&mut self) -> Result<(), String> {
-        self.ensure_recent_maps_writable()?;
-        if self.recent_maps.entries.is_empty() && self.recent_maps.error.is_none() {
-            return Ok(());
-        }
-        self.publish_recent_maps(Vec::new())
+        let result = self.recent_maps.authority().clear();
+        self.log_recent_map_result(result)
     }
 }
 
@@ -313,6 +211,7 @@ mod tests {
     use source_formats::keyvalues::WriteOptions;
 
     use super::*;
+    use crate::recent_maps::Store;
 
     fn fixture() -> (tempfile::TempDir, Session) {
         let directory = tempfile::tempdir().unwrap();
@@ -362,7 +261,7 @@ mod tests {
             let saved = fs::read(&storage).unwrap();
             second.open(actor, &b, false).unwrap();
             assert_eq!(second.path(), Some(b.as_path()));
-            assert!(second.recent_maps.entries.is_empty());
+            assert!(second.recent_maps_snapshot().entries.is_empty());
             assert_eq!(second.recent_maps()["persistence"], "blocked");
             assert!(
                 second.recent_maps()["error"]
@@ -382,7 +281,10 @@ mod tests {
             let camera = second.camera();
             let options = second.compile_options();
             second.reload_recent_maps().unwrap();
-            assert_eq!(second.recent_maps.entries, first.recent_maps.entries);
+            assert_eq!(
+                second.recent_maps_snapshot().entries,
+                first.recent_maps_snapshot().entries
+            );
             assert_eq!(map_state(&second), before);
             assert_eq!(second.block_preview(), preview);
             assert_eq!(second.camera(), camera);
@@ -390,14 +292,17 @@ mod tests {
             second.cancel_block_preview();
             second.save(actor, None).unwrap();
             let paths = second
-                .recent_maps
+                .recent_maps_snapshot()
                 .entries
                 .iter()
-                .map(|entry| &entry.path)
+                .map(|entry| entry.path.clone())
                 .collect::<Vec<_>>();
-            assert_eq!(paths, vec![&copy, &a]);
+            assert_eq!(paths, vec![copy, a]);
             first.reload_recent_maps().unwrap();
-            assert_eq!(first.recent_maps.entries, second.recent_maps.entries);
+            assert_eq!(
+                first.recent_maps_snapshot().entries,
+                second.recent_maps_snapshot().entries
+            );
         }
     }
 
@@ -418,7 +323,7 @@ mod tests {
                 .join("preferences")
                 .join(recent_maps::FILE_NAME);
             let bytes = fs::read(&storage).unwrap();
-            let entries = second.recent_maps.entries.clone();
+            let entries = second.recent_maps_snapshot().entries.clone();
             let map = map_state(&second);
             match operation {
                 "remove" => assert!(second.remove_recent_map(&a).is_err()),
@@ -437,11 +342,14 @@ mod tests {
                 _ => unreachable!(),
             }
             assert_eq!(fs::read(&storage).unwrap(), bytes);
-            assert_eq!(second.recent_maps.entries, entries);
+            assert_eq!(second.recent_maps_snapshot().entries, entries);
             assert_eq!(map_state(&second), map);
             assert_eq!(second.recent_maps()["persistence"], "blocked");
             second.reload_recent_maps().unwrap();
-            assert_eq!(second.recent_maps.entries, first.recent_maps.entries);
+            assert_eq!(
+                second.recent_maps_snapshot().entries,
+                first.recent_maps_snapshot().entries
+            );
         }
     }
 
@@ -454,7 +362,7 @@ mod tests {
             .preview_block(DVec3::ZERO, DVec3::splat(16.0))
             .unwrap();
         let preview = session.block_preview();
-        let entries = session.recent_maps.entries.clone();
+        let entries = session.recent_maps_snapshot().entries.clone();
         let before = map_state(&session);
         let storage = directory
             .path()
@@ -467,7 +375,7 @@ mod tests {
         ] {
             fs::write(&storage, &invalid).unwrap();
             assert!(session.reload_recent_maps().is_err());
-            assert_eq!(session.recent_maps.entries, entries);
+            assert_eq!(session.recent_maps_snapshot().entries, entries);
             assert_eq!(map_state(&session), before);
             assert_eq!(session.block_preview(), preview);
             assert_eq!(fs::read(&storage).unwrap(), invalid);
@@ -475,8 +383,8 @@ mod tests {
         }
         fs::write(&storage, &valid).unwrap();
         session.reload_recent_maps().unwrap();
-        assert_eq!(session.recent_maps.entries, entries);
-        assert!(session.recent_maps.error.is_none());
+        assert_eq!(session.recent_maps_snapshot().entries, entries);
+        assert!(session.recent_maps_snapshot().error.is_none());
         assert_eq!(session.block_preview(), preview);
     }
 
@@ -490,13 +398,16 @@ mod tests {
             paths.push(path);
         }
         assert_eq!(
-            session.recent_maps.entries.len(),
+            session.recent_maps_snapshot().entries.len(),
             recent_maps::MAX_RECENT_MAPS
         );
-        assert_eq!(session.recent_maps.entries[0].path, *paths.last().unwrap());
+        assert_eq!(
+            session.recent_maps_snapshot().entries[0].path,
+            *paths.last().unwrap()
+        );
         assert!(
             !session
-                .recent_maps
+                .recent_maps_snapshot()
                 .entries
                 .iter()
                 .any(|entry| entry.path == paths[0])
@@ -504,10 +415,10 @@ mod tests {
         session
             .open_recent_map(Actor::Agent, &paths[4], false)
             .unwrap();
-        assert_eq!(session.recent_maps.entries[0].path, paths[4]);
+        assert_eq!(session.recent_maps_snapshot().entries[0].path, paths[4]);
         assert_eq!(
             session
-                .recent_maps
+                .recent_maps_snapshot()
                 .entries
                 .iter()
                 .filter(|entry| entry.path == paths[4])
@@ -516,17 +427,20 @@ mod tests {
         );
         let mut reopened = Session::new(Err("no assets needed".into()));
         reopened.configure_recent_maps(Ok(directory.path().join("preferences")));
-        assert_eq!(reopened.recent_maps.entries, session.recent_maps.entries);
+        assert_eq!(
+            reopened.recent_maps_snapshot().entries,
+            session.recent_maps_snapshot().entries
+        );
         assert_eq!(reopened.recent_maps()["persistence"], "persistent");
         fs::remove_file(&paths[4]).unwrap();
         assert_eq!(reopened.recent_maps()["entries"][0]["available"], false);
-        let before = reopened.recent_maps.entries.clone();
+        let before = reopened.recent_maps_snapshot().entries.clone();
         assert!(
             reopened
                 .open_recent_map(Actor::Agent, &paths[4], false)
                 .is_err()
         );
-        assert_eq!(reopened.recent_maps.entries, before);
+        assert_eq!(reopened.recent_maps_snapshot().entries, before);
     }
 
     #[test]
@@ -546,7 +460,7 @@ mod tests {
             )
             .unwrap();
         let before = map_state(&session);
-        let entries = session.recent_maps.entries.clone();
+        let entries = session.recent_maps_snapshot().entries.clone();
         let bytes = fs::read(
             directory
                 .path()
@@ -572,7 +486,7 @@ mod tests {
                 .is_err()
         );
         assert_eq!(map_state(&session), before);
-        assert_eq!(session.recent_maps.entries, entries);
+        assert_eq!(session.recent_maps_snapshot().entries, entries);
         assert_eq!(
             fs::read(
                 directory
@@ -639,7 +553,7 @@ mod tests {
             compiler::LightingMode::Fullbright
         );
         assert_eq!(
-            restarted.recent_maps.entries[0].build_settings,
+            restarted.recent_maps_snapshot().entries[0].build_settings,
             BuildSettings::from_options(retained)
         );
         restarted.compiling = false;
@@ -647,12 +561,19 @@ mod tests {
             .open_recent_map(Actor::Agent, &first, false)
             .unwrap();
         assert_eq!(restarted.compile_options(), retained);
-        restarted.recent_maps.entries[0].game_directory = Some(directory.path().join("other-game"));
+        let mut entries = restarted.recent_maps_snapshot().entries;
+        entries[0].game_directory = Some(directory.path().join("other-game"));
+        Store {
+            directory: directory.path().join("preferences"),
+        }
+        .save(&entries)
+        .unwrap();
+        restarted.reload_recent_maps().unwrap();
         restarted.new_map(Actor::Agent, false).unwrap();
         restarted
             .set_compile_settings(Actor::Agent, "fullbright")
             .unwrap();
-        let incompatible = restarted.recent_maps.entries[0].clone();
+        let incompatible = restarted.recent_maps_snapshot().entries[0].clone();
         restarted
             .open_recent_map(Actor::Agent, &first, false)
             .unwrap();
@@ -660,13 +581,17 @@ mod tests {
             restarted.compile_options().lighting,
             compiler::LightingMode::Fullbright
         );
-        assert_eq!(restarted.recent_maps.entries[0], incompatible);
+        assert_eq!(restarted.recent_maps_snapshot().entries[0], incompatible);
         assert_eq!(
             restarted.recent_maps()["entries"][0]["context_compatible"],
             false
         );
         restarted.save(Actor::User, None).unwrap();
-        assert!(restarted.recent_maps.entries[0].game_directory.is_none());
+        assert!(
+            restarted.recent_maps_snapshot().entries[0]
+                .game_directory
+                .is_none()
+        );
         assert_eq!(
             restarted.recent_maps()["entries"][0]["context_compatible"],
             true
@@ -726,7 +651,7 @@ mod tests {
                 .unwrap();
             let retained = current.compile_options();
             assert!(
-                current.recent_maps.entries[0]
+                current.recent_maps_snapshot().entries[0]
                     .build_settings
                     .pack_sky_assets
             );
@@ -761,20 +686,20 @@ mod tests {
             restarted.open_recent_map(actor, &first, false).unwrap();
             assert_eq!(restarted.compile_options(), disabled);
             assert!(
-                restarted.recent_maps.entries[0]
+                restarted.recent_maps_snapshot().entries[0]
                     .build_settings
                     .pack_sky_assets
             );
             restarted.compiling = false;
             restarted.open_recent_map(actor, &first, false).unwrap();
             assert_eq!(restarted.compile_options(), retained);
-            let stored = restarted.recent_maps.entries[0].clone();
+            let stored = restarted.recent_maps_snapshot().entries[0].clone();
             let mut incompatible = mounted_session(directory.path(), &other_game);
             incompatible.configure_recent_maps(Ok(preferences.clone()));
             let options = incompatible.compile_options();
             incompatible.open_recent_map(actor, &first, false).unwrap();
             assert_eq!(incompatible.compile_options(), options);
-            assert_eq!(incompatible.recent_maps.entries[0], stored);
+            assert_eq!(incompatible.recent_maps_snapshot().entries[0], stored);
             assert_eq!(
                 incompatible.recent_maps()["entries"][0]["context_compatible"],
                 false
@@ -784,7 +709,7 @@ mod tests {
             let options = unmounted.compile_options();
             unmounted.open_recent_map(actor, &first, false).unwrap();
             assert_eq!(unmounted.compile_options(), options);
-            assert_eq!(unmounted.recent_maps.entries[0], stored);
+            assert_eq!(unmounted.recent_maps_snapshot().entries[0], stored);
             assert_eq!(fs::read(&first).unwrap(), source);
         }
     }
@@ -806,7 +731,7 @@ mod tests {
         let preferences = directory.path().join("preferences");
         let storage = preferences.join(recent_maps::FILE_NAME);
         let original: Value = serde_json::from_slice(&fs::read(&storage).unwrap()).unwrap();
-        let entries = current.recent_maps.entries.clone();
+        let entries = current.recent_maps_snapshot().entries.clone();
         let options = current.compile_options();
         let before = map_state(&current);
         let mut invalid = Vec::new();
@@ -829,7 +754,7 @@ mod tests {
                     .unwrap()
                     .contains("could not load")
             );
-            assert_eq!(current.recent_maps.entries, entries);
+            assert_eq!(current.recent_maps_snapshot().entries, entries);
             assert_eq!(current.compile_options(), options);
             assert_eq!(map_state(&current), before);
             assert!(current.clear_recent_maps().is_err());
@@ -855,7 +780,7 @@ mod tests {
         fs::set_permissions(&history, permissions).unwrap();
         session.open(Actor::Agent, &second, false).unwrap();
         assert_eq!(session.path(), Some(second.as_path()));
-        let entries = session.recent_maps.entries.clone();
+        let entries = session.recent_maps_snapshot().entries.clone();
         assert_eq!(entries[0].path, first);
         assert!(
             session.recent_maps()["error"]
@@ -866,17 +791,17 @@ mod tests {
         let state = map_state(&session);
         assert!(session.clear_recent_maps().is_err());
         assert!(session.remove_recent_map(&first).is_err());
-        assert_eq!(session.recent_maps.entries, entries);
+        assert_eq!(session.recent_maps_snapshot().entries, entries);
         assert_eq!(map_state(&session), state);
         let copy = directory.path().join("copy.vmf");
         session.save(Actor::User, Some(&copy)).unwrap();
         assert!(copy.is_file());
         assert!(!session.document().is_dirty());
-        assert_eq!(session.recent_maps.entries, entries);
+        assert_eq!(session.recent_maps_snapshot().entries, entries);
         assert_eq!(fs::read(&history).unwrap(), bytes);
         fs::set_permissions(&history, original).unwrap();
         session.save(Actor::User, None).unwrap();
-        assert_eq!(session.recent_maps.entries[0].path, copy);
+        assert_eq!(session.recent_maps_snapshot().entries[0].path, copy);
         assert!(session.recent_maps()["error"].is_null());
     }
 
@@ -885,7 +810,7 @@ mod tests {
         let (directory, mut session) = fixture();
         let first = map_file(directory.path(), "first.vmf");
         session.open(Actor::User, &first, false).unwrap();
-        let entries = session.recent_maps.entries.clone();
+        let entries = session.recent_maps_snapshot().entries.clone();
         let broken = directory.path().join("broken");
         fs::create_dir(&broken).unwrap();
         let path = broken.join(recent_maps::FILE_NAME);
@@ -895,17 +820,20 @@ mod tests {
         assert_eq!(session.recent_maps()["persistence"], "blocked");
         assert!(session.clear_recent_maps().is_err());
         assert!(session.remove_recent_map(&first).is_err());
-        assert_eq!(session.recent_maps.entries, entries);
+        assert_eq!(session.recent_maps_snapshot().entries, entries);
         assert_eq!(map_state(&session), before);
         session
             .open_recent_map(Actor::Agent, &first, false)
             .unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "broken preferences");
-        assert_eq!(session.recent_maps.entries, entries);
+        assert_eq!(session.recent_maps_snapshot().entries, entries);
         session.configure_recent_maps(Ok(directory.path().join("preferences")));
         session.clear_recent_maps().unwrap();
-        assert!(session.recent_maps.entries.is_empty());
+        assert!(session.recent_maps_snapshot().entries.is_empty());
         assert!(first.is_file());
         assert_eq!(session.path(), Some(first.as_path()));
     }
 }
+
+#[cfg(test)]
+mod authority_tests;

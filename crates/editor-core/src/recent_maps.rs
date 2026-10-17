@@ -4,6 +4,9 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+mod authority;
+pub use authority::{Authority, Snapshot};
+
 pub(crate) use crate::preference_file::ObservedSource;
 #[cfg(test)]
 use crate::preference_file::WriteLock;

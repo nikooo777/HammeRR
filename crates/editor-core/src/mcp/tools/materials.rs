@@ -575,7 +575,18 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Add or remove a material favorite shared with the GUI catalog. Favorites persist in the configured recovery directory; sessions without a store keep local favorites. Paths are canonicalized and bounded to 256 bytes; at most 512 favorites. Storage failures preserve the previous favorites. Recent applications remain session-local."
+        description = "Reload material favorites from the configured saved store after another editor changed it or storage was repaired. Replaces only the valid saved favorites/source and clears its conflict/error. Invalid Reload preserves the previous favorites and blocks persistent writes until repaired Reload. Does not reload material assets, initialize graphics, change map/history/selection/camera/view or apply/cancel an owned draft. Session-only favorites remain editable when no store exists."
+    )]
+    pub(in crate::mcp) fn reload_material_favorites(&self) -> ToolResult {
+        run(|| {
+            self.session()
+                .reload_material_favorites()
+                .map(|status| json!({"favorites":status}))
+        })
+    }
+
+    #[tool(
+        description = "Add or remove a material favorite shared with the GUI catalog. Favorites persist in the configured recovery directory; sessions without a store keep local favorites. Paths are canonicalized and bounded to 256 bytes; at most 512 favorites. Exact-source writes and a stable Linux lock reject stale sessions; use reload_material_favorites before retrying conflicts. Pre-publication failures preserve previous favorites; a written-but-unverified outcome adopts the published set and blocks until Reload. Recent applications remain session-local."
     )]
     pub(in crate::mcp) fn set_material_favorite(
         &self,
@@ -683,6 +694,10 @@ impl EditorServer {
 #[cfg(test)]
 #[path = "material_preview_tests.rs"]
 mod material_preview_tests;
+
+#[cfg(test)]
+#[path = "material_favorite_tests.rs"]
+mod material_favorite_tests;
 
 #[cfg(test)]
 mod material_source_tests {

@@ -1,6 +1,8 @@
 use std::collections::BTreeSet;
-use std::fs::{self, File};
-use std::io::Read;
+#[cfg(test)]
+use std::fs;
+
+use crate::preference_file::{CoordinatedFile, ObservedSource, Publication, SaveError, Source};
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -10,6 +12,8 @@ pub const MAX_MATERIAL_BYTES: usize = 256;
 pub const MAX_FILE_BYTES: u64 = 192 * 1024;
 pub const FILE_NAME: &str = "material-favorites.json";
 const FORMAT_VERSION: u32 = 1;
+const LOCK_FILE_NAME: &str = ".material-favorites.lock";
+pub const MAX_ERROR_BYTES: usize = 512;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -25,6 +29,7 @@ pub struct Status {
     pub directory: Option<PathBuf>,
     pub error: Option<String>,
     pub count: usize,
+    pub reload_available: bool,
     pub max_favorites: usize,
     pub max_material_bytes: usize,
     pub max_file_bytes: u64,
@@ -37,6 +42,7 @@ impl Status {
             directory: None,
             error: None,
             count,
+            reload_available: false,
             max_favorites: MAX_FAVORITES,
             max_material_bytes: MAX_MATERIAL_BYTES,
             max_file_bytes: MAX_FILE_BYTES,
@@ -87,29 +93,22 @@ impl Store {
     }
 
     pub fn load(&self) -> Result<BTreeSet<String>, String> {
+        self.load_snapshot().map(|(materials, _)| materials)
+    }
+
+    pub(crate) fn load_snapshot(&self) -> Result<(BTreeSet<String>, ObservedSource), String> {
+        let source = self.target().observe()?;
         let path = self.path();
-        let metadata = match fs::symlink_metadata(&path) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(BTreeSet::new());
-            }
-            Err(error) => return Err(format!("{}: {error}", path.display())),
+        let Source::File { bytes, length, .. } = &source.source else {
+            return Ok((BTreeSet::new(), source));
         };
-        if !metadata.is_file() || metadata.len() > MAX_FILE_BYTES {
+        if *length > MAX_FILE_BYTES {
             return Err(format!(
                 "{} must be a regular file of at most {MAX_FILE_BYTES} bytes",
                 path.display()
             ));
         }
-        let file = File::open(&path).map_err(|error| format!("{}: {error}", path.display()))?;
-        let mut data = Vec::new();
-        file.take(MAX_FILE_BYTES + 1)
-            .read_to_end(&mut data)
-            .map_err(|error| format!("{}: {error}", path.display()))?;
-        if data.len() as u64 > MAX_FILE_BYTES || data.len() as u64 != metadata.len() {
-            return Err(format!("{} changed size while loading", path.display()));
-        }
-        let preferences: Preferences = serde_json::from_slice(&data)
+        let preferences: Preferences = serde_json::from_slice(bytes)
             .map_err(|error| format!("{}: {error}", path.display()))?;
         if preferences.version != FORMAT_VERSION {
             return Err(format!(
@@ -124,16 +123,45 @@ impl Store {
                 path.display()
             ));
         }
-        preferences
+        let materials = preferences
             .materials
             .iter()
             .map(|name| {
                 canonical_name(name).map_err(|error| format!("{}: {error}", path.display()))
             })
-            .collect()
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        Ok((materials, source))
+    }
+
+    fn target(&self) -> CoordinatedFile<'_> {
+        CoordinatedFile {
+            directory: &self.directory,
+            file_name: FILE_NAME,
+            lock_name: LOCK_FILE_NAME,
+            label: "Material favorites",
+            reload: "Reload favorites",
+            max_bytes: MAX_FILE_BYTES,
+        }
     }
 
     pub fn save(&self, materials: &BTreeSet<String>) -> Result<(), String> {
+        let (_, source) = self.load_snapshot()?;
+        self.save_checked(materials, &source)
+            .map_err(|error| error.message)?
+            .source
+            .map(|_| ())
+    }
+
+    pub(crate) fn save_checked(
+        &self,
+        materials: &BTreeSet<String>,
+        expected: &ObservedSource,
+    ) -> Result<Publication, SaveError> {
+        let data = self.encode(materials).map_err(SaveError::failure)?;
+        self.target().publish(&data, expected)
+    }
+
+    fn encode(&self, materials: &BTreeSet<String>) -> Result<Vec<u8>, String> {
         if materials.len() > MAX_FAVORITES {
             return Err(format!("Keep at most {MAX_FAVORITES} material favorites"));
         }
@@ -152,18 +180,7 @@ impl Store {
                 "Material favorites must fit in {MAX_FILE_BYTES} bytes"
             ));
         }
-        fs::create_dir_all(&self.directory)
-            .map_err(|error| format!("{}: {error}", self.directory.display()))?;
-        let path = self.path();
-        match fs::symlink_metadata(&path) {
-            Ok(metadata) if !metadata.is_file() => {
-                return Err(format!("{} must be a regular file", path.display()));
-            }
-            Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(format!("{}: {error}", path.display())),
-        }
-        crate::recovery::atomic_write(&path, &data)
+        Ok(data)
     }
 }
 

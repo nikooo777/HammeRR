@@ -613,6 +613,7 @@ export component MaterialWindow inherits Window {
     in property <int> total;
     in property <string> catalog-label;
     in property <string> favorites-status;
+    in property <bool> favorites-reload-available;
     in property <string> reload-status;
     in-out property <string> asset-generation;
     in property <bool> favorite;
@@ -624,6 +625,7 @@ export component MaterialWindow inherits Window {
     callback preview-material();
     callback use-material();
     callback toggle-favorite();
+    callback reload-favorites();
     callback reload-material-assets();
     callback inspect-source();
     callback cancel();
@@ -705,6 +707,7 @@ export component MaterialWindow inherits Window {
                     }
                     Button { text: "Source…"; enabled: root.material != ""; clicked => { root.inspect-source(); } }
                     Button { text: root.favorite ? "Remove favorite" : "Add favorite"; enabled: root.material != ""; clicked => { root.toggle-favorite(); } }
+                    Button { text: "Reload favorites"; enabled: root.favorites-reload-available; clicked => { root.reload-favorites(); } }
                     favorites-state := Text { text: root.favorites-status; wrap: word-wrap; font-size: 11px; }
                 }
             }

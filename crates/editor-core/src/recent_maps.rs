@@ -1,10 +1,13 @@
 use std::collections::BTreeSet;
-use std::fs::{self, File};
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::preference_file::Source;
+pub(crate) use crate::preference_file::ObservedSource;
+#[cfg(test)]
+use crate::preference_file::WriteLock;
+use crate::preference_file::{CoordinatedFile, Publication, SaveError, Source};
 
 pub const MAX_RECENT_MAPS: usize = 20;
 pub const MAX_PATH_BYTES: usize = 4096;
@@ -13,187 +16,6 @@ pub const FILE_NAME: &str = "recent-maps.json";
 const LOCK_FILE_NAME: &str = ".recent-maps.lock";
 pub const MAX_ERROR_BYTES: usize = 512;
 const FORMAT_VERSION: u32 = 1;
-
-#[derive(Clone, Debug)]
-pub(crate) struct ObservedSource {
-    source: Source,
-    directory: DirectoryBinding,
-}
-
-#[derive(Clone, Debug)]
-struct DirectoryBinding {
-    requested: PathBuf,
-    ancestor: PathBuf,
-    physical: PathBuf,
-    #[cfg(unix)]
-    identity: (u64, u64),
-}
-
-impl DirectoryBinding {
-    fn capture(directory: &Path) -> Result<Self, String> {
-        let requested = std::path::absolute(directory).map_err(|error| error.to_string())?;
-        let mut ancestor = requested.clone();
-        let metadata = loop {
-            match fs::metadata(&ancestor) {
-                Ok(metadata) if metadata.is_dir() => break metadata,
-                Ok(_) => return Err("Recent maps directory must be a directory".into()),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    if !ancestor.pop() {
-                        return Err(error.to_string());
-                    }
-                }
-                Err(error) => return Err(error.to_string()),
-            }
-        };
-        let physical = ancestor.canonicalize().map_err(|error| error.to_string())?;
-        let binding = Self {
-            requested,
-            ancestor,
-            physical,
-            #[cfg(unix)]
-            identity: {
-                use std::os::unix::fs::MetadataExt;
-                (metadata.dev(), metadata.ino())
-            },
-        };
-        binding.verify()?;
-        Ok(binding)
-    }
-
-    fn verify(&self) -> Result<(), String> {
-        let metadata = fs::metadata(&self.ancestor).map_err(|error| error.to_string())?;
-        let same = metadata.is_dir()
-            && self
-                .ancestor
-                .canonicalize()
-                .map_err(|error| error.to_string())?
-                == self.physical;
-        #[cfg(unix)]
-        let same = {
-            use std::os::unix::fs::MetadataExt;
-            same && (metadata.dev(), metadata.ino()) == self.identity
-        };
-        if !same {
-            return Err("Recent maps directory changed; Reload saved list".into());
-        }
-        let suffix = self
-            .requested
-            .strip_prefix(&self.ancestor)
-            .map_err(|error| error.to_string())?;
-        let mut path = self.physical.clone();
-        for part in suffix.components() {
-            path.push(part);
-            match fs::symlink_metadata(&path) {
-                Ok(metadata) if metadata.is_dir() => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
-                _ => return Err("Recent maps directory binding changed; Reload saved list".into()),
-            }
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct Publication {
-    pub source: Result<ObservedSource, String>,
-}
-
-#[derive(Debug)]
-pub(crate) struct SaveError {
-    pub conflict: bool,
-    pub message: String,
-}
-
-impl SaveError {
-    fn failure(message: impl Into<String>) -> Self {
-        Self {
-            conflict: false,
-            message: map_core::entity_helpers::bounded_preview(&message.into(), MAX_ERROR_BYTES),
-        }
-    }
-}
-
-struct WriteLock {
-    file: File,
-    parent: File,
-    directory: PathBuf,
-    requested_directory: PathBuf,
-    path: PathBuf,
-}
-
-impl WriteLock {
-    #[cfg(target_os = "linux")]
-    fn acquire(directory: &Path) -> Result<Self, String> {
-        use rustix::fs::{FlockOperation, Mode, OFlags};
-        fs::create_dir_all(directory).map_err(|error| error.to_string())?;
-        let requested_directory =
-            std::path::absolute(directory).map_err(|error| error.to_string())?;
-        let directory = directory
-            .canonicalize()
-            .map_err(|error| error.to_string())?;
-        let parent = File::open(&directory).map_err(|error| error.to_string())?;
-        let path = directory.join(LOCK_FILE_NAME);
-        let descriptor = rustix::fs::open(
-            &path,
-            OFlags::CREATE | OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK,
-            Mode::RUSR | Mode::WUSR,
-        )
-        .map_err(|error| format!("Recent maps lock unavailable: {error}"))?;
-        let file = File::from(descriptor);
-        if !file
-            .metadata()
-            .map_err(|error| error.to_string())?
-            .is_file()
-        {
-            return Err("Recent maps lock must be a regular file".into());
-        }
-        rustix::fs::flock(&file, FlockOperation::NonBlockingLockExclusive)
-            .map_err(|error| format!("Recent maps are busy or cannot be locked; retry: {error}"))?;
-        let guard = Self {
-            file,
-            parent,
-            directory,
-            requested_directory,
-            path,
-        };
-        guard.verify()?;
-        Ok(guard)
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    fn acquire(_directory: &Path) -> Result<Self, String> {
-        Err("Coordinated Recent maps writes require Linux".into())
-    }
-
-    fn verify(&self) -> Result<(), String> {
-        let opened = self.file.metadata().map_err(|error| error.to_string())?;
-        let current = fs::symlink_metadata(&self.path).map_err(|error| error.to_string())?;
-        let parent = self.parent.metadata().map_err(|error| error.to_string())?;
-        let directory =
-            fs::metadata(&self.requested_directory).map_err(|error| error.to_string())?;
-        let same = opened.is_file()
-            && current.is_file()
-            && parent.is_dir()
-            && directory.is_dir()
-            && self
-                .requested_directory
-                .canonicalize()
-                .map_err(|error| error.to_string())?
-                == self.directory;
-        #[cfg(unix)]
-        let same = {
-            use std::os::unix::fs::MetadataExt;
-            same && (opened.dev(), opened.ino()) == (current.dev(), current.ino())
-                && (parent.dev(), parent.ino()) == (directory.dev(), directory.ino())
-        };
-        if !same {
-            return Err(
-                "Recent maps lock or directory changed identity; retry Reload saved list".into(),
-            );
-        }
-        Ok(())
-    }
-}
 
 pub use crate::build_settings::BuildSettings;
 
@@ -260,12 +82,15 @@ impl Store {
         self.directory.join(FILE_NAME)
     }
 
-    fn read_source(&self) -> Result<ObservedSource, String> {
-        let directory = DirectoryBinding::capture(&self.directory)?;
-        let source =
-            crate::preference_file::read_source(&self.path(), MAX_FILE_BYTES, "Recent maps")?;
-        directory.verify()?;
-        Ok(ObservedSource { source, directory })
+    fn target(&self) -> CoordinatedFile<'_> {
+        CoordinatedFile {
+            directory: &self.directory,
+            file_name: FILE_NAME,
+            lock_name: LOCK_FILE_NAME,
+            label: "Recent maps",
+            reload: "Reload saved list",
+            max_bytes: MAX_FILE_BYTES,
+        }
     }
 
     pub fn load(&self) -> Result<Vec<Entry>, String> {
@@ -273,7 +98,7 @@ impl Store {
     }
 
     pub(crate) fn load_snapshot(&self) -> Result<(Vec<Entry>, ObservedSource), String> {
-        let source = self.read_source()?;
+        let source = self.target().observe()?;
         let path = self.path();
         let Source::File { bytes, length, .. } = &source.source else {
             return Ok((Vec::new(), source));
@@ -332,43 +157,7 @@ impl Store {
                 "Recent maps must fit in {MAX_FILE_BYTES} bytes"
             )));
         }
-        if std::path::absolute(&self.directory)
-            .map_err(|error| SaveError::failure(error.to_string()))?
-            != expected.directory.requested
-        {
-            return Err(SaveError {
-                conflict: true,
-                message: "Recent maps source belongs to a different directory; Reload saved list"
-                    .into(),
-            });
-        }
-        expected.directory.verify().map_err(|message| SaveError {
-            conflict: true,
-            message,
-        })?;
-        let guard = WriteLock::acquire(&self.directory).map_err(SaveError::failure)?;
-        expected.directory.verify().map_err(|message| SaveError {
-            conflict: true,
-            message,
-        })?;
-        let current = self.read_source().map_err(SaveError::failure)?;
-        if current.source != expected.source {
-            return Err(SaveError {
-                conflict: true,
-                message: "Recent maps changed in another editor or outside this session; Reload saved list before changing it".into(),
-            });
-        }
-        guard.verify().map_err(SaveError::failure)?;
-        publish(&self.path(), &data).map_err(SaveError::failure)?;
-        let source = guard.verify().and_then(|()| self.read_source()).and_then(|source| {
-            guard.verify()?;
-            if matches!(&source.source, Source::File { bytes, .. } if *bytes == data) {
-                Ok(source)
-            } else {
-                Err("Recent maps changed after publication".into())
-            }
-        }).map_err(|error|format!("Recent maps were written but could not verify the saved list; Reload saved list: {error}"));
-        Ok(Publication { source })
+        self.target().publish_with(&data, expected, publish)
     }
 }
 
@@ -422,7 +211,13 @@ mod tests {
             directory: directory.path().into(),
         };
         let (_, source) = store.load_snapshot().unwrap();
-        let guard = WriteLock::acquire(&store.directory).unwrap();
+        let guard = WriteLock::acquire(
+            &store.directory,
+            LOCK_FILE_NAME,
+            "Recent maps",
+            "Reload saved list",
+        )
+        .unwrap();
         let lock_path = store.directory.join(LOCK_FILE_NAME);
         let error = store.save_checked(&[], &source).unwrap_err();
         assert!(!error.conflict && error.message.contains("busy"));
@@ -435,7 +230,13 @@ mod tests {
         let error = store.save_checked(&[], &source).unwrap_err();
         assert!(error.conflict);
         assert_eq!(fs::read(store.path()).unwrap(), disk);
-        let guard = WriteLock::acquire(&store.directory).unwrap();
+        let guard = WriteLock::acquire(
+            &store.directory,
+            LOCK_FILE_NAME,
+            "Recent maps",
+            "Reload saved list",
+        )
+        .unwrap();
         guard.verify().unwrap();
         drop(guard);
         store.save_checked(&[], &saved).unwrap().source.unwrap();
@@ -453,17 +254,21 @@ mod tests {
         let target = directory.path().join("target");
         fs::write(&target, b"unrelated").unwrap();
         symlink(&target, &lock).unwrap();
-        assert!(WriteLock::acquire(&state).is_err());
+        assert!(
+            WriteLock::acquire(&state, LOCK_FILE_NAME, "Recent maps", "Reload saved list").is_err()
+        );
         assert_eq!(fs::read(&target).unwrap(), b"unrelated");
         fs::remove_file(&lock).unwrap();
-        let guard = WriteLock::acquire(&state).unwrap();
+        let guard =
+            WriteLock::acquire(&state, LOCK_FILE_NAME, "Recent maps", "Reload saved list").unwrap();
         fs::rename(&lock, state.join("old-lock")).unwrap();
         fs::write(&lock, b"").unwrap();
         assert!(guard.verify().is_err());
         drop(guard);
         let alias = directory.path().join("alias");
         symlink(&state, &alias).unwrap();
-        let guard = WriteLock::acquire(&alias).unwrap();
+        let guard =
+            WriteLock::acquire(&alias, LOCK_FILE_NAME, "Recent maps", "Reload saved list").unwrap();
         fs::remove_file(&alias).unwrap();
         symlink(directory.path(), &alias).unwrap();
         assert!(guard.verify().is_err());

@@ -1,4 +1,5 @@
 import argparse
+import fcntl
 import json
 import tempfile
 from contextlib import contextmanager
@@ -38,6 +39,104 @@ def map_state(client, ids):
     }
 
 
+def validate_conflicts(binary, output, check):
+    preferences = output / "shared-favorites"
+    preferences.mkdir()
+    first_output = output / "writer-a"
+    second_output = output / "writer-b"
+    for directory in [first_output, second_output]:
+        directory.mkdir()
+        (directory / "recovery").symlink_to(preferences, target_is_directory=True)
+    store = preferences / "material-favorites.json"
+
+    def favorite(client, material, enabled=True, error=False):
+        return client.call(
+            "set_material_favorite",
+            {"material": material, "favorite": enabled},
+            error=error,
+        )
+
+    def favorites(client):
+        return client.call("browse_materials", {"group": "favorites"})
+
+    with launched(binary, first_output, "a") as first:
+        with launched(binary, second_output, "b") as second:
+            check(not store.exists(), "Two editors load the same missing favorite store")
+            favorite(first, "first")
+            saved = store.read_bytes()
+            favorite(second, "second", error=True)
+            status = favorites(second)["favorites"]
+            check(
+                store.read_bytes() == saved
+                and status["count"] == 0
+                and status["persistence"] == "blocked"
+                and "Reload favorites" in status["error"],
+                "A stale writer preserves saved and local favorites with a visible conflict",
+            )
+            block = second.call(
+                "create_block",
+                {"mins": [0, 0, 0], "maxs": [64, 64, 64], "material": "test/base"},
+            )["id"]
+            second.call(
+                "transform_objects",
+                {"ids": [block], "translation": [16, 0, 0], "preview": True},
+            )
+            before = map_state(second, [block])
+            owned = second.call("get_transform_handles")
+            reloaded = second.call("reload_material_favorites")["favorites"]
+            check(
+                reloaded["count"] == 1
+                and reloaded["error"] is None
+                and reloaded["reload_available"],
+                "Explicit Reload adopts another editor's saved favorites and clears conflict",
+            )
+            favorite(second, "second")
+            favorite(first, "first", False, error=True)
+            first.call("reload_material_favorites")
+            favorite(first, "first", False)
+            second.call("reload_material_favorites")
+            check(
+                {entry["name"] for entry in favorites(second)["entries"]} == {"second"},
+                "Reload plus explicit retry retains concurrent additions and removals",
+            )
+            with (preferences / ".material-favorites.lock").open("r+b") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                saved = store.read_bytes()
+                favorite(second, "third", error=True)
+                status = favorites(second)["favorites"]
+                check(
+                    store.read_bytes() == saved
+                    and status["persistence"] == "persistent"
+                    and "busy" in status["error"],
+                    "Independent lock contention preserves data and remains retryable",
+                )
+            favorite(second, "third")
+            valid = store.read_bytes()
+            store.write_bytes(b"malformed favorites")
+            second.call("reload_material_favorites", error=True)
+            check(
+                favorites(second)["favorites"]["count"] == 2
+                and favorites(second)["favorites"]["persistence"] == "blocked"
+                and store.read_bytes() == b"malformed favorites",
+                "Invalid Reload retains local favorites and cannot overwrite malformed storage",
+            )
+            store.write_bytes(valid)
+            second.call("reload_material_favorites")
+            check(
+                favorites(second)["favorites"]["error"] is None,
+                "Repair followed by Reload restores persistent editing",
+            )
+            check(
+                map_state(second, [block]) == before
+                and second.call("get_transform_handles") == owned,
+                "Favorite conflict, writes and Reload preserve the owned transform and map/history",
+            )
+            check(
+                not second.call("get_map_info")["rendering"]["initialized"],
+                "Favorite persistence and Reload never initialize graphics",
+            )
+
+
 def validate(binary, output):
     checks = []
 
@@ -59,6 +158,7 @@ def validate(binary, output):
     with launched(binary, output, "save") as client:
         tools = {tool["name"] for tool in client.rpc("tools/list", {})["tools"]}
         check("set_material_favorite" in tools, "Favorite operation is discoverable")
+        check("reload_material_favorites" in tools, "Favorite Reload is discoverable")
         initial = browse(client)
         check(initial["total"] == 0, "Temporary store starts empty")
         status = initial["favorites"]
@@ -185,6 +285,12 @@ def validate(binary, output):
                 map_state(client, []) == before,
                 f"{stage}: rejection preserves map and history",
             )
+            store.write_text('{"version":1,"materials":["repaired"]}')
+            repaired = client.call("reload_material_favorites")["favorites"]
+            check(
+                repaired["count"] == 1 and repaired["error"] is None,
+                f"{stage}: repaired preferences can be reloaded without restarting",
+            )
 
     store.write_text(
         json.dumps({"version": 1, "materials": [f"test/{index}" for index in range(512)]})
@@ -210,6 +316,7 @@ def validate(binary, output):
             browse(client)["total"] == 511,
             "Favorites still save with corrupt recovery settings",
         )
+    validate_conflicts(binary, output, check)
     return checks
 
 

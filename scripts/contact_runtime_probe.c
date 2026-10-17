@@ -72,6 +72,7 @@ static Tracked tracked[TRACKED_COUNT] = {
 static void *tools, *entities, *engine_server, *physics_system;
 static void *surface_properties;
 static bool initial_profile_enabled, initial_profile_done;
+static bool trigger_state_enabled;
 static int report_fd = -1;
 static bool invalidated, activated, entered, loaded, level_init_seen, initial_shutdown_seen;
 static unsigned long frame_count, sample_count;
@@ -307,7 +308,11 @@ static bool process_guard(void) {
     if (profile && strcmp(profile, "0") && strcmp(profile, "1"))
         return false;
     initial_profile_enabled = profile && !strcmp(profile, "1");
-    if (initial_profile_enabled && refresh_enabled)
+    const char *trigger_state = getenv("HAMMERR_CONTACT_TRIGGER_STATE");
+    if (trigger_state && strcmp(trigger_state, "0") && strcmp(trigger_state, "1"))
+        return false;
+    trigger_state_enabled = trigger_state && !strcmp(trigger_state, "1");
+    if ((initial_profile_enabled || trigger_state_enabled) && refresh_enabled)
         return false;
     char executable[PATH_MAX], actual_game[PATH_MAX], actual_root[PATH_MAX],
         expected_report[PATH_MAX], path[PATH_MAX];
@@ -358,8 +363,9 @@ static bool process_guard(void) {
     report_fd = open(report, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
     if (report_fd < 0)
         return false;
-    emit("{\"event\":\"start\",\"schema\":1,\"pid\":%ld,\"observation_only\":%s}\n",
-         (long)getpid(), refresh_enabled ? "false" : "true");
+    emit("{\"event\":\"start\",\"schema\":1,\"pid\":%ld,\"observation_only\":%s%s}\n",
+         (long)getpid(), refresh_enabled ? "false" : "true",
+         trigger_state_enabled ? ",\"contact_trigger_state\":true,\"contact_trigger_state_schema\":1" : "");
     Module *modules[] = {&engine, &server, &physics};
     const char *relative[] = {"bin/linux64/engine.so", "cstrike/bin/linux64/server.so",
                               "bin/linux64/vphysics.so"};
@@ -794,6 +800,15 @@ static bool initial_profiles(float time) {
                 frame_count, shadow_index);
 }
 
+static bool object_trigger_state(const void *object, bool *value) {
+    typedef bool (*Query)(const void *);
+    Query query = (Query)method((void *)object, 0x1948a8, 4, &physics, 0x371d0);
+    if (!query)
+        return false;
+    *value = query(object);
+    return !invalidated;
+}
+
 static bool contacts(void *object, size_t *count) {
     typedef void *(*Create)(void *);
     typedef void (*Destroy)(void *, void *);
@@ -885,15 +900,31 @@ static bool contacts(void *object, size_t *count) {
             }
             if (!strcmp(name, tracked[3].name) || !strcmp(name, tracked[4].name))
                 blocked_brace_contacts++;
+            char trigger_fields[160] = "";
+            if (trigger_state_enabled) {
+                bool source_trigger, other_trigger;
+                if (!object_trigger_state(source, &source_trigger) ||
+                    !object_trigger_state(other, &other_trigger))
+                    break;
+                int length = snprintf(trigger_fields, sizeof(trigger_fields),
+                                      ",\"trigger_state_schema\":1,\"source_is_trigger\":%s,"
+                                      "\"other_is_trigger\":%s",
+                                      source_trigger ? "true" : "false",
+                                      other_trigger ? "true" : "false");
+                if (length <= 0 || (size_t)length >= sizeof(trigger_fields)) {
+                    fail("trigger_state_record_size");
+                    break;
+                }
+            }
             const char *event = snapshot_stage ? "refresh_contact" : "contact";
             const char *stage = snapshot_stage ? "\"stage\":\"after\"," : "";
             emit(
                 "{\"event\":\"%s\",%s\"sample\":%lu,\"source\":\"%p\",\"other\":\"%p\","
                 "\"owner\":\"%p\",\"edict\":\"%p\",\"index\":%d,\"name\":\"%s\",\"classname\":\"%"
-                "s\",\"other_awake\":%s,\"other_collide\":\"%p\",\"point\":[%.9g,%.9g,%.9g],\"normal\":[%.9g,%.9g,%.9g]}\n",
+                "s\",\"other_awake\":%s,\"other_collide\":\"%p\",\"point\":[%.9g,%.9g,%.9g],\"normal\":[%.9g,%.9g,%.9g]%s}\n",
                 event, stage, sample_count, source, other, owner, edict, index, name, classname,
                 other_sleeping ? "false" : "true", other_collide, point.x, point.y, point.z,
-                normal.x, normal.y, normal.z);
+                normal.x, normal.y, normal.z, trigger_fields);
             (*count)++;
             next(snapshot);
         }

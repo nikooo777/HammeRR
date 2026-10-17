@@ -802,6 +802,7 @@ def main():
     parser.add_argument("--reuse-fixture", type=Path)
     parser.add_argument("--contact-observer-library", type=Path)
     parser.add_argument("--contact-initial-profile", action="store_true")
+    parser.add_argument("--contact-trigger-state", action="store_true")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--bsp", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -814,6 +815,9 @@ def main():
     if args.contact_initial_profile:
         assert args.contact_observer_library, "--contact-initial-profile requires the native contact library"
         assert args.release_mode != "disable-refresh", "Initial profiles are observation-only"
+    if args.contact_trigger_state:
+        assert args.contact_observer_library, "--contact-trigger-state requires the native contact library"
+        assert args.release_mode != "disable-refresh", "Trigger-state observation forbids native intervention"
     if args.contact_observer_library:
         args.contact_observer_library = args.contact_observer_library.resolve(strict=True)
         assert args.runtime or args.worker, "--contact-observer-library requires --runtime"
@@ -827,7 +831,7 @@ def main():
             try:
                 runtime.worker(
                     args,
-                    launch_adapter=partial(contact.prepare, args.contact_observer_library, args.release_mode, initial_profile=args.contact_initial_profile),
+                    launch_adapter=partial(contact.prepare, args.contact_observer_library, args.release_mode, initial_profile=args.contact_initial_profile, trigger_state=args.contact_trigger_state),
                 )
             except BaseException as error:
                 failures.append(error)
@@ -836,7 +840,7 @@ def main():
             except BaseException as error:
                 failures.append(error)
             try:
-                contact.verify(args.output, args.release_mode, initial_profile=args.contact_initial_profile)
+                contact.verify(args.output, args.release_mode, initial_profile=args.contact_initial_profile, trigger_state=args.contact_trigger_state)
             except BaseException as error:
                 failures.append(error)
             if failures:
@@ -892,6 +896,8 @@ def main():
             command.extend(["--contact-observer-library", str(args.contact_observer_library)])
         if args.contact_initial_profile:
             command.append("--contact-initial-profile")
+        if args.contact_trigger_state:
+            command.append("--contact-trigger-state")
         runtime.private_compositor(command, output, timeout=90)
         report["native"] = json.loads((output / "rotating-removal-recovery.json").read_text())
         report["runtime_checked"] = True

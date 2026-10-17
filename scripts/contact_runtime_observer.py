@@ -45,10 +45,11 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def prepare(library, release_mode, root, game, output, command, environment, *, initial_profile=False):
+def prepare(library, release_mode, root, game, output, command, environment, *, initial_profile=False, trigger_state=False):
     assert release_mode in {"kill", "disable", "disable-wake", "disable-refresh"}
     intervention = release_mode == "disable-refresh"
     assert not (initial_profile and intervention), "Initial profiles are observation-only"
+    assert not (trigger_state and intervention), "Trigger-state observation forbids native intervention"
     assert not environment.get("LD_PRELOAD"), (
         "Contact observation cannot inherit LD_PRELOAD"
     )
@@ -94,6 +95,8 @@ def prepare(library, release_mode, root, game, output, command, environment, *, 
     }
     if initial_profile:
         receipt["initial_object_profile"] = {"schema": 2, "objects": 7, "observation_only": True}
+    if trigger_state:
+        receipt["contact_trigger_state"] = {"schema": 1, "observation_only": True}
     (output / "contact-observer-launch.json").write_text(
         json.dumps(receipt, indent=2) + "\n"
     )
@@ -107,6 +110,7 @@ def prepare(library, release_mode, root, game, output, command, environment, *, 
         "HAMMERR_CONTACT_REPORT": str(output / "contact-observer.jsonl"),
         "HAMMERR_CONTACT_INTERVENTION": "single-recheck" if intervention else "none",
         "HAMMERR_CONTACT_INITIAL_PROFILE": "1" if initial_profile else "0",
+        "HAMMERR_CONTACT_TRIGGER_STATE": "1" if trigger_state else "0",
     }
 
 
@@ -121,7 +125,38 @@ def vector(value):
     assert all(isinstance(item, (int, float)) and math.isfinite(item) for item in value)
 
 
-def verify(output, release_mode, *, initial_profile=False):
+def verify_trigger_state_option(receipt, start, enabled):
+    if enabled:
+        option = receipt["contact_trigger_state"]
+        assert isinstance(option, dict)
+        assert option.keys() == {"schema", "observation_only"}
+        assert type(option["schema"]) is int and option["schema"] == 1
+        assert option["observation_only"] is True
+        assert start["contact_trigger_state"] is True
+        assert type(start["contact_trigger_state_schema"]) is int
+        assert start["contact_trigger_state_schema"] == 1
+    else:
+        assert "contact_trigger_state" not in receipt
+        assert "contact_trigger_state" not in start
+        assert "contact_trigger_state_schema" not in start
+
+
+def verify_contact_trigger_state(row, enabled):
+    fields = {"trigger_state_schema", "source_is_trigger", "other_is_trigger"}
+    if enabled:
+        assert type(row["trigger_state_schema"]) is int and row["trigger_state_schema"] == 1
+        assert type(row["source_is_trigger"]) is bool
+        assert type(row["other_is_trigger"]) is bool
+    else:
+        assert fields.isdisjoint(row)
+
+
+def trigger_state_summary(rows):
+    nontrigger = sum(not row["source_is_trigger"] and not row["other_is_trigger"] for row in rows)
+    return {"contact_rows": len(rows), "nontrigger_pair_rows": nontrigger, "trigger_pair_rows": len(rows) - nontrigger}
+
+
+def verify(output, release_mode, *, initial_profile=False, trigger_state=False):
     intervention = release_mode == "disable-refresh"
     report = {
         "schema": 1,
@@ -132,6 +167,7 @@ def verify(output, release_mode, *, initial_profile=False):
     try:
         receipt = json.loads((output / "contact-observer-launch.json").read_text())
         assert not (initial_profile and intervention)
+        assert not (trigger_state and intervention)
         if initial_profile:
             assert receipt["initial_object_profile"] == {"schema": 2, "objects": 7, "observation_only": True}
         else:
@@ -167,6 +203,7 @@ def verify(output, release_mode, *, initial_profile=False):
         assert not grouped.get("unload"), "Observer unloaded before capture termination"
         assert len(grouped.get("start", [])) == 1 and grouped["start"][0]["schema"] == 1
         assert grouped["start"][0]["observation_only"] is (not intervention)
+        verify_trigger_state_option(receipt, grouped["start"][0], trigger_state)
         if not intervention:
             assert not any(name.startswith("refresh_") for name in grouped)
         assert len(grouped.get("loaded", [])) == 1 and grouped["loaded"][0]["success"]
@@ -295,6 +332,7 @@ def verify(output, release_mode, *, initial_profile=False):
                 == 1
             )
         for row in contacts + refresh_contacts:
+            verify_contact_trigger_state(row, trigger_state)
             assert 0 <= row["sample"] < len(samples)
             if row["event"] == "contact":
                 contacts_by_sample.setdefault(row["sample"], []).append(row)
@@ -559,6 +597,8 @@ def verify(output, release_mode, *, initial_profile=False):
                 "asleep_samples": sum(not row["awake"] for row in before_retry),
                 "awake_samples": sum(row["awake"] for row in before_retry),
             }
+            if trigger_state:
+                report["post_disable_before_retry"]["contact_trigger_state"] = trigger_state_summary(retained)
             report["obstruction_brace_contacts"] = len(definite)
             if intervention:
                 arms = grouped.get("refresh_arm", [])
@@ -651,6 +691,13 @@ def verify(output, release_mode, *, initial_profile=False):
                 }
         if initial_profile:
             report["initial_object_profiles"]["success"] = True
+        if trigger_state:
+            report["contact_trigger_state"] = {
+                "schema": 1,
+                "observation_only": True,
+                **trigger_state_summary(contacts),
+                "limits": "Public IsTrigger values describe the bound snapshot pair at sampled instants. False values do not exclude transient controllers during an earlier Disable/filter call, establish recovery or prove compiler parity. Authored Wake behavior is unchanged.",
+            }
         report.update(
             {
                 "success": True,

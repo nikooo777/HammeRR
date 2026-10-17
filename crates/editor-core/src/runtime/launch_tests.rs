@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-fn fixture() -> (
+pub(super) fn fixture() -> (
     tempfile::TempDir,
     SharedSession,
     Result<CompileResult, String>,
@@ -27,7 +27,7 @@ fn fixture() -> (
     (directory, shared, result, game_dir, completion)
 }
 
-fn gated() -> (
+pub(super) fn gated() -> (
     impl FnOnce(LaunchRequest) -> Result<game::Run, String> + Send + 'static,
     mpsc::Receiver<game::Log>,
     mpsc::Sender<()>,
@@ -68,7 +68,7 @@ fn replace(shared: &SharedSession) -> (Vmf, String) {
     (session.document().vmf().clone(), session.history_snapshot())
 }
 
-fn discarded(
+pub(super) fn discarded(
     shared: &SharedSession,
     game_dir: &Path,
     log: &game::Log,

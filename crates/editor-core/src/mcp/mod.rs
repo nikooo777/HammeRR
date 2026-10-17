@@ -52,7 +52,7 @@ use crate::game;
 
 use crate::identity::{id_string, parse_id};
 
-use crate::runtime::{CompileSubmission, DocumentHandle, SharedSession, launch, lock};
+use crate::runtime::{CompileSubmission, DocumentHandle, LaunchSubmission, SharedSession, lock};
 
 use crate::session::{
     Actor, ConnectionFields, ConnectionRecord, ObjectFilter, PropertyChange, PropertyTarget,

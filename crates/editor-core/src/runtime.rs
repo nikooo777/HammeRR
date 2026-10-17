@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use crate::game;
 use crate::session::compilation::{CompileRequest, CompileResult};
-use crate::session::{Actor, LaunchRequest, Session};
+use crate::session::{Actor, LaunchOrigin, LaunchRequest, Session};
 
 mod document;
 pub use document::DocumentHandle;
@@ -13,6 +13,76 @@ pub type SharedSession = Arc<Mutex<Session>>;
 
 pub fn lock(session: &Mutex<Session>) -> MutexGuard<'_, Session> {
     session.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+pub(crate) struct LaunchSubmission {
+    request: Option<LaunchRequest>,
+    session: SharedSession,
+    actor: Actor,
+    origin: LaunchOrigin,
+}
+
+pub(crate) struct LaunchCancellation(Option<LaunchOrigin>);
+
+impl LaunchCancellation {
+    pub(crate) fn disarm(&mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for LaunchCancellation {
+    fn drop(&mut self) {
+        if let Some(origin) = &self.0 {
+            origin.cancel();
+        }
+    }
+}
+
+impl LaunchSubmission {
+    pub(crate) fn begin(session: &SharedSession, actor: Actor) -> Result<Self, String> {
+        let request = lock(session).begin_launch(actor)?;
+        let origin = request.origin();
+        Ok(Self {
+            request: Some(request),
+            session: session.clone(),
+            actor,
+            origin,
+        })
+    }
+
+    pub(crate) fn cancellation(&self) -> LaunchCancellation {
+        LaunchCancellation(Some(self.origin.clone()))
+    }
+
+    pub(crate) fn run(self) -> Result<game::Log, String> {
+        self.run_with(LaunchRequest::run)
+    }
+
+    fn run_with(
+        mut self,
+        run: impl FnOnce(LaunchRequest) -> Result<game::Run, String>,
+    ) -> Result<game::Log, String> {
+        let request = self
+            .request
+            .take()
+            .expect("launch submission owns its request");
+        let result = if self.origin.cancelled() {
+            drop(request);
+            Err("game launch cancelled".into())
+        } else {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(request)))
+                .unwrap_or_else(|_| Err("game launch worker panicked".into()))
+        };
+        let completed = lock(&self.session).finish_launch(self.actor, &self.origin, result);
+        completed
+    }
+}
+
+impl Drop for LaunchSubmission {
+    fn drop(&mut self) {
+        drop(self.request.take());
+        self.origin.retire();
+    }
 }
 
 pub fn launch(session: &SharedSession, actor: Actor) -> Result<game::Log, String> {
@@ -24,19 +94,14 @@ fn launch_with(
     actor: Actor,
     run: impl FnOnce(LaunchRequest) -> Result<game::Run, String>,
 ) -> Result<game::Log, String> {
-    let request = {
-        let mut state = lock(session);
-        match state.begin_launch(actor) {
-            Ok(request) => request,
-            Err(error) => {
-                state.log(actor, format!("game launch failed: {error}"));
-                return Err(error);
-            }
+    let submission = match LaunchSubmission::begin(session, actor) {
+        Ok(submission) => submission,
+        Err(error) => {
+            lock(session).log(actor, format!("game launch failed: {error}"));
+            return Err(error);
         }
     };
-    let origin = request.origin();
-    let result = run(request);
-    lock(session).finish_launch(actor, &origin, result)
+    submission.run_with(run)
 }
 
 pub fn start_launch(session: &SharedSession, actor: Actor) -> Result<(), String> {
@@ -48,20 +113,16 @@ fn start_launch_with(
     actor: Actor,
     run: impl FnOnce(LaunchRequest) -> Result<game::Run, String> + Send + 'static,
 ) -> Result<std::thread::JoinHandle<()>, String> {
-    let request = lock(session).begin_launch(actor)?;
-    let origin = request.origin();
-    let worker_origin = origin.clone();
-    let worker_session = session.clone();
+    let submission = LaunchSubmission::begin(session, actor)?;
     match std::thread::Builder::new()
         .name("game-launch".into())
         .spawn(move || {
-            let result = run(request);
-            let _ = lock(&worker_session).finish_launch(actor, &worker_origin, result);
+            let _ = submission.run_with(run);
         }) {
         Ok(worker) => Ok(worker),
         Err(error) => {
             let error = error.to_string();
-            let _ = lock(session).finish_launch(actor, &origin, Err(error.clone()));
+            lock(session).log(actor, format!("game launch failed: {error}"));
             Err(error)
         }
     }
@@ -174,6 +235,8 @@ impl CompileCompletion {
 
 #[cfg(test)]
 mod compile_tests;
+#[cfg(test)]
+mod launch_submission_tests;
 #[cfg(test)]
 mod launch_tests;
 

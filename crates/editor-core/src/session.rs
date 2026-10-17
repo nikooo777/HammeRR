@@ -3,7 +3,10 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::Instant;
 
 use glam::{DVec2, DVec3};
@@ -292,14 +295,35 @@ pub struct LaunchRequest {
 #[derive(Clone)]
 pub struct LaunchOrigin {
     generation: u64,
-    ticket: Arc<()>,
+    ticket: Arc<LaunchTicket>,
+}
+
+struct LaunchTicket {
+    active: AtomicBool,
+    cancelled: AtomicBool,
 }
 
 impl LaunchOrigin {
+    pub(crate) fn retire(&self) {
+        self.ticket.active.store(false, Ordering::Release);
+    }
+    pub(crate) fn active(&self) -> bool {
+        self.ticket.active.load(Ordering::Acquire)
+    }
+    pub(crate) fn cancel(&self) {
+        self.ticket.cancelled.store(true, Ordering::Release);
+    }
+    pub(crate) fn cancelled(&self) -> bool {
+        self.ticket.cancelled.load(Ordering::Acquire)
+    }
+
     fn new(generation: u64) -> Self {
         Self {
             generation,
-            ticket: Arc::new(()),
+            ticket: Arc::new(LaunchTicket {
+                active: AtomicBool::new(true),
+                cancelled: AtomicBool::new(false),
+            }),
         }
     }
 }
@@ -1841,7 +1865,9 @@ impl Session {
     }
 
     pub fn launching(&self) -> bool {
-        self.pending_launch.is_some()
+        self.pending_launch
+            .as_ref()
+            .is_some_and(LaunchOrigin::active)
     }
 
     fn current_snapshot(&self, snapshot: &Snapshot) -> bool {
@@ -1932,10 +1958,9 @@ impl Session {
         origin: &LaunchOrigin,
         result: Result<game::Run, String>,
     ) -> Result<game::Log, String> {
-        let matching = self
-            .pending_launch
-            .as_ref()
-            .is_some_and(|pending| Arc::ptr_eq(&pending.ticket, &origin.ticket));
+        let matching = self.pending_launch.as_ref().is_some_and(|pending| {
+            pending.active() && Arc::ptr_eq(&pending.ticket, &origin.ticket)
+        });
         if !matching {
             drop(result);
             return Err("game launch result does not match the pending launch".into());
@@ -1949,6 +1974,12 @@ impl Session {
             drop(result);
             let error =
                 "game launch belongs to an earlier map; compile and launch the current map again";
+            self.log(actor, error);
+            return Err(error.into());
+        }
+        if origin.cancelled() {
+            drop(result);
+            let error = "game launch cancelled";
             self.log(actor, error);
             return Err(error.into());
         }

@@ -225,8 +225,17 @@ impl EditorServer {
         description = "Launch the latest successful compile of the current map in Linux CS:S. Rejects outdated compiles and duplicate launches. Use run_map to compile and launch in one call."
     )]
     pub(in crate::mcp) async fn launch_game(&self) -> ToolResult {
-        let session = self.session.clone();
-        let result = tokio::task::spawn_blocking(move || launch(&session, Actor::Agent)).await;
+        let submission = match LaunchSubmission::begin(&self.session, Actor::Agent) {
+            Ok(submission) => submission,
+            Err(error) => {
+                self.session()
+                    .log(Actor::Agent, format!("game launch failed: {error}"));
+                return fail(error);
+            }
+        };
+        let mut cancellation = submission.cancellation();
+        let result = tokio::task::spawn_blocking(move || submission.run()).await;
+        cancellation.disarm();
         match result {
             Ok(Ok(log)) => ok(game_log_json(&log)),
             Ok(Err(error)) => fail(error),
@@ -335,3 +344,6 @@ impl EditorServer {
         })
     }
 }
+
+#[cfg(test)]
+mod launch_submission_tests;

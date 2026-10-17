@@ -1994,6 +1994,9 @@ changed file metadata or Session state invalidates stale requests. Renamed or
 replaced sources invalidate loaded placement reviews; deletion alone retains the
 detached draft. Direct replacement, private formats and referenced instances are
 unavailable. Rename requires Linux atomic no-replace support.
+The metadata stamp does not bind physical directory identity: replacing an empty
+library or retargeting a parent alias can leave an old action valid for the new
+directory. Keep the library path and parent aliases stable during review.
 
 Flat remains the default material-free brush/terrain/model thumbnail, including
 ordinary point helpers and authored hidden objects. Textured admits opaque

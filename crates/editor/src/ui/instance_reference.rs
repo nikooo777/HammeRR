@@ -139,6 +139,14 @@ impl Controller {
     fn open(&self, entity: Option<u32>) {
         self.generation.set(self.generation.get().wrapping_add(1));
         self.edits.set(self.edits.get().wrapping_add(1));
+        self.reset_fields();
+        let result = lock(&self.shared).begin_instance_reference(Actor::User, entity);
+        self.result(result);
+        self.refresh();
+        let _ = self.window.show();
+    }
+
+    fn reset_fields(&self) {
         self.values.replace(std::array::from_fn(|_| String::new()));
         self.window.set_origin_x("".into());
         self.window.set_origin_y("".into());
@@ -146,10 +154,6 @@ impl Controller {
         self.window.set_pitch("".into());
         self.window.set_yaw("".into());
         self.window.set_roll("".into());
-        let result = lock(&self.shared).begin_instance_reference(Actor::User, entity);
-        self.result(result);
-        self.refresh();
-        let _ = self.window.show();
     }
 
     fn edited(&self, field: i32) {
@@ -179,9 +183,21 @@ impl Controller {
             _ => return,
         }
         let result = lock(&self.shared).update_instance_reference(Actor::User, token, changes);
-        self.editing.set(true);
-        self.result(result);
-        self.editing.set(false);
+        match result {
+            Ok(report) => {
+                self.editing.set(true);
+                self.result(Ok(report));
+                self.editing.set(false);
+            }
+            Err(error) => {
+                self.reset_fields();
+                let report = lock(&self.shared).get_instance_reference();
+                self.present(&report);
+                self.window.set_message(
+                    format!("{error}; rejected inputs were restored to the shared form").into(),
+                );
+            }
+        }
     }
 
     fn complete_file(&self, token: u64, generation: u64, edits: u64, picker: u64, path: &Path) {

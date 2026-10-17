@@ -50,11 +50,13 @@ pub(super) fn bind_pivot_pick_controls(app: &AppWindow, shared: SharedSession) {
         move || {
             let app = app.unwrap();
             let mut session = lock(&shared);
+            let camera = session.camera();
+            let snapshot = session.transform_pivot_pick_stamp();
             let result = session.begin_transform_pivot_pick(
                 Actor::User,
-                session.camera(),
+                camera,
                 viewport_size(&app),
-                &session.transform_pivot_pick_stamp(),
+                &snapshot,
             );
             if let Err(error) = result {
                 app.set_message(error.into());

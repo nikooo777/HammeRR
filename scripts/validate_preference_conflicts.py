@@ -7,7 +7,6 @@ from pathlib import Path
 
 from validate_face_lighting import DEFAULT_BINARY, Client, detail
 
-
 STORES = {
     "grid": ("get_grid_defaults", "set_grid_defaults", "grid-defaults.json", ".grid-defaults.lock"),
     "preview": ("get_preview_defaults", "set_preview_defaults", "preview-defaults.json", ".preview-defaults.lock"),

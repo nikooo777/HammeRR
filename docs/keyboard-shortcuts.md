@@ -35,7 +35,8 @@ Limits:
   Save. Save and Reset coordinate with other editors through a nonblocking
   lock; a busy lock preserves the file and active bindings. Reload before
   retrying. Changed directories require explicit Reload. Programs that ignore
-  the lock can still race with publication.
+  the lock can still race with publication. Coordinated writes require Linux;
+  other platforms reject publication.
 - If a write completes but verification fails, the dialog reports the completed
   write and its error. The intended saved bindings remain active; Reload to
   inspect storage before continuing.

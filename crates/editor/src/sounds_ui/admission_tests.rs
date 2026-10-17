@@ -22,7 +22,7 @@ struct Snapshot {
     history: String,
     selected: Vec<map_core::ObjectId>,
     serials: [u64; 3],
-    choice: serde_json::Value,
+    choice: Result<serde_json::Value, String>,
     playback: serde_json::Value,
     files: BTreeMap<PathBuf, Vec<u8>>,
 }
@@ -91,7 +91,7 @@ fn snapshot(fixture: &Fixture) -> Snapshot {
             session.view_serial(),
             session.log_serial(),
         ],
-        choice: session.sound_choice(fixture.token).unwrap(),
+        choice: session.sound_choice(fixture.token),
         playback: session.sound_preview_status(),
         files: files(fixture.directory.path()),
     }
@@ -149,12 +149,14 @@ fn retained_sound_callbacks_reject_drain_and_closed_document_while_peer_stays_li
     }
     assert!(receive.try_recv().is_err());
     let before = snapshot(&fixture);
+    let peer_before = snapshot(&peer);
     retained_actions(&fixture.controller);
     assert_eq!(
         fixture.controller.window.get_message(),
         "the editor is closing"
     );
     assert_eq!(snapshot(&fixture), before);
+    assert_eq!(snapshot(&peer), peer_before);
     let peer_history = lock(&peer.shared).history_snapshot();
     peer.controller
         .window
@@ -162,6 +164,7 @@ fn retained_sound_callbacks_reject_drain_and_closed_document_while_peer_stays_li
     peer.controller.window.invoke_apply();
     assert_ne!(lock(&peer.shared).history_snapshot(), peer_history);
     assert_eq!(peer.document.lifecycle(), DocumentLifecycle::Live);
+    let peer_after = snapshot(&peer);
     drop(gate);
     receive.recv_timeout(TIMEOUT).unwrap().unwrap();
     thread.join().unwrap();
@@ -173,6 +176,7 @@ fn retained_sound_callbacks_reject_drain_and_closed_document_while_peer_stays_li
         "the document is closed"
     );
     assert_eq!(snapshot(&fixture), before);
+    assert_eq!(snapshot(&peer), peer_after);
     assert_eq!(
         lock(&fixture.shared)
             .recovery_entries()
@@ -188,6 +192,7 @@ fn retained_sound_callbacks_reject_drain_and_closed_document_while_peer_stays_li
     let volume = lock(&fixture.shared).sound_preview_volume();
     fixture.controller.window.invoke_volume_changed();
     assert_eq!(lock(&fixture.shared).sound_preview_volume(), volume);
+    assert_eq!(snapshot(&peer), peer_after);
     peer.document.shutdown().unwrap();
 }
 

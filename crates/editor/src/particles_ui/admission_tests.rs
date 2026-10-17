@@ -22,7 +22,7 @@ struct Snapshot {
     history: String,
     selected: Vec<map_core::ObjectId>,
     serials: [u64; 3],
-    choice: serde_json::Value,
+    choice: Result<serde_json::Value, String>,
     files: BTreeMap<PathBuf, Vec<u8>>,
 }
 
@@ -88,7 +88,7 @@ fn snapshot(fixture: &Fixture) -> Snapshot {
             session.view_serial(),
             session.log_serial(),
         ],
-        choice: session.particle_choice(fixture.token).unwrap(),
+        choice: session.particle_choice(fixture.token),
         files: files(fixture.directory.path()),
     }
 }
@@ -139,17 +139,20 @@ fn retained_particle_callbacks_reject_drain_and_closed_document_while_peer_stays
     }
     assert!(receive.try_recv().is_err());
     let before = snapshot(&fixture);
+    let peer_before = snapshot(&peer);
     retained_actions(&fixture.controller);
     assert_eq!(
         fixture.controller.window.get_message(),
         "the editor is closing"
     );
     assert_eq!(snapshot(&fixture), before);
+    assert_eq!(snapshot(&peer), peer_before);
     let peer_history = lock(&peer.shared).history_snapshot();
     peer.controller.window.invoke_choose("test_sparks".into());
     peer.controller.window.invoke_apply();
     assert_ne!(lock(&peer.shared).history_snapshot(), peer_history);
     assert_eq!(peer.document.lifecycle(), DocumentLifecycle::Live);
+    let peer_after = snapshot(&peer);
     drop(gate);
     receive.recv_timeout(TIMEOUT).unwrap().unwrap();
     thread.join().unwrap();
@@ -161,6 +164,7 @@ fn retained_particle_callbacks_reject_drain_and_closed_document_while_peer_stays
         "the document is closed"
     );
     assert_eq!(snapshot(&fixture), before);
+    assert_eq!(snapshot(&peer), peer_after);
     assert_eq!(
         lock(&fixture.shared)
             .recovery_entries()
@@ -175,11 +179,10 @@ fn retained_particle_callbacks_reject_drain_and_closed_document_while_peer_stays
     assert!(continuation.upgrade().is_err());
     fixture.controller.window.invoke_reload();
     assert_eq!(
-        lock(&fixture.shared)
-            .particle_choice(fixture.token)
-            .unwrap(),
+        lock(&fixture.shared).particle_choice(fixture.token),
         before.choice
     );
+    assert_eq!(snapshot(&peer), peer_after);
     peer.document.shutdown().unwrap();
 }
 

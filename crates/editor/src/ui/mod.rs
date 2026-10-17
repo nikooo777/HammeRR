@@ -570,7 +570,13 @@ pub(super) fn run(
     app.window().on_close_requested({
         let ui = ui.clone();
         move || {
-            confirm_discard(&ui, || {
+            let shared = session_of(&ui);
+            confirm_discard(&ui, move |review| {
+                let mut session = lock(&shared);
+                if let Err(error) = session.ensure_buffer_replacement_review(&review) {
+                    session.log(Actor::System, error);
+                    return;
+                }
                 if let Err(error) = slint::quit_event_loop() {
                     eprintln!("could not close editor: {error}");
                 }
@@ -615,11 +621,14 @@ pub(super) fn run(
         }
     });
     app.on_new_map({
-        let ui = ui.clone();
+        let (app, ui) = (app.as_weak(), ui.clone());
         move || {
-            let ui2 = ui.clone();
-            confirm_discard(&ui, move || {
-                drop(lock(&session_of(&ui2)).new_map(Actor::User, true))
+            let (app, shared) = (app.clone(), session_of(&ui));
+            confirm_discard(&ui, move |review| {
+                let result = lock(&shared).new_map_reviewed(Actor::User, true, &review);
+                if let Some(app) = app.upgrade() {
+                    report(&app, result.map(|()| "New map".into()));
+                }
             });
         }
     });

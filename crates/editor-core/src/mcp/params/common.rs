@@ -16,12 +16,16 @@ pub struct OpenMapArgs {
     /// Open even if the current map has unsaved changes, losing them.
     #[serde(default)]
     pub discard_changes: bool,
+    /// Exact replacement_review from get_map_info; rejects edits, saves or partition-preview changes since review.
+    pub expected_review: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct NewMapArgs {
     #[serde(default)]
     pub discard_changes: bool,
+    /// Exact replacement_review from get_map_info; checked together with discard_changes.
+    pub expected_review: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -34,6 +38,8 @@ pub struct RecentMapPathArgs {
 pub struct SaveMapArgs {
     /// Where to save; defaults to the map's current file.
     pub path: Option<String>,
+    /// Generation from get_map_info; rejects replacement while allowing edits in the same buffer.
+    pub expected_generation: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -302,6 +308,8 @@ pub struct RestoreRecoveryArgs {
     /// Optional stale-map guard; supply both generation and revision from get_recovery.status.
     pub generation: Option<u64>,
     pub revision: Option<u64>,
+    /// Exact replacement_review from get_map_info; also checks saves and partition-preview changes.
+    pub expected_review: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -610,6 +618,8 @@ pub struct CompileTokenArgs {
 pub struct CompileArgs {
     /// Output .bsp path; defaults to the current map filename with a .bsp extension.
     pub path: Option<String>,
+    /// Generation from get_map_info; rejects replacement while allowing edits in the same buffer.
+    pub expected_generation: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

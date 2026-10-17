@@ -50,7 +50,7 @@ use crate::game;
 
 use crate::identity::{id_string, parse_id};
 
-use crate::runtime::{SharedSession, finish_compile_worker, launch, lock, start_compile};
+use crate::runtime::{SharedSession, finish_compile_worker, launch, lock};
 
 use crate::session::{
     Actor, ConnectionFields, ConnectionRecord, ObjectFilter, PropertyChange, PropertyTarget,
@@ -422,7 +422,11 @@ impl EditorServer {
         }
         let request = {
             let path = args.path.as_ref().map(PathBuf::from);
-            match self.session().begin_compile(Actor::Agent, path.as_deref()) {
+            match self.session().begin_compile_for_generation(
+                Actor::Agent,
+                path.as_deref(),
+                args.expected_generation,
+            ) {
                 Ok(request) => request,
                 Err(message) => return fail(message),
             }

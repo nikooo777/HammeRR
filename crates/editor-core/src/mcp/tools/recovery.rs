@@ -108,11 +108,16 @@ impl EditorServer {
                     );
                 }
             };
-            session.restore_recovery_snapshot(
+            let review = match args.expected_review.as_deref() {
+                Some(token) => session.buffer_replacement_review_from_token(token)?,
+                None => session.buffer_replacement_review(),
+            };
+            session.restore_recovery_snapshot_reviewed(
                 Actor::Agent,
                 &args.id,
                 args.discard_changes,
                 expected,
+                &review,
             )?;
             Ok(
                 json!({"restored": args.id, "path": session.path(), "unsaved_changes": session.document().is_dirty(), "status": session.recovery_status()}),

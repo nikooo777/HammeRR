@@ -1,19 +1,19 @@
 use super::*;
 
-/// Asks before throwing away unsaved changes, then runs `then`.
-pub(super) fn confirm_discard(ui: &SharedUi, then: impl FnOnce() + 'static) {
+pub(super) fn confirm_discard(
+    ui: &SharedUi,
+    then: impl FnOnce(editor_core::session::BufferReplacementReview) + 'static,
+) {
     let shared = session_of(ui);
-    let (dirty, generation, revision, partition) = {
+    let (dirty, review) = {
         let session = lock(&shared);
         (
             session.document().is_dirty() || session.partition_preview_token().is_some(),
-            session.document_generation(),
-            session.document().revision(),
-            session.partition_preview_token(),
+            session.buffer_replacement_review(),
         )
     };
     if !dirty {
-        then();
+        then(review);
         return;
     }
     let dialog = rfd::AsyncMessageDialog::new()
@@ -22,19 +22,7 @@ pub(super) fn confirm_discard(ui: &SharedUi, then: impl FnOnce() + 'static) {
         .set_buttons(rfd::MessageButtons::YesNoCancel);
     slint::spawn_local(async move {
         if dialog.show().await == rfd::MessageDialogResult::Yes {
-            let mut session = lock(&shared);
-            if session.document_generation() != generation
-                || session.document().revision() != revision
-                || session.partition_preview_token() != partition
-            {
-                session.log(
-                    Actor::System,
-                    "Map changed while confirming discard. Try again.",
-                );
-                return;
-            }
-            drop(session);
-            then();
+            then(review);
         }
     })
     .expect("event loop is running");
@@ -62,8 +50,8 @@ pub(super) fn open_dialog(app: &AppWindow, ui: &SharedUi) {
         };
         let path = file.path().to_owned();
         let ui2 = ui.clone();
-        confirm_discard(&ui, move || {
-            let result = lock(&session_of(&ui2)).open(Actor::User, &path, true);
+        confirm_discard(&ui, move |review| {
+            let result = lock(&session_of(&ui2)).open_reviewed(Actor::User, &path, true, &review);
             if let Some(app) = app.upgrade() {
                 report(&app, result);
             }
@@ -73,9 +61,13 @@ pub(super) fn open_dialog(app: &AppWindow, ui: &SharedUi) {
 }
 
 pub(super) fn save(app: &AppWindow, ui: &SharedUi) {
-    let has_path = lock(&session_of(ui)).path().is_some();
+    let shared = session_of(ui);
+    let (has_path, generation) = {
+        let session = lock(&shared);
+        (session.path().is_some(), session.document_generation())
+    };
     if has_path {
-        let result = lock(&session_of(ui)).save(Actor::User, None);
+        let result = lock(&shared).save_for_generation(Actor::User, None, Some(generation));
         report(app, result.map(|p| format!("Saved {}", p.display())));
         return;
     }
@@ -83,12 +75,13 @@ pub(super) fn save(app: &AppWindow, ui: &SharedUi) {
         .set_title("Save map")
         .set_file_name("untitled.vmf")
         .add_filter("Valve Map File", &["vmf"]);
-    let (app, ui) = (app.as_weak(), ui.clone());
+    let app = app.as_weak();
     slint::spawn_local(async move {
         let Some(file) = dialog.save_file().await else {
             return;
         };
-        let result = lock(&session_of(&ui)).save(Actor::User, Some(file.path()));
+        let result =
+            lock(&shared).save_for_generation(Actor::User, Some(file.path()), Some(generation));
         if let Some(app) = app.upgrade() {
             report(&app, result.map(|p| format!("Saved {}", p.display())));
         }
@@ -101,16 +94,23 @@ pub(super) fn start_compile(
     session: SharedSession,
     path: Option<&Path>,
     play: bool,
+    generation: u64,
 ) {
-    if let Err(error) = runtime::start_compile(&session, Actor::User, path, play) {
+    if let Err(error) =
+        runtime::start_compile_for_generation(&session, Actor::User, path, play, Some(generation))
+    {
         app.set_message(error.into());
     }
 }
 
 pub(super) fn compile_map(app: &AppWindow, ui: &SharedUi, play: bool) {
     let session = session_of(ui);
-    if lock(&session).path().is_some() {
-        start_compile(app, session, None, play);
+    let (has_path, generation) = {
+        let state = lock(&session);
+        (state.path().is_some(), state.document_generation())
+    };
+    if has_path {
+        start_compile(app, session, None, play, generation);
         return;
     }
     let dialog = rfd::AsyncFileDialog::new()
@@ -123,7 +123,7 @@ pub(super) fn compile_map(app: &AppWindow, ui: &SharedUi, play: bool) {
             return;
         };
         if let Some(app) = app.upgrade() {
-            start_compile(&app, session, Some(file.path()), play);
+            start_compile(&app, session, Some(file.path()), play, generation);
         }
     })
     .expect("event loop is running");

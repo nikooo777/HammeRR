@@ -71,7 +71,10 @@ async fn both_mcp_build_paths_publish_grouping_and_recover_after_ambiguous_claim
     let history = lock(&shared).history_snapshot();
     let failed = value(
         server
-            .compile_map(Parameters(CompileArgs { path: None }))
+            .compile_map(Parameters(CompileArgs {
+                path: None,
+                expected_generation: None,
+            }))
             .await,
         true,
     );
@@ -84,7 +87,10 @@ async fn both_mcp_build_paths_publish_grouping_and_recover_after_ambiguous_claim
             .any(|item| item["message"].as_str().unwrap().contains("both qualify"))
     );
     value(
-        server.start_compile(Parameters(CompileArgs { path: None })),
+        server.start_compile(Parameters(CompileArgs {
+            path: None,
+            expected_generation: None,
+        })),
         false,
     );
     let status = finished(&server).await;
@@ -102,7 +108,10 @@ async fn both_mcp_build_paths_publish_grouping_and_recover_after_ambiguous_claim
         .unwrap();
     let complete = value(
         server
-            .compile_map(Parameters(CompileArgs { path: None }))
+            .compile_map(Parameters(CompileArgs {
+                path: None,
+                expected_generation: None,
+            }))
             .await,
         false,
     );
@@ -110,7 +119,10 @@ async fn both_mcp_build_paths_publish_grouping_and_recover_after_ambiguous_claim
     assert_eq!(complete["stats"]["viscluster_groups"], 1);
     let bytes = std::fs::read(&bsp).unwrap();
     value(
-        server.start_compile(Parameters(CompileArgs { path: None })),
+        server.start_compile(Parameters(CompileArgs {
+            path: None,
+            expected_generation: None,
+        })),
         false,
     );
     let status = finished(&server).await;

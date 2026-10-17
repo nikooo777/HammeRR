@@ -22,6 +22,8 @@ use crate::spatial;
 
 pub mod atlas_texturing;
 pub mod baked_lightmaps;
+mod buffer_replacement;
+pub use buffer_replacement::BufferReplacementReview;
 pub mod carving;
 pub mod checks;
 pub mod clip_drag;
@@ -260,6 +262,7 @@ pub struct Session {
     camera_serial: u64,
     log_serial: u64,
     document_generation: u64,
+    buffer_review_scope: String,
     compiling: bool,
     compilation: compilation::State,
     native_capture: native_capture::State,
@@ -395,6 +398,7 @@ impl Session {
             camera_serial: 1,
             log_serial: 0,
             document_generation: 0,
+            buffer_review_scope: crate::recovery::unique_id(),
             compiling: false,
             compilation: compilation::State::default(),
             native_capture: native_capture::State::default(),

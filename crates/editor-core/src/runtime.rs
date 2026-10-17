@@ -85,6 +85,16 @@ pub fn start_compile(
     path: Option<&std::path::Path>,
     play: bool,
 ) -> Result<Value, String> {
+    start_compile_for_generation(session, actor, path, play, None)
+}
+
+pub fn start_compile_for_generation(
+    session: &SharedSession,
+    actor: Actor,
+    path: Option<&std::path::Path>,
+    play: bool,
+    expected_generation: Option<u64>,
+) -> Result<Value, String> {
     let (request, status) = {
         let mut state = lock(session);
         if play && (state.game_running() || state.launching()) {
@@ -92,7 +102,7 @@ pub fn start_compile(
                 "CS:S is already launching or running; close it before running another map".into(),
             );
         }
-        let request = state.begin_compile(actor, path)?;
+        let request = state.begin_compile_for_generation(actor, path, expected_generation)?;
         (request, state.compile_status())
     };
     let worker_session = session.clone();

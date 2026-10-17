@@ -297,7 +297,7 @@ fn managed_overlay_actions_create_refit_rebind_and_move_exact_corner_handles() {
         .show(&mut lock(&target.shared), "test/checker")
         .unwrap();
     target.controller.window.invoke_search_overlays();
-    let entity = selected[0].to_string();
+    let entity = crate::identity::id_string(selected[0]);
     assert!(
         target
             .controller

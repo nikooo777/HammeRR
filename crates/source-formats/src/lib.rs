@@ -2,6 +2,7 @@
 
 pub mod bsp;
 pub mod fgd;
+pub mod file_publication;
 pub mod gamefs;
 pub mod keyvalues;
 pub mod mdl;

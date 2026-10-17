@@ -76,111 +76,7 @@ pub(crate) struct ObservedSource {
     directory: DirectoryBinding,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct DirectoryBinding {
-    requested: PathBuf,
-    ancestor: PathBuf,
-    physical: PathBuf,
-    label: &'static str,
-    reload: &'static str,
-    #[cfg(unix)]
-    identity: (u64, u64),
-}
-
-impl DirectoryBinding {
-    pub(crate) fn capture(
-        directory: &Path,
-        label: &'static str,
-        reload: &'static str,
-    ) -> Result<Self, String> {
-        let requested = std::path::absolute(directory).map_err(|error| error.to_string())?;
-        let mut ancestor = requested.clone();
-        let metadata = loop {
-            match fs::metadata(&ancestor) {
-                Ok(metadata) if metadata.is_dir() => break metadata,
-                Ok(_) => return Err(format!("{label} directory must be a directory")),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    if !ancestor.pop() {
-                        return Err(error.to_string());
-                    }
-                }
-                Err(error) => return Err(error.to_string()),
-            }
-        };
-        let physical = ancestor.canonicalize().map_err(|error| error.to_string())?;
-        let binding = Self {
-            requested,
-            ancestor,
-            physical,
-            label,
-            reload,
-            #[cfg(unix)]
-            identity: {
-                use std::os::unix::fs::MetadataExt;
-                (metadata.dev(), metadata.ino())
-            },
-        };
-        binding.verify()?;
-        Ok(binding)
-    }
-
-    pub(crate) fn verify(&self) -> Result<(), String> {
-        let metadata = fs::metadata(&self.ancestor).map_err(|error| error.to_string())?;
-        let same = metadata.is_dir()
-            && self
-                .ancestor
-                .canonicalize()
-                .map_err(|error| error.to_string())?
-                == self.physical;
-        #[cfg(unix)]
-        let same = {
-            use std::os::unix::fs::MetadataExt;
-            same && (metadata.dev(), metadata.ino()) == self.identity
-        };
-        if !same {
-            return Err(format!("{} directory changed; {}", self.label, self.reload));
-        }
-        let suffix = self
-            .requested
-            .strip_prefix(&self.ancestor)
-            .map_err(|error| error.to_string())?;
-        let mut path = self.physical.clone();
-        for part in suffix.components() {
-            path.push(part);
-            match fs::symlink_metadata(&path) {
-                Ok(metadata) if metadata.is_dir() => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
-                _ => {
-                    return Err(format!(
-                        "{} directory binding changed; {}",
-                        self.label, self.reload
-                    ));
-                }
-            }
-        }
-        Ok(())
-    }
-
-    pub(crate) fn physical_ancestor(&self) -> &Path {
-        &self.physical
-    }
-
-    pub(crate) fn suffix(&self) -> Result<&Path, String> {
-        self.requested
-            .strip_prefix(&self.ancestor)
-            .map_err(|error| error.to_string())
-    }
-
-    pub(crate) fn matches_ancestor(&self, metadata: &fs::Metadata) -> bool {
-        let same = metadata.is_dir();
-        #[cfg(unix)]
-        let same = {
-            use std::os::unix::fs::MetadataExt;
-            same && (metadata.dev(), metadata.ino()) == self.identity
-        };
-        same
-    }
-}
+pub(crate) use source_formats::file_publication::DirectoryBinding;
 
 #[derive(Debug)]
 pub(crate) struct Publication {
@@ -352,7 +248,7 @@ impl CoordinatedFile<'_> {
         }
         if std::path::absolute(self.directory)
             .map_err(|error| SaveError::failure(error.to_string()))?
-            != expected.directory.requested
+            != expected.directory.requested()
         {
             return Err(SaveError {
                 conflict: true,

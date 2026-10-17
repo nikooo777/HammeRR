@@ -3,6 +3,8 @@ use std::rc::Rc;
 
 use slint::{ComponentHandle, VecModel};
 
+use crate::runtime::{DocumentAccess, DocumentContinuation};
+#[cfg(test)]
 use crate::runtime::{SharedSession, lock};
 use crate::session::history::{INITIAL_STATE, PAGE_SIZE, Report};
 use crate::session::{Actor, Session};
@@ -286,53 +288,99 @@ fn page(window: &HistoryWindow, session: &Session, form: &RefCell<Form>, older: 
     }
 }
 
+fn with_session(
+    window: &slint::Weak<HistoryWindow>,
+    target: &DocumentContinuation,
+    body: impl FnOnce(&HistoryWindow, &mut Session),
+) {
+    let Some(window) = window.upgrade() else {
+        return;
+    };
+    let result = target.upgrade().and_then(|access| {
+        access.with_session(|session| {
+            body(&window, session);
+            Ok(())
+        })
+    });
+    if let Err(error) = result {
+        window.set_message(error.into());
+    }
+}
+
 impl Controller {
+    #[cfg(test)]
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
+        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
+    }
+
+    pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let window = HistoryWindow::new()?;
         let form = Rc::new(RefCell::new(Form::default()));
         window.on_choose({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
-            move |target| choose(&window.unwrap(), &lock(&shared), &form, target.to_string())
+            let (window, target, form) = (window.as_weak(), access.downgrade(), form.clone());
+            move |state| {
+                with_session(&window, &target, |window, session| {
+                    choose(window, session, &form, state.to_string());
+                })
+            }
         });
         window.on_navigate({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
-            move || navigate(&window.unwrap(), &mut lock(&shared), &form)
+            let (window, target, form) = (window.as_weak(), access.downgrade(), form.clone());
+            move || {
+                with_session(&window, &target, |window, session| {
+                    navigate(window, session, &form)
+                })
+            }
         });
         window.on_newer({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
-            move || page(&window.unwrap(), &lock(&shared), &form, false)
+            let (window, target, form) = (window.as_weak(), access.downgrade(), form.clone());
+            move || {
+                with_session(&window, &target, |window, session| {
+                    page(window, session, &form, false)
+                })
+            }
         });
         window.on_older({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
-            move || page(&window.unwrap(), &lock(&shared), &form, true)
+            let (window, target, form) = (window.as_weak(), access.downgrade(), form.clone());
+            move || {
+                with_session(&window, &target, |window, session| {
+                    page(window, session, &form, true)
+                })
+            }
         });
         window.on_refresh_history({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, target, form) = (window.as_weak(), access.downgrade(), form.clone());
             move || {
-                form.borrow_mut().snapshot.clear();
-                refresh(&window.unwrap(), &lock(&shared), &form);
+                with_session(&window, &target, |window, session| {
+                    form.borrow_mut().snapshot.clear();
+                    refresh(window, session, &form);
+                })
             }
         });
         window.on_cancel({
             let (window, form) = (window.as_weak(), form.clone());
             move || {
-                cancel(&window.unwrap(), &form);
-                window
-                    .unwrap()
-                    .set_message("Selection cancelled. Map and history unchanged.".into());
+                if let Some(window) = window.upgrade() {
+                    cancel(&window, &form);
+                    window.set_message("Selection cancelled. Map and history unchanged.".into());
+                }
             }
         });
         window.on_close_dialog({
             let (window, form) = (window.as_weak(), form.clone());
             move || {
-                cancel(&window.unwrap(), &form);
-                let _ = window.unwrap().hide();
+                if let Some(window) = window.upgrade() {
+                    cancel(&window, &form);
+                    let _ = window.hide();
+                }
             }
         });
         window.window().on_close_requested({
             let (window, form) = (window.as_weak(), form.clone());
             move || {
-                cancel(&window.unwrap(), &form);
+                if let Some(window) = window.upgrade() {
+                    cancel(&window, &form);
+                }
                 slint::CloseRequestResponse::HideWindow
             }
         });

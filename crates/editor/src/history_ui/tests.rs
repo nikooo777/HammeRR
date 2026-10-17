@@ -150,3 +150,121 @@ fn history_window_inspects_cancels_navigates_guards_and_reopens_with_software_re
     assert_eq!(window.get_selected_state(), "");
     window.invoke_close_dialog();
 }
+
+fn admitted_fixture() -> (
+    tempfile::TempDir,
+    crate::runtime::DocumentHandle,
+    SharedSession,
+) {
+    i_slint_backend_testing::init_no_event_loop();
+    let directory = tempfile::tempdir().unwrap();
+    let mut session = Session::new(Err("no assets required".into()));
+    session.configure_recovery(Ok(directory.path().join("recovery")));
+    add_marker(&mut session, Actor::User, "First marker");
+    let shared = Arc::new(Mutex::new(session));
+    let document = crate::test_assets::document(shared.clone());
+    (directory, document, shared)
+}
+
+#[test]
+fn admitted_history_callbacks_work_then_reject_retained_terminal_actions_without_refreshing_forms()
+{
+    let (_directory, document, shared) = admitted_fixture();
+    let access = DocumentAccess::for_document(document.clone());
+    let first = lock(&shared)
+        .inspect_history(0, PAGE_SIZE)
+        .unwrap()
+        .current_state;
+    let first_source = lock(&shared).document().vmf().clone();
+    add_marker(&mut lock(&shared), Actor::Agent, "Second marker");
+    let last = lock(&shared)
+        .inspect_history(0, PAGE_SIZE)
+        .unwrap()
+        .current_state;
+    let controller = Controller::new_with_access(&access).unwrap();
+    controller.show(&lock(&shared)).unwrap();
+    controller.window.invoke_choose(first.clone().into());
+    controller.window.invoke_navigate();
+    assert_eq!(lock(&shared).document().vmf(), &first_source);
+    controller.window.invoke_choose(last.into());
+    controller.window.invoke_navigate();
+    controller.window.invoke_choose(first.clone().into());
+    assert!(controller.window.get_can_navigate());
+    let window = controller.window.clone_strong();
+    drop(controller);
+    let mut peer = Session::new(Err("peer assets unavailable".into()));
+    add_marker(&mut peer, Actor::User, "First marker");
+    add_marker(&mut peer, Actor::Agent, "Second marker");
+    let peer_source = peer.document().vmf().clone();
+    let peer_history = peer.history_snapshot();
+    document.shutdown().unwrap();
+    let source = lock(&shared).document().vmf().clone();
+    let history = lock(&shared).history_snapshot();
+    let camera = lock(&shared).camera();
+    let selected = window.get_selected_state();
+    let position = window.get_position();
+    window.invoke_navigate();
+    assert_eq!(window.get_message(), "the document is closed");
+    window.invoke_choose(INITIAL_STATE.into());
+    assert_eq!(window.get_selected_state(), selected);
+    window.invoke_older();
+    assert_eq!(window.get_message(), "the document is closed");
+    window.invoke_newer();
+    assert_eq!(window.get_message(), "the document is closed");
+    window.invoke_refresh_history();
+    assert_eq!(window.get_message(), "the document is closed");
+    assert_eq!(window.get_position(), position);
+    assert_eq!(lock(&shared).document().vmf(), &source);
+    assert_eq!(lock(&shared).history_snapshot(), history);
+    assert_eq!(lock(&shared).camera(), camera);
+    assert_eq!(peer.document().vmf(), &peer_source);
+    assert_eq!(peer.history_snapshot(), peer_history);
+    window.invoke_cancel();
+    assert_eq!(window.get_selected_state(), "");
+    window.invoke_close_dialog();
+    assert!(!window.window().is_visible());
+}
+
+#[test]
+fn retained_history_window_does_not_keep_session_or_runtime_alive() {
+    let (_directory, document, shared) = admitted_fixture();
+    let weak = Arc::downgrade(&shared);
+    let access = DocumentAccess::for_document(document.clone());
+    let controller = Controller::new_with_access(&access).unwrap();
+    controller.show(&lock(&shared)).unwrap();
+    controller.window.invoke_choose(INITIAL_STATE.into());
+    let window = controller.window.clone_strong();
+    drop(controller);
+    drop(access);
+    drop(shared);
+    drop(document);
+    assert!(weak.upgrade().is_none());
+    window.invoke_navigate();
+    assert_eq!(window.get_message(), "the document is closed");
+    window.invoke_refresh_history();
+    assert_eq!(window.get_message(), "the document is closed");
+    window.invoke_close_dialog();
+}
+
+#[test]
+fn history_failed_terminal_admission_preserves_exact_error_without_retry() {
+    let (directory, document, shared) = admitted_fixture();
+    let access = DocumentAccess::for_document(document.clone());
+    let controller = Controller::new_with_access(&access).unwrap();
+    controller.show(&lock(&shared)).unwrap();
+    controller.window.invoke_choose(INITIAL_STATE.into());
+    let selected = controller.window.get_selected_state();
+    let recovery = directory.path().join("recovery");
+    std::fs::write(&recovery, b"not a directory").unwrap();
+    let error = document.shutdown().unwrap_err();
+    controller.window.invoke_navigate();
+    assert_eq!(
+        controller.window.get_message(),
+        format!("document shutdown failed: {error}")
+    );
+    assert_eq!(controller.window.get_selected_state(), selected);
+    std::fs::remove_file(&recovery).unwrap();
+    std::fs::create_dir(&recovery).unwrap();
+    assert_eq!(document.shutdown().unwrap_err(), error);
+    assert_eq!(std::fs::read_dir(&recovery).unwrap().count(), 0);
+}

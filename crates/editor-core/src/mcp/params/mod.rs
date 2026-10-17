@@ -2,6 +2,8 @@ use super::*;
 
 mod assets;
 pub(super) use assets::*;
+mod atlas;
+pub(super) use atlas::*;
 mod common;
 pub(super) use common::*;
 mod components;

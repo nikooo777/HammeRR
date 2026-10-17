@@ -140,7 +140,7 @@ impl Session {
             self.cancel_transform_preview();
         }
         if !retained.contains(&Kind::Face) {
-            self.cancel_face_preview();
+            self.clear_face_preview();
         }
         if !retained.contains(&Kind::Paint) {
             self.clear_paint_stroke();

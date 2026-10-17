@@ -20,6 +20,7 @@ use crate::game;
 use crate::inspector;
 use crate::spatial;
 
+pub mod atlas_texturing;
 pub mod baked_lightmaps;
 pub mod carving;
 pub mod checks;
@@ -112,6 +113,7 @@ struct FacePreview {
     document: Document,
     edits: Vec<(FaceId, SurfaceEdit)>,
     terrain_mask_token: Option<u64>,
+    atlas: Option<atlas_texturing::PreviewGuard>,
 }
 
 #[derive(Debug)]
@@ -611,6 +613,15 @@ impl Session {
     }
 
     pub fn check_face_preview_token(&self, token: Option<u64>) -> Result<(), String> {
+        if token.is_none()
+            && self
+                .geometry
+                .face_preview
+                .as_ref()
+                .is_some_and(|preview| preview.atlas.is_some())
+        {
+            return Err("Atlas previews require their exact preview token".into());
+        }
         if token.is_some() && self.face_preview_token() != token {
             return Err("Face preview was closed or replaced".into());
         }
@@ -637,6 +648,13 @@ impl Session {
     }
 
     pub fn cancel_face_preview(&mut self) {
+        if self.has_atlas_face_preview() {
+            return;
+        }
+        self.clear_face_preview();
+    }
+
+    fn clear_face_preview(&mut self) {
         if self.geometry.face_preview.take().is_some() {
             self.scene_serial += 1;
         }
@@ -713,6 +731,7 @@ impl Session {
                 document,
                 edits,
                 terrain_mask_token: None,
+                atlas: None,
             });
             self.scene_serial += 1;
             Ok(changed)
@@ -726,6 +745,9 @@ impl Session {
         actor: Actor,
         edits: Vec<(FaceId, SurfaceEdit)>,
     ) -> Result<usize, String> {
+        if self.has_atlas_face_preview() {
+            return Err("An atlas preview is active. Apply or cancel it in atlas fitting, or Preview a replacement before applying other face settings.".into());
+        }
         let label = edits
             .iter()
             .find_map(|(_, patch)| patch.terrain.as_ref())
@@ -774,6 +796,7 @@ impl Session {
     }
 
     pub fn commit_face_preview(&mut self, actor: Actor) -> Result<usize, String> {
+        self.check_atlas_face_commit(actor)?;
         let preview = self
             .geometry
             .face_preview

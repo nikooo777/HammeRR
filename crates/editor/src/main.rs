@@ -1,3 +1,4 @@
+mod atlas_ui;
 mod carve_ui;
 mod checks_ui;
 mod clipboard_ui;

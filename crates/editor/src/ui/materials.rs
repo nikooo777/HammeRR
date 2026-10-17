@@ -398,6 +398,30 @@ pub(super) fn refresh_surface_sample(window: &SurfaceWindow, session: &mut Sessi
     );
 }
 
+fn show_atlas_window(app: &AppWindow, ui: &SharedUi, material: &str) {
+    if ui.borrow().atlas.is_none() {
+        let controller = match atlas_ui::Controller::new(&session_of(ui)) {
+            Ok(controller) => controller,
+            Err(error) => {
+                app.set_message(error.to_string().into());
+                return;
+            }
+        };
+        controller.window.on_browse({
+            let (app, ui) = (app.as_weak(), ui.clone());
+            move || show_material_window(&app.unwrap(), &ui, "@atlas")
+        });
+        ui.borrow_mut().atlas = Some(controller);
+    }
+    let shared = session_of(ui);
+    if let Some(controller) = &ui.borrow().atlas {
+        let result = controller.show(&mut lock(&shared), material);
+        if let Err(error) = result {
+            app.set_message(error.into());
+        }
+    }
+}
+
 pub(super) fn show_surface_window(app: &AppWindow, ui: &SharedUi) {
     if ui.borrow().surface_window.is_none() {
         let window = match SurfaceWindow::new() {
@@ -425,6 +449,10 @@ pub(super) fn show_surface_window(app: &AppWindow, ui: &SharedUi) {
         window.on_browse({
             let (app, ui) = (app.as_weak(), ui.clone());
             move || show_material_window(&app.unwrap(), &ui, "@faces")
+        });
+        window.on_fit_atlas({
+            let (app, ui, window) = (app.as_weak(), ui.clone(), window.as_weak());
+            move || show_atlas_window(&app.unwrap(), &ui, &window.unwrap().get_material())
         });
         window.on_preview_edit({
             let (window, ui) = (window.as_weak(), ui.clone());
@@ -695,6 +723,10 @@ fn bind_material_choice(window: &MaterialWindow, app: &AppWindow, ui: &SharedUi)
                         return;
                     }
                 }
+            } else if ui.borrow().material_for_atlas {
+                if let Some(controller) = &ui.borrow().atlas {
+                    controller.choose_material(&mut session, &material);
+                }
             } else if ui.borrow().material_for_group {
                 if let Some(controller) = &ui.borrow().surface_group {
                     controller.choose_material(&mut session, &material);
@@ -776,6 +808,7 @@ pub(super) fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
         _ => None,
     };
     ui.borrow_mut().material_for_group = key == "@group";
+    ui.borrow_mut().material_for_atlas = key == "@atlas";
     ui.borrow_mut().material_for_faces = key == "@faces";
     ui.borrow_mut().material_for_clip = key == "@clip";
     ui.borrow_mut().material_for_primitive = key == "@primitive";
@@ -807,6 +840,7 @@ pub(super) fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
         || key == "@extrusion"
         || key.starts_with("@replace-")
         || key == "@group"
+        || key == "@atlas"
     {
         None
     } else {
@@ -824,6 +858,12 @@ pub(super) fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
                     controller.window.get_source().to_string()
                 }
             })
+            .unwrap_or_default()
+    } else if key == "@atlas" {
+        ui.borrow()
+            .atlas
+            .as_ref()
+            .map(|controller| controller.window.get_material().to_string())
             .unwrap_or_default()
     } else if key == "@overlay" {
         ui.borrow()

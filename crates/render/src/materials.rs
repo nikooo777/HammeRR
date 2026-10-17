@@ -7,8 +7,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
 
-use source_formats::gamefs::GameFs;
-use source_formats::vmt::{Material, texture_path};
+use source_formats::gamefs::{GameFs, asset_relative};
+use source_formats::vmt::{Material, material_path, texture_path};
 use source_formats::vtf::Vtf;
 
 use crate::helpers::{HelperMaterial, bulb_material};
@@ -47,7 +47,7 @@ impl MaterialInfo {
 
     pub fn load(fs: &GameFs, name: &str) -> Self {
         let name = name.to_ascii_lowercase();
-        match Self::load_checked(fs, &name) {
+        match Self::load_checked(fs, &name, None) {
             Ok(material) => material,
             Err(error) => {
                 let mut material = Self::untextured(&name);
@@ -60,13 +60,17 @@ impl MaterialInfo {
         }
     }
 
-    fn load_checked(fs: &GameFs, name: &str) -> Result<Self, String> {
-        let material =
-            Material::load(fs, name).map_err(|error| format!("Material {name}: {error}"))?;
+    fn load_checked(fs: &GameFs, name: &str, limits: Option<[usize; 2]>) -> Result<Self, String> {
+        let material = match limits {
+            Some([maximum, _]) => resolved_material_limited(fs, name, maximum)?,
+            None => {
+                Material::load(fs, name).map_err(|error| format!("Material {name}: {error}"))?
+            }
+        };
         let mut base = None;
         if let Some(material) = &material {
             for path in material.editor_textures() {
-                if let Some(texture) = read_vtf(fs, &path)? {
+                if let Some(texture) = read_vtf(fs, &path, limits.map(|limits| limits[1]))? {
                     base = Some(texture);
                     break;
                 }
@@ -78,7 +82,8 @@ impl MaterialInfo {
             .and_then(|m| m.get("$basetexture2"))
             .map(|texture| {
                 let path = texture_path(texture);
-                read_vtf(fs, &path)?.ok_or_else(|| format!("Blend texture {path} was not found"))
+                read_vtf(fs, &path, limits.map(|limits| limits[1]))?
+                    .ok_or_else(|| format!("Blend texture {path} was not found"))
             })
             .transpose()?;
         let (width, height) = base
@@ -155,8 +160,25 @@ pub fn material_identity(material: &Material) -> u64 {
     hash.finish()
 }
 
-fn read_vtf(fs: &GameFs, path: &str) -> Result<Option<Vtf>, String> {
-    fs.read(path)
+pub fn resolved_material_limited(
+    fs: &GameFs,
+    name: &str,
+    maximum: usize,
+) -> Result<Option<Material>, String> {
+    Material::load_with_reader(&material_path(name), &mut |path| {
+        fs.read_limited(&asset_relative(path)?, maximum)
+    })
+    .map_err(|error| format!("Material {name}: {error}"))
+}
+
+fn read_vtf(fs: &GameFs, path: &str, maximum: Option<usize>) -> Result<Option<Vtf>, String> {
+    let bytes = match maximum {
+        Some(maximum) => fs
+            .read_asset_limited(path, maximum)
+            .map(|asset| asset.map(|asset| asset.data)),
+        None => fs.read(path),
+    };
+    bytes
         .map_err(|error| format!("{path}: {error}"))?
         .map(|bytes| Vtf::parse(bytes).map_err(|error| format!("{path}: {error}")))
         .transpose()
@@ -343,6 +365,26 @@ impl MaterialLibrary {
         let id = self.materials.len() - 1;
         self.by_name.insert(key, id);
         id
+    }
+
+    pub fn load_limited(
+        &mut self,
+        fs: &GameFs,
+        name: &str,
+        limits: [usize; 2],
+    ) -> Result<MaterialId, String> {
+        let key = name.to_ascii_lowercase();
+        if let Some(&id) = self.by_name.get(&key) {
+            return Ok(id);
+        }
+        let material = MaterialInfo::load_checked(fs, &key, Some(limits))?;
+        if material.missing {
+            return Err(format!("Material {key} has no usable base texture"));
+        }
+        let id = self.materials.len();
+        self.materials.push(material);
+        self.by_name.insert(key, id);
+        Ok(id)
     }
 
     pub fn find(&self, name: &str) -> Option<&MaterialInfo> {

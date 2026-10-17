@@ -1,4 +1,5 @@
 export { MaterialSourceWindow } from "material-source.slint";
+export { AtlasWindow } from "atlas.slint";
 export { SkyAssetsWindow, SkyAssetFaceRow } from "sky-assets.slint";
 export { HistoryWindow, HistoryRow } from "history.slint";
 export { GridDefaultsWindow } from "grid-defaults.slint";
@@ -918,6 +919,7 @@ export component SurfaceWindow inherits Window {
     in-out property <string> reviewed-token;
     in-out property <string> owned-token;
     callback browse();
+    callback fit-atlas();
     callback preview-edit();
     callback apply();
     callback cancel();
@@ -968,6 +970,7 @@ export component SurfaceWindow inherits Window {
                             Text { text: "Material"; }
                             LineEdit { text <=> root.material; placeholder-text: "Mixed · keep current materials"; edited => { root.ready = false; } }
                             Button { text: "Browse materials…"; clicked => { root.browse(); } }
+                            Button { text: "Fit atlas region…"; clicked => { root.fit-atlas(); } }
                         }
                     }
                     HorizontalLayout {

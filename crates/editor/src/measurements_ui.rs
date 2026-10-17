@@ -8,6 +8,8 @@ use map_core::measurements::{Endpoint as StoredEndpoint, Measurement};
 use serde_json::Value;
 use slint::{ComponentHandle, VecModel};
 
+use crate::runtime::{DocumentAccess, DocumentContinuation};
+#[cfg(test)]
 use crate::runtime::{SharedSession, lock};
 use crate::session::measurements::{Endpoint, Request};
 use crate::session::{Actor, Pointer, Session};
@@ -359,8 +361,32 @@ fn change_origin(
     }
 }
 
+fn with_session<R>(
+    window: &slint::Weak<MeasurementsWindow>,
+    access: &DocumentContinuation,
+    body: impl FnOnce(&MeasurementsWindow, &mut Session) -> R,
+) -> Option<R> {
+    let window = window.upgrade()?;
+    match access
+        .upgrade()
+        .and_then(|access| access.with_session(|session| Ok(body(&window, session))))
+    {
+        Ok(result) => Some(result),
+        Err(error) => {
+            window.set_message(error.into());
+            None
+        }
+    }
+}
+
 impl Controller {
+    #[cfg(test)]
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
+        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
+    }
+
+    pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
+        let access = access.downgrade();
         let window = MeasurementsWindow::new()?;
         let form = Rc::new(RefCell::new(Form::default()));
         let viewport = Rc::new(Cell::new((1024, 576)));
@@ -370,16 +396,16 @@ impl Controller {
                 OriginAction::Detach,
                 OriginAction::World,
             ] {
-                let (window_ref, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+                let (window_ref, access, form) = (window.as_weak(), access.clone(), form.clone());
                 let callback = move || {
-                    let window = window_ref.unwrap();
-                    let mut session = lock(&shared);
-                    match change_origin(&window, &mut session, &form, endpoint, action)
-                        .and_then(|state|adopt(&window, &session, &form, &state)) {
+                    with_session(&window_ref, &access, |window, session| {
+                        match change_origin(window, session, &form, endpoint, action)
+                        .and_then(|state|adopt(window, session, &form, &state)) {
                         Ok(()) => window.set_message("Endpoint preview updated. Check the ruler, then Apply to save in one Undo step.".into()),
                         Err(error) => window.set_message(error.into()),
                     }
-                    refresh(&window, &session, &form);
+                        refresh(window, session, &form);
+                    });
                 };
                 match (endpoint, action) {
                     (Endpoint::Start, OriginAction::Attach) => {
@@ -396,45 +422,45 @@ impl Controller {
             }
         }
         for endpoint in [Endpoint::Start, Endpoint::End] {
-            let (pick_window, shared, form, viewport) = (
+            let (pick_window, access, form, viewport) = (
                 window.as_weak(),
-                shared.clone(),
+                access.clone(),
                 form.clone(),
                 viewport.clone(),
             );
             let pick = move || {
-                let window = pick_window.unwrap();
-                let mut session = lock(&shared);
-                let camera = session.camera();
-                let snapshot = session.measurement_pick_stamp();
-                let result = {
-                    let form = form.borrow();
-                    if form.dirty {
-                        Err("Preview the changed endpoints or name before picking".to_string())
-                    } else {
-                        form.owned_token
-                            .ok_or_else(|| {
-                                "Preview or Review the measurement before picking".to_string()
-                            })
-                            .and_then(|token| {
-                                session.begin_measurement_pick(
-                                    Actor::User,
-                                    token,
-                                    endpoint,
-                                    camera,
-                                    viewport.get(),
-                                    &snapshot,
-                                )
-                            })
+                with_session(&pick_window, &access, |window, session| {
+                    let camera = session.camera();
+                    let snapshot = session.measurement_pick_stamp();
+                    let result = {
+                        let form = form.borrow();
+                        if form.dirty {
+                            Err("Preview the changed endpoints or name before picking".to_string())
+                        } else {
+                            form.owned_token
+                                .ok_or_else(|| {
+                                    "Preview or Review the measurement before picking".to_string()
+                                })
+                                .and_then(|token| {
+                                    session.begin_measurement_pick(
+                                        Actor::User,
+                                        token,
+                                        endpoint,
+                                        camera,
+                                        viewport.get(),
+                                        &snapshot,
+                                    )
+                                })
+                        }
+                    };
+                    match result.and_then(|state| adopt(window, session, &form, &state)) {
+                        Ok(()) => {
+                            let _ = window.hide();
+                        }
+                        Err(error) => window.set_message(error.into()),
                     }
-                };
-                match result.and_then(|state| adopt(&window, &session, &form, &state)) {
-                    Ok(()) => {
-                        let _ = window.hide();
-                    }
-                    Err(error) => window.set_message(error.into()),
-                }
-                refresh(&window, &session, &form);
+                    refresh(window, session, &form);
+                });
             };
             match endpoint {
                 Endpoint::Start => window.on_pick_start(pick),
@@ -442,142 +468,149 @@ impl Controller {
             }
         }
         window.on_cancel_pick({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, access, form) = (window.as_weak(), access.clone(), form.clone());
             move || {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
-                let result = form
-                    .borrow()
-                    .owned_token
-                    .ok_or_else(|| {
-                        "Review the measurement before cancelling endpoint picking".to_string()
-                    })
-                    .and_then(|token| session.cancel_measurement_pick(Actor::User, token));
-                if let Err(error) = result.and_then(|state| adopt(&window, &session, &form, &state))
-                {
-                    window.set_message(error.into());
-                }
-                refresh(&window, &session, &form);
+                with_session(&window, &access, |window, session| {
+                    let result = form
+                        .borrow()
+                        .owned_token
+                        .ok_or_else(|| {
+                            "Review the measurement before cancelling endpoint picking".to_string()
+                        })
+                        .and_then(|token| session.cancel_measurement_pick(Actor::User, token));
+                    if let Err(error) =
+                        result.and_then(|state| adopt(window, session, &form, &state))
+                    {
+                        window.set_message(error.into());
+                    }
+                    refresh(window, session, &form);
+                });
             }
         });
         window.on_edited({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, access, form) = (window.as_weak(), access.clone(), form.clone());
             move || {
-                form.borrow_mut().dirty = true;
-                refresh(&window.unwrap(), &lock(&shared), &form);
+                with_session(&window, &access, |window, session| {
+                    form.borrow_mut().dirty = true;
+                    refresh(window, session, &form);
+                });
             }
         });
         window.on_choose({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, access, form) = (window.as_weak(), access.clone(), form.clone());
             move |id| {
-                let window = window.unwrap();
-                let session = lock(&shared);
-                let result = session.measurements().and_then(|metadata| {
-                    if !session.measurement_state()["draft"].is_null() {
-                        return Err(
-                            "Apply or Cancel the preview before choosing a measurement".into()
-                        );
-                    }
-                    let id = id.parse::<u32>().map_err(|_| "Invalid measurement ID")?;
-                    metadata
-                        .measurements
-                        .into_iter()
-                        .find(|measurement| measurement.id == id)
-                        .ok_or_else(|| "Measurement no longer exists".into())
-                });
-                match result {
-                    Ok(measurement) => {
-                        let mut displayed = measurement.clone();
-                        for endpoint in [StoredEndpoint::Start, StoredEndpoint::End] {
-                            if let Ok(point) =
-                                measurement.resolve_endpoint(session.document().vmf(), endpoint)
-                            {
-                                displayed.set_stored_endpoint(endpoint, point);
-                            }
+                with_session(&window, &access, |window, session| {
+                    let result = session.measurements().and_then(|metadata| {
+                        if !session.measurement_state()["draft"].is_null() {
+                            return Err(
+                                "Apply or Cancel the preview before choosing a measurement".into(),
+                            );
                         }
-                        load(&window, &displayed);
-                        let mut form = form.borrow_mut();
-                        form.selected = Some(measurement.id);
-                        form.dirty = false;
-                        form.owned_token = None;
-                        remember_snapshot(&mut form, &session);
-                        window
-                            .set_message("Edit endpoints or name, then Preview and Apply.".into());
+                        let id = id.parse::<u32>().map_err(|_| "Invalid measurement ID")?;
+                        metadata
+                            .measurements
+                            .into_iter()
+                            .find(|measurement| measurement.id == id)
+                            .ok_or_else(|| "Measurement no longer exists".into())
+                    });
+                    match result {
+                        Ok(measurement) => {
+                            let mut displayed = measurement.clone();
+                            for endpoint in [StoredEndpoint::Start, StoredEndpoint::End] {
+                                if let Ok(point) =
+                                    measurement.resolve_endpoint(session.document().vmf(), endpoint)
+                                {
+                                    displayed.set_stored_endpoint(endpoint, point);
+                                }
+                            }
+                            load(window, &displayed);
+                            let mut form = form.borrow_mut();
+                            form.selected = Some(measurement.id);
+                            form.dirty = false;
+                            form.owned_token = None;
+                            remember_snapshot(&mut form, session);
+                            window.set_message(
+                                "Edit endpoints or name, then Preview and Apply.".into(),
+                            );
+                        }
+                        Err(error) => window.set_message(error.into()),
                     }
-                    Err(error) => window.set_message(error.into()),
-                }
-                refresh(&window, &session, &form);
+                    refresh(window, session, &form);
+                });
             }
         });
         window.on_new_measurement({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, access, form) = (window.as_weak(), access.clone(), form.clone());
             move || {
-                let window = window.unwrap();
-                let session = lock(&shared);
-                if !session.measurement_state()["draft"].is_null() {
-                    window.set_message(
-                        "Apply or Cancel the preview before starting another measurement.".into(),
+                with_session(&window, &access, |window, session| {
+                    if !session.measurement_state()["draft"].is_null() {
+                        window.set_message(
+                            "Apply or Cancel the preview before starting another measurement."
+                                .into(),
+                        );
+                        return;
+                    }
+                    *form.borrow_mut() = Form::default();
+                    remember_snapshot(&mut form.borrow_mut(), session);
+                    load(
+                        window,
+                        &Measurement {
+                            id: 1,
+                            name: "".into(),
+                            start: DVec3::ZERO,
+                            end: DVec3::X * 64.0,
+                            extra: Vec::new(),
+                        },
                     );
-                    return;
-                }
-                *form.borrow_mut() = Form::default();
-                remember_snapshot(&mut form.borrow_mut(), &session);
-                load(
-                    &window,
-                    &Measurement {
-                        id: 1,
-                        name: "".into(),
-                        start: DVec3::ZERO,
-                        end: DVec3::X * 64.0,
-                        extra: Vec::new(),
-                    },
-                );
-                window.set_selected_id("".into());
-                refresh(&window, &session, &form);
+                    window.set_selected_id("".into());
+                    refresh(window, session, &form);
+                });
             }
         });
         window.on_preview({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, access, form) = (window.as_weak(), access.clone(), form.clone());
             move || {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
-                let result = {
-                    let form = form.borrow();
-                    request(&window, form.selected).and_then(|request| {
-                        session.preview_measurement(Actor::User, request, &form.snapshot)
-                    })
-                };
-                match result.and_then(|state| adopt(&window, &session, &form, &state)) {
-                    Ok(()) => window.set_message(
-                        "Check the gold ruler and colored XYZ components in the viewport.".into(),
-                    ),
-                    Err(error) => window.set_message(error.into()),
-                }
-                refresh(&window, &session, &form);
+                with_session(&window, &access, |window, session| {
+                    let result = {
+                        let form = form.borrow();
+                        request(window, form.selected).and_then(|request| {
+                            session.preview_measurement(Actor::User, request, &form.snapshot)
+                        })
+                    };
+                    match result.and_then(|state| adopt(window, session, &form, &state)) {
+                        Ok(()) => window.set_message(
+                            "Check the gold ruler and colored XYZ components in the viewport."
+                                .into(),
+                        ),
+                        Err(error) => window.set_message(error.into()),
+                    }
+                    refresh(window, session, &form);
+                });
             }
         });
         window.on_review({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, access, form) = (window.as_weak(), access.clone(), form.clone());
             move || {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
-                let result = form
-                    .borrow()
-                    .displayed_token
-                    .ok_or_else(|| "No measurement preview to review".to_string())
-                    .and_then(|token| session.review_measurement(Actor::User, token));
-                if let Err(error) = result.and_then(|state| adopt(&window, &session, &form, &state))
-                {
-                    window.set_message(error.into());
-                }
-                refresh(&window, &session, &form);
+                with_session(&window, &access, |window, session| {
+                    let result = form
+                        .borrow()
+                        .displayed_token
+                        .ok_or_else(|| "No measurement preview to review".to_string())
+                        .and_then(|token| session.review_measurement(Actor::User, token));
+                    if let Err(error) =
+                        result.and_then(|state| adopt(window, session, &form, &state))
+                    {
+                        window.set_message(error.into());
+                    }
+                    refresh(window, session, &form);
+                });
             }
         });
         window.on_apply({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, access, form) = (window.as_weak(), access.clone(), form.clone());
             move || {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
+                with_session(&window, &access, |window, session| {
+
                 let result = {
                     let form = form.borrow();
                     if form.dirty {
@@ -593,86 +626,96 @@ impl Controller {
                         let mut form = form.borrow_mut();
                         form.owned_token = None;
                         form.selected = state["id"].as_u64().map(|id| id as u32);
-                        remember_snapshot(&mut form, &session);
+                        remember_snapshot(&mut form, session);
                         window.set_message("Measurement saved. Save the VMF to keep it. Undo restores the previous state.".into());
                     }
                     Err(error) => window.set_message(error.into()),
                 }
-                refresh(&window, &session, &form);
+                refresh(window, session, &form);
+
+                });
             }
         });
         window.on_delete_measurement({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, access, form) = (window.as_weak(), access.clone(), form.clone());
             move || {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
-                let result = {
-                    let form = form.borrow();
-                    form.selected
-                        .ok_or_else(|| "Select a saved measurement first".to_string())
-                        .and_then(|id| session.delete_measurement(Actor::User, id, &form.snapshot))
-                };
-                match result {
-                    Ok(_) => {
-                        let mut form = form.borrow_mut();
-                        form.selected = None;
-                        remember_snapshot(&mut form, &session);
-                        window.set_selected_id("".into());
-                        window.set_message("Measurement deleted. Undo restores it.".into());
+                with_session(&window, &access, |window, session| {
+                    let result = {
+                        let form = form.borrow();
+                        form.selected
+                            .ok_or_else(|| "Select a saved measurement first".to_string())
+                            .and_then(|id| {
+                                session.delete_measurement(Actor::User, id, &form.snapshot)
+                            })
+                    };
+                    match result {
+                        Ok(_) => {
+                            let mut form = form.borrow_mut();
+                            form.selected = None;
+                            remember_snapshot(&mut form, session);
+                            window.set_selected_id("".into());
+                            window.set_message("Measurement deleted. Undo restores it.".into());
+                        }
+                        Err(error) => window.set_message(error.into()),
                     }
-                    Err(error) => window.set_message(error.into()),
-                }
-                refresh(&window, &session, &form);
+                    refresh(window, session, &form);
+                });
             }
         });
         window.on_frame({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, access, form) = (window.as_weak(), access.clone(), form.clone());
             move || {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
-                let form_ref = form.borrow();
-                let (id, token) = if form_ref.owned_token.is_some() && !form_ref.dirty {
-                    (None, form_ref.owned_token)
-                } else {
-                    (form_ref.selected, None)
-                };
-                if let Err(error) =
-                    session.frame_measurement(id, token, 16.0 / 9.0, &form_ref.snapshot)
-                {
-                    window.set_message(error.into());
-                }
+                with_session(&window, &access, |window, session| {
+                    let form_ref = form.borrow();
+                    let (id, token) = if form_ref.owned_token.is_some() && !form_ref.dirty {
+                        (None, form_ref.owned_token)
+                    } else {
+                        (form_ref.selected, None)
+                    };
+                    if let Err(error) =
+                        session.frame_measurement(id, token, 16.0 / 9.0, &form_ref.snapshot)
+                    {
+                        window.set_message(error.into());
+                    }
+                });
             }
         });
         window.on_view_changed({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, access, form) = (window.as_weak(), access.clone(), form.clone());
             move || {
-                let window = window.unwrap();
-                let mut session = lock(&shared);
-                let snapshot = session.measurement_stamp();
-                match session.set_measurement_guides(window.get_show_guides(), &snapshot) {
-                    Ok(_) => {
-                        if form.borrow().generation == session.document_generation()
-                            && form.borrow().revision == session.document().revision()
-                        {
-                            form.borrow_mut().snapshot = session.measurement_stamp();
+                with_session(&window, &access, |window, session| {
+                    let snapshot = session.measurement_stamp();
+                    match session.set_measurement_guides(window.get_show_guides(), &snapshot) {
+                        Ok(_) => {
+                            if form.borrow().generation == session.document_generation()
+                                && form.borrow().revision == session.document().revision()
+                            {
+                                form.borrow_mut().snapshot = session.measurement_stamp();
+                            }
                         }
+                        Err(error) => window.set_message(error.into()),
                     }
-                    Err(error) => window.set_message(error.into()),
-                }
-                refresh(&window, &session, &form);
+                    refresh(window, session, &form);
+                });
             }
         });
         window.on_cancel({
-            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            let (window, access, form) = (window.as_weak(), access.clone(), form.clone());
             move || {
-                cancel_owned(&mut lock(&shared), &form);
-                let _ = window.unwrap().hide();
+                with_session(&window, &access, |_window, session| {
+                    cancel_owned(session, &form);
+                });
+                if let Some(window) = window.upgrade() {
+                    let _ = window.hide();
+                }
             }
         });
         window.window().on_close_requested({
-            let (shared, form) = (shared.clone(), form.clone());
+            let window = window.as_weak();
             move || {
-                cancel_owned(&mut lock(&shared), &form);
+                if let Some(window) = window.upgrade() {
+                    window.invoke_cancel();
+                }
                 slint::CloseRequestResponse::HideWindow
             }
         });
@@ -763,3 +806,6 @@ impl Controller {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod admission_tests;

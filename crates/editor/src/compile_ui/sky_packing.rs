@@ -1,7 +1,7 @@
 use serde_json::Value;
 use slint::ComponentHandle;
 
-use super::{Actor, CompileWindow, Session, SharedSession, lock};
+use super::{Actor, CompileWindow, DocumentAccess, Session, lock};
 use crate::session::compilation::BuildSettingsUpdate;
 
 pub(super) fn refresh(window: &CompileWindow, session: &Session) {
@@ -26,16 +26,17 @@ fn change(window: &CompileWindow, session: &mut Session, enabled: bool) {
 
 pub(super) fn bind(
     window: &CompileWindow,
-    shared: &SharedSession,
+    access: &DocumentAccess,
     recipes: &std::rc::Rc<std::cell::RefCell<super::RecipeForm>>,
 ) {
     window.on_change_pack_sky_assets({
-        let (window, shared, recipes) = (window.as_weak(), shared.clone(), recipes.clone());
+        let (window, target, recipes) = (window.as_weak(), access.downgrade(), recipes.clone());
         move |enabled| {
-            let mut session = lock(&shared);
-            let window = window.unwrap();
-            change(&window, &mut session, enabled);
-            super::refresh_recipes(&window, &session, &recipes);
+            super::admitted(&window, &target, |window, shared| {
+                let mut session = lock(shared);
+                change(&window, &mut session, enabled);
+                super::refresh_recipes(&window, &session, &recipes);
+            });
         }
     });
 }

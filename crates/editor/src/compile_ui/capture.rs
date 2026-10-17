@@ -5,7 +5,7 @@ use std::rc::Rc;
 use serde_json::{Value, json};
 use slint::ComponentHandle;
 
-use super::{Actor, CompileWindow, Session, SharedSession, lock};
+use super::{Actor, CompileWindow, DocumentAccess, DocumentContinuation, Session, lock};
 
 #[derive(Clone, Default)]
 pub(super) struct Form {
@@ -37,6 +37,26 @@ fn accept_folder(
         _ => return false,
     }
     true
+}
+
+fn complete_folder(
+    window: &slint::Weak<CompileWindow>,
+    target: &DocumentContinuation,
+    serial: &Cell<u64>,
+    pending: u64,
+    kind: i32,
+    path: &Path,
+) {
+    let Some(current) = window.upgrade() else {
+        return;
+    };
+    if serial.get() != pending || !current.get_capture_editing() || !current.get_capture_editable()
+    {
+        return;
+    }
+    super::admitted(window, target, |window, _| {
+        accept_folder(&window, serial, pending, kind, path);
+    });
 }
 
 impl Form {
@@ -101,110 +121,113 @@ impl Form {
 
 pub(super) fn bind(
     window: &CompileWindow,
-    shared: &SharedSession,
+    access: &DocumentAccess,
     recipes: &Rc<RefCell<super::RecipeForm>>,
 ) -> Form {
     let form = Form::default();
     window.on_change_reflections({
-        let (window, shared, recipes) = (window.as_weak(), shared.clone(), recipes.clone());
+        let (window, target, recipes) = (window.as_weak(), access.downgrade(), recipes.clone());
         move |enabled| {
-            let mut session = lock(&shared);
-            let result = session.update_build_settings(Actor::User, crate::session::compilation::BuildSettingsUpdate {
-                generate_reflections: Some(enabled),
-                ..Default::default()
-            });
-            let window = window.unwrap();
-            super::refresh_recipes(&window, &session, &recipes);
-            window.set_message(match result {
-                Ok(_) if enabled => "Reflection generation enabled. The next Compile or Run Map captures and verifies the selected lighting channels before publishing.".into(),
-                Ok(_) => "Reflection generation disabled.".into(),
-                Err(error) => error.into(),
+            super::admitted(&window, &target, |window, shared| {
+                let mut session = lock(shared);
+                let result = session.update_build_settings(Actor::User, crate::session::compilation::BuildSettingsUpdate {
+                    generate_reflections: Some(enabled),
+                    ..Default::default()
+                });
+                super::refresh_recipes(&window, &session, &recipes);
+                window.set_message(match result {
+                    Ok(_) if enabled => "Reflection generation enabled. The next Compile or Run Map captures and verifies the selected lighting channels before publishing.".into(),
+                    Ok(_) => "Reflection generation disabled.".into(),
+                    Err(error) => error.into(),
+                });
             });
         }
     });
     window.on_begin_capture_edit({
-        let (window, shared, baseline, serial) = (window.as_weak(), shared.clone(), form.baseline.clone(), form.serial.clone());
+        let (window, target, baseline, serial) = (window.as_weak(), access.downgrade(), form.baseline.clone(), form.serial.clone());
         move || {
-            let session = lock(&shared);
-            let window = window.unwrap();
-            if session.compile_settings()["editable"] != true {
-                window.set_message("Wait for the active build before editing capture runtime settings.".into());
-                return;
-            }
-            let state = session.native_capture_runtime();
-            window.set_capture_engine_root(state["configured_engine_root"].as_str().unwrap_or_default().into());
-            window.set_capture_steam_root(state["configured_steam_root"].as_str().unwrap_or_default().into());
-            *baseline.borrow_mut() = Some(configuration(&state));
-            serial.set(serial.get().wrapping_add(1));
-            window.set_capture_editing(true);
-            window.set_capture_current(true);
-            window.set_message("Choose the CS:S installation and Steam client overrides, then Apply capture runtime. Empty overrides use automatic values.".into());
+            super::admitted(&window, &target, |window, shared| {
+                let session = lock(shared);
+                if session.compile_settings()["editable"] != true {
+                    window.set_message("Wait for the active build before editing capture runtime settings.".into());
+                    return;
+                }
+                let state = session.native_capture_runtime();
+                window.set_capture_engine_root(state["configured_engine_root"].as_str().unwrap_or_default().into());
+                window.set_capture_steam_root(state["configured_steam_root"].as_str().unwrap_or_default().into());
+                *baseline.borrow_mut() = Some(configuration(&state));
+                serial.set(serial.get().wrapping_add(1));
+                window.set_capture_editing(true);
+                window.set_capture_current(true);
+                window.set_message("Choose the CS:S installation and Steam client overrides, then Apply capture runtime. Empty overrides use automatic values.".into());
+            });
         }
     });
     window.on_choose_capture_root({
-        let (window, serial) = (window.as_weak(), form.serial.clone());
+        let (window, target, serial) = (window.as_weak(), access.downgrade(), form.serial.clone());
         move |kind| {
-            let current = window.unwrap();
-            if !current.get_capture_editing()
-                || !current.get_capture_editable()
-                || !(0..=1).contains(&kind)
-            {
-                return;
-            }
-            let pending = serial.get();
-            let (window, serial) = (window.clone(), serial.clone());
-            let title = if kind == 0 {
-                "Choose CS:S installation"
-            } else {
-                "Choose Steam client"
-            };
-            slint::spawn_local(async move {
-                let Some(folder) = rfd::AsyncFileDialog::new()
-                    .set_title(title)
-                    .pick_folder()
-                    .await
-                else {
+            super::admitted(&window, &target, |current, _| {
+                if !current.get_capture_editing()
+                    || !current.get_capture_editable()
+                    || !(0..=1).contains(&kind)
+                {
                     return;
+                }
+                let pending = serial.get();
+                let (window, target, serial) = (window.clone(), target.clone(), serial.clone());
+                let title = if kind == 0 {
+                    "Choose CS:S installation"
+                } else {
+                    "Choose Steam client"
                 };
-                let Some(window) = window.upgrade() else {
-                    return;
-                };
-                accept_folder(&window, &serial, pending, kind, folder.path());
-            })
-            .expect("event loop is running");
+                slint::spawn_local(async move {
+                    let Some(folder) = rfd::AsyncFileDialog::new()
+                        .set_title(title)
+                        .pick_folder()
+                        .await
+                    else {
+                        return;
+                    };
+                    complete_folder(&window, &target, &serial, pending, kind, folder.path());
+                })
+                .expect("event loop is running");
+            });
         }
     });
     window.on_apply_capture_runtime({
-        let (window, shared, baseline, serial) = (window.as_weak(), shared.clone(), form.baseline.clone(), form.serial.clone());
+        let (window, target, baseline, serial) = (window.as_weak(), access.downgrade(), form.baseline.clone(), form.serial.clone());
         move || {
-            let mut session = lock(&shared);
-            let window = window.unwrap();
-            let Some(reviewed) = baseline.borrow().clone() else { return; };
-            if reviewed != configuration(&session.native_capture_runtime()) {
-                window.set_capture_current(false);
-                window.set_message("Capture configuration changed. Cancel this edit and review the current configuration.".into());
-                return;
-            }
-            let engine = window.get_capture_engine_root();
-            let steam = window.get_capture_steam_root();
-            let result = session.configure_native_capture_runtime(Actor::User,
-                (!engine.trim().is_empty()).then(|| Path::new(engine.trim())),
-                (!steam.trim().is_empty()).then(|| Path::new(steam.trim())));
-            window.set_message(match result {
-                Ok(_) => {
-                    *baseline.borrow_mut() = None;
-                    serial.set(serial.get().wrapping_add(1));
-                    window.set_capture_editing(false);
-                    "Capture runtime applied. No game was launched.".into()
-                },
-                Err(error) => error.into(),
+            super::admitted(&window, &target, |window, shared| {
+                let mut session = lock(shared);
+                let Some(reviewed) = baseline.borrow().clone() else { return; };
+                if reviewed != configuration(&session.native_capture_runtime()) {
+                    window.set_capture_current(false);
+                    window.set_message("Capture configuration changed. Cancel this edit and review the current configuration.".into());
+                    return;
+                }
+                let engine = window.get_capture_engine_root();
+                let steam = window.get_capture_steam_root();
+                let result = session.configure_native_capture_runtime(Actor::User,
+                    (!engine.trim().is_empty()).then(|| Path::new(engine.trim())),
+                    (!steam.trim().is_empty()).then(|| Path::new(steam.trim())));
+                window.set_message(match result {
+                    Ok(_) => {
+                        *baseline.borrow_mut() = None;
+                        serial.set(serial.get().wrapping_add(1));
+                        window.set_capture_editing(false);
+                        "Capture runtime applied. No game was launched.".into()
+                    },
+                    Err(error) => error.into(),
+                });
             });
         }
     });
     window.on_cancel_capture_edit({
         let (window, form) = (window.as_weak(), form.clone());
         move || {
-            let window = window.unwrap();
+            let Some(window) = window.upgrade() else {
+                return;
+            };
             form.discard(&window);
             window.set_message("Runtime edit cancelled. Capture settings are unchanged.".into());
         }
@@ -368,5 +391,91 @@ mod tests {
         assert!(!controller.window.get_capture_editing());
         assert_eq!(lock(&shared).document().vmf(), &original);
         assert_eq!(lock(&shared).document().undo_labels().count(), 0);
+    }
+
+    #[test]
+    fn retained_capture_folder_completion_renews_admission_after_local_guards() {
+        i_slint_backend_testing::init_no_event_loop();
+        let directory = tempfile::tempdir().unwrap();
+        let mut session = Session::new(Err("no native runtime required".into()));
+        session.configure_recovery(Ok(directory.path().join("recovery")));
+        let shared = Arc::new(Mutex::new(session));
+        let document = crate::test_assets::document(shared.clone());
+        let access = DocumentAccess::for_document(document.clone());
+        let controller = Controller::new_with_access(&shared, access.clone()).unwrap();
+        controller.refresh(&lock(&shared));
+        controller.window.invoke_begin_capture_edit();
+        let window = controller.window.as_weak();
+        let target = access.downgrade();
+        let pending = controller.capture.serial.get();
+        complete_folder(
+            &window,
+            &target,
+            &controller.capture.serial,
+            pending,
+            0,
+            Path::new("/reviewed/engine"),
+        );
+        assert_eq!(
+            controller.window.get_capture_engine_root(),
+            "/reviewed/engine"
+        );
+        controller.window.invoke_cancel_capture_edit();
+        controller.window.invoke_begin_capture_edit();
+        let reviewed = controller.window.get_capture_engine_root();
+        let message = controller.window.get_message();
+        complete_folder(
+            &window,
+            &target,
+            &controller.capture.serial,
+            pending,
+            0,
+            Path::new("/stale/engine"),
+        );
+        assert_eq!(controller.window.get_capture_engine_root(), reviewed);
+        assert_eq!(controller.window.get_message(), message);
+        let pending = controller.capture.serial.get();
+        let source = lock(&shared).document().vmf().clone();
+        let history = lock(&shared).history_snapshot();
+        document.shutdown().unwrap();
+        let runtime = lock(&shared).native_capture_runtime();
+        complete_folder(
+            &window,
+            &target,
+            &controller.capture.serial,
+            pending,
+            0,
+            Path::new("/closed/engine"),
+        );
+        assert_eq!(controller.window.get_capture_engine_root(), reviewed);
+        assert_eq!(controller.window.get_message(), "the document is closed");
+        assert_eq!(lock(&shared).native_capture_runtime(), runtime);
+        assert_eq!(lock(&shared).document().vmf(), &source);
+        assert_eq!(lock(&shared).history_snapshot(), history);
+        drop(access);
+        drop(document);
+        assert!(target.upgrade().is_err());
+        complete_folder(
+            &window,
+            &target,
+            &controller.capture.serial,
+            pending,
+            0,
+            Path::new("/vanished/engine"),
+        );
+        assert_eq!(controller.window.get_capture_engine_root(), reviewed);
+        controller.window.invoke_close_dialog();
+        controller
+            .window
+            .set_message("Local close preserved".into());
+        complete_folder(
+            &window,
+            &target,
+            &controller.capture.serial,
+            pending,
+            0,
+            Path::new("/stale/closed"),
+        );
+        assert_eq!(controller.window.get_message(), "Local close preserved");
     }
 }

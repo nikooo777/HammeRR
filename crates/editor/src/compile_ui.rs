@@ -4,9 +4,11 @@ use std::rc::Rc;
 use slint::ComponentHandle;
 
 use crate::CompileWindow;
-use crate::runtime::{DocumentAccess, SharedSession, lock};
+use crate::runtime::{DocumentAccess, DocumentContinuation, SharedSession, lock};
 use crate::session::{Actor, Session};
 
+#[cfg(test)]
+mod admission_tests;
 mod baked_lightmaps;
 mod capture;
 #[cfg(test)]
@@ -41,6 +43,25 @@ enum RecipeAction {
     Rename,
     Delete,
     Reload,
+}
+
+fn admitted(
+    window: &slint::Weak<CompileWindow>,
+    target: &DocumentContinuation,
+    body: impl FnOnce(CompileWindow, &SharedSession),
+) {
+    let Some(window) = window.upgrade() else {
+        return;
+    };
+    let result = target.upgrade().and_then(|target| {
+        target.with_shared(|shared| {
+            body(window.clone_strong(), shared);
+            Ok(())
+        })
+    });
+    if let Err(error) = result {
+        window.set_message(error.into());
+    }
 }
 
 fn hdr_lighting_details(stats: &serde_json::Value) -> String {
@@ -377,86 +398,76 @@ impl Controller {
         let window = CompileWindow::new()?;
         let token = Rc::new(Cell::new(None));
         let recipes = Rc::new(RefCell::new(RecipeForm::default()));
-        let capture = capture::bind(&window, shared, &recipes);
-        sky_packing::bind(&window, shared, &recipes);
-        let baked_lightmaps = baked_lightmaps::bind(&window, shared)?;
+        let capture = capture::bind(&window, &access, &recipes);
+        sky_packing::bind(&window, &access, &recipes);
+        let baked_lightmaps = baked_lightmaps::bind(&window, &access)?;
         window.on_choose_recipe({
-            let (shared, window, recipes) = (shared.clone(), window.as_weak(), recipes.clone());
-            move |index| choose_recipe(&window.unwrap(), &lock(&shared), &recipes, index)
+            let (target, window, recipes) = (access.downgrade(), window.as_weak(), recipes.clone());
+            move |index| {
+                admitted(&window, &target, |window, shared| {
+                    choose_recipe(&window, &lock(shared), &recipes, index)
+                });
+            }
         });
         window.on_apply_recipe({
-            let (shared, window, recipes) = (shared.clone(), window.as_weak(), recipes.clone());
+            let (target, window, recipes) = (access.downgrade(), window.as_weak(), recipes.clone());
             move || {
-                recipe_action(
-                    &window.unwrap(),
-                    &mut lock(&shared),
-                    &recipes,
-                    RecipeAction::Apply,
-                )
+                admitted(&window, &target, |window, shared| {
+                    recipe_action(&window, &mut lock(shared), &recipes, RecipeAction::Apply)
+                });
             }
         });
         window.on_save_recipe({
-            let (shared, window, recipes) = (shared.clone(), window.as_weak(), recipes.clone());
+            let (target, window, recipes) = (access.downgrade(), window.as_weak(), recipes.clone());
             move || {
-                recipe_action(
-                    &window.unwrap(),
-                    &mut lock(&shared),
-                    &recipes,
-                    RecipeAction::Save,
-                )
+                admitted(&window, &target, |window, shared| {
+                    recipe_action(&window, &mut lock(shared), &recipes, RecipeAction::Save)
+                });
             }
         });
         window.on_replace_recipe({
-            let (shared, window, recipes) = (shared.clone(), window.as_weak(), recipes.clone());
+            let (target, window, recipes) = (access.downgrade(), window.as_weak(), recipes.clone());
             move || {
-                recipe_action(
-                    &window.unwrap(),
-                    &mut lock(&shared),
-                    &recipes,
-                    RecipeAction::Replace,
-                )
+                admitted(&window, &target, |window, shared| {
+                    recipe_action(&window, &mut lock(shared), &recipes, RecipeAction::Replace)
+                });
             }
         });
         window.on_rename_recipe({
-            let (shared, window, recipes) = (shared.clone(), window.as_weak(), recipes.clone());
+            let (target, window, recipes) = (access.downgrade(), window.as_weak(), recipes.clone());
             move || {
-                recipe_action(
-                    &window.unwrap(),
-                    &mut lock(&shared),
-                    &recipes,
-                    RecipeAction::Rename,
-                )
+                admitted(&window, &target, |window, shared| {
+                    recipe_action(&window, &mut lock(shared), &recipes, RecipeAction::Rename)
+                });
             }
         });
         window.on_delete_recipe({
-            let (shared, window, recipes) = (shared.clone(), window.as_weak(), recipes.clone());
+            let (target, window, recipes) = (access.downgrade(), window.as_weak(), recipes.clone());
             move || {
-                recipe_action(
-                    &window.unwrap(),
-                    &mut lock(&shared),
-                    &recipes,
-                    RecipeAction::Delete,
-                )
+                admitted(&window, &target, |window, shared| {
+                    recipe_action(&window, &mut lock(shared), &recipes, RecipeAction::Delete)
+                });
             }
         });
         window.on_cancel_recipe_edit({
-            let (shared, window, recipes) = (shared.clone(), window.as_weak(), recipes.clone());
+            let (target, window, recipes) = (access.downgrade(), window.as_weak(), recipes.clone());
             move || {
-                let session = lock(&shared);
-                *recipes.borrow_mut() = RecipeForm::default();
-                let window = window.unwrap();
-                refresh_recipes(&window, &session, &recipes);
-                window.set_message(
-                    "Recipe edit cancelled. Current build settings are unchanged.".into(),
-                );
+                admitted(&window, &target, |window, shared| {
+                    let session = lock(shared);
+                    *recipes.borrow_mut() = RecipeForm::default();
+                    refresh_recipes(&window, &session, &recipes);
+                    window.set_message(
+                        "Recipe edit cancelled. Current build settings are unchanged.".into(),
+                    );
+                });
             }
         });
         window.on_reload_recipes({
-            let (shared, window, recipes) = (shared.clone(), window.as_weak(), recipes.clone());
+            let (target, window, recipes) = (access.downgrade(), window.as_weak(), recipes.clone());
             move || {
-                if let Some(window) = window.upgrade() {
-                    recipe_action(&window, &mut lock(&shared), &recipes, RecipeAction::Reload);
-                }
+                admitted(&window, &target, |window, shared| {
+                    recipe_action(&window, &mut lock(shared), &recipes, RecipeAction::Reload);
+                });
             }
         });
         let settings = lock(shared).compile_settings();
@@ -496,161 +507,178 @@ impl Controller {
             .collect::<Vec<_>>();
         window.set_bounce_modes(Rc::new(slint::VecModel::from(bounce_labels)).into());
         window.on_change_smoothing_angle({
-            let (shared, window, recipes) = (shared.clone(), window.as_weak(), recipes.clone());
+            let (target, window, recipes) = (access.downgrade(), window.as_weak(), recipes.clone());
             move |angle| {
-                let mut session = lock(&shared);
-                let result = u8::try_from(angle)
-                    .map_err(|_| "Choose an angle from 0 to 90 degrees".to_string())
-                    .and_then(|angle| {
-                        session.update_build_settings(
-                            Actor::User,
-                            crate::session::compilation::BuildSettingsUpdate {
-                                smoothing_angle: Some(angle),
-                                ..Default::default()
-                            },
-                        )
+                admitted(&window, &target, |window, shared| {
+                    let mut session = lock(shared);
+                    let result = u8::try_from(angle)
+                        .map_err(|_| "Choose an angle from 0 to 90 degrees".to_string())
+                        .and_then(|angle| {
+                            session.update_build_settings(
+                                Actor::User,
+                                crate::session::compilation::BuildSettingsUpdate {
+                                    smoothing_angle: Some(angle),
+                                    ..Default::default()
+                                },
+                            )
+                        });
+                    refresh_recipes(&window, &session, &recipes);
+                    window.set_message(match result {
+                        Ok(_) => {
+                            "Brush smoothing angle updated. The next build will use this angle."
+                                .into()
+                        }
+                        Err(error) => error.into(),
                     });
-                let window = window.unwrap();
-                refresh_recipes(&window, &session, &recipes);
-                window.set_message(match result {
-                    Ok(_) => {
-                        "Brush smoothing angle updated. The next build will use this angle.".into()
-                    }
-                    Err(error) => error.into(),
                 });
             }
         });
         window.on_change_bounces({
-            let (shared, window, recipes) = (shared.clone(), window.as_weak(), recipes.clone());
+            let (target, window, recipes) = (access.downgrade(), window.as_weak(), recipes.clone());
             move |choice| {
-                let mut session = lock(&shared);
-                let settings = session.compile_settings();
-                let result = settings["bounce_choices"][choice as usize]["bounces"]
-                    .as_u64()
-                    .and_then(|count| u8::try_from(count).ok())
-                    .ok_or_else(|| "Choose a supported indirect lighting mode".to_string())
-                    .and_then(|count| {
-                        session.update_compile_options(
-                            Actor::User,
-                            None,
-                            None,
-                            None,
-                            None,
-                            Some(count),
-                        )
+                admitted(&window, &target, |window, shared| {
+                    let mut session = lock(shared);
+                    let settings = session.compile_settings();
+                    let result = settings["bounce_choices"][choice as usize]["bounces"]
+                        .as_u64()
+                        .and_then(|count| u8::try_from(count).ok())
+                        .ok_or_else(|| "Choose a supported indirect lighting mode".to_string())
+                        .and_then(|count| {
+                            session.update_compile_options(
+                                Actor::User,
+                                None,
+                                None,
+                                None,
+                                None,
+                                Some(count),
+                            )
+                        });
+                    refresh_recipes(&window, &session, &recipes);
+                    window.set_message(match result {
+                        Ok(_) => {
+                            "Indirect light updated. The next build will use this setting.".into()
+                        }
+                        Err(error) => error.into(),
                     });
-                let window = window.unwrap();
-                refresh_recipes(&window, &session, &recipes);
-                window.set_message(match result {
-                    Ok(_) => "Indirect light updated. The next build will use this setting.".into(),
-                    Err(error) => error.into(),
                 });
             }
         });
         window.on_change_visibility({
-            let (shared, window, recipes) = (shared.clone(), window.as_weak(), recipes.clone());
+            let (target, window, recipes) = (access.downgrade(), window.as_weak(), recipes.clone());
             move |choice| {
-                let mut session = lock(&shared);
-                let settings = session.compile_settings();
-                let result = settings["visibility_choices"][choice as usize]["name"]
-                    .as_str()
-                    .ok_or_else(|| "Choose a supported visibility quality".to_string())
-                    .and_then(|mode| {
-                        session.update_compile_options(
-                            Actor::User,
-                            None,
-                            None,
-                            None,
-                            Some(mode),
-                            None,
-                        )
+                admitted(&window, &target, |window, shared| {
+                    let mut session = lock(shared);
+                    let settings = session.compile_settings();
+                    let result = settings["visibility_choices"][choice as usize]["name"]
+                        .as_str()
+                        .ok_or_else(|| "Choose a supported visibility quality".to_string())
+                        .and_then(|mode| {
+                            session.update_compile_options(
+                                Actor::User,
+                                None,
+                                None,
+                                None,
+                                Some(mode),
+                                None,
+                            )
+                        });
+                    refresh_recipes(&window, &session, &recipes);
+                    window.set_message(match result {
+                        Ok(_) => {
+                            "Visibility quality updated. The next build will use this quality."
+                                .into()
+                        }
+                        Err(error) => error.into(),
                     });
-                let window = window.unwrap();
-                refresh_recipes(&window, &session, &recipes);
-                window.set_message(match result {
-                    Ok(_) => {
-                        "Visibility quality updated. The next build will use this quality.".into()
-                    }
-                    Err(error) => error.into(),
                 });
             }
         });
         window.on_change_sky_quality({
-            let (shared, window, recipes) = (shared.clone(), window.as_weak(), recipes.clone());
+            let (target, window, recipes) = (access.downgrade(), window.as_weak(), recipes.clone());
             move |choice| {
-                let mut session = lock(&shared);
-                let settings = session.compile_settings();
-                let result = settings["sky_choices"][choice as usize]["name"]
-                    .as_str()
-                    .ok_or_else(|| "Choose a supported sky quality".to_string())
-                    .and_then(|quality| {
-                        session.update_compile_settings_quality(
-                            Actor::User,
-                            None,
-                            None,
-                            Some(quality),
-                        )
+                admitted(&window, &target, |window, shared| {
+                    let mut session = lock(shared);
+                    let settings = session.compile_settings();
+                    let result = settings["sky_choices"][choice as usize]["name"]
+                        .as_str()
+                        .ok_or_else(|| "Choose a supported sky quality".to_string())
+                        .and_then(|quality| {
+                            session.update_compile_settings_quality(
+                                Actor::User,
+                                None,
+                                None,
+                                Some(quality),
+                            )
+                        });
+                    refresh_recipes(&window, &session, &recipes);
+                    window.set_message(match result {
+                        Ok(_) => {
+                            "Sky quality updated. The next build will use this quality.".into()
+                        }
+                        Err(error) => error.into(),
                     });
-                let window = window.unwrap();
-                refresh_recipes(&window, &session, &recipes);
-                window.set_message(match result {
-                    Ok(_) => "Sky quality updated. The next build will use this quality.".into(),
-                    Err(error) => error.into(),
                 });
             }
         });
         window.on_change_physics({
-            let (shared, window, recipes) = (shared.clone(), window.as_weak(), recipes.clone());
+            let (target, window, recipes) = (access.downgrade(), window.as_weak(), recipes.clone());
             move |choice| {
-                let mut session = lock(&shared);
-                let settings = session.compile_settings();
-                let result = settings["physics_choices"][choice as usize]["name"]
-                    .as_str()
-                    .ok_or_else(|| "Choose a supported physics mode".to_string())
-                    .and_then(|mode| {
-                        session.update_compile_settings(Actor::User, None, Some(mode))
+                admitted(&window, &target, |window, shared| {
+                    let mut session = lock(shared);
+                    let settings = session.compile_settings();
+                    let result = settings["physics_choices"][choice as usize]["name"]
+                        .as_str()
+                        .ok_or_else(|| "Choose a supported physics mode".to_string())
+                        .and_then(|mode| {
+                            session.update_compile_settings(Actor::User, None, Some(mode))
+                        });
+                    refresh_recipes(&window, &session, &recipes);
+                    window.set_message(match result {
+                        Ok(_) => "Physics mode updated. The next build will use this mode.".into(),
+                        Err(error) => error.into(),
                     });
-                let window = window.unwrap();
-                refresh_recipes(&window, &session, &recipes);
-                window.set_message(match result {
-                    Ok(_) => "Physics mode updated. The next build will use this mode.".into(),
-                    Err(error) => error.into(),
                 });
             }
         });
         window.on_change_lighting({
-            let (shared, window, recipes) = (shared.clone(), window.as_weak(), recipes.clone());
+            let (target, window, recipes) = (access.downgrade(), window.as_weak(), recipes.clone());
             move |choice| {
-                let mut session = lock(&shared);
-                let settings = session.compile_settings();
-                let result = settings["choices"][choice as usize]["name"]
-                    .as_str()
-                    .ok_or_else(|| "Choose a supported lighting mode".to_string())
-                    .and_then(|mode| session.set_compile_settings(Actor::User, mode));
-                let window = window.unwrap();
-                refresh_recipes(&window, &session, &recipes);
-                window.set_message(match result {
-                    Ok(_) => "Build lighting updated. The next build will use this mode.".into(),
-                    Err(error) => error.into(),
+                admitted(&window, &target, |window, shared| {
+                    let mut session = lock(shared);
+                    let settings = session.compile_settings();
+                    let result = settings["choices"][choice as usize]["name"]
+                        .as_str()
+                        .ok_or_else(|| "Choose a supported lighting mode".to_string())
+                        .and_then(|mode| session.set_compile_settings(Actor::User, mode));
+                    refresh_recipes(&window, &session, &recipes);
+                    window.set_message(match result {
+                        Ok(_) => {
+                            "Build lighting updated. The next build will use this mode.".into()
+                        }
+                        Err(error) => error.into(),
+                    });
                 });
             }
         });
         window.on_play_build({
-            let (shared, window) = (shared.clone(), window.as_weak());
+            let (target, window) = (access.downgrade(), window.as_weak());
             move || {
-                let result = crate::runtime::start_launch(&shared, Actor::User);
-                window.unwrap().set_message(match result {
+                admitted(&window, &target, |window, shared| {
+                let result = crate::runtime::start_launch(shared, Actor::User);
+                window.set_message(match result {
                     Ok(()) => "Launching the last successful build with -insecure. Open Game Log for engine output.".into(),
                     Err(error) => error.into(),
+                });
                 });
             }
         });
         window.on_cancel_build({
             let (continuation, window, token) = (access.downgrade(), window.as_weak(), token.clone());
             move || {
+                let Some(window) = window.upgrade() else { return };
                 if let Some(token) = token.get() {
                     let result = continuation.upgrade().and_then(|access| access.cancel_compile(Actor::User, token));
-                    window.unwrap().set_message(match result {
+                    window.set_message(match result {
                         Ok(_) => {
                             "Cancellation requested. Queued jobs retire immediately; running jobs stop after cleanup.".into()
                         }
@@ -662,7 +690,9 @@ impl Controller {
         window.on_close_dialog({
             let (window, capture) = (window.as_weak(), capture.clone());
             move || {
-                let window = window.unwrap();
+                let Some(window) = window.upgrade() else {
+                    return;
+                };
                 capture.discard(&window);
                 let _ = window.hide();
             }

@@ -5,7 +5,7 @@ use editor_core::session::baked_lightmaps::{Channel, Inspection, Query, SourceRe
 use serde_json::Value;
 use slint::ComponentHandle;
 
-use super::{CompileWindow, Session, SharedSession, lock};
+use super::{CompileWindow, DocumentAccess, DocumentContinuation, Session, SharedSession, lock};
 use crate::BakedLightmapsWindow;
 
 pub(super) struct Form {
@@ -20,6 +20,25 @@ struct Lists {
     matches: Vec<usize>,
     source: Option<SourceReference>,
     match_summary: String,
+}
+
+fn admitted(
+    window: &slint::Weak<BakedLightmapsWindow>,
+    target: &DocumentContinuation,
+    body: impl FnOnce(BakedLightmapsWindow, &SharedSession),
+) {
+    let Some(window) = window.upgrade() else {
+        return;
+    };
+    let result = target.upgrade().and_then(|target| {
+        target.with_shared(|shared| {
+            body(window.clone_strong(), shared);
+            Ok(())
+        })
+    });
+    if let Err(error) = result {
+        window.set_diagnostics(error.into());
+    }
 }
 
 fn clear_lists(window: &BakedLightmapsWindow, lists: &RefCell<Lists>) {
@@ -343,6 +362,11 @@ fn lists_current(
 }
 
 impl Form {
+    #[cfg(test)]
+    pub(super) fn window(&self) -> &BakedLightmapsWindow {
+        &self.window
+    }
+
     pub(super) fn is_visible(&self) -> bool {
         self.window.window().is_visible()
     }
@@ -377,140 +401,152 @@ impl Form {
 
 pub(super) fn bind(
     parent: &CompileWindow,
-    shared: &SharedSession,
+    access: &DocumentAccess,
 ) -> Result<Form, slint::PlatformError> {
     let window = BakedLightmapsWindow::new()?;
     let baseline = Rc::new(RefCell::new(None));
     let lists = Rc::new(RefCell::new(Lists::default()));
     parent.on_inspect_baked_lightmaps({
-        let (window, shared, baseline, lists) = (
+        let (window, target, baseline, lists) = (
             window.as_weak(),
-            shared.clone(),
+            access.downgrade(),
             baseline.clone(),
             lists.clone(),
         );
+        let parent = parent.as_weak();
         move || {
-            let window = window.unwrap();
-            inspect(
-                &window,
-                &lock(&shared),
-                &baseline,
-                &lists,
-                query(&window, true),
-            );
-            let _ = window.show();
+            super::admitted(&parent, &target, |_, shared| {
+                let Some(window) = window.upgrade() else {
+                    return;
+                };
+                inspect(
+                    &window,
+                    &lock(shared),
+                    &baseline,
+                    &lists,
+                    query(&window, true),
+                );
+                let _ = window.show();
+            });
         }
     });
     window.on_inspect_face({
-        let (window, shared, baseline, lists) = (
+        let (window, target, baseline, lists) = (
             window.as_weak(),
-            shared.clone(),
+            access.downgrade(),
             baseline.clone(),
             lists.clone(),
         );
         move || {
-            let window = window.unwrap();
-            inspect(
-                &window,
-                &lock(&shared),
-                &baseline,
-                &lists,
-                query(&window, false),
-            );
+            admitted(&window, &target, |window, shared| {
+                inspect(
+                    &window,
+                    &lock(shared),
+                    &baseline,
+                    &lists,
+                    query(&window, false),
+                );
+            });
         }
     });
     window.on_inspect_selected_authored({
-        let (window, shared, baseline, lists) = (
+        let (window, target, baseline, lists) = (
             window.as_weak(),
-            shared.clone(),
+            access.downgrade(),
             baseline.clone(),
             lists.clone(),
         );
         move || {
-            let window = window.unwrap();
-            let mut query = query(&window, true);
-            query.offset = 0;
-            query.contributor_offset = 0;
-            query.selected_authored_face = true;
-            window.set_match_offset(0);
-            window.set_contributor_offset(0);
-            inspect(&window, &lock(&shared), &baseline, &lists, query);
+            admitted(&window, &target, |window, shared| {
+                let mut query = query(&window, true);
+                query.offset = 0;
+                query.contributor_offset = 0;
+                query.selected_authored_face = true;
+                window.set_match_offset(0);
+                window.set_contributor_offset(0);
+                inspect(&window, &lock(shared), &baseline, &lists, query);
+            });
         }
     });
     window.on_inspect_origin({
-        let (window, shared, baseline, lists) = (
+        let (window, target, baseline, lists) = (
             window.as_weak(),
-            shared.clone(),
+            access.downgrade(),
             baseline.clone(),
             lists.clone(),
         );
         move |index| {
-            let window = window.unwrap();
-            let session = lock(&shared);
-            if !lists_current(&window, &session, &baseline, &lists) {
-                return;
-            }
-            let source = lists
-                .borrow()
-                .origins
-                .get(index.max(0) as usize)
-                .cloned()
-                .flatten();
-            if let Some(source) = source {
-                let mut query = query(&window, true);
-                query.source = Some(source);
-                query.offset = 0;
-                window.set_match_offset(0);
-                inspect(&window, &session, &baseline, &lists, query);
-            }
+            admitted(&window, &target, |window, shared| {
+                let session = lock(shared);
+                if !lists_current(&window, &session, &baseline, &lists) {
+                    return;
+                }
+                let source = lists
+                    .borrow()
+                    .origins
+                    .get(index.max(0) as usize)
+                    .cloned()
+                    .flatten();
+                if let Some(source) = source {
+                    let mut query = query(&window, true);
+                    query.source = Some(source);
+                    query.offset = 0;
+                    window.set_match_offset(0);
+                    inspect(&window, &session, &baseline, &lists, query);
+                }
+            });
         }
     });
     window.on_find_matches({
-        let (window, shared, baseline, lists) = (
+        let (window, target, baseline, lists) = (
             window.as_weak(),
-            shared.clone(),
+            access.downgrade(),
             baseline.clone(),
             lists.clone(),
         );
         move || {
-            let window = window.unwrap();
-            let session = lock(&shared);
-            if !lists_current(&window, &session, &baseline, &lists) {
-                return;
-            }
-            let source = lists.borrow().source.clone();
-            if let Some(source) = source {
-                let mut query = query(&window, true);
-                query.source = Some(source);
-                query.offset = window.get_match_offset().max(0) as usize;
-                inspect(&window, &session, &baseline, &lists, query);
-            }
+            admitted(&window, &target, |window, shared| {
+                let session = lock(shared);
+                if !lists_current(&window, &session, &baseline, &lists) {
+                    return;
+                }
+                let source = lists.borrow().source.clone();
+                if let Some(source) = source {
+                    let mut query = query(&window, true);
+                    query.source = Some(source);
+                    query.offset = window.get_match_offset().max(0) as usize;
+                    inspect(&window, &session, &baseline, &lists, query);
+                }
+            });
         }
     });
     window.on_inspect_match({
-        let (window, shared, baseline, lists) = (
+        let (window, target, baseline, lists) = (
             window.as_weak(),
-            shared.clone(),
+            access.downgrade(),
             baseline.clone(),
             lists.clone(),
         );
         move |index| {
-            let window = window.unwrap();
-            let session = lock(&shared);
-            if !lists_current(&window, &session, &baseline, &lists) {
-                return;
-            }
-            let face = lists.borrow().matches.get(index.max(0) as usize).copied();
-            if let Some(face) = face {
-                window.set_compiled_face(face as i32);
-                inspect(&window, &session, &baseline, &lists, query(&window, false));
-            }
+            admitted(&window, &target, |window, shared| {
+                let session = lock(shared);
+                if !lists_current(&window, &session, &baseline, &lists) {
+                    return;
+                }
+                let face = lists.borrow().matches.get(index.max(0) as usize).copied();
+                if let Some(face) = face {
+                    window.set_compiled_face(face as i32);
+                    inspect(&window, &session, &baseline, &lists, query(&window, false));
+                }
+            });
         }
     });
     window.on_query_changed({
         let window = window.as_weak();
         move || {
-            let window = window.unwrap();
+            let Some(window) = window.upgrade() else {
+                return;
+            };
             window.set_has_preview(false);
             window.set_preview(slint::Image::default());
             window.set_selected(
@@ -522,7 +558,9 @@ pub(super) fn bind(
     window.on_close_dialog({
         let window = window.as_weak();
         move || {
-            let _ = window.unwrap().hide();
+            if let Some(window) = window.upgrade() {
+                let _ = window.hide();
+            }
         }
     });
     Ok(Form {

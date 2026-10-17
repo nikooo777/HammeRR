@@ -93,6 +93,7 @@ fn prepared_assets(
     )
     .unwrap();
     session.compiled = Some(CompiledMap {
+        claim: None,
         face_origins: Err("Fixture has no retained source mapping".into()),
         path: destination.clone(),
         snapshot: Snapshot {
@@ -117,6 +118,9 @@ fn prepared_assets(
         destination_stamp: Some(destination_stamp),
         control,
         publication: Mutex::new(Publication {
+            claims: Some(request.output_claims),
+            artifact: None,
+            warning: None,
             pending,
             lease: Some(lease),
             pointfile_lease,

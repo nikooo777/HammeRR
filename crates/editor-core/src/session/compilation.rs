@@ -19,6 +19,7 @@ mod viscluster_tests;
 
 #[derive(Default)]
 pub struct State {
+    pub(super) retained_pointfile: Option<crate::path_claims::Claim>,
     serial: u64,
     job: Option<Job>,
     options: compiler::Options,
@@ -45,6 +46,7 @@ struct Job {
 }
 
 pub struct CompileRequest {
+    output_claims: crate::path_claims::OutputClaims,
     token: u64,
     control: compiler::Control,
     vmf: Vmf,
@@ -79,6 +81,9 @@ pub struct CompileResult {
 
 struct Publication {
     pending: Option<compiler::PreparedWrite>,
+    claims: Option<crate::path_claims::OutputClaims>,
+    artifact: Option<crate::path_claims::Claim>,
+    warning: Option<String>,
     lease: Option<compiler::OutputLease>,
     pointfile_lease: Option<compiler::OutputLease>,
     pointfile_stamp: Option<compiler::FileStamp>,
@@ -89,6 +94,22 @@ struct Publication {
 }
 
 impl CompileResult {
+    fn artifact_claim(&self) -> Option<crate::path_claims::Claim> {
+        self.publication
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .artifact
+            .clone()
+    }
+
+    fn publication_warning(&self) -> Option<String> {
+        self.publication
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .warning
+            .clone()
+    }
+
     pub(crate) fn published(&self) -> bool {
         self.publication
             .lock()
@@ -163,10 +184,12 @@ impl CompileRequest {
             .as_ref()
             .map(|lease| lease.path().to_owned())
             .unwrap_or_else(|| self.path.clone());
-        let reservation = guarded
-            .then(|| compiler::WriteReservation::new(&path, &self.control))
-            .transpose()
-            .map_err(|e| e.to_string())?;
+        let reservation = compiler::WriteReservation::for_destinations(
+            self.output_claims.bsp.destination(),
+            self.output_claims.pointfile.destination(),
+            &self.control,
+        )
+        .map_err(|error| error.to_string())?;
         let mut output = if instances {
             compiler::compile_with_source_controlled(
                 &self.vmf,
@@ -217,7 +240,7 @@ impl CompileRequest {
             return Err("Sky packing did not return its retained asset plan".into());
         }
         let mut sources = None;
-        let (pending, published, committed) = if guarded {
+        let (pending, published, committed, claims, artifact, warning) = if guarded {
             if output.bsp.is_none() && output.leak.is_some() {
                 if let Some(stamp) = &self.pointfile_stamp {
                     stamp.verify_metadata().map_err(|error| error.to_string())?;
@@ -237,10 +260,7 @@ impl CompileRequest {
                 }
             }
             let pending = output
-                .prepare_write_reserved(
-                    reservation.ok_or("Guarded output reservation missing")?,
-                    &self.control,
-                )
+                .prepare_write_reserved(reservation, &self.control)
                 .map_err(|e| e.to_string())?;
             sources = Some(
                 compiler::asset_sources::capture_output_asset_source_guard(
@@ -263,12 +283,34 @@ impl CompileRequest {
                 .ok_or("Guarded destination lease missing")?
                 .verify(&self.control)
                 .map_err(|e| e.to_string())?;
-            (pending, false, false)
+            let claims = pending.as_ref().map(|_| self.output_claims);
+            (pending, false, false, claims, None, None)
         } else {
-            output
-                .write_controlled(&self.path, &self.control)
-                .map_err(|e| format!("{}: {e}", self.path.display()))?;
-            (None, output.bsp.is_some(), true)
+            let pending = output
+                .prepare_write_reserved(reservation, &self.control)
+                .map_err(|error| format!("{}: {error}", self.path.display()))?;
+            match pending {
+                Some(pending) => {
+                    let receipt = pending
+                        .commit_receipt(&self.control)
+                        .map_err(|error| format!("{}: {error}", self.path.display()))?;
+                    let claim = if receipt.success {
+                        self.output_claims.bsp.clone()
+                    } else {
+                        self.output_claims.pointfile.clone()
+                    };
+                    claim.published(receipt.publication.destination);
+                    (
+                        None,
+                        receipt.success,
+                        true,
+                        None,
+                        Some(claim),
+                        receipt.publication.warning,
+                    )
+                }
+                None => (None, false, false, None, None, None),
+            }
         };
         Ok(CompileResult {
             token: self.token,
@@ -282,6 +324,9 @@ impl CompileRequest {
             destination_stamp: self.destination_stamp,
             control: self.control,
             publication: Mutex::new(Publication {
+                claims,
+                artifact,
+                warning,
                 pending,
                 lease,
                 pointfile_lease,
@@ -305,6 +350,7 @@ fn result_json(result: &CompileResult) -> Value {
         "success":result.published(),
         "published":result.published(),
         "error":result.publication_error(),
+        "warning":result.publication_warning(),
         "bsp":result.published().then(||result.path.display().to_string()),
         "diagnostic_count":output.report.diagnostics.len(),
         "diagnostics":output.report.diagnostics.iter().take(100).map(|diagnostic|json!({
@@ -535,6 +581,11 @@ impl Session {
         if let Some(error) = &self.game_error {
             return Err(error.clone());
         }
+        if let Some(claim) = &self.file_claims.source {
+            claim.destination().verify().map_err(|error| {
+                format!("Map source binding changed; reopen or Save As before compiling: {error}")
+            })?;
+        }
         let control = compiler::Control::default();
         let instances = compiler::instances::requires_source(self.document.vmf());
         if instances && self.path.is_none() {
@@ -585,6 +636,32 @@ impl Session {
             } else {
                 (None, None)
             };
+        if self.file_claims.source.is_none()
+            && let Some(source) = &self.path
+        {
+            let destination = source_formats::file_publication::BoundDestination::capture(
+                source,
+                source_formats::file_publication::Policy::FollowSource,
+            )
+            .map_err(|error| error.to_string())?;
+            self.file_claims.source = Some(self.file_claims.source(destination)?);
+        }
+        let destination = source_formats::file_publication::BoundDestination::capture(
+            &path,
+            source_formats::file_publication::Policy::ReplaceEntry,
+        )
+        .map_err(|error| error.to_string())?;
+        let pointfile = source_formats::file_publication::BoundDestination::capture(
+            &path.with_extension("lin"),
+            source_formats::file_publication::Policy::ReplaceEntry,
+        )
+        .map_err(|error| error.to_string())?;
+        let output_claims = self.file_claims.outputs(destination, pointfile)?;
+        if let Some(claim) = &self.file_claims.source {
+            claim.destination().verify().map_err(|error| {
+                format!("Map source binding changed; reopen or Save As before compiling: {error}")
+            })?;
+        }
         self.compilation.serial += 1;
         let inspection_source = if let Some(source) = &instance_source {
             Ok(Some(source.root_identity().clone()))
@@ -616,6 +693,7 @@ impl Session {
             instance_dependencies: None,
         });
         let request = CompileRequest {
+            output_claims,
             token: self.compilation.serial,
             control,
             vmf: self.document.vmf().clone(),
@@ -691,8 +769,8 @@ impl Session {
                 .as_ref()
                 .or(publication.lease.as_ref())
                 .ok_or("Guarded destination lease missing")?;
-            let success = pending
-                .commit_checked_with(lease, &result.control, || {
+            let receipt = pending
+                .commit_checked_with_receipt(lease, &result.control, || {
                     if let Some(source) = &result.source {
                         source.verify_metadata()?;
                     }
@@ -715,7 +793,17 @@ impl Session {
                     Ok(())
                 })
                 .map_err(|e| e.to_string())?;
-            publication.published = success;
+            if let Some(claims) = publication.claims.take() {
+                let claim = if receipt.success {
+                    claims.bsp
+                } else {
+                    claims.pointfile
+                };
+                claim.published(receipt.publication.destination);
+                publication.artifact = Some(claim);
+            }
+            publication.warning = receipt.publication.warning;
+            publication.published = receipt.success;
             publication.committed = true;
             Ok(())
         })();
@@ -724,6 +812,7 @@ impl Session {
         publication.sources = None;
         if let Err(error) = &outcome {
             publication.pending = None;
+            publication.claims = None;
             publication.error = Some(error.clone());
         }
         outcome
@@ -807,6 +896,7 @@ impl Session {
                     .map(|job| job.inspection_source.clone())
                     .unwrap_or_else(|| Err("Build source identity is unavailable".into()));
                 self.compiled = Some(CompiledMap {
+                    claim: result.artifact_claim(),
                     face_origins: result.output.face_origins.clone(),
                     path: result.path.clone(),
                     snapshot,
@@ -828,6 +918,13 @@ impl Session {
                         result.output.bsp.as_ref(),
                     ),
                 });
+            } else if result.output.leak.is_some()
+                && let Some(claim) = result.artifact_claim()
+            {
+                self.compilation.retained_pointfile = Some(claim);
+            }
+            if let Some(warning) = result.publication_warning() {
+                self.log(actor, format!("Build output was written, but {warning}"));
             }
         }
         let message = match result {

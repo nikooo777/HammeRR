@@ -160,6 +160,7 @@ fn install_build(session: &mut Session, path: &Path, source: &Path) {
     let source_identity =
         compiler::FileIdentity::capture(source, &compiler::Control::default()).unwrap();
     session.compiled = Some(CompiledMap {
+        claim: None,
         face_origins: Err("Fixture has no retained source mapping".into()),
         instance_dependencies: None,
         instance_source_path: None,

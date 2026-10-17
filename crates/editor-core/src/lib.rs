@@ -10,6 +10,7 @@ pub mod material_favorites;
 pub mod materials;
 pub mod model_preview;
 pub mod navigation_preferences;
+mod path_claims;
 pub mod prefabs;
 mod preference_file;
 pub mod preview_preferences;

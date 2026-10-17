@@ -421,11 +421,17 @@ mod tests {
         fs::write(&path, b"previous").unwrap();
         let lease = OutputLease::acquire(&path, &Control::default()).unwrap();
         assert!(OutputLease::acquire(&path, &Control::default()).is_err());
-        let mut temporary = tempfile::NamedTempFile::new_in(directory.path()).unwrap();
+        let mut staged = source_formats::file_publication::BoundDestination::capture(
+            &path,
+            source_formats::file_publication::Policy::ReplaceEntry,
+        )
+        .unwrap()
+        .stage()
+        .unwrap();
         use std::io::Write;
-        temporary.write_all(b"new output").unwrap();
+        staged.file_mut().write_all(b"new output").unwrap();
         let prepared = crate::PreparedWrite {
-            temporary,
+            staged,
             destination: path.clone(),
             success: true,
             instance_dependencies: None,
@@ -443,7 +449,13 @@ mod tests {
         let control = Control::default();
         let lease = OutputLease::acquire(&path, &control).unwrap();
         let prepared = crate::PreparedWrite {
-            temporary: tempfile::NamedTempFile::new_in(directory.path()).unwrap(),
+            staged: source_formats::file_publication::BoundDestination::capture(
+                &path,
+                source_formats::file_publication::Policy::ReplaceEntry,
+            )
+            .unwrap()
+            .stage()
+            .unwrap(),
             destination: path.clone(),
             success: true,
             instance_dependencies: None,

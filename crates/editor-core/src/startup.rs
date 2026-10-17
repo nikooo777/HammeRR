@@ -74,6 +74,7 @@ pub fn mount_game(gameinfo: Option<PathBuf>) -> Result<GameFs, String> {
 }
 
 pub struct Application {
+    _path_claims: crate::path_claims::Authority,
     pub material_favorites: material_favorites::Authority,
     pub recent_maps: recent_maps::Authority,
     pub shortcuts: shortcuts::Authority,
@@ -93,6 +94,8 @@ impl Application {
             mount_game(args.gameinfo.clone()),
             saved_defaults.clone(),
         )));
+        let path_claims = crate::path_claims::Authority::default();
+        lock(&session).use_application_path_claims(path_claims.clone());
         if args.engine_root.is_some() || args.steam_root.is_some() {
             lock(&session).configure_native_capture_runtime(
                 Actor::System,
@@ -133,6 +136,7 @@ impl Application {
             .as_ref()
             .map(|map| lock(&session).open(Actor::User, map, true));
         Ok(Self {
+            _path_claims: path_claims,
             material_favorites,
             recent_maps,
             shortcuts,

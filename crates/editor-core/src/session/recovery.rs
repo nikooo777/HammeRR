@@ -715,14 +715,15 @@ impl Session {
     pub(super) fn backup_before_save(
         &mut self,
         path: &Path,
+        destination: &source_formats::file_publication::BoundDestination,
     ) -> Result<Option<RecoveryBackup>, String> {
         let Some(store) = self.recovery.store.clone() else {
             return Ok(None);
         };
         let keep = self.recovery_settings().keep_per_map;
-        let data = match std::fs::read(path) {
-            Ok(data) => data,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        let data = match destination.read_existing() {
+            Ok(Some(data)) => data,
+            Ok(None) => return Ok(None),
             Err(error) => return Err(format!("Could not read previous save: {error}")),
         };
         let source = absolute_path(path);

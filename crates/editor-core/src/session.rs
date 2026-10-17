@@ -46,6 +46,8 @@ pub mod definitions;
 pub mod entity_placement;
 mod favorites;
 pub mod fgd_helpers;
+#[cfg(test)]
+mod file_claim_tests;
 pub mod fog;
 pub mod grid_preferences;
 pub mod groups;
@@ -141,6 +143,7 @@ struct Snapshot {
 }
 
 struct CompiledMap {
+    claim: Option<crate::path_claims::Claim>,
     face_origins: Result<std::sync::Arc<compiler::face_origins::FaceOrigins>, String>,
     path: PathBuf,
     snapshot: Snapshot,
@@ -183,6 +186,7 @@ pub enum SelectMode {
 }
 
 pub struct Session {
+    file_claims: crate::path_claims::Binding,
     instance_contents: instance_contents::State,
     compile_region: compile_region::State,
     overlay: overlay::State,
@@ -286,6 +290,7 @@ pub struct Session {
 }
 
 pub struct LaunchRequest {
+    artifact_claim: Option<crate::path_claims::Claim>,
     origin: LaunchOrigin,
     install: game::Install,
     bsp: PathBuf,
@@ -347,6 +352,11 @@ impl LaunchRequest {
     }
 
     fn run_inner(self) -> Result<game::Run, String> {
+        if let Some(claim) = &self.artifact_claim {
+            claim.destination().verify().map_err(|error| {
+                format!("Compiled output binding changed; compile again before launching: {error}")
+            })?;
+        }
         self.verify_instance_dependencies()?;
         game::Run::launch_controlled(&self.install, &self.bsp, || {
             if self.origin.cancelled() {
@@ -359,6 +369,13 @@ impl LaunchRequest {
 }
 
 impl Session {
+    pub(crate) fn use_application_path_claims(&mut self, authority: crate::path_claims::Authority) {
+        assert!(self.compiled.is_none());
+        assert!(self.compilation.retained_pointfile.is_none());
+        assert!(!self.compiling);
+        self.file_claims.attach(authority);
+    }
+
     pub fn new(game: Result<GameFs, String>) -> Self {
         let (game, game_error) = match game {
             Ok(game) => (game, None),
@@ -372,6 +389,7 @@ impl Session {
             ),
         };
         Self {
+            file_claims: crate::path_claims::Binding::default(),
             instance_contents: instance_contents::State::default(),
             geometry: previews::State::default(),
             compile_region: compile_region::State::default(),
@@ -1312,6 +1330,8 @@ impl Session {
         self.saved_cameras = [None; 4];
         self.document_generation += 1;
         self.compiled = None;
+        self.compilation.retained_pointfile = None;
+        self.file_claims.source = None;
         self.leak = None;
         self.reset_pointfile();
         self.path = path;
@@ -1330,12 +1350,26 @@ impl Session {
     ) -> Result<String, String> {
         self.ensure_discardable(discard_changes)?;
         let start = Instant::now();
-        let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let destination = source_formats::file_publication::BoundDestination::capture(
+            path,
+            source_formats::file_publication::Policy::FollowSource,
+        )
+        .map_err(|error| format!("{}: {error}", path.display()))?;
+        let claim = self.file_claims.source(destination.clone())?;
+        let bytes = destination
+            .read_existing()
+            .map_err(|error| format!("{}: {error}", path.display()))?
+            .ok_or_else(|| format!("{}: source map does not exist", path.display()))?;
+        let text =
+            String::from_utf8(bytes).map_err(|error| format!("{}: {error}", path.display()))?;
         let vmf = Vmf::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?;
         let document =
             Document::try_new(vmf).map_err(|error| format!("{}: {error}", path.display()))?;
         document
             .context()
+            .map_err(|error| format!("{}: {error}", path.display()))?;
+        destination
+            .verify()
             .map_err(|error| format!("{}: {error}", path.display()))?;
         let message = format!(
             "opened {} ({} brushes, {} entities) in {:.0?}",
@@ -1345,6 +1379,7 @@ impl Session {
             start.elapsed()
         );
         self.replace_document(document, Some(path.to_owned()));
+        self.file_claims.source = Some(claim);
         self.restore_recent_map_context(path);
         self.remember_recent_map(path);
         self.log(actor, &message);
@@ -1365,6 +1400,7 @@ impl Session {
         self.ensure_not_closing()?;
         self.ensure_partitions_resolved()?;
         self.ensure_entity_placement_resolved()?;
+        let explicit_destination = path.is_some();
         let path = path
             .map(Path::to_owned)
             .or_else(|| self.path.clone())
@@ -1373,11 +1409,36 @@ impl Session {
             .document
             .snapshot_for_save()
             .write(&WriteOptions::default());
-        let backup = self.backup_before_save(&path);
-        if let Err(error) = crate::recovery::atomic_write(&path, text.as_bytes()) {
-            let _ = self.finish_save_backup(backup.as_ref().ok().and_then(Option::as_ref), false);
-            return Err(error);
-        }
+        let destination = match &self.file_claims.source {
+            Some(claim) if !explicit_destination => claim.destination(),
+            _ => source_formats::file_publication::BoundDestination::capture(
+                &path,
+                source_formats::file_publication::Policy::FollowSource,
+            )
+            .map_err(|error| format!("{}: {error}", path.display()))?,
+        };
+        destination
+            .verify()
+            .map_err(|error| format!("{}: {error}", path.display()))?;
+        let claim = self.file_claims.source(destination.clone())?;
+        let backup = self.backup_before_save(&path, &destination);
+        let publication = (|| {
+            use std::io::Write;
+            let mut stage = destination.stage()?;
+            stage.file_mut().write_all(text.as_bytes())?;
+            stage.sync_all()?;
+            stage.commit()
+        })();
+        let receipt = match publication {
+            Ok(receipt) => receipt,
+            Err(error) => {
+                let _ =
+                    self.finish_save_backup(backup.as_ref().ok().and_then(Option::as_ref), false);
+                return Err(format!("{}: {error}", path.display()));
+            }
+        };
+        claim.published(receipt.destination);
+        self.file_claims.source = Some(claim);
         let retention_error = self
             .finish_save_backup(backup.as_ref().ok().and_then(Option::as_ref), true)
             .err();
@@ -1399,6 +1460,9 @@ impl Session {
                 None => format!("saved {}", path.display()),
             },
         );
+        if let Some(warning) = receipt.warning {
+            self.log(actor, format!("saved {}, but {warning}", path.display()));
+        }
         Ok(path)
     }
 
@@ -1936,6 +2000,11 @@ impl Session {
         if compiled.options != self.compile_options() {
             return Err("Build settings changed since compilation; compile again or restore the previous settings before launching".into());
         }
+        if let Some(claim) = &compiled.claim {
+            claim.destination().verify().map_err(|error| {
+                format!("Compiled output binding changed; compile again before launching: {error}")
+            })?;
+        }
         if !compiled.path.is_file() {
             return Err("the compiled BSP is missing; compile the map again".into());
         }
@@ -1946,6 +2015,10 @@ impl Session {
     pub fn begin_launch(&mut self, actor: Actor) -> Result<LaunchRequest, String> {
         let bsp = self.launch_readiness()?.to_owned();
         let request = LaunchRequest {
+            artifact_claim: self
+                .compiled
+                .as_ref()
+                .and_then(|compiled| compiled.claim.clone()),
             origin: LaunchOrigin::new(self.document_generation),
             install: game::Install::from_game(&self.game)?,
             bsp,

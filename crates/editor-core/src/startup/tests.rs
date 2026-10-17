@@ -12,6 +12,8 @@ fn fixture() -> (tempfile::TempDir, Application, PathBuf) {
         Err("No content required".into()),
         material_favorites.clone(),
     );
+    let path_claims = crate::path_claims::Authority::default();
+    state.use_application_path_claims(path_claims.clone());
     state.use_application_recent_maps(recent_maps.clone());
     state.use_application_shortcuts(shortcuts.clone());
     state.use_application_saved_defaults(saved_defaults.clone());
@@ -34,6 +36,7 @@ fn fixture() -> (tempfile::TempDir, Application, PathBuf) {
     let session = Arc::new(Mutex::new(state));
     let document = DocumentHandle::start(session).unwrap();
     let application = Application {
+        _path_claims: path_claims,
         material_favorites,
         recent_maps,
         shortcuts,

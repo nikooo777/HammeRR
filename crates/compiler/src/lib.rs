@@ -526,7 +526,7 @@ pub struct Output {
 
 #[derive(Debug)]
 pub struct PreparedWrite {
-    temporary: tempfile::NamedTempFile,
+    staged: source_formats::file_publication::StagedFile,
     destination: std::path::PathBuf,
     success: bool,
     instance_dependencies: Option<instances::DependencyGuard>,
@@ -535,43 +535,67 @@ pub struct PreparedWrite {
 
 #[derive(Debug)]
 pub struct WriteReservation {
-    temporary: tempfile::NamedTempFile,
-    destination: std::path::PathBuf,
+    destination: source_formats::file_publication::BoundDestination,
+    pointfile: source_formats::file_publication::BoundDestination,
     requested: std::path::PathBuf,
+}
+
+#[derive(Debug)]
+pub struct PublicationReceipt {
+    pub success: bool,
+    pub publication: source_formats::file_publication::CommittedReceipt,
 }
 
 impl WriteReservation {
     pub fn new(path: &Path, control: &Control) -> io::Result<Self> {
+        use source_formats::file_publication::{BoundDestination, Policy};
         control.checkpoint().map_err(io::Error::other)?;
-        let parent = path
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-            .unwrap_or(Path::new("."));
-        let parent = std::fs::canonicalize(parent)?;
-        let destination = parent.join(
-            path.file_name()
-                .ok_or_else(|| io::Error::other("Build destination has no file name"))?,
-        );
-        let temporary = tempfile::NamedTempFile::new_in(parent)?;
+        Self::for_destinations(
+            BoundDestination::capture(path, Policy::ReplaceEntry)?,
+            BoundDestination::capture(&path.with_extension("lin"), Policy::ReplaceEntry)?,
+            control,
+        )
+    }
+
+    pub fn for_destinations(
+        destination: source_formats::file_publication::BoundDestination,
+        pointfile: source_formats::file_publication::BoundDestination,
+        control: &Control,
+    ) -> io::Result<Self> {
+        control.checkpoint().map_err(io::Error::other)?;
+        destination.verify()?;
+        pointfile.verify()?;
+        if pointfile.authored_path() != destination.authored_path().with_extension("lin")
+            || pointfile.physical_path() != destination.physical_path().with_extension("lin")
+        {
+            return Err(io::Error::other(
+                "Pointfile destination must be derived from the admitted BSP destination",
+            ));
+        }
+        let requested = destination.authored_path().to_owned();
         Ok(Self {
-            temporary,
             destination,
-            requested: std::path::absolute(path)?,
+            pointfile,
+            requested,
         })
     }
 }
 
 impl PreparedWrite {
     pub fn commit(self, control: &Control) -> io::Result<bool> {
+        self.commit_receipt(control).map(|receipt| receipt.success)
+    }
+
+    pub fn commit_receipt(self, control: &Control) -> io::Result<PublicationReceipt> {
         if self.instance_dependencies.is_some() {
             let lease = OutputLease::acquire(&self.destination, control)?;
-            return self.commit_checked(&lease, control);
+            return self.commit_checked_with_receipt(&lease, control, || Ok(()));
         }
         control.publish(|| {
-            self.temporary
-                .persist(&self.destination)
-                .map(|_| self.success)
-                .map_err(|error| error.error)
+            self.staged.commit().map(|publication| PublicationReceipt {
+                success: self.success,
+                publication,
+            })
         })
     }
 
@@ -585,6 +609,16 @@ impl PreparedWrite {
         control: &Control,
         validate: impl FnOnce() -> io::Result<()>,
     ) -> io::Result<bool> {
+        self.commit_checked_with_receipt(lease, control, validate)
+            .map(|receipt| receipt.success)
+    }
+
+    pub fn commit_checked_with_receipt(
+        self,
+        lease: &OutputLease,
+        control: &Control,
+        validate: impl FnOnce() -> io::Result<()>,
+    ) -> io::Result<PublicationReceipt> {
         if let Some(dependencies) = &self.instance_dependencies {
             dependencies.verify(control)?;
         }
@@ -597,10 +631,10 @@ impl PreparedWrite {
             }
             validate()?;
             lease.verify_commit(&self.destination)?;
-            self.temporary
-                .persist(&self.destination)
-                .map(|_| self.success)
-                .map_err(|error| error.error)
+            self.staged.commit().map(|publication| PublicationReceipt {
+                success: self.success,
+                publication,
+            })
         })
     }
 }
@@ -639,7 +673,7 @@ impl Output {
         control: &Control,
     ) -> io::Result<Option<PreparedWrite>> {
         control.checkpoint().map_err(io::Error::other)?;
-        let path = &reservation.destination;
+        let path = reservation.destination.physical_path();
         let instance_output_stamp = self
             .instance_dependencies
             .as_ref()
@@ -704,26 +738,26 @@ impl Output {
         }
         control.advance(Stage::Writing).map_err(io::Error::other)?;
         let (destination, bytes, success) = if let Some(bsp) = &self.bsp {
-            (path.to_owned(), bsp.to_bytes(), true)
+            (&reservation.destination, bsp.to_bytes(), true)
         } else if let Some(leak) = &self.leak {
             let text: String = leak
                 .points
                 .iter()
                 .map(|&point| format!("{}\n", source_formats::vmf::format_vec3(point)))
                 .collect();
-            (path.with_extension("lin"), text.into_bytes(), false)
+            (&reservation.pointfile, text.into_bytes(), false)
         } else {
             return Ok(None);
         };
-        let mut temporary = reservation.temporary;
+        let mut staged = destination.stage()?;
         for chunk in bytes.chunks(64 * 1024) {
             control.checkpoint().map_err(io::Error::other)?;
-            temporary.write_all(chunk)?;
+            staged.file_mut().write_all(chunk)?;
         }
-        temporary.as_file().sync_all()?;
+        staged.sync_all()?;
         Ok(Some(PreparedWrite {
-            temporary,
-            destination,
+            staged,
+            destination: destination.physical_path().to_owned(),
             success,
             instance_dependencies: self.instance_dependencies.clone(),
             instance_output_stamp,

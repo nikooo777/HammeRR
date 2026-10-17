@@ -2315,6 +2315,9 @@ dirty exit and deterministic storage failure, including real process status,
 snapshot content/count, preserved primary VMF and empty protocol output. Unit
 checks cover idempotent drain, disabled/clean shutdown, join failure, caught
 capture panic, in-flight capture ordering and primary-plus-shutdown errors.
+The private error-domain case keeps settings-load failures across successful
+manual capture, keeps snapshot failures across settings repair, and exercises
+valid, malformed and oversized saved-settings Reload without changing the map.
 No graphics, game, desktop window or input is used.
 
 ### Coordinated material favorites
@@ -2414,3 +2417,22 @@ rename or delete saved recipes. Software callbacks preserve a typed name across
 human setting changes and display all updated settings before a stale action can
 be retried. The existing private Build recipe validator also covers independent
 process storage and explicit Reload; it does not imply cross-process locking.
+
+
+### Recovery settings and independent failure lifetimes
+
+```sh
+cargo test -p editor-core --features mcp error_domain
+cargo test -p editor-core --features mcp settings_loader
+cargo test -p editor recovery_ui::tests -- --test-threads=1
+python3 -B scripts/validate_recovery_exit.py --headless-binary target/debug/hammerr-headless --editor-binary target/debug/editor --output /tmp/hammerr-recovery-exit-check
+```
+
+The Session and MCP checks preserve independent settings, snapshot, retention
+and terminal drain errors. Owned capture completion keeps its exact retention
+outcome after later actions, and the worker uses that outcome for shutdown.
+The bounded settings loader checks missing defaults, oversized/nonregular files,
+Linux FIFO rejection with an enforced deadline, valid regular-file symlinks and
+read-only behavior. Software controls retain listing warnings, typed settings
+on failed Reload and current document state. Set `HAMMERR_UI_SNAPSHOTS` to an
+existing directory for the failed-Reload capture.

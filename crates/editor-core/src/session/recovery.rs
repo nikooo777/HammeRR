@@ -18,7 +18,10 @@ pub(super) struct State {
     last_attempt: Instant,
     captured: Option<Snapshot>,
     last_entry: Option<Entry>,
-    error: Option<String>,
+    settings_error: Option<String>,
+    snapshot_error: Option<String>,
+    retention_error: Option<String>,
+    drain_error: Option<String>,
     busy: bool,
     serial: u64,
 }
@@ -35,11 +38,49 @@ impl Default for State {
             last_attempt: Instant::now(),
             captured: None,
             last_entry: None,
-            error: None,
+            settings_error: None,
+            snapshot_error: None,
+            retention_error: None,
+            drain_error: None,
             busy: false,
             serial: 0,
         }
     }
+}
+
+impl State {
+    fn error(&self) -> Option<String> {
+        let mut errors: Vec<&str> = Vec::new();
+        for (error, prefix) in [
+            (self.drain_error.as_deref(), None),
+            (
+                self.snapshot_error.as_deref(),
+                Some("Exit recovery snapshot failed: "),
+            ),
+            (
+                self.retention_error.as_deref(),
+                Some("Exit recovery snapshot saved, but recovery cleanup failed: "),
+            ),
+            (self.settings_error.as_deref(), None),
+        ] {
+            let Some(error) = error else { continue };
+            let wrapped = prefix.is_some_and(|prefix| {
+                let wrapped = format!("{prefix}{error}");
+                self.drain_error.as_ref().is_some_and(|drain| {
+                    drain == &wrapped || drain.ends_with(&format!("; {wrapped}"))
+                })
+            });
+            if !wrapped && !errors.contains(&error) {
+                errors.push(error);
+            }
+        }
+        (!errors.is_empty()).then(|| errors.join("; "))
+    }
+}
+
+pub(crate) struct RecoveryCompletion {
+    pub entry: Entry,
+    pub retention_error: Option<String>,
 }
 
 pub struct RecoveryRequest {
@@ -94,15 +135,19 @@ impl Session {
         let store = match directory {
             Ok(directory) => Store { directory },
             Err(error) => {
-                self.recovery.error = Some(error);
+                self.recovery.settings_error = Some(error);
+                self.recovery.serial += 1;
                 return;
             }
         };
         match store.load_settings() {
-            Ok(settings) => self.recovery.settings = settings,
+            Ok(settings) => {
+                self.recovery.settings = settings;
+                self.recovery.settings_error = None;
+            }
             Err(error) => {
                 self.recovery.settings.enabled = false;
-                self.recovery.error = Some(error.clone());
+                self.recovery.settings_error = Some(error.clone());
                 self.log(
                     Actor::System,
                     format!("Recovery settings could not load: {error}"),
@@ -115,7 +160,7 @@ impl Session {
     }
 
     pub(crate) fn report_recovery_worker_error(&mut self, error: String) {
-        self.recovery.error = Some(error.clone());
+        self.recovery.drain_error = Some(error.clone());
         self.recovery.serial += 1;
         self.log(Actor::System, format!("Recovery shutdown failed: {error}"));
     }
@@ -150,7 +195,9 @@ impl Session {
             "directory": self.recovery.store.as_ref().map(|store| &store.directory),
             "busy": self.recovery.busy, "pending_changes": pending,
             "next_autosave_seconds": (pending && self.recovery.store.is_some() && self.recovery.settings.enabled && !self.recovery.busy && !self.closing).then(|| Duration::from_secs(self.recovery.settings.interval_seconds).saturating_sub(self.recovery.last_attempt.elapsed()).as_secs()),
-            "last_snapshot": self.recovery.last_entry, "error": self.recovery.error,
+            "last_snapshot": self.recovery.last_entry, "error": self.recovery.error(),
+            "settings_error": self.recovery.settings_error, "snapshot_error": self.recovery.snapshot_error,
+            "retention_error": self.recovery.retention_error, "drain_error": self.recovery.drain_error,
             "document_key": self.recovery.document_key,
         })
     }
@@ -166,15 +213,20 @@ impl Session {
                 "Recovery settings changed elsewhere; reload the settings before applying".into(),
             );
         }
-        let store = self
+        let saved = self
             .recovery
             .store
             .as_ref()
-            .ok_or("Recovery storage is unavailable")?;
-        store.save_settings(&settings)?;
+            .ok_or_else(|| "Recovery storage is unavailable".to_owned())
+            .and_then(|store| store.save_settings(&settings));
+        if let Err(error) = saved {
+            self.recovery.settings_error = Some(error.clone());
+            self.recovery.serial += 1;
+            return Err(error);
+        }
         self.recovery.settings = settings;
         self.recovery.settings_revision += 1;
-        self.recovery.error = None;
+        self.recovery.settings_error = None;
         self.recovery.serial += 1;
         self.log(actor, "updated autosave and recovery settings");
         Ok(())
@@ -239,20 +291,35 @@ impl Session {
         request: &RecoveryRequest,
         result: Result<Entry, String>,
     ) -> Result<Entry, String> {
+        self.finish_recovery_snapshot_completed(actor, request, result)
+            .map(|completion| completion.entry)
+    }
+
+    pub(crate) fn finish_recovery_snapshot_completed(
+        &mut self,
+        actor: Actor,
+        request: &RecoveryRequest,
+        result: Result<Entry, String>,
+    ) -> Result<RecoveryCompletion, String> {
         self.recovery.busy = false;
         self.recovery.last_attempt = Instant::now();
         self.recovery.serial += 1;
         match result {
             Ok(entry) => {
-                self.recovery.error = None;
+                self.recovery.snapshot_error = None;
+                self.recovery.retention_error = None;
                 if request.snapshot.generation == self.document_generation
                     && request.document_key == self.recovery.document_key
                 {
                     self.recovery.captured = Some(request.snapshot.clone());
                     self.recovery.last_entry = Some(entry.clone());
                 }
-                if let Err(error) = request.store.prune(&request.document_key, request.keep) {
-                    self.recovery.error = Some(error.clone());
+                let retention_error = request
+                    .store
+                    .prune(&request.document_key, request.keep)
+                    .err();
+                if let Some(error) = &retention_error {
+                    self.recovery.retention_error = Some(error.clone());
                     self.log(
                         Actor::System,
                         format!("Recovery snapshot saved, but retention failed: {error}"),
@@ -263,10 +330,13 @@ impl Session {
                         format!("recovery snapshot saved for {}", entry.title),
                     );
                 }
-                Ok(entry)
+                Ok(RecoveryCompletion {
+                    entry,
+                    retention_error,
+                })
             }
             Err(error) => {
-                self.recovery.error = Some(error.clone());
+                self.recovery.snapshot_error = Some(error.clone());
                 self.log(actor, format!("Recovery snapshot failed: {error}"));
                 Err(error)
             }
@@ -376,7 +446,7 @@ impl Session {
             .map(Some);
         self.recovery.serial += 1;
         if let Err(error) = &result {
-            self.recovery.error = Some(error.clone());
+            self.recovery.snapshot_error = Some(error.clone());
         }
         result
     }
@@ -396,11 +466,14 @@ impl Session {
         };
         self.recovery.serial += 1;
         if let Err(error) = &result {
-            self.recovery.error = Some(error.clone());
+            self.recovery.retention_error = Some(error.clone());
         }
         result
     }
 }
+
+#[cfg(test)]
+mod error_domain_tests;
 
 #[cfg(test)]
 mod tests {

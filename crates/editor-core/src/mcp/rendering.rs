@@ -7,6 +7,7 @@ pub(in crate::mcp) struct Offscreen {
     pub(in crate::mcp) issues: Vec<render::scene::SceneIssue>,
     pub(in crate::mcp) normal_maps: render::normal_maps::Report,
     pub(in crate::mcp) lighting: render::lighting::Report,
+    pub(in crate::mcp) sprite_guides: Value,
 }
 
 impl Offscreen {
@@ -18,6 +19,7 @@ impl Offscreen {
             issues: Vec::new(),
             normal_maps: Default::default(),
             lighting: Default::default(),
+            sprite_guides: Value::Null,
         }
     }
 }
@@ -31,6 +33,7 @@ pub(in crate::mcp) struct OffscreenState {
 pub(in crate::mcp) struct RenderedView {
     pub(in crate::mcp) normal_maps: render::normal_maps::Report,
     pub(in crate::mcp) lighting: render::lighting::Report,
+    pub(in crate::mcp) sprite_guides: Value,
     pub(in crate::mcp) png: Vec<u8>,
     pub(in crate::mcp) issues: Vec<render::scene::SceneIssue>,
 }
@@ -107,6 +110,7 @@ impl EditorServer {
             issues,
             normal_maps,
             lighting,
+            sprite_guides,
         } = offscreen
             .renderer
             .as_mut()
@@ -119,6 +123,7 @@ impl EditorServer {
                 *issues = mesh.issues.clone();
                 *normal_maps = mesh.normal_maps.clone();
                 *lighting = mesh.lighting.report.clone();
+                *sprite_guides = session.sprite_guide_preview_state(view);
                 *scene = Some((key, renderer.upload(ctx, &mesh, session.materials())));
             }
         }
@@ -135,6 +140,7 @@ impl EditorServer {
         Ok(RenderedView {
             normal_maps: normal_maps.clone(),
             lighting: lighting.clone(),
+            sprite_guides: sprite_guides.clone(),
             png,
             issues: issues.clone(),
         })

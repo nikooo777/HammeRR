@@ -144,7 +144,7 @@ impl Session {
                     .models
                     .borrow_mut()
                     .get_geometry(&self.game, report.path.as_deref().unwrap())
-                    .and_then(|asset| Instance::new(entity, asset));
+                    .and_then(|asset| Instance::editor_guide(entity, asset));
                 match result {
                     Ok(instance) if instance.has_geometry() => {
                         let vertex_count = instance.asset.model.vertices.len();

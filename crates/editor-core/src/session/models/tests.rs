@@ -2,6 +2,122 @@ use super::*;
 use map_core::query::Ray;
 
 #[test]
+fn model_opacity_controls_and_inspection_share_atomic_property_edits_and_undo() {
+    for actor in [Actor::User, Actor::Agent] {
+        let Ok(game) = crate::startup::mount_game(None) else {
+            return;
+        };
+        let mut session = Session::new(Ok(game));
+        session.set_definitions(actor, source_formats::fgd::Catalog::parse(
+            r#"@PointClass = prop_dynamic [ model(studio) : "World Model" rendermode(integer) : "Render mode" : 0 renderamt(integer) : "FX Amount" : 255 renderfx(integer) : "FX" : 0 rendercolor(color255) : "Color" : "255 255 255" ]"#,
+        ).unwrap());
+        let ObjectId::Entity(id) = session
+            .create_entity(
+                actor,
+                "prop_dynamic",
+                Some(DVec3::ZERO),
+                BTreeMap::from([
+                    (
+                        "model".into(),
+                        "models/props_junk/wood_crate001a.mdl".into(),
+                    ),
+                    ("rendercolor".into(), "64 128 255 032".into()),
+                    ("rendermode".into(), "0".into()),
+                    ("renderamt".into(), "064".into()),
+                    ("renderfx".into(), "0".into()),
+                ]),
+            )
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let before = session.document().vmf().clone();
+        let history = session.document().undo_labels().count();
+        let normal = session.inspect_entity_model(id).unwrap();
+        assert_eq!(normal["appearance"]["state"], "normal");
+        assert_eq!(normal["appearance"]["opacity"], 1.0);
+        assert_eq!(normal["opacity_preview"], false);
+        let inspector = session.entity_inspector(id).unwrap();
+        let mode = inspector
+            .properties
+            .iter()
+            .find(|field| field.key == "rendermode")
+            .unwrap();
+        assert_eq!(mode.control, crate::inspector::Control::Choices);
+        assert_eq!(
+            mode.choices
+                .iter()
+                .map(|choice| choice.value.as_str())
+                .collect::<Vec<_>>(),
+            ["0", "2"]
+        );
+        let amount = inspector
+            .properties
+            .iter()
+            .find(|field| field.key == "renderamt")
+            .unwrap();
+        assert_eq!(amount.label, "Opacity");
+        assert_eq!(amount.control, crate::inspector::Control::Slider);
+        assert_eq!(amount.range, Some([0.0, 255.0]));
+        session
+            .set_entity_properties(
+                actor,
+                id,
+                &[
+                    ("rendermode".into(), Some("2".into())),
+                    ("renderamt".into(), Some("128".into())),
+                ],
+            )
+            .unwrap();
+        let texture = session.inspect_entity_model(id).unwrap();
+        assert_eq!(texture["appearance"]["state"], "texture");
+        assert_eq!(texture["appearance"]["render_amount"], 128);
+        assert_eq!(texture["appearance"]["authored"]["renderamt"], "128");
+        assert_eq!(texture["opacity_preview"], true);
+        assert_eq!(texture["tint"], normal["tint"]);
+        assert_eq!(texture["world_bounds"], normal["world_bounds"]);
+        assert_eq!(session.document().undo_labels().count(), history + 1);
+        assert_eq!(
+            session
+                .document()
+                .entity(id)
+                .unwrap()
+                .properties
+                .get("rendercolor"),
+            Some("64 128 255 032")
+        );
+        session.undo(actor).unwrap();
+        assert_eq!(session.document().vmf(), &before);
+        session.redo(actor).unwrap();
+        assert_eq!(session.inspect_entity_model(id).unwrap(), texture);
+        session
+            .set_entity_properties(actor, id, &[("renderamt".into(), Some("0".into()))])
+            .unwrap();
+        let transparent = session.inspect_entity_model(id).unwrap();
+        assert_eq!(transparent["appearance"]["opacity"], 0.0);
+        assert_eq!(transparent["displayed"], true);
+        assert_eq!(transparent["world_bounds"], normal["world_bounds"]);
+        session
+            .set_entity_properties(actor, id, &[("rendermode".into(), Some("5".into()))])
+            .unwrap();
+        let unsupported = session.inspect_entity_model(id).unwrap();
+        assert_eq!(unsupported["appearance"]["state"], "unsupported");
+        assert_eq!(unsupported["appearance"]["authored"]["rendermode"], "5");
+        assert_eq!(unsupported["displayed"], false);
+        assert_eq!(unsupported["helper"], true);
+        assert!(unsupported["error"].as_str().unwrap().contains("mode 5"));
+        let inspector = session.entity_inspector(id).unwrap();
+        let mode = inspector
+            .properties
+            .iter()
+            .find(|field| field.key == "rendermode")
+            .unwrap();
+        assert_eq!(mode.choices[0].value, "5");
+        assert!(mode.choices[0].label.contains("unsupported"));
+    }
+}
+
+#[test]
 fn model_tint_picker_preserves_fourth_components_and_undo() {
     let mut session = Session::new(Err("no model assets needed".into()));
     session.set_definitions(Actor::User,source_formats::fgd::Catalog::parse(r#"@PointClass = prop_dynamic [ model(studio) : "World Model" rendercolor(color255) : "FX Color (R G B)" : "255 255 255" ]"#).unwrap());

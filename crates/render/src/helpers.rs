@@ -45,6 +45,8 @@ pub(crate) fn bulb_model() -> &'static HelperModel {
                     color: chunk[32..36].try_into().unwrap(),
                     lightmap: [0.0; 3],
                     smoothing: 0,
+                    opacity: 1.0,
+                    texture_alpha: 0,
                 }
             })
             .collect();

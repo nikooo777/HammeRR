@@ -106,6 +106,17 @@ fn label(key: &str, property: Option<&Property>) -> String {
 fn field(entity: &Entity, class: Option<&Class>, key: String) -> Field {
     let property = class.and_then(|class| class.property(&key));
     let lower = key.to_ascii_lowercase();
+    let dynamic_model = entity.solids.is_empty()
+        && entity
+            .properties
+            .get("model")
+            .is_some_and(|path| render::models::model_path(path).is_ok())
+        && !class
+            .and_then(|class| class.property("model"))
+            .is_some_and(|property| property.kind == "sprite")
+        && !entity
+            .classname()
+            .is_some_and(|name| name.eq_ignore_ascii_case("prop_static"));
     let detail_tint = lower == "_detail_lighting_tint"
         && entity.classname().is_some_and(|class| {
             ["prop_detail", "detail_prop", "prop_detail_sprite"]
@@ -288,15 +299,56 @@ fn field(entity: &Entity, class: Option<&Class>, key: String) -> Field {
     }
     if lower == "rendercolor" && kind == "color255" {
         result.intensity = None;
-        if entity.solids.is_empty()
-            && entity.properties.get("model").is_some()
-            && !entity
-                .classname()
-                .is_some_and(|name| name.eq_ignore_ascii_case("prop_static"))
-        {
+        if dynamic_model {
             result.label = "Tint".into();
-            result.description="Multiply model textures by this color. White keeps the original colors. Opacity preview is not supported.".into();
+            result.description="Multiply model textures by this color. White keeps the original colors. Model opacity uses Render mode and Opacity; an authored fourth color component is preserved independently.".into();
             result.advanced = false;
+        }
+    }
+    if dynamic_model && lower == "rendermode" {
+        result.label = "Render mode".into();
+        result.description = "Textured model preview supports Normal (0) and Texture (2). Normal ignores Opacity; Texture alpha-blends the model with depth testing and no depth writes. Other stored modes and render FX remain unsupported and retain a helper; no native game-parity claim.".into();
+        result.kind = "choices".into();
+        result.control = Control::Choices;
+        result.advanced = false;
+        result.choices = [("0", "Normal"), ("2", "Texture · opacity")]
+            .map(|(value, label)| Choice {
+                value: value.into(),
+                label: label.into(),
+            })
+            .into();
+        if !result
+            .choices
+            .iter()
+            .any(|choice| choice.value == result.value)
+        {
+            result.choices.insert(
+                0,
+                Choice {
+                    label: if result.value.parse::<u8>().is_ok_and(|mode| {
+                        matches!(
+                            mode,
+                            source_formats::render_color::NORMAL
+                                | source_formats::render_color::TEXTURE
+                        )
+                    }) {
+                        format!("{} (stored mode)", result.value)
+                    } else {
+                        format!("{} (unsupported stored mode)", result.value)
+                    },
+                    value: result.value.clone(),
+                },
+            );
+        }
+    }
+    if dynamic_model && lower == "renderamt" {
+        result.label = "Opacity".into();
+        result.description = "Texture render mode multiplies material alpha by this integer divided by 255: 0 is invisible, 255 keeps the material alpha. Normal render mode ignores this value. Bounds, picking and selection outlines remain available at every opacity.".into();
+        result.advanced = false;
+        if result.value.parse::<u8>().is_ok() {
+            result.kind = "integer".into();
+            result.control = Control::Slider;
+            result.range = Some([0.0, 255.0]);
         }
     }
     result

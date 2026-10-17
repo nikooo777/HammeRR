@@ -201,7 +201,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect the selected/explicit model entity's shared viewport asset, skin/body, transformed bounds and named world attachment positions/axes, displayed state and fallback reason. Reads the rendered draft, preserving source/history. Static meshes, checked reference poses and selected bodygroups at scale1/LOD0 are supported. UI: Model details….",
+        description = "Inspect the selected/explicit model entity's shared viewport asset, skin/body, transformed bounds, RGB tint, authored render mode/amount/FX and supported appearance state, named world attachment positions/axes, displayed state and fallback reason. Textured dynamic-model previews support Normal (0) and Texture (2) with renderamt 0–255 and renderfx 0; Normal ignores the amount. Edit through set_entity_properties, shared with the inspector's Render mode and Opacity controls. Other render modes/FX retain a diagnostic helper. Reads the rendered draft, preserving source/history. Static meshes, checked reference poses and selected bodygroups at scale1/LOD0 are supported. UI: Model details….",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn inspect_entity_model(

@@ -236,6 +236,13 @@ fn invalid_static_props_preserve_previous_output_and_source() {
     let path = directory.path().join("existing.bsp");
     assert!(output.write(&path).unwrap());
     let old = std::fs::read(&path).unwrap();
+    for amount in ["0", "128", "255"] {
+        let mut normal = vmf.clone();
+        normal.entities[prop].properties.set("rendermode", "0");
+        normal.entities[prop].properties.set("renderamt", amount);
+        let output = compiler::compile(&normal, &game);
+        assert_eq!(output.bsp.unwrap().to_bytes(), old);
+    }
     for (key, value) in [
         ("model", "models/absent.mdl"),
         ("model", "models/../escape.mdl"),
@@ -247,6 +254,9 @@ fn invalid_static_props_preserve_previous_output_and_source() {
         ("lightingorigin", "missing"),
         ("generatelightmaps", "1"),
         ("modelscale", "2"),
+        ("rendermode", "2"),
+        ("renderfx", "1"),
+        ("renderamt", "256"),
         ("origin", "16380 0 0"),
         ("origin", "1024 0 0"),
     ] {

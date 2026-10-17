@@ -275,9 +275,23 @@ impl ViewOptions {
 #[derive(Debug, Clone, Copy)]
 struct DrawBatch {
     batch: Batch,
+    center: glam::Vec3,
     tool: bool,
     helper: bool,
     sky: bool,
+}
+
+fn translucent_order<'a>(
+    batches: &'a [DrawBatch],
+    camera: &Camera,
+) -> std::borrow::Cow<'a, [DrawBatch]> {
+    if !batches.iter().any(|draw| draw.batch.model_translucent) {
+        return std::borrow::Cow::Borrowed(batches);
+    }
+    let mut ordered = batches.to_vec();
+    let depth = |draw: &DrawBatch| (draw.center - camera.position).dot(camera.forward());
+    ordered.sort_by(|a, b| depth(b).total_cmp(&depth(a)));
+    std::borrow::Cow::Owned(ordered)
 }
 
 #[repr(C)]
@@ -475,6 +489,8 @@ impl Renderer {
                             3 => Unorm8x4,
                             4 => Float32x3,
                             5 => Uint32,
+                            6 => Float32,
+                            7 => Uint32,
                         ],
                     })],
                 },
@@ -700,13 +716,22 @@ impl Renderer {
         for &batch in &mesh.batches {
             self.ensure_material(ctx, library, batch.material);
             let info = library.get(batch.material);
+            let range =
+                batch.first_index as usize..batch.first_index as usize + batch.index_count as usize;
+            let (mins, maxs) = mesh.indices[range]
+                .iter()
+                .map(|&index| glam::Vec3::from_array(mesh.vertices[index as usize].position))
+                .fold((glam::Vec3::MAX, glam::Vec3::MIN), |(mins, maxs), point| {
+                    (mins.min(point), maxs.max(point))
+                });
             let draw = DrawBatch {
                 batch,
+                center: (mins + maxs) * 0.5,
                 tool: info.tool,
                 sky: info.sky,
                 helper: batch.material == MaterialLibrary::EDITOR || info.helper.is_some(),
             };
-            if info.translucent {
+            if info.translucent || batch.model_translucent {
                 translucent.push(draw);
             } else {
                 opaque.push(draw);
@@ -1077,9 +1102,10 @@ impl Renderer {
             }
             pass.set_vertex_buffer(0, scene.vertices.slice(..));
             pass.set_index_buffer(scene.indices.slice(..), wgpu::IndexFormat::Uint32);
+            let translucent = translucent_order(&scene.translucent, camera);
             for (pipeline, batches) in [
-                (&self.opaque_pipeline, &scene.opaque),
-                (&self.translucent_pipeline, &scene.translucent),
+                (&self.opaque_pipeline, scene.opaque.as_slice()),
+                (&self.translucent_pipeline, translucent.as_ref()),
             ] {
                 for draw in batches {
                     if draw.batch.rope && !options.rope_preview {
@@ -1444,6 +1470,34 @@ fn checkerboard_texture(ctx: &GpuContext) -> wgpu::Texture {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn transparent_model_order_tracks_render_camera_and_keeps_normal_order() {
+        use super::*;
+        let batch = |center, model_translucent| DrawBatch {
+            batch: Batch {
+                material: 0,
+                first_index: 0,
+                index_count: 3,
+                rope: false,
+                model_translucent,
+            },
+            center,
+            tool: false,
+            helper: false,
+            sky: false,
+        };
+        let above = Camera::looking_at(glam::Vec3::new(0.0, 0.0, 64.0), glam::Vec3::ZERO);
+        let below = Camera::looking_at(glam::Vec3::new(0.0, 0.0, -64.0), glam::Vec3::ZERO);
+        let near = batch(glam::Vec3::new(0.0, 0.0, 16.0), true);
+        let far = batch(glam::Vec3::new(0.0, 0.0, -16.0), true);
+        let ordered = translucent_order(&[near, far], &above);
+        assert_eq!(ordered[0].center, far.center);
+        let reversed = translucent_order(&[near, far], &below);
+        assert_eq!(reversed[0].center, near.center);
+        let normal = [batch(near.center, false), batch(far.center, false)];
+        assert_eq!(translucent_order(&normal, &above)[0].center, near.center);
+    }
+
     #[test]
     fn surface_and_sky_shaders_parse_and_validate_without_a_gpu() {
         use wgpu::naga::{front::wgsl, valid};

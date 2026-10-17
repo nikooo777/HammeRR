@@ -33,6 +33,8 @@ struct VertexIn {
     @location(3) color: vec4<f32>,
     @location(4) lightmap: vec3<f32>,
     @location(5) smoothing: u32,
+    @location(6) opacity: f32,
+    @location(7) texture_alpha: u32,
 }
 
 struct VertexOut {
@@ -43,6 +45,8 @@ struct VertexOut {
     @location(3) world_position: vec3<f32>,
     @location(4) lightmap: vec3<f32>,
     @location(5) @interpolate(flat) smoothing: u32,
+    @location(6) opacity: f32,
+    @location(7) @interpolate(flat) texture_alpha: u32,
 }
 
 @vertex
@@ -55,6 +59,8 @@ fn vs_main(v: VertexIn) -> VertexOut {
     out.world_position = v.position;
     out.lightmap = v.lightmap;
     out.smoothing = v.smoothing;
+    out.opacity = v.opacity;
+    out.texture_alpha = v.texture_alpha;
     return out;
 }
 
@@ -106,7 +112,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     // undersides darkest, walls in between depending on facing.
     let n = normalize(in.normal);
     let shade = 0.55 + 0.45 * clamp(dot(n, globals.light_dir.xyz) * 0.5 + 0.5, 0.0, 1.0);
-    let alpha = select(1.0, texel.a, material.flags.z > 0.5);
+    let alpha = select(1.0, texel.a, material.flags.z > 0.5 || in.texture_alpha != 0u) * in.opacity;
     if material.helper.x > 0.5 {
         var helper_normal = n;
         let determinant = uv_dx.x * uv_dy.y - uv_dx.y * uv_dy.x;

@@ -374,6 +374,225 @@ fn model_tints_modulate_vertices_and_keep_black_selection_visible() {
 }
 
 #[test]
+fn model_texture_opacity_keeps_geometry_tint_picking_and_guide_appearance_independent() {
+    let mut entity = Entity::new(2, "prop_dynamic");
+    entity.properties.set("origin", "0 0 0");
+    entity.properties.set("rendercolor", "64 128 255 032");
+    entity.properties.set("rendermode", "0");
+    entity.properties.set("renderamt", "128");
+    let normal = Instance::new(&entity, asset()).unwrap();
+    let ray = Ray {
+        origin: DVec3::new(0.0, 0.0, 32.0),
+        direction: DVec3::NEG_Z,
+    };
+    let expected_hit = normal.pick(&ray).unwrap();
+    let expected_bounds = normal.bounds();
+    let mut vmf = Document::empty().vmf().clone();
+    vmf.entities.push(entity.clone());
+    let game = material_game(std::path::Path::new("/nonexistent-model-opacity-fixture"));
+    for amount in [0, 128, 255] {
+        entity.properties.set("rendermode", "2");
+        entity.properties.set("renderamt", amount.to_string());
+        let instance = Instance::new(&entity, asset()).unwrap();
+        assert_eq!(instance.bounds(), expected_bounds);
+        assert_eq!(instance.pick(&ray).unwrap(), expected_hit);
+        let mesh = crate::SceneMesh::build_with_models(
+            &vmf,
+            &game,
+            &mut crate::MaterialLibrary::default(),
+            &HashSet::from([ObjectId::Entity(2)]),
+            &HashSet::new(),
+            &[],
+            &[instance],
+        );
+        assert_eq!(mesh.stats.model_entities, 1);
+        assert_eq!(mesh.indices.len(), 6);
+        assert!(mesh.batches.iter().all(|batch| batch.model_translucent));
+        assert!(mesh.vertices.iter().all(|vertex| {
+            vertex.opacity == amount as f32 / 255.0
+                && vertex.texture_alpha == 1
+                && vertex.color == [96, 105, 150, 0]
+        }));
+        assert!(!mesh.selection_outline_ranges.is_empty());
+    }
+    entity.properties.set("rendermode", "5");
+    assert!(
+        Instance::new(&entity, asset())
+            .err()
+            .unwrap()
+            .contains("mode 5")
+    );
+    let guide = Instance::editor_guide(&entity, asset()).unwrap();
+    assert_eq!(guide.appearance.opacity(), 1.0);
+    assert_eq!(guide.tint, normal.tint);
+    entity.properties.set("rendermode", "2");
+    entity.properties.set("classname", "prop_static");
+    entity.properties.set("rendercolor", "255 255 255");
+    assert!(
+        Instance::new(&entity, asset())
+            .err()
+            .unwrap()
+            .contains("Static-prop output")
+    );
+}
+
+fn opacity_texture(pixel: [u8; 4]) -> Vec<u8> {
+    let mut bytes = vec![0; 80];
+    bytes[..4].copy_from_slice(b"VTF\0");
+    for (offset, value) in [(4, 7u32), (8, 2), (12, 80), (57, u32::MAX)] {
+        bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    for offset in [16, 18, 24, 63] {
+        bytes[offset..offset + 2].copy_from_slice(&1u16.to_le_bytes());
+    }
+    bytes[56] = 1;
+    bytes.extend(pixel);
+    bytes
+}
+
+fn opacity_model(
+    id: u32,
+    height: f64,
+    mode: &str,
+    amount: &str,
+    material: &str,
+) -> (Entity, Instance) {
+    let mut entity = Entity::new(id, "prop_dynamic");
+    entity.properties.set("origin", format!("0 0 {height}"));
+    entity.properties.set("rendermode", mode);
+    entity.properties.set("renderamt", amount);
+    let model = asset();
+    *model.materials.write().unwrap() = Ok(vec![material.into()]);
+    let instance = Instance::new(&entity, model).unwrap();
+    (entity, instance)
+}
+
+fn opacity_pixels(
+    context: &crate::GpuContext,
+    renderer: &mut crate::Renderer,
+    materials: &mut crate::MaterialLibrary,
+    game: &GameFs,
+    models: &[(Entity, Instance)],
+) -> Vec<u8> {
+    let mut vmf = Document::empty().vmf().clone();
+    vmf.entities
+        .extend(models.iter().map(|(entity, _)| entity.clone()));
+    let instances = models
+        .iter()
+        .map(|(_, instance)| instance.clone())
+        .collect::<Vec<_>>();
+    let mesh = crate::SceneMesh::build_with_models(
+        &vmf,
+        game,
+        materials,
+        &HashSet::new(),
+        &HashSet::new(),
+        &[],
+        &instances,
+    );
+    let scene = renderer.upload(context, &mesh, materials);
+    renderer.render_to_rgba(
+        context,
+        &scene,
+        &crate::Camera::looking_at(glam::Vec3::new(0.0, 0.0, 96.0), glam::Vec3::ZERO),
+        &crate::ViewOptions {
+            grid_visible: false,
+            ..Default::default()
+        },
+        65,
+        65,
+    )
+}
+
+#[test]
+#[ignore = "requires an offscreen GPU; run explicitly with --ignored"]
+fn rendered_model_opacity_preserves_texture_alpha_depth_and_sorted_overlap() {
+    let directory = tempfile::tempdir().unwrap();
+    let game = material_game(directory.path());
+    std::fs::create_dir(directory.path().join("materials")).unwrap();
+    for (name, parameters, pixel) in [
+        ("opaque", "", [255, 80, 40, 128]),
+        ("translucent", "$translucent 1", [255, 80, 40, 128]),
+        ("cutout", "$alphatest 1", [255, 80, 40, 127]),
+        ("cutout_edge", "$alphatest 1", [255, 80, 40, 128]),
+        ("red", "", [255, 0, 0, 255]),
+        ("green", "", [0, 255, 0, 255]),
+        ("blue", "", [0, 0, 255, 255]),
+    ] {
+        std::fs::write(
+            directory.path().join(format!("materials/{name}.vmt")),
+            format!("VertexLitGeneric {{ $basetexture {name} {parameters} }}"),
+        )
+        .unwrap();
+        std::fs::write(
+            directory.path().join(format!("materials/{name}.vtf")),
+            opacity_texture(pixel),
+        )
+        .unwrap();
+    }
+    let context = crate::GpuContext::new().unwrap();
+    let mut renderer = crate::Renderer::new(&context);
+    let mut materials = crate::MaterialLibrary::default();
+    let mut render = |models: &[(Entity, Instance)]| {
+        opacity_pixels(&context, &mut renderer, &mut materials, &game, models)
+    };
+    let blank = render(&[]);
+    let normal = render(&[opacity_model(2, 0.0, "0", "0", "opaque")]);
+    assert_ne!(normal, blank);
+    assert_eq!(
+        normal,
+        render(&[opacity_model(2, 0.0, "0", "128", "opaque")])
+    );
+    assert_eq!(
+        normal,
+        render(&[opacity_model(2, 0.0, "0", "255", "opaque")])
+    );
+    let source_alpha = render(&[opacity_model(2, 0.0, "0", "255", "translucent")]);
+    assert_ne!(source_alpha, normal);
+    assert_eq!(
+        source_alpha,
+        render(&[opacity_model(2, 0.0, "2", "255", "opaque")])
+    );
+    assert_eq!(
+        source_alpha,
+        render(&[opacity_model(2, 0.0, "2", "255", "translucent")])
+    );
+    let half = render(&[opacity_model(2, 0.0, "2", "128", "opaque")]);
+    assert_ne!(half, source_alpha);
+    assert_ne!(half, blank);
+    assert_eq!(
+        half,
+        render(&[opacity_model(2, 0.0, "2", "128", "translucent")])
+    );
+    assert_eq!(blank, render(&[opacity_model(2, 0.0, "2", "0", "opaque")]));
+    assert_eq!(
+        blank,
+        render(&[opacity_model(2, 0.0, "0", "255", "cutout")])
+    );
+    assert_eq!(
+        blank,
+        render(&[opacity_model(2, 0.0, "2", "128", "cutout")])
+    );
+    assert_eq!(
+        normal,
+        render(&[opacity_model(2, 0.0, "0", "255", "cutout_edge")])
+    );
+    assert_eq!(
+        half,
+        render(&[opacity_model(2, 0.0, "2", "128", "cutout_edge")])
+    );
+    let front = opacity_model(2, 16.0, "0", "255", "blue");
+    let obscured = opacity_model(3, 0.0, "2", "128", "red");
+    assert_eq!(render(&[front.clone()]), render(&[front, obscured]));
+    let far = opacity_model(2, 0.0, "2", "128", "red");
+    let near = opacity_model(3, 8.0, "2", "128", "green");
+    let ordered = render(&[far.clone(), near.clone()]);
+    assert_eq!(ordered, render(&[near, far]));
+    let center = (32 * 65 + 32) * 4;
+    assert!(ordered[center + 1] > ordered[center]);
+}
+
+#[test]
 fn model_surface_hits_use_world_triangle_normals() {
     let mut entity = Entity::new(2, "prop_dynamic");
     entity.properties.set("origin", "0 0 0");

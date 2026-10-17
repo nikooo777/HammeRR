@@ -243,6 +243,14 @@ fn record(
     {
         return Err("Tinted static props are not supported by the current static-prop output; use prop_dynamic for model tint".into());
     }
+    let appearance = source_formats::render_color::model_appearance(
+        entity.properties.get("rendermode"),
+        entity.properties.get("renderamt"),
+        entity.properties.get("renderfx"),
+    )?;
+    if appearance.mode != source_formats::render_color::NORMAL {
+        return Err("Static-prop output does not support authored render modes; use prop_dynamic for model opacity".into());
+    }
     if let Some(point) = lighting.resolve(entity.properties.get("lightingorigin"))? {
         prop.flags |= 2;
         prop.lighting_origin = point.to_array().map(|v| v as f32);

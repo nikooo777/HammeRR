@@ -322,11 +322,38 @@ pub struct Instance {
     pub skin: usize,
     pub body: u32,
     pub tint: [u8; 3],
+    pub appearance: source_formats::render_color::ModelAppearance,
     helper_bounds: (DVec3, DVec3),
+}
+
+pub fn appearance(
+    entity: &Entity,
+) -> Result<source_formats::render_color::ModelAppearance, String> {
+    let appearance = source_formats::render_color::model_appearance(
+        entity.properties.get("rendermode"),
+        entity.properties.get("renderamt"),
+        entity.properties.get("renderfx"),
+    )?;
+    if appearance.mode != source_formats::render_color::NORMAL
+        && entity
+            .classname()
+            .is_some_and(|name| name.eq_ignore_ascii_case("prop_static"))
+    {
+        return Err("Static-prop output does not support authored render modes; use prop_dynamic for model opacity".into());
+    }
+    Ok(appearance)
 }
 
 impl Instance {
     pub fn new(entity: &Entity, asset: Arc<Asset>) -> Result<Self, String> {
+        Self::with_appearance(entity, asset, true)
+    }
+
+    pub fn editor_guide(entity: &Entity, asset: Arc<Asset>) -> Result<Self, String> {
+        Self::with_appearance(entity, asset, false)
+    }
+
+    fn with_appearance(entity: &Entity, asset: Arc<Asset>, authored: bool) -> Result<Self, String> {
         let tint = source_formats::render_color::rgb(entity.properties.get("rendercolor"))
             .map_err(|error| error.to_string())?;
         if tint != [255; 3]
@@ -336,6 +363,11 @@ impl Instance {
         {
             return Err("Tinted static props are not supported by the current compiler output; use prop_dynamic for model tint".into());
         }
+        let appearance = if authored {
+            appearance(entity)?
+        } else {
+            source_formats::render_color::model_appearance(None, None, None)?
+        };
         if entity
             .classname()
             .is_some_and(|name| name.eq_ignore_ascii_case("prop_static"))
@@ -408,6 +440,7 @@ impl Instance {
             skin,
             body,
             tint,
+            appearance,
             helper_bounds: map_core::query::entity_bounds(entity)
                 .unwrap_or_else(|| map_core::query::point_entity_bounds(origin)),
         };

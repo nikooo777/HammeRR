@@ -1,4 +1,5 @@
 use super::*;
+use std::time::Duration;
 
 fn fixture() -> (tempfile::TempDir, Application, PathBuf) {
     let directory = tempfile::tempdir().unwrap();
@@ -31,13 +32,8 @@ fn fixture() -> (tempfile::TempDir, Application, PathBuf) {
         )
         .unwrap();
     let session = Arc::new(Mutex::new(state));
-    let worker = recovery::Worker::start(&session).unwrap();
+    let document = DocumentHandle::start(session).unwrap();
     let application = Application {
-        _shutdown: ShutdownGuard {
-            session: session.clone(),
-            drained: false,
-        },
-        _recovery_worker: worker,
         material_favorites,
         recent_maps,
         shortcuts,
@@ -45,9 +41,8 @@ fn fixture() -> (tempfile::TempDir, Application, PathBuf) {
         build_recipes,
         recovery_settings,
         prefabs,
-        session,
+        document,
         open_message: None,
-        finished: None,
     };
     (directory, application, path)
 }
@@ -56,7 +51,7 @@ fn fixture() -> (tempfile::TempDir, Application, PathBuf) {
 fn application_shutdown_drains_once_with_retained_session_and_drop_fallback() {
     for explicit in [false, true] {
         let (_directory, mut application, path) = fixture();
-        let retained = application.session.clone();
+        let retained = application.document().session().clone();
         let original = lock(&retained).document().vmf().clone();
         if explicit {
             application.shutdown().unwrap();
@@ -87,7 +82,8 @@ fn application_retains_prefab_owner_across_session_recovery_configuration() {
         application.prefabs.clone(),
     );
     peer.configure_recovery(Err("Peer document recovery unavailable".into()));
-    let mut session = lock(&application.session);
+    let shared = application.document().session().clone();
+    let mut session = lock(&shared);
     let ids = session.selected_ids();
     let stamp = session.prefab_report("", 0, 64, None)["snapshot"]
         .as_str()
@@ -121,7 +117,7 @@ fn application_retains_prefab_owner_across_session_recovery_configuration() {
 fn application_finish_preserves_primary_and_shutdown_failures_and_retained_status() {
     for primary in [false, true] {
         let (_directory, application, path) = fixture();
-        let retained = application.session.clone();
+        let retained = application.document().session().clone();
         std::fs::write(&path, b"not a directory").unwrap();
         let result = if primary {
             Err("injected GPU initialization failure".into())
@@ -152,7 +148,7 @@ fn application_finish_preserves_primary_and_shutdown_failures_and_retained_statu
 #[test]
 fn application_finish_retains_primary_error_after_successful_exit_capture() {
     let (_directory, application, path) = fixture();
-    let retained = application.session.clone();
+    let retained = application.document().session().clone();
     let error = application
         .finish(Err("injected application failure".into()))
         .unwrap_err();
@@ -168,10 +164,42 @@ fn application_finish_retains_primary_error_after_successful_exit_capture() {
     assert_eq!(lock(&retained).recovery_status()["pending_changes"], false);
 }
 
+#[cfg(feature = "mcp")]
+#[test]
+fn application_finish_drains_even_while_mcp_and_document_handles_remain() {
+    let (_directory, application, path) = fixture();
+    let document = application.document();
+    let session = document.session().clone();
+    let server = crate::mcp::EditorServer::for_document(document.clone(), None);
+    application.finish(Ok(())).unwrap();
+    assert_eq!(lock(&session).recovery_status()["pending_changes"], false);
+    lock(&session)
+        .create_block(
+            Actor::Agent,
+            glam::DVec3::splat(32.0),
+            glam::DVec3::splat(48.0),
+            "late",
+            false,
+        )
+        .unwrap();
+    document.shutdown().unwrap();
+    assert_eq!(lock(&session).recovery_status()["pending_changes"], true);
+    drop(document);
+    drop(server);
+    assert_eq!(
+        recovery::Store { directory: path }
+            .list()
+            .unwrap()
+            .entries
+            .len(),
+        1
+    );
+}
+
 #[test]
 fn application_shutdown_waits_for_inflight_manual_capture_then_saves_newer_revision() {
     let (_directory, mut application, path) = fixture();
-    let session = application.session.clone();
+    let session = application.document().session().clone();
     let request = lock(&session)
         .begin_recovery_snapshot(recovery::Kind::Manual)
         .unwrap();

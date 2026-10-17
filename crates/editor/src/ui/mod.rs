@@ -40,6 +40,7 @@ use transform_pivot::*;
 struct Ui {
     ctx: GpuContext,
     session: SharedSession,
+    _document: Option<DocumentHandle>,
     viewport: Viewport,
     seen_scene: render::SceneKey,
     seen_camera: u64,
@@ -135,12 +136,19 @@ struct Ui {
 }
 
 impl Ui {
+    fn for_document(document: DocumentHandle, ctx: GpuContext) -> Self {
+        let mut ui = Self::new(document.session().clone(), ctx);
+        ui._document = Some(document);
+        ui
+    }
+
     fn new(session: SharedSession, ctx: GpuContext) -> Self {
         let camera = lock(&session).camera();
         Self {
             viewport: Viewport::new(&ctx, camera),
             ctx,
             session,
+            _document: None,
             seen_scene: render::ViewOptions::default().scene_key(0),
             seen_camera: 0,
             seen_view: 0,
@@ -538,7 +546,7 @@ fn report(app: &AppWindow, result: Result<String, String>) {
 }
 
 pub(super) fn run(
-    session: SharedSession,
+    document: DocumentHandle,
     ctx: GpuContext,
     mcp_status: String,
     open_message: Option<Result<String, String>>,
@@ -556,7 +564,7 @@ pub(super) fn run(
     app.set_mcp_status(mcp_status.into());
     app.set_stats(ctx.adapter.get_info().name.into());
     {
-        let session = lock(&session);
+        let session = lock(document.session());
         let message = match (&open_message, session.game_error()) {
             (Some(result), _) => result.clone().unwrap_or_else(|e| e),
             (None, Some(error)) => error.to_owned(),
@@ -565,7 +573,7 @@ pub(super) fn run(
         app.set_message(message.into());
     }
 
-    let ui = Rc::new(RefCell::new(Ui::new(session, ctx)));
+    let ui = Rc::new(RefCell::new(Ui::for_document(document, ctx)));
 
     app.window().on_close_requested({
         let ui = ui.clone();

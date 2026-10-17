@@ -5,6 +5,9 @@ use serde_json::Value;
 use crate::game;
 use crate::session::{Actor, Session};
 
+mod document;
+pub use document::DocumentHandle;
+
 pub type SharedSession = Arc<Mutex<Session>>;
 
 pub fn lock(session: &Mutex<Session>) -> MutexGuard<'_, Session> {

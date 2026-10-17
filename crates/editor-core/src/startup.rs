@@ -1,10 +1,9 @@
-use crate::runtime::{SharedSession, lock};
+use crate::runtime::{DocumentHandle, lock};
 use crate::session::{Actor, Session};
 use crate::{build_recipes, material_favorites, prefabs, recent_maps, recovery, shortcuts, steam};
 use source_formats::{fgd::Catalog, gamefs::GameFs};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 const USAGE: &str = "\
 usage: editor | hammerr-headless [map.vmf] [--game <gameinfo.txt>] [--fgd <file.fgd>] [--mcp-port <port> | --no-mcp] [--headless]
@@ -18,38 +17,6 @@ usage: editor | hammerr-headless [map.vmf] [--game <gameinfo.txt>] [--fgd <file.
   --headless   no window; serve MCP over stdin/stdout; graphics initialized on first render";
 
 const DEFAULT_MCP_PORT: u16 = 7377;
-const SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(10);
-
-struct ShutdownGuard {
-    session: SharedSession,
-    drained: bool,
-}
-
-impl ShutdownGuard {
-    fn drain(&mut self) {
-        if self.drained {
-            return;
-        }
-        lock(&self.session).shutdown();
-        loop {
-            let busy = {
-                let session = lock(&self.session);
-                session.launching() || session.recovery_busy() || session.compiling()
-            };
-            if !busy {
-                break;
-            }
-            std::thread::sleep(SHUTDOWN_POLL_INTERVAL);
-        }
-        self.drained = true;
-    }
-}
-
-impl Drop for ShutdownGuard {
-    fn drop(&mut self) {
-        self.drain();
-    }
-}
 
 pub struct Args {
     pub map: Option<PathBuf>,
@@ -107,9 +74,6 @@ pub fn mount_game(gameinfo: Option<PathBuf>) -> Result<GameFs, String> {
 }
 
 pub struct Application {
-    // Shutdown and exit recovery run while the session still has a strong owner.
-    _shutdown: ShutdownGuard,
-    _recovery_worker: recovery::Worker,
     pub material_favorites: material_favorites::Authority,
     pub recent_maps: recent_maps::Authority,
     pub shortcuts: shortcuts::Authority,
@@ -117,9 +81,8 @@ pub struct Application {
     pub build_recipes: build_recipes::Authority,
     pub recovery_settings: recovery::Authority,
     pub prefabs: prefabs::Authority,
-    pub session: SharedSession,
+    document: DocumentHandle,
     pub open_message: Option<Result<String, String>>,
-    finished: Option<Result<(), String>>,
 }
 
 impl Application {
@@ -151,11 +114,7 @@ impl Application {
         let prefabs = prefabs::Authority::configured(directory.clone());
         lock(&session).use_application_prefabs(prefabs.clone());
         lock(&session).configure_recovery(directory);
-        let worker = recovery::Worker::start(&session)?;
-        let shutdown = ShutdownGuard {
-            session: session.clone(),
-            drained: false,
-        };
+        let document = DocumentHandle::start(session.clone())?;
         let fgd = args
             .fgd
             .clone()
@@ -174,8 +133,6 @@ impl Application {
             .as_ref()
             .map(|map| lock(&session).open(Actor::User, map, true));
         Ok(Self {
-            _shutdown: shutdown,
-            _recovery_worker: worker,
             material_favorites,
             recent_maps,
             shortcuts,
@@ -183,22 +140,19 @@ impl Application {
             build_recipes,
             recovery_settings,
             prefabs,
-            session,
+            document,
             open_message,
-            finished: None,
         })
     }
 }
 
 impl Application {
+    pub fn document(&self) -> DocumentHandle {
+        self.document.clone()
+    }
+
     pub fn shutdown(&mut self) -> Result<(), String> {
-        if let Some(result) = &self.finished {
-            return result.clone();
-        }
-        self._shutdown.drain();
-        let result = self._recovery_worker.drain().map(|_| ());
-        self.finished = Some(result.clone());
-        result
+        self.document.shutdown()
     }
 
     pub fn finish(
@@ -218,11 +172,7 @@ impl Application {
 
 impl Drop for Application {
     fn drop(&mut self) {
-        if self.finished.is_none()
-            && let Err(error) = self.shutdown()
-        {
-            eprintln!("Application shutdown failed: {error}");
-        }
+        self.document.shutdown_on_drop();
     }
 }
 

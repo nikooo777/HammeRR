@@ -50,7 +50,7 @@ use crate::game;
 
 use crate::identity::{id_string, parse_id};
 
-use crate::runtime::{SharedSession, finish_compile_worker, launch, lock};
+use crate::runtime::{DocumentHandle, SharedSession, finish_compile_worker, launch, lock};
 
 use crate::session::{
     Actor, ConnectionFields, ConnectionRecord, ObjectFilter, PropertyChange, PropertyTarget,
@@ -361,6 +361,7 @@ fn game_log_json(log: &game::Log) -> Value {
 #[derive(Clone)]
 pub struct EditorServer {
     session: SharedSession,
+    _document: Option<DocumentHandle>,
     offscreen: Arc<Mutex<OffscreenState>>,
     model_renderer: Arc<Mutex<crate::model_preview::PreviewRenderer>>,
     tool_router: ToolRouter<Self>,
@@ -370,6 +371,7 @@ impl EditorServer {
     pub fn new(session: SharedSession, ctx: Option<GpuContext>) -> Self {
         Self {
             session,
+            _document: None,
             model_renderer: Arc::default(),
             offscreen: Arc::new(Mutex::new(OffscreenState {
                 renderer: ctx.map(Offscreen::new),
@@ -377,6 +379,12 @@ impl EditorServer {
             })),
             tool_router: Self::tool_router(),
         }
+    }
+
+    pub fn for_document(document: DocumentHandle, ctx: Option<GpuContext>) -> Self {
+        let mut server = Self::new(document.session().clone(), ctx);
+        server._document = Some(document);
+        server
     }
 
     fn session(&self) -> MutexGuard<'_, Session> {

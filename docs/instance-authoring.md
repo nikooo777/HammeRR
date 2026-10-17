@@ -53,7 +53,9 @@ Limits:
   remain visible for correction; values are never clamped or replaced with zero.
 - Unsupported imported replacements, connections or opaque fields are preserved
   and block Apply. This form edits file/origin/angles only. Child editing,
-  extraction, nested/runtime entities and name fixups remain unavailable.
+  nested/runtime entities and name fixups remain unavailable. A separate
+  [Extract selection to instance…](instance-extraction.md) workflow exports
+  supported world/detail selections into a new child.
 - Metadata guards detect replacement and common external changes; they do not
   lock files. Refresh and Compile perform their normal full validation.
 

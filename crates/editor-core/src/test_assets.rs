@@ -199,3 +199,62 @@ pub use crate::session::sounds::fixtures::fixture as sounds;
 pub use crate::session::repeat::fixtures::fixture as repeat;
 
 pub use crate::session::particles::fixtures::fixture as particles;
+
+pub fn instance_extraction_map() -> (tempfile::TempDir, GameFs, PathBuf, Vec<map_core::ObjectId>) {
+    use glam::DVec3;
+    use map_core::{Document, ObjectId, edit};
+    let (directory, game, _) = game_process(false);
+    let parent = directory.path().join("extraction-parent.vmf");
+    let mut document = Document::new(room());
+    let selected = document
+        .edit("assembly", |tx| {
+            let world = edit::create_block(
+                tx,
+                DVec3::new(32.0, 40.0, 8.0),
+                DVec3::new(48.0, 56.0, 24.0),
+                "test/checker",
+            )?;
+            let ObjectId::Solid(world_id) = world else {
+                unreachable!()
+            };
+            for side in &mut tx.solid_mut(world_id)?.sides {
+                side.u_axis.axis = DVec3::new(1.0, 0.5, 0.0);
+                side.u_axis.scale = -0.25;
+                side.u_axis.offset = 7.5;
+                side.v_axis.axis = DVec3::new(0.0, 1.0, 0.25);
+                side.v_axis.scale = 0.5;
+                side.v_axis.offset = -3.25;
+                side.smoothing_groups = None;
+            }
+            let a = edit::create_block(
+                tx,
+                DVec3::new(64.0, 40.0, 8.0),
+                DVec3::new(72.0, 56.0, 24.0),
+                "test/checker",
+            )?;
+            let b = edit::create_block(
+                tx,
+                DVec3::new(80.0, 40.0, 8.0),
+                DVec3::new(88.0, 56.0, 24.0),
+                "test/checker",
+            )?;
+            let brush_id = |id| match id {
+                ObjectId::Solid(id) => id,
+                _ => unreachable!(),
+            };
+            let detail = edit::tie_to_entity(tx, &[brush_id(a), brush_id(b)], "func_detail", &[])?;
+            edit::create_entity(
+                tx,
+                "info_target",
+                Some(DVec3::new(0.0, 0.0, 64.0)),
+                &[],
+                Vec::new(),
+            )?;
+            Ok(vec![world, detail])
+        })
+        .unwrap();
+    std::fs::write(&parent, document.vmf().write(&Default::default())).unwrap();
+    std::fs::write(parent.with_extension("bsp"), b"prior BSP").unwrap();
+    std::fs::write(parent.with_extension("lin"), b"prior LIN").unwrap();
+    (directory, game, parent, selected)
+}

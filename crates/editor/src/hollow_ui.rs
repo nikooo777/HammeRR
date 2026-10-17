@@ -4,7 +4,9 @@ use std::rc::Rc;
 use map_core::surface::FaceId;
 use slint::{ComponentHandle, Model, VecModel};
 
-use crate::runtime::{SharedSession, lock};
+#[cfg(test)]
+use crate::runtime::SharedSession;
+use crate::runtime::{DocumentAccess, DocumentContinuation};
 use crate::session::{Actor, Session};
 use crate::{HollowWindow, OpeningRow};
 
@@ -163,138 +165,182 @@ pub fn refresh_changed(window: &HollowWindow, session: &Session) {
     }
 }
 
+fn edited(window: &HollowWindow) {
+    window.set_ready(false);
+    window.set_message("Settings changed. Preview the new walls before applying.".into());
+}
+
+fn close_openings(window: &HollowWindow) {
+    let rows = window
+        .get_faces()
+        .iter()
+        .map(|mut row| {
+            row.open = false;
+            row
+        })
+        .collect::<Vec<_>>();
+    window.set_faces(Rc::new(VecModel::from(rows)).into());
+    edited(window);
+}
+
+fn choose_opening(window: &HollowWindow, key: &str) {
+    let rows = window
+        .get_faces()
+        .iter()
+        .map(|mut row| {
+            if row.key == key {
+                row.open = !row.open;
+            }
+            row
+        })
+        .collect::<Vec<_>>();
+    window.set_faces(Rc::new(VecModel::from(rows)).into());
+    edited(window);
+}
+
+fn with_session<R>(
+    window: &slint::Weak<HollowWindow>,
+    access: &DocumentContinuation,
+    body: impl FnOnce(&HollowWindow, &mut Session) -> R,
+) -> Option<R> {
+    let window = window.upgrade()?;
+    match access
+        .upgrade()
+        .and_then(|access| access.with_session(|session| Ok(body(&window, session))))
+    {
+        Ok(result) => Some(result),
+        Err(error) => {
+            window.set_message(error.into());
+            None
+        }
+    }
+}
+
+#[cfg(test)]
 pub fn bind(window: &HollowWindow, shared: &SharedSession) {
+    bind_with_access(window, &DocumentAccess::unmanaged(shared.clone()));
+}
+
+pub fn bind_with_access(window: &HollowWindow, access: &DocumentAccess) {
     window.on_close_openings({
-        let window = window.as_weak();
+        let (window, access) = (window.as_weak(), access.downgrade());
         move || {
-            let window = window.unwrap();
-            let rows = window
-                .get_faces()
-                .iter()
-                .map(|mut row| {
-                    row.open = false;
-                    row
-                })
-                .collect::<Vec<_>>();
-            window.set_faces(Rc::new(VecModel::from(rows)).into());
-            window.invoke_edited();
+            with_session(&window, &access, |window, _| close_openings(window));
         }
     });
     window.on_choose_opening({
-        let window = window.as_weak();
+        let (window, access) = (window.as_weak(), access.downgrade());
         move |key| {
-            let window = window.unwrap();
-            let rows = window
-                .get_faces()
-                .iter()
-                .map(|mut row| {
-                    if row.key == key {
-                        row.open = !row.open;
-                    }
-                    row
-                })
-                .collect::<Vec<_>>();
-            window.set_faces(Rc::new(VecModel::from(rows)).into());
-            window.invoke_edited();
+            with_session(&window, &access, |window, _| choose_opening(window, &key));
         }
     });
     window.on_edited({
-        let window = window.as_weak();
+        let (window, access) = (window.as_weak(), access.downgrade());
         move || {
-            let window = window.unwrap();
-            window.set_ready(false);
-            window.set_message("Settings changed. Preview the new walls before applying.".into());
+            with_session(&window, &access, |window, _| edited(window));
         }
     });
     window.on_preview_edit({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.downgrade());
         move || {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            let ids = session.selected_ids();
-            let result = window
-                .get_thickness()
-                .trim()
-                .parse::<f64>()
-                .map_err(|_| "Enter a numeric wall thickness".to_string())
-                .and_then(|thickness| {
-                    let open_faces = openings(&window)?;
-                    session.preview_hollow(
-                        &ids,
-                        map_core::hollow::Spec {
-                            thickness,
-                            outward: window.get_direction() == 1,
-                            open_faces,
-                        },
-                        window.get_stamp().as_str(),
-                    )
-                });
-            refresh(&window, &session);
-            if let Err(error) = result {
-                window.set_ready(false);
-                window.set_message(error.into());
-            } else {
-                window.set_message("".into());
-            }
+            with_session(&window, &access, |window, session| {
+                let ids = session.selected_ids();
+                let result = window
+                    .get_thickness()
+                    .trim()
+                    .parse::<f64>()
+                    .map_err(|_| "Enter a numeric wall thickness".to_string())
+                    .and_then(|thickness| {
+                        let open_faces = openings(window)?;
+                        session.preview_hollow(
+                            &ids,
+                            map_core::hollow::Spec {
+                                thickness,
+                                outward: window.get_direction() == 1,
+                                open_faces,
+                            },
+                            window.get_stamp().as_str(),
+                        )
+                    });
+                refresh(window, session);
+                if let Err(error) = result {
+                    window.set_ready(false);
+                    window.set_message(error.into());
+                } else {
+                    window.set_message("".into());
+                }
+            });
         }
     });
     window.on_look_inside({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.downgrade());
         move || {
-            let window = window.unwrap();
-            let result = window
-                .get_token()
-                .parse::<u64>()
-                .map_err(|_| "Preview walls first".to_string())
-                .and_then(|token| {
-                    lock(&shared)
-                        .look_inside_hollow(token, window.get_cavity().saturating_sub(1) as usize)
-                });
-            window.set_message(result.err().unwrap_or_default().into());
+            with_session(&window, &access, |window, session| {
+                let result = window
+                    .get_token()
+                    .parse::<u64>()
+                    .map_err(|_| "Preview walls first".to_string())
+                    .and_then(|token| {
+                        session.look_inside_hollow(
+                            token,
+                            window.get_cavity().saturating_sub(1) as usize,
+                        )
+                    });
+                window.set_message(result.err().unwrap_or_default().into());
+            });
         }
     });
     window.on_apply({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.downgrade());
         move || {
-            let window = window.unwrap();
-            if !window.get_ready() {
-                return;
-            }
-            let mut session = lock(&shared);
-            let result = window
-                .get_token()
-                .parse::<u64>()
-                .map_err(|_| "Preview walls first".to_string())
-                .and_then(|token| session.commit_hollow(Actor::User, token));
-            refresh(&window, &session);
-            window.set_message(
-                result
-                    .map(|result| {
-                        format!(
-                            "Created {} wall brushes. Undo restores the original solids.",
-                            result.brushes.len()
-                        )
-                    })
-                    .unwrap_or_else(|error| error)
-                    .into(),
-            );
+            with_session(&window, &access, |window, session| {
+                if !window.get_ready() {
+                    return;
+                }
+                let result = window
+                    .get_token()
+                    .parse::<u64>()
+                    .map_err(|_| "Preview walls first".to_string())
+                    .and_then(|token| session.commit_hollow(Actor::User, token));
+                refresh(window, session);
+                window.set_message(
+                    result
+                        .map(|result| {
+                            format!(
+                                "Created {} wall brushes. Undo restores the original solids.",
+                                result.brushes.len()
+                            )
+                        })
+                        .unwrap_or_else(|error| error)
+                        .into(),
+                );
+            });
         }
     });
     window.on_cancel({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.downgrade());
         move || {
-            let window = window.unwrap();
-            if let Ok(token) = window.get_token().parse::<u64>() {
-                let _ = lock(&shared).cancel_hollow(token);
-            }
-            let _ = window.hide();
+            let Some(owner) = window.upgrade() else {
+                return;
+            };
+            with_session(&window, &access, |window, session| {
+                if let Ok(token) = window.get_token().parse::<u64>() {
+                    let _ = session.cancel_hollow(token);
+                }
+            });
+            let _ = owner.hide();
         }
     });
     window.window().on_close_requested({
         let window = window.as_weak();
         move || {
-            window.unwrap().invoke_cancel();
+            if let Some(window) = window.upgrade() {
+                window.invoke_cancel();
+            }
             slint::CloseRequestResponse::HideWindow
         }
     });
 }
+
+#[cfg(test)]
+mod tests;

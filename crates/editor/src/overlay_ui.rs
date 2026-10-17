@@ -1549,9 +1549,36 @@ mod tests {
             assert!(!corners.window.get_ready());
             if cancel {
                 let app = crate::AppWindow::new().unwrap();
-                app.set_overlay_handling(true);
                 app.show().unwrap();
                 app.window().set_size(slint::PhysicalSize::new(1600, 900));
+                app.window().take_snapshot().unwrap();
+                {
+                    let session = lock(&shared);
+                    let size = (
+                        app.get_viewport_width().round().max(1.0) as u32,
+                        app.get_viewport_height().round().max(1.0) as u32,
+                    );
+                    app.set_overlay_handling(session.overlay_corner_handles_interactive(
+                        Actor::User,
+                        session.camera(),
+                        size,
+                    ));
+                    app.set_can_cancel_overlay_handles(
+                        session.overlay_corner_handles_owned(Actor::User),
+                    );
+                    app.set_overlay_handle_notice(
+                        session
+                            .overlay_corner_handle_notice(Actor::User, session.camera(), size)
+                            .unwrap()
+                            .into(),
+                    );
+                }
+                assert!(!app.get_overlay_handling());
+                assert!(app.get_can_cancel_overlay_handles());
+                assert!(
+                    app.get_overlay_handle_notice()
+                        .contains("dimensions changed")
+                );
                 crate::ui::tests::assert_dialog_button_visible(&app, "Cancel handles");
                 app.hide().unwrap();
             }

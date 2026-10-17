@@ -429,3 +429,91 @@ fn reviewing_active_handles_transfers_the_last_valid_draft_and_closes_the_old_ge
         assert_eq!(session.document.vmf(), &before);
     }
 }
+
+#[test]
+fn desktop_handles_ignore_foreign_and_stale_gestures_without_losing_owned_cleanup() {
+    for stale in [false, true] {
+        let (_directory, mut session, id, original) = corner_fixture(Actor::Agent, false);
+        let before = session.document.vmf().clone();
+        let camera = camera(&original, false);
+        let state = begin(&mut session, Actor::Agent, camera);
+        assert!(session.overlay_corner_handles_active());
+        assert!(session.overlay_corner_handles_owned(Actor::Agent));
+        assert!(!session.overlay_corner_handles_owned(Actor::User));
+        assert!(session.overlay_corner_handles_interactive(Actor::Agent, camera, SIZE));
+        assert!(!session.overlay_corner_handles_interactive(Actor::User, camera, SIZE));
+        assert!(
+            session
+                .overlay_corner_handle_notice(Actor::User, camera, SIZE)
+                .unwrap()
+                .contains("Review current draft")
+        );
+        let state = if stale {
+            session.select(&[], SelectMode::Replace).unwrap();
+            assert!(session.selected_ids().is_empty());
+            assert!(session.overlay_corner_handles_active());
+            assert!(!session.overlay_corner_handles_interactive(Actor::User, camera, SIZE));
+            assert!(!session.overlay_corner_handles_interactive(Actor::Agent, camera, SIZE));
+            assert!(
+                session
+                    .overlay_corner_handle_notice(Actor::User, camera, SIZE)
+                    .unwrap()
+                    .contains("Stale")
+            );
+            assert!(session.review_overlay(Actor::User, token(&state)).is_err());
+            assert!(
+                session
+                    .cancel_overlay_corner_handles(Actor::User, token(&state))
+                    .is_err()
+            );
+            session
+                .cancel_overlay_corner_handles(Actor::Agent, token(&state))
+                .unwrap();
+            assert!(!session.overlay_corner_handles_active());
+            session
+                .select(&[ObjectId::Entity(id)], SelectMode::Replace)
+                .unwrap();
+            session
+                .preview_overlay_corners(
+                    Actor::User,
+                    id,
+                    original.uv_points.map(|point| [point[0], point[1]]),
+                    &session.overlay_stamp(),
+                )
+                .unwrap()
+        } else {
+            session.review_overlay(Actor::User, token(&state)).unwrap()
+        };
+        assert_eq!(state["draft"]["owner"], Actor::User.label());
+        assert!(!session.overlay_corner_handles_active());
+        let state = begin(&mut session, Actor::User, camera);
+        assert!(session.overlay_corner_handles_interactive(Actor::User, camera, SIZE));
+        assert!(!session.overlay_corner_handles_interactive(
+            Actor::User,
+            camera,
+            (SIZE.0 + 1, SIZE.1)
+        ));
+        assert!(!session.overlay_corner_handles_interactive(
+            Actor::User,
+            Camera {
+                position: camera.position + glam::Vec3::X,
+                ..camera
+            },
+            SIZE
+        ));
+        session.set_camera(session.camera());
+        assert!(!session.overlay_corner_handles_interactive(Actor::User, camera, SIZE));
+        assert!(session.overlay_corner_handles_owned(Actor::User));
+        assert!(
+            session
+                .overlay_corner_handle_notice(Actor::User, camera, SIZE)
+                .unwrap()
+                .contains("Cancel handles")
+        );
+        session
+            .cancel_overlay_corner_handles(Actor::User, token(&state))
+            .unwrap();
+        assert!(!session.overlay_corner_handles_active());
+        assert_eq!(session.document.vmf(), &before);
+    }
+}

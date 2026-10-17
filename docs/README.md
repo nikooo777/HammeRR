@@ -11,6 +11,7 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | [Getting started](getting-started.md) | Requirements, building, launching, game content |
 | [Editor basics](basics.md) | The window, previews and undo, navigation, viewport modes, saved camera views |
 | [Preview defaults](preview-defaults.md) | Save, apply and recover startup visibility for existing images and guides |
+| [Keyboard shortcuts](keyboard-shortcuts.md) | Configure viewport Undo, Redo, Frame, Delete and Duplicate bindings |
 | [Recent maps](recent-maps.md) | Reopening retained paths with compatible build settings, removing and clearing entries |
 | [Transaction history](history.md) | Inspecting human/agent edits and navigating retained undo/redo states |
 | [Measurement guides](measurements.md) | Named persistent rulers, surface endpoint picks, exact distances and axis components |
@@ -19,7 +20,7 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | [Prefab library](prefabs.md) | Save, search, inspect flat thumbnails and place reusable brush/entity assemblies |
 | [Layers](layers.md) | Nested colored layers, membership, scoped selection and map visibility |
 | [Object groups](groups.md) | Nested groups, membership editing, group selection and temporary bypass |
-| [Brushes and transforms](brushes.md) | Drawing brushes, handles, exact transforms, mirror, shear, brush shapes |
+| [Brushes and transforms](brushes.md) | Drawing brushes, handles, exact transforms, surface-picked pivots, mirror, shear, brush shapes |
 | [Polygon brushes](polygon-brushes.md) | Drawing convex or concave outlines and extruding editable brushes |
 | [Surface placement](placement.md) | Floor/ceiling placement, picked-surface alignment and real brush corner snapping |
 | [Repeated placement](repeated-placement.md) | Previewing translation, rotation and brush-scale arrays with copied names and internal links |
@@ -29,6 +30,8 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | [Flat partitions](partitions.md) | Dividing a face into pieces to raise, extrude or restyle them |
 | [Materials and textures](textures.md) | Material browser, texture editing, sampling, wrapping, painting, replacement, face lighting |
 | [Material source](material-source.md) | Mounted VMT origins, raw source, Patch includes and resolved declarations |
+| [Atlas-region texturing](atlas-texturing.md) | Fit flat faces into a numeric rectangle of an existing material image |
+| [Normal-map preview](normal-maps.md) | Preview supported flat-brush normal textures under editor directional shading |
 | [Working region](working-region.md) | Temporary whole-object display bounds and visibility reasons |
 | [Fog preview](fog.md) | Choosing an authored static fog controller for perspective Textured views |
 | [Sky preview and assets](sky.md) | Previewing LDR sky surfaces and inspecting the applied family's LDR/HDR material and texture structure |

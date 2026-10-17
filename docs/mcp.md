@@ -96,7 +96,7 @@ To build the map, set the build options once, then compile:
 
 ## Tools by task
 
-The shared desktop and private stdio server register 389 tools. `tools/list`
+The shared desktop and private stdio server register 396 tools. `tools/list`
 returns their current schemas and descriptions.
 
 | Task | Tools |
@@ -105,6 +105,7 @@ returns their current schemas and descriptions.
 | Recent maps | `get_recent_maps`, `open_recent_map`, `remove_recent_map`, `clear_recent_maps` |
 | Grid defaults | `get_grid_defaults`, `set_grid_defaults` |
 | Preview defaults | `get_preview_defaults`, `set_preview_defaults` |
+| Keyboard shortcuts and viewport commands | `get_keyboard_shortcuts`, `set_keyboard_shortcuts`, `execute_editor_command` |
 | Entity definitions | `get_entity_definitions`, `load_entity_definitions`, `search_entity_classes`, `get_entity_class` |
 | Material source | `get_material_source` |
 | Sky asset inspection | `inspect_sky_assets` |
@@ -119,6 +120,7 @@ returns their current schemas and descriptions.
 | Repeated placement | `get_repeat_array`, `preview_repeat_array`, `apply_repeat_array`, `cancel_repeat_array` |
 | Brush drawing and transforms | `set_spatial_settings`, `draw_block`, `cancel_block_preview`, `create_block`, `transform_objects` |
 | Transform handles | `set_transform_tool`, `get_transform_handles`, `begin_transform_drag`, `update_transform_drag`, `commit_transform_preview`, `cancel_transform_preview` |
+| Surface-picked transform pivot | `transform_pivot_pick` |
 | Absolute grid placement | `preview_snap_to_grid`; inspect and apply/cancel through the transform tools |
 | Overlay authoring | `get_overlay_state`, `browse_overlay_targets`, `preview_overlay`, `preview_overlay_refit`, `preview_overlay_rebind`, `preview_overlay_corners`, `overlay_corner_handles`, `review_overlay`, `apply_overlay`, `cancel_overlay` |
 | Surface placement | `preview_surface_placement`, `begin_surface_placement_pick`, `pick_surface_placement`, `get_surface_placement`, `apply_surface_placement`, `cancel_surface_placement` |
@@ -138,6 +140,7 @@ returns their current schemas and descriptions.
 | Flat partitions | `preview_component_partition`, `update_component_partition_cut`, `update_component_partition_material`, `update_component_partition_texture`, `place_component_partition_texture`, `raise_component_partition`, `preview_partition_extrusion`, `select_component_partitions`, `frame_component_partitions`, `pick_component_partitions`, `commit_component_edit`, `cancel_component_edit` |
 | Saved flat pieces | `get_saved_component_partitions`, `store_component_partition`, `resume_component_partitions`, `remove_saved_component_partitions` |
 | Face textures | `select_faces`, `get_face_selection`, `set_material`, `edit_faces`, `sample_face_texture`, `get_surface_sample`, `paint_face_texture`, `propagate_face_texture`, `project_face_group`, `commit_face_preview`, `cancel_face_preview` |
+| Atlas-region face texturing | `inspect_material_atlas`, `preview_atlas_fit`; finish through `commit_face_preview` / `cancel_face_preview` |
 | Texture paint strokes | `begin_texture_stroke`, `update_texture_stroke`, `get_texture_stroke`, `commit_texture_stroke`, `cancel_texture_stroke` |
 | Terrain vertices | `get_terrain_vertices`, `highlight_terrain_vertices`, `pick_terrain_vertex`, `frame_terrain_vertices`, `get_terrain_volume_vertices`, `select_terrain_vertices_in_volume`, `get_terrain_vertex_mask`, `preview_terrain_vertex_move` |
 | Terrain brush strokes | `begin_terrain_stroke`, `update_terrain_stroke`, `get_terrain_stroke`, `break_terrain_stroke`, `finish_terrain_stroke`, `cancel_terrain_stroke` |
@@ -157,6 +160,7 @@ returns their current schemas and descriptions.
 | Camera and visual checks | `get_camera`, `set_camera`, `frame_selection`, `set_view`, `render_view`, `pick_at_pixel`, `raycast` |
 | Working region | `get_working_region`, `set_working_region` |
 | Fog preview | `get_fog_preview`, `set_fog_preview`; temporary overrides through `render_view` |
+| Normal-map preview | `get_normal_map_preview`, `set_view`; temporary `render_view.normal_maps` override |
 | Saved camera views | `get_camera_views`, `save_camera_view`, `restore_camera_view`, `rename_camera_view`, `delete_camera_view` |
 | Pointfiles | `load_pointfile`, `get_pointfile`, `navigate_pointfile`, `frame_pointfile`, `clear_pointfile` |
 | Compile and play | `get_compile_settings`, `set_compile_settings`, `start_compile`, `get_compile_status`, `cancel_compile`, `compile_map`, `run_map`, `launch_game`, `game_log`, `stop_game` |
@@ -341,6 +345,37 @@ use the same Session operations. Apply makes the complete path edit in one Undo
 step; no pick commits map data. Free-space workplanes, offsets and object
 attachment remain unavailable.
 
+### Surface-picked transform pivot
+
+`transform_pivot_pick` shares **Pick pivot…** and **Cancel pivot pick** with the
+transform inspector. Each call takes an `action`:
+
+| Action | Fields and result |
+| --- | --- |
+| `inspect` | No other fields. Returns `snapshot`, nullable `current_pivot`, nullable `picking`, `last_pick`, validity/provenance flags and `begin_error`. |
+| `begin` | Latest `snapshot`, `width` / `height` (1–8192), and optional temporary `camera` matching `render_view`. Returns `picking.token`, a numeric ownership token. |
+| `ray` | Owned `token`, finite `ray_origin` and nonzero finite `ray_direction`. |
+| `pixel` | Owned `token`, continuous `x` / `y` and the captured `width` / `height`. Coordinates have no implicit half-pixel offset. |
+| `cancel` | Owned `token`; stale cleanup is allowed and leaves the current pivot exactly unchanged. |
+
+Begin requires a nonempty whole-object selection and no active preview,
+viewport tool, build or launch. The first visible brush, terrain sheet or
+supported model triangle supplies an exact unsnapped world point, including
+selected objects. A hit sets only the shared custom transform pivot and disarms
+picking. `last_pick` reports `target`, nullable `solid` / `side`, `point`,
+`normal`, `generation` and `revision`; `last_pick_document_current` and
+`last_pick_matches_pivot` distinguish retained provenance from a current choice.
+Misses leave picking armed. Helpers and empty space supply no fallback plane.
+
+Foreign/replaced tokens, invalid rays/pixels and changed source, definitions,
+selection, tool, scene, view, camera or viewport reject without replacing the
+pending pick or current pivot. Only a fresh User-owned context captures desktop
+input. No map/history/selection/camera/framing change, attachment, offset or
+persistence is added. The point stays fixed in world space. Numeric UI
+transforms and handles use it; pass returned `current_pivot` explicitly to
+`transform_objects`, whose omitted-pivot selection-center behavior is unchanged.
+See [Brushes and transforms](brushes.md#pick-a-custom-pivot-on-a-surface).
+
 ### History, measurements and surface creation
 
 `get_history` returns bounded transaction pages, authors, actual object/section
@@ -462,6 +497,44 @@ Toggling visibility never clears an existing successful or failed asset cache
 entry. After external repairs, use `reload_material_assets` for icons/Sprite
 resources or `reload_model_assets` for model guides.
 
+### Keyboard shortcuts and viewport commands
+
+`get_keyboard_shortcuts` returns `snapshot`, `current`, `factory_defaults`,
+command rows/labels, `ready`, `stored`, storage `path`, `error`, `limits` and
+reserved scope. It shares **Viewport → Keyboard shortcuts…**. Bindings apply
+only with viewport focus; text fields retain native text editing.
+
+`set_keyboard_shortcuts` requires the latest `snapshot` and tagged `action`:
+
+| Action | Behavior |
+| --- | --- |
+| `save` | Validate, atomically save and immediately activate a complete `bindings` object. |
+| `reload` | Load and activate valid storage, preserving active bindings on failure. |
+| `reset` | Explicitly write and activate factory bindings, including malformed-file recovery. |
+
+`bindings` must contain `undo`, `redo`, `frame_selection`, `delete_selection`
+and `duplicate_selection`. Each value is exactly two nullable slots; each
+nonnull chord is `{"key":"F","control":false,"shift":false}`. Keys are
+logical A–Z, F1–F12, Delete and Backspace, with case normalization and exact
+Ctrl/Shift modifiers. Duplicate/reserved chords and unknown fields reject.
+Alt/Meta, scan codes, sequences and other commands are unavailable. File,
+clipboard, camera, navigation and Escape controls remain reserved.
+
+The versioned `shortcuts.json` file lives beside grid/preview preferences and
+caps at 16 KiB. Save is blocked after storage errors until Reload succeeds or
+explicit Reset. Writes compare inspected identity/bytes; nonregular targets
+and final-file symlinks reject. `write_committed:true` reports a completed write
+even if readback failed. Independent writers do not lock storage. Configuration
+changes preserve map/history/selection/camera and active drafts.
+
+`execute_editor_command` accepts `command` using the same five identifiers.
+Undo/Redo perform one step and return a nullable label; Frame accepts optional
+positive finite `aspect` (default 1). Delete uses the current object selection;
+Duplicate copies it by `[grid,grid,0]` and selects the copies. Object edits reject
+empty selection and component-editing scope. This shared dispatcher does not
+synthesize keyboard input. Existing explicit-ID/offset object tools remain
+available. See [Keyboard shortcuts](keyboard-shortcuts.md).
+
 ### Saved preview defaults
 
 `get_preview_defaults` reports `current`, `saved`, effective `defaults`,
@@ -482,9 +555,9 @@ and rope/sky are false.
 
 The UI is **Preview defaults… → Save current as defaults / Apply saved defaults /
 Reload defaults / Reset saved defaults**. Ordinary viewport toggles, `set_view`
-and temporary `render_view` overrides never save automatically. Sky channel and
-exposure, fog, rendering mode, tool filters, camera, grids and active tools stay
-outside this format. See [Preview defaults](preview-defaults.md).
+and temporary `render_view` overrides never save automatically. Normal-map
+preview, sky channel and exposure, fog, rendering mode, tool filters, camera,
+grids and active tools stay outside this format. See [Preview defaults](preview-defaults.md).
 
 Save/Apply/Reset recheck inspected file identity and bytes. Invalid, unsupported
 or oversized files remain untouched and block Save/Apply until Reload succeeds
@@ -495,6 +568,66 @@ inspect readiness before continuing. Independent writers do not lock the file.
 Apply preserves unrelated view settings, source/history/selection/camera and
 rejects active geometry/measurement previews, viewport tools, builds or launches.
 Save/Reload/Reset leave the view and pending viewport contexts unchanged.
+
+### Normal-map preview
+
+`set_view` accepts optional boolean `normal_maps` (default false), matching
+**Viewport → Normal map preview**. `render_view.normal_maps` overrides only
+that render; shared settings and the desktop camera stay unchanged. Effective
+flags appear in `get_map_info.view` and render metadata. This flag is outside
+saved Preview defaults and preserves pending geometry reviews.
+
+`get_normal_map_preview {}` returns `enabled`, `summary`, `report` and `limits`
+through the shared CPU scene without initializing graphics. Reports identify
+admitted materials, mounted VMT/VTF provenance, applied/rejected flat brush
+polygons, transforms, bounded errors and truncation. Render metadata includes
+`normal_maps: {report, limits}` for the requested view. Disabled and non-Textured
+views perform no normal admission.
+
+Only ordinary flat LightmappedGeneric polygons with one static supported RGB
+`$bumpmap`, identity base transform and positive axis-scaled/translated bump
+transform are covered. Terrain, models, helpers, tool surfaces, proxies,
+fallbacks, secondary/detail normals, signed/swizzled/HDR/SSBump data and special
+sampling flags reject. Unsupported faces retain their base image. Limits are
+1024 pixels per texture axis, 16 MiB per VTF, 64 KiB per VMT/Patch file, 128 cached
+admissions and 64 MiB decoded pixels. `reload_material_assets` clears successes
+and failures; external VMT changes require reload before combining new normal
+settings with a cached base. This is fixed editor directional shading; authored
+lights and native appearance parity remain separate. See [Normal-map preview](normal-maps.md).
+
+### Atlas-region face texturing
+
+1. Call `inspect_material_atlas` with `material`. It returns a CPU PNG thumbnail
+   no larger than 256 pixels per side, original `width` / `height`, `snapshot`,
+   texture identity, cache policy and limits without initializing graphics.
+2. Call `preview_atlas_fit` with `material`, that `snapshot`, and
+   `rectangle:{x,y,width,height}`. Coordinates are integer texture edges with
+   top-left origin; width/height must be positive and the rectangle must fit the
+   original image. Optional `faces` contains `{solid,side}` pairs; otherwise the
+   selected faces are used. Batches admit 1–256 distinct flat faces.
+3. Inspect `atlas.preview` or `get_face_selection.atlas`. The preview reports
+   string `token`, `owner`, `material`, `snapshot`, `rectangle`, `dimensions`,
+   normalized `uv_bounds` and face identities. To revise an owned atlas draft,
+   pass its current string `token` to `preview_atlas_fit`.
+4. Pass the exact token to `commit_face_preview` for one Undo step, or
+   `cancel_face_preview` to discard it. Foreign owners and stale tokens reject;
+   stale assets block Apply while the owner can still Cancel.
+
+Each world/brush-entity face fits independently, preserving axes, skew,
+rotation, mirroring, geometry and lighting metadata. Terrain and invalid or
+collapsed projections reject atomically without replacing a valid preview.
+Supported atlases are static single-layer LightmappedGeneric/UnlitGeneric base
+images with identity base transforms; a `%tooltexture` must match the actual
+`$basetexture`. Proxies/fallbacks, extra layers and animated/volume/cubemap/
+procedural/render-target images reject. Texture axes cap at 8192 pixels; new
+reads cap at 1 MiB per VMT/Patch and 32 MiB per VTF, with a 16-megapixel thumbnail
+decode budget. Cached base pixels supply both thumbnail and UV dimensions until
+`reload_material_assets`; a fresh/cached VMT identity mismatch requires reload.
+Unrelated normal-image admission does not invalidate an unchanged atlas review.
+No texture-file writes, atlas packing, named hotspots, grouped continuity,
+filter gutters or native rendering parity is added. UI: **Face Textures →
+Fit atlas region… → Inspect material → Preview atlas fit → Apply atlas fit /
+Cancel**. See [Atlas-region texturing](atlas-texturing.md).
 
 ### Material source and FGD preferences
 

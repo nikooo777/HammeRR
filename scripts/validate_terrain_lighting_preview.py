@@ -8,7 +8,6 @@ from validate_authored_lighting_preview import SOURCE_FIELDS, assets, file_sha25
 from validate_face_lighting import DEFAULT_BINARY, Client, detail, face_ref
 from validate_sky_preview import rgba_png
 
-
 COUNTS = {
     "admitted_surfaces": 3,
     "excluded_surfaces": 0,

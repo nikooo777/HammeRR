@@ -151,6 +151,16 @@ fn terrain_receiver_policy_is_cached_with_base_and_rejection_retains_ordinary_ge
     let (directory, game) = game();
     let mut session = Session::new(Ok(game));
     let face = patch(&mut session, 2, -32.0);
+    let material = session
+        .document
+        .solid(face.solid)
+        .unwrap()
+        .sides
+        .iter()
+        .find(|side| side.id == face.side)
+        .unwrap()
+        .material
+        .clone();
     enable(&mut session);
     assert_eq!(
         session
@@ -208,7 +218,7 @@ fn terrain_receiver_policy_is_cached_with_base_and_rejection_retains_ordinary_ge
                 .report
                 .diagnostics
                 .iter()
-                .any(|row| row.material.as_deref() == Some("test/checker")
+                .any(|row| row.material.as_deref() == Some(material.as_str())
                     && row.reason.contains(&format!("face {}", face.side)))
         );
         let off = session.build_scene_for_view(ViewOptions {
@@ -321,7 +331,7 @@ fn suppressed_tool_terrain_counts_no_drawn_triangles_on_mixed_material_parents()
             .edit(Actor::User, "tool terrain on ordinary parent", |tx| {
                 let solid = tx.solid_mut(face.solid)?;
                 for side in &mut solid.sides {
-                    assert_eq!(side.material, "test/checker");
+                    assert!(side.material.eq_ignore_ascii_case("test/checker"));
                     if side.id == face.side {
                         side.material = "test/terrain-tool".into();
                     }

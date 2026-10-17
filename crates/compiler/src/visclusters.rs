@@ -419,7 +419,10 @@ pub(crate) fn partition(
                         .enumerate()
                         .map(|(side, face)| map_core::brush::Face {
                             side,
-                            plane: *map.planes.get(face.plane),
+                            plane: map_core::Plane {
+                                normal: map.planes.get(face.plane).normal,
+                                dist: map.planes.get(face.plane).dist,
+                            },
                             vertices: face.winding.0.clone(),
                         })
                         .collect(),

@@ -30,6 +30,18 @@ fn instance_dependency_build_details_share_counts_hashes_and_stale_launch_status
     );
     assert!(controller.window.get_details().contains("child.vmf"));
     assert!(controller.window.get_details().contains("SHA256"));
+    controller.window.show().unwrap();
+    controller.window.window().take_snapshot().unwrap();
+    controller
+        .window
+        .window()
+        .dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+            position: slint::LogicalPosition::new(360.0, 450.0),
+            delta_x: 0.0,
+            delta_y: -10_000.0,
+        });
+    i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(250));
+    crate::ui::tests::save_ui_snapshot(controller.window.window(), "build-instance-dependencies");
     std::fs::remove_file(&child).unwrap();
     controller.refresh(&lock(&shared));
     assert!(!controller.window.get_launch_ready());

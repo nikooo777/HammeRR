@@ -78,7 +78,8 @@ fn instance_builds_use_unsaved_snapshots_and_guard_ordinary_publication_and_fres
         assert!(
             session
                 .finish_launch(actor, launch)
-                .unwrap_err()
+                .err()
+                .unwrap()
                 .contains("Instance source/dependencies changed")
         );
         let status = session.compile_status();

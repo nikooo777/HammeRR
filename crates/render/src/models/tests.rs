@@ -6,6 +6,7 @@ use source_formats::{
 };
 use std::collections::HashSet;
 
+mod lighting_tests;
 mod scale_tests;
 
 fn asset() -> Arc<Asset> {

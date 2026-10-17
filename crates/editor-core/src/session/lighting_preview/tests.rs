@@ -635,3 +635,5 @@ fn authored_lighting_reports_bounded_diagnostics_without_hiding_invalid_lights_o
 }
 
 mod terrain;
+
+mod models;

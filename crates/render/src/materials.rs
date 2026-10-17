@@ -22,6 +22,7 @@ pub struct MaterialInfo {
     pub(crate) reference: bool,
     pub lighting_error: Option<String>,
     pub terrain_lighting_error: Option<String>,
+    pub model_lighting_error: Option<String>,
     pub normal: Option<Arc<crate::normal_maps::Asset>>,
     pub display_texture: Option<String>,
     material_identity: Option<u64>,
@@ -128,6 +129,12 @@ impl MaterialInfo {
                 || Some("No resolved material".into()),
                 terrain_lighting_error,
             ),
+            model_lighting_error: material.map_or_else(
+                || Some("No resolved material".into()),
+                |material| {
+                    model_lighting_error(material, base.as_ref(), display_texture.as_deref())
+                },
+            ),
             display_texture,
             normal: None,
             helper: None,
@@ -152,6 +159,7 @@ impl MaterialInfo {
             material_identity: None,
             lighting_error: Some("Editor helper or unavailable material".into()),
             terrain_lighting_error: Some("Editor helper or unavailable material".into()),
+            model_lighting_error: Some("Editor helper or unavailable material".into()),
             display_texture: None,
             normal: None,
             helper: None,
@@ -171,9 +179,14 @@ impl MaterialInfo {
 }
 
 fn lighting_error(material: &Material) -> Option<String> {
-    let reason = if material.shader != "lightmappedgeneric" {
-        "Authored lighting requires LightmappedGeneric"
-    } else if !material.blocks.is_empty() {
+    if material.shader != "lightmappedgeneric" {
+        return Some("Authored lighting requires LightmappedGeneric".into());
+    }
+    diffuse_lighting_error(material)
+}
+
+fn diffuse_lighting_error(material: &Material) -> Option<String> {
+    let reason = if !material.blocks.is_empty() {
         "Authored lighting excludes proxies and nested fallback/effect blocks"
     } else if material.translucent() || material.alpha_test() {
         "Authored lighting excludes translucent and alpha-tested materials"
@@ -185,6 +198,55 @@ fn lighting_error(material: &Material) -> Option<String> {
         return None;
     };
     Some(reason.into())
+}
+
+fn model_lighting_error(
+    material: &Material,
+    base: Option<&Vtf>,
+    display_texture: Option<&str>,
+) -> Option<String> {
+    if material.shader != "vertexlitgeneric" {
+        return Some("Model authored lighting requires VertexLitGeneric".into());
+    }
+    if let Some(reason) = diffuse_lighting_error(material) {
+        return Some(reason);
+    }
+    if let Some((key, _)) = material.params.iter().find(|(key, _)| {
+        !matches!(
+            key.as_str(),
+            "$basetexture" | "$model" | "$surfaceprop" | "$surfaceprop2" | "$nodecal" | "%keywords"
+        )
+    }) {
+        let key: String = key.chars().take(256).collect();
+        return Some(format!(
+            "Model authored lighting excludes unsupported parameter {key}"
+        ));
+    }
+    let declared = material.get("$basetexture").map(texture_path);
+    if declared.as_deref() != display_texture || display_texture.is_none() {
+        return Some("Model authored lighting needs its declared base display texture".into());
+    }
+    let Some(base) = base else {
+        return Some("Model authored lighting needs an available base display texture".into());
+    };
+    if base.frames != 1 || base.faces != 1 || base.depth != 1 {
+        return Some(
+            "Model authored lighting requires a static single-frame, single-face 2D base".into(),
+        );
+    }
+    if !matches!(
+        base.format,
+        source_formats::vtf::ImageFormat::Rgb888
+            | source_formats::vtf::ImageFormat::Bgr888
+            | source_formats::vtf::ImageFormat::Rgba8888
+            | source_formats::vtf::ImageFormat::Bgra8888
+            | source_formats::vtf::ImageFormat::Dxt1
+            | source_formats::vtf::ImageFormat::Dxt3
+            | source_formats::vtf::ImageFormat::Dxt5
+    ) {
+        return Some("Model authored lighting requires an ordinary LDR RGB base format".into());
+    }
+    None
 }
 
 fn terrain_lighting_error(material: &Material) -> Option<String> {

@@ -259,3 +259,5 @@ fn tool_terrain_temporary_visibility_rebuilds_retained_lighting_counts_and_pixel
     assert_eq!(session.view(), view);
     assert_eq!(session.selected_ids(), selection);
 }
+
+mod models;

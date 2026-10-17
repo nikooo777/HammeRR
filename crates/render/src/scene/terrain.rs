@@ -171,18 +171,11 @@ pub(super) fn lighting_error(
         return Some("Terrain authored lighting needs finite nonzero packed normals");
     }
     for triangle in mesh.triangles() {
-        let [a, b, c] = triangle.map(|index| mesh.positions[index].as_vec3());
-        let Some(geometric) = (c - a).cross(b - a).try_normalize() else {
-            return Some("Terrain authored lighting excludes degenerate packed triangles");
-        };
-        // A common positive hemisphere bounds every interpolated normal away from zero.
-        if triangle
-            .iter()
-            .any(|&index| normals[index].normalize().dot(geometric) <= 1e-4)
-        {
-            return Some(
-                "Terrain authored lighting needs a safe common normal hemisphere on every triangle",
-            );
+        if let Some(reason) = crate::lighting::triangle_error(
+            triangle.map(|index| mesh.positions[index].as_vec3()),
+            triangle.map(|index| normals[index]),
+        ) {
+            return Some(reason);
         }
     }
     None

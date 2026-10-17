@@ -2209,6 +2209,7 @@ impl Session {
         lighting.report.admitted_receivers = mesh.lighting.report.admitted_receivers;
         lighting.report.excluded_receivers = mesh.lighting.report.excluded_receivers;
         lighting.report.terrain = mesh.lighting.report.terrain;
+        lighting.report.models = mesh.lighting.report.models;
         for diagnostic in mesh.lighting.report.diagnostics {
             lighting.report.diagnostic(
                 diagnostic.entity,
@@ -2221,6 +2222,7 @@ impl Session {
             lighting.report.excluded_receivers += lighting.report.admitted_receivers;
             lighting.report.admitted_receivers = 0;
             lighting.report.terrain.exclude_admitted();
+            lighting.report.models.exclude_admitted();
             for vertex in &mut mesh.vertices {
                 vertex.lighting_receiver = 0;
             }

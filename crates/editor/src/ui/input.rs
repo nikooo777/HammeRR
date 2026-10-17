@@ -205,11 +205,9 @@ pub(super) fn command_key(
 ) -> bool {
     let key = text.to_lowercase();
     let object_shortcut = if control {
-        matches!(key.as_str(), "d" | "c" | "x" | "v")
+        matches!(key.as_str(), "c" | "x" | "v")
     } else {
         [
-            Key::Delete,
-            Key::Backspace,
             Key::UpArrow,
             Key::DownArrow,
             Key::LeftArrow,
@@ -231,9 +229,6 @@ pub(super) fn command_key(
     }
     if control {
         match key.as_str() {
-            "z" if shift => drop(lock(&session_of(ui)).redo(Actor::User)),
-            "z" => drop(lock(&session_of(ui)).undo(Actor::User)),
-            "y" => drop(lock(&session_of(ui)).redo(Actor::User)),
             "s" => save(app, ui),
             "c" => app.invoke_copy_objects(),
             "x" => app.invoke_cut_objects(),
@@ -244,29 +239,8 @@ pub(super) fn command_key(
                     drop(lock(&session_of(&ui2)).new_map(Actor::User, true));
                 });
             }
-            "d" => {
-                let shared = session_of(ui);
-                let mut session = lock(&shared);
-                let ids = session.selected_ids();
-                let grid = session.spatial().grid_size;
-                let offset = DVec3::new(grid, grid, 0.0);
-                let result = session
-                    .edit(
-                        Actor::User,
-                        &format!("duplicate {} objects", ids.len()),
-                        |tx| edit::duplicate(tx, &ids, offset),
-                    )
-                    .and_then(|copies| session.select(&copies, SelectMode::Replace));
-                if let Err(message) = result {
-                    app.set_message(message.into());
-                }
-            }
             _ => return false,
         }
-        return true;
-    }
-    if key == key_text(Key::Delete) || key == key_text(Key::Backspace) {
-        edit_selection(app, ui, |n| format!("delete {n} objects"), edit::delete);
         return true;
     }
     if key == key_text(Key::Escape) {
@@ -369,10 +343,6 @@ pub(super) fn command_key(
         } else {
             drop(session.select(&[], SelectMode::Replace));
         }
-        return true;
-    }
-    if key == "f" {
-        frame_selection(app, ui);
         return true;
     }
     let camera = ui.borrow().viewport.camera;

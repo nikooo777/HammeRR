@@ -22,6 +22,7 @@ mod placement;
 mod preview_preferences;
 mod recovery;
 mod selection;
+mod shortcuts;
 mod terrain;
 mod transform_pivot;
 mod view;

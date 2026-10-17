@@ -629,7 +629,7 @@ pub(crate) fn clipping_controls_preview_apply_cancel_and_escape_without_desktop_
     bind_clip_controls(&app, shared.clone());
     app.on_key({
         let (app, shared) = (app.as_weak(), shared.clone());
-        move |text, down, _, _| {
+        move |text, down, _, _, _, _| {
             if down && text == key_text(Key::Escape) {
                 cancel_clip(&app.unwrap(), &mut lock(&shared));
                 true

@@ -236,6 +236,7 @@ pub(super) fn command_key(
     }
     if control {
         match key.as_str() {
+            "s" if shift => save_as(app, ui),
             "s" => save(app, ui),
             "c" => app.invoke_copy_objects(),
             "x" => app.invoke_cut_objects(),

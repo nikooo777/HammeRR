@@ -111,38 +111,75 @@ pub(super) fn open_dialog(app: &AppWindow, ui: &SharedUi) {
 }
 
 pub(super) fn save(app: &AppWindow, ui: &SharedUi) {
+    save_map(app, ui, false);
+}
+
+pub(super) fn save_as(app: &AppWindow, ui: &SharedUi) {
+    save_map(app, ui, true);
+}
+
+fn complete_save_dialog(
+    app: &slint::Weak<AppWindow>,
+    continuation: &DocumentContinuation,
+    path: Option<&Path>,
+    generation: u64,
+) {
+    let Some(path) = path else { return };
+    complete_file_action(app, continuation, |session| {
+        session
+            .save_for_generation(Actor::User, Some(path), Some(generation))
+            .map(|path| format!("Saved {}", path.display()))
+    });
+}
+
+fn save_map(app: &AppWindow, ui: &SharedUi, choose_destination: bool) {
     let access = file_access(ui);
-    let observation = access
-        .with_session(|session| Ok((session.path().is_some(), session.document_generation())));
-    let (has_path, generation) = match observation {
+    let observation = access.with_session(|session| {
+        Ok((
+            session.path().map(Path::to_owned),
+            session.document_generation(),
+        ))
+    });
+    let (path, generation) = match observation {
         Ok(observation) => observation,
         Err(error) => {
             app.set_message(error.into());
             return;
         }
     };
-    if has_path {
+    if path.is_some() && !choose_destination {
         let result = access.with_session(|session| {
             session.save_for_generation(Actor::User, None, Some(generation))
         });
         report(app, result.map(|p| format!("Saved {}", p.display())));
         return;
     }
-    let dialog = rfd::AsyncFileDialog::new()
-        .set_title("Save map")
+    let mut dialog = rfd::AsyncFileDialog::new()
+        .set_title(if choose_destination {
+            "Save map as"
+        } else {
+            "Save map"
+        })
         .set_file_name("untitled.vmf")
         .add_filter("Valve Map File", &["vmf"]);
+    if let Some(path) = path {
+        if let Some(name) = path.file_name() {
+            dialog = dialog.set_file_name(name.to_string_lossy());
+        }
+        if let Some(directory) = path.parent().filter(|path| !path.as_os_str().is_empty()) {
+            dialog = dialog.set_directory(directory);
+        }
+    }
     let (app, owner, continuation) = (app.as_weak(), Rc::downgrade(ui), access.downgrade());
     slint::spawn_local(async move {
-        let Some(file) = dialog.save_file().await else {
-            return;
-        };
+        let file = dialog.save_file().await;
         let Some(_ui) = owner.upgrade() else { return };
-        complete_file_action(&app, &continuation, |session| {
-            session
-                .save_for_generation(Actor::User, Some(file.path()), Some(generation))
-                .map(|path| format!("Saved {}", path.display()))
-        });
+        complete_save_dialog(
+            &app,
+            &continuation,
+            file.as_ref().map(|file| file.path()),
+            generation,
+        );
     })
     .expect("event loop is running");
 }

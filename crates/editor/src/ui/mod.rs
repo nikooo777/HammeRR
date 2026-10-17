@@ -647,6 +647,10 @@ pub(super) fn run(
         let (app, ui) = (app.as_weak(), ui.clone());
         move || save(&app.unwrap(), &ui)
     });
+    app.on_save_map_as({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || save_as(&app.unwrap(), &ui)
+    });
     app.on_history({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || {

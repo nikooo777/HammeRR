@@ -130,3 +130,68 @@ fn recent_open_and_recovery_restore_callbacks_reject_matching_reviews_after_drai
     assert_eq!(lock(&shared).history_snapshot(), before);
     assert_eq!(std::fs::read(&source).unwrap(), bytes);
 }
+
+#[test]
+fn explicit_save_completion_repairs_stale_source_and_cancel_preserves_state() {
+    software_backend();
+    let (directory, document, shared, access) = fixture();
+    let source = directory.path().join("source.vmf");
+    access
+        .with_session(|session| session.save(Actor::User, Some(&source)))
+        .unwrap();
+    access
+        .with_session(|session| {
+            session.create_block(
+                Actor::User,
+                DVec3::splat(32.0),
+                DVec3::splat(48.0),
+                "test",
+                false,
+            )
+        })
+        .unwrap();
+    std::fs::remove_file(&source).unwrap();
+    std::fs::write(&source, b"external replacement").unwrap();
+    assert!(
+        access
+            .with_session(|session| session.save(Actor::User, None))
+            .is_err()
+    );
+    let app = AppWindow::new().unwrap();
+    app.set_message("Choose a destination".into());
+    let continuation = access.downgrade();
+    let generation = lock(&shared).document_generation();
+    let before = lock(&shared).history_snapshot();
+    complete_save_dialog(&app.as_weak(), &continuation, None, generation);
+    assert_eq!(app.get_message(), "Choose a destination");
+    assert_eq!(lock(&shared).history_snapshot(), before);
+    assert_eq!(lock(&shared).path(), Some(source.as_path()));
+    assert!(lock(&shared).document().is_dirty());
+    let destination = directory.path().join("repaired.vmf");
+    complete_save_dialog(
+        &app.as_weak(),
+        &continuation,
+        Some(&destination),
+        generation,
+    );
+    assert_eq!(lock(&shared).path(), Some(destination.as_path()));
+    assert!(!lock(&shared).document().is_dirty());
+    assert!(destination.is_file());
+    assert_eq!(std::fs::read(&source).unwrap(), b"external replacement");
+    access
+        .with_session(|session| session.save(Actor::User, None))
+        .unwrap();
+
+    access
+        .with_session(|session| session.new_map(Actor::User, true))
+        .unwrap();
+    let replacement = lock(&shared).document().vmf().clone();
+    let history = lock(&shared).history_snapshot();
+    let stale = directory.path().join("stale-picker.vmf");
+    complete_save_dialog(&app.as_weak(), &continuation, Some(&stale), generation);
+    assert!(!stale.exists());
+    assert!(app.get_message().contains("map was replaced"));
+    assert_eq!(lock(&shared).document().vmf(), &replacement);
+    assert_eq!(lock(&shared).history_snapshot(), history);
+    document.shutdown().unwrap();
+}

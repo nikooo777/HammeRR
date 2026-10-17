@@ -1973,6 +1973,7 @@ export component AppWindow inherits Window {
     callback open-map();
     callback recent-maps();
     callback save-map();
+    callback save-map-as();
     callback compile-map();
     callback run-map();
     callback game-log();
@@ -2127,6 +2128,11 @@ export component AppWindow inherits Window {
                     clicked => {
                         root.save-map();
                     }
+                }
+
+                Button {
+                    text: "Save as…";
+                    clicked => { root.save-map-as(); }
                 }
 
                 Button {

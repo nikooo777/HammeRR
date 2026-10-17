@@ -2154,6 +2154,7 @@ impl Session {
             (&evaluation.models.instances, &evaluation.helpers),
             (&icons, &model_guides),
             skybox,
+            view.tool_textures,
             view.normal_maps && view.surface == render::SurfaceView::Textured,
             view.lighting_preview && view.surface == render::SurfaceView::Textured,
             |id| evaluation.objects.contains(&id),

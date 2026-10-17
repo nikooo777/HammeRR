@@ -364,6 +364,7 @@ fn floor(
         (&[], &Default::default()),
         (&Default::default(), &[]),
         None,
+        true,
         normal_maps,
         lighting,
         |_| true,

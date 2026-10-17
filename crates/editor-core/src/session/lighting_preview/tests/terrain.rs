@@ -306,6 +306,75 @@ fn terrain_receiver_rejections_count_outline_only_sheets_and_bounded_drawn_sheet
     }
 }
 
+#[test]
+fn suppressed_tool_terrain_counts_no_drawn_triangles_on_mixed_material_parents() {
+    for flag in ["%compilenodraw", "%compilesky"] {
+        let (directory, game) = game();
+        std::fs::write(
+            directory.path().join("materials/test/terrain-tool.vmt"),
+            format!("LightmappedGeneric {{ $basetexture test/checker {flag} 1 }}"),
+        )
+        .unwrap();
+        let mut session = Session::new(Ok(game));
+        let face = patch(&mut session, 2, -32.0);
+        session
+            .edit(Actor::User, "tool terrain on ordinary parent", |tx| {
+                let solid = tx.solid_mut(face.solid)?;
+                for side in &mut solid.sides {
+                    assert_eq!(side.material, "test/checker");
+                    if side.id == face.side {
+                        side.material = "test/terrain-tool".into();
+                    }
+                }
+                Ok(())
+            })
+            .unwrap();
+        enable(&mut session);
+        let source = session.document.vmf().clone();
+        let history = session.document.undo_labels().count();
+        let view = session.view();
+        let shown = session.build_scene_for_view(ViewOptions {
+            tool_textures: true,
+            ..view
+        });
+        let suppressed = session.build_scene_for_view(ViewOptions {
+            tool_textures: false,
+            ..view
+        });
+        assert_eq!(shown.lighting.report.terrain.excluded_surfaces, 1, "{flag}");
+        assert_eq!(
+            shown.lighting.report.terrain.excluded_triangles, 32,
+            "{flag}"
+        );
+        assert_eq!(
+            suppressed.lighting.report.terrain.excluded_surfaces, 1,
+            "{flag}"
+        );
+        assert_eq!(
+            suppressed.lighting.report.terrain.excluded_triangles, 0,
+            "{flag}"
+        );
+        assert_eq!(suppressed.lighting.report.terrain.admitted_triangles, 0);
+        assert_eq!(shown.vertices, suppressed.vertices);
+        assert_eq!(shown.indices, suppressed.indices);
+        assert_eq!(shown.batches, suppressed.batches);
+        assert_eq!(shown.indices.len(), 32 * 3);
+        assert!(session.materials.find("test/terrain-tool").unwrap().tool);
+        assert!(!session.materials.find("test/checker").unwrap().tool);
+        assert_eq!(session.view(), view);
+        session.set_view(ViewOptions {
+            tool_textures: false,
+            ..view
+        });
+        assert!(!session.hidden_tool_brushes().contains(&face.solid));
+        let shared = session.lighting_preview_state();
+        assert_eq!(shared["report"]["terrain"]["excluded_surfaces"], 1);
+        assert_eq!(shared["report"]["terrain"]["excluded_triangles"], 0);
+        assert_eq!(session.document.vmf(), &source);
+        assert_eq!(session.document.undo_labels().count(), history);
+    }
+}
+
 fn sample_triangle(
     positions: &[[f64; 3]],
     triangles: &[[usize; 3]],

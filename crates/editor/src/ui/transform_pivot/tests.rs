@@ -45,6 +45,7 @@ fn surface_pivot_ui_arms_cancels_picks_and_releases_foreign_or_stale_input() {
     bind_pivot_pick_controls(&app, shared.clone());
     refresh_panel(&app, &mut lock(&shared));
     refresh_interaction(&app, &lock(&shared));
+    app.set_show_transform(true);
     app.show().unwrap();
     app.window().set_size(slint::PhysicalSize::new(1600, 1000));
     refresh_pivot_pick_controls(&app, &lock(&shared), camera);

@@ -23,6 +23,11 @@ If an input would produce invalid geometry, the last valid preview stays on scre
 
 Undo and redo are **Ctrl+Z** and **Ctrl+Y**.
 
+These are factory bindings. Use **Viewport → Keyboard shortcuts…** to change
+Undo, Redo, Frame selection, Delete selection or Duplicate selection; see
+[Keyboard shortcuts](keyboard-shortcuts.md). Text fields keep their normal
+editing keys, and the Frame hint follows the active binding.
+
 ## Working with an AI agent
 
 You and any connected agent share one editing session: the map, the selection, the camera, open previews and the undo history. An agent's edits appear live and show up in Activity, and you can undo them like your own. An agent can set up a preview for you to apply, or the other way around. See [AI agents and MCP](mcp.md).

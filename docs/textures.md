@@ -67,6 +67,11 @@ even after a model switches to a different existing candidate.
 
 ![Face material, offset, scale, rotation and preview controls](images/face-textures.png)
 
+Use **Fit atlas region…** in the same window to fit faces into a pixel rectangle
+of the material image. See [Atlas-region texturing](atlas-texturing.md).
+
+For surface detail under editor shading, see [Normal-map preview](normal-maps.md).
+
 
 ## Set U/V vectors and skew
 

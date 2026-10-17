@@ -7,7 +7,7 @@ use crate::shortcuts::{Bindings, Command};
 pub enum ShortcutsArgs {
     Save {
         snapshot: String,
-        bindings: Bindings,
+        bindings: Box<Bindings>,
     },
     Reload {
         snapshot: String,
@@ -48,7 +48,7 @@ impl EditorServer {
                     Actor::Agent,
                     &snapshot,
                     "save",
-                    Some(bindings),
+                    Some(*bindings),
                 ),
                 ShortcutsArgs::Reload { snapshot } => {
                     session.change_keyboard_shortcuts(Actor::Agent, &snapshot, "reload", None)

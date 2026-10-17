@@ -65,6 +65,11 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 | ![A resized brush with its texture stretched](docs/images/object-texture-stretch.png) | ![A sheared brush](docs/images/brush-shear-after.png) |
 | Move, rotate, scale or snap selections to the grid, with shared previews and texture controls. | Reflect across any axis or slant one coordinate by another, with textures attached. |
 
+| Surface-picked pivots |
+| --- |
+| ![Rotation handles centered on a picked brush surface point](docs/images/surface-picked-transform-pivot-viewport.png) |
+| Pick an exact brush, terrain or model surface point as the selection's transform pivot. |
+
 | Polygon brushes |
 | --- |
 | ![A concave polygon extruded into editable brushes](docs/images/polygon-brushes.png) |
@@ -137,6 +142,13 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 
 [Material source →](docs/material-source.md)
 
+| Atlas-region texturing | Normal-map preview |
+| --- | --- |
+| ![Atlas image with a reviewed pixel rectangle](docs/images/atlas-face-fit.png) | ![Normal-mapped brush surface under editor shading](docs/images/normal-map-preview.png) |
+| Fit selected faces into a rectangular part of a material image. | Preview supported brush normal maps without compiling. |
+
+[Atlas-region texturing →](docs/atlas-texturing.md) · [Normal-map preview →](docs/normal-maps.md)
+
 ### Select and view
 
 | Paint selection | Volume selection |
@@ -158,6 +170,13 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 | --- | --- |
 | ![Saved grid size, snapping and visibility controls](docs/images/grid-defaults.png) | ![Saved entity guide and viewport preview choices](docs/images/preview-defaults.png) |
 | Save your startup grid while keeping temporary grid changes independent. | Save startup outlines, entity images, model guides, ropes and sky visibility. |
+
+| Keyboard shortcuts |
+| --- |
+| ![Command bindings with modifier controls and saved preferences](docs/images/keyboard-shortcuts.png) |
+| Configure two bindings each for Undo, Redo, framing, deletion and duplication. |
+
+[Keyboard shortcuts →](docs/keyboard-shortcuts.md)
 
 | Working region | Fog preview |
 | --- | --- |

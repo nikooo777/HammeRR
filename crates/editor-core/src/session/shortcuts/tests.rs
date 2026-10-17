@@ -8,17 +8,18 @@ fn fixture() -> (tempfile::TempDir, Session) {
 }
 
 fn custom() -> Bindings {
-    let mut bindings = Bindings::default();
-    bindings.undo = [
-        Some(Chord {
-            key: "F6".into(),
-            control: true,
-            shift: false,
-        }),
-        None,
-    ];
-    bindings.duplicate_selection = [None, None];
-    bindings
+    Bindings {
+        undo: [
+            Some(Chord {
+                key: "F6".into(),
+                control: true,
+                shift: false,
+            }),
+            None,
+        ],
+        duplicate_selection: [None, None],
+        ..Default::default()
+    }
 }
 
 fn save(session: &mut Session, actor: Actor, bindings: Bindings) -> Value {

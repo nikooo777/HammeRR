@@ -556,6 +556,82 @@ fn derived_layer_changes_preserve_fresh_owned_pivot_picks_and_genuine_stale_guar
 }
 
 #[test]
+fn measurement_endpoint_picking_suppresses_contents_without_expiring_its_context() {
+    use crate::session::{Pointer, measurements};
+    use glam::{DVec2, Vec3};
+    for actor in [Actor::User, Actor::Agent] {
+        let (_directory, mut session, _source, _child, owner) = opened(actor);
+        refresh(&mut session, actor);
+        session.set_camera(render::Camera::looking_at(
+            Vec3::new(8.0, 8.0, 96.0),
+            Vec3::new(8.0, 8.0, 0.0),
+        ));
+        let ray = Ray {
+            origin: DVec3::new(8.0, 8.0, 96.0),
+            direction: DVec3::NEG_Z,
+        };
+        assert_eq!(session.instance_contents_hits(&ray, None)[0].object, owner);
+        let source = session.document.vmf().clone();
+        let history = session.history_snapshot();
+        let state = session
+            .preview_measurement(
+                actor,
+                measurements::Request {
+                    id: None,
+                    name: "Root floor".into(),
+                    start: DVec3::ZERO,
+                    end: DVec3::X,
+                },
+                &session.measurement_stamp(),
+            )
+            .unwrap();
+        let state = session
+            .begin_measurement_pick(
+                actor,
+                state["draft"]["token"].as_u64().unwrap(),
+                measurements::Endpoint::Start,
+                session.camera(),
+                (511, 511),
+                &session.measurement_pick_stamp(),
+            )
+            .unwrap();
+        let token = state["draft"]["token"].as_u64().unwrap();
+        let serials = (session.scene_serial(), session.view_serial());
+        session.preflight_instance_contents();
+        session.build_scene();
+        let preview = session.instance_contents_preview(true);
+        assert!(preview.mesh.is_none());
+        assert_eq!(
+            preview.report["suppression_reason"],
+            "active_editing_tool_or_draft"
+        );
+        assert!(session.instance_contents_hits(&ray, Some(true)).is_empty());
+        assert_eq!((session.scene_serial(), session.view_serial()), serials);
+        let state = session.measurement_state();
+        assert_eq!(state["draft"]["token"], token);
+        assert_eq!(state["draft"]["picking"]["valid"], true);
+        let picked = session
+            .pick_measurement_pixel(
+                actor,
+                token,
+                Pointer {
+                    position: DVec2::splat(255.0),
+                    size: (511, 511),
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            picked["draft"]["last_pick"]["target"],
+            format!("solid:{}", source.world.solids[0].id)
+        );
+        assert_eq!(picked["draft"]["last_pick"]["point"][2], 0.0);
+        assert_eq!(session.document.vmf(), &source);
+        assert_eq!(session.history_snapshot(), history);
+        assert!(session.instance_contents_preview(true).mesh.is_some());
+    }
+}
+
+#[test]
 fn suppressed_reference_refresh_preserves_transform_and_terrain_owned_previews() {
     use glam::DVec2;
     use map_core::surface::FaceId;

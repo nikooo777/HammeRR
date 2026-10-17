@@ -347,6 +347,7 @@ pub(in crate::mcp) fn face_id(face: &FaceRef) -> map_core::surface::FaceId {
 pub(in crate::mcp) fn face_state(session: &Session) -> Value {
     json!({"mode": if session.face_mode() { "faces" } else { "objects" }, "preview": session.has_face_preview(),
         "preview_token":session.face_preview_token().map(|token|token.to_string()),
+        "atlas":session.atlas_fit_state(),
         "sample": surface_sample_state(session),
         "preview_faces": session.preview_faces().into_iter().filter_map(|face| {
             let side = session.preview_side(face)?;

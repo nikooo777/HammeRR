@@ -337,7 +337,9 @@ pub(super) fn command_key(
             return true;
         }
         if session.has_face_preview() {
-            session.cancel_face_preview();
+            if let Err(error) = session.cancel_owned_face_preview(Actor::User, None) {
+                app.set_message(error.into());
+            }
         } else if session.face_mode() {
             drop(session.select_faces(&[], SelectMode::Replace));
         } else {

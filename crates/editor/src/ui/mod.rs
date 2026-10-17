@@ -95,6 +95,7 @@ struct Ui {
     material_window: Option<MaterialWindow>,
     material_target: Option<(u32, String, u64)>,
     surface_window: Option<SurfaceWindow>,
+    atlas: Option<atlas_ui::Controller>,
     surface_target: Option<(Vec<map_core::surface::FaceId>, u64, u64)>,
     lighting: Option<lighting_ui::Controller>,
     terrain: Option<terrain_ui::Controller>,
@@ -111,6 +112,7 @@ struct Ui {
     preview_defaults: Option<preview_defaults_ui::Controller>,
     shortcuts: Option<shortcuts_ui::Controller>,
     material_for_group: bool,
+    material_for_atlas: bool,
     overlay_material_target: Option<overlay_ui::MaterialTarget>,
     material_for_replace: Option<bool>,
     material_for_faces: bool,
@@ -454,6 +456,7 @@ pub(super) fn run(
         material_window: None,
         material_target: None,
         surface_window: None,
+        atlas: None,
         surface_target: None,
         lighting: None,
         terrain: None,
@@ -470,6 +473,7 @@ pub(super) fn run(
         preview_defaults: None,
         shortcuts: None,
         material_for_group: false,
+        material_for_atlas: false,
         overlay_material_target: None,
         material_for_replace: None,
         material_for_faces: false,
@@ -3099,6 +3103,11 @@ pub(super) fn run(
 
             if now.duration_since(ui.last_log_refresh) >= Duration::from_millis(500) {
                 ui.last_log_refresh = now;
+                if let Some(controller) = &ui.atlas
+                    && controller.window.window().is_visible()
+                {
+                    controller.refresh(&lock(&ui.session));
+                }
                 app.set_preview_defaults_error(
                     lock(&ui.session).preview_preferences_error().is_some(),
                 );

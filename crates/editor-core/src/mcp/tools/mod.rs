@@ -1,4 +1,5 @@
 mod assets;
+mod atlas;
 mod build;
 mod checks;
 mod clipboard;

@@ -32,6 +32,7 @@ pub mod saved_views;
 pub mod subobject;
 pub mod surface;
 pub mod surface_group;
+pub mod texture_atlas;
 pub mod texture_chain;
 pub mod texture_deform;
 pub mod transfer;

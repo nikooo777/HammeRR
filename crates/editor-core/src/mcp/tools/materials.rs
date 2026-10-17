@@ -181,7 +181,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect shared selected faces, texture parameters, lightmap scales, smoothing groups, owners and active preview token. Face IDs work for world brushes and brushes inside entities.",
+        description = "Inspect shared selected faces, texture parameters, lightmap scales, smoothing groups, owners, active preview token and optional atlas rectangle/snapshot. Face IDs work for world brushes and brushes inside entities.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_face_selection(&self) -> ToolResult {
@@ -421,7 +421,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Apply the shared face material/lighting/terrain preview in one undo step. Pass its token to reject a replaced preview. Fails if edits, document replacement or selection changes have invalidated it."
+        description = "Apply the shared face material/lighting/terrain preview in one undo step. Pass its token to reject a replaced preview. Fails if edits, document replacement or selection changes have invalidated it. Atlas drafts require the exact token, originating actor and current material snapshot; rejected Apply preserves the draft."
     )]
     pub(in crate::mcp) fn commit_face_preview(
         &self,
@@ -437,7 +437,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Cancel the shared face material/lighting preview without changing the document or undo/redo history. Pass its token to reject a replaced preview. Equivalent to the editing dialog's Cancel button."
+        description = "Cancel the shared face material/lighting preview without changing the document or undo/redo history. Pass its token to reject a replaced preview. Atlas drafts require their exact token and originating actor; their stale assets do not prevent owned Cancel. Equivalent to the editing dialog's Cancel button."
     )]
     pub(in crate::mcp) fn cancel_face_preview(
         &self,
@@ -445,9 +445,10 @@ impl EditorServer {
     ) -> ToolResult {
         run(|| {
             let mut session = self.session();
-            session
-                .check_face_preview_token(args.token.as_deref().map(parse_token).transpose()?)?;
-            session.cancel_face_preview();
+            session.cancel_owned_face_preview(
+                Actor::Agent,
+                args.token.as_deref().map(parse_token).transpose()?,
+            )?;
             Ok(json!({"preview": false}))
         })
     }

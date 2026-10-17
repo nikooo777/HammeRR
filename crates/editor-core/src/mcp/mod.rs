@@ -551,9 +551,13 @@ mod baked_lightmap_tests;
 #[cfg(test)]
 mod normal_map_tests;
 
+#[cfg(test)]
+mod atlas_tests;
+
 impl EditorServer {
     fn tool_router() -> ToolRouter<Self> {
         Self::assets_tools()
+            + Self::atlas_tools()
             + Self::build_tools()
             + Self::compile_region_tools()
             + Self::checks_tools()

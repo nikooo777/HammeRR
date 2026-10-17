@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
@@ -154,10 +155,14 @@ pub struct RecoveryRequest {
     kind: Kind,
     vmf: Vmf,
     keep: usize,
+    started: AtomicBool,
 }
 
 impl RecoveryRequest {
     pub fn run(&self) -> Result<Entry, String> {
+        if self.started.swap(true, Ordering::AcqRel) {
+            return Err("Recovery snapshot request has already started".into());
+        }
         self.store.write(
             &self.document_key,
             self.source_path.as_deref(),
@@ -435,6 +440,7 @@ impl Session {
             kind,
             vmf: self.document.vmf().clone(),
             keep: settings.keep_per_map,
+            started: AtomicBool::new(false),
         })
     }
 
@@ -664,6 +670,65 @@ mod tests {
         session
             .finish_recovery_snapshot(Actor::User, &request, result)
             .unwrap()
+    }
+
+    #[test]
+    fn recovery_request_writes_once_across_concurrent_and_repeated_calls() {
+        let (_directory, mut session, _) = fixture();
+        let before = session.document().vmf().clone();
+        let history = session.history_snapshot();
+        let request = session.begin_recovery_snapshot(Kind::Manual).unwrap();
+        let barrier = std::sync::Barrier::new(2);
+        let results = std::thread::scope(|scope| {
+            let first = scope.spawn(|| {
+                barrier.wait();
+                request.run()
+            });
+            let second = scope.spawn(|| {
+                barrier.wait();
+                request.run()
+            });
+            [first.join().unwrap(), second.join().unwrap()]
+        });
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        let error = results
+            .iter()
+            .find_map(|result| result.as_ref().err())
+            .unwrap();
+        assert!(error.contains("already started"));
+        let entry = results.into_iter().find_map(Result::ok).unwrap();
+        assert_eq!(session.recovery_entries().unwrap().entries.len(), 1);
+        session
+            .finish_recovery_snapshot(Actor::User, &request, Ok(entry))
+            .unwrap();
+        assert!(request.run().unwrap_err().contains("already started"));
+        assert_eq!(session.recovery_entries().unwrap().entries.len(), 1);
+        capture(&mut session);
+        assert_eq!(session.recovery_entries().unwrap().entries.len(), 2);
+        assert_eq!(session.document().vmf(), &before);
+        assert_eq!(session.history_snapshot(), history);
+    }
+
+    #[test]
+    fn failed_recovery_request_requires_new_admission_after_storage_repair() {
+        let (directory, mut session, _) = fixture();
+        let blocked = directory.path().join("blocked");
+        std::fs::write(&blocked, b"not a directory").unwrap();
+        session.recovery.store = Some(Store {
+            directory: blocked.clone(),
+        });
+        let request = session.begin_recovery_snapshot(Kind::Manual).unwrap();
+        let failure = request.run().unwrap_err();
+        std::fs::remove_file(&blocked).unwrap();
+        assert!(request.run().unwrap_err().contains("already started"));
+        assert!(!blocked.exists());
+        session
+            .finish_recovery_snapshot(Actor::User, &request, Err(failure.clone()))
+            .unwrap_err();
+        assert_eq!(session.recovery_status()["snapshot_error"], failure);
+        capture(&mut session);
+        assert_eq!(session.recovery_entries().unwrap().entries.len(), 1);
+        assert!(session.recovery_status()["snapshot_error"].is_null());
     }
 
     #[cfg(unix)]

@@ -87,6 +87,10 @@ To recover, select a snapshot and click **Open recovered copy**. It opens as an 
 
 Recovery files live in `$XDG_STATE_HOME/hammerr/recovery`, or `~/.local/state/hammerr/recovery` if that variable isn't set. Set `HAMMERR_RECOVERY_DIR` to an absolute path to use another folder. Turning autosave off keeps manual snapshots and save backups. Failed snapshots are reported in Recovery and in Activity.
 
+To retry after a snapshot failure, repair the reported storage problem and click
+**Save snapshot now** again. Each admitted request attempts its write once; a
+retry captures a fresh request.
+
 Normal exit cancels instance Contents/Extraction work and FGD loading and waits for their owned result/staging cleanup, then waits for in-flight recovery and captures outstanding committed changes once when autosave is enabled. A failed exit snapshot or recovery-worker drain is reported on stderr and returns a failing process exit status, including both headless modes. If another application error also occurred, the final error retains both causes. The original map is never treated as saved by an exit snapshot.
 
 Recovery retains settings, snapshot-folder configuration, capture, retention and shutdown failures separately. Saving settings clears only settings errors; a successful snapshot clears only capture and retention errors. Recovery displays unresolved causes together with listing warnings, and MCP reports the same causes separately as well as in its combined error. A settings warning alone does not turn a successful exit snapshot into a shutdown failure.

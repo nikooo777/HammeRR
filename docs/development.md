@@ -2579,3 +2579,13 @@ Launch cases use fake clients and deterministic barriers, including an occupied
 Tokio blocking pool. They check admission before scheduling, dropped work under
 a held Session lock, exact-origin cancellation/retirement, panics, peer isolation
 and process/file cleanup before idle. The user's game is never started.
+
+### Recovery write admission
+
+```sh
+cargo test -p editor-core --features mcp,test-support recovery_request
+```
+
+These cases race two calls on one admitted snapshot request, reject later
+re-execution, and repair a failed destination before retrying. Only a fresh
+request can attempt another write. The source document and history stay intact.

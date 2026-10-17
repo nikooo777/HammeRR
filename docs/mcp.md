@@ -2280,6 +2280,10 @@ imported data and history.
 
 ### Recovery settings and errors
 
+Retry a failed snapshot with a new `create_recovery_snapshot` call. Each call
+admits a fresh request; internal repeated or concurrent execution of that same
+request cannot write another snapshot, including after a failed write.
+
 `get_recovery.status` includes `settings_revision` and independent
 `settings_error`, `storage_error`, `snapshot_error`, `retention_error` and
 `drain_error` fields. `storage_error` describes the originating document's

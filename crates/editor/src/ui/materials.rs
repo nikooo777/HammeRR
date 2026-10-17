@@ -937,7 +937,7 @@ pub(super) fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
         bind_material_favorites(&window, session_of(ui), move || owner.upgrade().is_some());
         bind_material_preview(&window, session_of(ui));
         bind_material_reload(&window, session_of(ui));
-        material_source_ui::bind(&window, session_of(ui));
+        material_source_ui::bind_with_access(&window, &file_access(ui));
         ui.borrow_mut().material_window = Some(window);
     }
     let shared = session_of(ui);

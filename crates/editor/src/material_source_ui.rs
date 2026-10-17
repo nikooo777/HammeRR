@@ -3,7 +3,9 @@ use std::rc::Rc;
 
 use slint::ComponentHandle;
 
-use crate::runtime::{SharedSession, lock};
+#[cfg(test)]
+use crate::runtime::SharedSession;
+use crate::runtime::{DocumentAccess, DocumentContinuation, lock};
 use crate::session::{Session, material_source::Report};
 use crate::{MaterialSourceWindow, MaterialWindow};
 
@@ -137,66 +139,120 @@ fn refresh(window: &MaterialSourceWindow, session: &Session, name: &str) {
     }
 }
 
+fn with_source<R>(
+    window: &slint::Weak<MaterialSourceWindow>,
+    access: &DocumentContinuation,
+    body: impl FnOnce(&MaterialSourceWindow, &Session) -> R,
+) -> Option<R> {
+    let window = window.upgrade()?;
+    match access
+        .upgrade()
+        .and_then(|access| access.with_session(|session| Ok(body(&window, session))))
+    {
+        Ok(result) => Some(result),
+        Err(error) => {
+            window.set_status(error.into());
+            None
+        }
+    }
+}
+
 impl Controller {
-    pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
+    pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let window = MaterialSourceWindow::new()?;
         let material = Rc::new(RefCell::new(String::new()));
         window.on_refresh_source({
-            let (window, shared, material) = (window.as_weak(), shared.clone(), material.clone());
-            move || refresh(&window.unwrap(), &lock(&shared), &material.borrow())
+            let (window, access, material) =
+                (window.as_weak(), access.downgrade(), material.clone());
+            move || {
+                with_source(&window, &access, |window, session| {
+                    refresh(window, session, &material.borrow())
+                });
+            }
         });
         window.on_close_dialog({
             let window = window.as_weak();
             move || {
-                let _ = window.unwrap().hide();
+                if let Some(window) = window.upgrade() {
+                    let _ = window.hide();
+                }
             }
         });
+        window
+            .window()
+            .on_close_requested(|| slint::CloseRequestResponse::HideWindow);
         Ok(Self { window, material })
     }
 
-    pub fn show(&self, session: &Session, name: &str) -> Result<(), slint::PlatformError> {
+    fn populate(&self, session: &Session, name: &str) {
         *self.material.borrow_mut() = name.to_owned();
         refresh(&self.window, session, name);
+    }
+
+    #[cfg(test)]
+    pub fn show(&self, session: &Session, name: &str) -> Result<(), slint::PlatformError> {
+        self.populate(session, name);
         self.window.show()
     }
 }
 
+#[cfg(test)]
 pub(crate) fn bind(
     window: &MaterialWindow,
     shared: SharedSession,
 ) -> Rc<RefCell<Option<Controller>>> {
+    bind_with_access(window, &DocumentAccess::unmanaged(shared))
+}
+
+pub(crate) fn bind_with_access(
+    window: &MaterialWindow,
+    access: &DocumentAccess,
+) -> Rc<RefCell<Option<Controller>>> {
     let controller = Rc::new(RefCell::new(None::<Controller>));
     window.on_inspect_source({
-        let (window, controller) = (window.as_weak(), controller.clone());
+        let (window, controller, access) =
+            (window.as_weak(), controller.clone(), access.downgrade());
         move || {
-            let window = window.unwrap();
-            if controller.borrow().is_none() {
-                match Controller::new(&shared) {
-                    Ok(source) => *controller.borrow_mut() = Some(source),
-                    Err(error) => {
-                        window.set_detail(error.to_string().into());
-                        return;
-                    }
-                }
-            }
-            let material = if window.get_sprite_resource() {
-                match editor_core::sprite_resource::browse_reference(&window.get_material()) {
-                    Ok(material) => material,
-                    Err(error) => {
-                        window.set_detail(error.into());
-                        return;
-                    }
-                }
-            } else {
-                window.get_material().to_string()
+            let Some(window) = window.upgrade() else {
+                return;
             };
-            if let Err(error) = controller
-                .borrow()
-                .as_ref()
-                .unwrap()
-                .show(&lock(&shared), &material)
-            {
-                window.set_detail(error.to_string().into());
+            let result = access.upgrade().and_then(|access| {
+                access.with_shared(|shared| {
+                    let inspected = (|| -> Result<(), String> {
+                        if controller.borrow().is_none() {
+                            let source = Controller::new_with_access(&access)
+                                .map_err(|error| error.to_string())?;
+                            *controller.borrow_mut() = Some(source);
+                        }
+                        let material = if window.get_sprite_resource() {
+                            editor_core::sprite_resource::browse_reference(&window.get_material())?
+                        } else {
+                            window.get_material().to_string()
+                        };
+                        {
+                            let session = lock(shared);
+                            controller
+                                .borrow()
+                                .as_ref()
+                                .unwrap()
+                                .populate(&session, &material);
+                        }
+                        controller
+                            .borrow()
+                            .as_ref()
+                            .unwrap()
+                            .window
+                            .show()
+                            .map_err(|error| error.to_string())
+                    })();
+                    if let Err(error) = inspected {
+                        window.set_detail(error.into());
+                    }
+                    Ok(())
+                })
+            });
+            if let Err(error) = result {
+                window.set_detail(error.into());
             }
         }
     });

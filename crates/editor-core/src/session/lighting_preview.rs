@@ -213,7 +213,7 @@ impl Session {
             "enabled":view.lighting_preview, "quality":view.lighting_quality.name(), "exposure_ev":view.lighting_exposure_ev,
             "summary":report.summary(), "report":report,
             "source":source,"source_scope":"current render document and visible working region; includes pending geometry previews",
-            "limits":{"lights":MAX_LIGHTS,"diagnostics":render::lighting::MAX_DIAGNOSTICS,"summed_linear_headroom":MAX_CONTRIBUTION,"exposure_ev":[-8,8],"receiver_counts":"flat brush polygons; terrain/models/resource guides excluded by category","policy":render::lighting::POLICY}
+            "limits":{"lights":MAX_LIGHTS,"diagnostics":render::lighting::MAX_DIAGNOSTICS,"summed_linear_headroom":MAX_CONTRIBUTION,"exposure_ev":[-8,8],"receiver_counts":render::lighting::RECEIVER_COUNTS,"policy":render::lighting::POLICY}
         })
     }
 }

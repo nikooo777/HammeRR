@@ -228,7 +228,7 @@ impl Builder<'_> {
         self.mark_selection_outline(start);
     }
 
-    fn add_solid(&mut self, solid: &Solid, selected: bool) {
+    fn add_solid(&mut self, solid: &Solid, selected: bool, terrain_owner_supported: bool) {
         self.stats.brushes += 1;
         let geometry = match self.terrain_geometry.remove(&solid.id) {
             Some(geometry) => geometry,
@@ -236,6 +236,21 @@ impl Builder<'_> {
         };
         let Ok(brush) = geometry else {
             self.stats.invalid_brushes += 1;
+            for side in solid
+                .sides
+                .iter()
+                .filter(|side| side.displacement.is_some())
+            {
+                self.exclude_terrain(
+                    FaceId {
+                        solid: solid.id,
+                        side: side.id,
+                    },
+                    &side.material,
+                    0,
+                    "No prepared terrain geometry; authored lighting excluded",
+                );
+            }
             return;
         };
         // Hammer draws only the displaced faces of a brush with displacements.
@@ -262,6 +277,12 @@ impl Builder<'_> {
                     };
                     let displacement = self.displacements.remove(&id);
                     let Some(Displacement { mesh, normals }) = displacement else {
+                        self.exclude_terrain(
+                            id,
+                            &side.material,
+                            0,
+                            "No prepared shaded terrain surface; ordinary outline retained (see terrain issues)",
+                        );
                         if let Some(mesh) = self.unshaded_terrain.remove(&id) {
                             self.lines.extend(displacement_lines(&mesh, SELECTED_EDGE));
                         } else {
@@ -270,7 +291,14 @@ impl Builder<'_> {
                         continue;
                     };
                     self.stats.displacements += 1;
-                    self.add_displacement(material, &mesh, &normals, uv, tint, side);
+                    self.add_displacement(
+                        material,
+                        &mesh,
+                        &normals,
+                        uv,
+                        tint,
+                        (id, side, terrain_owner_supported),
+                    );
                     self.push_displacement_wire(&mesh, tool);
                     if selected {
                         self.selection_loop(
@@ -461,6 +489,22 @@ impl Builder<'_> {
         lines.extend(displacement_lines(mesh, WIRE_EDGE));
     }
 
+    fn exclude_terrain(&mut self, face: FaceId, material: &str, triangles: usize, reason: &str) {
+        if !self.lighting.report.active {
+            return;
+        }
+        self.lighting.report.terrain.excluded_surfaces += 1;
+        self.lighting.report.terrain.excluded_triangles += triangles;
+        self.lighting.report.diagnostic(
+            None,
+            Some(material),
+            &format!(
+                "Terrain face {} on brush {}: {reason}",
+                face.side, face.solid
+            ),
+        );
+    }
+
     fn add_displacement(
         &mut self,
         material: MaterialId,
@@ -468,9 +512,32 @@ impl Builder<'_> {
         normals: &[[f64; 3]],
         uv: impl Fn(DVec3) -> [f32; 2],
         tint: [u8; 3],
-        side: &source_formats::vmf::Side,
+        source: (FaceId, &source_formats::vmf::Side, bool),
     ) {
+        let (face, side, owner_supported) = source;
         let triangles: Vec<[usize; 3]> = mesh.triangles().collect();
+        let mut lighting_receiver = 0;
+        if self.lighting.report.active {
+            let info = self.library.get(material);
+            let reason = if !owner_supported {
+                Some("Terrain authored lighting requires world or func_detail terrain")
+            } else if info.tool {
+                Some("Tool and sky terrain are excluded from authored lighting")
+            } else if info.base.is_none() || info.missing {
+                Some("Terrain authored lighting needs an available base display texture")
+            } else {
+                info.terrain_lighting_error
+                    .as_deref()
+                    .or_else(|| terrain::lighting_error(mesh, normals))
+            };
+            if let Some(reason) = reason.map(str::to_owned) {
+                self.exclude_terrain(face, &side.material, triangles.len(), &reason);
+            } else {
+                lighting_receiver = 1;
+                self.lighting.report.terrain.admitted_surfaces += 1;
+                self.lighting.report.terrain.admitted_triangles += triangles.len();
+            }
+        }
         // Texture coordinates come from the undisplaced face, as in the engine,
         // so they're computed from the flat grid position.
         let first = self.vertices.len() as u32;
@@ -486,7 +553,7 @@ impl Builder<'_> {
                 opacity: 1.0,
                 texture_alpha: 0,
                 tangent: [0.0; 4],
-                lighting_receiver: 0,
+                lighting_receiver,
             });
         }
         self.indices[material].extend(triangles.iter().flatten().map(|&i| first + i as u32));
@@ -1252,7 +1319,7 @@ impl SceneMesh {
             .iter()
             .filter(|s| !s.hidden && include(ObjectId::Solid(s.id)))
         {
-            builder.add_solid(solid, selected.contains(&ObjectId::Solid(solid.id)));
+            builder.add_solid(solid, selected.contains(&ObjectId::Solid(solid.id)), true);
         }
         for entity in vmf
             .entities
@@ -1267,7 +1334,11 @@ impl SceneMesh {
                 builder.add_point_entity(entity, is_selected, model_guide);
             }
             for solid in entity.solids.iter().filter(|s| !s.hidden) {
-                builder.add_solid(solid, is_selected);
+                builder.add_solid(
+                    solid,
+                    is_selected,
+                    entity.classname() == Some("func_detail"),
+                );
             }
         }
 

@@ -16,12 +16,14 @@ pub fn limits() -> Limits {
         lights: MAX_LIGHTS,
         diagnostics: MAX_DIAGNOSTICS,
         exposure_ev: [-8, 8],
-        receiver_counts: "flat brush polygons; terrain/models/resource guides excluded by category",
+        receiver_counts: RECEIVER_COUNTS,
         policy: POLICY,
     }
 }
 
-pub const POLICY: &str = "Unshadowed authored LDR point/spot diffuse preview. At most 32 constant unnamed style-0 lights; this is an editor budget, not an engine limit. No sun, ambient, bounce, shadows, animation, native brightness or tone mapping. Opaque flat LightmappedGeneric brush polygons only; excluded surfaces retain their ordinary display. Fast interpolates vertex lighting and can miss small pools on large faces; Detail evaluates each fragment and composes with supported normal maps. Linear base × tint × compiler contribution / 255, exposure 2^EV, per-channel Reinhard, then one sRGB target conversion. Zero admitted lights make supported receivers black. Reload material assets refreshes cached base display and receiver policy together.";
+pub const RECEIVER_COUNTS: &str = "flat brush polygons counted separately from admitted/excluded terrain surfaces and drawn triangles; outline-only terrain has zero drawn triangles; models/resource guides excluded by category";
+
+pub const POLICY: &str = "Unshadowed authored LDR point/spot diffuse preview. At most 32 constant unnamed style-0 lights; this is an editor budget, not an engine limit. No sun, ambient, bounce, shadows, animation, native brightness or tone mapping. Opaque flat LightmappedGeneric brush polygons and single-base world/func_detail terrain with checked sewn LOD normals; terrain excludes bump/normal, blend and detail declarations; excluded surfaces retain their ordinary display. Fast interpolates vertex lighting and can miss small pools on large faces; Detail evaluates each fragment and composes with supported normal maps. Linear base × tint × compiler contribution / 255, exposure 2^EV, per-channel Reinhard, then one sRGB target conversion. Zero admitted lights make supported receivers black. Reload material assets refreshes cached base display and receiver policy together.";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -74,9 +76,27 @@ pub struct Report {
     pub admitted_entities: Vec<u32>,
     pub admitted_receivers: usize,
     pub excluded_receivers: usize,
+    pub terrain: TerrainReceivers,
     pub diagnostics: Vec<Diagnostic>,
     pub diagnostics_truncated: bool,
     pub unavailable: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct TerrainReceivers {
+    pub admitted_surfaces: usize,
+    pub excluded_surfaces: usize,
+    pub admitted_triangles: usize,
+    pub excluded_triangles: usize,
+}
+
+impl TerrainReceivers {
+    pub fn exclude_admitted(&mut self) {
+        self.excluded_surfaces += self.admitted_surfaces;
+        self.excluded_triangles += self.admitted_triangles;
+        self.admitted_surfaces = 0;
+        self.admitted_triangles = 0;
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -101,33 +121,47 @@ impl Report {
             reason: reason.chars().take(512).collect(),
         });
     }
+    fn terrain_summary(&self) -> String {
+        format!(
+            "{} admitted / {} excluded terrain surfaces ({} admitted / {} excluded drawn triangles)",
+            self.terrain.admitted_surfaces,
+            self.terrain.excluded_surfaces,
+            self.terrain.admitted_triangles,
+            self.terrain.excluded_triangles
+        )
+    }
     pub fn summary(&self) -> String {
         if !self.requested {
             return "Authored lighting preview is off".into();
         }
         if let Some(reason) = &self.unavailable {
             return format!(
-                "Unshadowed lighting unavailable: {reason}\n{} admitted / {} excluded lights · {} admitted / {} excluded brush receiver polygons; ordinary display retained",
+                "Unshadowed lighting unavailable: {reason}\n{} admitted / {} excluded lights · {} admitted / {} excluded brush receiver polygons · {}; ordinary display retained",
                 self.admitted_lights,
                 self.excluded_lights,
                 self.admitted_receivers,
-                self.excluded_receivers
+                self.excluded_receivers,
+                self.terrain_summary()
             );
         }
         if !self.active {
             return "Unshadowed lighting requires Textured view; no light admission".into();
         }
         let mut text = format!(
-            "Unshadowed lighting · {} admitted / {} excluded lights · {} admitted / {} excluded brush receiver polygons",
+            "Unshadowed lighting · {} admitted / {} excluded lights · {} admitted / {} excluded brush receiver polygons · {}",
             self.admitted_lights,
             self.excluded_lights,
             self.admitted_receivers,
-            self.excluded_receivers
+            self.excluded_receivers,
+            self.terrain_summary()
         );
         if self.admitted_lights == 0 {
             text.push_str("\nZero admitted lights: supported receivers are black");
         }
-        if self.excluded_lights > 0 || self.excluded_receivers > 0 {
+        if self.excluded_lights > 0
+            || self.excluded_receivers > 0
+            || self.terrain.excluded_surfaces > 0
+        {
             text.push_str(
                 "\nPartial scene coverage; excluded receivers keep their ordinary display",
             );

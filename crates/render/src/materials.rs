@@ -20,6 +20,7 @@ pub const MAX_RELOAD_FAILURES: usize = 100;
 #[derive(Debug)]
 pub struct MaterialInfo {
     pub lighting_error: Option<String>,
+    pub terrain_lighting_error: Option<String>,
     pub normal: Option<Arc<crate::normal_maps::Asset>>,
     pub display_texture: Option<String>,
     material_identity: Option<u64>,
@@ -121,6 +122,10 @@ impl MaterialInfo {
             material_identity: material.map(material_identity),
             lighting_error: material
                 .map_or_else(|| Some("No resolved material".into()), lighting_error),
+            terrain_lighting_error: material.map_or_else(
+                || Some("No resolved material".into()),
+                terrain_lighting_error,
+            ),
             display_texture,
             normal: None,
             helper: None,
@@ -143,6 +148,7 @@ impl MaterialInfo {
         Self {
             material_identity: None,
             lighting_error: Some("Editor helper or unavailable material".into()),
+            terrain_lighting_error: Some("Editor helper or unavailable material".into()),
             display_texture: None,
             normal: None,
             helper: None,
@@ -176,6 +182,28 @@ fn lighting_error(material: &Material) -> Option<String> {
         return None;
     };
     Some(reason.into())
+}
+
+fn terrain_lighting_error(material: &Material) -> Option<String> {
+    lighting_error(material).or_else(|| {
+        material.params.iter().find_map(|(key, _)| {
+            if key.starts_with("$bump") || key.starts_with("$normal") || key.starts_with("$ssbump")
+                || key == "$forcebump" {
+                Some("Terrain authored lighting excludes declared bump and normal maps".into())
+            } else if key.starts_with("$detail")
+                || key.starts_with("$blend")
+                || key.starts_with("$basetexture2")
+                || key.starts_with("$texture2")
+                || key.starts_with("$envmap")
+                || key.starts_with("$phong")
+                || key == "$lightwarptexture"
+            {
+                Some("Terrain authored lighting requires a single base without extra, blend or detail layers".into())
+            } else {
+                None
+            }
+        })
+    })
 }
 
 fn hash_nodes(

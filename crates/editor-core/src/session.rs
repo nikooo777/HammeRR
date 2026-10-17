@@ -2161,6 +2161,7 @@ impl Session {
         mesh.normal_maps.requested = view.normal_maps;
         lighting.report.admitted_receivers = mesh.lighting.report.admitted_receivers;
         lighting.report.excluded_receivers = mesh.lighting.report.excluded_receivers;
+        lighting.report.terrain = mesh.lighting.report.terrain;
         for diagnostic in mesh.lighting.report.diagnostics {
             lighting.report.diagnostic(
                 diagnostic.entity,
@@ -2172,6 +2173,7 @@ impl Session {
         if !lighting.report.active {
             lighting.report.excluded_receivers += lighting.report.admitted_receivers;
             lighting.report.admitted_receivers = 0;
+            lighting.report.terrain.exclude_admitted();
             for vertex in &mut mesh.vertices {
                 vertex.lighting_receiver = 0;
             }

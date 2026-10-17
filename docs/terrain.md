@@ -266,7 +266,20 @@ Limits: world and consumed `func_detail` terrain only. Helpers keep sheet behavi
 | --- | --- |
 | ![Automatically blended terrain lighting](images/terrain-border-automatic.png) | ![Separate terrain border lighting](images/terrain-border-hard.png) |
 
-Limits: 1–16 faces, angles 0–180 degrees, world/func_detail terrain with shared full/half borders and pairwise local-normal thresholds. Connected corners share the accepted group normal. Interior shading remains smooth; heights, alpha, flags, topology and collision stay fixed. The viewport uses authored geometry, while compiler LOD may change fine geometry and its local angles. Invalid/duplicate imported `smooth` fields block compilation until repaired; **Automatic** removes the override. This setting is separate from the compiler's brush smoothing angle and the **Smooth** height brush.
+Limits: 1–16 faces, angles 0–180 degrees, world/func_detail terrain with shared full/half borders and pairwise local-normal thresholds. Connected corners share the accepted group normal. Interior shading remains smooth; heights, alpha, flags, topology and collision stay fixed. The viewport uses its prepared sewn LOD mesh; changing fine border positions can also change local shading angles. Invalid/duplicate imported `smooth` fields block compilation until repaired; **Automatic** removes the override. This setting is separate from the compiler's brush smoothing angle and the **Smooth** height brush.
+
+## Preview authored lighting
+
+Inspect point and spot lighting on terrain before a bake.
+
+1. Under **VIEWPORT**, choose **Textured**, then enable **Unshadowed authored lighting**.
+2. Choose **Fast · vertex lighting** for interpolated vertex contributions or **Detail · per-fragment lighting** for evaluation at each displayed surface point. Fast can miss small pools between terrain vertices.
+3. Set **Lighting exposure (EV)** from −8 to 8. The status reports admitted and excluded terrain surfaces and drawn triangles separately from flat brush polygons. Read the listed reason when a sheet keeps its ordinary display.
+4. Use **Edit terrain… → Preview** to review changed terrain under the same lights. **Apply / Cancel** controls the terrain edit; lighting settings preserve the review, committed map and undo history.
+
+Limits: visible world and `func_detail` terrain at power 2, 3 or 4, with an available opaque single-base `LightmappedGeneric` image. Prepared sewn LOD positions and normals must satisfy the preview's finite Source coordinate, nondegenerate triangle and safe normal checks. Bump/normal, second/base blend, detail, reflection/specular and light-warp declarations are excluded, along with tool/sky, alpha-tested/translucent, self-illuminated, additive and proxy/fallback materials. Declared unsupported keys are excluded even when set to zero. **Reload material assets** refreshes cached base pixels and receiver policy together.
+
+This uses the existing unshadowed LDR point/spot preview: no shadows, sun, ambient or bounce, and no native brightness claim. Rejected terrain retains its ordinary geometry and contributes to excluded counts. A preparation failure retains the existing outline and counts one excluded surface with zero drawn triangles. Exceeding the light budget disables the whole preview and retains ordinary pixels. Disabled, Flat, Wireframe and diagnostic views retain their rendering behavior. No terrain normal texture or new lighting atlas is created.
 
 ## Connected lighting
 

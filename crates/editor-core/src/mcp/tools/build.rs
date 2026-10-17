@@ -166,26 +166,36 @@ impl EditorServer {
         Parameters(args): Parameters<CompileArgs>,
     ) -> ToolResult {
         run(|| {
-            crate::runtime::start_compile_with_operation(
-                &self.session,
-                Actor::Agent,
-                args.path.as_deref().map(std::path::Path::new),
-                false,
-                args.expected_generation,
-                self.operation.clone(),
-            )
+            let access = self.document_access();
+            if access.managed() {
+                access.start_compile(
+                    Actor::Agent,
+                    args.path.as_deref().map(std::path::Path::new),
+                    false,
+                    args.expected_generation,
+                )
+            } else {
+                crate::runtime::start_compile_with_operation(
+                    &self.session,
+                    Actor::Agent,
+                    args.path.as_deref().map(std::path::Path::new),
+                    false,
+                    args.expected_generation,
+                    self.operation.clone(),
+                )
+            }
         })
     }
 
     #[tool(
-        description = "Inspect the latest compile job: token, state, current stage, elapsed time, output path, snapshot/dependency freshness and terminal diagnostics/statistics. Instance jobs report bounded stats.instances counts/files/hashes and instance_dependencies.current/error from cheap metadata/alias checks; launch verifies exact dependencies in its background worker. Job diagnostics include the first 100 messages and the total count. Shared with the editor's build status."
+        description = "Inspect the latest compile job: token, queued/running/terminal state, queue position and capacity, current stage, elapsed time, output path, snapshot/dependency freshness and terminal diagnostics/statistics. Instance jobs report bounded stats.instances counts/files/hashes and instance_dependencies.current/error from cheap metadata/alias checks; launch verifies exact dependencies in its background worker. Job diagnostics include the first 100 messages and the total count. Shared with the editor's build status."
     )]
     pub(in crate::mcp) fn get_compile_status(&self) -> ToolResult {
         ok(self.session().compile_status())
     }
 
     #[tool(
-        description = "Request cancellation of the exact active compile job. Poll get_compile_status until cancelled; another build remains blocked until the worker stops. Cancellation is rejected once output publication has completed. Previous BSP and pointfile remain unchanged when cancellation is accepted."
+        description = "Request cancellation of the exact queued or running compile job. Queued work retires promptly; running work remains busy until its owned cleanup stops. Poll get_compile_status until cancelled. Cancellation is rejected once output publication has completed. Previous BSP and pointfile remain unchanged when cancellation is accepted."
     )]
     pub(in crate::mcp) fn cancel_compile(
         &self,
@@ -196,9 +206,7 @@ impl EditorServer {
                 .token
                 .parse()
                 .map_err(|_| "Invalid compile job token")?;
-            let mut session = self.session();
-            session.cancel_compile(Actor::Agent, token)?;
-            Ok(session.compile_status())
+            self.document_access().cancel_compile(Actor::Agent, token)
         })
     }
 

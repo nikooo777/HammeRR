@@ -36,6 +36,7 @@ fn fixture() -> (tempfile::TempDir, Application, PathBuf) {
     let session = Arc::new(Mutex::new(state));
     let document = DocumentHandle::start(session).unwrap();
     let application = Application {
+        compile_queue: None,
         _path_claims: path_claims,
         material_favorites,
         recent_maps,

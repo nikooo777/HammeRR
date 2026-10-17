@@ -393,6 +393,13 @@ impl EditorServer {
         server
     }
 
+    fn document_access(&self) -> crate::runtime::DocumentAccess {
+        self._document.as_ref().map_or_else(
+            || crate::runtime::DocumentAccess::unmanaged(self.session.clone()),
+            |document| crate::runtime::DocumentAccess::for_document(document.clone()),
+        )
+    }
+
     fn session(&self) -> MutexGuard<'_, Session> {
         lock(&self.session)
     }
@@ -450,27 +457,42 @@ impl EditorServer {
         args: CompileArgs,
         play: bool,
     ) -> ToolResult {
-        let submission = {
+        let access = self.document_access();
+        let result = if access.managed() {
             let path = args.path.as_ref().map(PathBuf::from);
-            match CompileSubmission::begin(
-                &self.session,
+            let handle = match access.submit_compile(
                 Actor::Agent,
                 path.as_deref(),
                 play,
                 args.expected_generation,
             ) {
-                Ok(submission) => submission,
-                Err(message) => return fail(message),
-            }
-        };
-        let completion = submission.completion();
-        let worker = tokio::task::spawn_blocking(self.worker(move || submission.run())).await;
-        let result = match worker {
-            Ok(result) => result,
-            Err(error) => {
-                let error = error.to_string();
-                completion.fail(error.clone());
-                Err(error)
+                Ok(handle) => handle,
+                Err(error) => return fail(error),
+            };
+            handle.await
+        } else {
+            let submission = {
+                let path = args.path.as_ref().map(PathBuf::from);
+                match CompileSubmission::begin(
+                    &self.session,
+                    Actor::Agent,
+                    path.as_deref(),
+                    play,
+                    args.expected_generation,
+                ) {
+                    Ok(submission) => submission,
+                    Err(message) => return fail(message),
+                }
+            };
+            let completion = submission.completion();
+            let worker = tokio::task::spawn_blocking(self.worker(move || submission.run())).await;
+            match worker {
+                Ok(result) => result,
+                Err(error) => {
+                    let error = error.to_string();
+                    completion.fail(error.clone());
+                    Err(error)
+                }
             }
         };
         let (result, game) = match result {

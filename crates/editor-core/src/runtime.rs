@@ -6,6 +6,10 @@ use crate::game;
 use crate::session::compilation::{CompileOrigin, CompileRequest, CompileResult};
 use crate::session::{Actor, LaunchOrigin, LaunchRequest, Session};
 
+mod compile_queue;
+pub use compile_queue::CompileHandle;
+pub(crate) use compile_queue::{CompileQueue, QueueStatus};
+
 mod document;
 pub use document::{
     DocumentAccess, DocumentContinuation, DocumentHandle, DocumentId, DocumentLifecycle,

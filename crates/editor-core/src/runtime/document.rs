@@ -2,8 +2,11 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
-use super::{SharedSession, lock};
+use super::compile_queue::{CompileInput, QueueClient};
+use super::{CompileHandle, CompileQueue, SharedSession, lock};
 use crate::recovery;
+use crate::session::Actor;
+use serde_json::Value;
 
 const SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(10);
 static NEXT_DOCUMENT_ID: AtomicU64 = AtomicU64::new(1);
@@ -81,6 +84,7 @@ struct ShutdownGuard {
     session: SharedSession,
     admission: Arc<Admission>,
     drained: bool,
+    queue: Option<(QueueClient, DocumentId)>,
 }
 
 impl ShutdownGuard {
@@ -90,6 +94,9 @@ impl ShutdownGuard {
         }
         self.admission.begin_drain();
         lock(&self.session).shutdown();
+        if let Some((queue, document)) = &self.queue {
+            queue.cancel_document(*document);
+        }
         loop {
             let busy = {
                 let session = lock(&self.session);
@@ -146,6 +153,7 @@ struct DocumentRuntime {
     session: SharedSession,
     admission: Arc<Admission>,
     id: DocumentId,
+    queue: Option<QueueClient>,
 }
 
 impl Drop for DocumentRuntime {
@@ -161,7 +169,22 @@ impl Drop for DocumentRuntime {
 pub struct DocumentHandle(Arc<DocumentRuntime>);
 
 impl DocumentHandle {
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn start(session: SharedSession) -> Result<Self, String> {
+        Self::start_with_queue(session, None)
+    }
+
+    pub(crate) fn start_managed(
+        session: SharedSession,
+        queue: &CompileQueue,
+    ) -> Result<Self, String> {
+        Self::start_with_queue(session, Some(queue.client()))
+    }
+
+    fn start_with_queue(
+        session: SharedSession,
+        queue: Option<QueueClient>,
+    ) -> Result<Self, String> {
         let id = NEXT_DOCUMENT_ID
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
             .map(DocumentId)
@@ -177,6 +200,7 @@ impl DocumentHandle {
                     session: session.clone(),
                     admission: admission.clone(),
                     drained: false,
+                    queue: queue.clone().map(|queue| (queue, id)),
                 },
                 recovery_worker,
                 finished: None,
@@ -184,6 +208,7 @@ impl DocumentHandle {
             session,
             admission,
             id,
+            queue,
         })))
     }
 
@@ -275,6 +300,88 @@ impl DocumentAccess {
         operation: impl FnOnce(&mut crate::session::Session) -> Result<R, String>,
     ) -> Result<R, String> {
         self.with_shared(|session| operation(&mut lock(session)))
+    }
+
+    pub fn start_compile(
+        &self,
+        actor: Actor,
+        path: Option<&std::path::Path>,
+        play: bool,
+        generation: Option<u64>,
+    ) -> Result<Value, String> {
+        if self.managed() {
+            self.submit_compile(actor, path, play, generation)
+                .map(|handle| handle.status().clone())
+        } else {
+            let operation = self
+                .document
+                .as_ref()
+                .map(DocumentHandle::admit)
+                .transpose()?;
+            super::start_compile_with_operation(
+                &self.session,
+                actor,
+                path,
+                play,
+                generation,
+                operation,
+            )
+        }
+    }
+
+    pub fn submit_compile(
+        &self,
+        actor: Actor,
+        path: Option<&std::path::Path>,
+        play: bool,
+        generation: Option<u64>,
+    ) -> Result<CompileHandle, String> {
+        let document = self
+            .document
+            .as_ref()
+            .ok_or("An owning document is required for queued compilation")?;
+        let operation = document.admit()?;
+        let queue = document
+            .0
+            .queue
+            .as_ref()
+            .ok_or("This document uses the explicit unmanaged runtime")?;
+        queue.submit(
+            document.id(),
+            &self.session,
+            operation,
+            CompileInput {
+                actor,
+                path,
+                play,
+                generation,
+            },
+        )
+    }
+
+    pub fn cancel_compile(&self, actor: Actor, token: u64) -> Result<Value, String> {
+        let _operation = self
+            .document
+            .as_ref()
+            .map(DocumentHandle::admit)
+            .transpose()?;
+        let origin = {
+            let mut session = lock(&self.session);
+            session.cancel_compile(actor, token)?;
+            session.compile_origin(token)?
+        };
+        if let Some(document) = &self.document
+            && let Some(queue) = &document.0.queue
+        {
+            queue.cancel_queued(document.id(), &origin);
+        }
+        Ok(lock(&self.session).compile_status())
+    }
+
+    pub(crate) fn managed(&self) -> bool {
+        self.document
+            .as_ref()
+            .is_some_and(|document| document.0.queue.is_some())
     }
 
     pub fn downgrade(&self) -> DocumentContinuation {

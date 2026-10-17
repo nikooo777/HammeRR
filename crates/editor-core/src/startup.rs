@@ -74,6 +74,7 @@ pub fn mount_game(gameinfo: Option<PathBuf>) -> Result<GameFs, String> {
 }
 
 pub struct Application {
+    compile_queue: Option<crate::runtime::CompileQueue>,
     _path_claims: crate::path_claims::Authority,
     pub material_favorites: material_favorites::Authority,
     pub recent_maps: recent_maps::Authority,
@@ -88,6 +89,7 @@ pub struct Application {
 
 impl Application {
     pub fn open(args: &Args) -> Result<Self, String> {
+        let compile_queue = crate::runtime::CompileQueue::process()?;
         let directory = recovery::default_directory();
         let saved_defaults = crate::saved_defaults::SavedDefaults::configured(directory.clone());
         let session = Arc::new(Mutex::new(Session::with_saved_defaults(
@@ -117,7 +119,7 @@ impl Application {
         let prefabs = prefabs::Authority::configured(directory.clone());
         lock(&session).use_application_prefabs(prefabs.clone());
         lock(&session).configure_recovery(directory);
-        let document = DocumentHandle::start(session.clone())?;
+        let document = DocumentHandle::start_managed(session.clone(), &compile_queue)?;
         let fgd = args
             .fgd
             .clone()
@@ -136,6 +138,7 @@ impl Application {
             .as_ref()
             .map(|map| lock(&session).open(Actor::User, map, true));
         Ok(Self {
+            compile_queue: Some(compile_queue),
             _path_claims: path_claims,
             material_favorites,
             recent_maps,
@@ -156,7 +159,20 @@ impl Application {
     }
 
     pub fn shutdown(&mut self) -> Result<(), String> {
-        self.document.shutdown()
+        if let Some(queue) = &self.compile_queue {
+            queue.close_admission();
+        }
+        let document = self.document.shutdown();
+        let queue = self
+            .compile_queue
+            .as_mut()
+            .map_or(Ok(()), crate::runtime::CompileQueue::shutdown);
+        match (document, queue) {
+            (Ok(()), result) | (result, Ok(())) => result,
+            (Err(document), Err(queue)) => Err(format!(
+                "{document}; compiler queue shutdown failed: {queue}"
+            )),
+        }
     }
 
     pub fn finish(

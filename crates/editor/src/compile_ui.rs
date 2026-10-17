@@ -4,7 +4,7 @@ use std::rc::Rc;
 use slint::ComponentHandle;
 
 use crate::CompileWindow;
-use crate::runtime::{SharedSession, lock};
+use crate::runtime::{DocumentAccess, SharedSession, lock};
 use crate::session::{Actor, Session};
 
 mod baked_lightmaps;
@@ -365,7 +365,15 @@ fn recipe_action(
 }
 
 impl Controller {
+    #[cfg(test)]
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
+        Self::new_with_access(shared, DocumentAccess::unmanaged(shared.clone()))
+    }
+
+    pub fn new_with_access(
+        shared: &SharedSession,
+        access: DocumentAccess,
+    ) -> Result<Self, slint::PlatformError> {
         let window = CompileWindow::new()?;
         let token = Rc::new(Cell::new(None));
         let recipes = Rc::new(RefCell::new(RecipeForm::default()));
@@ -638,13 +646,13 @@ impl Controller {
             }
         });
         window.on_cancel_build({
-            let (shared, window, token) = (shared.clone(), window.as_weak(), token.clone());
+            let (continuation, window, token) = (access.downgrade(), window.as_weak(), token.clone());
             move || {
                 if let Some(token) = token.get() {
-                    let result = lock(&shared).cancel_compile(Actor::User, token);
+                    let result = continuation.upgrade().and_then(|access| access.cancel_compile(Actor::User, token));
                     window.unwrap().set_message(match result {
-                        Ok(()) => {
-                            "Cancellation requested. Waiting for the compiler to stop.".into()
+                        Ok(_) => {
+                            "Cancellation requested. Queued jobs retire immediately; running jobs stop after cleanup.".into()
                         }
                         Err(error) => error.into(),
                     });
@@ -708,6 +716,18 @@ impl Controller {
             return;
         }
         self.window.set_summary(session.compile_label().into());
+        let queue_details = match job["queue"]["position"].as_u64() {
+            Some(position) => format!(
+                "\nQueue position: {position} · {} / {} jobs admitted",
+                job["queue"]["admitted"].as_u64().unwrap_or_default(),
+                job["queue"]["limit"].as_u64().unwrap_or_default()
+            ),
+            None if job["queue"].is_object() => format!(
+                "\nQueue wait: {:.2}s",
+                job["queue"]["waiting_ms"].as_u64().unwrap_or_default() as f64 / 1000.0
+            ),
+            None => String::new(),
+        };
         let result = &job["result"];
         let ldr_prefix = if result["stats"]["hdr"].is_object() {
             "LDR "
@@ -1039,7 +1059,7 @@ impl Controller {
         };
         self.window.set_details(
             format!(
-                "Output: {}\nRecipe at build start: {}\nCompile scope at build start: {region_label}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nIndirect light: {} · Brush smoothing angle: {}°\nStage: {} · {:.2}s elapsed{instances}{packed_sky}{samples}{reflections}{props}{details}{visibility}{hints}{bounce}{areas}{occluders}{terrain}{overlays}{water}{sky}{lighting}{bumps}{model_maps}{styles}{hdr}{smoothing}{physics}\n{}",
+                "Output: {}\nRecipe at build start: {}\nCompile scope at build start: {region_label}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nIndirect light: {} · Brush smoothing angle: {}°\nStage: {} · {:.2}s elapsed{queue_details}{instances}{packed_sky}{samples}{reflections}{props}{details}{visibility}{hints}{bounce}{areas}{occluders}{terrain}{overlays}{water}{sky}{lighting}{bumps}{model_maps}{styles}{hdr}{smoothing}{physics}\n{}",
                 job["path"].as_str().unwrap_or_default(),
                 job["recipe"]["name"].as_str().unwrap_or("Custom settings"),
                 compiler::LightingMode::parse(job["settings"]["lighting"].as_str().unwrap_or_default()).unwrap_or_default().label(),

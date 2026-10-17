@@ -33,6 +33,7 @@ pub struct State {
 }
 
 struct Job {
+    queue: Option<crate::runtime::QueueStatus>,
     origin: CompileOrigin,
     token: u64,
     control: compiler::Control,
@@ -114,6 +115,15 @@ impl State {
 
 impl Job {
     fn status(&self) -> &'static str {
+        if self.finished.is_none()
+            && self.terminal().is_none()
+            && self
+                .queue
+                .as_ref()
+                .is_some_and(crate::runtime::QueueStatus::queued)
+        {
+            return "queued";
+        }
         self.terminal()
             .map_or(self.status, |terminal| terminal.status)
     }
@@ -174,6 +184,10 @@ impl CompileResult {
 }
 
 impl CompileRequest {
+    pub(crate) fn control(&self) -> compiler::Control {
+        self.control.clone()
+    }
+
     pub(crate) fn origin(&self) -> CompileOrigin {
         self.origin.clone()
     }
@@ -746,6 +760,7 @@ impl Session {
         };
         let origin = CompileOrigin::new();
         self.compilation.job = Some(Job {
+            queue: None,
             origin: origin.clone(),
             token: self.compilation.serial,
             control: control.clone(),
@@ -1077,12 +1092,13 @@ impl Session {
         let job = self.compilation.job.as_ref().map(|job| {
             let progress = job.control.progress();
             let dependency_issue=self.instance_dependency_issue(job.instance_dependencies.as_ref(),&job.source_path);
-            let mut status=json!({"token":job.token.to_string(),"status":if job.status()=="running" && progress.cancel_requested {"cancelling"} else {job.status()},
-                "stage":progress.stage.name(),"stage_label":progress.stage.label(),"cancellable":job.status()=="running" && progress.cancellable && !progress.cancel_requested,
+            let mut status=json!({"token":job.token.to_string(),"status":if matches!(job.status(), "queued" | "running") && progress.cancel_requested {"cancelling"} else {job.status()},
+                "stage":progress.stage.name(),"stage_label":progress.stage.label(),"cancellable":matches!(job.status(), "queued" | "running") && progress.cancellable && !progress.cancel_requested,
                 "elapsed_ms":job.elapsed().as_millis(),
                 "path":job.path.display().to_string(),"generation":job.snapshot.generation,"revision":job.snapshot.revision,
                 "compile_region":job.region,"recipe":job.recipe,"native_runtime":job.native_runtime,"reflections":{"channel":if job.options.lighting==compiler::LightingMode::DirectLdrHdr {"ldr_hdr"} else {"ldr"},"samples_complete":progress.reflection_samples_complete,"samples_total":progress.reflection_samples_total},"settings":{"pack_sky_assets":job.options.pack_sky_assets,"generate_reflections":job.options.generate_reflections,"smoothing_angle":job.options.smoothing_angle,"bounces":job.options.bounces,"lighting":job.options.lighting.name(),"physics":job.options.physics.name(),"sky_quality":job.options.sky_quality.name(),"visibility":job.options.visibility.name()},
                 "stale":!self.current_snapshot(&job.snapshot) || job.options != self.compilation.options || ((job.options.requires_guarded_publication() || job.instance_dependencies.is_some()) && job.content_epoch != self.content_epoch) || dependency_issue.is_some(),"result":job.result()});
+            if let Some(queue) = &job.queue { status["queue"] = queue.snapshot(); }
             if job.instance_dependencies.is_some() { status["instance_dependencies"]=json!({"current":dependency_issue.is_none(),"error":dependency_issue}); }
             status
         });
@@ -1097,6 +1113,30 @@ impl Session {
         self.compilation.job.as_ref().map(|job| job.token)
     }
 
+    pub(crate) fn queue_compile(
+        &mut self,
+        origin: &CompileOrigin,
+        queue: crate::runtime::QueueStatus,
+    ) -> Result<(), String> {
+        let job = self
+            .compilation
+            .job
+            .as_mut()
+            .filter(|job| job.origin.same(origin) && job.finished.is_none())
+            .ok_or("Compile job was replaced")?;
+        job.queue = Some(queue);
+        Ok(())
+    }
+
+    pub(crate) fn compile_origin(&self, token: u64) -> Result<CompileOrigin, String> {
+        self.compilation
+            .job
+            .as_ref()
+            .filter(|job| job.token == token)
+            .map(|job| job.origin.clone())
+            .ok_or_else(|| "Compile job was replaced".into())
+    }
+
     pub fn cancel_compile(&mut self, actor: Actor, token: u64) -> Result<(), String> {
         let job = self
             .compilation
@@ -1104,7 +1144,7 @@ impl Session {
             .as_ref()
             .filter(|job| job.token == token)
             .ok_or("Compile job was replaced")?;
-        if job.status() != "running" {
+        if !matches!(job.status(), "queued" | "running") {
             return Err("Compile job is already finished".into());
         }
         job.control.cancel()?;
@@ -1118,7 +1158,8 @@ impl Session {
         };
         let progress = job.control.progress();
         match job.status() {
-            "running" if progress.cancel_requested => "Cancelling compilation…".into(),
+            "running" | "queued" if progress.cancel_requested => "Cancelling compilation…".into(),
+            "queued" => "Queued · Waiting to compile".into(),
             "running" => format!("Compiling · {}", progress.stage.label()),
             "completed" => format!(
                 "Compiled in {:.2}s{}",
@@ -1149,7 +1190,9 @@ impl Session {
     pub fn compile_cancellable(&self) -> bool {
         self.compilation.job.as_ref().is_some_and(|job| {
             let progress = job.control.progress();
-            job.status() == "running" && progress.cancellable && !progress.cancel_requested
+            matches!(job.status(), "queued" | "running")
+                && progress.cancellable
+                && !progress.cancel_requested
         })
     }
 

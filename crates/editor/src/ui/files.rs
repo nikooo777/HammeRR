@@ -187,9 +187,7 @@ pub(super) fn start_compile(
     play: bool,
     generation: u64,
 ) {
-    let result = access.with_shared(|session| {
-        runtime::start_compile_for_generation(session, Actor::User, path, play, Some(generation))
-    });
+    let result = access.start_compile(Actor::User, path, play, Some(generation));
     if let Err(error) = result {
         app.set_message(error.into());
     }

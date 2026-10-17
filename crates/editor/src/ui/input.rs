@@ -19,10 +19,45 @@ pub(super) fn edit_selection(
     }
 }
 
-pub(super) fn cancel_surface_pick(app: &AppWindow, ui: &SharedUi) -> bool {
+pub(super) fn overlay_handles_interactive(
+    app: &AppWindow,
+    session: &Session,
+    camera: render::Camera,
+) -> bool {
+    session.overlay_corner_handles_interactive(
+        Actor::User,
+        camera,
+        (
+            app.get_viewport_width().round().max(1.0) as u32,
+            app.get_viewport_height().round().max(1.0) as u32,
+        ),
+    )
+}
+
+pub(super) fn refresh_overlay_handle_controls(
+    app: &AppWindow,
+    session: &Session,
+    camera: render::Camera,
+) {
+    let size = (
+        app.get_viewport_width().round().max(1.0) as u32,
+        app.get_viewport_height().round().max(1.0) as u32,
+    );
+    app.set_overlay_handling(session.overlay_corner_handles_interactive(Actor::User, camera, size));
+    app.set_can_cancel_overlay_handles(session.overlay_corner_handles_owned(Actor::User));
+    app.set_overlay_handle_notice(
+        session
+            .overlay_corner_handle_notice(Actor::User, camera, size)
+            .unwrap_or_default()
+            .into(),
+    );
+}
+
+pub(super) fn cancel_overlay_handles(app: &AppWindow, ui: &SharedUi) -> bool {
     let shared = session_of(ui);
+    let camera = ui.borrow().viewport.camera;
     let mut session = lock(&shared);
-    if session.overlay_corner_handles_active() {
+    if session.overlay_corner_handles_owned(Actor::User) {
         let result = if let Some(controller) = &ui.borrow().overlay {
             controller.cancel_handles(&mut session)
         } else {
@@ -34,12 +69,22 @@ pub(super) fn cancel_surface_pick(app: &AppWindow, ui: &SharedUi) -> bool {
                 )
                 .map(|_| ())
         };
-        match result {
-            Ok(()) => app.set_overlay_handling(false),
-            Err(error) => app.set_message(error.into()),
+        if let Err(error) = result {
+            app.set_message(error.into());
         }
+        refresh_overlay_handle_controls(app, &session, camera);
         return true;
     }
+    false
+}
+
+pub(super) fn cancel_surface_pick(app: &AppWindow, ui: &SharedUi) -> bool {
+    let shared = session_of(ui);
+    let camera = ui.borrow().viewport.camera;
+    if overlay_handles_interactive(app, &lock(&shared), camera) {
+        return cancel_overlay_handles(app, ui);
+    }
+    let mut session = lock(&shared);
     let path = session.linked_path();
     if !path["preview"]["picking"].is_null() {
         if path["preview"]["owner"] != Actor::User.label() {

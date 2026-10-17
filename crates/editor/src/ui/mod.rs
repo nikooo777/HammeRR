@@ -1419,6 +1419,12 @@ pub(super) fn run(
             cancel_surface_pick(&app.unwrap(), &ui);
         }
     });
+    app.on_cancel_overlay_handles({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            cancel_overlay_handles(&app.unwrap(), &ui);
+        }
+    });
     app.on_copy_objects({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || copy_clipboard_selection(&app.unwrap(), &ui, false)
@@ -1881,7 +1887,7 @@ pub(super) fn run(
                 ui.pick_release = false;
                 return;
             }
-            if button == 0 && lock(&ui.session).overlay_corner_handles_active() {
+            if button == 0 && overlay_handles_interactive(&app, &lock(&ui.session), ui.viewport.camera) {
                 let Some(controller) = &ui.overlay else {
                     app.set_message("Open Overlay… and Review current draft before using shared corner handles.".into());
                     return;
@@ -1907,7 +1913,7 @@ pub(super) fn run(
                 } else {
                     Ok(())
                 };
-                app.set_overlay_handling(session.overlay_corner_handles_active());
+                refresh_overlay_handle_controls(&app, &session, ui.viewport.camera);
                 if let Err(error) = result {
                     app.set_message(error.into());
                 }
@@ -2440,7 +2446,7 @@ pub(super) fn run(
             }) {
                 return;
             }
-            if lock(&ui.session).overlay_corner_handles_active() {
+            if overlay_handles_interactive(&app, &lock(&ui.session), ui.viewport.camera) {
                 let mut session = lock(&ui.session);
                 session.publish_camera(ui.viewport.camera);
                 if session.overlay_corner_handle_dragging()
@@ -2588,9 +2594,12 @@ pub(super) fn run(
             {
                 let mut ui = ui.borrow_mut();
                 ui.object_cycle.cancel();
-                if lock(&ui.session).overlay_corner_handle_dragging()
-                    && let Some(controller) = &ui.overlay
-                {
+                let cancel_overlay = {
+                    let session = lock(&ui.session);
+                    overlay_handles_interactive(&app.unwrap(), &session, ui.viewport.camera)
+                        && session.overlay_corner_handle_dragging()
+                };
+                if cancel_overlay && let Some(controller) = &ui.overlay {
                     let _ = controller.discard_handles(&mut lock(&ui.session));
                     app.unwrap().set_overlay_handling(false);
                 }
@@ -3152,7 +3161,7 @@ pub(super) fn run(
                     app.get_viewport_height().round().max(1.0) as u32,
                 ));
             }
-            app.set_overlay_handling(lock(&ui.session).overlay_corner_handles_active());
+            refresh_overlay_handle_controls(&app, &lock(&ui.session), ui.viewport.camera);
             if let Some(controller) = &ui.linked_path {
                 controller.set_viewport((
                     app.get_viewport_width().round().max(1.0) as u32,

@@ -1976,6 +1976,9 @@ export component AppWindow inherits Window {
     in property <bool> terrain-center-picking;
     in property <bool> surface-picking;
     in property <bool> overlay-handling;
+    in property <string> overlay-handle-notice;
+    in property <bool> can-cancel-overlay-handles;
+    callback cancel-overlay-handles();
     callback cancel-terrain-center-pick();
     in property <bool> terrain-stroking;
     callback cancel-terrain-stroke();
@@ -2288,9 +2291,9 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                if root.overlay-handling: Rectangle {
+                if root.overlay-handle-notice != "": Rectangle {
                     x: 12px;
-                    y: 64px;
+                    y: root.overlay-handling ? 64px : 114px;
                     width: min(720px, parent.width - 24px);
                     height: 64px;
                     background: #20252eee;
@@ -2300,8 +2303,8 @@ export component AppWindow inherits Window {
                     HorizontalLayout {
                         padding: 10px;
                         spacing: 12px;
-                        Text {text:"Drag a cyan overlay corner. Release to review with Apply corners. Escape restores the pre-handle draft.";wrap:word-wrap;color:#91b9e9;}
-                        Button {text:"Cancel handles";clicked=>{root.cancel-surface-pick();}}
+                        Text {text:root.overlay-handle-notice;wrap:word-wrap;color:#91b9e9;}
+                        if root.can-cancel-overlay-handles: Button {text:"Cancel handles";clicked=>{root.cancel-overlay-handles();}}
                     }
                 }
 

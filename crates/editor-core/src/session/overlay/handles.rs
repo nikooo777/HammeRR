@@ -57,6 +57,52 @@ impl Session {
             .is_some_and(|draft| draft.handles.is_some())
     }
 
+    pub fn overlay_corner_handles_owned(&self, actor: Actor) -> bool {
+        self.overlay
+            .draft
+            .as_ref()
+            .is_some_and(|draft| draft.owner == actor && draft.handles.is_some())
+    }
+
+    pub fn overlay_corner_handles_interactive(
+        &self,
+        actor: Actor,
+        camera: Camera,
+        size: (u32, u32),
+    ) -> bool {
+        self.overlay.draft.as_ref().is_some_and(|draft| {
+            self.checked_overlay_corner_handle_viewport(actor, draft.token, camera, size)
+                .is_ok()
+        })
+    }
+
+    pub fn overlay_corner_handle_notice(
+        &self,
+        actor: Actor,
+        camera: Camera,
+        size: (u32, u32),
+    ) -> Option<String> {
+        let draft = self.overlay.draft.as_ref()?;
+        draft.handles.as_ref()?;
+        if draft.owner != actor {
+            return Some(if self.checked_overlay(draft.token).is_ok() {
+                format!(
+                    "Overlay handles belong to {}. Open Overlay… and Review current draft to take ownership.",
+                    draft.owner.label()
+                )
+            } else {
+                format!(
+                    "Stale overlay handles belong to {}. Their owner can cancel them, or preview a new corner draft in Overlay….",
+                    draft.owner.label()
+                )
+            });
+        }
+        Some(match self.checked_overlay_corner_handle_viewport(actor, draft.token, camera, size) {
+            Ok(_) => "Drag a cyan overlay corner. Release to review with Apply corners. Escape restores the pre-handle draft.".into(),
+            Err(error) => format!("{error}. Cancel handles restores the pre-handle draft."),
+        })
+    }
+
     pub fn overlay_corner_handle_dragging(&self) -> bool {
         self.overlay
             .draft
@@ -98,6 +144,22 @@ impl Session {
         }
         if !self.working_solid_visible(self.render_document(), draft.source.solid) {
             return Err("The bound overlay face is outside the working region".into());
+        }
+        Ok(handles)
+    }
+
+    fn checked_overlay_corner_handle_viewport(
+        &self,
+        actor: Actor,
+        token: u64,
+        camera: Camera,
+        size: (u32, u32),
+    ) -> Result<&Handles, String> {
+        let handles = self.checked_overlay_corner_handles(actor, token)?;
+        if handles.context.camera() != camera || handles.context.size != size {
+            return Err(
+                "Viewport camera or dimensions changed; cancel handles and start again".into(),
+            );
         }
         Ok(handles)
     }

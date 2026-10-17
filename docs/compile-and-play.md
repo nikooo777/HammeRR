@@ -538,6 +538,9 @@ To follow a leak, open **Pointfile…**:
 - Loading and navigating never change the map.
 - Editing the map hides an external path until you reload it. A new build replaces it, and opening another map clears it.
 - Files may hold 2–65,536 points and be up to 2 MiB.
+- Unix loads verify the opened regular file and its aliases. Changed files,
+  special files and document shutdown preserve the previous overlay; non-Unix
+  file admission is unavailable.
 
 | Pointfile controls | Leak path drawn through the map |
 | --- | --- |
@@ -549,6 +552,9 @@ To follow a leak, open **Pointfile…**:
 
 - Each run uses its own uniquely named copy of the BSP, which is removed when the game exits. Its logs stay until the next run or until the editor closes.
 - Closing the editor stops the game it started. Your other maps and game processes are never touched.
+- BSP reads are limited to 512 MiB and verify the opened regular file and aliases.
+  Cancellation is checked while reading and before starting the client. These
+  checks cannot interrupt a filesystem call stalled in the kernel.
 
 **Play built map** shows which BSP it will launch. It is disabled, with an explanation, when the map changed since the build, the output is missing, the build settings changed, no Linux client is installed, or a build or game is already running. A failed rebuild keeps the previous successful build playable if the map hasn't changed since.
 

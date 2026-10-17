@@ -357,6 +357,10 @@ with bounded parsing and inheritance work. Valid canonical aliases are supported
 
 - A paint stroke accepts up to 256 points, 32,768 new samples and 1,048,576 pixel visits per update, and 262,144 samples in total.
 - Pointfile point numbers start at 0 over MCP, and at 1 in the editor.
+- `load_pointfile` accepts regular files up to 2 MiB and 65,536 points. Unix
+  reads use nonblocking opened-target checks and preserve valid file/directory
+  aliases; changed sources, special files and closing reject without replacing
+  the previous overlay. Non-Unix targets report unsupported file admission.
 
 **Entities**
 
@@ -2283,6 +2287,13 @@ imported data and history.
 Retry a failed snapshot with a new `create_recovery_snapshot` call. Each call
 admits a fresh request; internal repeated or concurrent execution of that same
 request cannot write another snapshot, including after a failed write.
+
+Manual capture freezes committed content, its source identity and retention
+settings before worker scheduling, through the same operation as **Save snapshot
+now**. Edits or settings changes while it waits affect later requests. Dropping
+a queued call skips capture; once capture starts, its write and retention finish
+even if the caller disappears. Abandoned work retires only its own request and
+cannot clear a newer capture or another Session's activity.
 
 `get_recovery.status` includes `settings_revision` and independent
 `settings_error`, `storage_error`, `snapshot_error`, `retention_error` and

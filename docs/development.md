@@ -2589,3 +2589,23 @@ cargo test -p editor-core --features mcp,test-support recovery_request
 These cases race two calls on one admitted snapshot request, reject later
 re-execution, and repair a failed destination before retrying. Only a fresh
 request can attempt another write. The source document and history stay intact.
+
+### Owned recovery and bounded opened files
+
+```sh
+cargo test -p editor-core --features mcp,test-support session::recovery::ownership_tests
+cargo test -p editor-core --features mcp,test-support runtime::recovery::tests
+cargo test -p editor-core --features mcp,test-support mcp::tools::recovery::submission_tests
+cargo test -p editor-core --features mcp,test-support bounded_file::tests
+cargo test -p editor-core --features mcp,test-support pointfiles::loading_tests
+cargo test -p editor-core --features mcp,test-support game::launch_read_tests
+python3 -B scripts/validate_pointfiles.py --binary target/debug/hammerr-headless --output /tmp/hammerr-pointfile-admission-check
+```
+
+Recovery gates cover exact origin/outcome, finish exclusion while writing,
+nonlocking abandonment, retained old requests, frozen content/retention, queued
+MCP cancellation and real document shutdown. Opened-file cases use real FIFOs,
+aliases, changed files and sparse oversized inputs; they check captured-size
+allocation and preserve prior overlays or owned games. Launch cases use fake
+clients and inspect process/staging cleanup. Filesystem syscalls have no hard
+deadline; nonblocking admission applies on Unix.

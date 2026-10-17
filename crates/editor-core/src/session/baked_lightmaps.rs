@@ -7,8 +7,12 @@ use source_formats::vtf::RgbaImage;
 
 use super::Session;
 
+mod origins;
+pub use origins::SourceReference;
+
 pub const MAX_PAGE_FACES: usize = 32;
 pub const MAX_PREVIEW_SIDE: usize = 128;
+const MAX_SOURCE_FILE_BYTES: usize = 4096;
 const MAX_BSP_BYTES: u64 = 128 * 1024 * 1024;
 const RGBEXP_BYTES: usize = size_of::<RgbExp32>();
 const BSP_HEADER_AND_PADDING_BYTES: usize = 12 + LUMP_COUNT * 19 + 4;
@@ -120,6 +124,9 @@ pub struct Query {
     pub offset: usize,
     pub limit: usize,
     pub face: Option<usize>,
+    pub source: Option<SourceReference>,
+    pub selected_authored_face: bool,
+    pub contributor_offset: usize,
     pub style_index: usize,
     pub map_index: usize,
 }
@@ -131,6 +138,9 @@ impl Default for Query {
             offset: 0,
             limit: MAX_PAGE_FACES,
             face: None,
+            source: None,
+            selected_authored_face: false,
+            contributor_offset: 0,
             style_index: 0,
             map_index: 0,
         }
@@ -148,6 +158,7 @@ impl Session {
             return json!({"status":"unavailable", "current":false, "diagnostics":["Compile the map successfully in this session before inspecting baked lightmaps"]});
         };
         let identity = &build.lightmap_identity;
+        let pending_preview = !std::ptr::eq(self.render_document(), self.document());
         let mut diagnostics = Vec::new();
         if !self.current_snapshot(&build.snapshot) {
             diagnostics.push("The map changed since this successful build".to_owned());
@@ -209,6 +220,7 @@ impl Session {
         json!({
             "status":if output_issue.is_some() {"unavailable"} else if diagnostics.is_empty() {"current"} else {"stale"},
             "current":diagnostics.is_empty(), "token":identity.token.to_string(),
+            "render_context":{"pending_preview":pending_preview,"current_for_display":diagnostics.is_empty() && !pending_preview,"diagnostics":if pending_preview {vec!["The displayed geometry/face draft was not baked; this inspection uses the committed build snapshot"]} else {Vec::<&str>::new()}},
             "bsp":build.path, "generation":build.snapshot.generation, "revision":build.snapshot.revision,
             "lighting":build.options.lighting.name(), "diagnostics":diagnostics,
             "source":identity.source.as_ref().ok().and_then(|source| source.as_ref()).map(compiler::FileIdentity::path),
@@ -216,6 +228,25 @@ impl Session {
     }
 
     pub fn inspect_baked_lightmaps(&self, query: &Query) -> Result<Inspection, String> {
+        if usize::from(query.face.is_some())
+            + usize::from(query.source.is_some())
+            + usize::from(query.selected_authored_face)
+            > 1
+        {
+            return Err(
+                "Choose only one compiled face, source reference or selected authored face".into(),
+            );
+        }
+        if let Some(SourceReference::Instance { file, .. }) = &query.source
+            && file.len() > MAX_SOURCE_FILE_BYTES
+        {
+            return Err("Instance source reference exceeds the bounded filename length".into());
+        }
+        let source = if query.selected_authored_face {
+            Some(self.selected_baked_lightmap_source()?)
+        } else {
+            query.source.clone()
+        };
         if query.limit == 0 || query.limit > MAX_PAGE_FACES {
             return Err(format!("Face page limit must be 1–{MAX_PAGE_FACES}"));
         }
@@ -224,10 +255,11 @@ impl Session {
         }
         let mut report = json!({
             "build":self.baked_lightmap_build_state(), "channel":query.channel.name(),
-            "face_identity":"Zero-based compiled BSP face index in the selected channel. No authored VMF face mapping is asserted.",
+            "face_identity":"Zero-based compiled BSP face index in the selected channel; authored contributors come only from the exact retained compiler emission mapping.",
+            "mapping":origins::unavailable("No successful owned emission mapping is available"),
             "intensity_units":"Decoded linear RGBExp32 intensities; independent of the display image and not native screen brightness.",
             "channels":[], "faces":[], "selected":null, "diagnostics":[],
-            "limits":{"bsp_bytes":MAX_BSP_BYTES,"page_faces":MAX_PAGE_FACES,"preview_side":MAX_PREVIEW_SIDE},
+            "limits":{"bsp_bytes":MAX_BSP_BYTES,"page_faces":MAX_PAGE_FACES,"preview_side":MAX_PREVIEW_SIDE,"mapping_faces":compiler::face_origins::MAX_FACES,"mapping_references":compiler::face_origins::MAX_REFERENCES,"mapping_bytes":compiler::face_origins::MAX_BYTES},
         });
         let Some(build) = &self.compiled else {
             return Ok(Inspection {
@@ -251,32 +283,101 @@ impl Session {
         let bsp = match result {
             Ok(bsp) => bsp,
             Err(error) => {
-                report["build"]["status"] = json!("unavailable");
-                report["build"]["current"] = json!(false);
-                report["diagnostics"] =
-                    json!([format!("Compiled BSP cannot be inspected: {error}")]);
+                mark_unavailable(
+                    &mut report,
+                    format!("Compiled BSP cannot be inspected: {error}"),
+                );
                 return Ok(Inspection {
                     report,
                     image: None,
                 });
             }
         };
-        if let Ok(Some(source)) = &build.lightmap_identity.source
+        if let Some(dependencies) = &build.instance_dependencies {
+            if let Err(error) = dependencies.verify(&compiler::Control::default()) {
+                mark_stale(
+                    &mut report,
+                    format!("Instance source/dependencies changed: {error}"),
+                );
+            }
+        } else if let Ok(Some(source)) = &build.lightmap_identity.source
             && let Err(error) = read_owned_bytes(source)
         {
-            report["build"]["status"] = json!("stale");
-            report["build"]["current"] = json!(false);
-            report["build"]["diagnostics"]
-                .as_array_mut()
-                .expect("build diagnostics")
-                .push(json!(format!("Saved VMF source changed: {error}")));
+            mark_stale(&mut report, format!("Saved VMF source changed: {error}"));
         }
-        let inspected = inspect_bsp(&bsp, query);
+        let mut effective = query.clone();
+        let mapping = build
+            .face_origins
+            .as_ref()
+            .map_err(Clone::clone)
+            .and_then(|origins| {
+                origins.validate_channel(&bsp, query.channel.kind())?;
+                Ok(origins)
+            });
+        match &mapping {
+            Ok(origins) => {
+                report["mapping"] = json!({"status":"available","retained_faces":origins.len(),"metadata_bytes":origins.bytes(),"contributors":[],"matches":[],"diagnostics":[]});
+                if let Some(source) = &source {
+                    let (matches, face) =
+                        origins::matches(origins, source, query.offset, query.limit);
+                    merge(&mut report["mapping"], matches);
+                    effective.face = face;
+                    effective.offset = 0;
+                    if face.is_none() {
+                        report["channels"] = json!([
+                            channel_summary(&bsp, Channel::Ldr),
+                            channel_summary(&bsp, Channel::Hdr)
+                        ]);
+                        recheck(build, &mut report);
+                        return Ok(Inspection {
+                            report,
+                            image: None,
+                        });
+                    }
+                }
+            }
+            Err(error) => {
+                report["mapping"] = origins::unavailable(error);
+                if source.is_some() {
+                    report["channels"] = json!([
+                        channel_summary(&bsp, Channel::Ldr),
+                        channel_summary(&bsp, Channel::Hdr)
+                    ]);
+                    recheck(build, &mut report);
+                    return Ok(Inspection {
+                        report,
+                        image: None,
+                    });
+                }
+            }
+        }
+        let inspected = inspect_bsp(&bsp, &effective);
         match inspected {
             Ok((details, image)) => {
                 for (key, value) in details.as_object().expect("inspection object") {
                     report[key] = value.clone();
                 }
+                if let Ok(origins) = mapping
+                    && let Some(face) = report["selected"]["face"].as_u64()
+                {
+                    merge(
+                        &mut report["mapping"],
+                        origins::selected(
+                            origins,
+                            &bsp,
+                            query.channel,
+                            face as usize,
+                            query.contributor_offset,
+                            query.limit,
+                        ),
+                    );
+                }
+                recheck(build, &mut report);
+                let image = if report["build"]["status"] == "unavailable" {
+                    None
+                } else {
+                    image
+                };
                 Ok(Inspection { report, image })
             }
             Err(error) => {
@@ -285,12 +386,68 @@ impl Session {
                     channel_summary(&bsp, Channel::Hdr)
                 ]);
                 report["diagnostics"] = json!([error]);
+                recheck(build, &mut report);
                 Ok(Inspection {
                     report,
                     image: None,
                 })
             }
         }
+    }
+}
+
+fn merge(target: &mut Value, value: Value) {
+    for (key, value) in value.as_object().expect("report object") {
+        target[key] = value.clone();
+    }
+}
+
+fn mark_stale(report: &mut Value, error: String) {
+    report["build"]["current"] = json!(false);
+    report["build"]["status"] = json!("stale");
+    report["build"]["render_context"]["current_for_display"] = json!(false);
+    report["build"]["diagnostics"]
+        .as_array_mut()
+        .expect("build diagnostics")
+        .push(json!(error));
+}
+
+fn mark_unavailable(report: &mut Value, error: String) {
+    report["build"]["status"] = json!("unavailable");
+    report["build"]["current"] = json!(false);
+    report["build"]["render_context"]["current_for_display"] = json!(false);
+    report["selected"] = Value::Null;
+    report["faces"] = json!([]);
+    report["mapping"] = origins::unavailable(&error);
+    report["diagnostics"] = json!([error]);
+}
+
+fn recheck(build: &super::CompiledMap, report: &mut Value) {
+    if let Some(error) = build
+        .instance_dependencies
+        .as_ref()
+        .and_then(|dependencies| dependencies.verify_metadata().err())
+    {
+        mark_stale(
+            report,
+            format!("Instance source/dependencies changed during inspection: {error}"),
+        );
+    }
+    if let Ok(Some(source)) = &build.lightmap_identity.source
+        && let Err(error) = source.verify_metadata()
+    {
+        mark_stale(
+            report,
+            format!("Saved VMF source changed during inspection: {error}"),
+        );
+    }
+    if let Ok(output) = &build.lightmap_identity.output
+        && let Err(error) = output.verify_metadata()
+    {
+        mark_unavailable(
+            report,
+            format!("Compiled BSP changed during inspection: {error}"),
+        );
     }
 }
 
@@ -395,15 +552,23 @@ fn inspect_bsp(bsp: &Bsp, query: &Query) -> Result<(Value, Option<RgbaImage>), S
         .lighting_faces(kind)
         .map_err(|error| error.to_string())?;
     report["page"] = json!({"offset":query.offset,"limit":query.limit,"total":faces.len(),"next_offset":query.offset.checked_add(query.limit).filter(|&offset| offset < faces.len())});
+    if query.offset > faces.len() {
+        return Err("Face page offset exceeds the compiled face count".into());
+    }
+    if query.face.is_some_and(|face| face >= faces.len()) {
+        return Err("Compiled face index exceeds this channel's face count".into());
+    }
     let Some(lighting) = bsp.lighting(kind).map_err(|error| error.to_string())? else {
+        if let Some(index) = query.face.or((!faces.is_empty()).then_some(0))
+            && index < faces.len()
+        {
+            report["selected"] = json!({"face":index,"status":"unlit","diagnostics":["No baked samples in this channel"]});
+        }
         report["diagnostics"] = json!([
             "No baked samples in the requested channel. Compile with Direct LDR or Direct LDR + HDR; Fullbright has no baked lightmaps."
         ]);
         return Ok((report, None));
     };
-    if query.offset > faces.len() {
-        return Err("Face page offset exceeds the compiled face count".into());
-    }
     let infos = bsp
         .records::<TexInfo>()
         .map_err(|error| error.to_string())?;

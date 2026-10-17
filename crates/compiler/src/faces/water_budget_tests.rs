@@ -91,6 +91,14 @@ fn crossed_water_partitions_reject_each_injected_budget_and_preserve_publication
         })
         .count();
     assert!(bottoms >= 16);
+    let origins = baseline.face_origins.as_ref().unwrap();
+    for (index, face) in bsp.records::<Face>().unwrap().iter().enumerate() {
+        if names[data[infos[face.texinfo as usize].texdata as usize].name_index as usize] == "BELOW"
+        {
+            assert_eq!(origins.contributors(index).unwrap().len(), 0);
+        }
+    }
+
     let path = directory.path().join("previous.bsp");
     assert!(baseline.write(&path).unwrap());
     let previous = std::fs::read(&path).unwrap();

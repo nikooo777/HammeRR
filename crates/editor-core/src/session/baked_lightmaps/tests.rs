@@ -160,6 +160,7 @@ fn install_build(session: &mut Session, path: &Path, source: &Path) {
     let source_identity =
         compiler::FileIdentity::capture(source, &compiler::Control::default()).unwrap();
     session.compiled = Some(CompiledMap {
+        face_origins: Err("Fixture has no retained source mapping".into()),
         instance_dependencies: None,
         instance_source_path: None,
         path: path.to_owned(),
@@ -258,4 +259,245 @@ fn baked_lightmap_publication_identity_rejects_replacement_before_completion() {
     oversized.set_len(MAX_BSP_BYTES + 1).unwrap();
     let identity = BuildIdentity::capture(2, &path, Ok(None), Some(&fixture()));
     assert!(identity.output.unwrap_err().contains("budget"));
+}
+
+#[test]
+fn authored_queries_retain_build_origins_and_preserve_the_selected_face_draft() {
+    use crate::session::SelectMode;
+    use map_core::surface::{FaceId, SurfaceEdit};
+    let (directory, game) = crate::test_assets::game();
+    let source = directory.path().join("source.vmf");
+    std::fs::write(
+        &source,
+        crate::test_assets::room().write(&Default::default()),
+    )
+    .unwrap();
+    let mut session = Session::new(Ok(game));
+    session.open(Actor::Agent, &source, false).unwrap();
+    session
+        .update_compile_settings(Actor::Agent, Some("direct_ldr_hdr"), Some("none"))
+        .unwrap();
+    let result = session.begin_compile(Actor::Agent, None).unwrap().run();
+    session.finish_compile(Actor::Agent, &result);
+    assert_eq!(session.compile_status()["job"]["status"], "completed");
+    let first = session.inspect_baked_lightmaps(&Query::default()).unwrap();
+    assert_eq!(first.report["mapping"]["status"], "available");
+    let origin = &first.report["mapping"]["contributors"][0];
+    assert_eq!(origin["kind"], "root");
+    let face = FaceId {
+        solid: origin["solid"].as_u64().unwrap() as u32,
+        side: origin["side"].as_u64().unwrap() as u32,
+    };
+    session.select_faces(&[face], SelectMode::Replace).unwrap();
+    session
+        .edit_faces(
+            Actor::Agent,
+            &[face],
+            SurfaceEdit {
+                shift_u: Some(17.0),
+                ..Default::default()
+            },
+            false,
+            true,
+        )
+        .unwrap();
+    let vmf = session.document().vmf().clone();
+    let rendered = session.render_document().vmf().clone();
+    let history = session.history_snapshot();
+    let camera = session.camera();
+    let token = session.face_preview_token();
+    let selection = session.selected_faces();
+    let query = Query {
+        selected_authored_face: true,
+        limit: 1,
+        ..Default::default()
+    };
+    let matched = session.inspect_baked_lightmaps(&query).unwrap();
+    assert_eq!(matched.report["build"]["current"], true);
+    assert_eq!(
+        matched.report["build"]["render_context"]["current_for_display"],
+        false
+    );
+    assert_eq!(matched.report["mapping"]["match_page"]["limit"], 1);
+    assert!(
+        matched.report["mapping"]["match_page"]["total"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+    let compiled = matched.report["mapping"]["matches"][0]["face"]
+        .as_u64()
+        .unwrap() as usize;
+    assert_eq!(matched.report["selected"]["face"], compiled);
+    let hdr = session
+        .inspect_baked_lightmaps(&Query {
+            channel: Channel::Hdr,
+            face: Some(compiled),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(
+        hdr.report["mapping"]["contributors"],
+        first.report["mapping"]["contributors"]
+    );
+    let no_match = session
+        .inspect_baked_lightmaps(&Query {
+            source: Some(SourceReference::Root {
+                solid: u32::MAX,
+                side: u32::MAX,
+            }),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(no_match.report["mapping"]["match_page"]["total"], 0);
+    assert!(no_match.image.is_none());
+    assert!(
+        session
+            .inspect_baked_lightmaps(&Query {
+                face: Some(compiled),
+                selected_authored_face: true,
+                ..Default::default()
+            })
+            .is_err()
+    );
+    std::fs::write(
+        &source,
+        b"externally changed source with reused numeric IDs",
+    )
+    .unwrap();
+    let stale = session.inspect_baked_lightmaps(&query).unwrap();
+    assert_eq!(stale.report["build"]["status"], "stale");
+    assert_eq!(
+        stale.report["mapping"]["source"],
+        matched.report["mapping"]["source"]
+    );
+    session.compiled.as_mut().unwrap().face_origins =
+        Err("Authored mapping budget exhausted".into());
+    let compiled_only = session
+        .inspect_baked_lightmaps(&Query {
+            face: Some(compiled),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(compiled_only.report["mapping"]["status"], "unavailable");
+    assert!(compiled_only.image.is_some());
+    assert!(
+        session
+            .inspect_baked_lightmaps(&query)
+            .unwrap()
+            .image
+            .is_none()
+    );
+    assert_eq!(session.document().vmf(), &vmf);
+    assert_eq!(session.render_document().vmf(), &rendered);
+    assert_eq!(session.history_snapshot(), history);
+    assert_eq!(session.camera(), camera);
+    assert_eq!(session.selected_faces(), selection);
+    assert_eq!(session.face_preview_token(), token);
+}
+
+#[test]
+fn instance_origins_remain_scoped_to_retained_child_bytes_after_external_changes() {
+    let (_directory, game, source, child) = crate::test_assets::instance_map(false);
+    let mut session = Session::new(Ok(game));
+    session.open(Actor::Agent, &source, false).unwrap();
+    let result = session.begin_compile(Actor::Agent, None).unwrap().run();
+    session.finish_compile(Actor::Agent, &result);
+    assert_eq!(session.compile_status()["job"]["status"], "completed");
+    let origins = session
+        .compiled
+        .as_ref()
+        .unwrap()
+        .face_origins
+        .as_ref()
+        .unwrap();
+    let source_ref = (0..origins.len())
+        .find_map(|face| {
+            origins
+                .contributors(face)
+                .unwrap()
+                .find_map(|origin| match origin {
+                    compiler::face_origins::Origin::Instance {
+                        instance,
+                        file,
+                        solid,
+                        side,
+                    } => Some(SourceReference::Instance {
+                        instance: *instance,
+                        file: file.clone(),
+                        solid: *solid,
+                        side: *side,
+                    }),
+                    _ => None,
+                })
+        })
+        .unwrap();
+    let query = Query {
+        source: Some(source_ref),
+        ..Default::default()
+    };
+    let before = session.inspect_baked_lightmaps(&query).unwrap();
+    assert_eq!(before.report["build"]["status"], "current");
+    assert!(
+        before.report["mapping"]["match_page"]["total"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+    std::fs::write(&child, b"external replacement").unwrap();
+    let after = session.inspect_baked_lightmaps(&query).unwrap();
+    assert_eq!(after.report["build"]["status"], "stale");
+    assert_eq!(
+        after.report["mapping"]["matches"],
+        before.report["mapping"]["matches"]
+    );
+    assert_eq!(
+        after.report["mapping"]["contributors"],
+        before.report["mapping"]["contributors"]
+    );
+    assert!(
+        after.report["build"]["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| value
+                .as_str()
+                .unwrap()
+                .contains("Instance source/dependencies changed"))
+    );
+}
+
+#[test]
+fn output_changed_after_quick_state_clears_display_currentness_and_mapped_samples() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("source.vmf");
+    let output = directory.path().join("owned.bsp");
+    std::fs::write(
+        &source,
+        map_core::Document::empty().vmf().write(&Default::default()),
+    )
+    .unwrap();
+    fixture().write(&output).unwrap();
+    let mut session = Session::new(Err("no assets".into()));
+    session.open(Actor::User, &source, false).unwrap();
+    install_build(&mut session, &output, &source);
+    let mut retained = session
+        .inspect_baked_lightmaps(&Query::default())
+        .unwrap()
+        .report;
+    assert_eq!(
+        retained["build"]["render_context"]["current_for_display"],
+        true
+    );
+    assert!(retained["selected"].is_object());
+    std::fs::write(&output, b"changed between quick state and publication").unwrap();
+    recheck(session.compiled.as_ref().unwrap(), &mut retained);
+    assert_eq!(retained["build"]["status"], "unavailable");
+    assert_eq!(
+        retained["build"]["render_context"]["current_for_display"],
+        false
+    );
+    assert!(retained["selected"].is_null());
+    assert_eq!(retained["mapping"]["status"], "unavailable");
+    assert!(retained["faces"].as_array().unwrap().is_empty());
 }

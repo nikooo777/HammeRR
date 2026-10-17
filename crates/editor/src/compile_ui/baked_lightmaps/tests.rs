@@ -60,6 +60,15 @@ fn baked_lightmap_controls_inspect_successful_build_and_clear_changed_output() {
     window.invoke_inspect_face();
     assert!(window.get_has_preview());
     assert!(window.get_selected().contains("HDR"));
+    assert!(window.get_mapping_status().contains("available"));
+    assert!(!controller.baked_lightmaps.lists.borrow().origins.is_empty());
+    let original_selection = lock(&shared).selected_faces();
+    window.invoke_inspect_origin(0);
+    assert!(window.get_has_source());
+    assert!(!controller.baked_lightmaps.lists.borrow().matches.is_empty());
+    window.invoke_inspect_match(0);
+    assert!(window.get_has_preview());
+    assert_eq!(lock(&shared).selected_faces(), original_selection);
     crate::ui::tests::save_ui_snapshot(window.window(), "baked-lightmaps");
     window.set_style_index(3);
     window.invoke_query_changed();
@@ -78,7 +87,12 @@ fn baked_lightmap_controls_inspect_successful_build_and_clear_changed_output() {
         .unwrap();
     assert_eq!(inspection.report["build"]["status"], "current");
     std::fs::write(&output, b"external replacement").unwrap();
-    present(window, inspection, &controller.baked_lightmaps.baseline);
+    present(
+        window,
+        inspection,
+        &controller.baked_lightmaps.baseline,
+        &controller.baked_lightmaps.lists,
+    );
     assert!(window.get_has_preview());
     assert!(window.get_build_state().contains("current"));
     controller.refresh(&lock(&shared));

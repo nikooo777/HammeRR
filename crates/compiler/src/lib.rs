@@ -7,6 +7,7 @@ mod cordons;
 pub mod cubemap_assets;
 mod detail_props;
 mod emit;
+pub mod face_origins;
 pub mod faces;
 mod hints;
 pub mod instances;
@@ -513,6 +514,7 @@ fn serialize_elapsed<S: serde::Serializer>(
 
 #[derive(Debug)]
 pub struct Output {
+    pub face_origins: Result<std::sync::Arc<face_origins::FaceOrigins>, String>,
     pub instance_dependencies: Option<instances::DependencyGuard>,
     pub bsp: Option<Bsp>,
     pub report: Report,
@@ -736,6 +738,7 @@ fn build(
     options: Options,
     context: Option<&CompileContext>,
     control: &Control,
+    mut face_origins: Result<face_origins::FaceOrigins, String>,
 ) -> Result<(), String> {
     options.validate()?;
     control.advance(Stage::Loading)?;
@@ -755,6 +758,10 @@ fn build(
         cubemap_assets::binding::capture_preflight(vmf)?;
     }
     let prepared = cordons::prepare(vmf, fs, &mut output.report, control)?;
+    face_origins = face_origins.and_then(|mut origins| {
+        origins.add_region(prepared.vmf.as_ref(), prepared.region.as_ref())?;
+        Ok(origins)
+    });
     output.stats.compile_region = prepared.region;
     let vmf = prepared.vmf.as_ref();
     let mut map = map::Map::load_controlled(vmf, fs, &mut output.report, control)?;
@@ -1014,6 +1021,7 @@ fn build(
         &areas,
         revision,
         control,
+        face_origins,
     )?;
     let mut bsp = emission.bsp;
     if let Some(data) = bsp.occlusion().map_err(|error| error.to_string())? {
@@ -1205,6 +1213,10 @@ fn build(
     output.stats.leaves = bsp.records::<bsp::Leaf>().map_err(|e| e.to_string())?.len();
     output.stats.faces = bsp.records::<bsp::Face>().map_err(|e| e.to_string())?.len();
     output.stats.models = models.len();
+    output.face_origins = emission
+        .face_origins
+        .and_then(|origins| origins.finish(&bsp))
+        .map(std::sync::Arc::new);
     output.bsp = Some(bsp);
     Ok(())
 }
@@ -1250,6 +1262,7 @@ pub fn compile_with_source_controlled(
 ) -> Output {
     let start = Instant::now();
     let mut output = Output {
+        face_origins: Err("No successful face emission mapping was retained".into()),
         instance_dependencies: None,
         bsp: None,
         report: Report::default(),
@@ -1287,6 +1300,7 @@ pub fn compile_with_source_controlled(
                 options,
                 context,
                 control,
+                face_origins::FaceOrigins::prepare(prepared.vmf.as_ref(), &prepared),
             ) {
                 output
                     .report

@@ -7,6 +7,9 @@ fn baked_lightmap_mcp_matches_session_and_encodes_cpu_image_without_initializing
         json!({"path":"arbitrary.bsp"}),
         json!({"face":-1}),
         json!({"channel":1}),
+        json!({"source":{"kind":"root","solid":1,"side":2,"path":"foreign.vmf"}}),
+        json!({"source":{"kind":"instance","instance":1,"file":"child.vmf","solid":2}}),
+        json!({"source":{"kind":"generated_region","solid":1,"side":2}}),
     ] {
         assert!(serde_json::from_value::<InspectBakedLightmapsArgs>(value).is_err());
     }
@@ -47,6 +50,33 @@ fn baked_lightmap_mcp_matches_session_and_encodes_cpu_image_without_initializing
     assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
     assert_eq!(image.mime_type, "image/png");
     assert_eq!(server.rendering_status()["initialized"], false);
+    let origin = &expected.report["mapping"]["contributors"][0];
+    let source = json!({"kind":"root","solid":origin["solid"],"side":origin["side"]});
+    let args = serde_json::from_value(json!({"source":source,"limit":1})).unwrap();
+    let result = server.inspect_baked_lightmaps(Parameters(args)).unwrap();
+    assert!(!result.is_error.unwrap_or(false));
+    let report: Value = serde_json::from_str(&result.content[0].as_text().unwrap().text).unwrap();
+    let expected_source = lock(&shared)
+        .inspect_baked_lightmaps(&Query {
+            source: Some(serde_json::from_value(source).unwrap()),
+            limit: 1,
+            ..Query::default()
+        })
+        .unwrap();
+    assert_eq!(report, expected_source.report);
+    assert!(report["mapping"]["match_page"]["total"].as_u64().unwrap() > 0);
+    assert!(
+        server
+            .inspect_baked_lightmaps(Parameters(
+                serde_json::from_value(
+                    json!({"face":0,"source":{"kind":"root","solid":1,"side":2}})
+                )
+                .unwrap()
+            ))
+            .unwrap()
+            .is_error
+            .unwrap_or(false)
+    );
     let session = lock(&shared);
     assert_eq!(session.document().vmf(), &document);
     assert_eq!(session.history_snapshot(), history);

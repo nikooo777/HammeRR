@@ -254,6 +254,24 @@ fn preprocessing_seals_retains_crossing_brushes_and_never_mutates_the_source() {
     let mut report = Report::default();
     let prepared = prepare(&source, &game, &mut report, &Control::default()).unwrap();
     let summary = prepared.region.as_ref().unwrap();
+    let output = crate::compile(&source, &game);
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    let origins = output.face_origins.as_ref().unwrap();
+    let generated: Vec<_> = (0..origins.len())
+        .flat_map(|face| origins.contributors(face).unwrap())
+        .filter_map(|origin| match origin {
+            crate::face_origins::Origin::GeneratedRegion { solid, side } => Some((*solid, *side)),
+            _ => None,
+        })
+        .collect();
+    assert!(!generated.is_empty());
+    assert!(
+        generated
+            .iter()
+            .all(|(solid, side)| summary.generated_brushes.contains(solid)
+                && !source.side_ids().any(|source| source == *side))
+    );
+
     assert!(
         summary
             .generated_brushes

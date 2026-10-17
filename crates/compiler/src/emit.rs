@@ -208,6 +208,7 @@ fn append_entity(
 }
 
 pub struct Emission {
+    pub face_origins: Result<crate::face_origins::FaceOrigins, String>,
     pub model_entities: Vec<usize>,
     pub world_leaf_nodes: Vec<Option<usize>>,
     pub bsp: Bsp,
@@ -222,7 +223,21 @@ pub fn build(
     areas: &crate::areas::Areas,
     revision: i32,
     control: &crate::Control,
+    mut face_origins: Result<crate::face_origins::FaceOrigins, String>,
 ) -> Result<Emission, String> {
+    face_origins = face_origins.and_then(|mut origins| {
+        let count = models
+            .iter()
+            .try_fold(0usize, |sum, model| sum.checked_add(model.faces.len()))
+            .ok_or("Face metadata count overflow")?;
+        let references = models
+            .iter()
+            .flat_map(|model| &model.faces)
+            .try_fold(0usize, |sum, face| sum.checked_add(face.source_sides.len()))
+            .ok_or("Contributor metadata count overflow")?;
+        origins.reserve_faces(count, references)?;
+        Ok(origins)
+    });
     index::<u16>(map.planes.len().saturating_sub(1), "plane")?;
     index::<i16>(map.texinfos.infos.len().saturating_sub(1), "texinfo")?;
     let mut bsp = Bsp::new();
@@ -269,7 +284,7 @@ pub fn build(
     let mut water_distances = vec![u16::MAX; leaves.len()];
     let mut leaf_faces = vec![Vec::<u16>::new(); leaves.len()];
     let mut leaf_brushes = vec![Vec::<u16>::new(); leaves.len()];
-    for (model, mapping) in models.iter().zip(&mappings) {
+    for (model_index, (model, mapping)) in models.iter().zip(&mappings).enumerate() {
         let model_start = faces.len();
         let mut groups: HashMap<Option<usize>, Vec<&Face>> = HashMap::new();
         for face in &model.faces {
@@ -284,7 +299,12 @@ pub fn build(
                 for face in groups.remove(&Some(node_index)).unwrap_or_default() {
                     let id = index(faces.len(), "leaf face")?;
                     overlay_bindings.add(&face.source_sides, id, &map.overlays)?;
-                    faces.push(geometry.face(face, map, faces.len(), model, water)?);
+                    let emitted = geometry.face(face, map, faces.len(), model, water)?;
+                    face_origins = face_origins.and_then(|mut origins| {
+                        origins.push(&emitted, model_index, &face.source_sides)?;
+                        Ok(origins)
+                    });
+                    faces.push(emitted);
                     smoothing_sources.push(face.smoothing_source.clone());
                     for &leaf in &face.leaves {
                         let leaf = (-1 - mapping[leaf]) as usize;
@@ -355,7 +375,12 @@ pub fn build(
         for face in groups.remove(&None).unwrap_or_default() {
             let id = index(faces.len(), "leaf face")?;
             overlay_bindings.add(&face.source_sides, id, &map.overlays)?;
-            faces.push(geometry.face(face, map, faces.len(), model, water)?);
+            let emitted = geometry.face(face, map, faces.len(), model, water)?;
+            face_origins = face_origins.and_then(|mut origins| {
+                origins.push(&emitted, model_index, &face.source_sides)?;
+                Ok(origins)
+            });
+            faces.push(emitted);
             smoothing_sources.push(face.smoothing_source.clone());
             for &leaf in &face.leaves {
                 leaf_faces[(-1 - mapping[leaf]) as usize].push(id);
@@ -548,7 +573,12 @@ pub fn build(
             }
         }
     }
+    face_origins = face_origins.and_then(|mut origins| {
+        origins.seal_geometry(&bsp)?;
+        Ok(origins)
+    });
     Ok(Emission {
+        face_origins,
         model_entities: models.iter().map(|model| model.entity).collect(),
         world_leaf_nodes,
         bsp,

@@ -38,8 +38,32 @@ fn direct_terrain_lighting_uses_native_surface_samples_and_sloped_normals() {
         assert!(!output.report.has_errors(), "{:?}", output.report);
         assert!(output.stats.ambient_samples > 0);
         assert_eq!(output.stats.lighting_faces, 7);
-        let bsp = output.bsp.unwrap();
+        let origins = output.face_origins.as_ref().unwrap();
+        let authored = document
+            .vmf()
+            .solids()
+            .find_map(|solid| {
+                solid
+                    .sides
+                    .iter()
+                    .find(|side| side.displacement.is_some())
+                    .map(|side| (solid.id, side.id))
+            })
+            .unwrap();
+        let bsp = output.bsp.as_ref().unwrap();
         let data = bsp.displacements().unwrap().unwrap();
+        assert_eq!(
+            origins
+                .contributors(usize::from(data.infos[0].face))
+                .unwrap()
+                .cloned()
+                .collect::<Vec<_>>(),
+            [compiler::face_origins::Origin::Root {
+                entity: document.vmf().world.id,
+                solid: authored.0,
+                side: authored.1
+            }]
+        );
         let face = bsp.records::<bsp::Face>().unwrap()[usize::from(data.infos[0].face)];
         assert_eq!(face.lightmap_size, [9, 9]);
         let info = bsp.records::<TexInfo>().unwrap()[face.texinfo as usize];

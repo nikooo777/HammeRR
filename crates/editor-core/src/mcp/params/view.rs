@@ -9,6 +9,10 @@ pub(in crate::mcp) struct InspectSkyAssetsArgs {}
 pub(in crate::mcp) struct InspectBakedLightmapsArgs {
     pub channel: Option<String>,
     pub face: Option<usize>,
+    pub source: Option<crate::session::baked_lightmaps::SourceReference>,
+    #[serde(default)]
+    pub selected_authored_face: bool,
+    pub contributor_offset: Option<usize>,
     pub offset: Option<usize>,
     pub limit: Option<usize>,
     pub style_index: Option<usize>,

@@ -19,7 +19,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect baked BSP face lightmaps from this session's last successful owned build, shared with Build status → Inspect baked lightmaps…. Read-only CPU operation; no GPU, game, map/history/selection/camera changes. Optional channel ldr/hdr (default ldr), exact zero-based compiled face, style_index and map_index (0 base, 1–3 directional bump maps). Omitted face selects the first valid lit face. Paginated face summaries use offset and limit (1–32). Returns explicit current/stale/unavailable build provenance, LDR/HDR availability, dimensions/styles/bytes, decoded linear RGBExp32 minimum/mean/maximum and stored base average, diagnostics and a PNG no larger than 128 pixels per side. Display conversion is documented separately from linear statistics and is not native tone mapping. No authored VMF face mapping is asserted. Changed/missing BSP files cannot be inspected; stale map/source/settings builds remain explicitly stale. No path argument.",
+        description = "Inspect baked BSP face lightmaps from this session's last successful owned build, shared with Build status → Inspect baked lightmaps…. Read-only CPU operation; no GPU, game, map/history/selection/camera changes. Optional channel ldr/hdr (default ldr), exact zero-based compiled face, style_index and map_index (0 base, 1–3 directional bump maps). Omitted face selects the first valid lit face. Paginated face summaries use offset and limit (1–32). Returns explicit current/stale/unavailable build provenance, LDR/HDR availability, dimensions/styles/bytes, decoded linear RGBExp32 minimum/mean/maximum and stored base average, diagnostics and a PNG no larger than 128 pixels per side. Display conversion is documented separately from linear statistics and is not native tone mapping. Compiler-retained many-to-many authored contributors are paginated by contributor_offset; generated/unresolved faces are explicit. Optional typed source (kind=root with solid/side, or kind=instance with instance/file/solid/side) or selected_authored_face=true finds compiled matches paginated by offset/limit; these selectors are mutually exclusive with face. Instance references match retained origins only and never authorize arbitrary file reads. Selecting inspection rows does not change editor selection. Pending displayed drafts are explicitly not baked. Changed/missing BSP files cannot be inspected; stale map/source/settings builds remain explicitly stale. No path argument.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn inspect_baked_lightmaps(
@@ -31,6 +31,9 @@ impl EditorServer {
             let query = Query {
                 channel: Channel::parse(args.channel.as_deref().unwrap_or("ldr"))?,
                 face: args.face,
+                source: args.source,
+                selected_authored_face: args.selected_authored_face,
+                contributor_offset: args.contributor_offset.unwrap_or_default(),
                 offset: args.offset.unwrap_or_default(),
                 limit: args
                     .limit

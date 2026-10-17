@@ -202,7 +202,7 @@ export component CompileWindow inherits Window {
 export component BakedLightmapsWindow inherits Window {
     title: "Baked lightmaps - HammeRR";
     width: 760px;
-    height: 900px;
+    height: 980px;
     in-out property <string> channel: "LDR";
     in-out property <int> compiled-face;
     in-out property <int> style-index;
@@ -211,6 +211,17 @@ export component BakedLightmapsWindow inherits Window {
     in property <string> build-state;
     in property <string> channels;
     in property <string> faces;
+    in property <string> mapping-status;
+    in property <[string]> origin-rows;
+    in property <[bool]> origin-selectable;
+    in property <[string]> match-rows;
+    in property <bool> has-source;
+    in-out property <int> contributor-offset;
+    in-out property <int> match-offset;
+    callback inspect-selected-authored();
+    callback inspect-origin(int);
+    callback inspect-match(int);
+    callback find-matches();
     in property <string> selected;
     in property <string> diagnostics;
     in property <image> preview;
@@ -221,52 +232,78 @@ export component BakedLightmapsWindow inherits Window {
     forward-focus: keys;
     keys := FocusScope {
       key-pressed(event) => { if event.text == Key.Escape { root.close-dialog(); accept } else { reject } }
-      VerticalLayout {
-        padding: 24px;
-        spacing: 12px;
-        Text { text: "Baked BSP face lightmaps"; font-size: 24px; font-weight: 600; }
-        Text { text: root.build-state; wrap: word-wrap; color: #ffcb80; }
-        Text { text: root.channels; wrap: word-wrap; }
-        HorizontalLayout {
-            spacing: 8px;
-            Text { text: "Channel"; vertical-alignment: center; }
-            ComboBox { model: ["LDR", "HDR"]; current-value <=> root.channel; selected(value) => { root.query-changed(); } }
-            Text { text: "Compiled face"; vertical-alignment: center; }
-            SpinBox { minimum: 0; maximum: 65535; value <=> root.compiled-face; edited => { root.query-changed(); } }
-            Button { text: "Inspect face"; clicked => { root.inspect-face(); } }
-        }
-        HorizontalLayout {
-            spacing: 8px;
-            Text { text: "Style index"; vertical-alignment: center; }
-            SpinBox { minimum: 0; maximum: 3; value <=> root.style-index; edited => { root.query-changed(); } }
-            Text { text: "Map index"; vertical-alignment: center; }
-            SpinBox { minimum: 0; maximum: 3; value <=> root.map-index; edited => { root.query-changed(); } }
-            Text { text: "0 = base · 1–3 = bump maps"; vertical-alignment: center; }
-        }
-        Text { text: "Indices identify the compiled BSP channel only. No authored VMF face correspondence is asserted."; wrap: word-wrap; color: #bac2ce; }
-        HorizontalLayout {
-            spacing: 12px;
-            Rectangle {
-                background: #11151d;
-                width: 220px;
-                height: 220px;
-                if root.has-preview: Image { source: root.preview; image-fit: contain; width: 100%; height: 100%; }
-                if !root.has-preview: Text { text: "No image"; color: #bac2ce; horizontal-alignment: center; vertical-alignment: center; }
-            }
-            TextEdit { text: root.selected; read-only: true; horizontal-stretch: 1; }
-        }
-        Text { text: "Image: per-channel Reinhard compression of intensity / 255, then gamma 1/2.2. Nearest sample reduction to ≤128 px. Linear statistics retain RGBExp32 intensity; this image does not reproduce game tone mapping."; wrap: word-wrap; color: #bac2ce; }
-        HorizontalLayout {
-            spacing: 8px;
-            Text { text: "Face page starts at"; vertical-alignment: center; }
-            SpinBox { minimum: 0; maximum: 65535; value <=> root.page-offset; edited => { root.query-changed(); } }
-            Text { text: "32 compiled faces per inspection"; vertical-alignment: center; }
-        }
-        TextEdit { text: root.faces; read-only: true; min-height: 130px; }
-        TextEdit { text: root.diagnostics; read-only: true; min-height: 70px; max-height: 110px; }
-        HorizontalLayout {
-            Rectangle { horizontal-stretch: 1; }
-            Button { text: "Close"; clicked => { root.close-dialog(); } }
+      ScrollView {
+        width: 100%;
+        height: 100%;
+        VerticalLayout {
+          padding: 24px;
+          spacing: 12px;
+          Text { text: "Baked BSP face lightmaps"; font-size: 24px; font-weight: 600; }
+          Text { text: root.build-state; wrap: word-wrap; color: #ffcb80; }
+          Text { text: root.channels; wrap: word-wrap; }
+          HorizontalLayout {
+              spacing: 8px;
+              Text { text: "Channel"; vertical-alignment: center; }
+              ComboBox { model: ["LDR", "HDR"]; current-value <=> root.channel; selected(value) => { root.query-changed(); } }
+              Text { text: "Compiled face"; vertical-alignment: center; }
+              SpinBox { minimum: 0; maximum: 65535; value <=> root.compiled-face; edited => { root.query-changed(); } }
+              Button { text: "Inspect face"; clicked => { root.inspect-face(); } }
+          }
+          HorizontalLayout {
+              spacing: 8px;
+              Text { text: "Style index"; vertical-alignment: center; }
+              SpinBox { minimum: 0; maximum: 3; value <=> root.style-index; edited => { root.query-changed(); } }
+              Text { text: "Map index"; vertical-alignment: center; }
+              SpinBox { minimum: 0; maximum: 3; value <=> root.map-index; edited => { root.query-changed(); } }
+              Text { text: "0 = base · 1–3 = bump maps"; vertical-alignment: center; }
+          }
+          Text { text: "Compiled indices identify this build. Authored origins are retained compiler contributors; splits and merges can produce many-to-many matches."; wrap: word-wrap; color: #bac2ce; }
+          HorizontalLayout {
+              spacing: 12px;
+              Rectangle {
+                  background: #11151d;
+                  width: 220px;
+                  height: 220px;
+                  if root.has-preview: Image { source: root.preview; image-fit: contain; width: 100%; height: 100%; }
+                  if !root.has-preview: Text { text: "No image"; color: #bac2ce; horizontal-alignment: center; vertical-alignment: center; }
+              }
+              TextEdit { text: root.selected; read-only: true; horizontal-stretch: 1; }
+          }
+          Text { text: "Image: per-channel Reinhard compression of intensity / 255, then gamma 1/2.2. Nearest sample reduction to ≤128 px. Linear statistics retain RGBExp32 intensity; this image does not reproduce game tone mapping."; wrap: word-wrap; color: #bac2ce; }
+          HorizontalLayout {
+              spacing: 8px;
+              Text { text: "Face page starts at"; vertical-alignment: center; }
+              SpinBox { minimum: 0; maximum: 65535; value <=> root.page-offset; edited => { root.query-changed(); } }
+              Text { text: "32 compiled faces per inspection"; vertical-alignment: center; }
+          }
+          TextEdit { text: root.faces; read-only: true; min-height: 70px; max-height: 80px; }
+          Text { text: root.mapping-status; wrap: word-wrap; color: #ffcb80; }
+          HorizontalLayout {
+              spacing: 8px;
+              Button { text: "Inspect selected authored face"; clicked => { root.inspect-selected-authored(); } }
+              Text { text: "Contributor page starts at"; vertical-alignment: center; }
+              SpinBox { minimum: 0; maximum: 262144; value <=> root.contributor-offset; edited => { root.query-changed(); } }
+          }
+          ListView {
+              height: 78px;
+              for row[i] in root.origin-rows: Button { text: row; enabled: root.origin-selectable[i]; clicked => { root.inspect-origin(i); } }
+          }
+          HorizontalLayout {
+              spacing: 8px;
+              Text { text: "Match page starts at"; vertical-alignment: center; }
+              SpinBox { minimum: 0; maximum: 65536; value <=> root.match-offset; }
+              Button { text: "Find matches"; enabled: root.has-source; clicked => { root.find-matches(); } }
+              Text { text: "Lists inspect locally; editor selection stays unchanged."; wrap: word-wrap; }
+          }
+          ListView {
+              height: 78px;
+              for row[i] in root.match-rows: Button { text: row; clicked => { root.inspect-match(i); } }
+          }
+          TextEdit { text: root.diagnostics; read-only: true; min-height: 70px; max-height: 110px; }
+          HorizontalLayout {
+              Rectangle { horizontal-stretch: 1; }
+              Button { text: "Close"; clicked => { root.close-dialog(); } }
+          }
         }
       }
     }

@@ -157,17 +157,8 @@ fn resolve_materials_checked(fs: &GameFs, model: &Model) -> Result<Vec<String>, 
             materials.push(path.clone());
             continue;
         }
-        let candidates = model
-            .material_directories
-            .iter()
-            .map(|directory| {
-                if directory.is_empty() {
-                    name.to_owned()
-                } else {
-                    format!("{directory}/{name}")
-                }
-            })
-            .chain(std::iter::once(name.to_owned()));
+        let candidates =
+            source_formats::model::material_candidates(name, &model.material_directories);
         let mut path = name.to_owned();
         for candidate in candidates {
             work += 1;

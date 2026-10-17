@@ -274,13 +274,10 @@ fn load(
         .ok_or_else(|| format!("Missing icon texture {texture_path}"))?;
     report.texture_source = Some(texture.origin.into());
     let bytes = material_bytes + texture.data.len();
-    if texture.data.get(24..26) == Some(&[0, 0])
-        || (texture.data.get(8).is_some_and(|minor| *minor >= 2)
-            && texture.data.get(63..65) == Some(&[0, 0]))
-    {
+    let vtf = Vtf::parse(texture.data).map_err(|error| format!("{texture_path}: {error}"))?;
+    if vtf.authored_frames == 0 || vtf.authored_depth == Some(0) {
         return Err("Icon VTF has zero frames or depth".into());
     }
-    let vtf = Vtf::parse(texture.data).map_err(|error| format!("{texture_path}: {error}"))?;
     if vtf.width == 0
         || vtf.height == 0
         || vtf.width > MAX_AXIS

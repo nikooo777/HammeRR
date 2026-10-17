@@ -1,3 +1,4 @@
+use super::values::bounded;
 use std::collections::BTreeSet;
 
 use glam::DVec3;
@@ -74,14 +75,6 @@ pub fn resolve(class: &Class, entity: &Entity) -> Vec<Sphere> {
     result
 }
 
-fn bounded(raw: &str, limit: usize) -> String {
-    let mut end = raw.len().min(limit);
-    while !raw.is_char_boundary(end) {
-        end -= 1;
-    }
-    raw[..end].to_owned()
-}
-
 fn resolve_one(class: &Class, entity: &Entity, helper: &Helper) -> Sphere {
     let mut result = Sphere {
         property: property_key(helper)
@@ -112,19 +105,12 @@ fn resolve_one(class: &Class, entity: &Entity, helper: &Helper) -> Sphere {
     let property = class.property(&result.property).unwrap();
     result.property = property.name.clone();
     result.property_type = Some(property.kind.clone());
-    let mut authored = entity.properties.get_all(&property.name);
-    let first = authored.next();
-    let duplicate = authored.next().is_some();
-    let raw = first.or(property.default.as_deref());
+    let value = super::values::Value::resolve(class, entity, &property.name, true);
+    let raw = value.raw;
     result.raw = raw.map(|raw| bounded(raw, MAX_SPHERE_VALUE_BYTES));
     result.raw_truncated = raw.is_some_and(|raw| raw.len() > MAX_SPHERE_VALUE_BYTES);
-    result.value_source = if first.is_some() {
-        "authored"
-    } else if raw.is_some() {
-        "fgd_default"
-    } else {
-        "missing"
-    };
+    result.value_source = value.source;
+    let duplicate = value.duplicate;
     let check = || -> Result<(f64, [[f64; 3]; 2]), String> {
         if duplicate {
             return Err(format!(
@@ -144,11 +130,8 @@ fn resolve_one(class: &Class, entity: &Entity, helper: &Helper) -> Sphere {
             )
         })?;
         property.validate(raw.trim())?;
-        let radius = raw
-            .trim()
-            .parse::<f64>()
-            .ok()
-            .filter(|radius| radius.is_finite() && (*radius as f32).is_finite())
+        let radius = super::values::numbers(raw, &[1])
+            .map(|values| values[0])
             .ok_or("Sphere radius must be one finite native number")?;
         if radius.abs() > MAX_HELPER_EXTENT {
             return Err(format!(

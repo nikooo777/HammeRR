@@ -1,8 +1,9 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 
-use map_core::{Document, ObjectId, entity_helpers::specialized_light};
+use map_core::Document;
+#[cfg(test)]
+use map_core::ObjectId;
 use render::icons::{Instance, Report};
-use source_formats::fgd::ClassKind;
 
 use super::super::{Session, working_region::Evaluation};
 
@@ -14,19 +15,8 @@ impl Session {
         inspected: Option<u32>,
         enabled: bool,
     ) -> BTreeMap<u32, (Report, Option<Instance>)> {
-        let models = evaluation
-            .models
-            .instances
-            .iter()
-            .filter(|instance| instance.has_geometry())
-            .map(|instance| instance.id)
-            .collect::<HashSet<_>>();
-        let entities = document
-            .vmf()
-            .entities
-            .iter()
-            .map(|entity| (entity.id, entity))
-            .collect::<BTreeMap<_, _>>();
+        let context = super::classification::Context::new(evaluation, self.selection());
+        let entities = context.entities(document, inspected, false);
         let mut displayed = 0;
         let mut rows = BTreeMap::new();
         for (id, entity) in entities {
@@ -45,43 +35,28 @@ impl Session {
             if declarations.is_empty() {
                 continue;
             }
-            let reason = if class.kind != ClassKind::Point || !entity.solids.is_empty() {
+            let facts = context.facts(entity, class);
+            let reason = if !facts.point {
                 Some("brush_or_nonpoint")
-            } else if specialized_light(entity) {
+            } else if facts.light {
                 Some("specialized_light")
-            } else if models.contains(&ObjectId::Entity(id)) {
+            } else if facts.loaded {
                 Some("loaded_model")
-            } else if entity.classname().is_some_and(|name| {
-                ["move_rope", "keyframe_rope"]
-                    .iter()
-                    .any(|special| name.eq_ignore_ascii_case(special))
-            }) {
+            } else if facts.rope {
                 Some("specialized_rope")
-            } else if class.helpers.iter().any(|helper| {
-                ["studio", "studioprop", "model", "sprite"].contains(&helper.name.as_str())
-            }) || class.property("model").is_some()
-                || entity.properties.get("model").is_some()
-                || entity.classname().is_some_and(|name| {
-                    ["env_sprite", "env_sprite_oriented"]
-                        .iter()
-                        .any(|special| name.eq_ignore_ascii_case(special))
-                })
+            } else if facts.model_helper
+                || facts.sprite_helper
+                || facts.declared_model
+                || facts.sprite
             {
                 Some("model_or_sprite_helper")
-            } else if evaluation
-                .helpers
-                .get(&ObjectId::Entity(id))
-                .is_some_and(|appearance| appearance.invalid_size)
-            {
+            } else if facts.invalid_size {
                 Some("invalid_fgd_size")
-            } else if entity.hidden {
+            } else if facts.hidden {
                 Some("authored_hidden")
-            } else if !evaluation.objects.contains(&ObjectId::Entity(id)) {
+            } else if facts.outside {
                 Some("outside_working_region")
-            } else if !entity
-                .origin()
-                .is_some_and(|origin| origin.is_finite() && origin.abs().max_element() <= 65536.0)
-            {
+            } else if !facts.valid_origin {
                 Some("invalid_origin")
             } else if !enabled {
                 Some("view_disabled")

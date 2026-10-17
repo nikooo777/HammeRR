@@ -642,10 +642,7 @@ pub(crate) fn clipping_controls_preview_apply_cancel_and_escape_without_desktop_
     app.show().unwrap();
     app.window().set_size(slint::PhysicalSize::new(1600, 960));
     app.window().take_snapshot().unwrap();
-    i_slint_backend_testing::ElementHandle::find_by_accessible_label(&app, "Clip selected brushes")
-        .next()
-        .unwrap()
-        .invoke_accessible_default_action();
+    scroll_inspector_to_control(&app, "Clip selected brushes").invoke_accessible_default_action();
     assert!(lock(&shared).clip_tool());
     app.set_clip_distance("64".into());
     for keep in [0, 1, 2] {
@@ -6747,6 +6744,7 @@ pub(crate) fn mirror_controls_share_brush_transform_and_agent_preview() {
         "Mirror Z",
         "Mirror textures with geometry",
     ] {
+        scroll_inspector_to_control(&app, label);
         assert_dialog_button_visible(&app, label);
     }
     state.cancel_transform_preview();
@@ -6876,6 +6874,7 @@ pub(crate) fn independent_texture_controls_share_numeric_and_agent_preview_modes
     assert_eq!(app.get_transform_y(), "1");
     assert_eq!(app.get_transform_z(), "1");
     for label in ["Follow move and rotation", "Stretch textures when scaling"] {
+        scroll_inspector_to_control(&app, label);
         assert_dialog_button_visible(&app, label);
     }
     state.cancel_transform_preview();

@@ -59,6 +59,16 @@ const SURFACE_EPSILON: f64 = 1e-5;
 const SNAP_PROBE_DISTANCE: f64 = 0.5;
 
 impl Session {
+    pub(super) fn entity_surface_picking(&self) -> bool {
+        self.geometry
+            .entity_placement
+            .draft
+            .as_ref()
+            .is_some_and(|draft| {
+                draft.placement.is_none() && self.checked_entity_placement(draft.token).is_ok()
+            })
+    }
+
     pub fn entity_placement_stamp(&self) -> String {
         format!(
             "{}:{}:{}:{}:{:?}:{}:{}:{}",

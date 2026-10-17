@@ -169,17 +169,7 @@ impl<'a> Graph<'a> {
         name: &str,
         directories: &[String],
     ) -> Result<bool, String> {
-        for candidate in directories
-            .iter()
-            .map(|directory| {
-                if directory.is_empty() {
-                    name.to_owned()
-                } else {
-                    format!("{directory}/{name}")
-                }
-            })
-            .chain(std::iter::once(name.to_owned()))
-        {
+        for candidate in source_formats::model::material_candidates(name, directories) {
             let candidate = material_name(&candidate)?;
             let path = vmt::material_path(&candidate);
             if self.record_material(&path)?.is_some() {

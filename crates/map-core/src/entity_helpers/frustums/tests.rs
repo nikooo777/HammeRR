@@ -176,3 +176,33 @@ fn frustum_shares_source_geometry_and_rejects_native_corner_collapse() {
     let collapsed = resolve(class, &entity, &class.helpers[0]);
     assert!(collapsed.error.unwrap().contains("native precision"));
 }
+
+#[test]
+fn padded_numeric_bindings_preserve_authored_text_and_exact_geometry() {
+    let fgd = FGD.replace("SCALE", "1");
+    let plain = fixture(&fgd, &[("fov", "90"), ("near", "4"), ("far", "120")]);
+    let padded = fixture(&fgd, &[("fov", " 90 "), ("near", "\t4 "), ("far", "120\n")]);
+    assert_eq!(padded.state, "ready", "{:?}", padded.error);
+    assert_eq!(padded.corners, plain.corners);
+    assert_eq!(
+        padded
+            .inputs
+            .iter()
+            .find(|value| value.property == "fov")
+            .unwrap()
+            .raw
+            .as_deref(),
+        Some(" 90 ")
+    );
+    let oversized = format!("{}90", " ".repeat(MAX_VALUE_BYTES));
+    let rejected = fixture(&fgd, &[("fov", &oversized)]);
+    assert_eq!(rejected.state, "invalid");
+    assert!(
+        rejected
+            .inputs
+            .iter()
+            .find(|value| value.property == "fov")
+            .unwrap()
+            .raw_truncated
+    );
+}

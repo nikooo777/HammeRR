@@ -4,7 +4,6 @@ use serde_json::{Value, json};
 
 use crate::recent_maps::{self, BuildSettings, Entry, Store};
 
-use super::compilation::BuildSettingsUpdate;
 use super::{Actor, Session};
 
 #[derive(Default)]
@@ -206,20 +205,7 @@ impl Session {
             );
             return;
         }
-        let settings = &entry.build_settings;
-        let result = self.update_build_settings(
-            Actor::System,
-            BuildSettingsUpdate {
-                lighting: Some(&settings.lighting),
-                physics: Some(&settings.physics),
-                sky_quality: Some(&settings.sky_quality),
-                visibility: Some(&settings.visibility),
-                bounces: Some(settings.bounces),
-                smoothing_angle: Some(settings.smoothing_angle),
-                generate_reflections: Some(settings.generate_reflections),
-                pack_sky_assets: Some(settings.pack_sky_assets),
-            },
-        );
+        let result = self.update_build_settings(Actor::System, entry.build_settings.update());
         if let Err(error) = result {
             self.recent_map_error(format!(
                 "Recent map build settings could not restore: {error}"
@@ -264,6 +250,7 @@ impl Session {
 
 #[cfg(test)]
 mod tests {
+    use crate::session::compilation::BuildSettingsUpdate;
     use std::fs;
 
     use glam::DVec3;

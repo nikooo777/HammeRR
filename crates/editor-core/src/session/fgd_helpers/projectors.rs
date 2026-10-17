@@ -1,11 +1,10 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 
 use map_core::{
-    Document, ObjectId,
+    Document,
     entity_helpers::projectors::{self, Projector},
 };
 use serde::Serialize;
-use source_formats::fgd::ClassKind;
 
 use super::super::{Session, working_region::Evaluation};
 
@@ -141,27 +140,12 @@ impl Session {
         evaluation: &Evaluation,
         inspected: Option<u32>,
     ) -> BTreeMap<u32, Report> {
-        let selected = self.selection();
-        let models = evaluation
-            .models
-            .instances
-            .iter()
-            .filter(|instance| instance.has_geometry())
-            .map(|instance| instance.id)
-            .collect::<HashSet<_>>();
-        let entities = document
-            .vmf()
-            .entities
-            .iter()
-            .filter(|entity| {
-                entity
-                    .classname()
-                    .is_some_and(|class| class.eq_ignore_ascii_case("env_projectedtexture"))
-                    && (selected.contains(&ObjectId::Entity(entity.id))
-                        || inspected == Some(entity.id))
-            })
-            .map(|entity| (entity.id, entity))
-            .collect::<BTreeMap<_, _>>();
+        let context = super::classification::Context::new(evaluation, self.selection());
+        let entities = context.entities_where(document, inspected, true, |entity| {
+            entity
+                .classname()
+                .is_some_and(|name| name.eq_ignore_ascii_case("env_projectedtexture"))
+        });
         let mut displayed = 0;
         let mut result = BTreeMap::new();
         for (id, entity) in entities {
@@ -171,27 +155,19 @@ impl Session {
             else {
                 continue;
             };
-            let object = ObjectId::Entity(id);
+            let facts = context.facts(entity, class);
             let geometry = projectors::resolve(class, entity);
-            let reason = if class.kind != ClassKind::Point || !entity.solids.is_empty() {
+            let reason = if !facts.point {
                 Some("brush_or_nonpoint")
-            } else if models.contains(&object) {
+            } else if facts.loaded {
                 Some("loaded_model")
-            } else if class
-                .helpers
-                .iter()
-                .any(|helper| ["studio", "studioprop", "model"].contains(&helper.name.as_str()))
-                || class
-                    .property("model")
-                    .is_some_and(|property| property.kind == "studio")
-                || entity.properties.get("model").is_some()
-            {
+            } else if facts.model_helper {
                 Some("model_helper")
-            } else if entity.hidden {
+            } else if facts.hidden {
                 Some("authored_hidden")
-            } else if !evaluation.objects.contains(&object) {
+            } else if facts.outside {
                 Some("outside_working_region")
-            } else if !selected.contains(&object) {
+            } else if !facts.selected {
                 Some("not_selected")
             } else if geometry.state != "ready" {
                 Some("unavailable_projector")

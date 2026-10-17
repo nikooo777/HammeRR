@@ -1,3 +1,4 @@
+use super::values::bounded;
 use std::collections::BTreeMap;
 
 use glam::DVec3;
@@ -154,19 +155,12 @@ impl<'a> Targets<'a> {
             "targetname"
         });
         result.property = Some(property.name.clone());
-        let mut authored = entity.properties.get_all(&property.name);
-        let first = authored.next();
-        let raw = first.or(property.default.as_deref());
-        result.value_source = if first.is_some() {
-            "authored"
-        } else if raw.is_some() {
-            "fgd_default"
-        } else {
-            "missing"
-        };
-        result.raw = raw.map(|value| bounded(value, MAX_VALUE_BYTES));
-        result.raw_truncated = raw.is_some_and(|value| value.len() > MAX_VALUE_BYTES);
-        if authored.next().is_some() {
+        let value = super::values::Value::resolve(class, entity, &property.name, true);
+        let raw = value.raw;
+        result.raw = raw.map(|raw| bounded(raw, MAX_VALUE_BYTES));
+        result.raw_truncated = raw.is_some_and(|raw| raw.len() > MAX_VALUE_BYTES);
+        result.value_source = value.source;
+        if value.duplicate {
             result.state = "duplicate_property";
             result.error = Some("Line reference property occurs more than once".into());
             return result;
@@ -283,14 +277,6 @@ fn canonical_node_id(raw: &str) -> bool {
         && (raw == "0" || !raw.starts_with('0'))
         && raw.bytes().all(|byte| byte.is_ascii_digit())
         && raw.parse::<i32>().is_ok()
-}
-
-fn bounded(value: &str, maximum: usize) -> String {
-    let mut end = value.len().min(maximum);
-    while !value.is_char_boundary(end) {
-        end -= 1;
-    }
-    value[..end].into()
 }
 
 pub(super) fn supported(class: &Class, helper: &Helper) -> bool {

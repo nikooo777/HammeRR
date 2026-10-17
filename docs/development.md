@@ -23,6 +23,14 @@ Shared session locking and compile/game workers live in `editor-core/src/runtime
 
 `Session` owns geometry-preview state through `session/previews.rs`. Rendering, picking and tool-texture filtering share its displayed-document selector. Feature modules validate replacement drafts before clearing competitors through the coordinator; their own payloads and ownership tokens remain local.
 
+Persisted compiler options share `editor-core/src/build_settings.rs` across
+recipes and recent maps. Shared and temporary view requests resolve through
+`Session::resolve_view_update`; temporary requests do not commit that result.
+Measurements and linked paths share the captured viewport context in
+`session/viewport_pick.rs`. FGD adapters share classification facts while
+retaining their own admission rules. Desktop face dialogs use the narrow
+context and ownership guards in `editor/src/face_edit_ui.rs`.
+
 ## Build and test
 
 ```sh
@@ -507,14 +515,20 @@ launch a game or measure friction in a running client.
 ### Private launch guards and cubemap capture probe
 
 ```sh
-python3 -B scripts/test_private_runtime_config.py
+python3 -B -m unittest discover -s scripts -p 'test_*.py'
+HAMMERR_TEST_BWRAP=1 python3 -B scripts/test_private_runtime_config.py
 python3 -B scripts/validate_cubemap_capture_probe.py --binary target/debug/hammerr-headless --output /tmp/hammerr-cubemap-capture-probe --timeout 150
 ```
 
 The headless regressions cover rejecting installed or symlinked output paths
 before writes, imported config command checks, identity-preflight upload/log
-guards, and timeout cleanup that retains both the original failure and
-preservation errors. The capture probe checks
+guards, failed startup, timeout/termination cleanup and preservation errors.
+The optional Bubblewrap check runs a small Python child to prove outside files
+remain read-only while private output stays writable; it needs Linux user
+namespaces and launches no game. The HDR observer checks cover complete and
+partial receipts, acquisition failures, process identity and channel stability.
+Reflection utility checks cover bounded PPM payloads and exact ROI metrics.
+The capture probe checks
 native capture and packing into a private staged map; it does not implement
 compiler reflection bindings. It requires complete sample VTFs with directional
 pixels, valid packed assets, unchanged non-PAK lumps and source files.
@@ -528,6 +542,14 @@ failed or timed-out workers, checks shared config/spray bytes, Cloud preferences
 cache semantics and upload logs. Cloud reads into private files remain allowed;
 no Cloud preference commands are issued. Reports retain these checks separately
 from feature assertions.
+
+Python workers use `private_runtime_config.private_native_process` for the
+read-only filesystem wrapper, termination and preservation audit. Primary
+observation/startup failures retain cleanup diagnostics. `hdr_observer.py`
+owns probe environment and hardware receipts; `reflection_validation.py`
+owns shared reflection snapshots, recording launchers and image utilities.
+Feature-specific geometry, texture decoding and pixel expectations remain in
+their validators.
 
 Use a short output directory: the private Wayland socket path must fit within
 107 filesystem bytes. Overlong paths reject before directories or processes

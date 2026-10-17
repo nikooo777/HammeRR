@@ -560,7 +560,11 @@ mod tests {
                     camera.position.x += 2.0;
                     s.set_camera(camera);
                 }
-                1 => s.set_view(s.view()),
+                1 => {
+                    let mut view = s.view();
+                    view.tool_textures = !view.tool_textures;
+                    s.set_view(view);
+                }
                 _ => mode(&mut s, Mode::Rotate),
             }
             assert!(s.clip_drag().is_none());

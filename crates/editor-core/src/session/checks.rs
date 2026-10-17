@@ -1,3 +1,4 @@
+use crate::identity::id_string as object_name;
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 
@@ -41,13 +42,6 @@ pub struct FixDraft {
     pub report: u64,
     pub issues: Vec<usize>,
     pub changes: Vec<Value>,
-}
-
-fn object_name(id: ObjectId) -> String {
-    match id {
-        ObjectId::Solid(id) => format!("solid:{id}"),
-        ObjectId::Entity(id) => format!("entity:{id}"),
-    }
 }
 
 pub fn issue_json(index: usize, issue: &Issue) -> Value {

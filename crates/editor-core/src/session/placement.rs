@@ -182,6 +182,12 @@ fn solid_points(points: &mut Vec<SupportPoint>, solid: &Solid) -> Result<(), Str
 }
 
 impl Session {
+    pub(super) fn surface_position_picking(&self) -> bool {
+        self.placement.draft.as_ref().is_some_and(|draft| {
+            draft.plan.is_none() && self.checked_placement(draft.token).is_ok()
+        })
+    }
+
     fn placement_source_corner(
         &mut self,
         ids: &[ObjectId],

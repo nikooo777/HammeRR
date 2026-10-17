@@ -18,9 +18,7 @@ use crate::{
 };
 
 struct Target {
-    faces: Vec<FaceId>,
-    generation: u64,
-    revision: u64,
+    context: crate::face_edit_ui::Context,
     preview: Option<u64>,
     highlight: Option<u64>,
     selected: BTreeMap<FaceId, BTreeSet<usize>>,
@@ -29,22 +27,14 @@ struct Target {
 
 impl Target {
     fn check(&self, session: &Session) -> Result<(), String> {
-        if self.generation != session.document_generation()
-            || self.revision != session.document().revision()
-            || self.faces != session.selected_faces()
-        {
-            return Err(
-                "Map or face selection changed. Cancel and reopen terrain triangles.".into(),
-            );
-        }
-        Ok(())
+        self.context.check(
+            session,
+            "Map or face selection changed. Cancel and reopen terrain triangles.",
+        )
     }
 
     fn cancel_preview(&mut self, session: &mut Session) {
-        if self.preview.is_some() && self.preview == session.face_preview_token() {
-            session.cancel_face_preview();
-        }
-        self.preview = None;
+        crate::face_edit_ui::cancel_preview(session, &mut self.preview);
     }
 
     fn clear_highlight(&mut self, session: &mut Session) {
@@ -94,6 +84,7 @@ fn choice(index: i32) -> Result<Option<Choice>, String> {
 
 fn face(window: &TerrainTrianglesWindow, target: &Target) -> Result<FaceId, String> {
     target
+        .context
         .faces
         .get(window.get_face_index() as usize)
         .copied()
@@ -419,7 +410,7 @@ impl Controller {
                     } else {
                         Session::select_terrain_triangles_in_volume
                     };
-                    let selected = select(&mut session, Actor::User, &target.faces, token)?;
+                    let selected = select(&mut session, Actor::User, &target.context.faces, token)?;
                     target.highlight = Some(selected.token);
                     target.selected = selected
                         .targets
@@ -551,9 +542,7 @@ impl Controller {
         self.window.set_buildable_index(0);
         self.window.set_kind_index(0);
         let target = Target {
-            faces,
-            generation: session.document_generation(),
-            revision: session.document().revision(),
+            context: crate::face_edit_ui::Context::capture(session, faces),
             preview: None,
             highlight: None,
             selected: BTreeMap::new(),
@@ -588,12 +577,12 @@ impl Controller {
         target.check(session)?;
         let (face, id, power) = if target.vertices {
             let hit = session
-                .pick_terrain_vertex(ray, &target.faces)?
+                .pick_terrain_vertex(ray, &target.context.faces)?
                 .ok_or("Click visible selected terrain, or cancel picking")?;
             (hit.vertex.face, hit.vertex.vertex, hit.power)
         } else {
             let hit = session
-                .pick_terrain_triangle(ray, &target.faces)?
+                .pick_terrain_triangle(ray, &target.context.faces)?
                 .ok_or("Click visible selected terrain, or cancel picking")?;
             (hit.triangle.face, hit.triangle.triangle, hit.power)
         };
@@ -604,6 +593,7 @@ impl Controller {
         }
         self.window.set_face_index(
             target
+                .context
                 .faces
                 .iter()
                 .position(|candidate| *candidate == face)

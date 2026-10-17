@@ -6,8 +6,8 @@ from pathlib import Path
 
 import validate_cubemap_capture_probe as probe
 import validate_native_runtime as runtime
+from reflection_validation import ppm
 from validate_compile_jobs import stopped_on_exit, wait_job
-from validate_cubemap_reflections import ppm
 from validate_detail_props import compile_pair, detail_records
 from validate_detail_sprites import dictionary, silhouette
 from validate_face_lighting import DEFAULT_BINARY, Client, detail, face_ref

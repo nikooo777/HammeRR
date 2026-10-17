@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use glam::DVec2;
-use map_core::surface::{self, FaceId};
+use map_core::surface;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::runtime::{SharedSession, lock};
@@ -10,28 +10,20 @@ use crate::session::{Actor, GroupProjection, Session};
 use crate::{SurfaceGroupWindow, ui::preview_image};
 
 struct Target {
-    faces: Vec<FaceId>,
-    generation: u64,
-    revision: u64,
+    context: crate::face_edit_ui::Context,
     preview: Option<u64>,
 }
 
 impl Target {
     fn check(&self, session: &Session) -> Result<(), String> {
-        if self.generation != session.document_generation()
-            || self.revision != session.document().revision()
-            || self.faces != session.selected_faces()
-        {
-            return Err("Map or face selection changed. Cancel and reopen texture mapping.".into());
-        }
-        Ok(())
+        self.context.check(
+            session,
+            "Map or face selection changed. Cancel and reopen texture mapping.",
+        )
     }
 
     fn cancel_preview(&mut self, session: &mut Session) {
-        if self.preview.is_some() && session.face_preview_token() == self.preview {
-            session.cancel_face_preview();
-        }
-        self.preview = None;
+        crate::face_edit_ui::cancel_preview(session, &mut self.preview);
     }
 }
 
@@ -58,15 +50,13 @@ fn apply(
     preview: bool,
 ) -> Result<usize, String> {
     target.check(session)?;
-    if !preview
-        && session.face_preview_token().is_some()
-        && session.face_preview_token() != target.preview
-    {
-        return Err("Another face preview is active. Preview this mapping before applying.".into());
-    }
-    if !preview && target.preview.is_some() {
-        session.check_face_preview_token(target.preview)?;
-        return session.commit_face_preview(Actor::User);
+    if let Some(changed) = crate::face_edit_ui::commit_preview(
+        session,
+        target.preview,
+        preview,
+        "Another face preview is active. Preview this mapping before applying.",
+    )? {
+        return Ok(changed);
     }
     let repeats = DVec2::new(
         window
@@ -85,6 +75,7 @@ fn apply(
     } else {
         GroupProjection::Face(Some(
             *target
+                .context
                 .faces
                 .get(window.get_reference_index().max(0) as usize)
                 .ok_or("Choose a reference face")?,
@@ -93,7 +84,7 @@ fn apply(
     let material = window.get_material();
     let count = session.project_face_group(
         Actor::User,
-        &target.faces,
+        &target.context.faces,
         projection,
         (!material.trim().is_empty()).then_some(material.as_str()),
         repeats,
@@ -201,9 +192,7 @@ impl Controller {
         self.window
             .set_message("Preview the shared mapping before applying.".into());
         *self.target.borrow_mut() = Some(Target {
-            faces,
-            generation: session.document_generation(),
-            revision: session.document().revision(),
+            context: crate::face_edit_ui::Context::capture(session, faces),
             preview: None,
         });
         refresh_material(&self.window, session);
@@ -228,8 +217,7 @@ impl Controller {
         if let Some(target) = self.target.borrow().as_ref() {
             let stale = target.check(session).err();
             self.window.set_stale(stale.is_some());
-            let foreign = session.face_preview_token().is_some()
-                && session.face_preview_token() != target.preview;
+            let foreign = crate::face_edit_ui::foreign_preview(session, target.preview);
             self.window.set_can_apply(!foreign);
             if let Some(error) = stale {
                 self.window.set_message(error.into());

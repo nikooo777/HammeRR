@@ -10,6 +10,22 @@ mod tests;
 mod vtx;
 mod vvd;
 
+pub fn material_candidates<'a>(
+    name: &'a str,
+    directories: &'a [String],
+) -> impl Iterator<Item = String> + 'a {
+    directories
+        .iter()
+        .map(move |directory| {
+            if directory.is_empty() {
+                name.to_owned()
+            } else {
+                format!("{directory}/{name}")
+            }
+        })
+        .chain(std::iter::once(name.to_owned()))
+}
+
 pub const MAX_VERTICES: usize = 1_000_000;
 pub const MAX_INDICES: usize = 6_000_000;
 const MAX_MATERIALS: usize = 4096;

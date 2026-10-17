@@ -107,17 +107,8 @@ impl ModelValidator {
         for name in &model.materials {
             let name = name.strip_suffix(".vmt").unwrap_or(name);
             let mut found = false;
-            for candidate in model
-                .material_directories
-                .iter()
-                .map(|directory| {
-                    if directory.is_empty() {
-                        name.to_owned()
-                    } else {
-                        format!("{directory}/{name}")
-                    }
-                })
-                .chain(std::iter::once(name.to_owned()))
+            for candidate in
+                source_formats::model::material_candidates(name, &model.material_directories)
             {
                 control.checkpoint()?;
                 if self.materials.contains(&candidate) {

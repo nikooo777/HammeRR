@@ -631,8 +631,13 @@ def private_readonly_launch(command, output, environment):
 
 
 @contextmanager
-def private_native_process(command, root, game, output, environment, report):
+def private_native_process(
+    command, root, game, output, environment, report,
+    *, preservation_key="configuration_preservation",
+):
     process = None
+    failure = None
+    cleanup_failures = []
     try:
         arguments, environment = private_readonly_launch(command, output, environment)
         report["command"] = arguments
@@ -642,16 +647,42 @@ def private_native_process(command, root, game, output, environment, report):
                 stdout=stream, stderr=stream,
             )
             yield process
+    except BaseException as error:
+        failure = error
+        report["success"] = False
+        report.setdefault("error", str(error))
     finally:
-        if process is not None and process.poll() is None:
-            process.terminate()
+        try:
+            if process is not None and process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
+        except BaseException as error:
+            cleanup_failures.append(error)
             try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=5)
+                if process is not None and process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=5)
+            except BaseException as error:
+                cleanup_failures.append(error)
         report["exit_code"] = None if process is None else process.returncode
-        report["configuration_preservation"] = finish_private_launch(game)
+        try:
+            report[preservation_key] = finish_private_launch(game)
+        except BaseException as error:
+            report["preservation_error"] = str(error)
+            cleanup_failures.append(error)
+        if cleanup_failures:
+            report["success"] = False
+            report["cleanup_failures"] = [str(error) for error in cleanup_failures]
+        if failure is not None:
+            for error in cleanup_failures:
+                failure.add_note(f"Private native cleanup also failed: {error}")
+            raise failure
+        if cleanup_failures:
+            raise BaseExceptionGroup("Private native cleanup failed", cleanup_failures)
 
 
 def verify_private_launch(game, text):

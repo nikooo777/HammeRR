@@ -55,12 +55,11 @@ pub(super) fn cube(bytes: &[u8], edge: u16) -> io::Result<Vtf> {
         return Err(invalid("Reflection VTF exceeds 4 MiB"));
     }
     let vtf = Vtf::parse(bytes.to_vec()).map_err(|error| invalid(error.to_string()))?;
-    let word = |offset: usize| u16::from_le_bytes(bytes[offset..offset + 2].try_into().unwrap());
     let integer = |offset: usize| u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap());
     if !matches!(vtf.version, (7, 2) | (7, 4))
-        || word(24) != 1
-        || word(26) != 0
-        || word(63) != 1
+        || vtf.authored_frames != 1
+        || vtf.first_frame != 0
+        || vtf.authored_depth != Some(1)
         || vtf.faces != 7
     {
         return Err(invalid(

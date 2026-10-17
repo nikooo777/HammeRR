@@ -185,17 +185,8 @@ impl Assets<'_> {
     ) -> Result<Option<Material>, String> {
         let name = &model.materials[index];
         let name = name.strip_suffix(".vmt").unwrap_or(name);
-        for candidate in model
-            .material_directories
-            .iter()
-            .map(|directory| {
-                if directory.is_empty() {
-                    name.to_owned()
-                } else {
-                    format!("{directory}/{name}")
-                }
-            })
-            .chain(std::iter::once(name.to_owned()))
+        for candidate in
+            source_formats::model::material_candidates(name, &model.material_directories)
         {
             budget.consume(1)?;
             self.lookups += 1;

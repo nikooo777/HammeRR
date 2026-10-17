@@ -192,39 +192,7 @@ impl EditorServer {
     pub(in crate::mcp) fn set_view(&self, Parameters(args): Parameters<SetViewArgs>) -> ToolResult {
         run(|| {
             let mut session = self.session();
-            let mut view = session.surface_view_options(
-                args.surface
-                    .as_deref()
-                    .map(render::SurfaceView::parse)
-                    .transpose()?,
-                args.smoothing_group,
-            )?;
-            if let Some(tools) = args.tool_textures {
-                view.tool_textures = tools;
-            }
-            if let Some(leak) = args.leak_path {
-                view.leak_path = leak;
-            }
-            if let Some(sky) = args.sky_preview {
-                view.sky_preview = sky;
-            }
-            if let Some(rope) = args.rope_preview {
-                view.rope_preview = rope;
-            }
-            if let Some(outlines) = args.selection_outlines {
-                view.selection_outlines = outlines;
-            }
-            if let Some(images) = args.entity_images {
-                view.entity_images = images;
-            }
-            if let Some(guides) = args.entity_model_guides {
-                view.entity_model_guides = guides;
-            }
-            let view = session.sky_preview_options(
-                view,
-                args.sky_channel.as_deref(),
-                args.sky_exposure_ev,
-            )?;
+            let view = session.resolve_view_update(args.view_update())?;
             session.set_view(view);
             Ok(view_state(view))
         })
@@ -265,55 +233,21 @@ impl EditorServer {
         let size = render_size(args.width, args.height);
         let (camera, mut view) = {
             let session = self.session();
-            match args
+            let camera = match args
                 .camera
-                .unwrap_or_default()
+                .as_ref()
+                .unwrap_or(&CameraSpec::default())
                 .resolve(&session, size.0 as f32 / size.1 as f32)
             {
-                Ok(camera) => {
-                    let view = args
-                        .surface
-                        .as_deref()
-                        .map(render::SurfaceView::parse)
-                        .transpose()
-                        .and_then(|mode| session.surface_view_options(mode, args.smoothing_group));
-                    match view {
-                        Ok(view) => (camera, view),
-                        Err(error) => return fail(error),
-                    }
-                }
-                Err(message) => return fail(message),
-            }
+                Ok(camera) => camera,
+                Err(error) => return fail(error),
+            };
+            let view = match session.resolve_view_update(args.view_update()) {
+                Ok(view) => view,
+                Err(error) => return fail(error),
+            };
+            (camera, view)
         };
-        view = match self.session().sky_preview_options(
-            view,
-            args.sky_channel.as_deref(),
-            args.sky_exposure_ev,
-        ) {
-            Ok(view) => view,
-            Err(error) => return fail(error),
-        };
-        if let Some(tools) = args.tool_textures {
-            view.tool_textures = tools;
-        }
-        if let Some(leak) = args.leak_path {
-            view.leak_path = leak;
-        }
-        if let Some(sky) = args.sky_preview {
-            view.sky_preview = sky;
-        }
-        if let Some(rope) = args.rope_preview {
-            view.rope_preview = rope;
-        }
-        if let Some(outlines) = args.selection_outlines {
-            view.selection_outlines = outlines;
-        }
-        if let Some(images) = args.entity_images {
-            view.entity_images = images;
-        }
-        if let Some(guides) = args.entity_model_guides {
-            view.entity_model_guides = guides;
-        }
         let mut fog_preview = {
             let session = self.session();
             let controller = match fog_controller_id(args.fog_controller.as_deref()) {
@@ -344,14 +278,18 @@ impl EditorServer {
         let preview_issues = rendered.issues.iter().map(|issue| json!({"face":{"solid":issue.face.solid,"side":issue.face.side},"message":issue.message})).collect::<Vec<_>>();
         let working_region = self.session().working_region_summary();
         let rope_preview = self.session().rope_preview_report(view.rope_preview);
-        let info = json!({ "working_region":working_region, "camera": camera_json(&camera), "width": size.0, "height": size.1, "skybox":skybox, "fog_preview":fog_preview, "rope_preview":rope_preview, "preview_issues":preview_issues, "material_reload":material_reload,
-            "view": { "tool_textures": view.tool_textures, "sky_preview":view.sky_preview,"sky_channel":view.sky_channel.name(),"sky_exposure_ev":view.sky_exposure_ev, "rope_preview":view.rope_preview, "selection_outlines":view.selection_outlines,"entity_images":view.entity_images,"entity_model_guides":view.entity_model_guides, "fog":fog_parameters(view), "leak_path": view.leak_path, "surface": view.surface.name(), "smoothing_group": view.smoothing_group,
-                "grid_visible": view.grid_visible, "grid_size": view.grid_size,
+        let mut rendered_view = view_state(view);
+        let extra = json!({"grid_visible": view.grid_visible, "grid_size": view.grid_size,
                 "grid_elevation": view.grid_elevation,
                 "block_preview": view.block_preview.map(|bounds| bounds.map(|point| point.to_array())),
                 "clip_preview": view.clip_preview.map(|guide| json!({"normal": guide.normal.to_array(), "distance": guide.distance, "bounds": guide.bounds.map(|point| point.to_array())})),
                 "transform_handles": view.transform_handles.map(|guide| json!({"mode": transform_mode_name(Some(guide.mode)), "origin": guide.origin.to_array(), "axes": guide.axes.map(|axis| axis.to_array()), "active": guide.active.map(render::handles::Handle::name)})),
-                "area_preview": view.area_preview.map(|guide| json!({"ndc": guide.corners.map(|point| point.to_array()), "contained": guide.contained, "aspect": guide.aspect, "camera": camera_json(&guide.camera)})) } });
+                "area_preview": view.area_preview.map(|guide| json!({"ndc": guide.corners.map(|point| point.to_array()), "contained": guide.contained, "aspect": guide.aspect, "camera": camera_json(&guide.camera)}))});
+        rendered_view
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        let info = json!({ "working_region":working_region, "camera": camera_json(&camera), "width": size.0, "height": size.1, "skybox":skybox, "fog_preview":fog_preview, "rope_preview":rope_preview, "preview_issues":preview_issues, "material_reload":material_reload, "view": rendered_view });
         Ok(CallToolResult::success(vec![
             ContentBlock::image(data, "image/png"),
             ContentBlock::text(info.to_string()),

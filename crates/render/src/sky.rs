@@ -232,46 +232,20 @@ fn load_texture(fs: &GameFs, name: &str) -> Result<(Vtf, [f32; 4]), String> {
 }
 
 fn texture_transform(value: Option<&str>) -> Result<[f32; 4], String> {
-    let Some(value) = value else {
-        return Ok([1.0, 1.0, 0.0, 0.0]);
-    };
-    let mut tokens = value.split_whitespace();
-    let mut center = [0.5, 0.5];
-    let mut scale = [1.0, 1.0];
-    let mut translate = [0.0, 0.0];
-    while let Some(key) = tokens.next() {
-        let count = match key {
-            "center" | "scale" | "translate" => 2,
-            "rotate" => 1,
-            _ => return Err("unsupported texture transform".into()),
-        };
-        let mut values = [0.0; 2];
-        for value in values.iter_mut().take(count) {
-            *value = tokens
-                .next()
-                .ok_or("incomplete texture transform")?
-                .parse::<f32>()
-                .map_err(|_| "invalid texture transform")?;
-            if !value.is_finite() || value.abs() > 1024.0 {
-                return Err("invalid texture transform".into());
-            }
+    source_formats::vmt::texture_transform(
+        value,
+        source_formats::vmt::DuplicateOperations::LastWins,
+    )
+    .map_err(|error| match error {
+        source_formats::vmt::TransformError::Syntax => "unsupported texture transform".into(),
+        source_formats::vmt::TransformError::Duplicate => "duplicate texture transform".into(),
+        source_formats::vmt::TransformError::Incomplete => "incomplete texture transform".into(),
+        source_formats::vmt::TransformError::Invalid => "invalid texture transform".into(),
+        source_formats::vmt::TransformError::Bounds => "invalid texture transform".into(),
+        source_formats::vmt::TransformError::Rotation => {
+            "rotated texture transforms are unsupported".into()
         }
-        match key {
-            "center" => center = values,
-            "scale" => scale = values,
-            "translate" => translate = values,
-            "rotate" if values[0] != 0.0 => {
-                return Err("rotated texture transforms are unsupported".into());
-            }
-            _ => {}
-        }
-    }
-    Ok([
-        scale[0],
-        scale[1],
-        center[0] * (1.0 - scale[0]) + translate[0],
-        center[1] * (1.0 - scale[1]) + translate[1],
-    ])
+    })
 }
 
 #[cfg(test)]

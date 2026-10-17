@@ -1,14 +1,10 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 
 use map_core::{
-    Document, ObjectId,
-    entity_helpers::{
-        frustums::{self, Frustum},
-        specialized_light,
-    },
+    Document,
+    entity_helpers::frustums::{self, Frustum},
 };
 use serde::Serialize;
-use source_formats::fgd::ClassKind;
 
 use super::super::{Session, working_region::Evaluation};
 
@@ -109,24 +105,9 @@ impl Session {
         evaluation: &Evaluation,
         inspected: Option<u32>,
     ) -> (BTreeMap<u32, Vec<Report>>, usize) {
-        let selected = self.selection();
-        let models = evaluation
-            .models
-            .instances
-            .iter()
-            .filter(|v| v.has_geometry())
-            .map(|v| v.id)
-            .collect::<HashSet<_>>();
+        let context = super::classification::Context::new(evaluation, self.selection());
         let source = self.projector_reports(document, evaluation, None);
-        let entities = document
-            .vmf()
-            .entities
-            .iter()
-            .filter(|entity| {
-                selected.contains(&ObjectId::Entity(entity.id)) || inspected == Some(entity.id)
-            })
-            .map(|entity| (entity.id, entity))
-            .collect::<BTreeMap<_, _>>();
+        let entities = context.entities(document, inspected, true);
         let mut displayed = 0;
         let mut omitted = 0;
         let mut result: BTreeMap<u32, Vec<Report>> = BTreeMap::new();
@@ -137,7 +118,7 @@ impl Session {
             else {
                 continue;
             };
-            let object = ObjectId::Entity(id);
+            let facts = context.facts(entity, class);
             let helpers = class
                 .helpers
                 .iter()
@@ -156,49 +137,33 @@ impl Session {
                         && source.corners == geometry.corners
                         && source.color == geometry.color
                 });
-                let reason =
-                    if class.kind != ClassKind::Point || !entity.solids.is_empty() {
-                        Some("brush_or_nonpoint")
-                    } else if models.contains(&object) {
-                        Some("loaded_model")
-                    } else if specialized_light(entity)
-                        || entity.classname().is_some_and(|name| {
-                            [
-                                "move_rope",
-                                "keyframe_rope",
-                                "env_sprite",
-                                "env_sprite_oriented",
-                            ]
-                            .iter()
-                            .any(|v| name.eq_ignore_ascii_case(v))
-                        })
-                    {
-                        Some("specialized_helper")
-                    } else if class.helpers.iter().any(|h| {
-                        ["studio", "studioprop", "model", "sprite"].contains(&h.name.as_str())
-                    }) || class.property("model").is_some_and(|p| p.kind == "studio")
-                        || entity.properties.get("model").is_some()
-                    {
-                        Some("model_or_sprite_helper")
-                    } else if entity.hidden {
-                        Some("authored_hidden")
-                    } else if !evaluation.objects.contains(&object) {
-                        Some("outside_working_region")
-                    } else if !selected.contains(&object) {
-                        Some("not_selected")
-                    } else if geometry.state != "ready" {
-                        Some("unavailable_frustum")
-                    } else if entity
-                        .classname()
-                        .is_some_and(|name| name.eq_ignore_ascii_case("env_projectedtexture"))
-                        && !shared
-                    {
-                        Some("source_projector_precedence")
-                    } else if displayed == MAX_DISPLAYED_FRUSTUMS {
-                        Some("scene_guide_limit")
-                    } else {
-                        None
-                    };
+                let reason = if !facts.point {
+                    Some("brush_or_nonpoint")
+                } else if facts.loaded {
+                    Some("loaded_model")
+                } else if facts.light || facts.rope || facts.sprite {
+                    Some("specialized_helper")
+                } else if facts.model_helper || facts.sprite_helper {
+                    Some("model_or_sprite_helper")
+                } else if facts.hidden {
+                    Some("authored_hidden")
+                } else if facts.outside {
+                    Some("outside_working_region")
+                } else if !facts.selected {
+                    Some("not_selected")
+                } else if geometry.state != "ready" {
+                    Some("unavailable_frustum")
+                } else if entity
+                    .classname()
+                    .is_some_and(|name| name.eq_ignore_ascii_case("env_projectedtexture"))
+                    && !shared
+                {
+                    Some("source_projector_precedence")
+                } else if displayed == MAX_DISPLAYED_FRUSTUMS {
+                    Some("scene_guide_limit")
+                } else {
+                    None
+                };
                 if reason.is_none() {
                     displayed += 1;
                 }

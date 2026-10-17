@@ -6,8 +6,8 @@ from pathlib import Path
 
 import validate_cubemap_capture_probe as probe
 import validate_native_runtime as runtime
+from reflection_validation import ppm
 from validate_compile_jobs import stopped_on_exit, wait_job
-from validate_cubemap_reflections import ppm
 from validate_detail_props import SMALL_BUSH, compile_pair, detail_records
 from validate_explicit_detail_sprites import FIELDS as SPRITE_FIELDS
 from validate_face_lighting import DEFAULT_BINARY, Client, detail, face_ref
@@ -327,8 +327,7 @@ def tint_color_measurements(frames, hdr_control=None):
 
 
 def checked_tint_capture(args, control, output, style):
-    from validate_hdr_lighting import read_probe
-    from validate_hdr_reflections import verify_hardware
+    from hdr_observer import read_probe, verify_hardware
 
     result = json.loads(probe.read_bounded(output / "results.json", 4 * 1024**2))
     native = result["native"]

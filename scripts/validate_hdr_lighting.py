@@ -13,24 +13,21 @@ import time
 from pathlib import Path
 
 import validate_native_runtime as runtime
+from hdr_observer import (
+    ENGINE_SHA256,
+    HDR_CONTROLS,
+    probe_environment,
+    read_probe,
+    verify_hardware,
+)
 from validate_bump_lighting import texture
 from validate_compile_jobs import wait_job
 from validate_direct_lighting import FACE_FORMAT
 from validate_face_lighting import DEFAULT_BINARY, ROOT, Client, detail, face_ref
 from validate_visibility import ROOM
 
-ENGINE_SHA256 = "965b90157cbec58187c553ce8bb65907e186c990b08453cb4abd75e909ec794a"
-HARDWARE_VERSION = "MaterialSystemHardwareConfig012"
 CHANNELS = {"ldr": (7, 8, 15, 52, 56), "hdr": (58, 53, 54, 51, 55)}
-CONTROLS = {
-    "mat_force_tonemap_scale": 0.25,
-    "mat_autoexposure_min": 0.25,
-    "mat_autoexposure_max": 0.25,
-    "mat_disable_bloom": 1,
-    "mat_bloomscale": 0,
-    "mat_fullbright": 0,
-    "sv_lan": 1,
-}
+CONTROLS = {**HDR_CONTROLS, "mat_fullbright": 0, "sv_lan": 1}
 OBSERVER = """
 stage <- 0;
 ready_at <- 0.0;
@@ -255,11 +252,6 @@ def fixture(args):
         client.close()
 
 
-def read_probe(path):
-    if not path.exists():
-        return []
-    lines = path.read_text().split("\n")
-    return [json.loads(line) for line in lines[:-1] if line]
 
 
 def verify_controls(text, level):
@@ -288,18 +280,12 @@ def worker(args):
     probe_log = output / "hardware.jsonl"
     assert not ready.exists() and not probe_log.exists(), "Use a fresh runtime output directory"
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-    environment = {**os.environ, "LD_LIBRARY_PATH": str(root / "bin/linux64"),
-                   "LD_PRELOAD": str(args.probe_library.resolve(strict=True)),
-                   "SteamAppId": "240", "SteamGameId": "240", "SDL_VIDEODRIVER": "x11",
-                   "HAMMERR_HDR_EXPECTED_EXE": str((root / "cstrike_linux64").resolve(strict=True)),
-                   "HAMMERR_HDR_LIBRARY_DIR": str((root / "bin/linux64").resolve(strict=True)),
-                   "HAMMERR_HDR_PRIVATE_GAME": str(game), "HAMMERR_HDR_READY": str(ready),
-                   "HAMMERR_HDR_REPORT": str(probe_log)}
+    environment = {**os.environ, "LD_LIBRARY_PATH": str(root / "bin/linux64"), "SteamAppId": "240", "SteamGameId": "240", "SDL_VIDEODRIVER": "x11", **probe_environment(root, game, args.probe_library, ready, probe_log)}
     command = [str(root / "cstrike_linux64"), "-game", str(game), "-windowed", "-w", "1280", "-h", "720",
                "-novid", *launch_options, "-nomaster", "-nojoy", "-console", "-port", str(27584 + args.hdr_level)]
-    with (output / "launcher.log").open("w") as log:
-        process = subprocess.Popen(command, cwd=root, env=environment, stdin=subprocess.DEVNULL, stdout=log, stderr=log)
-        try:
+    result = {}
+    try:
+        with runtime.private_native_process(command, root, game, output, environment, result) as process:
             deadline = time.monotonic() + 48
             while time.monotonic() < deadline:
                 if process.poll() is not None:
@@ -310,19 +296,13 @@ def worker(args):
                     verify_controls(text, args.hdr_level)
                     ready.write_text("post-map observer and queried controls verified\n")
                 records = read_probe(probe_log)
-                assert not any(row["event"].startswith("invalid_") or row["event"] in ["acquisition_failed", "thread_failed", "ready_timeout"] for row in records), records
-                if records and records[-1]["event"] == "complete":
+                hardware = verify_hardware(records, args.hdr_level)
+                if hardware is not None:
                     break
                 time.sleep(0.25)
             else:
                 raise TimeoutError(f"Private HDR observer did not complete; inspect {output}")
-            samples = [row for row in records if row["event"] == "sample"]
-            assert len(samples) == 8 and all(row["dx_support_level"] >= 90 for row in samples), records
-            assert all(row["hdr_type"] in (0, 1, 2) and row["hardware_hdr_type"] in (1, 2) for row in samples), samples
-            assert all(row["hdr_enabled"] == (args.hdr_level == 2) and (row["hdr_type"] != 0) == (args.hdr_level == 2) for row in samples), samples
-            assert len({(row["hdr_type"], row["hdr_enabled"]) for row in samples}) == 1, samples
-            factory = [row for row in records if row["event"] == "hardware_factory" and row["present"] and row["code"] == 0]
-            assert factory and factory[-1]["version"] == HARDWARE_VERSION, records
+            samples = hardware["samples"]
             subprocess.run(["grim", str(output / "game.png")], check=True, timeout=10)
             subprocess.run(["grim", "-t", "ppm", str(output / "game.ppm")], check=True, timeout=10)
             console = (game / "hammerr-runtime.log").read_text(errors="replace")
@@ -331,22 +311,14 @@ def worker(args):
             fingerprints = {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
                             for path in (root / "bin/linux64").glob("*.so")
                             if path.name in ("engine.so", "materialsystem.so", "shaderapivk.so", "shaderapidx9.so")}
-            result = {"hdr_level": args.hdr_level, "controls": controls, "hardware": samples,
+            result.update({"hdr_level": args.hdr_level, "controls": controls, "hardware": samples,
                       "private_launch": private_launch,
-                      "acquisition": factory[-1], "probe_records": records, "pid": process.pid,
+                      "acquisition": hardware["factory"], "probe_records": records, "pid": process.pid,
                       "engine_sha256": ENGINE_SHA256, "module_sha256": fingerprints,
                       "insecure": True, "post_map_sv_lan": True,
-                      "display": os.environ.get("DISPLAY"), "wayland_display": os.environ.get("WAYLAND_DISPLAY")}
-            (output / "runtime.json").write_text(json.dumps(result, indent=2) + "\n")
-        finally:
-            if process.poll() is None:
-                process.terminate()
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=5)
-            runtime.finish_private_launch(game)
+                      "display": os.environ.get("DISPLAY"), "wayland_display": os.environ.get("WAYLAND_DISPLAY")})
+    finally:
+        (output / "runtime.json").write_text(json.dumps(result, indent=2) + "\n")
 
 
 def frame_color(path):

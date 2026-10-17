@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::{BuildSettingsUpdate, Session};
+use super::Session;
 use crate::session::Actor;
 
 const FILE_NAME: &str = "build-recipes.json";
@@ -21,64 +21,7 @@ pub(super) struct Identity {
     name: String,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Settings {
-    lighting: String,
-    physics: String,
-    sky_quality: String,
-    visibility: String,
-    bounces: u8,
-    smoothing_angle: u8,
-    #[serde(default)]
-    generate_reflections: bool,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pack_sky_assets: bool,
-}
-
-impl From<compiler::Options> for Settings {
-    fn from(options: compiler::Options) -> Self {
-        Self {
-            lighting: options.lighting.name().into(),
-            physics: options.physics.name().into(),
-            sky_quality: options.sky_quality.name().into(),
-            visibility: options.visibility.name().into(),
-            bounces: options.bounces,
-            smoothing_angle: options.smoothing_angle,
-            generate_reflections: options.generate_reflections,
-            pack_sky_assets: options.pack_sky_assets,
-        }
-    }
-}
-
-impl Settings {
-    fn options(&self) -> Result<compiler::Options, String> {
-        compiler::Options {
-            lighting: compiler::LightingMode::parse(&self.lighting)?,
-            physics: compiler::PhysicsMode::parse(&self.physics)?,
-            sky_quality: compiler::SkyQuality::parse(&self.sky_quality)?,
-            visibility: compiler::VisibilityMode::parse(&self.visibility)?,
-            bounces: self.bounces,
-            smoothing_angle: self.smoothing_angle,
-            generate_reflections: self.generate_reflections,
-            pack_sky_assets: self.pack_sky_assets,
-        }
-        .validate()
-    }
-
-    fn update(&self) -> BuildSettingsUpdate<'_> {
-        BuildSettingsUpdate {
-            lighting: Some(&self.lighting),
-            physics: Some(&self.physics),
-            sky_quality: Some(&self.sky_quality),
-            visibility: Some(&self.visibility),
-            bounces: Some(self.bounces),
-            smoothing_angle: Some(self.smoothing_angle),
-            generate_reflections: Some(self.generate_reflections),
-            pack_sky_assets: Some(self.pack_sky_assets),
-        }
-    }
-}
+use crate::build_settings::BuildSettings as Settings;
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -487,6 +430,7 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::compilation::BuildSettingsUpdate;
     use map_core::Document;
     use source_formats::keyvalues::WriteOptions;
 

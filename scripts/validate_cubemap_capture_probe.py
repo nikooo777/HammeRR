@@ -495,15 +495,12 @@ def worker(args):
     environment = {**os.environ, "LD_LIBRARY_PATH": str(args.game_dir / "bin/linux64"), "LD_DEBUG": "files", "LD_DEBUG_OUTPUT": str(output / "loader"), "SteamAppId": "240", "SteamGameId": "240", "SDL_VIDEODRIVER": "x11", "XDG_CONFIG_HOME": str(private_settings / "config"), "XDG_CACHE_HOME": str(private_settings / "cache"), "XDG_DATA_HOME": str(private_settings / "data")}
     launch_options = runtime.private_launch_options(args.game_dir, game, hdr_level=0, map_name=MAP_NAME, log_name="hammerr-cubemap.log", controls={"servercfgfile": "hammerr_cubemap_postmap.cfg", "mat_fullbright": 0})
     command = [str(args.game_dir / "cstrike_linux64"), "-game", str(game), "-windowed", "-w", str(WIDTH), "-h", str(HEIGHT), "-novid", *launch_options, "-nomaster", "-nojoy", "-console", "-port", str(args.port)]
-    command, environment = runtime.private_readonly_launch(command, output, environment)
     report = {"command": command, "cwd": str(args.game_dir), "module_fingerprints": fingerprints, "viewport": [WIDTH, HEIGHT], "capture_size": CUBE_SIZE, "sample_origins": SAMPLES, "native_staging": staging_report, "seeded_pak": seeded_records, "bootstrap_sha256": digest(bootstrap), "bootstrap_vtf": bootstrap_metadata, "capture_trigger": "buildcubemaps 1 in a private cfg after verified post-map readiness", "display": os.environ.get("DISPLAY"), "wayland_display": os.environ.get("WAYLAND_DISPLAY"), "desktop_input": False, "success": False}
-    (output / "command.json").write_text(json.dumps(report, indent=2) + "\n")
     console = game / "hammerr-cubemap.log"
     seen = {}
-    process = None
     try:
-        with (output / "launcher.log").open("w") as log:
-            process = subprocess.Popen(command, cwd=args.game_dir, env=environment, stdin=subprocess.DEVNULL, stdout=log, stderr=log)
+        with runtime.private_native_process(command, args.game_dir, game, output, environment, report) as process:
+            (output / "command.json").write_text(json.dumps(report, indent=2) + "\n")
             started = time.monotonic()
             armed = False
             disarmed = False
@@ -574,21 +571,8 @@ def worker(args):
         report.update({"error": str(error), "traceback": traceback.format_exc(), "observed_modules": seen})
         raise
     finally:
-        if process is not None and process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=5)
-        try:
-            report["configuration_preservation"] = runtime.finish_private_launch(game)
-        except BaseException as error:
-            report.update({"success": False, "preservation_error": str(error), "preservation_traceback": traceback.format_exc()})
-            raise
-        finally:
-            report["final_exit_code"] = None if process is None else process.returncode
-            (output / "runtime.json").write_text(json.dumps(report, indent=2) + "\n")
+        report["final_exit_code"] = report.get("exit_code")
+        (output / "runtime.json").write_text(json.dumps(report, indent=2) + "\n")
 
 
 def protected_files(args, bsp, game):

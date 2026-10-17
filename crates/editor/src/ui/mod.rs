@@ -132,6 +132,107 @@ struct Ui {
     seen_materials: u64,
 }
 
+impl Ui {
+    fn new(session: SharedSession, ctx: GpuContext) -> Self {
+        let camera = lock(&session).camera();
+        Self {
+            viewport: Viewport::new(&ctx, camera),
+            ctx,
+            session,
+            seen_scene: render::ViewOptions::default().scene_key(0),
+            seen_camera: 0,
+            seen_view: 0,
+            seen_navigation: u64::MAX,
+            brush_drag: None,
+            clip_drag: None,
+            interaction: interaction::Interaction::default(),
+            object_cycle: object_picking::Gesture::default(),
+            seen_log: 0,
+            game_log_window: None,
+            last_log_refresh: Instant::now(),
+            entity_window: None,
+            connection_window: None,
+            seen_connections: (0, 0, 0),
+            properties_window: None,
+            report_window: None,
+            statistics_window: None,
+            pointfile_window: None,
+            components_window: None,
+            hollow_window: None,
+            carve_window: None,
+            merge_window: None,
+            recovery_window: None,
+            recent_maps_window: None,
+            checks_window: None,
+            context_window: None,
+            primitive_window: None,
+            polygon: None,
+            linked_path: None,
+            seen_primitive: 0,
+            seen_context: (0, 0),
+            seen_checks: (0, 0, 0),
+            seen_recovery: (0, 0),
+            seen_recent_maps: (0, 0),
+            seen_management: (0, 0, 0),
+            rename_window: None,
+            seen_rename: (0, 0, 0),
+            color_window: None,
+            model: None,
+            model_browser: None,
+            sounds: None,
+            particles: None,
+            placement: None,
+            entity_placement: None,
+            repeat: None,
+            clipboard: None,
+            object_groups: None,
+            layers: None,
+            compile_region: None,
+            fog: None,
+            working_region: None,
+            overlay: None,
+            cubemap: None,
+            prefabs: None,
+            color_target: None,
+            material_window: None,
+            material_target: None,
+            surface_window: None,
+            atlas: None,
+            surface_target: None,
+            lighting: None,
+            terrain: None,
+            terrain_triangles: None,
+            pick_release: false,
+            material_replace: None,
+            surface_group: None,
+            volume: None,
+            compile_status: None,
+            saved_views: None,
+            history: None,
+            measurements: None,
+            grid_defaults: None,
+            preview_defaults: None,
+            navigation_defaults: None,
+            shortcuts: None,
+            material_for_group: false,
+            material_for_atlas: false,
+            overlay_material_target: None,
+            material_for_replace: None,
+            material_for_faces: false,
+            material_for_clip: false,
+            material_for_primitive: false,
+            material_for_polygon: false,
+            material_for_extrusion: false,
+            material_for_partition: false,
+            partition_material_target: None,
+            extrusion_material_target: None,
+            primitive_material_target: None,
+            seen_definitions: 0,
+            seen_materials: 0,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 struct BrushDrag {
     start: DVec2,
@@ -142,6 +243,7 @@ struct BrushDrag {
 }
 
 type SharedUi = Rc<RefCell<Ui>>;
+type WeakUi = std::rc::Weak<RefCell<Ui>>;
 
 fn session_of(ui: &SharedUi) -> SharedSession {
     ui.borrow().session.clone()
@@ -452,102 +554,7 @@ pub(super) fn run(
         app.set_message(message.into());
     }
 
-    let camera = lock(&session).camera();
-    let ui: SharedUi = Rc::new(RefCell::new(Ui {
-        viewport: Viewport::new(&ctx, camera),
-        ctx,
-        session,
-        seen_scene: render::ViewOptions::default().scene_key(0),
-        seen_camera: 0,
-        seen_view: 0,
-        seen_navigation: u64::MAX,
-        brush_drag: None,
-        clip_drag: None,
-        interaction: interaction::Interaction::default(),
-        object_cycle: object_picking::Gesture::default(),
-        seen_log: 0,
-        game_log_window: None,
-        last_log_refresh: Instant::now(),
-        entity_window: None,
-        connection_window: None,
-        seen_connections: (0, 0, 0),
-        properties_window: None,
-        report_window: None,
-        statistics_window: None,
-        pointfile_window: None,
-        components_window: None,
-        hollow_window: None,
-        carve_window: None,
-        merge_window: None,
-        recovery_window: None,
-        recent_maps_window: None,
-        checks_window: None,
-        context_window: None,
-        primitive_window: None,
-        polygon: None,
-        linked_path: None,
-        seen_primitive: 0,
-        seen_context: (0, 0),
-        seen_checks: (0, 0, 0),
-        seen_recovery: (0, 0),
-        seen_recent_maps: (0, 0),
-        seen_management: (0, 0, 0),
-        rename_window: None,
-        seen_rename: (0, 0, 0),
-        color_window: None,
-        model: None,
-        model_browser: None,
-        sounds: None,
-        particles: None,
-        placement: None,
-        entity_placement: None,
-        repeat: None,
-        clipboard: None,
-        object_groups: None,
-        layers: None,
-        compile_region: None,
-        fog: None,
-        working_region: None,
-        overlay: None,
-        cubemap: None,
-        prefabs: None,
-        color_target: None,
-        material_window: None,
-        material_target: None,
-        surface_window: None,
-        atlas: None,
-        surface_target: None,
-        lighting: None,
-        terrain: None,
-        terrain_triangles: None,
-        pick_release: false,
-        material_replace: None,
-        surface_group: None,
-        volume: None,
-        compile_status: None,
-        saved_views: None,
-        history: None,
-        measurements: None,
-        grid_defaults: None,
-        preview_defaults: None,
-        navigation_defaults: None,
-        shortcuts: None,
-        material_for_group: false,
-        material_for_atlas: false,
-        overlay_material_target: None,
-        material_for_replace: None,
-        material_for_faces: false,
-        material_for_clip: false,
-        material_for_primitive: false,
-        material_for_polygon: false,
-        material_for_extrusion: false,
-        material_for_partition: false,
-        partition_material_target: None,
-        extrusion_material_target: None,
-        primitive_material_target: None,
-        seen_definitions: 0,
-        seen_materials: 0,
-    }));
+    let ui = Rc::new(RefCell::new(Ui::new(session, ctx)));
 
     app.window().on_close_requested({
         let ui = ui.clone();
@@ -984,12 +991,12 @@ pub(super) fn run(
                     Ok(window) => {
                         components_ui::bind(&window, &session_of(&ui));
                         window.on_browse_partition_material({
-                            let (app, ui) = (app.clone(), ui.clone());
-                            move || show_material_window(&app.unwrap(), &ui, "@partition")
+                            let browse = material_browser(app.clone(), Rc::downgrade(&ui));
+                            move || browse("@partition")
                         });
                         window.on_browse_extrusion_material({
-                            let (app, ui) = (app.clone(), ui.clone());
-                            move || show_material_window(&app.unwrap(), &ui, "@extrusion")
+                            let browse = material_browser(app.clone(), Rc::downgrade(&ui));
+                            move || browse("@extrusion")
                         });
                         ui.borrow_mut().components_window = Some(window);
                     }
@@ -1109,8 +1116,8 @@ pub(super) fn run(
                 match polygon_ui::Controller::new(&session_of(&ui)) {
                     Ok(controller) => {
                         controller.window.on_browse_material({
-                            let (app, ui) = (app.as_weak(), ui.clone());
-                            move || show_material_window(&app.unwrap(), &ui, "@polygon")
+                            let browse = material_browser(app.as_weak(), Rc::downgrade(&ui));
+                            move || browse("@polygon")
                         });
                         ui.borrow_mut().polygon = Some(controller);
                     }
@@ -1143,8 +1150,8 @@ pub(super) fn run(
                     Ok(window) => {
                         primitive_ui::bind(&window, &session_of(&ui));
                         window.on_browse_material({
-                            let (app, ui) = (app.as_weak(), ui.clone());
-                            move || show_material_window(&app.unwrap(), &ui, "@primitive")
+                            let browse = material_browser(app.as_weak(), Rc::downgrade(&ui));
+                            move || browse("@primitive")
                         });
                         ui.borrow_mut().primitive_window = Some(window);
                     }
@@ -1281,8 +1288,8 @@ pub(super) fn run(
                 match overlay_ui::Controller::new(&shared) {
                     Ok(controller) => {
                         controller.window.on_browse_material({
-                            let (app, ui) = (app.clone(), ui.clone());
-                            move || show_material_window(&app.unwrap(), &ui, "@overlay")
+                            let browse = material_browser(app.clone(), Rc::downgrade(&ui));
+                            move || browse("@overlay")
                         });
                         ui.borrow_mut().overlay = Some(controller);
                     }
@@ -1334,8 +1341,8 @@ pub(super) fn run(
                 match surface_group_ui::Controller::new(&shared) {
                     Ok(controller) => {
                         controller.window.on_browse({
-                            let (app, ui) = (app.clone(), ui.clone());
-                            move || show_material_window(&app.unwrap(), &ui, "@group")
+                            let browse = material_browser(app.clone(), Rc::downgrade(&ui));
+                            move || browse("@group")
                         });
                         ui.borrow_mut().surface_group = Some(controller);
                     }
@@ -1363,17 +1370,13 @@ pub(super) fn run(
                 match material_replace_ui::Controller::new(&shared) {
                     Ok(controller) => {
                         controller.window.on_browse({
-                            let (app, ui) = (app.clone(), ui.clone());
+                            let browse = material_browser(app.clone(), Rc::downgrade(&ui));
                             move |replacement| {
-                                show_material_window(
-                                    &app.unwrap(),
-                                    &ui,
-                                    if replacement {
-                                        "@replace-target"
-                                    } else {
-                                        "@replace-source"
-                                    },
-                                )
+                                browse(if replacement {
+                                    "@replace-target"
+                                } else {
+                                    "@replace-source"
+                                })
                             }
                         });
                         ui.borrow_mut().material_replace = Some(controller);
@@ -3458,6 +3461,9 @@ mod model_scale_tests;
 
 #[cfg(test)]
 mod hdr_sky_tests;
+
+#[cfg(test)]
+mod ownership_tests;
 
 pub(crate) use entities::property_row;
 pub(crate) use materials::{

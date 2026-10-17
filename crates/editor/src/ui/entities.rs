@@ -342,21 +342,36 @@ pub(super) fn show_entity_window(app: &AppWindow, ui: &SharedUi, brush_mode: boo
             }
         });
         window.on_filter_changed({
-            let ui = ui.clone();
-            move || refresh_entity_picker(&ui)
+            let ui = Rc::downgrade(ui);
+            move || {
+                if let Some(ui) = ui.upgrade() {
+                    refresh_entity_picker(&ui);
+                }
+            }
         });
         window.on_class_selected({
-            let ui = ui.clone();
-            move || refresh_entity_picker(&ui)
+            let ui = Rc::downgrade(ui);
+            move || {
+                if let Some(ui) = ui.upgrade() {
+                    refresh_entity_picker(&ui);
+                }
+            }
         });
         window.on_load_fgd({
-            let (app, ui) = (app.as_weak(), ui.clone());
-            move || load_fgd(&app.unwrap(), &ui)
+            let (app, ui) = (app.as_weak(), Rc::downgrade(ui));
+            move || {
+                let (Some(app), Some(ui)) = (app.upgrade(), ui.upgrade()) else {
+                    return;
+                };
+                load_fgd(&app, &ui);
+            }
         });
         window.on_pick_surface({
-            let (app, ui) = (app.as_weak(), ui.clone());
+            let (app, ui) = (app.as_weak(), Rc::downgrade(ui));
             move || {
-                let app = app.unwrap();
+                let (Some(app), Some(ui)) = (app.upgrade(), ui.upgrade()) else {
+                    return;
+                };
                 let shared = session_of(&ui);
                 let mut state = ui.borrow_mut();
                 if state.entity_placement.is_none() {
@@ -378,8 +393,11 @@ pub(super) fn show_entity_window(app: &AppWindow, ui: &SharedUi, brush_mode: boo
             }
         });
         window.on_create({
-            let (app, ui) = (app.as_weak(), ui.clone());
+            let (app, ui) = (app.as_weak(), Rc::downgrade(ui));
             move || {
+                let (Some(app), Some(ui)) = (app.upgrade(), ui.upgrade()) else {
+                    return;
+                };
                 let Some(window) = ui
                     .borrow()
                     .entity_window
@@ -419,12 +437,12 @@ pub(super) fn show_entity_window(app: &AppWindow, ui: &SharedUi, brush_mode: boo
                 match result {
                     Ok(_) => {
                         if let Err(error) = window.hide() {
-                            app.unwrap().set_message(error.to_string().into());
+                            app.set_message(error.to_string().into());
                         }
                     }
                     Err(error) => {
                         window.set_message(error.clone().into());
-                        app.unwrap().set_message(error.into());
+                        app.set_message(error.into());
                     }
                 }
             }
@@ -642,9 +660,11 @@ pub(super) fn show_color_window(app: &AppWindow, ui: &SharedUi, key: &str) {
             }
         });
         window.on_apply({
-            let (window, ui) = (window.as_weak(), ui.clone());
+            let (window, ui) = (window.as_weak(), Rc::downgrade(ui));
             move || {
-                let window = window.unwrap();
+                let (Some(window), Some(ui)) = (window.upgrade(), ui.upgrade()) else {
+                    return;
+                };
                 let Some((id, key, generation)) = ui.borrow().color_target.clone() else {
                     return;
                 };

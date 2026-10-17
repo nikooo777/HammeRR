@@ -432,6 +432,15 @@ pub(super) fn refresh_surface_sample(window: &SurfaceWindow, session: &mut Sessi
     );
 }
 
+pub(super) fn material_browser(app: slint::Weak<AppWindow>, ui: WeakUi) -> impl Fn(&str) {
+    move |key| {
+        let (Some(app), Some(ui)) = (app.upgrade(), ui.upgrade()) else {
+            return;
+        };
+        show_material_window(&app, &ui, key);
+    }
+}
+
 fn show_atlas_window(app: &AppWindow, ui: &SharedUi, material: &str) {
     if ui.borrow().atlas.is_none() {
         let controller = match atlas_ui::Controller::new(&session_of(ui)) {
@@ -442,8 +451,8 @@ fn show_atlas_window(app: &AppWindow, ui: &SharedUi, material: &str) {
             }
         };
         controller.window.on_browse({
-            let (app, ui) = (app.as_weak(), ui.clone());
-            move || show_material_window(&app.unwrap(), &ui, "@atlas")
+            let browse = material_browser(app.as_weak(), Rc::downgrade(ui));
+            move || browse("@atlas")
         });
         ui.borrow_mut().atlas = Some(controller);
     }
@@ -466,32 +475,46 @@ pub(super) fn show_surface_window(app: &AppWindow, ui: &SharedUi) {
             }
         };
         window.on_cancel({
-            let (window, ui) = (window.as_weak(), ui.clone());
+            let (window, ui) = (window.as_weak(), Rc::downgrade(ui));
             move || {
-                let window = window.unwrap();
+                let (Some(window), Some(ui)) = (window.upgrade(), ui.upgrade()) else {
+                    return;
+                };
                 cancel_surface_dialog(&window, &mut lock(&session_of(&ui)));
                 let _ = window.hide();
             }
         });
         window.window().on_close_requested({
-            let (window, ui) = (window.as_weak(), ui.clone());
+            let (window, ui) = (window.as_weak(), Rc::downgrade(ui));
             move || {
-                cancel_surface_dialog(&window.unwrap(), &mut lock(&session_of(&ui)));
+                let (Some(window), Some(ui)) = (window.upgrade(), ui.upgrade()) else {
+                    return slint::CloseRequestResponse::HideWindow;
+                };
+                cancel_surface_dialog(&window, &mut lock(&session_of(&ui)));
                 slint::CloseRequestResponse::HideWindow
             }
         });
         window.on_browse({
-            let (app, ui) = (app.as_weak(), ui.clone());
-            move || show_material_window(&app.unwrap(), &ui, "@faces")
+            let browse = material_browser(app.as_weak(), Rc::downgrade(ui));
+            move || browse("@faces")
         });
         window.on_fit_atlas({
-            let (app, ui, window) = (app.as_weak(), ui.clone(), window.as_weak());
-            move || show_atlas_window(&app.unwrap(), &ui, &window.unwrap().get_material())
+            let (app, ui, window) = (app.as_weak(), Rc::downgrade(ui), window.as_weak());
+            move || {
+                let (Some(app), Some(ui), Some(window)) =
+                    (app.upgrade(), ui.upgrade(), window.upgrade())
+                else {
+                    return;
+                };
+                show_atlas_window(&app, &ui, &window.get_material());
+            }
         });
         window.on_preview_edit({
-            let (window, ui) = (window.as_weak(), ui.clone());
+            let (window, ui) = (window.as_weak(), Rc::downgrade(ui));
             move || {
-                let window = window.unwrap();
+                let (Some(window), Some(ui)) = (window.upgrade(), ui.upgrade()) else {
+                    return;
+                };
                 let target = ui.borrow().surface_target.clone();
                 if let Some(target) = target {
                     let result =
@@ -504,9 +527,11 @@ pub(super) fn show_surface_window(app: &AppWindow, ui: &SharedUi) {
             }
         });
         window.on_apply({
-            let (window, ui) = (window.as_weak(), ui.clone());
+            let (window, ui) = (window.as_weak(), Rc::downgrade(ui));
             move || {
-                let window = window.unwrap();
+                let (Some(window), Some(ui)) = (window.upgrade(), ui.upgrade()) else {
+                    return;
+                };
                 let target = ui.borrow().surface_target.clone();
                 if let Some(target) = target {
                     match apply_surface_dialog(&window, &mut lock(&session_of(&ui)), &target, false)
@@ -673,10 +698,13 @@ pub(crate) fn refresh_material_catalog(window: &MaterialWindow, session: &mut Se
 
 fn bind_material_choice(window: &MaterialWindow, app: &AppWindow, ui: &SharedUi) {
     window.on_use_material({
-        let (window, app, ui) = (window.as_weak(), app.as_weak(), ui.clone());
+        let (window, app, ui) = (window.as_weak(), app.as_weak(), Rc::downgrade(ui));
         move || {
-            let window = window.unwrap();
-            let app = app.unwrap();
+            let (Some(window), Some(app), Some(ui)) =
+                (window.upgrade(), app.upgrade(), ui.upgrade())
+            else {
+                return;
+            };
             let material = window.get_material();
             let shared = session_of(&ui);
             let mut session = lock(&shared);
@@ -796,17 +824,21 @@ pub(super) fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
             }
         };
         window.on_search({
-            let (window, ui) = (window.as_weak(), ui.clone());
+            let (window, ui) = (window.as_weak(), Rc::downgrade(ui));
             move || {
-                let window = window.unwrap();
+                let (Some(window), Some(ui)) = (window.upgrade(), ui.upgrade()) else {
+                    return;
+                };
                 refresh_material_catalog(&window, &mut lock(&session_of(&ui)));
             }
         });
         bind_material_cancel(&window);
         window.on_toggle_favorite({
-            let (window, ui) = (window.as_weak(), ui.clone());
+            let (window, ui) = (window.as_weak(), Rc::downgrade(ui));
             move || {
-                let window = window.unwrap();
+                let (Some(window), Some(ui)) = (window.upgrade(), ui.upgrade()) else {
+                    return;
+                };
                 let shared = session_of(&ui);
                 let mut session = lock(&shared);
                 if let Err(error) =

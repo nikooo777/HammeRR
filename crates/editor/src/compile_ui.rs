@@ -12,6 +12,8 @@ mod capture;
 #[cfg(test)]
 mod instance_dependency_tests;
 #[cfg(test)]
+mod recipe_authority_tests;
+#[cfg(test)]
 mod recipe_reload_tests;
 mod sky_packing;
 
@@ -26,6 +28,7 @@ pub struct Controller {
 #[derive(Default)]
 struct RecipeForm {
     revision: u64,
+    registry_revision: u64,
     selected: Option<String>,
     rows: Vec<String>,
 }
@@ -105,12 +108,109 @@ fn visibility_details(stats: &serde_json::Value) -> String {
     text
 }
 
+fn refresh_current_settings(window: &CompileWindow, session: &Session) {
+    let settings = session.compile_settings();
+    sky_packing::refresh(window, session);
+    window.set_generate_reflections(settings["generate_reflections"] == true);
+    window.set_reflection_description(
+        settings["reflection_description"]
+            .as_str()
+            .unwrap_or_default()
+            .into(),
+    );
+    let choices = settings["choices"].as_array().cloned().unwrap_or_default();
+    let choice = choices
+        .iter()
+        .position(|choice| choice["name"] == settings["lighting"])
+        .unwrap_or_default() as i32;
+    window.set_lighting_choice(choice);
+    window.set_selected_lighting(
+        choices[choice as usize]["label"]
+            .as_str()
+            .unwrap_or_default()
+            .into(),
+    );
+    window.set_lighting_enabled(settings["editable"].as_bool().unwrap_or(false));
+    window.set_lighting_description(
+        settings["choices"][choice as usize]["description"]
+            .as_str()
+            .unwrap_or_default()
+            .into(),
+    );
+    let physics_choices = settings["physics_choices"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let physics_choice = physics_choices
+        .iter()
+        .position(|choice| choice["name"] == settings["physics"])
+        .unwrap_or_default();
+    window.set_selected_physics(
+        physics_choices[physics_choice]["label"]
+            .as_str()
+            .unwrap_or_default()
+            .into(),
+    );
+    window.set_physics_description(
+        physics_choices[physics_choice]["description"]
+            .as_str()
+            .unwrap_or_default()
+            .into(),
+    );
+    let sky_choice = settings["sky_choices"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|choice| choice["name"] == settings["sky_quality"]);
+    window.set_selected_sky_quality(
+        sky_choice
+            .and_then(|choice| choice["label"].as_str())
+            .unwrap_or_default()
+            .into(),
+    );
+    window.set_sky_enabled(
+        settings["editable"].as_bool().unwrap_or(false)
+            && compiler::LightingMode::parse(settings["lighting"].as_str().unwrap_or_default())
+                .is_ok_and(compiler::LightingMode::performs_lighting),
+    );
+    window.set_smoothing_angle(settings["smoothing_angle"].as_u64().unwrap_or_default() as i32);
+    let bounce_choice = settings["bounce_choices"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|choice| choice["bounces"] == settings["bounces"]);
+    window.set_selected_bounces(
+        bounce_choice
+            .and_then(|choice| choice["label"].as_str())
+            .unwrap_or_default()
+            .into(),
+    );
+    let visibility_choice = settings["visibility_choices"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|choice| choice["name"] == settings["visibility"]);
+    window.set_selected_visibility(
+        visibility_choice
+            .and_then(|choice| choice["label"].as_str())
+            .unwrap_or_default()
+            .into(),
+    );
+    window.set_visibility_description(
+        visibility_choice
+            .and_then(|choice| choice["description"].as_str())
+            .unwrap_or_default()
+            .into(),
+    );
+}
+
 fn refresh_recipes(window: &CompileWindow, session: &Session, form: &RefCell<RecipeForm>) {
-    let state = session.build_recipes();
+    refresh_current_settings(window, session);
+    let (state, registry_revision) = session.build_recipes_observation();
     let mut form = form.borrow_mut();
     let revision = state["revision"].as_u64().unwrap_or_default();
-    if form.revision != revision {
-        form.revision = revision;
+    if form.registry_revision != registry_revision || form.revision == 0 {
+        form.registry_revision = registry_revision;
         let entries = state["recipes"].as_array().cloned().unwrap_or_default();
         form.rows = entries
             .iter()
@@ -151,6 +251,7 @@ fn refresh_recipes(window: &CompileWindow, session: &Session, form: &RefCell<Rec
             );
         }
     }
+    form.revision = revision;
     window.set_custom_recipes_enabled(state["custom_editable"].as_bool().unwrap_or(false));
     window.set_recipes_reload_enabled(state["editable"] == true && state["path"].is_string());
     let active = state["active"]["name"]
@@ -261,7 +362,6 @@ fn recipe_action(
         Err(error) => window.set_message(error.into()),
     }
     refresh_recipes(window, session, form);
-    sky_packing::refresh(window, session);
 }
 
 impl Controller {
@@ -269,8 +369,8 @@ impl Controller {
         let window = CompileWindow::new()?;
         let token = Rc::new(Cell::new(None));
         let recipes = Rc::new(RefCell::new(RecipeForm::default()));
-        let capture = capture::bind(&window, shared);
-        sky_packing::bind(&window, shared);
+        let capture = capture::bind(&window, shared, &recipes);
+        sky_packing::bind(&window, shared, &recipes);
         let baked_lightmaps = baked_lightmaps::bind(&window, shared)?;
         window.on_choose_recipe({
             let (shared, window, recipes) = (shared.clone(), window.as_weak(), recipes.clone());
@@ -388,12 +488,13 @@ impl Controller {
             .collect::<Vec<_>>();
         window.set_bounce_modes(Rc::new(slint::VecModel::from(bounce_labels)).into());
         window.on_change_smoothing_angle({
-            let (shared, window) = (shared.clone(), window.as_weak());
+            let (shared, window, recipes) = (shared.clone(), window.as_weak(), recipes.clone());
             move |angle| {
+                let mut session = lock(&shared);
                 let result = u8::try_from(angle)
                     .map_err(|_| "Choose an angle from 0 to 90 degrees".to_string())
                     .and_then(|angle| {
-                        lock(&shared).update_build_settings(
+                        session.update_build_settings(
                             Actor::User,
                             crate::session::compilation::BuildSettingsUpdate {
                                 smoothing_angle: Some(angle),
@@ -401,7 +502,9 @@ impl Controller {
                             },
                         )
                     });
-                window.unwrap().set_message(match result {
+                let window = window.unwrap();
+                refresh_recipes(&window, &session, &recipes);
+                window.set_message(match result {
                     Ok(_) => {
                         "Brush smoothing angle updated. The next build will use this angle.".into()
                     }
@@ -410,7 +513,7 @@ impl Controller {
             }
         });
         window.on_change_bounces({
-            let (shared, window) = (shared.clone(), window.as_weak());
+            let (shared, window, recipes) = (shared.clone(), window.as_weak(), recipes.clone());
             move |choice| {
                 let mut session = lock(&shared);
                 let settings = session.compile_settings();
@@ -428,14 +531,16 @@ impl Controller {
                             Some(count),
                         )
                     });
-                window.unwrap().set_message(match result {
+                let window = window.unwrap();
+                refresh_recipes(&window, &session, &recipes);
+                window.set_message(match result {
                     Ok(_) => "Indirect light updated. The next build will use this setting.".into(),
                     Err(error) => error.into(),
                 });
             }
         });
         window.on_change_visibility({
-            let (shared, window) = (shared.clone(), window.as_weak());
+            let (shared, window, recipes) = (shared.clone(), window.as_weak(), recipes.clone());
             move |choice| {
                 let mut session = lock(&shared);
                 let settings = session.compile_settings();
@@ -452,7 +557,9 @@ impl Controller {
                             None,
                         )
                     });
-                window.unwrap().set_message(match result {
+                let window = window.unwrap();
+                refresh_recipes(&window, &session, &recipes);
+                window.set_message(match result {
                     Ok(_) => {
                         "Visibility quality updated. The next build will use this quality.".into()
                     }
@@ -461,7 +568,7 @@ impl Controller {
             }
         });
         window.on_change_sky_quality({
-            let (shared, window) = (shared.clone(), window.as_weak());
+            let (shared, window, recipes) = (shared.clone(), window.as_weak(), recipes.clone());
             move |choice| {
                 let mut session = lock(&shared);
                 let settings = session.compile_settings();
@@ -476,14 +583,16 @@ impl Controller {
                             Some(quality),
                         )
                     });
-                window.unwrap().set_message(match result {
+                let window = window.unwrap();
+                refresh_recipes(&window, &session, &recipes);
+                window.set_message(match result {
                     Ok(_) => "Sky quality updated. The next build will use this quality.".into(),
                     Err(error) => error.into(),
                 });
             }
         });
         window.on_change_physics({
-            let (shared, window) = (shared.clone(), window.as_weak());
+            let (shared, window, recipes) = (shared.clone(), window.as_weak(), recipes.clone());
             move |choice| {
                 let mut session = lock(&shared);
                 let settings = session.compile_settings();
@@ -493,14 +602,16 @@ impl Controller {
                     .and_then(|mode| {
                         session.update_compile_settings(Actor::User, None, Some(mode))
                     });
-                window.unwrap().set_message(match result {
+                let window = window.unwrap();
+                refresh_recipes(&window, &session, &recipes);
+                window.set_message(match result {
                     Ok(_) => "Physics mode updated. The next build will use this mode.".into(),
                     Err(error) => error.into(),
                 });
             }
         });
         window.on_change_lighting({
-            let (shared, window) = (shared.clone(), window.as_weak());
+            let (shared, window, recipes) = (shared.clone(), window.as_weak(), recipes.clone());
             move |choice| {
                 let mut session = lock(&shared);
                 let settings = session.compile_settings();
@@ -508,7 +619,9 @@ impl Controller {
                     .as_str()
                     .ok_or_else(|| "Choose a supported lighting mode".to_string())
                     .and_then(|mode| session.set_compile_settings(Actor::User, mode));
-                window.unwrap().set_message(match result {
+                let window = window.unwrap();
+                refresh_recipes(&window, &session, &recipes);
+                window.set_message(match result {
                     Ok(_) => "Build lighting updated. The next build will use this mode.".into(),
                     Err(error) => error.into(),
                 });
@@ -571,102 +684,6 @@ impl Controller {
         self.token.set(session.compile_token());
         self.window.set_cancellable(session.compile_cancellable());
         let status = session.compile_status();
-        let settings = &status["settings"];
-        sky_packing::refresh(&self.window, session);
-        self.window
-            .set_generate_reflections(settings["generate_reflections"] == true);
-        self.window.set_reflection_description(
-            settings["reflection_description"]
-                .as_str()
-                .unwrap_or_default()
-                .into(),
-        );
-        let choices = settings["choices"].as_array().cloned().unwrap_or_default();
-        let choice = choices
-            .iter()
-            .position(|choice| choice["name"] == settings["lighting"])
-            .unwrap_or_default() as i32;
-        self.window.set_lighting_choice(choice);
-        self.window.set_selected_lighting(
-            choices[choice as usize]["label"]
-                .as_str()
-                .unwrap_or_default()
-                .into(),
-        );
-        self.window
-            .set_lighting_enabled(settings["editable"].as_bool().unwrap_or(false));
-        self.window.set_lighting_description(
-            settings["choices"][choice as usize]["description"]
-                .as_str()
-                .unwrap_or_default()
-                .into(),
-        );
-        let physics_choices = settings["physics_choices"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
-        let physics_choice = physics_choices
-            .iter()
-            .position(|choice| choice["name"] == settings["physics"])
-            .unwrap_or_default();
-        self.window.set_selected_physics(
-            physics_choices[physics_choice]["label"]
-                .as_str()
-                .unwrap_or_default()
-                .into(),
-        );
-        self.window.set_physics_description(
-            physics_choices[physics_choice]["description"]
-                .as_str()
-                .unwrap_or_default()
-                .into(),
-        );
-        let sky_choice = settings["sky_choices"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .find(|choice| choice["name"] == settings["sky_quality"]);
-        self.window.set_selected_sky_quality(
-            sky_choice
-                .and_then(|choice| choice["label"].as_str())
-                .unwrap_or_default()
-                .into(),
-        );
-        self.window.set_sky_enabled(
-            settings["editable"].as_bool().unwrap_or(false)
-                && compiler::LightingMode::parse(settings["lighting"].as_str().unwrap_or_default())
-                    .is_ok_and(compiler::LightingMode::performs_lighting),
-        );
-        self.window
-            .set_smoothing_angle(settings["smoothing_angle"].as_u64().unwrap_or_default() as i32);
-        let bounce_choice = settings["bounce_choices"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .find(|choice| choice["bounces"] == settings["bounces"]);
-        self.window.set_selected_bounces(
-            bounce_choice
-                .and_then(|choice| choice["label"].as_str())
-                .unwrap_or_default()
-                .into(),
-        );
-        let visibility_choice = settings["visibility_choices"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .find(|choice| choice["name"] == settings["visibility"]);
-        self.window.set_selected_visibility(
-            visibility_choice
-                .and_then(|choice| choice["label"].as_str())
-                .unwrap_or_default()
-                .into(),
-        );
-        self.window.set_visibility_description(
-            visibility_choice
-                .and_then(|choice| choice["description"].as_str())
-                .unwrap_or_default()
-                .into(),
-        );
         let launch = &status["launch"];
         self.window
             .set_launch_ready(launch["ready"].as_bool().unwrap_or(false));

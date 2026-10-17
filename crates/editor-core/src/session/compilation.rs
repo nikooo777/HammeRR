@@ -381,7 +381,7 @@ impl Session {
             .map(|(count, label)| json!({"bounces": count, "label": label}))
             .collect::<Vec<_>>();
         json!({"pack_sky_assets":self.compilation.options.pack_sky_assets,"sky_packing_description":"Pack the complete exact authored sky family, original materials, Patch dependencies and supported LDR/HDR textures during Compile or Run Map. Default off. Incomplete or unsupported families fail without publication or automatic family fallback. Does not pack unrelated assets or select the game's rendering channel.","generate_reflections":self.compilation.options.generate_reflections,"reflection_description":"Generate one native reflection bounce during Compile or Run Map. Direct LDR captures LDR; Direct LDR + HDR captures and verifies both channels before publication. Requires a verified CS:S capture runtime. Fullbright generation is unsupported.","smoothing_angle":self.compilation.options.smoothing_angle,"smoothing_angle_range":{"min":0,"max":90,"unit":"degrees","disabled":0},"bounces":self.compilation.options.bounces,"bounce_choices":bounce_choices,"visibility":self.compilation.options.visibility.name(), "visibility_choices":visibility_choices, "sky_quality":self.compilation.options.sky_quality.name(),"sky_choices":sky_choices,"lighting":self.compilation.options.lighting.name(),"physics":self.compilation.options.physics.name(),
-            "recipe":self.compilation.recipes.active,"editable":!self.compiling && !self.closing,"choices":choices,"physics_choices":physics_choices})
+            "recipe":self.active_build_recipe(),"editable":!self.compiling && !self.closing,"choices":choices,"physics_choices":physics_choices})
     }
 
     pub fn set_compile_settings(&mut self, actor: Actor, lighting: &str) -> Result<Value, String> {
@@ -479,7 +479,8 @@ impl Session {
         }
         if options != self.compilation.options {
             self.compilation.options = options;
-            self.compilation.recipes.active = None;
+            self.compilation.recipes.set_active(None);
+            self.compilation.recipes.changed_local();
             self.remember_current_map_context();
             self.log(
                 actor,
@@ -603,7 +604,7 @@ impl Session {
             },
             options: self.compilation.options,
             region: self.compile_region_build_scope(),
-            recipe: self.compilation.recipes.active.clone(),
+            recipe: self.active_build_recipe(),
             started: Instant::now(),
             finished: None,
             status: "running",

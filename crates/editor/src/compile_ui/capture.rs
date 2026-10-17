@@ -99,10 +99,14 @@ impl Form {
     }
 }
 
-pub(super) fn bind(window: &CompileWindow, shared: &SharedSession) -> Form {
+pub(super) fn bind(
+    window: &CompileWindow,
+    shared: &SharedSession,
+    recipes: &Rc<RefCell<super::RecipeForm>>,
+) -> Form {
     let form = Form::default();
     window.on_change_reflections({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, shared, recipes) = (window.as_weak(), shared.clone(), recipes.clone());
         move |enabled| {
             let mut session = lock(&shared);
             let result = session.update_build_settings(Actor::User, crate::session::compilation::BuildSettingsUpdate {
@@ -110,7 +114,7 @@ pub(super) fn bind(window: &CompileWindow, shared: &SharedSession) -> Form {
                 ..Default::default()
             });
             let window = window.unwrap();
-            window.set_generate_reflections(session.compile_options().generate_reflections);
+            super::refresh_recipes(&window, &session, &recipes);
             window.set_message(match result {
                 Ok(_) if enabled => "Reflection generation enabled. The next Compile or Run Map captures and verifies the selected lighting channels before publishing.".into(),
                 Ok(_) => "Reflection generation disabled.".into(),

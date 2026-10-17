@@ -24,10 +24,19 @@ fn change(window: &CompileWindow, session: &mut Session, enabled: bool) {
     });
 }
 
-pub(super) fn bind(window: &CompileWindow, shared: &SharedSession) {
+pub(super) fn bind(
+    window: &CompileWindow,
+    shared: &SharedSession,
+    recipes: &std::rc::Rc<std::cell::RefCell<super::RecipeForm>>,
+) {
     window.on_change_pack_sky_assets({
-        let (window, shared) = (window.as_weak(), shared.clone());
-        move |enabled| change(&window.unwrap(), &mut lock(&shared), enabled)
+        let (window, shared, recipes) = (window.as_weak(), shared.clone(), recipes.clone());
+        move |enabled| {
+            let mut session = lock(&shared);
+            let window = window.unwrap();
+            change(&window, &mut session, enabled);
+            super::refresh_recipes(&window, &session, &recipes);
+        }
     });
 }
 

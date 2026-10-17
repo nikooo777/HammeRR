@@ -1,0 +1,501 @@
+use std::collections::HashSet;
+use std::fs;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+
+use std::sync::{Arc, Mutex, MutexGuard};
+
+pub(crate) const FILE_NAME: &str = "build-recipes.json";
+pub(crate) const VERSION: u32 = 1;
+pub(crate) const MAX_RECIPES: usize = 32;
+pub(crate) const MAX_NAME_BYTES: usize = 80;
+pub(crate) const MAX_FILE_BYTES: usize = 65_536;
+pub(crate) const MAX_ERROR_BYTES: usize = 512;
+
+#[derive(Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct Identity {
+    pub(crate) id: String,
+    pub(crate) name: String,
+}
+
+use crate::build_settings::BuildSettings as Settings;
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Recipe {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) settings: Settings,
+}
+
+impl Recipe {
+    pub(crate) fn identity(&self) -> Identity {
+        Identity {
+            id: self.id.clone(),
+            name: self.name.clone(),
+        }
+    }
+
+    pub(crate) fn json(&self, builtin: bool) -> Value {
+        let options = self
+            .settings
+            .options()
+            .expect("recipe settings are validated");
+        let description = format!(
+            "{} · {} · {} · {} · {} · {}° brush smoothing · reflections {} · sky packing {}",
+            options.lighting.label(),
+            options.physics.label(),
+            options.visibility.label(),
+            options.sky_quality.label(),
+            compiler::bounce_label(options.bounces),
+            options.smoothing_angle,
+            if options.generate_reflections {
+                "on"
+            } else {
+                "off"
+            },
+            if options.pack_sky_assets { "on" } else { "off" }
+        );
+        json!({"id":self.id,"name":self.name,"builtin":builtin,"settings":self.settings,"description":description})
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct File {
+    pub(crate) version: u32,
+    pub(crate) next_id: u64,
+    pub(crate) recipes: Vec<Recipe>,
+}
+
+impl Default for File {
+    fn default() -> Self {
+        Self {
+            version: VERSION,
+            next_id: 1,
+            recipes: Vec::new(),
+        }
+    }
+}
+
+struct Registry {
+    file: File,
+    revision: u64,
+    path: Option<PathBuf>,
+    disk: Option<Vec<u8>>,
+    load_failed: bool,
+    error: Option<String>,
+}
+
+impl Default for Registry {
+    fn default() -> Self {
+        Self {
+            file: File::default(),
+            revision: 1,
+            path: None,
+            disk: None,
+            load_failed: false,
+            error: None,
+        }
+    }
+}
+
+pub(crate) fn builtins() -> [Recipe; 2] {
+    [
+        Recipe {
+            id: "fast".into(),
+            name: "Fast preview".into(),
+            settings: compiler::Options::default().into(),
+        },
+        Recipe {
+            id: "final".into(),
+            name: "Final lighting".into(),
+            settings: compiler::Options {
+                lighting: compiler::LightingMode::DirectLdr,
+                physics: compiler::PhysicsMode::Engine,
+                sky_quality: compiler::SkyQuality::Detailed,
+                visibility: compiler::VisibilityMode::Detailed,
+                bounces: compiler::MAX_LIGHT_BOUNCES,
+                smoothing_angle: 45,
+                generate_reflections: false,
+                pack_sky_assets: false,
+            }
+            .into(),
+        },
+    ]
+}
+
+fn recipe_name(name: &str) -> Result<String, String> {
+    let name = name.trim();
+    if name.is_empty() || name.len() > MAX_NAME_BYTES || name.chars().any(char::is_control) {
+        return Err(format!(
+            "Recipe name must contain 1–{MAX_NAME_BYTES} bytes without control characters"
+        ));
+    }
+    Ok(name.into())
+}
+
+pub(crate) fn validate(file: &File) -> Result<(), String> {
+    if file.version != VERSION || file.recipes.len() > MAX_RECIPES || file.next_id == 0 {
+        return Err("Unsupported or oversized build recipe file".into());
+    }
+    let mut ids = HashSet::new();
+    let mut names = builtins()
+        .map(|recipe| recipe.name.to_lowercase())
+        .into_iter()
+        .collect::<HashSet<_>>();
+    for recipe in &file.recipes {
+        let id = recipe
+            .id
+            .strip_prefix("custom:")
+            .and_then(|id| id.parse::<u64>().ok())
+            .filter(|id| *id > 0 && *id < file.next_id)
+            .ok_or("Invalid custom recipe identifier")?;
+        if !ids.insert(id) || !names.insert(recipe.name.to_lowercase()) {
+            return Err("Duplicate build recipe identifier or name".into());
+        }
+        if recipe_name(&recipe.name)? != recipe.name {
+            return Err("Stored recipe name must not have surrounding whitespace".into());
+        }
+        recipe.settings.options()?;
+    }
+    Ok(())
+}
+
+fn read(path: &Path) -> Result<Option<Vec<u8>>, String> {
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("{}: {error}", path.display())),
+    };
+    let mut bytes = Vec::new();
+    file.take(MAX_FILE_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("{}: {error}", path.display()))?;
+    if bytes.len() > MAX_FILE_BYTES {
+        return Err(format!("Build recipe file exceeds {MAX_FILE_BYTES} bytes"));
+    }
+    Ok(Some(bytes))
+}
+
+fn load(path: &Path) -> Result<(File, Option<Vec<u8>>), String> {
+    let disk = read(path)?;
+    let file = match &disk {
+        Some(bytes) => serde_json::from_slice(bytes).map_err(|error| error.to_string())?,
+        None => File::default(),
+    };
+    validate(&file)?;
+    Ok((file, disk))
+}
+
+#[derive(Clone, Default)]
+pub struct Authority {
+    state: Arc<Mutex<Registry>>,
+}
+
+#[derive(Clone)]
+pub(crate) struct Snapshot {
+    pub file: File,
+    pub revision: u64,
+    pub path: Option<PathBuf>,
+    pub load_failed: bool,
+    pub error: Option<String>,
+}
+
+pub(crate) enum Edit<'a> {
+    Save {
+        name: &'a str,
+        replace: Option<&'a str>,
+        settings: Settings,
+    },
+    Rename {
+        id: &'a str,
+        name: &'a str,
+    },
+    Delete {
+        id: &'a str,
+    },
+}
+
+pub(crate) fn configured_path(directory: Result<PathBuf, String>) -> Result<PathBuf, String> {
+    match std::env::var_os("HAMMERR_BUILD_RECIPES") {
+        Some(path) if path.is_empty() => Err("HAMMERR_BUILD_RECIPES must be a file path".into()),
+        Some(path) => Ok(PathBuf::from(path)),
+        None => directory.map(|directory| directory.join(FILE_NAME)),
+    }
+}
+
+impl Snapshot {
+    pub fn find(&self, id: &str) -> Result<Recipe, String> {
+        builtins()
+            .into_iter()
+            .chain(self.file.recipes.iter().cloned())
+            .find(|recipe| recipe.id == id)
+            .ok_or_else(|| "Build recipe no longer exists".into())
+    }
+    pub fn identity(
+        &self,
+        active: Option<&Identity>,
+        options: compiler::Options,
+    ) -> Option<Identity> {
+        let active = active?;
+        self.find(&active.id)
+            .ok()
+            .filter(|recipe| {
+                recipe
+                    .settings
+                    .options()
+                    .is_ok_and(|saved| saved == options)
+            })
+            .map(|recipe| recipe.identity())
+    }
+}
+
+impl Authority {
+    pub fn configured(directory: Result<PathBuf, String>) -> Self {
+        let authority = Self::default();
+        let _ = authority.configure_at(configured_path(directory));
+        authority
+    }
+    fn lock(&self) -> MutexGuard<'_, Registry> {
+        self.state
+            .lock()
+            .expect("Build recipes authority was poisoned")
+    }
+    pub(crate) fn configure_at(&self, path: Result<PathBuf, String>) -> Result<(), String> {
+        let mut state = self.lock();
+        let loaded = path
+            .as_ref()
+            .map_err(Clone::clone)
+            .and_then(|path| load(path));
+        state.path = path.ok();
+        state.revision += 1;
+        match loaded {
+            Ok((file, disk)) => {
+                state.file = file;
+                state.disk = disk;
+                state.load_failed = false;
+                state.error = None;
+                Ok(())
+            }
+            Err(error) => {
+                state.load_failed = true;
+                let error = format!("Build recipes could not load: {error}");
+                state.error = Some(error.clone());
+                Err(error)
+            }
+        }
+    }
+    pub(crate) fn snapshot(&self) -> Snapshot {
+        self.lock().snapshot()
+    }
+    pub(crate) fn find(
+        &self,
+        id: &str,
+        expected: Option<u64>,
+    ) -> Result<(Recipe, Snapshot), String> {
+        let state = self.lock();
+        state.check_revision(expected)?;
+        let snapshot = state.snapshot();
+        let recipe = snapshot.find(id)?;
+        Ok((recipe, snapshot))
+    }
+    pub(crate) fn reload(&self, expected: Option<u64>) -> Result<Snapshot, String> {
+        let mut state = self.lock();
+        state.check_revision(expected)?;
+        let path = state
+            .path
+            .as_deref()
+            .ok_or("Build recipe storage is unavailable; session-only recipes remain editable")?;
+        let loaded = load(path);
+        state.revision += 1;
+        match loaded {
+            Ok((file, disk)) => {
+                state.file = file;
+                state.disk = disk;
+                state.load_failed = false;
+                state.error = None;
+                Ok(state.snapshot())
+            }
+            Err(error) => {
+                state.load_failed = true;
+                let error = map_core::entity_helpers::bounded_preview(
+                    &format!("Build recipes could not reload: {error}"),
+                    MAX_ERROR_BYTES,
+                );
+                state.error = Some(error.clone());
+                Err(error)
+            }
+        }
+    }
+    pub(crate) fn edit(
+        &self,
+        expected: Option<u64>,
+        edit: Edit<'_>,
+    ) -> Result<(Recipe, Snapshot), String> {
+        let mut state = self.lock();
+        state.check_revision(expected)?;
+        let mut file = state.file.clone();
+        let recipe = match edit {
+            Edit::Save {
+                name,
+                replace,
+                settings,
+            } => {
+                let name = recipe_name(name)?;
+                let id = match replace {
+                    Some(id) => {
+                        if !file.recipes.iter().any(|recipe| recipe.id == id) {
+                            return Err(
+                                "Choose an existing custom recipe; built-in recipes cannot change"
+                                    .into(),
+                            );
+                        }
+                        id.to_owned()
+                    }
+                    None => {
+                        if file.recipes.len() == MAX_RECIPES {
+                            return Err(format!("Keep at most {MAX_RECIPES} custom build recipes"));
+                        }
+                        let id = format!("custom:{}", file.next_id);
+                        file.next_id = file
+                            .next_id
+                            .checked_add(1)
+                            .ok_or("Build recipe identifiers exhausted")?;
+                        id
+                    }
+                };
+                let recipe = Recipe {
+                    id: id.clone(),
+                    name,
+                    settings,
+                };
+                file.recipes.retain(|recipe| recipe.id != id);
+                file.recipes.push(recipe.clone());
+                recipe
+            }
+            Edit::Rename { id, name } => {
+                let name = recipe_name(name)?;
+                let recipe = file
+                    .recipes
+                    .iter_mut()
+                    .find(|recipe| recipe.id == id)
+                    .ok_or("Choose an existing custom recipe; built-in recipes cannot change")?;
+                recipe.name = name;
+                recipe.clone()
+            }
+            Edit::Delete { id } => {
+                let index = file
+                    .recipes
+                    .iter()
+                    .position(|recipe| recipe.id == id)
+                    .ok_or(
+                        "Choose an existing custom recipe; built-in recipes cannot be deleted",
+                    )?;
+                file.recipes.remove(index)
+            }
+        };
+        state.publish(file)?;
+        Ok((recipe, state.snapshot()))
+    }
+}
+
+impl Registry {
+    fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            file: self.file.clone(),
+            revision: self.revision,
+            path: self.path.clone(),
+            load_failed: self.load_failed,
+            error: self.error.clone(),
+        }
+    }
+    fn check_revision(&self, expected: Option<u64>) -> Result<(), String> {
+        if expected.is_some_and(|revision| revision != self.revision) {
+            return Err(
+                "Build recipes changed; reload the list before applying this action".into(),
+            );
+        }
+        Ok(())
+    }
+    fn publish(&mut self, file: File) -> Result<(), String> {
+        validate(&file)?;
+        let state = self;
+        let result: Result<(), String> = (|| {
+            if state.load_failed {
+                return Err("Build recipes did not load; fix storage and Reload recipes before editing custom recipes".into());
+            }
+            let bytes = serde_json::to_vec_pretty(&file).map_err(|error| error.to_string())?;
+            if bytes.len() > MAX_FILE_BYTES {
+                return Err("Build recipes exceed the storage limit".into());
+            }
+            if let Some(path) = &state.path {
+                if read(path)? != state.disk {
+                    return Err(
+                        "Build recipes changed on disk; Reload recipes before editing".into(),
+                    );
+                }
+                let directory = path
+                    .parent()
+                    .filter(|path| !path.as_os_str().is_empty())
+                    .unwrap_or(Path::new("."));
+                fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+                crate::recovery::atomic_write(path, &bytes)?;
+                state.disk = Some(bytes);
+            }
+            Ok(())
+        })();
+        if let Err(error) = result {
+            let error = format!("Build recipes could not save: {error}");
+            state.error = Some(error.clone());
+            return Err(error);
+        }
+        state.file = file;
+        state.revision += 1;
+        state.error = None;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::session::{Actor, Session};
+
+    #[test]
+    fn high_registry_revisions_and_under_lock_guards_do_not_alias_local_action_tokens() {
+        let authority = Authority::default();
+        authority.lock().revision = 1 << 63;
+        let mut session = Session::with_build_recipes(Err("no assets".into()), authority.clone());
+        let token = session.build_recipes()["revision"].as_u64().unwrap();
+        let shared = authority.snapshot().revision;
+        authority
+            .edit(
+                None,
+                Edit::Save {
+                    name: "Peer",
+                    replace: None,
+                    settings: compiler::Options::default().into(),
+                },
+            )
+            .unwrap();
+        assert!(authority.find("fast", Some(shared)).is_err());
+        assert!(
+            authority
+                .edit(Some(shared), Edit::Delete { id: "custom:1" })
+                .is_err()
+        );
+        assert!(
+            session
+                .apply_build_recipe(Actor::User, "fast", Some(token))
+                .is_err()
+        );
+        let token = session.build_recipes()["revision"].as_u64().unwrap();
+        session
+            .apply_build_recipe(Actor::User, "fast", Some(token))
+            .unwrap();
+    }
+}

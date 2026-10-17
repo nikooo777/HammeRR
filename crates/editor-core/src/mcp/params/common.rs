@@ -611,7 +611,7 @@ pub struct SaveBuildRecipeArgs {
     pub name: String,
     /// Omit to create; supply a custom recipe ID to replace with current settings.
     pub replace_id: Option<String>,
-    /// Registry revision from get_build_recipes; rejects concurrent recipe edits.
+    /// Per-Session action revision from get_build_recipes; rejects changed recipes or local settings.
     pub revision: Option<u64>,
 }
 

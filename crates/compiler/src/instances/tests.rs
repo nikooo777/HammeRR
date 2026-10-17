@@ -1096,3 +1096,135 @@ fn referring_directory_alias_cannot_hide_a_replaced_physical_directory() {
     assert!(reference.verify_metadata().is_err());
     assert!(context.verify_metadata().is_err());
 }
+
+#[test]
+fn new_reference_guards_absence_without_reserving_or_reading_child_contents() {
+    let (directory, _, _, _) = fixture();
+    let modules = directory.path().join("modules");
+    std::fs::create_dir(&modules).unwrap();
+    let parent = directory.path().join("parent.vmf");
+    let before = std::fs::read(&parent).unwrap();
+    let location = SourceLocation::capture(&parent).unwrap();
+    let reference = location.new_reference(".\\modules\\new.VMF").unwrap();
+    assert_eq!(reference.relative(), "modules/new.VMF");
+    assert_eq!(reference.path(), modules.join("new.VMF"));
+    assert!(!reference.path().exists());
+    std::fs::write(modules.join("private-stage.vmf"), [0xff, 0x00, 0xfe]).unwrap();
+    std::fs::create_dir(modules.join("unrelated")).unwrap();
+    std::fs::write(directory.path().join("unrelated.txt"), "unrelated").unwrap();
+    reference.clone().verify_metadata().unwrap();
+    assert!(location.reference("modules/new.VMF").is_err());
+    std::fs::write(reference.path(), "competing creator").unwrap();
+    assert_eq!(
+        reference.verify_metadata().unwrap_err().kind(),
+        io::ErrorKind::AlreadyExists
+    );
+    assert_eq!(
+        std::fs::read(reference.path()).unwrap(),
+        b"competing creator"
+    );
+    assert_eq!(std::fs::read(parent).unwrap(), before);
+}
+
+#[test]
+fn new_reference_rejects_missing_parents_existing_targets_and_unsafe_names() {
+    let (directory, _, _, _) = fixture();
+    let location = SourceLocation::capture(&directory.path().join("parent.vmf")).unwrap();
+    std::fs::create_dir(directory.path().join("directory.vmf")).unwrap();
+    for value in [
+        "",
+        "../new.vmf",
+        "modules/../new.vmf",
+        "/new.vmf",
+        "C:\\new.vmf",
+        "new",
+        "new.vmx",
+        "new.vmf\n",
+        "missing/new.vmf",
+        "child.vmf/new.vmf",
+        "parent.vmf",
+        "child.vmf",
+        "directory.vmf",
+    ] {
+        assert!(location.new_reference(value).is_err(), "{value:?}");
+    }
+    assert!(
+        location
+            .new_reference(&format!("{}.vmf", "x".repeat(MAX_FIELD_BYTES)))
+            .is_err()
+    );
+    assert_eq!(
+        location.new_reference("child.vmf").unwrap_err().kind(),
+        io::ErrorKind::AlreadyExists
+    );
+    assert!(location.new_reference("new.vmf").is_ok());
+}
+
+#[cfg(unix)]
+#[test]
+fn new_reference_rejects_symlinks_and_retains_every_target_directory_identity() {
+    use std::os::unix::fs::symlink;
+    let (directory, _, _, _) = fixture();
+    let modules = directory.path().join("modules");
+    let nested = modules.join("nested");
+    std::fs::create_dir_all(&nested).unwrap();
+    let location = SourceLocation::capture(&directory.path().join("parent.vmf")).unwrap();
+    symlink(&modules, directory.path().join("linked-modules")).unwrap();
+    symlink(
+        directory.path().join("missing.vmf"),
+        nested.join("dangling.vmf"),
+    )
+    .unwrap();
+    symlink(
+        directory.path().join("child.vmf"),
+        nested.join("linked.vmf"),
+    )
+    .unwrap();
+    assert!(location.new_reference("linked-modules/new.vmf").is_err());
+    for value in ["modules/nested/dangling.vmf", "modules/nested/linked.vmf"] {
+        assert_eq!(
+            location.new_reference(value).unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
+    }
+    let reference = location.new_reference("modules/nested/new.vmf").unwrap();
+    std::fs::rename(&nested, modules.join("previous-nested")).unwrap();
+    std::fs::create_dir(&nested).unwrap();
+    assert!(reference.verify_metadata().is_err());
+    let reference = location.new_reference("modules/nested/new.vmf").unwrap();
+    std::fs::rename(&modules, directory.path().join("previous-modules")).unwrap();
+    std::fs::create_dir_all(&nested).unwrap();
+    assert!(reference.verify_metadata().is_err());
+    let reference = location.new_reference("modules/nested/new.vmf").unwrap();
+    std::fs::remove_dir(&nested).unwrap();
+    symlink(directory.path(), &nested).unwrap();
+    assert!(reference.verify_metadata().is_err());
+    location.verify_metadata().unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn new_reference_uses_referring_directory_and_expires_on_source_alias_retarget() {
+    use std::os::unix::fs::symlink;
+    let (directory, _, _, _) = fixture();
+    let physical = directory.path().join("physical");
+    std::fs::create_dir(&physical).unwrap();
+    std::fs::copy(
+        directory.path().join("parent.vmf"),
+        physical.join("root.vmf"),
+    )
+    .unwrap();
+    let referring = directory.path().join("referring.vmf");
+    symlink(physical.join("root.vmf"), &referring).unwrap();
+    let alias = directory.path().join("alias");
+    symlink(directory.path(), &alias).unwrap();
+    let location = SourceLocation::capture(&alias.join("referring.vmf")).unwrap();
+    let reference = location.new_reference("new.vmf").unwrap();
+    assert_eq!(reference.path(), directory.path().join("new.vmf"));
+    std::fs::write(directory.path().join("unrelated.txt"), "unrelated").unwrap();
+    reference.verify_metadata().unwrap();
+    std::fs::remove_file(&referring).unwrap();
+    symlink(directory.path().join("parent.vmf"), &referring).unwrap();
+    assert!(reference.verify_metadata().is_err());
+    assert!(!reference.path().exists());
+}

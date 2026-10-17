@@ -45,6 +45,37 @@ pub struct ReferencePath {
     identity: FileStamp,
 }
 
+#[derive(Clone, Debug)]
+pub struct NewReferencePath {
+    source: SourceLocation,
+    relative: String,
+    path: PathBuf,
+    directories: Vec<FileStamp>,
+}
+
+impl NewReferencePath {
+    pub fn relative(&self) -> &str {
+        &self.relative
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn verify_metadata(&self) -> io::Result<()> {
+        self.source.verify_metadata()?;
+        for directory in &self.directories {
+            directory.verify_container_identity()?;
+        }
+        if walk_reference_path(&self.source.directory, &self.relative, true)?.0 != self.path {
+            return Err(io::Error::other(
+                "New instance reference resolution changed",
+            ));
+        }
+        self.source.verify_metadata()
+    }
+}
+
 impl ReferencePath {
     pub fn relative(&self) -> &str {
         &self.relative
@@ -122,6 +153,20 @@ impl SourceLocation {
             path,
             bytes: metadata.len(),
             identity,
+        };
+        reference.verify_metadata()?;
+        Ok(reference)
+    }
+
+    pub fn new_reference(&self, value: &str) -> io::Result<NewReferencePath> {
+        self.verify_metadata()?;
+        let relative = filename(value).map_err(io::Error::other)?;
+        let (path, directories) = walk_reference_path(&self.directory, &relative, true)?;
+        let reference = NewReferencePath {
+            source: self.clone(),
+            relative,
+            path,
+            directories,
         };
         reference.verify_metadata()?;
         Ok(reference)
@@ -346,18 +391,46 @@ fn resolve_path(source: &SourceContext, relative: &str) -> io::Result<PathBuf> {
 }
 
 fn resolve_path_in(directory: &Path, relative: &str) -> io::Result<PathBuf> {
+    walk_reference_path(directory, relative, false).map(|(path, _)| path)
+}
+
+fn walk_reference_path(
+    directory: &Path,
+    relative: &str,
+    absent_leaf: bool,
+) -> io::Result<(PathBuf, Vec<FileStamp>)> {
     let relative = filename(relative).map_err(io::Error::other)?;
     let mut path = directory.to_owned();
-    for part in Path::new(&relative).components() {
+    let mut directories = Vec::new();
+    let mut components = Path::new(&relative).components().peekable();
+    while let Some(part) = components.next() {
         path.push(part);
+        if absent_leaf && components.peek().is_none() {
+            return match std::fs::symlink_metadata(&path) {
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok((path, directories)),
+                Err(error) => Err(error),
+                Ok(_) => Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "New instance reference destination already exists",
+                )),
+            };
+        }
         let metadata = std::fs::symlink_metadata(&path)?;
         if metadata.file_type().is_symlink() {
             return Err(io::Error::other(
                 "Instance dependency paths cannot contain symlinks",
             ));
         }
+        if absent_leaf {
+            if !metadata.is_dir() {
+                return Err(io::Error::other(
+                    "New instance reference parents must be existing directories",
+                ));
+            }
+            directories.push(FileStamp::capture_container(&path)?);
+        }
     }
-    Ok(path)
+    Ok((path, directories))
 }
 
 pub fn helper_admission(entity: &Entity) -> Result<(), String> {

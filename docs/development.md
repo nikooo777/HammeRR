@@ -1042,7 +1042,7 @@ python3 -B scripts/validate_recent_maps.py --binary target/debug/hammerr-headles
 python3 -B scripts/validate_build_recipes.py --binary target/debug/hammerr-headless --output /tmp/hammerr-build-recipes-check
 ```
 
-Recent-map checks use isolated preferences and multiple private stdio processes to cover MRU ordering/eviction, canonical aliases, missing/malformed files, dirty refusal, primary and auxiliary write failures, compatible eight-field build context, incompatible content, restart and storage repair. Remove/clear preserve map files and Undo. The script can omit `--output` to create a fresh temporary directory.
+Recent-map checks use isolated preferences and multiple private stdio processes to cover MRU ordering/eviction, canonical aliases, missing/malformed files, dirty refusal, primary and auxiliary write failures, compatible eight-field build context, incompatible content, restart and storage repair. Two private writers cover stale-save refusal, source/directory identity, nonblocking lock contention, repaired Reload and preservation of an agent-owned review. Remove/clear/Reload preserve map files and Undo. The script can omit `--output` to create a fresh temporary directory.
 
 Recipe checks cover immutable presets, bounded custom CRUD/apply, stale revisions, manual-value provenance invalidation, active/cancelling job guards, frozen completed-job names, output freshness, corrupt/oversized storage, conflict detection and atomic failure/retry. The headless script isolates recipe/recovery storage and verifies native compilation plus persistence across restart. Its output directory must not already exist; optional `--gameinfo` chooses a fixture game installation. Rebuild the selected executable before script validation when code changed; Cargo tests alone do not refresh the executable.
 
@@ -2276,3 +2276,35 @@ allocator exhaustion, owned staging cleanup after directory changes, cross-
 Session request identity, cancellation, finalizer rollback, parent Undo/Redo and
 software UI/shared MCP operations. Set `HAMMERR_UI_SNAPSHOTS` to an existing
 directory to capture the prepared software window without desktop interaction.
+
+### Explicit recovery drain
+
+```sh
+cargo test -p editor-core --features mcp recovery_worker
+cargo test -p editor-core --features mcp recovery_capture_panic
+cargo test -p editor-core --features mcp application_
+python3 -B scripts/validate_recovery_exit.py --headless-binary target/debug/hammerr-headless --editor-binary target/debug/editor --output /tmp/hammerr-recovery-exit-check
+```
+
+The private EOF validator checks both executable entry points with successful
+dirty exit and deterministic storage failure, including real process status,
+snapshot content/count, preserved primary VMF and empty protocol output. Unit
+checks cover idempotent drain, disabled/clean shutdown, join failure, caught
+capture panic, in-flight capture ordering and primary-plus-shutdown errors.
+No graphics, game, desktop window or input is used.
+
+### Coordinated material favorites
+
+```sh
+cargo test -p editor-core --features mcp session::favorites::conflict_tests
+cargo test -p editor-core --features mcp material_favorite_tests
+cargo test -p editor ui::materials::favorites_tests -- --test-threads=1
+python3 -B scripts/validate_material_favorites.py --binary target/debug/hammerr-headless --output /tmp/hammerr-material-favorites-check
+```
+
+The existing private validator also exercises two editors sharing a favorites
+store, rejected stale writes, Reload, lock contention, malformed repair and an
+owned transform review without starting graphics. Software callbacks cover
+page clamping, selected material/filter retention, independent status recovery
+and an unavailable catalog. The existing explicit UI ownership test includes
+retained-child toggle and Reload callbacks after their owner is dropped.

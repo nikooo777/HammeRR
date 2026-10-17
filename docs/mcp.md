@@ -178,13 +178,13 @@ for source, geometry and memory limits.
 
 ## Tools by task
 
-The shared desktop and private stdio server register 406 tools. `tools/list`
+The shared desktop and private stdio server register 408 tools. `tools/list`
 returns their current schemas and descriptions.
 
 | Task | Tools |
 | --- | --- |
 | Files and inspection | `new_map`, `open_map`, `save_map`, `get_map_info`, `get_map_statistics`, `find_objects`, `get_objects` |
-| Recent maps | `get_recent_maps`, `open_recent_map`, `remove_recent_map`, `clear_recent_maps` |
+| Recent maps | `get_recent_maps`, `open_recent_map`, `remove_recent_map`, `clear_recent_maps`, `reload_recent_maps` |
 | Grid defaults | `get_grid_defaults`, `set_grid_defaults` |
 | Fly speed and navigation defaults | `get_navigation_settings`, `set_navigation_settings`, `set_navigation_defaults` |
 | Preview defaults | `get_preview_defaults`, `set_preview_defaults` |
@@ -232,7 +232,7 @@ returns their current schemas and descriptions.
 | Terrain vertices | `get_terrain_vertices`, `highlight_terrain_vertices`, `pick_terrain_vertex`, `frame_terrain_vertices`, `get_terrain_volume_vertices`, `select_terrain_vertices_in_volume`, `get_terrain_vertex_mask`, `preview_terrain_vertex_move` |
 | Terrain brush strokes | `begin_terrain_stroke`, `update_terrain_stroke`, `get_terrain_stroke`, `break_terrain_stroke`, `finish_terrain_stroke`, `cancel_terrain_stroke` |
 | Material replacement | `find_material_faces`, `get_material_search`, `select_material_faces`, `replace_materials` |
-| Material browsing | `search_materials`, `browse_materials`, `preview_material`, `set_material_favorite`, `reload_material_assets` |
+| Material browsing | `search_materials`, `browse_materials`, `preview_material`, `set_material_favorite`, `reload_material_favorites`, `reload_material_assets` |
 | Entities | `create_entity`, `set_entity_properties`, `tie_to_entity`, `move_to_world` |
 | Linked paths | `get_linked_path`, `set_linked_path` |
 | Entity definitions and inspector | `search_entity_classes`, `get_entity_class`, `load_entity_definitions`, `get_entity_inspector`, `set_entity_color`, `set_entity_component` |
@@ -1840,7 +1840,7 @@ this preview. See [Fog preview](fog.md).
 
 `remove_recent_map {path}` and `clear_recent_maps {}` change only the retained list. Successful opens/saves update recency; changing build settings updates an existing entry without reordering it. Missing files remain listed. Failed primary opens/saves preserve the list; an auxiliary history-write failure is reported without failing an otherwise successful map operation.
 
-Preferences use `recent-maps.json` in recovery storage. `HAMMERR_RECENT_MAPS_DIR` selects an absolute directory; otherwise `HAMMERR_RECOVERY_DIR` also isolates this list. Paths are bounded to 4096 UTF-8 bytes and storage to 192 KiB. Invalid loads block preference changes until repaired and restarted; failed writes preserve the previous list and can retry. Separate editor processes do not coordinate writes. See [Recent maps](recent-maps.md).
+Preferences use `recent-maps.json` in recovery storage. `HAMMERR_RECENT_MAPS_DIR` selects an absolute directory; otherwise `HAMMERR_RECOVERY_DIR` also isolates this list. Paths are bounded to 4096 UTF-8 bytes and storage to 192 KiB. Exact-source checks reject stale list publication. `reload_recent_maps {}` reloads a valid saved list through the same operation as **Reload saved list**, clears its error and preserves the document, current build settings, history, selection, camera and owned drafts. Invalid Reload retains the last valid local list and blocks writes until repaired. Participating Linux writers coordinate through a stable advisory lock; contention is retryable. Older/manual writers that ignore the lock remain outside that guarantee. Post-publication verification failure reports that the list was written, adopts it locally and requires Reload. See [Recent maps](recent-maps.md).
 
 ### Build recipes
 
@@ -2203,3 +2203,31 @@ when their grids cannot be built, with no replacement shading.
 `run_map_checks` / `get_map_checks` expose the underlying errors without a GPU;
 shared-normal failures use `terrain_preview`. Checking and rendering preserve
 imported data and history.
+
+### Recovery shutdown
+
+Normal desktop exit and stdin EOF in either headless executable explicitly drain
+recovery. Pending committed changes are captured once when autosave is enabled;
+the original VMF is not saved. A failed exit snapshot or worker drain returns a
+nonzero process status and reports its cause on stderr. If the primary UI or
+transport also failed, the final error retains both causes. Shared manual and
+automatic recovery completion records capture failure and clears busy state,
+including a caught capture-worker panic.
+
+### Coordinated material favorites
+
+`set_material_favorite {material, favorite}` retains canonical names, a 512-entry
+limit and version-1 storage. Exact-source writes and a stable Linux advisory lock
+reject stale sessions before replacing the set. Source conflicts require
+`reload_material_favorites {}`, which returns `{favorites: Status}` and shares
+**Reload favorites**. Status includes `reload_available`.
+
+Reload replaces only a valid complete set and preserves the document, camera,
+selection, history, renderer caches and owned reviews. A dedicated favorites
+revision refreshes browser badges, counts and status without staling viewport
+picks. Failed Reload retains the last valid set; repair storage and Reload again.
+Lock contention can retry. A written-but-unverified result adopts the intended
+set locally, reports its error and blocks persistent changes until Reload.
+Unconfigured storage keeps editable session-only favorites and disables Reload.
+No implicit merge, watcher or coordination with nonparticipating writers is
+provided. See [Material favorites](textures.md).

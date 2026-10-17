@@ -116,7 +116,7 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 | Material browser | Texture painting |
 | --- | --- |
 | ![Material thumbnails, categories and favorites](docs/images/material-browser.png) | ![A sampled wood floor painted across stair treads](docs/images/texture-strokes.png) |
-| Thumbnails, search, categories, materials used in the map, recent materials and favorites. | Sample a face, then brush its material or its whole projection across other faces. |
+| Browse thumbnails by category, track used/recent materials, and reload shared favorites. | Sample a face, then brush its material or its whole projection across other faces. |
 
 | Material reload | UV vectors and skew |
 | --- | --- |

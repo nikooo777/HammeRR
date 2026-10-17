@@ -89,7 +89,7 @@ impl Controller {
         if let Some(rows) = state["owners"].as_array() {
             for row in rows {
                 owners.push_str(&format!(
-                    "{} · {}\nOrigin ({}) · Angles ({})\n{} world brushes · {} detail brushes\n",
+                    "{} · {}\nOrigin ({}) · Angles ({})\nWorld brushes: {} · Detail brushes: {}\n",
                     row["owner"].as_str().unwrap_or("Instance"),
                     row["file"].as_str().unwrap_or("unavailable"),
                     coordinates(&row["origin"]),

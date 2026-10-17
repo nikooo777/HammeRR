@@ -1,5 +1,9 @@
 use super::*;
 
+#[cfg(test)]
+#[path = "materials_alpha_tests.rs"]
+mod alpha_tests;
+
 pub(crate) fn preview_image(preview: &session::MaterialPreview) -> slint::Image {
     preview
         .image
@@ -52,28 +56,51 @@ pub(crate) fn refresh_material_window(window: &MaterialWindow, session: &mut Ses
             .into(),
     );
     window.set_favorite(session.is_material_favorite(&window.get_material()));
+    let channel = if window.get_preview_channel() == 1 {
+        session::MaterialPreviewChannel::Alpha
+    } else {
+        session::MaterialPreviewChannel::Color
+    };
     match material_picker_reference(window, &window.get_material())
-        .and_then(|material| session.material_preview(&material))
+        .and_then(|material| session.material_preview_channel(&material, channel))
     {
         Ok(preview) => {
             window.set_available(preview.image.is_some());
             window.set_preview(preview_image(&preview));
-            window.set_detail(
-                format!(
-                    "{}\n{} × {}{}",
-                    preview.name,
-                    preview.width,
-                    preview.height,
-                    if preview.missing {
-                        " · Missing texture"
-                    } else if preview.tool {
-                        " · Tool material"
-                    } else {
-                        ""
-                    }
-                )
-                .into(),
+            let mut detail = format!(
+                "{}\n{} × {}{}\n{}",
+                preview.name,
+                preview.width,
+                preview.height,
+                if preview.missing {
+                    " · Missing texture"
+                } else if preview.tool {
+                    " · Tool material"
+                } else {
+                    ""
+                },
+                preview.channel.label(),
             );
+            if let Some([low, high]) = preview.alpha_range {
+                detail.push_str(&format!(" · source alpha {low}–{high}"));
+            }
+            if let Some(source) = &preview.source {
+                detail.push_str(&format!(
+                    "\n{}\n{} · mip {} · VMT {}",
+                    source.texture,
+                    if source.cached {
+                        "Cached display"
+                    } else {
+                        "Current load"
+                    },
+                    source.mip,
+                    source.material_identity,
+                ));
+            }
+            if channel == session::MaterialPreviewChannel::Alpha {
+                detail.push_str("\nAlpha bytes as grayscale; shader opacity is separate.");
+            }
+            window.set_detail(detail.into());
         }
         Err(error) => {
             window.set_available(false);
@@ -81,6 +108,13 @@ pub(crate) fn refresh_material_window(window: &MaterialWindow, session: &mut Ses
             window.set_detail(error.into());
         }
     }
+}
+
+pub(crate) fn bind_material_preview(window: &MaterialWindow, shared: SharedSession) {
+    window.on_preview_material({
+        let window = window.as_weak();
+        move || refresh_material_window(&window.unwrap(), &mut lock(&shared))
+    });
 }
 
 pub(super) fn optional_number(value: SharedString) -> Result<Option<f64>, String> {
@@ -783,10 +817,7 @@ pub(super) fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
                 refresh_material_catalog(&window, &mut session);
             }
         });
-        window.on_preview_material({
-            let (window, ui) = (window.as_weak(), ui.clone());
-            move || refresh_material_window(&window.unwrap(), &mut lock(&session_of(&ui)))
-        });
+        bind_material_preview(&window, session_of(ui));
         bind_material_reload(&window, session_of(ui));
         material_source_ui::bind(&window, session_of(ui));
         ui.borrow_mut().material_window = Some(window);

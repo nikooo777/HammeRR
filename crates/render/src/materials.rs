@@ -21,6 +21,7 @@ pub const MAX_RELOAD_FAILURES: usize = 100;
 pub struct MaterialInfo {
     pub lighting_error: Option<String>,
     pub normal: Option<Arc<crate::normal_maps::Asset>>,
+    pub display_texture: Option<String>,
     material_identity: Option<u64>,
     /// Material name as used in the map, lowercase (`de_cbble/cobbleroad01`).
     pub name: String,
@@ -42,6 +43,10 @@ pub struct MaterialInfo {
 }
 
 impl MaterialInfo {
+    pub fn source_identity(&self) -> Option<u64> {
+        self.material_identity
+    }
+
     pub fn matches_material(&self, material: &Material) -> bool {
         self.material_identity == Some(material_identity(material))
     }
@@ -69,10 +74,12 @@ impl MaterialInfo {
             }
         };
         let mut base = None;
+        let mut display_texture = None;
         if let Some(material) = &material {
             for path in material.editor_textures() {
                 if let Some(texture) = read_vtf(fs, &path, limits.map(|limits| limits[1]))? {
                     base = Some(texture);
+                    display_texture = Some(path);
                     break;
                 }
             }
@@ -99,6 +106,7 @@ impl MaterialInfo {
             lighting_error: material
                 .as_ref()
                 .map_or_else(|| Some("No resolved material".into()), lighting_error),
+            display_texture,
             normal: None,
             helper: None,
             error: None,
@@ -120,6 +128,7 @@ impl MaterialInfo {
         Self {
             material_identity: None,
             lighting_error: Some("Editor helper or unavailable material".into()),
+            display_texture: None,
             normal: None,
             helper: None,
             name: name.to_owned(),

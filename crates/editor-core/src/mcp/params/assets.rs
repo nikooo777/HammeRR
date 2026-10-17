@@ -190,6 +190,7 @@ pub struct SearchMaterialsArgs {
 pub struct MaterialPreviewArgs {
     /// Material path without materials/ or .vmt, e.g. concrete/concretefloor001a.
     pub material: String,
+    pub channel: Option<crate::session::MaterialPreviewChannel>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

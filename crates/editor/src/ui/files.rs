@@ -2,11 +2,7 @@ use super::*;
 use editor_core::runtime::{DocumentAccess, DocumentContinuation};
 
 pub(super) fn file_access(ui: &SharedUi) -> DocumentAccess {
-    let state = ui.borrow();
-    match &state._document {
-        Some(document) => DocumentAccess::for_document(document.clone()),
-        None => DocumentAccess::unmanaged(state.session.clone()),
-    }
+    ui.borrow().document_access()
 }
 
 fn complete_file_action(

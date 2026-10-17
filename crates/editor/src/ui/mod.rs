@@ -23,6 +23,8 @@ use entities::*;
 mod files;
 use files::*;
 mod admission;
+mod root_callbacks;
+use root_callbacks::root_callback;
 mod input;
 use input::*;
 mod manipulation;
@@ -137,6 +139,13 @@ struct Ui {
 }
 
 impl Ui {
+    fn document_access(&self) -> runtime::DocumentAccess {
+        match &self._document {
+            Some(document) => runtime::DocumentAccess::for_document(document.clone()),
+            None => runtime::DocumentAccess::unmanaged(self.session.clone()),
+        }
+    }
+
     fn for_document(document: DocumentHandle, ctx: GpuContext) -> Self {
         let mut ui = Self::new(document.session().clone(), ctx);
         ui._document = Some(document);
@@ -314,18 +323,20 @@ fn refresh_sky_preview_status(app: &AppWindow, session: &mut Session) {
     );
 }
 
+#[cfg(test)]
 fn bind_model_guide_reload(app: &AppWindow, shared: SharedSession) {
     let weak = app.as_weak();
-    app.on_reload_model_guides(move || {
-        let app = weak.unwrap();
-        let mut session = lock(&shared);
-        let cancelled = session.refresh_model_assets(Actor::User);
-        refresh_panel(&app, &mut session);
-        app.set_message(if cancelled {
-            "Model assets reloaded; preview snap to grid again".into()
-        } else {
-            "Model assets reloaded".into()
-        });
+    app.on_reload_model_guides(move || reload_model_guides(weak.unwrap(), &shared));
+}
+
+fn reload_model_guides(app: AppWindow, shared: &SharedSession) {
+    let mut session = lock(shared);
+    let cancelled = session.refresh_model_assets(Actor::User);
+    refresh_panel(&app, &mut session);
+    app.set_message(if cancelled {
+        "Model assets reloaded; preview snap to grid again".into()
+    } else {
+        "Model assets reloaded".into()
     });
 }
 
@@ -344,76 +355,76 @@ fn prepare_scene_refresh(
     Some(next)
 }
 
+#[cfg(test)]
 fn bind_view_controls(app: &AppWindow, shared: SharedSession) {
-    app.on_options_changed({
-        let app = app.as_weak();
-        move || {
-            let app = app.unwrap();
-            let mut session = lock(&shared);
-            let lighting_exposure = match app.get_lighting_exposure_ev().parse::<f64>() {
-                Ok(value) => value,
-                Err(_) => {
-                    app.set_lighting_error(
-                        "Lighting exposure must be finite and between -8 and 8 EV".into(),
-                    );
-                    refresh_view_controls(&app, &session);
-                    return;
-                }
-            };
-            let mut view = match session.resolve_view_update(editor_core::session::ViewUpdate {
-                instance_contents: Some(app.get_instance_contents()),
-                lighting_preview: Some(app.get_lighting_preview()),
-                lighting_quality: Some(if app.get_lighting_quality() == 0 {
-                    "fast"
-                } else {
-                    "detail"
-                }),
-                lighting_exposure_ev: Some(lighting_exposure),
-                normal_maps: Some(app.get_normal_maps()),
-                additive_sprite_guides: Some(app.get_additive_sprite_guides()),
-                ..Default::default()
-            }) {
-                Ok(view) => view,
-                Err(error) => {
-                    app.set_lighting_error(error.clone().into());
-                    app.set_message(error.into());
-                    refresh_view_controls(&app, &session);
-                    return;
-                }
-            };
-            view.tool_textures = app.get_show_tools();
-            view.sky_preview = app.get_sky_preview();
-            view.rope_preview = app.get_rope_preview();
-            view.selection_outlines = app.get_selection_outlines();
-            view.entity_images = app.get_entity_images();
-            view.entity_model_guides = app.get_entity_model_guides();
-            view.leak_path = app.get_show_leak();
-            let exposure = app
-                .get_sky_exposure_ev()
-                .parse::<f64>()
-                .map_err(|_| "HDR sky exposure must be finite and between -8 and 8 EV".to_owned());
-            let channel = if app.get_sky_channel() == 1 {
-                "hdr"
-            } else {
-                "ldr"
-            };
-            let view = match exposure.and_then(|exposure| {
-                session.sky_preview_options(view, Some(channel), Some(exposure))
-            }) {
-                Ok(view) => view,
-                Err(error) => {
-                    app.set_sky_preview_error(error.into());
-                    refresh_view_controls(&app, &session);
-                    return;
-                }
-            };
-            app.set_sky_preview_error("".into());
-            app.set_lighting_error("".into());
-            session.set_view(view);
+    let weak = app.as_weak();
+    app.on_options_changed(move || apply_view_controls(weak.unwrap(), &shared));
+}
+
+fn apply_view_controls(app: AppWindow, shared: &SharedSession) {
+    let mut session = lock(shared);
+    let lighting_exposure = match app.get_lighting_exposure_ev().parse::<f64>() {
+        Ok(value) => value,
+        Err(_) => {
+            app.set_lighting_error(
+                "Lighting exposure must be finite and between -8 and 8 EV".into(),
+            );
             refresh_view_controls(&app, &session);
-            refresh_sky_preview_status(&app, &mut session);
+            return;
         }
-    });
+    };
+    let mut view = match session.resolve_view_update(editor_core::session::ViewUpdate {
+        instance_contents: Some(app.get_instance_contents()),
+        lighting_preview: Some(app.get_lighting_preview()),
+        lighting_quality: Some(if app.get_lighting_quality() == 0 {
+            "fast"
+        } else {
+            "detail"
+        }),
+        lighting_exposure_ev: Some(lighting_exposure),
+        normal_maps: Some(app.get_normal_maps()),
+        additive_sprite_guides: Some(app.get_additive_sprite_guides()),
+        ..Default::default()
+    }) {
+        Ok(view) => view,
+        Err(error) => {
+            app.set_lighting_error(error.clone().into());
+            app.set_message(error.into());
+            refresh_view_controls(&app, &session);
+            return;
+        }
+    };
+    view.tool_textures = app.get_show_tools();
+    view.sky_preview = app.get_sky_preview();
+    view.rope_preview = app.get_rope_preview();
+    view.selection_outlines = app.get_selection_outlines();
+    view.entity_images = app.get_entity_images();
+    view.entity_model_guides = app.get_entity_model_guides();
+    view.leak_path = app.get_show_leak();
+    let exposure = app
+        .get_sky_exposure_ev()
+        .parse::<f64>()
+        .map_err(|_| "HDR sky exposure must be finite and between -8 and 8 EV".to_owned());
+    let channel = if app.get_sky_channel() == 1 {
+        "hdr"
+    } else {
+        "ldr"
+    };
+    let view = match exposure
+        .and_then(|exposure| session.sky_preview_options(view, Some(channel), Some(exposure)))
+    {
+        Ok(view) => view,
+        Err(error) => {
+            app.set_sky_preview_error(error.into());
+            refresh_view_controls(&app, &session);
+            return;
+        }
+    };
+    app.set_sky_preview_error("".into());
+    app.set_lighting_error("".into());
+    session.set_view(view);
+    refresh_view_controls(&app, &session);
+    refresh_sky_preview_status(&app, &mut session);
 }
 
 fn refresh_panel(app: &AppWindow, session: &mut Session) {
@@ -601,1402 +612,1201 @@ pub(super) fn run(
         }
     });
 
-    app.on_open_map({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || open_dialog(&app.unwrap(), &ui)
-    });
-    app.on_recent_maps({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let app = app.unwrap();
-            if ui.borrow().recent_maps_window.is_none() {
-                match RecentMapsWindow::new() {
-                    Ok(window) => {
-                        recent_maps_ui::bind_with_access(
-                            &window,
-                            &session_of(&ui),
-                            file_access(&ui),
-                        );
-                        ui.borrow_mut().recent_maps_window = Some(window);
-                    }
-                    Err(error) => {
-                        app.set_message(error.to_string().into());
-                        return;
-                    }
+    root_callback!(app, ui, on_open_map, |app| open_dialog(&app.unwrap(), &ui));
+    root_callback!(app, ui, on_recent_maps, |app| {
+        let app = app.unwrap();
+        if ui.borrow().recent_maps_window.is_none() {
+            match RecentMapsWindow::new() {
+                Ok(window) => {
+                    recent_maps_ui::bind_with_access(&window, &session_of(&ui), file_access(&ui));
+                    ui.borrow_mut().recent_maps_window = Some(window);
                 }
-            }
-            let window = ui
-                .borrow()
-                .recent_maps_window
-                .as_ref()
-                .unwrap()
-                .clone_strong();
-            window.set_discard_changes(false);
-            window.set_confirm_clear(false);
-            window.set_message("".into());
-            recent_maps_ui::refresh(&window, &lock(&session_of(&ui)));
-            if let Err(error) = window.show() {
-                app.set_message(error.to_string().into());
+                Err(error) => {
+                    app.set_message(error.to_string().into());
+                    return;
+                }
             }
         }
-    });
-    app.on_new_map({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || new_map(&app.unwrap(), &ui)
-    });
-    app.on_save_map({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || save(&app.unwrap(), &ui)
-    });
-    app.on_save_map_as({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || save_as(&app.unwrap(), &ui)
-    });
-    app.on_history({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let mut ui = ui.borrow_mut();
-            if ui.history.is_none() {
-                match history_ui::Controller::new(&ui.session) {
-                    Ok(controller) => ui.history = Some(controller),
-                    Err(error) => {
-                        app.unwrap().set_message(error.to_string().into());
-                        return;
-                    }
-                }
-            }
-            if let Err(error) = ui.history.as_ref().unwrap().show(&lock(&ui.session)) {
-                app.unwrap().set_message(error.to_string().into());
-            }
+        let window = ui
+            .borrow()
+            .recent_maps_window
+            .as_ref()
+            .unwrap()
+            .clone_strong();
+        window.set_discard_changes(false);
+        window.set_confirm_clear(false);
+        window.set_message("".into());
+        recent_maps_ui::refresh(&window, &lock(&session_of(&ui)));
+        if let Err(error) = window.show() {
+            app.set_message(error.to_string().into());
         }
     });
-    app.on_saved_views({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let mut ui = ui.borrow_mut();
-            if ui.saved_views.is_none() {
-                match saved_views_ui::Controller::new(&ui.session) {
-                    Ok(controller) => ui.saved_views = Some(controller),
-                    Err(error) => {
-                        app.unwrap().set_message(error.to_string().into());
-                        return;
-                    }
+    root_callback!(app, ui, on_new_map, |app| new_map(&app.unwrap(), &ui));
+    root_callback!(app, ui, on_save_map, |app| save(&app.unwrap(), &ui));
+    root_callback!(app, ui, on_save_map_as, |app| save_as(&app.unwrap(), &ui));
+    root_callback!(app, ui, on_history, |app| {
+        let mut ui = ui.borrow_mut();
+        if ui.history.is_none() {
+            match history_ui::Controller::new(&ui.session) {
+                Ok(controller) => ui.history = Some(controller),
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
                 }
-            }
-            if let Err(error) = ui.saved_views.as_ref().unwrap().show(&lock(&ui.session)) {
-                app.unwrap().set_message(error.to_string().into());
             }
         }
-    });
-    app.on_measurements({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let mut ui = ui.borrow_mut();
-            if ui.measurements.is_none() {
-                match measurements_ui::Controller::new(&ui.session) {
-                    Ok(controller) => ui.measurements = Some(controller),
-                    Err(error) => {
-                        app.unwrap().set_message(error.to_string().into());
-                        return;
-                    }
-                }
-            }
-            let controller = ui.measurements.as_ref().unwrap();
-            controller.set_viewport((
-                app.unwrap().get_viewport_width().round().max(1.0) as u32,
-                app.unwrap().get_viewport_height().round().max(1.0) as u32,
-            ));
-            if let Err(error) = controller.show(&lock(&ui.session)) {
-                app.unwrap().set_message(error.to_string().into());
-            }
+        if let Err(error) = ui.history.as_ref().unwrap().show(&lock(&ui.session)) {
+            app.unwrap().set_message(error.to_string().into());
         }
     });
-    app.on_grid_defaults({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let mut ui = ui.borrow_mut();
-            if ui.grid_defaults.is_none() {
-                match grid_defaults_ui::Controller::new(&ui.session) {
-                    Ok(controller) => ui.grid_defaults = Some(controller),
-                    Err(error) => {
-                        app.unwrap().set_message(error.to_string().into());
-                        return;
-                    }
+    root_callback!(app, ui, on_saved_views, |app| {
+        let mut ui = ui.borrow_mut();
+        if ui.saved_views.is_none() {
+            match saved_views_ui::Controller::new(&ui.session) {
+                Ok(controller) => ui.saved_views = Some(controller),
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
                 }
             }
-            if let Err(error) = ui.grid_defaults.as_ref().unwrap().show(&lock(&ui.session)) {
-                app.unwrap().set_message(error.to_string().into());
+        }
+        if let Err(error) = ui.saved_views.as_ref().unwrap().show(&lock(&ui.session)) {
+            app.unwrap().set_message(error.to_string().into());
+        }
+    });
+    root_callback!(app, ui, on_measurements, |app| {
+        let mut ui = ui.borrow_mut();
+        if ui.measurements.is_none() {
+            match measurements_ui::Controller::new(&ui.session) {
+                Ok(controller) => ui.measurements = Some(controller),
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
+                }
             }
+        }
+        let controller = ui.measurements.as_ref().unwrap();
+        controller.set_viewport((
+            app.unwrap().get_viewport_width().round().max(1.0) as u32,
+            app.unwrap().get_viewport_height().round().max(1.0) as u32,
+        ));
+        if let Err(error) = controller.show(&lock(&ui.session)) {
+            app.unwrap().set_message(error.to_string().into());
+        }
+    });
+    root_callback!(app, ui, on_grid_defaults, |app| {
+        let mut ui = ui.borrow_mut();
+        if ui.grid_defaults.is_none() {
+            match grid_defaults_ui::Controller::new(&ui.session) {
+                Ok(controller) => ui.grid_defaults = Some(controller),
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
+                }
+            }
+        }
+        if let Err(error) = ui.grid_defaults.as_ref().unwrap().show(&lock(&ui.session)) {
+            app.unwrap().set_message(error.to_string().into());
         }
     });
     navigation_defaults_ui::bind_speed(&app, &session_of(&ui));
-    app.on_navigation_defaults({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let mut ui = ui.borrow_mut();
-            if ui.navigation_defaults.is_none() {
-                match navigation_defaults_ui::Controller::new(&ui.session) {
-                    Ok(controller) => ui.navigation_defaults = Some(controller),
-                    Err(error) => {
-                        app.unwrap().set_message(error.to_string().into());
-                        return;
-                    }
+    root_callback!(app, ui, on_navigation_defaults, |app| {
+        let mut ui = ui.borrow_mut();
+        if ui.navigation_defaults.is_none() {
+            match navigation_defaults_ui::Controller::new(&ui.session) {
+                Ok(controller) => ui.navigation_defaults = Some(controller),
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
                 }
             }
-            if let Err(error) = ui
-                .navigation_defaults
-                .as_ref()
-                .unwrap()
-                .show(&lock(&ui.session))
-            {
-                app.unwrap().set_message(error.to_string().into());
-            }
+        }
+        if let Err(error) = ui
+            .navigation_defaults
+            .as_ref()
+            .unwrap()
+            .show(&lock(&ui.session))
+        {
+            app.unwrap().set_message(error.to_string().into());
         }
     });
-    app.on_preview_defaults({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let mut ui = ui.borrow_mut();
-            if ui.preview_defaults.is_none() {
-                match preview_defaults_ui::Controller::new(&ui.session) {
-                    Ok(controller) => ui.preview_defaults = Some(controller),
-                    Err(error) => {
-                        app.unwrap().set_message(error.to_string().into());
-                        return;
-                    }
+    root_callback!(app, ui, on_preview_defaults, |app| {
+        let mut ui = ui.borrow_mut();
+        if ui.preview_defaults.is_none() {
+            match preview_defaults_ui::Controller::new(&ui.session) {
+                Ok(controller) => ui.preview_defaults = Some(controller),
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
                 }
             }
-            if let Err(error) = ui
-                .preview_defaults
-                .as_ref()
-                .unwrap()
-                .show(&lock(&ui.session))
-            {
-                app.unwrap().set_message(error.to_string().into());
-            }
+        }
+        if let Err(error) = ui
+            .preview_defaults
+            .as_ref()
+            .unwrap()
+            .show(&lock(&ui.session))
+        {
+            app.unwrap().set_message(error.to_string().into());
         }
     });
-    app.on_keyboard_shortcuts({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let mut ui = ui.borrow_mut();
-            if ui.shortcuts.is_none() {
-                match shortcuts_ui::Controller::new(&ui.session) {
-                    Ok(controller) => ui.shortcuts = Some(controller),
-                    Err(error) => {
-                        app.unwrap().set_message(error.to_string().into());
-                        return;
-                    }
+    root_callback!(app, ui, on_keyboard_shortcuts, |app| {
+        let mut ui = ui.borrow_mut();
+        if ui.shortcuts.is_none() {
+            match shortcuts_ui::Controller::new(&ui.session) {
+                Ok(controller) => ui.shortcuts = Some(controller),
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
                 }
             }
-            if let Err(error) = ui.shortcuts.as_ref().unwrap().show(&lock(&ui.session)) {
-                app.unwrap().set_message(error.to_string().into());
-            }
+        }
+        if let Err(error) = ui.shortcuts.as_ref().unwrap().show(&lock(&ui.session)) {
+            app.unwrap().set_message(error.to_string().into());
         }
     });
-    app.on_fog_preview({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let mut ui = ui.borrow_mut();
-            if ui.fog.is_none() {
-                match fog_ui::Controller::new(&ui.session) {
-                    Ok(controller) => ui.fog = Some(controller),
-                    Err(error) => {
-                        app.unwrap().set_message(error.to_string().into());
-                        return;
-                    }
+    root_callback!(app, ui, on_fog_preview, |app| {
+        let mut ui = ui.borrow_mut();
+        if ui.fog.is_none() {
+            match fog_ui::Controller::new(&ui.session) {
+                Ok(controller) => ui.fog = Some(controller),
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
                 }
             }
-            if let Err(error) = ui.fog.as_ref().unwrap().show(&lock(&ui.session)) {
-                app.unwrap().set_message(error.to_string().into());
-            }
+        }
+        if let Err(error) = ui.fog.as_ref().unwrap().show(&lock(&ui.session)) {
+            app.unwrap().set_message(error.to_string().into());
         }
     });
-    app.on_build_status({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let mut ui = ui.borrow_mut();
-            if ui.compile_status.is_none() {
-                match compile_ui::Controller::new(&ui.session) {
-                    Ok(controller) => ui.compile_status = Some(controller),
-                    Err(error) => {
-                        app.unwrap().set_message(error.to_string().into());
-                        return;
-                    }
+    root_callback!(app, ui, on_build_status, |app| {
+        let mut ui = ui.borrow_mut();
+        if ui.compile_status.is_none() {
+            match compile_ui::Controller::new(&ui.session) {
+                Ok(controller) => ui.compile_status = Some(controller),
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
                 }
             }
-            if let Err(error) = ui.compile_status.as_ref().unwrap().show(&lock(&ui.session)) {
-                app.unwrap().set_message(error.to_string().into());
-            }
+        }
+        if let Err(error) = ui.compile_status.as_ref().unwrap().show(&lock(&ui.session)) {
+            app.unwrap().set_message(error.to_string().into());
         }
     });
-    app.on_cancel_build({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let session = session_of(&ui);
-            let mut session = lock(&session);
-            if let Ok(token) = app.unwrap().get_compile_token().parse() {
-                report(
-                    &app.unwrap(),
-                    session
-                        .cancel_compile(Actor::User, token)
-                        .map(|()| "Cancelling compilation".into()),
-                );
-            }
+    root_callback!(app, ui, on_cancel_build, |app| {
+        let session = session_of(&ui);
+        let mut session = lock(&session);
+        if let Ok(token) = app.unwrap().get_compile_token().parse() {
+            report(
+                &app.unwrap(),
+                session
+                    .cancel_compile(Actor::User, token)
+                    .map(|()| "Cancelling compilation".into()),
+            );
         }
     });
-    app.on_compile_map({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || compile_map(&app.unwrap(), &ui, false)
-    });
-    app.on_run_map({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || compile_map(&app.unwrap(), &ui, true)
-    });
-    app.on_game_log({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || show_game_log(&app.unwrap(), &ui)
-    });
-    app.on_stop_game({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            if let Err(error) = lock(&session_of(&ui)).stop_game(Actor::User) {
-                app.unwrap().set_message(error.into());
-            }
+    root_callback!(app, ui, on_compile_map, |app| compile_map(
+        &app.unwrap(),
+        &ui,
+        false
+    ));
+    root_callback!(app, ui, on_run_map, |app| compile_map(
+        &app.unwrap(),
+        &ui,
+        true
+    ));
+    root_callback!(app, ui, on_game_log, |app| show_game_log(
+        &app.unwrap(),
+        &ui
+    ));
+    root_callback!(app, ui, on_stop_game, |app| {
+        if let Err(error) = lock(&session_of(&ui)).stop_game(Actor::User) {
+            app.unwrap().set_message(error.into());
         }
     });
-    app.on_undo({
-        let ui = ui.clone();
-        move || drop(lock(&session_of(&ui)).undo(Actor::User))
+    root_callback!(app, ui, on_undo, |_app| drop(
+        lock(&session_of(&ui)).undo(Actor::User)
+    ));
+    root_callback!(app, ui, on_redo, |_app| drop(
+        lock(&session_of(&ui)).redo(Actor::User)
+    ));
+    root_callback!(app, ui, on_create_block, |app| create_block(
+        &app.unwrap(),
+        &ui
+    ));
+    root_callback!(app, ui, on_projection_changed, |_app; index| {
+        let projection = [
+            Projection::Perspective,
+            Projection::Top,
+            Projection::Front,
+            Projection::Side,
+        ][index.clamp(0, 3) as usize];
+        lock(&session_of(&ui)).set_projection(Actor::User, projection);
     });
-    app.on_redo({
-        let ui = ui.clone();
-        move || drop(lock(&session_of(&ui)).redo(Actor::User))
-    });
-    app.on_create_block({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || create_block(&app.unwrap(), &ui)
-    });
-    app.on_projection_changed({
-        let ui = ui.clone();
-        move |index| {
-            let projection = [
-                Projection::Perspective,
-                Projection::Top,
-                Projection::Front,
-                Projection::Side,
-            ][index.clamp(0, 3) as usize];
-            lock(&session_of(&ui)).set_projection(Actor::User, projection);
-        }
-    });
-    app.on_spatial_changed({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || spatial_changed(&app.unwrap(), &ui)
-    });
-    app.on_frame_selection({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || frame_selection(&app.unwrap(), &ui)
-    });
-    app.on_apply_transform({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || apply_transform(&app.unwrap(), &ui)
-    });
+    root_callback!(app, ui, on_spatial_changed, |app| spatial_changed(
+        &app.unwrap(),
+        &ui
+    ));
+    root_callback!(app, ui, on_frame_selection, |app| frame_selection(
+        &app.unwrap(),
+        &ui
+    ));
+    root_callback!(app, ui, on_apply_transform, |app| apply_transform(
+        &app.unwrap(),
+        &ui
+    ));
     bind_clip_controls(&app, session_of(&ui));
     bind_manipulation_controls(&app, session_of(&ui));
     bind_pivot_pick_controls(&app, session_of(&ui));
-    app.on_place_entity({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || show_entity_window(&app.unwrap(), &ui, false)
-    });
-    app.on_tie_entity({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || show_entity_window(&app.unwrap(), &ui, true)
-    });
-    app.on_move_to_world({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let shared = session_of(&ui);
-            let mut session = lock(&shared);
-            if let Some(entity) = single_selected_entity(&session)
-                && let Err(error) = session.move_to_world(Actor::User, entity)
-            {
-                app.unwrap().set_message(error.into());
-            }
+    root_callback!(app, ui, on_place_entity, |app| show_entity_window(
+        &app.unwrap(),
+        &ui,
+        false
+    ));
+    root_callback!(app, ui, on_tie_entity, |app| show_entity_window(
+        &app.unwrap(),
+        &ui,
+        true
+    ));
+    root_callback!(app, ui, on_move_to_world, |app| {
+        let shared = session_of(&ui);
+        let mut session = lock(&shared);
+        if let Some(entity) = single_selected_entity(&session)
+            && let Err(error) = session.move_to_world(Actor::User, entity)
+        {
+            app.unwrap().set_message(error.into());
         }
     });
-    app.on_delete_selection({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let shared = session_of(&ui);
-            let mut session = lock(&shared);
-            let ids = session.selected_ids();
-            if ids.is_empty() {
-                app.unwrap().set_message("Nothing selected".into());
-            } else if let Err(error) = session.delete_objects(Actor::User, &ids) {
-                app.unwrap().set_message(error.into());
-            }
+    root_callback!(app, ui, on_delete_selection, |app| {
+        let shared = session_of(&ui);
+        let mut session = lock(&shared);
+        let ids = session.selected_ids();
+        if ids.is_empty() {
+            app.unwrap().set_message("Nothing selected".into());
+        } else if let Err(error) = session.delete_objects(Actor::User, &ids) {
+            app.unwrap().set_message(error.into());
         }
     });
-    app.on_selection_mode_changed({
-        let ui = ui.clone();
-        move |mode| lock(&session_of(&ui)).set_face_mode(mode == 1)
-    });
-    app.on_world_settings({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || show_properties_window(&app.unwrap(), &ui, true)
-    });
-    app.on_batch_properties({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || show_properties_window(&app.unwrap(), &ui, false)
-    });
-    app.on_object_report({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || show_report_window(&app.unwrap(), &ui)
-    });
-    app.on_hollow_brushes({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            if ui.borrow().hollow_window.is_none() {
-                match HollowWindow::new() {
-                    Ok(window) => {
-                        hollow_ui::bind(&window, &session_of(&ui));
-                        ui.borrow_mut().hollow_window = Some(window);
-                    }
-                    Err(error) => {
-                        app.unwrap().set_message(error.to_string().into());
-                        return;
-                    }
+    root_callback!(app, ui, on_selection_mode_changed, |_app; mode| lock(&session_of(&ui)).set_face_mode(mode == 1));
+    root_callback!(app, ui, on_world_settings, |app| show_properties_window(
+        &app.unwrap(),
+        &ui,
+        true
+    ));
+    root_callback!(app, ui, on_batch_properties, |app| show_properties_window(
+        &app.unwrap(),
+        &ui,
+        false
+    ));
+    root_callback!(app, ui, on_object_report, |app| show_report_window(
+        &app.unwrap(),
+        &ui
+    ));
+    root_callback!(app, ui, on_hollow_brushes, |app| {
+        if ui.borrow().hollow_window.is_none() {
+            match HollowWindow::new() {
+                Ok(window) => {
+                    hollow_ui::bind(&window, &session_of(&ui));
+                    ui.borrow_mut().hollow_window = Some(window);
                 }
-            }
-            let window = ui.borrow().hollow_window.as_ref().unwrap().clone_strong();
-            hollow_ui::refresh(&window, &lock(&session_of(&ui)));
-            if let Err(error) = window.show() {
-                app.unwrap().set_message(error.to_string().into());
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
+                }
             }
         }
-    });
-    app.on_carve_brushes({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            if ui.borrow().carve_window.is_none() {
-                match CarveWindow::new() {
-                    Ok(window) => {
-                        carve_ui::bind(&window, &session_of(&ui));
-                        ui.borrow_mut().carve_window = Some(window);
-                    }
-                    Err(error) => {
-                        app.unwrap().set_message(error.to_string().into());
-                        return;
-                    }
-                }
-            }
-            let window = ui.borrow().carve_window.as_ref().unwrap().clone_strong();
-            carve_ui::refresh(&window, &lock(&session_of(&ui)));
-            if let Err(error) = window.show() {
-                app.unwrap().set_message(error.to_string().into());
-            }
+        let window = ui.borrow().hollow_window.as_ref().unwrap().clone_strong();
+        hollow_ui::refresh(&window, &lock(&session_of(&ui)));
+        if let Err(error) = window.show() {
+            app.unwrap().set_message(error.to_string().into());
         }
     });
-    app.on_merge_brushes({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            if ui.borrow().merge_window.is_none() {
-                match MergeWindow::new() {
-                    Ok(window) => {
-                        merge_ui::bind(&window, &session_of(&ui));
-                        ui.borrow_mut().merge_window = Some(window);
-                    }
-                    Err(error) => {
-                        app.unwrap().set_message(error.to_string().into());
-                        return;
-                    }
+    root_callback!(app, ui, on_carve_brushes, |app| {
+        if ui.borrow().carve_window.is_none() {
+            match CarveWindow::new() {
+                Ok(window) => {
+                    carve_ui::bind(&window, &session_of(&ui));
+                    ui.borrow_mut().carve_window = Some(window);
                 }
-            }
-            let window = ui.borrow().merge_window.as_ref().unwrap().clone_strong();
-            merge_ui::refresh(&window, &lock(&session_of(&ui)));
-            if let Err(error) = window.show() {
-                app.unwrap().set_message(error.to_string().into());
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
+                }
             }
         }
-    });
-    app.on_brush_components({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            if ui.borrow().components_window.is_none() {
-                match ComponentsWindow::new() {
-                    Ok(window) => {
-                        components_ui::bind(&window, &session_of(&ui));
-                        window.on_browse_partition_material({
-                            let browse = material_browser(app.clone(), Rc::downgrade(&ui));
-                            move || browse("@partition")
-                        });
-                        window.on_browse_extrusion_material({
-                            let browse = material_browser(app.clone(), Rc::downgrade(&ui));
-                            move || browse("@extrusion")
-                        });
-                        ui.borrow_mut().components_window = Some(window);
-                    }
-                    Err(error) => {
-                        app.unwrap().set_message(error.to_string().into());
-                        return;
-                    }
-                }
-            }
-            let window = ui
-                .borrow()
-                .components_window
-                .as_ref()
-                .unwrap()
-                .clone_strong();
-            components_ui::refresh(&window, &lock(&session_of(&ui)));
-            components_ui::refresh_material_previews(&window, &lock(&session_of(&ui)));
-            window.set_aspect(
-                (app.unwrap().get_viewport_width() / app.unwrap().get_viewport_height().max(1.0))
-                    .max(0.01),
-            );
-            if let Err(error) = window.show() {
-                app.unwrap().set_message(error.to_string().into());
-            }
+        let window = ui.borrow().carve_window.as_ref().unwrap().clone_strong();
+        carve_ui::refresh(&window, &lock(&session_of(&ui)));
+        if let Err(error) = window.show() {
+            app.unwrap().set_message(error.to_string().into());
         }
     });
-    app.on_pointfile({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            if ui.borrow().pointfile_window.is_none() {
-                match PointfileWindow::new() {
-                    Ok(window) => {
-                        pointfile_ui::bind(&window, &session_of(&ui));
-                        ui.borrow_mut().pointfile_window = Some(window);
-                    }
-                    Err(error) => {
-                        app.unwrap().set_message(error.to_string().into());
-                        return;
-                    }
+    root_callback!(app, ui, on_merge_brushes, |app| {
+        if ui.borrow().merge_window.is_none() {
+            match MergeWindow::new() {
+                Ok(window) => {
+                    merge_ui::bind(&window, &session_of(&ui));
+                    ui.borrow_mut().merge_window = Some(window);
                 }
-            }
-            let app = app.unwrap();
-            let window = ui
-                .borrow()
-                .pointfile_window
-                .as_ref()
-                .unwrap()
-                .clone_strong();
-            window.set_aspect(
-                (app.get_viewport_width() / app.get_viewport_height().max(1.0)).max(0.01),
-            );
-            pointfile_ui::refresh(&window, &lock(&session_of(&ui)));
-            if let Err(error) = window.show() {
-                app.set_message(error.to_string().into());
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
+                }
             }
         }
-    });
-    app.on_map_statistics({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            if ui.borrow().statistics_window.is_none() {
-                match StatisticsWindow::new() {
-                    Ok(window) => {
-                        statistics_ui::bind(&window, &session_of(&ui));
-                        ui.borrow_mut().statistics_window = Some(window);
-                    }
-                    Err(error) => {
-                        app.unwrap().set_message(error.to_string().into());
-                        return;
-                    }
-                }
-            }
-            let window = ui
-                .borrow()
-                .statistics_window
-                .as_ref()
-                .unwrap()
-                .clone_strong();
-            statistics_ui::refresh(&window, &lock(&session_of(&ui)));
-            if let Err(error) = window.show() {
-                app.unwrap().set_message(error.to_string().into());
-            }
+        let window = ui.borrow().merge_window.as_ref().unwrap().clone_strong();
+        merge_ui::refresh(&window, &lock(&session_of(&ui)));
+        if let Err(error) = window.show() {
+            app.unwrap().set_message(error.to_string().into());
         }
     });
-    app.on_map_checks({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let app = app.unwrap();
-            if ui.borrow().checks_window.is_none() {
-                match ChecksWindow::new() {
-                    Ok(window) => {
-                        checks_ui::bind(&window, &session_of(&ui));
-                        ui.borrow_mut().checks_window = Some(window);
-                    }
-                    Err(error) => {
-                        app.set_message(error.to_string().into());
-                        return;
-                    }
+    root_callback!(app, ui, on_brush_components, |app| {
+        if ui.borrow().components_window.is_none() {
+            match ComponentsWindow::new() {
+                Ok(window) => {
+                    components_ui::bind(&window, &session_of(&ui));
+                    window.on_browse_partition_material({
+                        let browse = material_browser(app.clone(), Rc::downgrade(&ui));
+                        move || browse("@partition")
+                    });
+                    window.on_browse_extrusion_material({
+                        let browse = material_browser(app.clone(), Rc::downgrade(&ui));
+                        move || browse("@extrusion")
+                    });
+                    ui.borrow_mut().components_window = Some(window);
                 }
-            }
-            let window = ui.borrow().checks_window.as_ref().unwrap().clone_strong();
-            window.set_aspect(
-                (app.get_viewport_width() / app.get_viewport_height().max(1.0)).max(0.01),
-            );
-            window.set_message("".into());
-            checks_ui::refresh(&window, &lock(&session_of(&ui)));
-            if let Err(error) = window.show() {
-                app.set_message(error.to_string().into());
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
+                }
             }
         }
-    });
-    app.on_draw_polygon({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let app = app.unwrap();
-            if ui.borrow().polygon.is_none() {
-                match polygon_ui::Controller::new(&session_of(&ui)) {
-                    Ok(controller) => {
-                        controller.window.on_browse_material({
-                            let browse = material_browser(app.as_weak(), Rc::downgrade(&ui));
-                            move || browse("@polygon")
-                        });
-                        ui.borrow_mut().polygon = Some(controller);
-                    }
-                    Err(error) => {
-                        app.set_message(error.to_string().into());
-                        return;
-                    }
-                }
-            }
-            let shared = session_of(&ui);
-            let ui = ui.borrow();
-            let controller = ui.polygon.as_ref().unwrap();
-            controller
-                .window
-                .set_aspect(app.get_viewport_width() / app.get_viewport_height().max(1.0));
-            match controller.initialize(&mut lock(&shared), &app.get_material()) {
-                Ok(()) => {
-                    let _ = controller.window.show();
-                }
-                Err(error) => app.set_message(error.into()),
-            }
+        let window = ui
+            .borrow()
+            .components_window
+            .as_ref()
+            .unwrap()
+            .clone_strong();
+        components_ui::refresh(&window, &lock(&session_of(&ui)));
+        components_ui::refresh_material_previews(&window, &lock(&session_of(&ui)));
+        window.set_aspect(
+            (app.unwrap().get_viewport_width() / app.unwrap().get_viewport_height().max(1.0))
+                .max(0.01),
+        );
+        if let Err(error) = window.show() {
+            app.unwrap().set_message(error.to_string().into());
         }
     });
-    app.on_brush_shapes({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let app = app.unwrap();
-            if ui.borrow().primitive_window.is_none() {
-                match PrimitiveWindow::new() {
-                    Ok(window) => {
-                        primitive_ui::bind(&window, &session_of(&ui));
-                        window.on_browse_material({
-                            let browse = material_browser(app.as_weak(), Rc::downgrade(&ui));
-                            move || browse("@primitive")
-                        });
-                        ui.borrow_mut().primitive_window = Some(window);
-                    }
-                    Err(error) => {
-                        app.set_message(error.to_string().into());
-                        return;
-                    }
+    root_callback!(app, ui, on_pointfile, |app| {
+        if ui.borrow().pointfile_window.is_none() {
+            match PointfileWindow::new() {
+                Ok(window) => {
+                    pointfile_ui::bind(&window, &session_of(&ui));
+                    ui.borrow_mut().pointfile_window = Some(window);
                 }
-            }
-            let window = ui
-                .borrow()
-                .primitive_window
-                .as_ref()
-                .unwrap()
-                .clone_strong();
-            window.set_aspect(
-                (app.get_viewport_width() / app.get_viewport_height().max(1.0)).max(0.01),
-            );
-            primitive_ui::initialize(&window, &mut lock(&session_of(&ui)), &app.get_material());
-            if let Err(error) = window.show() {
-                app.set_message(error.to_string().into());
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
+                }
             }
         }
-    });
-    app.on_design_context({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let app = app.unwrap();
-            if ui.borrow().context_window.is_none() {
-                match ContextWindow::new() {
-                    Ok(window) => {
-                        context_ui::bind(&window, &session_of(&ui));
-                        ui.borrow_mut().context_window = Some(window);
-                    }
-                    Err(error) => {
-                        app.set_message(error.to_string().into());
-                        return;
-                    }
-                }
-            }
-            let window = ui.borrow().context_window.as_ref().unwrap().clone_strong();
-            window.set_aspect(
-                (app.get_viewport_width() / app.get_viewport_height().max(1.0)).max(0.01),
-            );
-            window.set_message("".into());
-            context_ui::refresh(&window, &lock(&session_of(&ui)));
-            if let Err(error) = window.show() {
-                app.set_message(error.to_string().into());
-            }
+        let app = app.unwrap();
+        let window = ui
+            .borrow()
+            .pointfile_window
+            .as_ref()
+            .unwrap()
+            .clone_strong();
+        window
+            .set_aspect((app.get_viewport_width() / app.get_viewport_height().max(1.0)).max(0.01));
+        pointfile_ui::refresh(&window, &lock(&session_of(&ui)));
+        if let Err(error) = window.show() {
+            app.set_message(error.to_string().into());
         }
     });
-    app.on_recovery({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let app = app.unwrap();
-            if ui.borrow().recovery_window.is_none() {
-                match RecoveryWindow::new() {
-                    Ok(window) => {
-                        recovery_ui::bind_with_access(&window, &session_of(&ui), file_access(&ui));
-                        ui.borrow_mut().recovery_window = Some(window);
-                    }
-                    Err(error) => {
-                        app.set_message(error.to_string().into());
-                        return;
-                    }
+    root_callback!(app, ui, on_map_statistics, |app| {
+        if ui.borrow().statistics_window.is_none() {
+            match StatisticsWindow::new() {
+                Ok(window) => {
+                    statistics_ui::bind(&window, &session_of(&ui));
+                    ui.borrow_mut().statistics_window = Some(window);
                 }
-            }
-            let window = ui.borrow().recovery_window.as_ref().unwrap().clone_strong();
-            window.set_settings_dirty(false);
-            window.set_discard_changes(false);
-            window.set_confirm_delete(false);
-            window.set_message("".into());
-            recovery_ui::refresh(&window, &lock(&session_of(&ui)));
-            if let Err(error) = window.show() {
-                app.set_message(error.to_string().into());
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
+                }
             }
         }
-    });
-    app.on_edit_connections({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || show_connection_window(&app.unwrap(), &ui)
-    });
-    app.on_edit_face_textures({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || show_surface_window(&app.unwrap(), &ui)
-    });
-    app.on_create_linked_path({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let shared = session_of(&ui);
-            if ui.borrow().linked_path.is_none() {
-                match linked_path_ui::Controller::new(&shared) {
-                    Ok(controller) => ui.borrow_mut().linked_path = Some(controller),
-                    Err(error) => {
-                        app.unwrap().set_message(error.to_string().into());
-                        return;
-                    }
-                }
-            }
-            if let Err(error) = ui
-                .borrow()
-                .linked_path
-                .as_ref()
-                .unwrap()
-                .show(&lock(&shared))
-            {
-                app.unwrap().set_message(error.to_string().into());
-            }
+        let window = ui
+            .borrow()
+            .statistics_window
+            .as_ref()
+            .unwrap()
+            .clone_strong();
+        statistics_ui::refresh(&window, &lock(&session_of(&ui)));
+        if let Err(error) = window.show() {
+            app.unwrap().set_message(error.to_string().into());
         }
     });
-    app.on_cubemap_faces({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let shared = session_of(&ui);
-            if ui.borrow().cubemap.is_none() {
-                match cubemap_ui::Controller::new(&shared) {
-                    Ok(controller) => ui.borrow_mut().cubemap = Some(controller),
-                    Err(error) => {
-                        app.unwrap().set_message(error.to_string().into());
-                        return;
-                    }
+    root_callback!(app, ui, on_map_checks, |app| {
+        let app = app.unwrap();
+        if ui.borrow().checks_window.is_none() {
+            match ChecksWindow::new() {
+                Ok(window) => {
+                    checks_ui::bind(&window, &session_of(&ui));
+                    ui.borrow_mut().checks_window = Some(window);
+                }
+                Err(error) => {
+                    app.set_message(error.to_string().into());
+                    return;
                 }
             }
-            if let Err(error) = ui.borrow().cubemap.as_ref().unwrap().show(&lock(&shared)) {
-                app.unwrap().set_message(error.to_string().into());
-            }
+        }
+        let window = ui.borrow().checks_window.as_ref().unwrap().clone_strong();
+        window
+            .set_aspect((app.get_viewport_width() / app.get_viewport_height().max(1.0)).max(0.01));
+        window.set_message("".into());
+        checks_ui::refresh(&window, &lock(&session_of(&ui)));
+        if let Err(error) = window.show() {
+            app.set_message(error.to_string().into());
         }
     });
-    app.on_create_overlay({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let shared = session_of(&ui);
-            if ui.borrow().overlay.is_none() {
-                match overlay_ui::Controller::new(&shared) {
-                    Ok(controller) => {
-                        controller.window.on_browse_material({
-                            let browse = material_browser(app.clone(), Rc::downgrade(&ui));
-                            move || browse("@overlay")
-                        });
-                        ui.borrow_mut().overlay = Some(controller);
-                    }
-                    Err(error) => {
-                        app.unwrap().set_message(error.to_string().into());
-                        return;
-                    }
+    root_callback!(app, ui, on_draw_polygon, |app| {
+        let app = app.unwrap();
+        if ui.borrow().polygon.is_none() {
+            match polygon_ui::Controller::new(&session_of(&ui)) {
+                Ok(controller) => {
+                    controller.window.on_browse_material({
+                        let browse = material_browser(app.as_weak(), Rc::downgrade(&ui));
+                        move || browse("@polygon")
+                    });
+                    ui.borrow_mut().polygon = Some(controller);
+                }
+                Err(error) => {
+                    app.set_message(error.to_string().into());
+                    return;
                 }
             }
-            let ui = ui.borrow();
-            if let Err(error) = ui
-                .overlay
-                .as_ref()
-                .unwrap()
-                .show(&mut lock(&shared), &app.unwrap().get_material())
-            {
-                app.unwrap().set_message(error.to_string().into());
+        }
+        let shared = session_of(&ui);
+        let ui = ui.borrow();
+        let controller = ui.polygon.as_ref().unwrap();
+        controller
+            .window
+            .set_aspect(app.get_viewport_width() / app.get_viewport_height().max(1.0));
+        match controller.initialize(&mut lock(&shared), &app.get_material()) {
+            Ok(()) => {
+                let _ = controller.window.show();
             }
+            Err(error) => app.set_message(error.into()),
         }
     });
-    app.on_select_volume({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let shared = session_of(&ui);
-            if ui.borrow().volume.is_none() {
-                let viewport = app.clone();
-                match volume_ui::Controller::new(&shared, move || {
-                    let app = viewport.unwrap();
-                    (app.get_viewport_width() / app.get_viewport_height().max(1.0)).max(0.01)
-                }) {
-                    Ok(controller) => ui.borrow_mut().volume = Some(controller),
-                    Err(error) => {
-                        app.unwrap().set_message(error.to_string().into());
-                        return;
-                    }
+    root_callback!(app, ui, on_brush_shapes, |app| {
+        let app = app.unwrap();
+        if ui.borrow().primitive_window.is_none() {
+            match PrimitiveWindow::new() {
+                Ok(window) => {
+                    primitive_ui::bind(&window, &session_of(&ui));
+                    window.on_browse_material({
+                        let browse = material_browser(app.as_weak(), Rc::downgrade(&ui));
+                        move || browse("@primitive")
+                    });
+                    ui.borrow_mut().primitive_window = Some(window);
+                }
+                Err(error) => {
+                    app.set_message(error.to_string().into());
+                    return;
                 }
             }
-            let ui = ui.borrow();
-            let controller = ui.volume.as_ref().unwrap();
-            controller.initialize(&mut lock(&shared));
-            let _ = controller.window.show();
+        }
+        let window = ui
+            .borrow()
+            .primitive_window
+            .as_ref()
+            .unwrap()
+            .clone_strong();
+        window
+            .set_aspect((app.get_viewport_width() / app.get_viewport_height().max(1.0)).max(0.01));
+        primitive_ui::initialize(&window, &mut lock(&session_of(&ui)), &app.get_material());
+        if let Err(error) = window.show() {
+            app.set_message(error.to_string().into());
         }
     });
-    app.on_map_face_group({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let shared = session_of(&ui);
-            if ui.borrow().surface_group.is_none() {
-                match surface_group_ui::Controller::new(&shared) {
-                    Ok(controller) => {
-                        controller.window.on_browse({
-                            let browse = material_browser(app.clone(), Rc::downgrade(&ui));
-                            move || browse("@group")
-                        });
-                        ui.borrow_mut().surface_group = Some(controller);
-                    }
-                    Err(error) => {
-                        app.unwrap().set_message(error.to_string().into());
-                        return;
-                    }
+    root_callback!(app, ui, on_design_context, |app| {
+        let app = app.unwrap();
+        if ui.borrow().context_window.is_none() {
+            match ContextWindow::new() {
+                Ok(window) => {
+                    context_ui::bind(&window, &session_of(&ui));
+                    ui.borrow_mut().context_window = Some(window);
+                }
+                Err(error) => {
+                    app.set_message(error.to_string().into());
+                    return;
                 }
             }
-            let ui = ui.borrow();
-            let controller = ui.surface_group.as_ref().unwrap();
-            match controller.initialize(&mut lock(&shared)) {
-                Ok(()) => {
-                    let _ = controller.window.show();
-                }
-                Err(error) => app.unwrap().set_message(error.into()),
-            }
+        }
+        let window = ui.borrow().context_window.as_ref().unwrap().clone_strong();
+        window
+            .set_aspect((app.get_viewport_width() / app.get_viewport_height().max(1.0)).max(0.01));
+        window.set_message("".into());
+        context_ui::refresh(&window, &lock(&session_of(&ui)));
+        if let Err(error) = window.show() {
+            app.set_message(error.to_string().into());
         }
     });
-    app.on_replace_materials({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let shared = session_of(&ui);
-            if ui.borrow().material_replace.is_none() {
-                match material_replace_ui::Controller::new(&shared) {
-                    Ok(controller) => {
-                        controller.window.on_browse({
-                            let browse = material_browser(app.clone(), Rc::downgrade(&ui));
-                            move |replacement| {
-                                browse(if replacement {
-                                    "@replace-target"
-                                } else {
-                                    "@replace-source"
-                                })
-                            }
-                        });
-                        ui.borrow_mut().material_replace = Some(controller);
-                    }
-                    Err(error) => {
-                        app.unwrap().set_message(error.to_string().into());
-                        return;
-                    }
+    root_callback!(app, ui, on_recovery, |app| {
+        let app = app.unwrap();
+        if ui.borrow().recovery_window.is_none() {
+            match RecoveryWindow::new() {
+                Ok(window) => {
+                    recovery_ui::bind_with_access(&window, &session_of(&ui), file_access(&ui));
+                    ui.borrow_mut().recovery_window = Some(window);
+                }
+                Err(error) => {
+                    app.set_message(error.to_string().into());
+                    return;
                 }
             }
-            let ui = ui.borrow();
-            let controller = ui.material_replace.as_ref().unwrap();
-            controller.initialize(&mut lock(&shared), &app.unwrap().get_material());
-            let _ = controller.window.show();
         }
+        let window = ui.borrow().recovery_window.as_ref().unwrap().clone_strong();
+        window.set_settings_dirty(false);
+        window.set_discard_changes(false);
+        window.set_confirm_delete(false);
+        window.set_message("".into());
+        recovery_ui::refresh(&window, &lock(&session_of(&ui)));
+        if let Err(error) = window.show() {
+            app.set_message(error.to_string().into());
+        }
+    });
+    root_callback!(app, ui, on_edit_connections, |app| show_connection_window(
+        &app.unwrap(),
+        &ui
+    ));
+    root_callback!(app, ui, on_edit_face_textures, |app| show_surface_window(
+        &app.unwrap(),
+        &ui
+    ));
+    root_callback!(app, ui, on_create_linked_path, |app| {
+        let shared = session_of(&ui);
+        if ui.borrow().linked_path.is_none() {
+            match linked_path_ui::Controller::new(&shared) {
+                Ok(controller) => ui.borrow_mut().linked_path = Some(controller),
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
+                }
+            }
+        }
+        if let Err(error) = ui
+            .borrow()
+            .linked_path
+            .as_ref()
+            .unwrap()
+            .show(&lock(&shared))
+        {
+            app.unwrap().set_message(error.to_string().into());
+        }
+    });
+    root_callback!(app, ui, on_cubemap_faces, |app| {
+        let shared = session_of(&ui);
+        if ui.borrow().cubemap.is_none() {
+            match cubemap_ui::Controller::new(&shared) {
+                Ok(controller) => ui.borrow_mut().cubemap = Some(controller),
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
+                }
+            }
+        }
+        if let Err(error) = ui.borrow().cubemap.as_ref().unwrap().show(&lock(&shared)) {
+            app.unwrap().set_message(error.to_string().into());
+        }
+    });
+    root_callback!(app, ui, on_create_overlay, |app| {
+        let shared = session_of(&ui);
+        if ui.borrow().overlay.is_none() {
+            match overlay_ui::Controller::new(&shared) {
+                Ok(controller) => {
+                    controller.window.on_browse_material({
+                        let browse = material_browser(app.clone(), Rc::downgrade(&ui));
+                        move || browse("@overlay")
+                    });
+                    ui.borrow_mut().overlay = Some(controller);
+                }
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
+                }
+            }
+        }
+        let ui = ui.borrow();
+        if let Err(error) = ui
+            .overlay
+            .as_ref()
+            .unwrap()
+            .show(&mut lock(&shared), &app.unwrap().get_material())
+        {
+            app.unwrap().set_message(error.to_string().into());
+        }
+    });
+    root_callback!(app, ui, on_select_volume, |app| {
+        let shared = session_of(&ui);
+        if ui.borrow().volume.is_none() {
+            let viewport = app.clone();
+            match volume_ui::Controller::new(&shared, move || {
+                let app = viewport.unwrap();
+                (app.get_viewport_width() / app.get_viewport_height().max(1.0)).max(0.01)
+            }) {
+                Ok(controller) => ui.borrow_mut().volume = Some(controller),
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
+                }
+            }
+        }
+        let ui = ui.borrow();
+        let controller = ui.volume.as_ref().unwrap();
+        controller.initialize(&mut lock(&shared));
+        let _ = controller.window.show();
+    });
+    root_callback!(app, ui, on_map_face_group, |app| {
+        let shared = session_of(&ui);
+        if ui.borrow().surface_group.is_none() {
+            match surface_group_ui::Controller::new(&shared) {
+                Ok(controller) => {
+                    controller.window.on_browse({
+                        let browse = material_browser(app.clone(), Rc::downgrade(&ui));
+                        move || browse("@group")
+                    });
+                    ui.borrow_mut().surface_group = Some(controller);
+                }
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
+                }
+            }
+        }
+        let ui = ui.borrow();
+        let controller = ui.surface_group.as_ref().unwrap();
+        match controller.initialize(&mut lock(&shared)) {
+            Ok(()) => {
+                let _ = controller.window.show();
+            }
+            Err(error) => app.unwrap().set_message(error.into()),
+        }
+    });
+    root_callback!(app, ui, on_replace_materials, |app| {
+        let shared = session_of(&ui);
+        if ui.borrow().material_replace.is_none() {
+            match material_replace_ui::Controller::new(&shared) {
+                Ok(controller) => {
+                    controller.window.on_browse({
+                        let browse = material_browser(app.clone(), Rc::downgrade(&ui));
+                        move |replacement| {
+                            browse(if replacement {
+                                "@replace-target"
+                            } else {
+                                "@replace-source"
+                            })
+                        }
+                    });
+                    ui.borrow_mut().material_replace = Some(controller);
+                }
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
+                }
+            }
+        }
+        let ui = ui.borrow();
+        let controller = ui.material_replace.as_ref().unwrap();
+        controller.initialize(&mut lock(&shared), &app.unwrap().get_material());
+        let _ = controller.window.show();
     });
     bind_terrain_controls(&app, session_of(&ui));
-    app.on_cancel_terrain_center_pick({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            if let Some(controller) = &ui.borrow().terrain {
-                controller.cancel_center_pick();
-            }
-            app.unwrap().set_terrain_center_picking(false);
+    root_callback!(app, ui, on_cancel_terrain_center_pick, |app| {
+        if let Some(controller) = &ui.borrow().terrain {
+            controller.cancel_center_pick();
         }
+        app.unwrap().set_terrain_center_picking(false);
     });
-    app.on_cancel_terrain_handles({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            if let Some(controller) = &ui.borrow().terrain {
-                controller.cancel_handles(&mut lock(&session_of(&ui)), true);
-            }
-            app.unwrap().set_terrain_handling(false);
+    root_callback!(app, ui, on_cancel_terrain_handles, |app| {
+        if let Some(controller) = &ui.borrow().terrain {
+            controller.cancel_handles(&mut lock(&session_of(&ui)), true);
         }
+        app.unwrap().set_terrain_handling(false);
     });
-    app.on_cancel_terrain_stroke({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            if let Some(controller) = &ui.borrow().terrain {
-                controller.cancel_stroke(&mut lock(&session_of(&ui)));
-            }
-            app.unwrap().set_terrain_stroking(false);
+    root_callback!(app, ui, on_cancel_terrain_stroke, |app| {
+        if let Some(controller) = &ui.borrow().terrain {
+            controller.cancel_stroke(&mut lock(&session_of(&ui)));
         }
+        app.unwrap().set_terrain_stroking(false);
     });
-    app.on_change_terrain_resolution({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let shared = session_of(&ui);
-            if ui.borrow().terrain.is_none() {
-                match terrain_ui::Controller::new(&shared) {
-                    Ok(controller) => ui.borrow_mut().terrain = Some(controller),
-                    Err(error) => {
-                        app.unwrap().set_message(error.to_string().into());
-                        return;
-                    }
+    root_callback!(app, ui, on_change_terrain_resolution, |app| {
+        let shared = session_of(&ui);
+        if ui.borrow().terrain.is_none() {
+            match terrain_ui::Controller::new(&shared) {
+                Ok(controller) => ui.borrow_mut().terrain = Some(controller),
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
                 }
             }
-            let ui = ui.borrow();
-            let controller = ui.terrain.as_ref().unwrap();
-            match controller.initialize(&mut lock(&shared)) {
-                Ok(()) => {
-                    let _ = controller.window.show();
-                }
-                Err(error) => app.unwrap().set_message(error.into()),
+        }
+        let ui = ui.borrow();
+        let controller = ui.terrain.as_ref().unwrap();
+        match controller.initialize(&mut lock(&shared)) {
+            Ok(()) => {
+                let _ = controller.window.show();
             }
+            Err(error) => app.unwrap().set_message(error.into()),
         }
     });
-    app.on_cancel_terrain_triangle_pick({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            if let Some(controller) = &ui.borrow().terrain_triangles {
-                controller.cancel_pick();
-            }
-            app.unwrap().set_terrain_triangle_picking(false);
+    root_callback!(app, ui, on_cancel_terrain_triangle_pick, |app| {
+        if let Some(controller) = &ui.borrow().terrain_triangles {
+            controller.cancel_pick();
         }
+        app.unwrap().set_terrain_triangle_picking(false);
     });
-    app.on_edit_terrain_triangles({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let shared = session_of(&ui);
-            if ui.borrow().terrain_triangles.is_none() {
-                match terrain_triangles_ui::Controller::new(&shared) {
-                    Ok(controller) => ui.borrow_mut().terrain_triangles = Some(controller),
-                    Err(error) => {
-                        app.unwrap().set_message(error.to_string().into());
-                        return;
-                    }
+    root_callback!(app, ui, on_edit_terrain_triangles, |app| {
+        let shared = session_of(&ui);
+        if ui.borrow().terrain_triangles.is_none() {
+            match terrain_triangles_ui::Controller::new(&shared) {
+                Ok(controller) => ui.borrow_mut().terrain_triangles = Some(controller),
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
                 }
             }
-            let ui = ui.borrow();
-            let controller = ui.terrain_triangles.as_ref().unwrap();
-            let app = app.unwrap();
-            controller
-                .window
-                .set_aspect(app.get_viewport_width() / app.get_viewport_height().max(1.0));
-            match controller.initialize(&mut lock(&shared)) {
-                Ok(()) => {
-                    let _ = controller.window.show();
-                }
-                Err(error) => app.set_message(error.into()),
+        }
+        let ui = ui.borrow();
+        let controller = ui.terrain_triangles.as_ref().unwrap();
+        let app = app.unwrap();
+        controller
+            .window
+            .set_aspect(app.get_viewport_width() / app.get_viewport_height().max(1.0));
+        match controller.initialize(&mut lock(&shared)) {
+            Ok(()) => {
+                let _ = controller.window.show();
             }
+            Err(error) => app.set_message(error.into()),
         }
     });
-    app.on_edit_face_lighting({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let shared = session_of(&ui);
-            if ui.borrow().lighting.is_none() {
-                match lighting_ui::Controller::new(&shared) {
-                    Ok(controller) => ui.borrow_mut().lighting = Some(controller),
-                    Err(error) => {
-                        app.unwrap().set_message(error.to_string().into());
-                        return;
-                    }
+    root_callback!(app, ui, on_edit_face_lighting, |app| {
+        let shared = session_of(&ui);
+        if ui.borrow().lighting.is_none() {
+            match lighting_ui::Controller::new(&shared) {
+                Ok(controller) => ui.borrow_mut().lighting = Some(controller),
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
                 }
             }
-            let ui = ui.borrow();
-            let controller = ui.lighting.as_ref().unwrap();
-            let result = controller.initialize(&mut lock(&shared));
-            match result {
-                Ok(()) => {
-                    let _ = controller.window.show();
-                }
-                Err(error) => app.unwrap().set_message(error.into()),
+        }
+        let ui = ui.borrow();
+        let controller = ui.lighting.as_ref().unwrap();
+        let result = controller.initialize(&mut lock(&shared));
+        match result {
+            Ok(()) => {
+                let _ = controller.window.show();
             }
+            Err(error) => app.unwrap().set_message(error.into()),
         }
     });
-    app.on_sample_face_texture({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let app = app.unwrap();
-            let shared = session_of(&ui);
-            let mut session = lock(&shared);
-            let result = match session.selected_faces().as_slice() {
-                [face] => session.sample_face_texture(*face),
-                _ => Err("Select exactly one source face.".into()),
-            };
-            app.set_message(match result {
-                Ok(()) => {
-                    "Texture sampled. Choose Paint texture or open Edit face textures.".into()
-                }
-                Err(error) => error.into(),
-            });
+    root_callback!(app, ui, on_sample_face_texture, |app| {
+        let app = app.unwrap();
+        let shared = session_of(&ui);
+        let mut session = lock(&shared);
+        let result = match session.selected_faces().as_slice() {
+            [face] => session.sample_face_texture(*face),
+            _ => Err("Select exactly one source face.".into()),
+        };
+        app.set_message(match result {
+            Ok(()) => "Texture sampled. Choose Paint texture or open Edit face textures.".into(),
+            Err(error) => error.into(),
+        });
+    });
+    root_callback!(app, ui, on_apply_material, |app| {
+        let app = app.unwrap();
+        let shared = session_of(&ui);
+        let mut session = lock(&shared);
+        let targets = session.material_targets();
+        if let Err(error) = session.apply_material(Actor::User, &targets, app.get_material().trim())
+        {
+            app.set_message(error.into());
         }
     });
-    app.on_apply_material({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let app = app.unwrap();
-            let shared = session_of(&ui);
-            let mut session = lock(&shared);
-            let targets = session.material_targets();
-            if let Err(error) =
-                session.apply_material(Actor::User, &targets, app.get_material().trim())
-            {
-                app.set_message(error.into());
-            }
-        }
+    root_callback!(app, ui, on_browse_material, |app; key| show_material_window(&app.unwrap(), &ui, &key));
+    root_callback!(app, ui, on_cancel_surface_pick, |app| {
+        cancel_surface_pick(&app.unwrap(), &ui);
     });
-    app.on_browse_material({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move |key| show_material_window(&app.unwrap(), &ui, &key)
+    root_callback!(app, ui, on_cancel_overlay_handles, |app| {
+        cancel_overlay_handles(&app.unwrap(), &ui);
     });
-    app.on_cancel_surface_pick({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            cancel_surface_pick(&app.unwrap(), &ui);
-        }
-    });
-    app.on_cancel_overlay_handles({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            cancel_overlay_handles(&app.unwrap(), &ui);
-        }
-    });
-    app.on_copy_objects({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || copy_clipboard_selection(&app.unwrap(), &ui, false)
-    });
-    app.on_cut_objects({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || copy_clipboard_selection(&app.unwrap(), &ui, true)
-    });
-    app.on_paste_objects({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let shared = session_of(&ui);
-            if ui.borrow().clipboard.is_none() {
-                match clipboard_ui::Controller::new(&shared) {
-                    Ok(controller) => ui.borrow_mut().clipboard = Some(controller),
-                    Err(error) => {
-                        app.unwrap().set_message(error.to_string().into());
-                        return;
-                    }
+    root_callback!(app, ui, on_copy_objects, |app| copy_clipboard_selection(
+        &app.unwrap(),
+        &ui,
+        false
+    ));
+    root_callback!(app, ui, on_cut_objects, |app| copy_clipboard_selection(
+        &app.unwrap(),
+        &ui,
+        true
+    ));
+    root_callback!(app, ui, on_paste_objects, |app| {
+        let shared = session_of(&ui);
+        if ui.borrow().clipboard.is_none() {
+            match clipboard_ui::Controller::new(&shared) {
+                Ok(controller) => ui.borrow_mut().clipboard = Some(controller),
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
                 }
             }
-            let ui = ui.borrow();
-            let controller = ui.clipboard.as_ref().unwrap();
-            controller.initialize(&mut lock(&shared), true);
-            let _ = controller.window.show();
         }
+        let ui = ui.borrow();
+        let controller = ui.clipboard.as_ref().unwrap();
+        controller.initialize(&mut lock(&shared), true);
+        let _ = controller.window.show();
     });
-    app.on_repeat_array({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let shared = session_of(&ui);
-            if ui.borrow().repeat.is_none() {
-                match repeat_ui::Controller::new(&shared) {
-                    Ok(controller) => ui.borrow_mut().repeat = Some(controller),
-                    Err(error) => {
-                        app.unwrap().set_message(error.to_string().into());
-                        return;
-                    }
+    root_callback!(app, ui, on_repeat_array, |app| {
+        let shared = session_of(&ui);
+        if ui.borrow().repeat.is_none() {
+            match repeat_ui::Controller::new(&shared) {
+                Ok(controller) => ui.borrow_mut().repeat = Some(controller),
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
                 }
-            }
-            let ui = ui.borrow();
-            let controller = ui.repeat.as_ref().unwrap();
-            match controller.initialize(&lock(&shared)) {
-                Ok(()) => {
-                    let _ = controller.window.show();
-                }
-                Err(error) => app.unwrap().set_message(error.into()),
             }
         }
-    });
-    app.on_object_groups({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let mut ui = ui.borrow_mut();
-            if ui.object_groups.is_none() {
-                match groups_ui::Controller::new(&ui.session) {
-                    Ok(controller) => ui.object_groups = Some(controller),
-                    Err(error) => {
-                        app.unwrap().set_message(error.to_string().into());
-                        return;
-                    }
-                }
+        let ui = ui.borrow();
+        let controller = ui.repeat.as_ref().unwrap();
+        match controller.initialize(&lock(&shared)) {
+            Ok(()) => {
+                let _ = controller.window.show();
             }
-            if let Err(error) = ui.object_groups.as_ref().unwrap().show(&lock(&ui.session)) {
-                app.unwrap().set_message(error.to_string().into());
-            }
+            Err(error) => app.unwrap().set_message(error.into()),
         }
     });
-    app.on_working_region({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let shared = session_of(&ui);
-            if ui.borrow().working_region.is_none() {
-                match working_region_ui::Controller::new(&shared) {
-                    Ok(controller) => ui.borrow_mut().working_region = Some(controller),
-                    Err(error) => {
-                        app.unwrap().set_message(error.to_string().into());
-                        return;
-                    }
+    root_callback!(app, ui, on_object_groups, |app| {
+        let mut ui = ui.borrow_mut();
+        if ui.object_groups.is_none() {
+            match groups_ui::Controller::new(&ui.session) {
+                Ok(controller) => ui.object_groups = Some(controller),
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
                 }
             }
-            if let Err(error) = ui
-                .borrow()
-                .working_region
-                .as_ref()
-                .unwrap()
-                .show(&mut lock(&shared))
-            {
-                app.unwrap().set_message(error.to_string().into());
+        }
+        if let Err(error) = ui.object_groups.as_ref().unwrap().show(&lock(&ui.session)) {
+            app.unwrap().set_message(error.to_string().into());
+        }
+    });
+    root_callback!(app, ui, on_working_region, |app| {
+        let shared = session_of(&ui);
+        if ui.borrow().working_region.is_none() {
+            match working_region_ui::Controller::new(&shared) {
+                Ok(controller) => ui.borrow_mut().working_region = Some(controller),
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
+                }
             }
+        }
+        if let Err(error) = ui
+            .borrow()
+            .working_region
+            .as_ref()
+            .unwrap()
+            .show(&mut lock(&shared))
+        {
+            app.unwrap().set_message(error.to_string().into());
         }
     });
     working_region_ui::bind_clear(&app, session_of(&ui));
-    app.on_compile_region({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let shared = session_of(&ui);
-            if ui.borrow().compile_region.is_none() {
-                let viewport = app.clone();
-                match compile_region_ui::Controller::new(&shared, move || {
-                    let app = viewport.unwrap();
-                    (app.get_viewport_width() / app.get_viewport_height().max(1.0)).max(0.01)
-                }) {
-                    Ok(controller) => ui.borrow_mut().compile_region = Some(controller),
-                    Err(error) => {
-                        app.unwrap().set_message(error.to_string().into());
-                        return;
-                    }
+    root_callback!(app, ui, on_compile_region, |app| {
+        let shared = session_of(&ui);
+        if ui.borrow().compile_region.is_none() {
+            let viewport = app.clone();
+            match compile_region_ui::Controller::new(&shared, move || {
+                let app = viewport.unwrap();
+                (app.get_viewport_width() / app.get_viewport_height().max(1.0)).max(0.01)
+            }) {
+                Ok(controller) => ui.borrow_mut().compile_region = Some(controller),
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
                 }
-            }
-            let ui = ui.borrow();
-            if let Err(error) = ui.compile_region.as_ref().unwrap().show(&lock(&shared)) {
-                app.unwrap().set_message(error.to_string().into());
             }
         }
-    });
-    app.on_layers({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let mut ui = ui.borrow_mut();
-            if ui.layers.is_none() {
-                match layers_ui::Controller::new(&ui.session) {
-                    Ok(controller) => ui.layers = Some(controller),
-                    Err(error) => {
-                        app.unwrap().set_message(error.to_string().into());
-                        return;
-                    }
-                }
-            }
-            if let Err(error) = ui.layers.as_ref().unwrap().show(&lock(&ui.session)) {
-                app.unwrap().set_message(error.to_string().into());
-            }
+        let ui = ui.borrow();
+        if let Err(error) = ui.compile_region.as_ref().unwrap().show(&lock(&shared)) {
+            app.unwrap().set_message(error.to_string().into());
         }
     });
-    app.on_prefabs({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let mut ui = ui.borrow_mut();
-            if ui.prefabs.is_none() {
-                match prefabs_ui::Controller::new(&ui.session) {
-                    Ok(controller) => ui.prefabs = Some(controller),
-                    Err(error) => {
-                        app.unwrap().set_message(error.to_string().into());
-                        return;
-                    }
+    root_callback!(app, ui, on_layers, |app| {
+        let mut ui = ui.borrow_mut();
+        if ui.layers.is_none() {
+            match layers_ui::Controller::new(&ui.session) {
+                Ok(controller) => ui.layers = Some(controller),
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
                 }
-            }
-            if let Err(error) = ui.prefabs.as_ref().unwrap().show(&lock(&ui.session)) {
-                app.unwrap().set_message(error.to_string().into());
             }
         }
+        if let Err(error) = ui.layers.as_ref().unwrap().show(&lock(&ui.session)) {
+            app.unwrap().set_message(error.to_string().into());
+        }
     });
-    app.on_place_on_surface({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let shared = session_of(&ui);
-            if ui.borrow().placement.is_none() {
-                match placement_ui::Controller::new(&shared) {
-                    Ok(controller) => ui.borrow_mut().placement = Some(controller),
-                    Err(error) => {
-                        app.unwrap().set_message(error.to_string().into());
-                        return;
-                    }
+    root_callback!(app, ui, on_prefabs, |app| {
+        let mut ui = ui.borrow_mut();
+        if ui.prefabs.is_none() {
+            match prefabs_ui::Controller::new(&ui.session) {
+                Ok(controller) => ui.prefabs = Some(controller),
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
                 }
             }
-            let ui = ui.borrow();
-            let controller = ui.placement.as_ref().unwrap();
+        }
+        if let Err(error) = ui.prefabs.as_ref().unwrap().show(&lock(&ui.session)) {
+            app.unwrap().set_message(error.to_string().into());
+        }
+    });
+    root_callback!(app, ui, on_place_on_surface, |app| {
+        let shared = session_of(&ui);
+        if ui.borrow().placement.is_none() {
+            match placement_ui::Controller::new(&shared) {
+                Ok(controller) => ui.borrow_mut().placement = Some(controller),
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
+                }
+            }
+        }
+        let ui = ui.borrow();
+        let controller = ui.placement.as_ref().unwrap();
+        controller.window.set_aspect(
+            app.unwrap().get_viewport_width() / app.unwrap().get_viewport_height().max(1.0),
+        );
+        let result = controller.initialize(&mut lock(&shared));
+        match result {
+            Ok(()) => {
+                let _ = controller.window.show();
+            }
+            Err(error) => app.unwrap().set_message(error.into()),
+        }
+    });
+    root_callback!(app, ui, on_browse_particle, |app| {
+        let shared = session_of(&ui);
+        if ui.borrow().particles.is_none() {
+            match particles_ui::Controller::new(&shared) {
+                Ok(controller) => ui.borrow_mut().particles = Some(controller),
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
+                }
+            }
+        }
+        let ui = ui.borrow();
+        let controller = ui.particles.as_ref().unwrap();
+        let result = {
+            let mut session = lock(&shared);
+            single_selected_entity(&session)
+                .ok_or("Select a particle system entity".to_owned())
+                .and_then(|id| controller.initialize(&mut session, id))
+        };
+        match result {
+            Ok(()) => {
+                let _ = controller.window.show();
+            }
+            Err(error) => app.unwrap().set_message(error.into()),
+        }
+    });
+    root_callback!(app, ui, on_browse_sound, |app; key| {
+        let shared = session_of(&ui);
+        if ui.borrow().sounds.is_none() {
+            match sounds_ui::Controller::new(&shared) {
+                Ok(controller) => ui.borrow_mut().sounds = Some(controller),
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
+                }
+            }
+        }
+        let ui = ui.borrow();
+        let controller = ui.sounds.as_ref().unwrap();
+        let result = {
+            let mut session = lock(&shared);
+            single_selected_entity(&session)
+                .ok_or("Select an entity with a sound field".to_owned())
+                .and_then(|id| controller.initialize(&mut session, id, &key))
+        };
+        match result {
+            Ok(()) => {
+                let _ = controller.window.show();
+            }
+            Err(error) => app.unwrap().set_message(error.into()),
+        }
+    });
+    root_callback!(app, ui, on_browse_model, |app| {
+        let shared = session_of(&ui);
+        if ui.borrow().model_browser.is_none() {
+            match model_browser_ui::Controller::new(&shared) {
+                Ok(controller) => ui.borrow_mut().model_browser = Some(controller),
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
+                }
+            }
+        }
+        let ui = ui.borrow();
+        let controller = ui.model_browser.as_ref().unwrap();
+        let result = {
+            let mut session = lock(&shared);
+            single_selected_entity(&session)
+                .ok_or("Select a model entity".to_owned())
+                .and_then(|id| controller.initialize(&mut session, id))
+        };
+        match result {
+            Ok(()) => {
+                if !controller.window.get_path().is_empty() && !controller.window.get_can_apply() {
+                    controller.window.invoke_preview_model();
+                }
+                let _ = controller.window.show();
+            }
+            Err(error) => app.unwrap().set_message(error.into()),
+        }
+    });
+    root_callback!(
+        app,
+        ui,
+        on_material_changed,
+        |app| refresh_material_preview(&app.unwrap(), &mut lock(&session_of(&ui)))
+    );
+    root_callback!(app, ui, on_pick_color, |app; key| show_color_window(&app.unwrap(), &ui, &key));
+    root_callback!(app, ui, on_property_component_edited, |app; key, index, value| {
+        let shared = session_of(&ui);
+        let mut session = lock(&shared);
+        let Some(id) = single_selected_entity(&session) else {
+            return;
+        };
+        if let Err(error) =
+            session.set_entity_component(Actor::User, id, &key, index as usize, &value)
+        {
+            let app = app.unwrap();
+            refresh_panel(&app, &mut session);
+            app.set_message(error.into());
+        }
+    });
+    root_callback!(app, ui, on_edit_references, |app| show_rename_window(
+        &app.unwrap(),
+        &ui,
+        None
+    ));
+    root_callback!(app, ui, on_property_edited, |app; key, value| {
+        let key = key.trim().to_owned();
+        if key.is_empty() {
+            return;
+        }
+        if key.eq_ignore_ascii_case("targetname") {
+            show_rename_window(&app.unwrap(), &ui, Some(value.to_string()));
+            return;
+        }
+        set_inspected_property(&app.unwrap(), &session_of(&ui), &key, &value);
+    });
+    root_callback!(app, ui, on_property_removed, |app; key| {
+        let shared = session_of(&ui);
+        let mut session = lock(&shared);
+        let Some(entity) = single_selected_entity(&session) else {
+            return;
+        };
+        let changes = [(key.to_string(), None)];
+        if let Err(message) = session.set_entity_properties(Actor::User, entity, &changes) {
+            let app = app.unwrap();
+            refresh_panel(&app, &mut session);
+            app.set_message(message.into());
+        }
+    });
+    root_callback!(app, ui, on_flag_toggled, |app; key, flag, checked| {
+        let shared = session_of(&ui);
+        let mut session = lock(&shared);
+        let Some(id) = single_selected_entity(&session) else {
+            return;
+        };
+        let entity = session.document().entity(id).unwrap();
+        let default = entity
+            .classname()
+            .and_then(|name| session.definitions().class(name))
+            .and_then(|class| class.property(&key))
+            .and_then(|property| property.default_value());
+        let current = entity
+            .properties
+            .get(&key)
+            .or(default.as_deref())
+            .unwrap_or("0");
+        let result = current
+            .parse::<u64>()
+            .and_then(|mask| {
+                flag.parse::<u64>()
+                    .map(|flag| if checked { mask | flag } else { mask & !flag })
+            })
+            .map_err(|error| error.to_string())
+            .and_then(|mask| {
+                session.set_entity_properties(
+                    Actor::User,
+                    id,
+                    &[(key.to_string(), Some(mask.to_string()))],
+                )
+            });
+        if let Err(error) = result {
+            let app = app.unwrap();
+            refresh_panel(&app, &mut session);
+            app.set_message(error.into());
+        }
+    });
+    root_callback!(app, ui, on_surface_view_changed, |app| {
+        let app = app.unwrap();
+        let mode = render::SurfaceView::from_index(app.get_surface_view()).unwrap_or_default();
+        let result =
+            lock(&session_of(&ui)).set_surface_view(mode, app.get_smoothing_view_group() as u32);
+        if let Err(error) = result {
+            app.set_message(error.into());
+        }
+    });
+    root_callback!(app, ui, on_inspect_model, |app| {
+        let shared = session_of(&ui);
+        if ui.borrow().model.is_none() {
+            match model_ui::Controller::new(&shared) {
+                Ok(controller) => ui.borrow_mut().model = Some(controller),
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
+                }
+            }
+        }
+        let ui = ui.borrow();
+        let mut session = lock(&shared);
+        if let Some(id) = single_selected_entity(&session) {
+            let controller = ui.model.as_ref().unwrap();
             controller.window.set_aspect(
                 app.unwrap().get_viewport_width() / app.unwrap().get_viewport_height().max(1.0),
             );
-            let result = controller.initialize(&mut lock(&shared));
-            match result {
-                Ok(()) => {
-                    let _ = controller.window.show();
-                }
-                Err(error) => app.unwrap().set_message(error.into()),
-            }
+            controller.initialize(&mut session, id);
+            let _ = controller.window.show();
         }
     });
-    app.on_browse_particle({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let shared = session_of(&ui);
-            if ui.borrow().particles.is_none() {
-                match particles_ui::Controller::new(&shared) {
-                    Ok(controller) => ui.borrow_mut().particles = Some(controller),
-                    Err(error) => {
-                        app.unwrap().set_message(error.to_string().into());
-                        return;
-                    }
-                }
-            }
-            let ui = ui.borrow();
-            let controller = ui.particles.as_ref().unwrap();
-            let result = {
-                let mut session = lock(&shared);
-                single_selected_entity(&session)
-                    .ok_or("Select a particle system entity".to_owned())
-                    .and_then(|id| controller.initialize(&mut session, id))
-            };
-            match result {
-                Ok(()) => {
-                    let _ = controller.window.show();
-                }
-                Err(error) => app.unwrap().set_message(error.into()),
-            }
-        }
+    root_callback!(app, ui, on_reload_model_guides, |app| {
+        reload_model_guides(app.unwrap(), &session_of(&ui));
     });
-    app.on_browse_sound({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move |key| {
-            let shared = session_of(&ui);
-            if ui.borrow().sounds.is_none() {
-                match sounds_ui::Controller::new(&shared) {
-                    Ok(controller) => ui.borrow_mut().sounds = Some(controller),
-                    Err(error) => {
-                        app.unwrap().set_message(error.to_string().into());
-                        return;
-                    }
-                }
-            }
-            let ui = ui.borrow();
-            let controller = ui.sounds.as_ref().unwrap();
-            let result = {
-                let mut session = lock(&shared);
-                single_selected_entity(&session)
-                    .ok_or("Select an entity with a sound field".to_owned())
-                    .and_then(|id| controller.initialize(&mut session, id, &key))
-            };
-            match result {
-                Ok(()) => {
-                    let _ = controller.window.show();
-                }
-                Err(error) => app.unwrap().set_message(error.into()),
-            }
-        }
+    root_callback!(app, ui, on_options_changed, |app| {
+        apply_view_controls(app.unwrap(), &session_of(&ui));
     });
-    app.on_browse_model({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let shared = session_of(&ui);
-            if ui.borrow().model_browser.is_none() {
-                match model_browser_ui::Controller::new(&shared) {
-                    Ok(controller) => ui.borrow_mut().model_browser = Some(controller),
-                    Err(error) => {
-                        app.unwrap().set_message(error.to_string().into());
-                        return;
-                    }
-                }
-            }
-            let ui = ui.borrow();
-            let controller = ui.model_browser.as_ref().unwrap();
-            let result = {
-                let mut session = lock(&shared);
-                single_selected_entity(&session)
-                    .ok_or("Select a model entity".to_owned())
-                    .and_then(|id| controller.initialize(&mut session, id))
-            };
-            match result {
-                Ok(()) => {
-                    if !controller.window.get_path().is_empty()
-                        && !controller.window.get_can_apply()
-                    {
-                        controller.window.invoke_preview_model();
-                    }
-                    let _ = controller.window.show();
-                }
-                Err(error) => app.unwrap().set_message(error.into()),
-            }
-        }
-    });
-    app.on_material_changed({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || refresh_material_preview(&app.unwrap(), &mut lock(&session_of(&ui)))
-    });
-    app.on_pick_color({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move |key| show_color_window(&app.unwrap(), &ui, &key)
-    });
-    app.on_property_component_edited({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move |key, index, value| {
-            let shared = session_of(&ui);
-            let mut session = lock(&shared);
-            let Some(id) = single_selected_entity(&session) else {
-                return;
-            };
-            if let Err(error) =
-                session.set_entity_component(Actor::User, id, &key, index as usize, &value)
-            {
-                let app = app.unwrap();
-                refresh_panel(&app, &mut session);
-                app.set_message(error.into());
-            }
-        }
-    });
-    app.on_edit_references({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || show_rename_window(&app.unwrap(), &ui, None)
-    });
-    app.on_property_edited({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move |key, value| {
-            let key = key.trim().to_owned();
-            if key.is_empty() {
-                return;
-            }
-            if key.eq_ignore_ascii_case("targetname") {
-                show_rename_window(&app.unwrap(), &ui, Some(value.to_string()));
-                return;
-            }
-            set_inspected_property(&app.unwrap(), &session_of(&ui), &key, &value);
-        }
-    });
-    app.on_property_removed({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move |key| {
-            let shared = session_of(&ui);
-            let mut session = lock(&shared);
-            let Some(entity) = single_selected_entity(&session) else {
-                return;
-            };
-            let changes = [(key.to_string(), None)];
-            if let Err(message) = session.set_entity_properties(Actor::User, entity, &changes) {
-                let app = app.unwrap();
-                refresh_panel(&app, &mut session);
-                app.set_message(message.into());
-            }
-        }
-    });
-    app.on_flag_toggled({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move |key, flag, checked| {
-            let shared = session_of(&ui);
-            let mut session = lock(&shared);
-            let Some(id) = single_selected_entity(&session) else {
-                return;
-            };
-            let entity = session.document().entity(id).unwrap();
-            let default = entity
-                .classname()
-                .and_then(|name| session.definitions().class(name))
-                .and_then(|class| class.property(&key))
-                .and_then(|property| property.default_value());
-            let current = entity
-                .properties
-                .get(&key)
-                .or(default.as_deref())
-                .unwrap_or("0");
-            let result = current
-                .parse::<u64>()
-                .and_then(|mask| {
-                    flag.parse::<u64>()
-                        .map(|flag| if checked { mask | flag } else { mask & !flag })
-                })
-                .map_err(|error| error.to_string())
-                .and_then(|mask| {
-                    session.set_entity_properties(
-                        Actor::User,
-                        id,
-                        &[(key.to_string(), Some(mask.to_string()))],
-                    )
-                });
-            if let Err(error) = result {
-                let app = app.unwrap();
-                refresh_panel(&app, &mut session);
-                app.set_message(error.into());
-            }
-        }
-    });
-    app.on_surface_view_changed({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let app = app.unwrap();
-            let mode = render::SurfaceView::from_index(app.get_surface_view()).unwrap_or_default();
-            let result = lock(&session_of(&ui))
-                .set_surface_view(mode, app.get_smoothing_view_group() as u32);
-            if let Err(error) = result {
-                app.set_message(error.into());
-            }
-        }
-    });
-    app.on_inspect_model({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let shared = session_of(&ui);
-            if ui.borrow().model.is_none() {
-                match model_ui::Controller::new(&shared) {
-                    Ok(controller) => ui.borrow_mut().model = Some(controller),
-                    Err(error) => {
-                        app.unwrap().set_message(error.to_string().into());
-                        return;
-                    }
-                }
-            }
-            let ui = ui.borrow();
-            let mut session = lock(&shared);
-            if let Some(id) = single_selected_entity(&session) {
-                let controller = ui.model.as_ref().unwrap();
-                controller.window.set_aspect(
-                    app.unwrap().get_viewport_width() / app.unwrap().get_viewport_height().max(1.0),
-                );
-                controller.initialize(&mut session, id);
-                let _ = controller.window.show();
-            }
-        }
-    });
-    bind_model_guide_reload(&app, session_of(&ui));
-    bind_view_controls(&app, session_of(&ui));
     instance_contents::bind(&app, session_of(&ui));
     instance_reference::bind(&app, session_of(&ui));
     instance_extraction::bind(&app, session_of(&ui));

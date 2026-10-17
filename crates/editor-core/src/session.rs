@@ -20,6 +20,7 @@ use crate::game;
 use crate::inspector;
 use crate::spatial;
 
+pub mod baked_lightmaps;
 pub mod carving;
 pub mod checks;
 pub mod clip_drag;
@@ -132,6 +133,7 @@ struct CompiledMap {
     snapshot: Snapshot,
     options: compiler::Options,
     content_epoch: u64,
+    lightmap_identity: baked_lightmaps::BuildIdentity,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

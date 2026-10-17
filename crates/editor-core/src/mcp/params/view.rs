@@ -5,6 +5,17 @@ use super::*;
 pub(in crate::mcp) struct InspectSkyAssetsArgs {}
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(in crate::mcp) struct InspectBakedLightmapsArgs {
+    pub channel: Option<String>,
+    pub face: Option<usize>,
+    pub offset: Option<usize>,
+    pub limit: Option<usize>,
+    pub style_index: Option<usize>,
+    pub map_index: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub(in crate::mcp) struct PointfileLoadArgs {
     pub(in crate::mcp) path: String,
 }

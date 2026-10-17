@@ -7,6 +7,7 @@ use crate::CompileWindow;
 use crate::runtime::{SharedSession, lock};
 use crate::session::{Actor, Session};
 
+mod baked_lightmaps;
 mod capture;
 mod sky_packing;
 
@@ -15,6 +16,7 @@ pub struct Controller {
     token: Rc<Cell<Option<u64>>>,
     recipes: Rc<RefCell<RecipeForm>>,
     capture: capture::Form,
+    baked_lightmaps: baked_lightmaps::Form,
 }
 
 #[derive(Default)]
@@ -231,6 +233,7 @@ impl Controller {
         let recipes = Rc::new(RefCell::new(RecipeForm::default()));
         let capture = capture::bind(&window, shared);
         sky_packing::bind(&window, shared);
+        let baked_lightmaps = baked_lightmaps::bind(&window, shared)?;
         window.on_choose_recipe({
             let (shared, window, recipes) = (shared.clone(), window.as_weak(), recipes.clone());
             move |index| choose_recipe(&window.unwrap(), &lock(&shared), &recipes, index)
@@ -511,12 +514,14 @@ impl Controller {
             token,
             recipes,
             capture,
+            baked_lightmaps,
         })
     }
 
     pub fn refresh(&self, session: &Session) {
         refresh_recipes(&self.window, session, &self.recipes);
         self.capture.refresh(&self.window, session);
+        self.baked_lightmaps.refresh(session);
         self.token.set(session.compile_token());
         self.window.set_cancellable(session.compile_cancellable());
         let status = session.compile_status();
@@ -1016,6 +1021,10 @@ impl Controller {
         self.window.set_message("Closing this window leaves an active build running. Cancel build stops it and preserves previous output.".into());
         self.refresh(session);
         self.window.show()
+    }
+
+    pub fn is_visible(&self) -> bool {
+        self.window.window().is_visible() || self.baked_lightmaps.is_visible()
     }
 }
 

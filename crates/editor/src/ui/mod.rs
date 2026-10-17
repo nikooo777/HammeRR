@@ -3129,7 +3129,7 @@ pub(super) fn run(
                     controller.refresh_playback(&mut lock(&ui.session));
                 }
                 if let Some(controller) = &ui.compile_status
-                    && controller.window.window().is_visible()
+                    && controller.is_visible()
                 {
                     controller.refresh(&lock(&ui.session));
                 }

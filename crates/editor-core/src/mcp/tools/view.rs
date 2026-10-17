@@ -3,6 +3,52 @@ use super::super::*;
 #[tool_router(router = view_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
+        description = "Inspect baked BSP face lightmaps from this session's last successful owned build, shared with Build status → Inspect baked lightmaps…. Read-only CPU operation; no GPU, game, map/history/selection/camera changes. Optional channel ldr/hdr (default ldr), exact zero-based compiled face, style_index and map_index (0 base, 1–3 directional bump maps). Omitted face selects the first valid lit face. Paginated face summaries use offset and limit (1–32). Returns explicit current/stale/unavailable build provenance, LDR/HDR availability, dimensions/styles/bytes, decoded linear RGBExp32 minimum/mean/maximum and stored base average, diagnostics and a PNG no larger than 128 pixels per side. Display conversion is documented separately from linear statistics and is not native tone mapping. No authored VMF face mapping is asserted. Changed/missing BSP files cannot be inspected; stale map/source/settings builds remain explicitly stale. No path argument.",
+        annotations(read_only_hint = true)
+    )]
+    pub(in crate::mcp) fn inspect_baked_lightmaps(
+        &self,
+        Parameters(args): Parameters<InspectBakedLightmapsArgs>,
+    ) -> ToolResult {
+        use crate::session::baked_lightmaps::{Channel, Query};
+        let result = (|| {
+            let query = Query {
+                channel: Channel::parse(args.channel.as_deref().unwrap_or("ldr"))?,
+                face: args.face,
+                offset: args.offset.unwrap_or_default(),
+                limit: args
+                    .limit
+                    .unwrap_or(crate::session::baked_lightmaps::MAX_PAGE_FACES),
+                style_index: args.style_index.unwrap_or_default(),
+                map_index: args.map_index.unwrap_or_default(),
+            };
+            self.session().inspect_baked_lightmaps(&query)
+        })();
+        let inspection = match result {
+            Ok(inspection) => inspection,
+            Err(error) => return fail(error),
+        };
+        let mut content = vec![ContentBlock::text(inspection.report.to_string())];
+        if let Some(image) = inspection.image {
+            let mut bytes = Vec::new();
+            let mut encoder = png::Encoder::new(Cursor::new(&mut bytes), image.width, image.height);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            let result = encoder
+                .write_header()
+                .and_then(|mut writer| writer.write_image_data(&image.pixels));
+            if let Err(error) = result {
+                return fail(error.to_string());
+            }
+            content.push(ContentBlock::image(
+                base64::engine::general_purpose::STANDARD.encode(bytes),
+                "image/png",
+            ));
+        }
+        Ok(CallToolResult::success(content))
+    }
+
+    #[tool(
         description = "Inspect the exact applied world skyname through the same read-only Session operation as World settings → Inspect applied sky…. Returns six material names, directory/VPK and Patch provenance, authored LDR/HDR references, VTF dimensions/formats, bounded read counts and actionable issues. ldr_ready/hdr_ready describe supported material/VTF structure only; they do not establish editor preview readiness, HDR radiance, actual game channel selection or portable sky packing. No family substitution, document/history/camera/draft changes or native processes. No arguments; refresh by calling again.",
         annotations(read_only_hint = true)
     )]

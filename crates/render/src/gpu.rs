@@ -281,6 +281,7 @@ pub type SceneKey = (
     bool,
     bool,
     bool,
+    bool,
 );
 
 impl ViewOptions {
@@ -295,6 +296,7 @@ impl ViewOptions {
             self.lighting_preview,
             self.lighting_preview && self.surface == SurfaceView::Textured,
             self.additive_sprite_guides,
+            self.lighting_preview && self.surface == SurfaceView::Textured && self.tool_textures,
         )
     }
 }

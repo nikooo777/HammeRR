@@ -25,7 +25,7 @@ impl Controller {
         if active {
             self.window
                 .set_file(report["file"].as_str().unwrap_or_default().into());
-            self.window.set_summary(format!("Parent: {}\nOwner: {} · {}\nSelection: {}\n{} world brushes · {} detail brushes · {} faces\nChild bytes: {} · SHA-256: {}\n{}",
+            self.window.set_summary(format!("Parent: {}\nOwner: {} · {}\nSelection: {}\nWorld brushes: {} · Detail brushes: {} · Faces: {}\nChild bytes: {} · SHA-256: {}\n{}",
                 report["source"].as_str().unwrap_or("Unavailable"),report["owner"].as_str().unwrap_or("Unknown"),report["status"].as_str().unwrap_or("Unknown"),report["selected"].as_array().map(|ids|ids.iter().filter_map(|id|id.as_str()).collect::<Vec<_>>().join(", ")).unwrap_or_default(),
                 report["world_brushes"],report["detail_brushes"],report["sides"],report["bytes"],report["sha256"].as_str().unwrap_or("Not prepared"),
                 report["error"].as_str().or_else(||report["cleanup_error"].as_str()).unwrap_or(if report["ready"]==true {"Serialized child and compiler-expanded geometry match. Extract publishes the new file and replaces this selection."}else{"Preparing uses a private file; the final child does not exist yet."})).into());

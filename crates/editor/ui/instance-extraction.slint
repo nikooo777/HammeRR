@@ -1,4 +1,4 @@
-import { Button, LineEdit } from "std-widgets.slint";
+import { Button, LineEdit, ScrollView } from "std-widgets.slint";
 
 export component InstanceExtractionWindow inherits Window {
     title: "Extract selection to instance - HammeRR";
@@ -26,7 +26,11 @@ export component InstanceExtractionWindow inherits Window {
         Text { text: "New child VMF · explicit relative path under the saved parent"; color: #cbd6e4; }
         LineEdit { text <=> root.file; enabled: !root.active; placeholder-text: "assemblies/platform.vmf"; }
         Text { text: "Pivot: World origin (0, 0, 0) · planes and texture axes stay unchanged"; color: #a7b5c8; wrap: word-wrap; }
-        Text { text: root.summary; color: #cbd6e4; wrap: word-wrap; vertical-stretch: 1; }
+        ScrollView {
+            content-width: self.width;
+            vertical-stretch: 1;
+            VerticalLayout { Text { text: root.summary; color: #cbd6e4; wrap: word-wrap; } }
+        }
         Text { text: root.message; color: #f4b268; wrap: word-wrap; }
         Text { text: "Undo restores the parent objects. The exported child stays on disk; Redo changes only the parent. Refresh instance contents explicitly after extraction."; color: #a7b5c8; wrap: word-wrap; }
         HorizontalLayout {

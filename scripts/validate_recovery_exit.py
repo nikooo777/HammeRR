@@ -88,7 +88,7 @@ def validate_case(binary, output, fail):
             assert entry["kind"] == "autosave" and entry["source_path"] == str(parent)
             assert entry["bytes"] == snapshot.stat().st_size
             assert len(re.findall(r'(?m)^\s*"?solid"?\s*$', text)) == 1
-            assert "audit/no-assets-needed" in text
+            assert len(re.findall(r'(?m)^\s*"material"\s+"AUDIT/NO-ASSETS-NEEDED"\s*$', text)) == 6
             assert "Exit recovery snapshot failed" not in log and "Could not drain recovery" not in log
             result["snapshot"], result["snapshot_sha256"] = entry, digest(snapshot)
         result["parent_sha256"] = source_sha256

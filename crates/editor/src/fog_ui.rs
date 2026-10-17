@@ -5,8 +5,14 @@ use serde_json::Value;
 use slint::{ComponentHandle, VecModel};
 
 use crate::FogWindow;
-use crate::runtime::{SharedSession, lock};
+use crate::runtime::{DocumentAccess, DocumentContinuation};
 use crate::session::Session;
+
+#[cfg(test)]
+use crate::runtime::SharedSession;
+
+#[cfg(test)]
+mod admission_tests;
 
 #[derive(Default)]
 struct Form {
@@ -84,44 +90,80 @@ fn refresh(window: &FogWindow, form: &RefCell<Form>, session: &Session) {
     update_choice(window, &form);
 }
 
+fn callback(
+    window: &slint::Weak<FogWindow>,
+    target: &DocumentContinuation,
+    body: impl FnOnce(FogWindow, &mut Session),
+) {
+    let Some(window) = window.upgrade() else {
+        return;
+    };
+    let result = target.upgrade().and_then(|access| {
+        access.with_session(|session| {
+            body(window.clone_strong(), session);
+            Ok(())
+        })
+    });
+    if let Err(error) = result {
+        window.set_message(error.into());
+    }
+}
+
 impl Controller {
+    #[cfg(test)]
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
+        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
+    }
+
+    pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
+        let target = access.downgrade();
         let window = FogWindow::new()?;
         let form = Rc::new(RefCell::new(Form::default()));
         window.on_choice_changed({
-            let (window, form) = (window.as_weak(), form.clone());
-            move || update_choice(&window.unwrap(), &form.borrow())
+            let (window, form, target) = (window.as_weak(), form.clone(), target.clone());
+            move || {
+                callback(&window, &target, |window, _| {
+                    update_choice(&window, &form.borrow())
+                })
+            }
         });
         window.on_refresh({
-            let (window, form, shared) = (window.as_weak(), form.clone(), shared.clone());
-            move || refresh(&window.unwrap(), &form, &lock(&shared))
+            let (window, form, target) = (window.as_weak(), form.clone(), target.clone());
+            move || {
+                callback(&window, &target, |window, session| {
+                    refresh(&window, &form, session)
+                })
+            }
         });
         window.on_apply({
-            let (window, form, shared) = (window.as_weak(), form.clone(), shared.clone());
+            let (window, form, target) = (window.as_weak(), form.clone(), target.clone());
             move || {
-                let window = window.unwrap();
-                let form = form.borrow();
-                let controller = selected(&form, window.get_controller_index())
-                    .and_then(|choice| choice["id"].as_str())
-                    .and_then(|id| id.strip_prefix("entity:"))
-                    .and_then(|id| id.parse().ok());
-                let result = lock(&shared).set_fog_preview(
-                    window.get_preview_enabled(),
-                    controller,
-                    &form.snapshot,
-                );
-                match result {
-                    Ok(_) => {
-                        let _ = window.hide();
+                callback(&window, &target, |window, session| {
+                    let form = form.borrow();
+                    let controller = selected(&form, window.get_controller_index())
+                        .and_then(|choice| choice["id"].as_str())
+                        .and_then(|id| id.strip_prefix("entity:"))
+                        .and_then(|id| id.parse().ok());
+                    let result = session.set_fog_preview(
+                        window.get_preview_enabled(),
+                        controller,
+                        &form.snapshot,
+                    );
+                    match result {
+                        Ok(_) => {
+                            let _ = window.hide();
+                        }
+                        Err(error) => window.set_message(error.into()),
                     }
-                    Err(error) => window.set_message(error.into()),
-                }
+                })
             }
         });
         window.on_cancel({
             let window = window.as_weak();
             move || {
-                let _ = window.unwrap().hide();
+                if let Some(window) = window.upgrade() {
+                    let _ = window.hide();
+                }
             }
         });
         Ok(Self { window, form })

@@ -2,10 +2,16 @@ use std::rc::Rc;
 
 use slint::{ComponentHandle, VecModel};
 
-use crate::runtime::{SharedSession, lock};
+use crate::runtime::{DocumentAccess, DocumentContinuation};
 use crate::session::Session;
 use crate::session::statistics::{PAGE_SIZE, Section};
 use crate::{StatisticRow, StatisticsWindow};
+
+#[cfg(test)]
+use crate::runtime::SharedSession;
+
+#[cfg(test)]
+mod admission_tests;
 
 pub fn refresh(window: &StatisticsWindow, session: &Session) {
     let section = match window.get_section() {
@@ -93,21 +99,45 @@ pub fn refresh_changed(window: &StatisticsWindow, session: &Session) {
     }
 }
 
+fn admitted_refresh(window: &slint::Weak<StatisticsWindow>, target: &DocumentContinuation) {
+    let Some(window) = window.upgrade() else {
+        return;
+    };
+    let result = target.upgrade().and_then(|access| {
+        access.with_session(|session| {
+            refresh(&window, session);
+            Ok(())
+        })
+    });
+    if let Err(error) = result {
+        window.set_summary(error.into());
+    }
+}
+
+#[cfg(test)]
 pub fn bind(window: &StatisticsWindow, shared: &SharedSession) {
+    bind_with_access(window, &DocumentAccess::unmanaged(shared.clone()));
+}
+
+pub fn bind_with_access(window: &StatisticsWindow, access: &DocumentAccess) {
     window.on_refresh({
-        let (window, shared) = (window.as_weak(), shared.clone());
-        move || refresh(&window.unwrap(), &lock(&shared))
+        let (window, target) = (window.as_weak(), access.downgrade());
+        move || admitted_refresh(&window, &target)
     });
     window.on_cancel({
         let window = window.as_weak();
         move || {
-            let _ = window.unwrap().hide();
+            if let Some(window) = window.upgrade() {
+                let _ = window.hide();
+            }
         }
     });
     window.window().on_close_requested({
         let window = window.as_weak();
         move || {
-            window.unwrap().invoke_cancel();
+            if let Some(window) = window.upgrade() {
+                window.invoke_cancel();
+            }
             slint::CloseRequestResponse::HideWindow
         }
     });

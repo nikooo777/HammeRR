@@ -1,6 +1,20 @@
 use super::*;
 
 #[test]
+fn accepted_reads_reserve_only_the_captured_file_size() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("source");
+    let expected = vec![b' '; READ_BYTES + 1];
+    fs::write(&path, &expected).unwrap();
+    let bytes = Source::capture(&path, (READ_BYTES * 2) as u64)
+        .unwrap()
+        .read()
+        .unwrap();
+    assert_eq!(bytes, expected);
+    assert_eq!(bytes.capacity(), expected.len());
+}
+
+#[test]
 fn bounded_reads_reject_oversize_growth_shrink_and_replacement() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("source");

@@ -80,10 +80,17 @@ impl Source {
             return Err(io::Error::other("File changed while opening"));
         }
         let maximum = self
-            .limit
+            .metadata
+            .len()
             .checked_add(1)
             .ok_or_else(|| io::Error::other("File byte limit overflow"))?;
+        let size = usize::try_from(self.metadata.len()).map_err(|error| {
+            io::Error::other(format!("File size cannot fit in memory: {error}"))
+        })?;
         let mut bytes = Vec::new();
+        bytes.try_reserve_exact(size).map_err(|error| {
+            io::Error::other(format!("Could not allocate {size} bytes for file: {error}"))
+        })?;
         let mut reader = (&file).take(maximum);
         let mut buffer = [0; READ_BYTES];
         loop {
@@ -91,6 +98,9 @@ impl Source {
             let count = reader.read(&mut buffer)?;
             if count == 0 {
                 break;
+            }
+            if count > size - bytes.len() {
+                return Err(io::Error::other("File grew while reading"));
             }
             bytes.extend_from_slice(&buffer[..count]);
         }

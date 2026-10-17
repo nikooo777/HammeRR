@@ -14,6 +14,10 @@ The browser shows thumbnails in pages with a larger preview, search, and groups 
 
 Click a thumbnail to preview it, then **Use material**. **Cancel** keeps the previous choice.
 
+During document shutdown, the main browser rejects new searches, reads,
+favorites changes, reloads and material choices. The previous map and preview
+remain unchanged, and **Cancel** still closes the browser.
+
 The selected preview reports material syntax, patch-include and texture-read
 errors. A broken preferred editor texture is reported rather than replaced with
 another image. **Check map… → Run checks** identifies affected faces. Repair

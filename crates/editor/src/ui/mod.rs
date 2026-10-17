@@ -778,7 +778,7 @@ pub(super) fn run(
     root_callback!(app, ui, on_fog_preview, |app| {
         let mut ui = ui.borrow_mut();
         if ui.fog.is_none() {
-            match fog_ui::Controller::new(&ui.session) {
+            match fog_ui::Controller::new_with_access(&ui.document_access()) {
                 Ok(controller) => ui.fog = Some(controller),
                 Err(error) => {
                     app.unwrap().set_message(error.to_string().into());
@@ -1038,7 +1038,7 @@ pub(super) fn run(
         if ui.borrow().statistics_window.is_none() {
             match StatisticsWindow::new() {
                 Ok(window) => {
-                    statistics_ui::bind(&window, &session_of(&ui));
+                    statistics_ui::bind_with_access(&window, &file_access(&ui));
                     ui.borrow_mut().statistics_window = Some(window);
                 }
                 Err(error) => {

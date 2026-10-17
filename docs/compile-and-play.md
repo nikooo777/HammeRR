@@ -34,7 +34,7 @@ HammeRR includes its own native compiler, so it builds Counter-Strike: Source ma
 | **Stop Map** | Toolbar | Stops the game started by the editor. |
 | **Leak path** | Toolbar | Shows or hides the red leak line after a failed build. |
 
-Builds run in the background, and closing Build details leaves them running. Scroll the window to inspect settings, statistics and **Diagnostics**; the build controls and **Close** stay at the bottom. Output is written in one step at the end: a failed or cancelled build never replaces the previous BSP or pointfile. Use [Baked lightmaps](baked-lightmaps.md) to inspect actual samples after a lit build.
+Builds run in the background, and closing Build details leaves them running. Scroll the window to inspect settings, statistics and **Diagnostics**; the build controls and **Close** stay at the bottom. A successful build publishes its BSP atomically; a detected leak publishes its `.lin` pointfile and preserves the previous BSP. Cancellation or a rejected publication preserves previous outputs. Use [Baked lightmaps](baked-lightmaps.md) to inspect actual samples after a lit build.
 
 The BSP and its matching `.lin` pointfile are reserved before a build starts.
 Either destination conflicting with an owned source map or another output is

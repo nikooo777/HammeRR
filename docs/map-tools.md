@@ -27,6 +27,9 @@ Choose a breakdown to page through materials, entity classes, model paths, light
 
 These counts describe the editable map: brush sides rather than compiled faces, and model paths as written rather than verified files. Open previews aren't counted.
 
+During document shutdown, refresh rejects new reads and preserves the displayed
+totals and rows. **Close** remains available.
+
 ![Map totals and material usage](images/map-statistics.png)
 
 ## Check the map

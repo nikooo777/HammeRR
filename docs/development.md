@@ -2643,6 +2643,9 @@ cargo test -p editor recent_maps_ui::tests
 cargo test -p editor recovery_ui::tests
 cargo test -p editor prefabs_ui::admission_tests
 cargo test -p editor material_source_ui::tests
+cargo test -p editor ui::materials::admission_tests
+cargo test -p editor statistics_ui::admission_tests
+cargo test -p editor fog_ui::admission_tests
 ```
 
 Publication cases exercise retained parent descriptors, source symlinks and
@@ -2674,6 +2677,11 @@ snapshot scheduling and terminal results. Prefab cases cover catalog writes,
 gallery rendering, shared-library peers and the owned Paste preview.
 Material-source cases also reject new reads and lazy window creation during
 drain, preserve the last report and allow a live peer to inspect its content.
+Main browser cases exercise actual entity Use, asset-generation review,
+favorites, caches and a complete Search callback/shutdown barrier. Full Ui
+opening and the ordinary multi-target Use dispatcher are reviewed in source;
+these software cases do not create a GPU-backed Ui. Statistics and Fog cases
+cover retained report/form data, exact preview choices, peers and owner release.
 
 The optional GPU resource-release case uses software windows and an offscreen
 adapter, without desktop input:

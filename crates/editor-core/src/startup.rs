@@ -113,6 +113,7 @@ pub struct Application {
     pub material_favorites: material_favorites::Authority,
     pub recent_maps: recent_maps::Authority,
     pub shortcuts: shortcuts::Authority,
+    pub saved_defaults: crate::saved_defaults::SavedDefaults,
     pub session: SharedSession,
     pub open_message: Option<Result<String, String>>,
     finished: Option<Result<(), String>>,
@@ -120,7 +121,12 @@ pub struct Application {
 
 impl Application {
     pub fn open(args: &Args) -> Result<Self, String> {
-        let session = Arc::new(Mutex::new(Session::new(mount_game(args.gameinfo.clone()))));
+        let directory = recovery::default_directory();
+        let saved_defaults = crate::saved_defaults::SavedDefaults::configured(directory.clone());
+        let session = Arc::new(Mutex::new(Session::with_saved_defaults(
+            mount_game(args.gameinfo.clone()),
+            saved_defaults.clone(),
+        )));
         if args.engine_root.is_some() || args.steam_root.is_some() {
             lock(&session).configure_native_capture_runtime(
                 Actor::System,
@@ -128,7 +134,6 @@ impl Application {
                 args.steam_root.as_deref(),
             )?;
         }
-        let directory = recovery::default_directory();
         let material_favorites = material_favorites::Authority::configured(directory.clone());
         lock(&session).use_application_material_favorites(material_favorites.clone());
         let recent_maps =
@@ -165,6 +170,7 @@ impl Application {
             material_favorites,
             recent_maps,
             shortcuts,
+            saved_defaults,
             session,
             open_message,
             finished: None,

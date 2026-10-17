@@ -335,7 +335,12 @@ fn committed_verification_failure_keeps_intended_values_and_original_directory_u
     let current = session.grid_preferences_state()["current"].clone();
     let source = session.document.vmf().clone();
     let camera = session.camera();
-    let expected = session.grid_preferences.source.as_ref().unwrap().clone();
+    let expected = session
+        .grid_preferences
+        .authority()
+        .snapshot()
+        .source
+        .unwrap();
     let intended = Grid {
         grid_size: 31.5,
         snap: false,

@@ -335,7 +335,12 @@ fn committed_verification_failure_keeps_intended_values_and_original_directory_u
     let current = session.preview_preferences_state()["current"].clone();
     let source = session.document.vmf().clone();
     let camera = session.camera();
-    let expected = session.preview_preferences.source.as_ref().unwrap().clone();
+    let expected = session
+        .preview_preferences
+        .authority()
+        .snapshot()
+        .source
+        .unwrap();
     let intended = custom();
     let data = serde_json::to_vec(&json!({"version":1,"preview":intended})).unwrap();
     let target = crate::preference_file::CoordinatedFile {

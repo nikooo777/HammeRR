@@ -95,3 +95,107 @@ fn mcp_and_desktop_operations_share_temporary_speed_and_all_explicit_defaults_ac
     assert_eq!(session.camera(), camera);
     assert!(server.offscreen.lock().unwrap().renderer.is_none());
 }
+
+fn attached_defaults_state(server: &EditorServer, kind: usize) -> Value {
+    value(match kind {
+        0 => server.get_grid_defaults(),
+        1 => server.get_preview_defaults(),
+        _ => server.get_navigation_settings(),
+    })
+}
+
+fn attached_defaults_change(
+    server: &EditorServer,
+    kind: usize,
+    action: &str,
+    snapshot: Value,
+) -> ToolResult {
+    let args = json!({"action":action,"snapshot":snapshot});
+    match kind {
+        0 => server.set_grid_defaults(Parameters(serde_json::from_value(args).unwrap())),
+        1 => server.set_preview_defaults(Parameters(serde_json::from_value(args).unwrap())),
+        _ => server.set_navigation_defaults(Parameters(serde_json::from_value(args).unwrap())),
+    }
+}
+
+#[test]
+fn attached_mcp_sessions_report_shared_saved_defaults_and_reject_old_forms_without_applying_to_peers()
+ {
+    let directory = tempfile::tempdir().unwrap();
+    let defaults = crate::saved_defaults::SavedDefaults::configured(Ok(directory.path().into()));
+    let first = Arc::new(Mutex::new(Session::with_saved_defaults(
+        Err("no assets needed".into()),
+        defaults.clone(),
+    )));
+    let second = Arc::new(Mutex::new(Session::with_saved_defaults(
+        Err("no assets needed".into()),
+        defaults,
+    )));
+    let left = EditorServer::new(first.clone(), None);
+    let right = EditorServer::new(second.clone(), None);
+    value(left.set_spatial_settings(Parameters(
+        serde_json::from_value(json!({"grid_size":17.375})).unwrap(),
+    )));
+    value(left.set_view(Parameters(
+        serde_json::from_value(json!({"selection_outlines":false})).unwrap(),
+    )));
+    value(left.set_navigation_settings(Parameters(
+        serde_json::from_value(json!({"fly_speed":987.625})).unwrap(),
+    )));
+    let current = (0..3)
+        .map(|kind| attached_defaults_state(&right, kind)["current"].clone())
+        .collect::<Vec<_>>();
+    let source = lock(&second).document().vmf().clone();
+    let camera = lock(&second).camera();
+    for (kind, peer_current) in current.iter().enumerate() {
+        let old = attached_defaults_state(&right, kind)["snapshot"].clone();
+        let stamp = attached_defaults_state(&left, kind)["snapshot"].clone();
+        let saved = value(attached_defaults_change(&left, kind, "save", stamp));
+        assert_eq!(saved["write_committed"], true);
+        assert_eq!(
+            attached_defaults_state(&right, kind)["saved"],
+            saved["saved"]
+        );
+        assert_eq!(
+            &attached_defaults_state(&right, kind)["current"],
+            peer_current
+        );
+        assert_eq!(
+            attached_defaults_change(&right, kind, "reset", old)
+                .unwrap()
+                .is_error,
+            Some(true)
+        );
+        let stamp = attached_defaults_state(&right, kind)["snapshot"].clone();
+        let reloaded = value(attached_defaults_change(&right, kind, "reload", stamp));
+        assert_eq!(&reloaded["current"], peer_current);
+        let mut session = lock(&second);
+        let reset = match kind {
+            0 => {
+                let stamp = session.grid_preferences_stamp();
+                session.change_grid_preferences(Actor::User, "reset", &stamp)
+            }
+            1 => {
+                let stamp = session.preview_preferences_stamp();
+                session.change_preview_preferences(Actor::User, "reset", &stamp)
+            }
+            _ => {
+                let stamp = session.navigation_preferences_stamp();
+                session.change_navigation_preferences(Actor::User, "reset", &stamp)
+            }
+        }
+        .unwrap();
+        drop(session);
+        assert_eq!(
+            attached_defaults_state(&left, kind)["saved"],
+            reset["saved"]
+        );
+    }
+    assert_eq!(lock(&second).document().vmf(), &source);
+    assert_eq!(lock(&second).camera(), camera);
+    assert_eq!(lock(&second).document().undo_labels().count(), 0);
+    assert_eq!(
+        value(right.get_map_info())["rendering"]["initialized"],
+        false
+    );
+}

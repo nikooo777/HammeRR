@@ -57,7 +57,7 @@ fn refresh(window: &PreviewDefaultsWindow, session: &Session, snapshot: &RefCell
         )
         .into(),
     );
-    window.set_status(session.preview_preferences_error().unwrap_or("Startup uses these defaults. Apply saved defaults changes the current session after active previews and viewport tools are finished.").into());
+    window.set_status(state["error"].as_str().or(state["storage_error"].as_str()).unwrap_or("Startup uses these defaults. Apply saved defaults changes the current session after active previews and viewport tools are finished.").into());
     window.set_ready(state["ready"] == true);
 }
 

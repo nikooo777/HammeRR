@@ -279,6 +279,22 @@ impl WriteLock {
     }
 }
 
+#[cfg(target_os = "linux")]
+impl Drop for WriteLock {
+    fn drop(&mut self) {
+        use std::io::Write;
+
+        // Forked children can retain this open file description until exec.
+        if let Err(error) = rustix::fs::flock(&self.file, rustix::fs::FlockOperation::Unlock) {
+            let _ = writeln!(
+                std::io::stderr(),
+                "{} lock could not unlock: {error}",
+                self.label
+            );
+        }
+    }
+}
+
 pub(crate) struct CoordinatedFile<'a> {
     pub directory: &'a Path,
     pub file_name: &'static str,

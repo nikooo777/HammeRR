@@ -9,6 +9,7 @@ use source_formats::vmf::{Vmf, parse_vec3};
 use crate::{EditError, Transaction};
 
 mod origins;
+pub(crate) use origins::reserved_origin_ids;
 pub use origins::{Endpoint, entity_origin};
 
 pub const KEY: &str = "hammerr_measurements";

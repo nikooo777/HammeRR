@@ -133,6 +133,234 @@ fn duplicate_keeps_original_reference_and_delete_is_unavailable_until_undo() {
 }
 
 #[test]
+fn deleted_origin_ids_remain_reserved_after_save_reopen_create_and_history_navigation() {
+    let (mut document, object) = source();
+    let ObjectId::Entity(id) = object else {
+        panic!()
+    };
+    let mut measurement = ruler();
+    measurement.set_origin_reference(Endpoint::Start, Some(id));
+    document
+        .edit("measurement", |tx| {
+            Measurements {
+                measurements: vec![measurement.clone()],
+                extra: Vec::new(),
+            }
+            .write(tx)
+        })
+        .unwrap();
+    let original = document.vmf().clone();
+    document
+        .edit("delete highest entity", |tx| edit::delete(tx, &[object]))
+        .unwrap();
+    let missing = document.vmf().clone();
+    assert!(
+        measurement
+            .resolved(&missing)
+            .unwrap_err()
+            .contains("missing")
+    );
+    document.undo().unwrap();
+    assert_eq!(document.vmf(), &original);
+    assert_eq!(
+        measurement.resolved(document.vmf()).unwrap().start,
+        ruler().start
+    );
+    document.redo().unwrap();
+    assert_eq!(document.vmf(), &missing);
+    let reopened = Vmf::parse(&missing.write(&Default::default())).unwrap();
+    let mut document = Document::new(reopened.clone());
+    let created = document
+        .edit("create unrelated entity", |tx| {
+            edit::create_entity(tx, "logic_relay", Some(DVec3::splat(64.0)), &[], Vec::new())
+        })
+        .unwrap();
+    assert_eq!(created, ObjectId::Entity(id + 1));
+    assert_eq!(document.vmf().extra, reopened.extra);
+    assert!(
+        measurement
+            .resolved(document.vmf())
+            .unwrap_err()
+            .contains("missing")
+    );
+    let after_creation = document.vmf().clone();
+    document.undo().unwrap();
+    assert_eq!(document.vmf(), &reopened);
+    document.redo().unwrap();
+    assert_eq!(document.vmf(), &after_creation);
+    let later = document
+        .edit("create another unrelated entity", |tx| {
+            edit::create_entity(
+                tx,
+                "logic_relay",
+                Some(DVec3::splat(128.0)),
+                &[],
+                Vec::new(),
+            )
+        })
+        .unwrap();
+    assert_eq!(later, ObjectId::Entity(id + 2));
+    assert!(!document.contains(object));
+    assert!(measurement.resolved(document.vmf()).is_err());
+    assert_eq!(document.vmf().extra, reopened.extra);
+}
+
+#[test]
+fn origin_reservations_skip_only_exact_ids_and_refresh_after_transaction_metadata_changes() {
+    let mut document = Document::empty();
+    let mut measurement = ruler();
+    measurement.set_origin_reference(Endpoint::Start, Some(2));
+    measurement.set_origin_reference(Endpoint::End, Some(u32::MAX));
+    document
+        .edit("orphan origins", |tx| {
+            Measurements {
+                measurements: vec![measurement.clone()],
+                extra: Vec::new(),
+            }
+            .write(tx)
+        })
+        .unwrap();
+    let reopened = Vmf::parse(&document.vmf().write(&Default::default())).unwrap();
+    let mut document = Document::new(reopened.clone());
+    let created = document
+        .edit("create batch", |tx| {
+            let entity =
+                edit::create_entity(tx, "logic_relay", Some(DVec3::ZERO), &[], Vec::new())?;
+            let solid =
+                edit::create_block(tx, DVec3::ZERO, DVec3::splat(16.0), "tools/toolsnodraw")?;
+            let another =
+                edit::create_entity(tx, "logic_relay", Some(DVec3::splat(32.0)), &[], Vec::new())?;
+            Ok([entity, solid, another])
+        })
+        .unwrap();
+    assert_eq!(
+        created,
+        [ObjectId::Entity(3), ObjectId::Solid(4), ObjectId::Entity(5)]
+    );
+    assert_eq!(document.vmf().extra, reopened.extra);
+    assert!(measurement.resolved(document.vmf()).is_err());
+
+    let mut document = Document::empty();
+    let created = document
+        .edit("create around a new reference", |tx| {
+            let first = edit::create_entity(tx, "logic_relay", Some(DVec3::ZERO), &[], Vec::new())?;
+            let mut measurement = ruler();
+            measurement.set_origin_reference(Endpoint::Start, Some(3));
+            Measurements {
+                measurements: vec![measurement],
+                extra: Vec::new(),
+            }
+            .write(tx)?;
+            let second =
+                edit::create_entity(tx, "logic_relay", Some(DVec3::splat(32.0)), &[], Vec::new())?;
+            Ok([first, second])
+        })
+        .unwrap();
+    assert_eq!(created, [ObjectId::Entity(2), ObjectId::Entity(4)]);
+    assert_eq!(
+        Measurements::parse(document.vmf()).unwrap().measurements[0]
+            .origin_reference(Endpoint::Start)
+            .unwrap(),
+        Some(3)
+    );
+}
+
+#[test]
+fn malformed_measurements_preserve_parseable_reference_ids_without_blocking_unrelated_creation() {
+    let malformed = vec![
+        Node::block(
+            "measurement",
+            vec![
+                Node::string("start_entity_origin", "2"),
+                Node::string("start_entity_origin", "4"),
+                Node::string("end_entity_origin", u32::MAX.to_string()),
+                Node::string("end_entity_origin", "invalid"),
+                Node::string("end_entity_origin", "0"),
+                Node::string("end_entity_origin", "4294967296"),
+                Node::string("unrelated", "3"),
+            ],
+        ),
+        Node::string("start_entity_origin", "3"),
+        Node::block("unrelated", vec![Node::string("start_entity_origin", "3")]),
+    ];
+    let mut vmf = Document::empty().into_vmf();
+    let mut fields = vec![Node::string("version", "future")];
+    fields.extend(malformed);
+    vmf.extra.push(Node::block(super::super::KEY, fields));
+    assert!(Measurements::parse(&vmf).is_err());
+    let mut document = Document::new(Vmf::parse(&vmf.write(&Default::default())).unwrap());
+    let created = document
+        .edit("create with retained unsupported metadata", |tx| {
+            let first = edit::create_entity(tx, "logic_relay", Some(DVec3::ZERO), &[], Vec::new())?;
+            let second =
+                edit::create_entity(tx, "logic_relay", Some(DVec3::splat(32.0)), &[], Vec::new())?;
+            Ok([first, second])
+        })
+        .unwrap();
+    assert_eq!(created, [ObjectId::Entity(3), ObjectId::Entity(5)]);
+    assert_eq!(document.vmf().extra, vmf.extra);
+    assert!(Measurements::parse(document.vmf()).is_err());
+    for (blocks, expected) in [
+        (vec![Node::string(super::super::KEY, "malformed")], 2),
+        (
+            vec![Node::block(
+                super::super::KEY,
+                vec![
+                    Node::string("version", "1"),
+                    Node::block(
+                        "measurement",
+                        vec![Node::string("start_entity_origin", "invalid")],
+                    ),
+                ],
+            )],
+            2,
+        ),
+        (
+            vec![Node::block(
+                super::super::KEY,
+                vec![
+                    Node::string("version", "1"),
+                    Node::block(
+                        "measurement",
+                        vec![Node::string("start_entity_origin", "2")],
+                    ),
+                ],
+            )],
+            3,
+        ),
+        (
+            (2..=3)
+                .map(|id| {
+                    Node::block(
+                        super::super::KEY,
+                        vec![
+                            Node::string("version", "1"),
+                            Node::block(
+                                "measurement",
+                                vec![Node::string("end_entity_origin", id.to_string())],
+                            ),
+                        ],
+                    )
+                })
+                .collect(),
+            4,
+        ),
+    ] {
+        let mut vmf = Document::empty().into_vmf();
+        vmf.extra = blocks;
+        let mut document = Document::new(vmf.clone());
+        let created = document
+            .edit("create", |tx| {
+                edit::create_entity(tx, "logic_relay", Some(DVec3::ZERO), &[], Vec::new())
+            })
+            .unwrap();
+        assert_eq!(created, ObjectId::Entity(expected));
+        assert_eq!(document.vmf().extra, vmf.extra);
+        assert!(Measurements::parse(document.vmf()).is_err());
+    }
+}
+
+#[test]
 fn unsupported_targets_and_invalid_authored_origins_have_no_fallback() {
     let (mut document, object) = source();
     let ObjectId::Entity(id) = object else {

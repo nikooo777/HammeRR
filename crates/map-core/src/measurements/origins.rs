@@ -1,8 +1,10 @@
+use std::collections::HashSet;
+
 use glam::DVec3;
 use source_formats::keyvalues::Node;
 use source_formats::vmf::{Vmf, parse_vec3};
 
-use super::{Measurement, validate_point};
+use super::{KEY, Measurement, validate_point};
 use crate::ObjectId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -25,6 +27,22 @@ impl Endpoint {
             Self::End => "end",
         }
     }
+}
+
+pub(crate) fn reserved_origin_ids(vmf: &Vmf) -> HashSet<u32> {
+    vmf.extra
+        .iter()
+        .filter(|node| node.key == KEY)
+        .filter_map(Node::children)
+        .flatten()
+        .filter(|node| node.key == "measurement")
+        .filter_map(Node::children)
+        .flatten()
+        .filter(|node| [Endpoint::Start.key(), Endpoint::End.key()].contains(&node.key.as_str()))
+        .filter_map(Node::as_str)
+        .filter_map(|value| value.parse::<u32>().ok())
+        .filter(|id| *id != 0)
+        .collect()
 }
 
 pub fn entity_origin(vmf: &Vmf, object: ObjectId) -> Result<DVec3, String> {

@@ -342,6 +342,7 @@ impl Document {
             doc: self,
             touched: Vec::new(),
             start_positions: None,
+            reserved_measurement_ids: None,
             world: None,
             extra: None,
             cordon: None,
@@ -491,6 +492,7 @@ pub struct Transaction<'a> {
     doc: &'a mut Document,
     touched: Vec<(ObjectId, State)>,
     start_positions: Option<std::collections::HashMap<ObjectId, usize>>,
+    reserved_measurement_ids: Option<HashSet<u32>>,
     world: Option<Properties>,
     extra: Option<Vec<Node>>,
     cordon: Option<Option<Node>>,
@@ -546,13 +548,22 @@ impl Transaction<'_> {
     }
 
     pub fn new_object_id(&mut self) -> Result<u32, EditError> {
+        if self.reserved_measurement_ids.is_none() {
+            self.reserved_measurement_ids =
+                Some(crate::measurements::reserved_origin_ids(self.vmf()));
+        }
         loop {
             let id = u32::try_from(self.doc.next_object_id)
                 .map_err(|_| EditError::Invalid("Map object IDs are exhausted".into()))?;
             self.doc.next_object_id += 1;
             let notes = &self.doc.context()?.notes;
             let reserved = notes.contains_key(&Scope::Object(ObjectId::Solid(id)))
-                || notes.contains_key(&Scope::Object(ObjectId::Entity(id)));
+                || notes.contains_key(&Scope::Object(ObjectId::Entity(id)))
+                || self
+                    .reserved_measurement_ids
+                    .as_ref()
+                    .unwrap()
+                    .contains(&id);
             if !reserved {
                 return Ok(id);
             }
@@ -684,6 +695,9 @@ impl Transaction<'_> {
     }
 
     pub(crate) fn set_editor_metadata(&mut self, key: &str, node: Option<Node>) {
+        if key == crate::measurements::KEY {
+            self.reserved_measurement_ids = None;
+        }
         self.extra.get_or_insert_with(|| self.doc.vmf.extra.clone());
         let existing = self.doc.vmf.extra.iter().position(|node| node.key == key);
         self.doc.vmf.extra.retain(|node| node.key != key);

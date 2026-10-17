@@ -52,7 +52,7 @@ pub enum Kind {
     BeforeSave,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Entry {
     pub format: u32,
     pub id: String,
@@ -358,31 +358,29 @@ pub fn complete_capture(
     actor: crate::session::Actor,
     request: &crate::session::RecoveryRequest,
 ) -> Result<Entry, String> {
-    complete_capture_with(
-        session,
-        actor,
-        request,
-        crate::session::RecoveryRequest::run,
-    )
+    complete_capture_with(session, actor, request, || {})
 }
 
-fn complete_capture_with(
+pub(crate) fn complete_capture_with(
     session: &crate::runtime::SharedSession,
     actor: crate::session::Actor,
     request: &crate::session::RecoveryRequest,
-    run: impl FnOnce(&crate::session::RecoveryRequest) -> Result<Entry, String>,
+    before_write: impl FnOnce(),
 ) -> Result<Entry, String> {
-    complete_capture_completed_with(session, actor, request, run).map(|completion| completion.entry)
+    complete_capture_completed_with(session, actor, request, before_write)
+        .map(|completion| completion.entry)
 }
 
 fn complete_capture_completed_with(
     session: &crate::runtime::SharedSession,
     actor: crate::session::Actor,
     request: &crate::session::RecoveryRequest,
-    run: impl FnOnce(&crate::session::RecoveryRequest) -> Result<Entry, String>,
+    before_write: impl FnOnce(),
 ) -> Result<crate::session::RecoveryCompletion, String> {
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(request)))
-        .unwrap_or_else(|_| Err("Recovery snapshot worker panicked".into()));
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        request.run_with(before_write)
+    }))
+    .unwrap_or_else(|_| Err("Recovery snapshot worker panicked".into()));
     crate::runtime::lock(session).finish_recovery_snapshot_completed(actor, request, result)
 }
 
@@ -439,7 +437,7 @@ impl Worker {
                         session,
                         crate::session::Actor::System,
                         &request,
-                        crate::session::RecoveryRequest::run,
+                        || {},
                     )
                     .map_err(|error| format!("Exit recovery snapshot failed: {error}"))
                     .and_then(|completion| match completion.retention_error {

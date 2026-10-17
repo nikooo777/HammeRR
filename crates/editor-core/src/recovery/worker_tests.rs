@@ -101,7 +101,7 @@ fn recovery_capture_panic_completes_busy_as_error_then_exit_can_recover() {
         .begin_recovery_snapshot(Kind::Manual)
         .unwrap();
     assert!(lock(&session).recovery_busy());
-    let result = complete_capture_with(&session, Actor::User, &request, |_| {
+    let result = complete_capture_with(&session, Actor::User, &request, || {
         panic!("injected snapshot failure")
     });
     assert_eq!(result.unwrap_err(), "Recovery snapshot worker panicked");

@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
@@ -26,7 +27,7 @@ pub(super) struct State {
     snapshot_error: Option<String>,
     retention_error: Option<String>,
     drain_error: Option<String>,
-    busy: bool,
+    pending: Option<Arc<Origin>>,
     serial: u64,
 }
 
@@ -46,7 +47,7 @@ impl Default for State {
             snapshot_error: None,
             retention_error: None,
             drain_error: None,
-            busy: false,
+            pending: None,
             serial: 0,
         }
     }
@@ -105,7 +106,7 @@ impl Binding {
 
 #[derive(Default)]
 struct Observer {
-    observed: Option<(u64, SettingsStamp)>,
+    observed: Option<(u64, bool, SettingsStamp)>,
     serial: u64,
 }
 
@@ -116,9 +117,10 @@ struct SettingsStamp {
 }
 
 impl Observer {
-    fn observe(&mut self, local: u64, settings: SettingsSnapshot) -> u64 {
+    fn observe(&mut self, local: u64, busy: bool, settings: SettingsSnapshot) -> u64 {
         let observed = (
             local,
+            busy,
             SettingsStamp {
                 revision: settings.revision,
                 error: settings.error,
@@ -155,21 +157,127 @@ pub struct RecoveryRequest {
     kind: Kind,
     vmf: Vmf,
     keep: usize,
-    started: AtomicBool,
+    origin: Arc<Origin>,
+}
+
+#[derive(Clone, Copy)]
+#[repr(u8)]
+enum Phase {
+    Admitted,
+    Writing,
+    Ready,
+    Finishing,
+    Terminal,
+}
+
+struct Origin {
+    phase: AtomicU8,
+    outcome: Mutex<Option<Result<Entry, String>>>,
+}
+
+impl Origin {
+    fn new() -> Self {
+        Self {
+            phase: AtomicU8::new(Phase::Admitted as u8),
+            outcome: Mutex::new(None),
+        }
+    }
+
+    fn live(&self) -> bool {
+        self.phase.load(Ordering::Acquire) != Phase::Terminal as u8
+    }
+
+    fn transition(&self, from: Phase, to: Phase) -> bool {
+        self.phase
+            .compare_exchange(from as u8, to as u8, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+
+    fn claim_finish(
+        &self,
+        supplied: &Result<Entry, String>,
+    ) -> Result<Result<Entry, String>, String> {
+        let phase = self.phase.load(Ordering::Acquire);
+        let (from, outcome) = if phase == Phase::Admitted as u8 && supplied.is_err() {
+            (Phase::Admitted, supplied.clone())
+        } else if phase == Phase::Ready as u8 {
+            let outcome = self.outcome.lock().expect("Recovery outcome lock poisoned");
+            let outcome = outcome.as_ref().expect("Ready recovery outcome missing");
+            if outcome != supplied {
+                return Err("Recovery snapshot result does not belong to this request".into());
+            }
+            (Phase::Ready, outcome.clone())
+        } else {
+            return Err("Recovery snapshot request is not ready to finish".into());
+        };
+        if !self.transition(from, Phase::Finishing) {
+            return Err("Recovery snapshot request is no longer ready to finish".into());
+        }
+        Ok(outcome)
+    }
+}
+
+struct WriteScope<'a> {
+    origin: &'a Origin,
+    outcome: Option<Result<Entry, String>>,
+}
+
+impl Drop for WriteScope<'_> {
+    fn drop(&mut self) {
+        let outcome = self
+            .outcome
+            .take()
+            .unwrap_or_else(|| Err("Recovery snapshot worker panicked".into()));
+        *self
+            .origin
+            .outcome
+            .lock()
+            .expect("Recovery outcome lock poisoned") = Some(outcome);
+        self.origin
+            .phase
+            .store(Phase::Ready as u8, Ordering::Release);
+    }
+}
+
+struct FinishScope<'a>(&'a Origin);
+
+impl Drop for FinishScope<'_> {
+    fn drop(&mut self) {
+        self.0.phase.store(Phase::Terminal as u8, Ordering::Release);
+    }
 }
 
 impl RecoveryRequest {
     pub fn run(&self) -> Result<Entry, String> {
-        if self.started.swap(true, Ordering::AcqRel) {
-            return Err("Recovery snapshot request has already started".into());
+        self.run_with(|| {})
+    }
+
+    pub(crate) fn run_with(&self, before_write: impl FnOnce()) -> Result<Entry, String> {
+        if !self.origin.transition(Phase::Admitted, Phase::Writing) {
+            return Err("Recovery snapshot request has already started or retired".into());
         }
-        self.store.write(
+        let mut writing = WriteScope {
+            origin: &self.origin,
+            outcome: None,
+        };
+        before_write();
+        let outcome = self.store.write(
             &self.document_key,
             self.source_path.as_deref(),
             &self.title,
             self.kind.clone(),
             self.vmf.write(&WriteOptions::default()).as_bytes(),
-        )
+        );
+        writing.outcome = Some(outcome.clone());
+        outcome
+    }
+}
+
+impl Drop for RecoveryRequest {
+    fn drop(&mut self) {
+        if !self.origin.transition(Phase::Admitted, Phase::Terminal) {
+            self.origin.transition(Phase::Ready, Phase::Terminal);
+        }
     }
 }
 
@@ -247,10 +355,11 @@ impl Session {
     }
 
     pub fn recovery_serial(&self) -> u64 {
-        self.recovery
-            .observer
-            .borrow_mut()
-            .observe(self.recovery.serial, self.recovery_settings_snapshot())
+        self.recovery.observer.borrow_mut().observe(
+            self.recovery.serial,
+            self.recovery_busy(),
+            self.recovery_settings_snapshot(),
+        )
     }
 
     pub fn recovery_settings_snapshot(&self) -> SettingsSnapshot {
@@ -262,7 +371,10 @@ impl Session {
     }
 
     pub fn recovery_busy(&self) -> bool {
-        self.recovery.busy
+        self.recovery
+            .pending
+            .as_ref()
+            .is_some_and(|origin| origin.live())
     }
 
     pub fn recovery_settings_revision(&self) -> u64 {
@@ -281,6 +393,7 @@ impl Session {
     }
 
     fn recovery_status_with_settings(&self, settings: &SettingsSnapshot) -> Value {
+        let busy = self.recovery_busy();
         let pending = self.document.is_dirty()
             && !self
                 .recovery
@@ -292,8 +405,8 @@ impl Session {
             "available": self.recovery.store.is_some(), "settings": settings.settings,
             "settings_revision": settings.revision,
             "directory": self.recovery.store.as_ref().map(|store| &store.directory),
-            "busy": self.recovery.busy, "pending_changes": pending,
-            "next_autosave_seconds": (pending && self.recovery.store.is_some() && settings.settings.enabled && !self.recovery.busy && !self.closing).then(|| Duration::from_secs(settings.settings.interval_seconds).saturating_sub(self.recovery.last_attempt.elapsed()).as_secs()),
+            "busy": busy, "pending_changes": pending,
+            "next_autosave_seconds": (pending && self.recovery.store.is_some() && settings.settings.enabled && !busy && !self.closing).then(|| Duration::from_secs(settings.settings.interval_seconds).saturating_sub(self.recovery.last_attempt.elapsed()).as_secs()),
             "last_snapshot": self.recovery.last_entry, "error": self.recovery.error(settings.error.as_deref()),
             "settings_error": settings.error, "storage_error": self.recovery.storage_error,
             "snapshot_error": self.recovery.snapshot_error,
@@ -361,7 +474,7 @@ impl Session {
     fn autosave_due_with_settings(&self, settings: &Settings) -> bool {
         self.recovery.store.is_some()
             && settings.enabled
-            && !self.recovery.busy
+            && !self.recovery_busy()
             && !self.closing
             && self.document.is_dirty()
             && self.recovery.last_attempt.elapsed()
@@ -417,7 +530,7 @@ impl Session {
         if self.closing && kind != Kind::Autosave {
             return Err("The editor is closing".into());
         }
-        if self.recovery.busy {
+        if self.recovery_busy() {
             return Err("A recovery snapshot is already being written".into());
         }
         let store = self
@@ -425,7 +538,8 @@ impl Session {
             .store
             .clone()
             .ok_or("Recovery storage is unavailable")?;
-        self.recovery.busy = true;
+        let origin = Arc::new(Origin::new());
+        self.recovery.pending = Some(origin.clone());
         self.recovery.last_attempt = Instant::now();
         self.recovery.changed();
         Ok(RecoveryRequest {
@@ -440,7 +554,7 @@ impl Session {
             kind,
             vmf: self.document.vmf().clone(),
             keep: settings.keep_per_map,
-            started: AtomicBool::new(false),
+            origin,
         })
     }
 
@@ -460,7 +574,16 @@ impl Session {
         request: &RecoveryRequest,
         result: Result<Entry, String>,
     ) -> Result<RecoveryCompletion, String> {
-        self.recovery.busy = false;
+        if !self
+            .recovery
+            .pending
+            .as_ref()
+            .is_some_and(|origin| Arc::ptr_eq(origin, &request.origin))
+        {
+            return Err("Recovery snapshot request does not belong to this pending capture".into());
+        }
+        let result = request.origin.claim_finish(&result)?;
+        let _finishing = FinishScope(&request.origin);
         self.recovery.last_attempt = Instant::now();
         self.recovery.changed();
         match result {
@@ -503,7 +626,7 @@ impl Session {
     }
 
     pub fn delete_recovery_snapshot(&mut self, actor: Actor, id: &str) -> Result<(), String> {
-        if self.recovery.busy {
+        if self.recovery_busy() {
             return Err("Wait for the current recovery snapshot to finish".into());
         }
         self.recovery
@@ -641,6 +764,9 @@ mod error_domain_tests;
 
 #[cfg(test)]
 mod authority_tests;
+
+#[cfg(test)]
+mod ownership_tests;
 
 #[cfg(test)]
 mod tests {

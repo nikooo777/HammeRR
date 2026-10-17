@@ -25,6 +25,7 @@ mod measurements_ui;
 mod merge_ui;
 mod model_browser_ui;
 mod model_ui;
+mod navigation_defaults_ui;
 mod overlay_ui;
 mod particles_ui;
 mod placement_ui;

@@ -7,6 +7,7 @@ pub mod interaction;
 pub mod material_favorites;
 pub mod materials;
 pub mod model_preview;
+pub mod navigation_preferences;
 pub mod prefabs;
 mod preference_file;
 pub mod preview_preferences;

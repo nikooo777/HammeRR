@@ -12,8 +12,6 @@ use slint::SharedString;
 use slint::platform::Key;
 
 const LOOK_DEGREES_PER_PIXEL: f32 = 0.2;
-const DEFAULT_SPEED: f32 = 600.0;
-const FAST_MULTIPLIER: f32 = 4.0;
 const DOLLY_UNITS_PER_PIXEL: f32 = 2.0;
 /// A left press and release closer than this (logical pixels) is a click.
 pub(crate) const CLICK_SLOP: f32 = 4.0;
@@ -39,7 +37,6 @@ pub struct Viewport {
     looking: bool,
     last_mouse: Option<(f32, f32)>,
     left_press: Option<(f32, f32)>,
-    pub speed: f32,
     dirty: bool,
 }
 
@@ -57,7 +54,6 @@ impl Viewport {
             looking: false,
             last_mouse: None,
             left_press: None,
-            speed: DEFAULT_SPEED,
             dirty: true,
         }
     }
@@ -148,7 +144,7 @@ impl Viewport {
         self.last_mouse = Some((x, y));
     }
 
-    /// Wheel dollies the camera, or changes fly speed while looking.
+    /// Wheel dollies the perspective camera or zooms a planar view.
     pub fn wheel(&mut self, delta: f32, ndc: (f32, f32), aspect: f32) {
         if self.camera.projection != Projection::Perspective {
             let before = self.camera.plane_point(ndc, aspect, 0.0).unwrap();
@@ -156,8 +152,6 @@ impl Viewport {
                 .clamp(Camera::MIN_ORTHO_HEIGHT, Camera::MAX_ORTHO_HEIGHT);
             let after = self.camera.plane_point(ndc, aspect, 0.0).unwrap();
             self.camera.position += before - after;
-        } else if self.looking {
-            self.speed = (self.speed * 2f32.powf(delta / 240.0)).clamp(25.0, 20_000.0);
         } else {
             self.camera
                 .fly(Vec3::new(delta * DOLLY_UNITS_PER_PIXEL, 0.0, 0.0));
@@ -176,7 +170,7 @@ impl Viewport {
 
     /// Advances the camera by `dt` seconds of held movement keys. Returns
     /// whether it moved.
-    pub fn update(&mut self, dt: f32) -> bool {
+    pub fn update(&mut self, dt: f32, fly_speed: f32) -> bool {
         let axis = |pos: &str, neg: &str| {
             f32::from(u8::from(self.held.contains(pos)))
                 - f32::from(u8::from(self.held.contains(neg)))
@@ -186,11 +180,11 @@ impl Viewport {
             return false;
         }
         let fast = if self.held.contains(&key_text(Key::Shift)) {
-            FAST_MULTIPLIER
+            editor_core::navigation_preferences::FAST_MULTIPLIER
         } else {
             1.0
         };
-        let amount = dir.normalize() * self.speed * fast * dt;
+        let amount = dir.normalize() * fly_speed * fast * dt;
         if self.camera.projection == Projection::Perspective {
             self.camera.fly(amount);
         } else {

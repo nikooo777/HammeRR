@@ -89,7 +89,7 @@ Recovery files live in `$XDG_STATE_HOME/hammerr/recovery`, or `~/.local/state/ha
 
 Normal exit waits for in-flight recovery, then captures outstanding committed changes once when autosave is enabled. A failed exit snapshot or recovery-worker drain is reported on stderr and returns a failing process exit status, including both headless modes. If another application error also occurred, the final error retains both causes. The original map is never treated as saved by an exit snapshot.
 
-Recovery retains settings, snapshot, retention and shutdown failures separately. Saving settings clears only settings errors; a successful snapshot clears only snapshot and retention errors. Recovery displays unresolved causes together with listing warnings, and MCP reports the same causes separately as well as in its combined error. A settings warning alone does not turn a successful exit snapshot into a shutdown failure.
+Recovery retains settings, snapshot-folder configuration, capture, retention and shutdown failures separately. Saving settings clears only settings errors; a successful snapshot clears only capture and retention errors. Recovery displays unresolved causes together with listing warnings, and MCP reports the same causes separately as well as in its combined error. A settings warning alone does not turn a successful exit snapshot into a shutdown failure.
 
 To reload settings after repairing or changing the saved file outside the editor:
 
@@ -101,4 +101,6 @@ To reload settings after repairing or changing the saved file outside the editor
 
 ![Failed Reload keeps typed recovery settings and existing snapshot errors](images/recovery-settings-reload.png)
 
-Reload does not capture a snapshot or write the map. An absent settings file restores the two-minute interval, ten snapshots per map and enabled autosave. Settings files must resolve to a regular file no larger than **32 KiB**; valid regular-file symlinks remain supported. Each Session keeps its own settings, and simultaneous writers remain uncoordinated.
+Reload does not capture a snapshot or write the map. An absent settings file restores the two-minute interval, ten snapshots per map and enabled autosave. Settings files must resolve to a regular file no larger than **32 KiB**; valid regular-file symlinks remain supported.
+
+Sessions attached to one application share saved recovery settings and settings errors. Applying or reloading settings affects future automatic captures; an in-flight snapshot keeps its original retention count. Snapshot folders, scheduling, pending changes, capture errors and recovery workers stay with each document. Separate processes still write settings without a shared lock or automatic merge. Multiple open documents remain unavailable.

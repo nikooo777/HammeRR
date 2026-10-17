@@ -39,6 +39,11 @@ Saving increments the VMF's map version and uses standard VMF formatting while r
 
 Saving through a file symlink updates its target and preserves the link and target permissions. Broken or looping links are refused. Failed saves preserve unsaved changes; repair the path or choose another destination and save again.
 
+Discard confirmations apply to the map state you reviewed. If the map changes
+before New, Open, Recent maps or recovery replaces it, the action asks you to
+review again. Save and Compile file choosers also reject a buffer replaced while
+the chooser was open; edits within the same buffer remain allowed.
+
 | Option | Purpose |
 | --- | --- |
 | `--game <gameinfo.txt>` | Load content from a specific game installation instead of the one found through Steam. |

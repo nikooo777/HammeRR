@@ -18,6 +18,8 @@ export component CompileWindow inherits Window {
     callback rename-recipe();
     callback delete-recipe();
     callback cancel-recipe-edit();
+    callback reload-recipes();
+    in property <bool> recipes-reload-enabled;
     in property <int> lighting-choice;
     in property <bool> lighting-enabled;
     in property <string> lighting-description;
@@ -106,6 +108,7 @@ export component CompileWindow inherits Window {
                     spacing: 8px;
                     Button { text: "Delete recipe"; enabled: root.custom-recipes-enabled && root.custom-recipe-selected; clicked => { root.delete-recipe(); } }
                     Button { text: "Cancel recipe edit"; clicked => { root.cancel-recipe-edit(); } }
+                    Button { text: "Reload recipes"; enabled: root.recipes-reload-enabled; clicked => { root.reload-recipes(); } }
                     Rectangle { horizontal-stretch: 1; }
                 }
                 Text { text: "Recipes change the settings below. Apply recipe does not start a build. Active builds freeze settings and recipe edits."; wrap: word-wrap; color: #bac2ce; }

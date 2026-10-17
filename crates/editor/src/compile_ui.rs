@@ -11,6 +11,8 @@ mod baked_lightmaps;
 mod capture;
 #[cfg(test)]
 mod instance_dependency_tests;
+#[cfg(test)]
+mod recipe_reload_tests;
 mod sky_packing;
 
 pub struct Controller {
@@ -35,6 +37,7 @@ enum RecipeAction {
     Replace,
     Rename,
     Delete,
+    Reload,
 }
 
 fn hdr_lighting_details(stats: &serde_json::Value) -> String {
@@ -149,6 +152,7 @@ fn refresh_recipes(window: &CompileWindow, session: &Session, form: &RefCell<Rec
         }
     }
     window.set_custom_recipes_enabled(state["custom_editable"].as_bool().unwrap_or(false));
+    window.set_recipes_reload_enabled(state["editable"] == true && state["path"].is_string());
     let active = state["active"]["name"]
         .as_str()
         .unwrap_or("Custom settings");
@@ -223,6 +227,7 @@ fn recipe_action(
         RecipeAction::Replace => session.save_build_recipe(Actor::User, &name, Some(id), revision),
         RecipeAction::Rename => session.rename_build_recipe(Actor::User, id, &name, revision),
         RecipeAction::Delete => session.delete_build_recipe(Actor::User, id, revision),
+        RecipeAction::Reload => session.reload_build_recipes(Actor::User, revision),
     };
     match result {
         Ok(state) => {
@@ -246,6 +251,9 @@ fn recipe_action(
                         "Recipe renamed. Existing jobs retain their original name."
                     }
                     RecipeAction::Delete => "Recipe deleted. Current settings are unchanged.",
+                    RecipeAction::Reload => {
+                        "Recipes reloaded. Current build settings are unchanged."
+                    }
                 }
                 .into(),
             );
@@ -333,6 +341,14 @@ impl Controller {
                 window.set_message(
                     "Recipe edit cancelled. Current build settings are unchanged.".into(),
                 );
+            }
+        });
+        window.on_reload_recipes({
+            let (shared, window, recipes) = (shared.clone(), window.as_weak(), recipes.clone());
+            move || {
+                if let Some(window) = window.upgrade() {
+                    recipe_action(&window, &mut lock(&shared), &recipes, RecipeAction::Reload);
+                }
             }
         });
         let settings = lock(shared).compile_settings();
@@ -1238,6 +1254,7 @@ mod tests {
             "Rename recipe",
             "Delete recipe",
             "Cancel recipe edit",
+            "Reload recipes",
         ] {
             assert!(
                 i_slint_backend_testing::ElementHandle::find_by_accessible_label(

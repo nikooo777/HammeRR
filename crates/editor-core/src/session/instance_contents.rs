@@ -56,6 +56,7 @@ struct Pending {
 #[derive(Default)]
 pub(super) struct State {
     serial: u64,
+    render_serial: u64,
     pending: Option<Pending>,
     ready: Option<Arc<Ready>>,
     status: &'static str,
@@ -464,6 +465,14 @@ impl Request {
 }
 
 impl Session {
+    pub fn instance_contents_serial(&self) -> u64 {
+        self.instance_contents.render_serial
+    }
+
+    pub(super) fn invalidate_instance_contents_render(&mut self) {
+        self.instance_contents.render_serial = self.instance_contents.render_serial.wrapping_add(1);
+    }
+
     pub fn begin_instance_contents_refresh(&mut self, actor: Actor) -> Result<Request, String> {
         if self.closing {
             return Err("The editor is closing".into());
@@ -474,8 +483,7 @@ impl Session {
         self.instance_contents.serial = self.instance_contents.serial.wrapping_add(1);
         self.instance_contents.ready = None;
         self.instance_contents.error = None;
-        self.scene_serial += 1;
-        self.view_serial += 1;
+        self.invalidate_instance_contents_render();
         let admission = (|| {
             let vmf = self.document.vmf();
             if vmf.object_ids().take(instances::MAX_OBJECTS + 1).count() > instances::MAX_OBJECTS
@@ -569,8 +577,7 @@ impl Session {
                 self.instance_contents.status = "stale";
                 self.instance_contents.error =
                     Some("Map or referring path changed while resolving instance contents".into());
-                self.scene_serial += 1;
-                self.view_serial += 1;
+                self.invalidate_instance_contents_render();
             }
             return Err("Instance contents result is stale; Refresh again".into());
         }
@@ -605,8 +612,7 @@ impl Session {
                 self.instance_contents.error = Some(bounded(&error));
             }
         }
-        self.scene_serial += 1;
-        self.view_serial += 1;
+        self.invalidate_instance_contents_render();
         self.log(
             actor,
             format!("instance contents {}", self.instance_contents.status),
@@ -635,8 +641,7 @@ impl Session {
             self.instance_contents.ready = None;
             self.instance_contents.status = "stale";
             self.instance_contents.error = Some(error);
-            self.scene_serial += 1;
-            self.view_serial += 1;
+            self.invalidate_instance_contents_render();
             self.instance_contents.presentation_key = None;
             return true;
         }
@@ -653,8 +658,7 @@ impl Session {
         });
         if key != self.instance_contents.presentation_key {
             self.instance_contents.presentation_key = key;
-            self.scene_serial += 1;
-            self.view_serial += 1;
+            self.invalidate_instance_contents_render();
             return true;
         }
         false
@@ -673,6 +677,7 @@ impl Session {
             .ok_or("Instance contents request token is expired")?;
         pending.control.cancel()?;
         self.instance_contents.status = "cancelled";
+        self.invalidate_instance_contents_render();
         self.log(actor, "cancelled instance contents refresh");
         self.inspect_instance_contents(0, MAX_ROWS)
     }
@@ -701,8 +706,7 @@ impl Session {
         self.instance_contents.ready = None;
         self.instance_contents.status = "failed";
         self.instance_contents.error = Some(bounded(&error));
-        self.scene_serial += 1;
-        self.view_serial += 1;
+        self.invalidate_instance_contents_render();
         self.log(actor, "instance contents worker could not start");
         self.inspect_instance_contents(0, MAX_ROWS)
     }
@@ -718,13 +722,13 @@ impl Session {
         self.instance_contents.ready = None;
         self.instance_contents.status = "not_loaded";
         self.instance_contents.error = None;
-        self.scene_serial += 1;
-        self.view_serial += 1;
+        self.invalidate_instance_contents_render();
         self.log(actor, "cleared instance contents");
         self.inspect_instance_contents(0, MAX_ROWS)
     }
 
     pub(super) fn reset_instance_contents(&mut self) {
+        self.invalidate_instance_contents_render();
         if let Some(pending) = &self.instance_contents.pending {
             let _ = pending.control.cancel();
         }

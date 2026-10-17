@@ -131,7 +131,12 @@ fn terminal_drain_error_survives_settings_and_capture_success_without_duplicate_
 fn aggregate_does_not_hide_an_unrelated_substring_error() {
     let (_directory, mut session) = fixture();
     session.recovery.snapshot_error = Some("snapshot disk failure".into());
-    session.recovery.settings_error = Some("disk".into());
+    session
+        .recovery
+        .settings
+        .authority()
+        .configure(Err("disk".into()))
+        .unwrap_err();
     assert_eq!(
         session.recovery_status()["error"],
         "snapshot disk failure; disk"
@@ -174,7 +179,7 @@ fn disk_reload_preserves_live_requests_and_errors_and_only_adopts_valid_settings
                 .reload_recovery_settings(Actor::Agent, Some(revision))
                 .is_err()
         );
-        assert_eq!(session.recovery_settings(), &settings);
+        assert_eq!(session.recovery_settings(), settings);
         assert_eq!(session.recovery_settings_revision(), revision);
         assert_eq!(session.recovery.last_attempt, attempt);
         assert!(session.recovery_busy());
@@ -193,7 +198,7 @@ fn disk_reload_preserves_live_requests_and_errors_and_only_adopts_valid_settings
     session
         .reload_recovery_settings(Actor::User, Some(revision))
         .unwrap();
-    assert_eq!(session.recovery_settings(), &replacement);
+    assert_eq!(session.recovery_settings(), replacement);
     assert_eq!(request.keep, 4);
     assert_eq!(session.recovery.last_attempt, attempt);
     assert!(session.recovery_busy());
@@ -217,7 +222,7 @@ fn disk_reload_preserves_live_requests_and_errors_and_only_adopts_valid_settings
     assert_eq!(session.camera(), camera);
     std::fs::remove_file(&path).unwrap();
     session.reload_recovery_settings(Actor::User, None).unwrap();
-    assert_eq!(session.recovery_settings(), &Settings::default());
+    assert_eq!(session.recovery_settings(), Settings::default());
     let mut unavailable = Session::new(Err("no assets".into()));
     let before = unavailable.recovery_status();
     assert!(

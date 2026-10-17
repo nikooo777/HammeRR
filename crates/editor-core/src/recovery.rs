@@ -6,6 +6,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
+mod settings;
+pub(crate) use settings::ReloadError;
+pub use settings::{Authority, SettingsSnapshot, SettingsUpdate};
+
 const FORMAT_VERSION: u32 = 1;
 const MAX_MANIFEST_BYTES: u64 = 32 * 1024;
 pub const MAX_SETTINGS_BYTES: u64 = 32 * 1024;
@@ -428,31 +432,23 @@ impl Worker {
         let captured = match &session {
             None => Err("Recovery session was released before worker drain".into()),
             Some(session) => {
-                let status = crate::runtime::lock(session).recovery_status();
-                if status["settings"]["enabled"] != true || status["pending_changes"] != true {
-                    Ok(None)
-                } else if status["available"] != true {
-                    Err("Exit recovery storage is unavailable".into())
-                } else {
-                    let request =
-                        crate::runtime::lock(session).begin_recovery_snapshot(Kind::Autosave);
-                    request
-                        .and_then(|request| {
-                            complete_capture_completed_with(
-                                session,
-                                crate::session::Actor::System,
-                                &request,
-                                crate::session::RecoveryRequest::run,
-                            )
-                        })
-                        .map_err(|error| format!("Exit recovery snapshot failed: {error}"))
-                        .and_then(|completion| match completion.retention_error {
-                            Some(error) => Err(format!(
-                                "Exit recovery snapshot saved, but recovery cleanup failed: {error}"
-                            )),
-                            None => Ok(Some(completion.entry)),
-                        })
-                }
+                let request = crate::runtime::lock(session).begin_exit_recovery_snapshot();
+                request.and_then(|request| match request {
+                    None => Ok(None),
+                    Some(request) => complete_capture_completed_with(
+                        session,
+                        crate::session::Actor::System,
+                        &request,
+                        crate::session::RecoveryRequest::run,
+                    )
+                    .map_err(|error| format!("Exit recovery snapshot failed: {error}"))
+                    .and_then(|completion| match completion.retention_error {
+                        Some(error) => Err(format!(
+                            "Exit recovery snapshot saved, but recovery cleanup failed: {error}"
+                        )),
+                        None => Ok(Some(completion.entry)),
+                    }),
+                })
             }
         };
         let result = match (joined, captured) {
@@ -498,14 +494,7 @@ fn autosave_loop(
         let Some(session) = session.upgrade() else {
             return;
         };
-        let request = {
-            let mut state = crate::runtime::lock(&session);
-            if state.autosave_due() {
-                state.begin_recovery_snapshot(Kind::Autosave).ok()
-            } else {
-                None
-            }
-        };
+        let request = crate::runtime::lock(&session).begin_due_recovery_snapshot();
         if let Some(request) = request {
             let _ = complete_capture(&session, crate::session::Actor::System, &request);
         }

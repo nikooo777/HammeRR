@@ -115,6 +115,7 @@ pub struct Application {
     pub shortcuts: shortcuts::Authority,
     pub saved_defaults: crate::saved_defaults::SavedDefaults,
     pub build_recipes: build_recipes::Authority,
+    pub recovery_settings: recovery::Authority,
     pub session: SharedSession,
     pub open_message: Option<Result<String, String>>,
     finished: Option<Result<(), String>>,
@@ -144,6 +145,8 @@ impl Application {
         lock(&session).use_application_shortcuts(shortcuts.clone());
         let build_recipes = build_recipes::Authority::configured(directory.clone());
         lock(&session).use_application_build_recipes(build_recipes.clone());
+        let recovery_settings = recovery::Authority::configured(directory.clone());
+        lock(&session).use_application_recovery_settings(recovery_settings.clone());
         lock(&session).configure_recovery(directory);
         let worker = recovery::Worker::start(&session)?;
         let shutdown = ShutdownGuard {
@@ -175,6 +178,7 @@ impl Application {
             shortcuts,
             saved_defaults,
             build_recipes,
+            recovery_settings,
             session,
             open_message,
             finished: None,

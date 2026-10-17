@@ -321,7 +321,7 @@ mod tests {
         fs::write(root.join(FILE_NAME), "broken favorites").unwrap();
         let mut again = Session::new(Err("no assets needed".into()));
         again.configure_recovery(Ok(root));
-        assert_eq!(again.recovery_settings(), &settings);
+        assert_eq!(again.recovery_settings(), settings);
         assert_eq!(
             again.material_favorite_status().persistence,
             Persistence::Blocked

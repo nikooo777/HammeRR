@@ -5025,7 +5025,7 @@ pub(crate) fn recovery_controls_guard_settings_and_restore_and_share_snapshot_op
         .unwrap();
     window.invoke_apply_settings();
     assert!(window.get_message().contains("changed elsewhere"));
-    assert_eq!(lock(&shared).recovery_settings(), &newer);
+    assert_eq!(lock(&shared).recovery_settings(), newer);
     window.invoke_reload_settings();
     assert_eq!(window.get_keep_count(), 7);
     let before = lock(&shared).document().vmf().clone();

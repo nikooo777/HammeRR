@@ -22,6 +22,7 @@ mod entities;
 use entities::*;
 mod files;
 use files::*;
+mod admission;
 mod input;
 use input::*;
 mod manipulation;
@@ -2000,29 +2001,29 @@ pub(super) fn run(
     instance_reference::bind(&app, session_of(&ui));
     instance_extraction::bind(&app, session_of(&ui));
     app.on_key({
-        let (app, ui) = (app.as_weak(), ui.clone());
+        let scope = admission::Callback::new(&app, &ui, &file_access(&ui));
         move |text, down, control, shift, alt, meta| {
-            let app = app.unwrap();
-            shortcuts_ui::route_viewport_key(
-                &app,
-                &session_of(&ui),
-                shortcuts_ui::ViewportKey {
-                    text: &text,
-                    down,
-                    control,
-                    shift,
-                    alt,
-                    meta,
-                },
-                |text, control, shift| command_key(&app, &ui, text, control, shift),
-                |text, down| ui.borrow_mut().viewport.key(text, down),
-            )
+            scope.input(true, |app, ui| {
+                shortcuts_ui::route_viewport_key(
+                    &app,
+                    &session_of(&ui),
+                    shortcuts_ui::ViewportKey {
+                        text: &text,
+                        down,
+                        control,
+                        shift,
+                        alt,
+                        meta,
+                    },
+                    |text, control, shift| command_key(&app, &ui, text, control, shift),
+                    |text, down| ui.borrow_mut().viewport.key(text, down),
+                )
+            })
         }
     });
     app.on_mouse_button({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move |button, down, x, y, control, alt| {
-            let app = app.unwrap();
+        let scope = admission::Callback::new(&app, &ui, &file_access(&ui));
+        move |button, down, x, y, control, alt| scope.input((), |app, ui| {
             let viewport_size = (app.get_viewport_width(), app.get_viewport_height());
             let mut ui = ui.borrow_mut();
             if button == 0 && !down && ui.object_cycle.active() {
@@ -2610,872 +2611,891 @@ pub(super) fn run(
             if let Err(message) = result {
                 app.set_message(message.into());
             }
-        }
+        })
     });
     app.on_mouse_moved({
-        let (app, ui) = (app.as_weak(), ui.clone());
+        let scope = admission::Callback::new(&app, &ui, &file_access(&ui));
         move |x, y| {
-            let app = app.unwrap();
-            let size = (app.get_viewport_width(), app.get_viewport_height());
-            let mut ui = ui.borrow_mut();
-            ui.viewport.mouse_moved(x, y, size.1);
-            if ui.object_cycle.moved(Pointer {
-                position: DVec2::new(f64::from(x), f64::from(y)),
-                size: (
-                    size.0.round().max(1.0) as u32,
-                    size.1.round().max(1.0) as u32,
-                ),
-            }) {
-                return;
-            }
-            if overlay_handles_interactive(&app, &lock(&ui.session), ui.viewport.camera) {
-                let mut session = lock(&ui.session);
-                session.publish_camera(ui.viewport.camera);
-                if session.overlay_corner_handle_dragging()
-                    && let Some(controller) = &ui.overlay
-                    && let Err(error) = controller.move_handle(
-                        &mut session,
-                        Pointer {
-                            position: DVec2::new(f64::from(x), f64::from(y)),
+            scope.input((), |app, ui| {
+                let size = (app.get_viewport_width(), app.get_viewport_height());
+                let mut ui = ui.borrow_mut();
+                ui.viewport.mouse_moved(x, y, size.1);
+                if ui.object_cycle.moved(Pointer {
+                    position: DVec2::new(f64::from(x), f64::from(y)),
+                    size: (
+                        size.0.round().max(1.0) as u32,
+                        size.1.round().max(1.0) as u32,
+                    ),
+                }) {
+                    return;
+                }
+                if overlay_handles_interactive(&app, &lock(&ui.session), ui.viewport.camera) {
+                    let mut session = lock(&ui.session);
+                    session.publish_camera(ui.viewport.camera);
+                    if session.overlay_corner_handle_dragging()
+                        && let Some(controller) = &ui.overlay
+                        && let Err(error) = controller.move_handle(
+                            &mut session,
+                            Pointer {
+                                position: DVec2::new(f64::from(x), f64::from(y)),
+                                size: (
+                                    size.0.round().max(1.0) as u32,
+                                    size.1.round().max(1.0) as u32,
+                                ),
+                            },
+                        )
+                    {
+                        app.set_message(error.into());
+                    }
+                    return;
+                }
+                if let Some(controller) = &ui.terrain
+                    && controller.is_handling()
+                {
+                    if controller.handle_dragging() {
+                        let pointer = Pointer {
+                            position: glam::DVec2::new(f64::from(x), f64::from(y)),
                             size: (
                                 size.0.round().max(1.0) as u32,
                                 size.1.round().max(1.0) as u32,
                             ),
-                        },
-                    )
-                {
-                    app.set_message(error.into());
-                }
-                return;
-            }
-            if let Some(controller) = &ui.terrain
-                && controller.is_handling()
-            {
-                if controller.handle_dragging() {
-                    let pointer = Pointer {
-                        position: glam::DVec2::new(f64::from(x), f64::from(y)),
-                        size: (
-                            size.0.round().max(1.0) as u32,
-                            size.1.round().max(1.0) as u32,
-                        ),
-                    };
-                    let mut session = lock(&ui.session);
-                    session.publish_camera(ui.viewport.camera);
-                    if let Err(error) = controller.update_handle(&mut session, pointer) {
-                        app.set_message(error.into());
-                    }
-                }
-                return;
-            }
-            if let Some(controller) = &ui.terrain
-                && controller.is_stroking()
-            {
-                if controller.stroke_dragging() {
-                    let size = (size.0.max(1.0), size.1.max(1.0));
-                    let (origin, direction) = ui.viewport.camera.ray(
-                        2.0 * x / size.0 - 1.0,
-                        1.0 - 2.0 * y / size.1,
-                        size.0 / size.1,
-                    );
-                    if let Err(error) = controller.update_stroke(
-                        &mut lock(&ui.session),
-                        &Ray {
-                            origin: origin.as_dvec3(),
-                            direction: direction.as_dvec3(),
-                        },
-                    ) {
-                        app.set_message(error.into());
-                    }
-                }
-                return;
-            }
-            if let Some(drag) = ui.clip_drag {
-                let shared = ui.session.clone();
-                let mut session = lock(&shared);
-                if drag.epoch != session.clip_epoch() {
-                    ui.clip_drag = None;
-                    return;
-                }
-                let result = plane_coordinates(
-                    ui.viewport.camera,
-                    (x, y),
-                    size,
-                    session.spatial().elevation,
-                )
-                .ok_or("Viewport has no size".to_owned())
-                .and_then(|end| clip_drag_plane(&session, drag, end))
-                .and_then(|plane| preview_clip(&app, &mut session, plane));
-                if result.is_err() {
-                    session.clear_clip_preview();
-                    refresh_clip(&app, &session);
-                }
-                if let Some(active) = &mut ui.clip_drag {
-                    active.epoch = session.clip_epoch();
-                }
-            }
-            if let Some(drag) = ui.brush_drag {
-                let shared = ui.session.clone();
-                let mut session = lock(&shared);
-                if let Some(end) = plane_coordinates(
-                    ui.viewport.camera,
-                    (x, y),
-                    size,
-                    session.spatial().elevation,
-                ) {
-                    match drag_bounds(&session, drag, end) {
-                        Ok((mins, maxs)) => {
-                            drop(session.preview_block(mins, maxs));
+                        };
+                        let mut session = lock(&ui.session);
+                        session.publish_camera(ui.viewport.camera);
+                        if let Err(error) = controller.update_handle(&mut session, pointer) {
+                            app.set_message(error.into());
                         }
-                        Err(_) => session.clear_block_preview(),
                     }
-                }
-            }
-            let shared = ui.session.clone();
-            let mut session = lock(&shared);
-            let pointer = Pointer {
-                position: DVec2::new(f64::from(x), f64::from(y)),
-                size: (
-                    size.0.round().max(1.0) as u32,
-                    size.1.round().max(1.0) as u32,
-                ),
-            };
-            if let Err(error) = ui.interaction.moved(&mut session, pointer) {
-                app.set_message(error.into());
-            }
-            refresh_interaction(&app, &session);
-            if session.clip_tool() {
-                refresh_clip(&app, &session);
-            }
-        }
-    });
-    app.on_wheel({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move |delta, x, y| {
-            let app = app.unwrap();
-            let width = app.get_viewport_width().max(1.0);
-            let height = app.get_viewport_height().max(1.0);
-            let ndc = (x * 2.0 / width - 1.0, 1.0 - y * 2.0 / height);
-            let mut ui = ui.borrow_mut();
-            let speed_change = navigation_defaults_ui::wheel_speed(
-                &mut lock(&ui.session),
-                ui.viewport.camera.projection,
-                ui.viewport.looking(),
-                delta,
-            );
-            match speed_change {
-                Ok(true) => {
-                    navigation_defaults_ui::refresh_speed(&app, &lock(&ui.session));
                     return;
-                }
-                Err(error) => {
-                    app.set_message(error.into());
-                    return;
-                }
-                Ok(false) => {}
-            }
-            ui.object_cycle.cancel();
-            if ui.interaction.active() {
-                let shared = ui.session.clone();
-                ui.interaction.cancel(&mut lock(&shared));
-                refresh_interaction(&app, &lock(&shared));
-            }
-            if ui.clip_drag.take().is_some() {
-                let mut session = lock(&ui.session);
-                session.cancel_clip_preview();
-                refresh_clip(&app, &session);
-            }
-            ui.viewport.wheel(delta, ndc, width / height)
-        }
-    });
-    app.on_viewport_focus_lost({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            {
-                let mut ui = ui.borrow_mut();
-                ui.object_cycle.cancel();
-                let cancel_overlay = {
-                    let session = lock(&ui.session);
-                    overlay_handles_interactive(&app.unwrap(), &session, ui.viewport.camera)
-                        && session.overlay_corner_handle_dragging()
-                };
-                if cancel_overlay && let Some(controller) = &ui.overlay {
-                    let _ = controller.discard_handles(&mut lock(&ui.session));
-                    app.unwrap().set_overlay_handling(false);
                 }
                 if let Some(controller) = &ui.terrain
                     && controller.is_stroking()
-                    && controller.stroke_dragging()
                 {
-                    controller.discard_stroke(&mut lock(&ui.session));
-                    app.unwrap().set_terrain_stroking(false);
+                    if controller.stroke_dragging() {
+                        let size = (size.0.max(1.0), size.1.max(1.0));
+                        let (origin, direction) = ui.viewport.camera.ray(
+                            2.0 * x / size.0 - 1.0,
+                            1.0 - 2.0 * y / size.1,
+                            size.0 / size.1,
+                        );
+                        if let Err(error) = controller.update_stroke(
+                            &mut lock(&ui.session),
+                            &Ray {
+                                origin: origin.as_dvec3(),
+                                direction: direction.as_dvec3(),
+                            },
+                        ) {
+                            app.set_message(error.into());
+                        }
+                    }
+                    return;
                 }
-                if let Some(controller) = &ui.terrain
-                    && controller.handle_dragging()
-                {
-                    controller.cancel_handles(&mut lock(&ui.session), false);
-                    app.unwrap().set_terrain_handling(false);
+                if let Some(drag) = ui.clip_drag {
+                    let shared = ui.session.clone();
+                    let mut session = lock(&shared);
+                    if drag.epoch != session.clip_epoch() {
+                        ui.clip_drag = None;
+                        return;
+                    }
+                    let result = plane_coordinates(
+                        ui.viewport.camera,
+                        (x, y),
+                        size,
+                        session.spatial().elevation,
+                    )
+                    .ok_or("Viewport has no size".to_owned())
+                    .and_then(|end| clip_drag_plane(&session, drag, end))
+                    .and_then(|plane| preview_clip(&app, &mut session, plane));
+                    if result.is_err() {
+                        session.clear_clip_preview();
+                        refresh_clip(&app, &session);
+                    }
+                    if let Some(active) = &mut ui.clip_drag {
+                        active.epoch = session.clip_epoch();
+                    }
                 }
+                if let Some(drag) = ui.brush_drag {
+                    let shared = ui.session.clone();
+                    let mut session = lock(&shared);
+                    if let Some(end) = plane_coordinates(
+                        ui.viewport.camera,
+                        (x, y),
+                        size,
+                        session.spatial().elevation,
+                    ) {
+                        match drag_bounds(&session, drag, end) {
+                            Ok((mins, maxs)) => {
+                                drop(session.preview_block(mins, maxs));
+                            }
+                            Err(_) => session.clear_block_preview(),
+                        }
+                    }
+                }
+                let shared = ui.session.clone();
+                let mut session = lock(&shared);
+                let pointer = Pointer {
+                    position: DVec2::new(f64::from(x), f64::from(y)),
+                    size: (
+                        size.0.round().max(1.0) as u32,
+                        size.1.round().max(1.0) as u32,
+                    ),
+                };
+                if let Err(error) = ui.interaction.moved(&mut session, pointer) {
+                    app.set_message(error.into());
+                }
+                refresh_interaction(&app, &session);
+                if session.clip_tool() {
+                    refresh_clip(&app, &session);
+                }
+            })
+        }
+    });
+    app.on_wheel({
+        let scope = admission::Callback::new(&app, &ui, &file_access(&ui));
+        move |delta, x, y| {
+            scope.input((), |app, ui| {
+                let width = app.get_viewport_width().max(1.0);
+                let height = app.get_viewport_height().max(1.0);
+                let ndc = (x * 2.0 / width - 1.0, 1.0 - y * 2.0 / height);
+                let mut ui = ui.borrow_mut();
+                let speed_change = navigation_defaults_ui::wheel_speed(
+                    &mut lock(&ui.session),
+                    ui.viewport.camera.projection,
+                    ui.viewport.looking(),
+                    delta,
+                );
+                match speed_change {
+                    Ok(true) => {
+                        navigation_defaults_ui::refresh_speed(&app, &lock(&ui.session));
+                        return;
+                    }
+                    Err(error) => {
+                        app.set_message(error.into());
+                        return;
+                    }
+                    Ok(false) => {}
+                }
+                ui.object_cycle.cancel();
                 if ui.interaction.active() {
                     let shared = ui.session.clone();
                     ui.interaction.cancel(&mut lock(&shared));
-                    refresh_interaction(&app.unwrap(), &lock(&shared));
+                    refresh_interaction(&app, &lock(&shared));
                 }
-            }
-            ui.borrow_mut().viewport.release_all();
-            ui.borrow_mut().brush_drag = None;
-            if ui.borrow_mut().clip_drag.take().is_some() {
-                lock(&session_of(&ui)).cancel_clip_preview();
-            }
-            lock(&session_of(&ui)).cancel_block_preview();
-            app.unwrap().set_flying(false);
+                if ui.clip_drag.take().is_some() {
+                    let mut session = lock(&ui.session);
+                    session.cancel_clip_preview();
+                    refresh_clip(&app, &session);
+                }
+                ui.viewport.wheel(delta, ndc, width / height)
+            })
+        }
+    });
+    app.on_viewport_focus_lost({
+        let scope = admission::Callback::new(&app, &ui, &file_access(&ui));
+        move || {
+            scope.focus_lost(
+                |app, ui| {
+                    {
+                        let mut ui = ui.borrow_mut();
+                        ui.object_cycle.cancel();
+                        let cancel_overlay = {
+                            let session = lock(&ui.session);
+                            overlay_handles_interactive(&app, &session, ui.viewport.camera)
+                                && session.overlay_corner_handle_dragging()
+                        };
+                        if cancel_overlay && let Some(controller) = &ui.overlay {
+                            let _ = controller.discard_handles(&mut lock(&ui.session));
+                            app.set_overlay_handling(false);
+                        }
+                        if let Some(controller) = &ui.terrain
+                            && controller.is_stroking()
+                            && controller.stroke_dragging()
+                        {
+                            controller.discard_stroke(&mut lock(&ui.session));
+                            app.set_terrain_stroking(false);
+                        }
+                        if let Some(controller) = &ui.terrain
+                            && controller.handle_dragging()
+                        {
+                            controller.cancel_handles(&mut lock(&ui.session), false);
+                            app.set_terrain_handling(false);
+                        }
+                        if ui.interaction.active() {
+                            let shared = ui.session.clone();
+                            ui.interaction.cancel(&mut lock(&shared));
+                            refresh_interaction(&app, &lock(&shared));
+                        }
+                    }
+                    if ui.borrow_mut().clip_drag.take().is_some() {
+                        lock(&session_of(&ui)).cancel_clip_preview();
+                    }
+                    lock(&session_of(&ui)).cancel_block_preview();
+                },
+                |ui| {
+                    let mut ui = ui.borrow_mut();
+                    ui.viewport.release_all();
+                    ui.brush_drag = None;
+                    ui.clip_drag = None;
+                    ui.object_cycle.cancel();
+                },
+            )
         }
     });
 
     let frame_timer = slint::Timer::default();
     let mut last_tick = Instant::now();
     frame_timer.start(slint::TimerMode::Repeated, Duration::from_millis(8), {
-        let (app, ui) = (app.as_weak(), ui.clone());
+        let scope = admission::Callback::new(&app, &ui, &file_access(&ui));
         move || {
-            let Some(app) = app.upgrade() else { return };
-            let now = Instant::now();
-            let dt = (now - last_tick).as_secs_f32().min(0.1);
-            last_tick = now;
+            scope.frame(|app, ui| {
+                let now = Instant::now();
+                let dt = (now - last_tick).as_secs_f32().min(0.1);
+                last_tick = now;
 
-            let ui = &mut *ui.borrow_mut();
-            let fly_speed = lock(&ui.session).fly_speed();
-            ui.viewport.update(dt, fly_speed);
-            let mut panel_dirty = false;
-            {
-                let mut session = lock(&ui.session);
-                session.poll_game();
-                let navigation_serial = session.navigation_preferences_serial();
-                if navigation_serial != ui.seen_navigation {
-                    ui.seen_navigation = navigation_serial;
-                    navigation_defaults_ui::refresh_speed(&app, &session);
-                }
-                app.set_compile_label(session.compile_label().into());
-                app.set_compile_token(
-                    session
-                        .compile_token()
-                        .map(|token| token.to_string())
-                        .unwrap_or_default()
-                        .into(),
-                );
-                app.set_compile_cancellable(session.compile_cancellable());
-                if ui
-                    .clip_drag
-                    .is_some_and(|drag| drag.epoch != session.clip_epoch())
+                let ui = &mut *ui.borrow_mut();
+                let fly_speed = lock(&ui.session).fly_speed();
+                ui.viewport.update(dt, fly_speed);
+                let mut panel_dirty = false;
                 {
-                    ui.clip_drag = None;
+                    let mut session = lock(&ui.session);
+                    session.poll_game();
+                    let navigation_serial = session.navigation_preferences_serial();
+                    if navigation_serial != ui.seen_navigation {
+                        ui.seen_navigation = navigation_serial;
+                        navigation_defaults_ui::refresh_speed(&app, &session);
+                    }
+                    app.set_compile_label(session.compile_label().into());
+                    app.set_compile_token(
+                        session
+                            .compile_token()
+                            .map(|token| token.to_string())
+                            .unwrap_or_default()
+                            .into(),
+                    );
+                    app.set_compile_cancellable(session.compile_cancellable());
+                    if ui
+                        .clip_drag
+                        .is_some_and(|drag| drag.epoch != session.clip_epoch())
+                    {
+                        ui.clip_drag = None;
+                    }
+                    if ui
+                        .brush_drag
+                        .is_some_and(|drag| drag.epoch != session.brush_epoch())
+                    {
+                        ui.brush_drag = None;
+                    }
+                    if session.materials().generation() != ui.seen_materials {
+                        ui.seen_materials = session.materials().generation();
+                        refresh_material_preview(&app, &mut session);
+                        refresh_texture_brush_sample_assets(&app, &session);
+                        if let Some(window) = &ui.primitive_window
+                            && window.window().is_visible()
+                        {
+                            primitive_ui::refresh(window, &mut session);
+                        }
+                        if let Some(window) = &ui.components_window
+                            && window.window().is_visible()
+                        {
+                            components_ui::refresh_material_previews(window, &session);
+                        }
+                        if let Some(window) = &ui.surface_window
+                            && window.window().is_visible()
+                        {
+                            materials::refresh_surface_material(window, &session);
+                        }
+                        if let Some(controller) = &ui.surface_group
+                            && controller.window.window().is_visible()
+                        {
+                            controller.refresh_material(&session);
+                        }
+                        if let Some(controller) = &ui.material_replace
+                            && controller.window.window().is_visible()
+                        {
+                            controller.refresh_materials(&session);
+                        }
+                        if let Some(controller) = &ui.polygon
+                            && controller.window.window().is_visible()
+                        {
+                            controller.refresh_material(&session);
+                        }
+                    }
+                    if session.definitions_serial() != ui.seen_definitions {
+                        ui.seen_definitions = session.definitions_serial();
+                        if let Some(window) = &ui.entity_window {
+                            refresh_entity_window(window, &session);
+                        }
+                        panel_dirty = true;
+                    }
+                    if session.camera_serial() != ui.seen_camera {
+                        ui.seen_camera = session.camera_serial();
+                        ui.viewport.camera = session.camera();
+                        ui.viewport.release_all();
+                        ui.brush_drag = None;
+                        ui.viewport.redraw();
+                        refresh_spatial(&app, &session);
+                    } else {
+                        session.publish_camera(ui.viewport.camera);
+                    }
+                    let previous_scene = ui.seen_scene;
+                    if let Some(scene_key) = prepare_scene_refresh(
+                        &mut session,
+                        previous_scene,
+                        &mut ui.viewport.options,
+                    ) {
+                        if session.scene_serial() != ui.seen_scene.serial {
+                            ui.brush_drag = None;
+                        }
+                        ui.seen_scene = scene_key;
+                        app.set_instance_contents(session.view().instance_contents);
+                        let mesh = session.build_scene();
+                        app.set_normal_map_status(mesh.normal_maps.summary().into());
+                        app.set_lighting_status(mesh.lighting.report.summary().into());
+                        app.set_instance_contents_status(
+                            session.instance_contents_rendered_report()["summary"]
+                                .as_str()
+                                .unwrap_or("Instance contents unavailable")
+                                .into(),
+                        );
+                        let mut preview_error = mesh.issue_summary();
+                        if let Some(report) = session.material_reload_report()
+                            && report.failed > 0
+                        {
+                            if !preview_error.is_empty() {
+                                preview_error.push('\n');
+                            }
+                            preview_error.push_str(&report.summary);
+                            if let Some(failure) = report.failures.first() {
+                                preview_error.push_str(&format!(
+                                    " · {}: {}",
+                                    failure.material, failure.error
+                                ));
+                            }
+                        }
+                        app.set_preview_error(preview_error.into());
+                        ui.viewport.set_scene(&ui.ctx, &mesh, session.materials());
+                        if let Some(controller) = &ui.volume
+                            && controller.window.window().is_visible()
+                        {
+                            controller.refresh(&session);
+                        }
+                        if let Some(controller) = &ui.surface_group
+                            && controller.window.window().is_visible()
+                        {
+                            controller.refresh(&session);
+                        }
+                        if let Some(controller) = &ui.material_replace
+                            && controller.window.window().is_visible()
+                        {
+                            controller.refresh(&session);
+                        }
+                        if let Some(controller) = &ui.model
+                            && controller.window.window().is_visible()
+                        {
+                            controller.refresh(&session);
+                        }
+                        if let Some(controller) = &ui.model_browser
+                            && controller.window.window().is_visible()
+                        {
+                            controller.refresh(&session);
+                        }
+                        if let Some(controller) = &ui.particles
+                            && controller.window.window().is_visible()
+                        {
+                            controller.refresh(&session);
+                        }
+                        if let Some(controller) = &ui.sounds
+                            && controller.window.window().is_visible()
+                        {
+                            controller.refresh(&mut session);
+                        }
+                        if let Some(controller) = &ui.repeat
+                            && controller.window.window().is_visible()
+                        {
+                            controller.refresh(&session);
+                        }
+                        if let Some(controller) = &ui.clipboard
+                            && controller.window.window().is_visible()
+                        {
+                            controller.refresh(&session);
+                        }
+                        if let Some(controller) = &ui.placement
+                            && (controller.window.window().is_visible() || controller.is_picking())
+                        {
+                            controller.refresh(&session);
+                        }
+                        if let Some(controller) = &ui.lighting
+                            && controller.window.window().is_visible()
+                        {
+                            controller.refresh(&session);
+                        }
+                        if let Some(controller) = &ui.terrain
+                            && (controller.window.window().is_visible()
+                                || controller.is_stroking()
+                                || controller.is_handling())
+                        {
+                            controller.refresh(&session);
+                        }
+                        if let Some(controller) = &ui.terrain_triangles
+                            && (controller.window.window().is_visible() || controller.is_picking())
+                        {
+                            controller.refresh(&session);
+                        }
+                        if let Some(window) = &ui.surface_window
+                            && window.window().is_visible()
+                            && let Some(target) = &ui.surface_target
+                        {
+                            refresh_surface_dialog(window, &mut session, target);
+                        }
+                        app.set_show_tools(session.view().tool_textures);
+                        app.set_sky_preview(session.view().sky_preview);
+                        refresh_sky_preview_status(&app, &mut session);
+                        app.set_surface_view(session.view().surface.index());
+                        app.set_smoothing_view_group(session.view().smoothing_group as i32);
+                        app.set_show_leak(session.view().leak_path);
+                        panel_dirty = true;
+                    }
+                    ui.seen_favorites = refresh_shared_favorites(
+                        ui.material_window.as_ref(),
+                        &mut session,
+                        ui.seen_favorites,
+                    );
+                    if session.view_serial() != ui.seen_view {
+                        ui.seen_view = session.view_serial();
+                        refresh_view_controls(&app, &session);
+                        app.set_fog_preview_status(
+                            session.fog_preview_state()["summary"]
+                                .as_str()
+                                .unwrap()
+                                .into(),
+                        );
+                        app.set_working_region_active(session.working_region_enabled());
+                        ui.viewport.options = session.view();
+                        ui.viewport.redraw();
+                        refresh_spatial(&app, &session);
+                        refresh_texture_brush_sample(&app, &mut session);
+                        if let Some(controller) = &ui.model_browser
+                            && controller.window.window().is_visible()
+                        {
+                            controller.refresh(&session);
+                        }
+                        if let Some(controller) = &ui.particles
+                            && controller.window.window().is_visible()
+                        {
+                            controller.refresh(&session);
+                        }
+                        if let Some(controller) = &ui.sounds
+                            && controller.window.window().is_visible()
+                        {
+                            controller.refresh(&mut session);
+                        }
+                        if let Some(controller) = &ui.repeat
+                            && controller.window.window().is_visible()
+                        {
+                            controller.refresh(&session);
+                        }
+                        if let Some(controller) = &ui.clipboard
+                            && controller.window.window().is_visible()
+                        {
+                            controller.refresh(&session);
+                        }
+                        if let Some(controller) = &ui.placement
+                            && (controller.window.window().is_visible() || controller.is_picking())
+                        {
+                            controller.refresh(&session);
+                        }
+                        if let Some(controller) = &ui.volume
+                            && controller.window.window().is_visible()
+                        {
+                            controller.refresh(&session);
+                        }
+                        if let Some(controller) = &ui.surface_group
+                            && controller.window.window().is_visible()
+                        {
+                            controller.refresh(&session);
+                        }
+                        if let Some(controller) = &ui.material_replace
+                            && controller.window.window().is_visible()
+                        {
+                            controller.refresh(&session);
+                        }
+                        if let Some(controller) = &ui.lighting
+                            && controller.window.window().is_visible()
+                        {
+                            controller.refresh(&session);
+                        }
+                        if let Some(controller) = &ui.terrain
+                            && controller.window.window().is_visible()
+                        {
+                            controller.refresh(&session);
+                        }
+                        if let Some(controller) = &ui.terrain_triangles
+                            && (controller.window.window().is_visible() || controller.is_picking())
+                        {
+                            controller.refresh(&session);
+                        }
+                        if let Some(window) = &ui.surface_window
+                            && window.window().is_visible()
+                        {
+                            refresh_surface_sample(window, &mut session);
+                        }
+                        if let Some(window) = &ui.material_window
+                            && window.window().is_visible()
+                        {
+                            refresh_material_catalog(window, &mut session);
+                            refresh_material_window(window, &mut session);
+                        }
+                        app.set_show_tools(session.view().tool_textures);
+                        app.set_sky_preview(session.view().sky_preview);
+                        refresh_sky_preview_status(&app, &mut session);
+                        app.set_surface_view(session.view().surface.index());
+                        app.set_smoothing_view_group(session.view().smoothing_group as i32);
+                        app.set_show_leak(session.view().leak_path);
+                        if !session.spatial().draw_block {
+                            ui.brush_drag = None;
+                        }
+                    }
+                    if session.log_serial() != ui.seen_log {
+                        ui.seen_log = session.log_serial();
+                        if let Some(entry) = session.recent_log().next() {
+                            app.set_message(
+                                format!("{}: {}", entry.actor.label(), entry.text).into(),
+                            );
+                        }
+                        panel_dirty = true;
+                    }
+                    let connections = (
+                        session.connection_serial(),
+                        session.scene_serial(),
+                        session.definitions_serial(),
+                    );
+                    if connections != ui.seen_connections {
+                        ui.seen_connections = connections;
+                        if let Some(window) = &ui.connection_window
+                            && window.window().is_visible()
+                        {
+                            connection_ui::refresh(window, &session);
+                        }
+                    }
+                    let management = (
+                        session.management_serial(),
+                        session.scene_serial(),
+                        session.definitions_serial(),
+                    );
+                    let checks = (
+                        session.map_check_serial(),
+                        session.scene_serial(),
+                        session.definitions_serial(),
+                    );
+                    if checks != ui.seen_checks {
+                        ui.seen_checks = checks;
+                        if let Some(window) = &ui.checks_window
+                            && window.window().is_visible()
+                        {
+                            checks_ui::refresh(window, &session);
+                        }
+                    }
+                    if session.primitive_serial() != ui.seen_primitive {
+                        ui.seen_primitive = session.primitive_serial();
+                        if let Some(window) = &ui.primitive_window
+                            && window.window().is_visible()
+                        {
+                            primitive_ui::refresh(window, &mut session);
+                        }
+                        if let Some(controller) = &ui.polygon
+                            && controller.window.window().is_visible()
+                        {
+                            controller.refresh(&session);
+                        }
+                    }
+                    let context = (session.context_serial(), session.scene_serial());
+                    if context != ui.seen_context {
+                        ui.seen_context = context;
+                        if let Some(window) = &ui.context_window
+                            && window.window().is_visible()
+                        {
+                            context_ui::refresh(window, &session);
+                        }
+                    }
+                    let recovery = (session.recovery_serial(), session.scene_serial());
+                    let recent_maps = (session.recent_maps_serial(), session.scene_serial());
+                    if recent_maps != ui.seen_recent_maps {
+                        ui.seen_recent_maps = recent_maps;
+                        if let Some(window) = &ui.recent_maps_window
+                            && window.window().is_visible()
+                        {
+                            recent_maps_ui::refresh(window, &session);
+                        }
+                    }
+                    if recovery != ui.seen_recovery {
+                        ui.seen_recovery = recovery;
+                        if let Some(window) = &ui.recovery_window
+                            && window.window().is_visible()
+                        {
+                            recovery_ui::refresh(window, &session);
+                        }
+                    }
+                    if management != ui.seen_management {
+                        ui.seen_management = management;
+                        if let Some(window) = &ui.properties_window
+                            && window.window().is_visible()
+                        {
+                            management_ui::refresh_properties(window, &session);
+                        }
+                        if let Some(window) = &ui.report_window
+                            && window.window().is_visible()
+                        {
+                            management_ui::refresh_report(window, &session);
+                        }
+                    }
+                    let rename = (
+                        session.rename_serial(),
+                        session.scene_serial(),
+                        session.definitions_serial(),
+                    );
+                    if rename != ui.seen_rename {
+                        ui.seen_rename = rename;
+                        if let Some(window) = &ui.rename_window
+                            && window.window().is_visible()
+                        {
+                            rename_ui::refresh(window, &session);
+                        }
+                    }
+                    if panel_dirty {
+                        refresh_panel(&app, &mut session);
+                    }
                 }
-                if ui
-                    .brush_drag
-                    .is_some_and(|drag| drag.epoch != session.brush_epoch())
-                {
-                    ui.brush_drag = None;
-                }
-                if session.materials().generation() != ui.seen_materials {
-                    ui.seen_materials = session.materials().generation();
-                    refresh_material_preview(&app, &mut session);
-                    refresh_texture_brush_sample_assets(&app, &session);
-                    if let Some(window) = &ui.primitive_window
+
+                if now.duration_since(ui.last_log_refresh) >= Duration::from_millis(500) {
+                    ui.last_log_refresh = now;
+                    if let Some(controller) = &ui.atlas
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&lock(&ui.session));
+                    }
+                    grid_defaults_ui::refresh_status(&app, &lock(&ui.session));
+                    app.set_preview_defaults_error(
+                        lock(&ui.session).preview_preferences_error().is_some(),
+                    );
+                    shortcuts_ui::refresh_hint(&app, &lock(&ui.session));
+                    if let Some(window) = &ui.hollow_window
                         && window.window().is_visible()
                     {
-                        primitive_ui::refresh(window, &mut session);
+                        hollow_ui::refresh_changed(window, &lock(&ui.session));
+                    }
+                    if let Some(window) = &ui.carve_window
+                        && window.window().is_visible()
+                    {
+                        carve_ui::refresh_changed(window, &lock(&ui.session));
+                    }
+                    if let Some(window) = &ui.merge_window
+                        && window.window().is_visible()
+                    {
+                        merge_ui::refresh_changed(window, &lock(&ui.session));
                     }
                     if let Some(window) = &ui.components_window
                         && window.window().is_visible()
                     {
-                        components_ui::refresh_material_previews(window, &session);
+                        window.set_aspect(
+                            (app.get_viewport_width() / app.get_viewport_height().max(1.0))
+                                .max(0.01),
+                        );
+                        components_ui::refresh_changed(window, &lock(&ui.session));
                     }
-                    if let Some(window) = &ui.surface_window
+                    if let Some(window) = &ui.pointfile_window
                         && window.window().is_visible()
                     {
-                        materials::refresh_surface_material(window, &session);
+                        window.set_aspect(
+                            (app.get_viewport_width() / app.get_viewport_height().max(1.0))
+                                .max(0.01),
+                        );
+                        pointfile_ui::refresh_changed(window, &lock(&ui.session));
                     }
-                    if let Some(controller) = &ui.surface_group
+                    if let Some(window) = &ui.statistics_window
+                        && window.window().is_visible()
+                    {
+                        statistics_ui::refresh_changed(window, &lock(&ui.session));
+                    }
+                    if let Some(controller) = &ui.object_groups
                         && controller.window.window().is_visible()
                     {
-                        controller.refresh_material(&session);
+                        controller.refresh(&lock(&ui.session));
                     }
-                    if let Some(controller) = &ui.material_replace
+                    if let Some(controller) = &ui.working_region
                         && controller.window.window().is_visible()
                     {
-                        controller.refresh_materials(&session);
+                        controller.refresh(&mut lock(&ui.session));
                     }
-                    if let Some(controller) = &ui.polygon
+                    if let Some(controller) = &ui.compile_region
                         && controller.window.window().is_visible()
                     {
-                        controller.refresh_material(&session);
+                        controller.refresh(&lock(&ui.session));
+                    }
+                    if let Some(controller) = &ui.overlay
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&lock(&ui.session));
+                    }
+                    if let Some(controller) = &ui.linked_path
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&lock(&ui.session));
+                    }
+                    if let Some(controller) = &ui.cubemap
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&lock(&ui.session));
+                    }
+                    if let Some(controller) = &ui.layers
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&lock(&ui.session));
+                    }
+                    if let Some(controller) = &ui.prefabs {
+                        controller.refresh(&lock(&ui.session));
+                    }
+                    if let Some(controller) = &ui.history
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&lock(&ui.session));
+                    }
+                    if let Some(controller) = &ui.saved_views
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&lock(&ui.session));
+                    }
+                    if let Some(controller) = &ui.measurements
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&lock(&ui.session));
+                    }
+                    if let Some(controller) = &ui.grid_defaults
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&lock(&ui.session));
+                    }
+                    if let Some(controller) = &ui.navigation_defaults
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&lock(&ui.session));
+                    }
+                    if let Some(controller) = &ui.preview_defaults
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&lock(&ui.session));
+                    }
+                    if let Some(controller) = &ui.shortcuts
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&lock(&ui.session));
+                    }
+                    if let Some(controller) = &ui.sounds
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh_playback(&mut lock(&ui.session));
+                    }
+                    if let Some(controller) = &ui.compile_status
+                        && controller.is_visible()
+                    {
+                        controller.refresh(&lock(&ui.session));
+                    }
+                    if let Some(window) = &ui.game_log_window {
+                        let text = lock(&ui.session)
+                            .game_log(game::DEFAULT_LOG_LINES)
+                            .map(|log| log.text())
+                            .unwrap_or_else(|error| error);
+                        window.set_content(text.into());
                     }
                 }
-                if session.definitions_serial() != ui.seen_definitions {
-                    ui.seen_definitions = session.definitions_serial();
-                    if let Some(window) = &ui.entity_window {
-                        refresh_entity_window(window, &session);
-                    }
-                    panel_dirty = true;
+
+                let entity_picking =
+                    lock(&ui.session).get_entity_placement()["draft"]["picking"] == true;
+                let measurement_picking =
+                    !lock(&ui.session).measurement_state()["draft"]["picking"].is_null();
+                if let Some(controller) = &ui.overlay {
+                    controller.set_viewport((
+                        app.get_viewport_width().round().max(1.0) as u32,
+                        app.get_viewport_height().round().max(1.0) as u32,
+                    ));
                 }
-                if session.camera_serial() != ui.seen_camera {
-                    ui.seen_camera = session.camera_serial();
-                    ui.viewport.camera = session.camera();
-                    ui.viewport.release_all();
-                    ui.brush_drag = None;
-                    ui.viewport.redraw();
-                    refresh_spatial(&app, &session);
+                refresh_overlay_handle_controls(&app, &lock(&ui.session), ui.viewport.camera);
+                refresh_pivot_pick_controls(&app, &lock(&ui.session), ui.viewport.camera);
+                if let Some(controller) = &ui.linked_path {
+                    controller.set_viewport((
+                        app.get_viewport_width().round().max(1.0) as u32,
+                        app.get_viewport_height().round().max(1.0) as u32,
+                    ));
+                }
+                let path_picking = !lock(&ui.session).linked_path()["preview"]["picking"].is_null();
+                if let Some(controller) = &ui.measurements {
+                    controller.set_viewport((
+                        app.get_viewport_width().round().max(1.0) as u32,
+                        app.get_viewport_height().round().max(1.0) as u32,
+                    ));
+                }
+                app.set_surface_picking(
+                    lock(&ui.session).surface_placement()["picking"] == true
+                        || entity_picking
+                        || measurement_picking
+                        || path_picking,
+                );
+                if let Some(controller) = &ui.entity_placement
+                    && controller.window.window().is_visible()
+                {
+                    controller.refresh(&lock(&ui.session));
+                }
+                app.set_terrain_triangle_picking(
+                    ui.terrain_triangles
+                        .as_ref()
+                        .is_some_and(|controller| controller.is_picking()),
+                );
+                app.set_terrain_center_picking(
+                    ui.terrain
+                        .as_ref()
+                        .is_some_and(|controller| controller.is_picking()),
+                );
+                app.set_terrain_stroking(
+                    ui.terrain
+                        .as_ref()
+                        .is_some_and(|controller| controller.is_stroking()),
+                );
+                app.set_terrain_handling(
+                    ui.terrain
+                        .as_ref()
+                        .is_some_and(|controller| controller.is_handling()),
+                );
+                let scale = app.window().scale_factor();
+                let size = (
+                    (app.get_viewport_width() * scale).round() as u32,
+                    (app.get_viewport_height() * scale).round() as u32,
+                );
+                if let Some(frame) = ui.viewport.render(&ui.ctx, size, scale) {
+                    app.set_frame(frame);
+                }
+                let c = &ui.viewport.camera;
+                let status = if c.projection == Projection::Perspective {
+                    format!(
+                        "{:.0} {:.0} {:.0}  yaw {:.0}° pitch {:.0}°  speed {:.0}",
+                        c.position.x,
+                        c.position.y,
+                        c.position.z,
+                        c.yaw_degrees,
+                        c.pitch_degrees,
+                        fly_speed
+                    )
                 } else {
-                    session.publish_camera(ui.viewport.camera);
-                }
-                let previous_scene = ui.seen_scene;
-                if let Some(scene_key) =
-                    prepare_scene_refresh(&mut session, previous_scene, &mut ui.viewport.options)
-                {
-                    if session.scene_serial() != ui.seen_scene.serial {
-                        ui.brush_drag = None;
-                    }
-                    ui.seen_scene = scene_key;
-                    app.set_instance_contents(session.view().instance_contents);
-                    let mesh = session.build_scene();
-                    app.set_normal_map_status(mesh.normal_maps.summary().into());
-                    app.set_lighting_status(mesh.lighting.report.summary().into());
-                    app.set_instance_contents_status(
-                        session.instance_contents_rendered_report()["summary"]
-                            .as_str()
-                            .unwrap_or("Instance contents unavailable")
-                            .into(),
-                    );
-                    let mut preview_error = mesh.issue_summary();
-                    if let Some(report) = session.material_reload_report()
-                        && report.failed > 0
-                    {
-                        if !preview_error.is_empty() {
-                            preview_error.push('\n');
-                        }
-                        preview_error.push_str(&report.summary);
-                        if let Some(failure) = report.failures.first() {
-                            preview_error
-                                .push_str(&format!(" · {}: {}", failure.material, failure.error));
-                        }
-                    }
-                    app.set_preview_error(preview_error.into());
-                    ui.viewport.set_scene(&ui.ctx, &mesh, session.materials());
-                    if let Some(controller) = &ui.volume
-                        && controller.window.window().is_visible()
-                    {
-                        controller.refresh(&session);
-                    }
-                    if let Some(controller) = &ui.surface_group
-                        && controller.window.window().is_visible()
-                    {
-                        controller.refresh(&session);
-                    }
-                    if let Some(controller) = &ui.material_replace
-                        && controller.window.window().is_visible()
-                    {
-                        controller.refresh(&session);
-                    }
-                    if let Some(controller) = &ui.model
-                        && controller.window.window().is_visible()
-                    {
-                        controller.refresh(&session);
-                    }
-                    if let Some(controller) = &ui.model_browser
-                        && controller.window.window().is_visible()
-                    {
-                        controller.refresh(&session);
-                    }
-                    if let Some(controller) = &ui.particles
-                        && controller.window.window().is_visible()
-                    {
-                        controller.refresh(&session);
-                    }
-                    if let Some(controller) = &ui.sounds
-                        && controller.window.window().is_visible()
-                    {
-                        controller.refresh(&mut session);
-                    }
-                    if let Some(controller) = &ui.repeat
-                        && controller.window.window().is_visible()
-                    {
-                        controller.refresh(&session);
-                    }
-                    if let Some(controller) = &ui.clipboard
-                        && controller.window.window().is_visible()
-                    {
-                        controller.refresh(&session);
-                    }
-                    if let Some(controller) = &ui.placement
-                        && (controller.window.window().is_visible() || controller.is_picking())
-                    {
-                        controller.refresh(&session);
-                    }
-                    if let Some(controller) = &ui.lighting
-                        && controller.window.window().is_visible()
-                    {
-                        controller.refresh(&session);
-                    }
-                    if let Some(controller) = &ui.terrain
-                        && (controller.window.window().is_visible()
-                            || controller.is_stroking()
-                            || controller.is_handling())
-                    {
-                        controller.refresh(&session);
-                    }
-                    if let Some(controller) = &ui.terrain_triangles
-                        && (controller.window.window().is_visible() || controller.is_picking())
-                    {
-                        controller.refresh(&session);
-                    }
-                    if let Some(window) = &ui.surface_window
-                        && window.window().is_visible()
-                        && let Some(target) = &ui.surface_target
-                    {
-                        refresh_surface_dialog(window, &mut session, target);
-                    }
-                    app.set_show_tools(session.view().tool_textures);
-                    app.set_sky_preview(session.view().sky_preview);
-                    refresh_sky_preview_status(&app, &mut session);
-                    app.set_surface_view(session.view().surface.index());
-                    app.set_smoothing_view_group(session.view().smoothing_group as i32);
-                    app.set_show_leak(session.view().leak_path);
-                    panel_dirty = true;
-                }
-                ui.seen_favorites = refresh_shared_favorites(
-                    ui.material_window.as_ref(),
-                    &mut session,
-                    ui.seen_favorites,
-                );
-                if session.view_serial() != ui.seen_view {
-                    ui.seen_view = session.view_serial();
-                    refresh_view_controls(&app, &session);
-                    app.set_fog_preview_status(
-                        session.fog_preview_state()["summary"]
-                            .as_str()
-                            .unwrap()
-                            .into(),
-                    );
-                    app.set_working_region_active(session.working_region_enabled());
-                    ui.viewport.options = session.view();
-                    ui.viewport.redraw();
-                    refresh_spatial(&app, &session);
-                    refresh_texture_brush_sample(&app, &mut session);
-                    if let Some(controller) = &ui.model_browser
-                        && controller.window.window().is_visible()
-                    {
-                        controller.refresh(&session);
-                    }
-                    if let Some(controller) = &ui.particles
-                        && controller.window.window().is_visible()
-                    {
-                        controller.refresh(&session);
-                    }
-                    if let Some(controller) = &ui.sounds
-                        && controller.window.window().is_visible()
-                    {
-                        controller.refresh(&mut session);
-                    }
-                    if let Some(controller) = &ui.repeat
-                        && controller.window.window().is_visible()
-                    {
-                        controller.refresh(&session);
-                    }
-                    if let Some(controller) = &ui.clipboard
-                        && controller.window.window().is_visible()
-                    {
-                        controller.refresh(&session);
-                    }
-                    if let Some(controller) = &ui.placement
-                        && (controller.window.window().is_visible() || controller.is_picking())
-                    {
-                        controller.refresh(&session);
-                    }
-                    if let Some(controller) = &ui.volume
-                        && controller.window.window().is_visible()
-                    {
-                        controller.refresh(&session);
-                    }
-                    if let Some(controller) = &ui.surface_group
-                        && controller.window.window().is_visible()
-                    {
-                        controller.refresh(&session);
-                    }
-                    if let Some(controller) = &ui.material_replace
-                        && controller.window.window().is_visible()
-                    {
-                        controller.refresh(&session);
-                    }
-                    if let Some(controller) = &ui.lighting
-                        && controller.window.window().is_visible()
-                    {
-                        controller.refresh(&session);
-                    }
-                    if let Some(controller) = &ui.terrain
-                        && controller.window.window().is_visible()
-                    {
-                        controller.refresh(&session);
-                    }
-                    if let Some(controller) = &ui.terrain_triangles
-                        && (controller.window.window().is_visible() || controller.is_picking())
-                    {
-                        controller.refresh(&session);
-                    }
-                    if let Some(window) = &ui.surface_window
-                        && window.window().is_visible()
-                    {
-                        refresh_surface_sample(window, &mut session);
-                    }
-                    if let Some(window) = &ui.material_window
-                        && window.window().is_visible()
-                    {
-                        refresh_material_catalog(window, &mut session);
-                        refresh_material_window(window, &mut session);
-                    }
-                    app.set_show_tools(session.view().tool_textures);
-                    app.set_sky_preview(session.view().sky_preview);
-                    refresh_sky_preview_status(&app, &mut session);
-                    app.set_surface_view(session.view().surface.index());
-                    app.set_smoothing_view_group(session.view().smoothing_group as i32);
-                    app.set_show_leak(session.view().leak_path);
-                    if !session.spatial().draw_block {
-                        ui.brush_drag = None;
-                    }
-                }
-                if session.log_serial() != ui.seen_log {
-                    ui.seen_log = session.log_serial();
-                    if let Some(entry) = session.recent_log().next() {
-                        app.set_message(format!("{}: {}", entry.actor.label(), entry.text).into());
-                    }
-                    panel_dirty = true;
-                }
-                let connections = (
-                    session.connection_serial(),
-                    session.scene_serial(),
-                    session.definitions_serial(),
-                );
-                if connections != ui.seen_connections {
-                    ui.seen_connections = connections;
-                    if let Some(window) = &ui.connection_window
-                        && window.window().is_visible()
-                    {
-                        connection_ui::refresh(window, &session);
-                    }
-                }
-                let management = (
-                    session.management_serial(),
-                    session.scene_serial(),
-                    session.definitions_serial(),
-                );
-                let checks = (
-                    session.map_check_serial(),
-                    session.scene_serial(),
-                    session.definitions_serial(),
-                );
-                if checks != ui.seen_checks {
-                    ui.seen_checks = checks;
-                    if let Some(window) = &ui.checks_window
-                        && window.window().is_visible()
-                    {
-                        checks_ui::refresh(window, &session);
-                    }
-                }
-                if session.primitive_serial() != ui.seen_primitive {
-                    ui.seen_primitive = session.primitive_serial();
-                    if let Some(window) = &ui.primitive_window
-                        && window.window().is_visible()
-                    {
-                        primitive_ui::refresh(window, &mut session);
-                    }
-                    if let Some(controller) = &ui.polygon
-                        && controller.window.window().is_visible()
-                    {
-                        controller.refresh(&session);
-                    }
-                }
-                let context = (session.context_serial(), session.scene_serial());
-                if context != ui.seen_context {
-                    ui.seen_context = context;
-                    if let Some(window) = &ui.context_window
-                        && window.window().is_visible()
-                    {
-                        context_ui::refresh(window, &session);
-                    }
-                }
-                let recovery = (session.recovery_serial(), session.scene_serial());
-                let recent_maps = (session.recent_maps_serial(), session.scene_serial());
-                if recent_maps != ui.seen_recent_maps {
-                    ui.seen_recent_maps = recent_maps;
-                    if let Some(window) = &ui.recent_maps_window
-                        && window.window().is_visible()
-                    {
-                        recent_maps_ui::refresh(window, &session);
-                    }
-                }
-                if recovery != ui.seen_recovery {
-                    ui.seen_recovery = recovery;
-                    if let Some(window) = &ui.recovery_window
-                        && window.window().is_visible()
-                    {
-                        recovery_ui::refresh(window, &session);
-                    }
-                }
-                if management != ui.seen_management {
-                    ui.seen_management = management;
-                    if let Some(window) = &ui.properties_window
-                        && window.window().is_visible()
-                    {
-                        management_ui::refresh_properties(window, &session);
-                    }
-                    if let Some(window) = &ui.report_window
-                        && window.window().is_visible()
-                    {
-                        management_ui::refresh_report(window, &session);
-                    }
-                }
-                let rename = (
-                    session.rename_serial(),
-                    session.scene_serial(),
-                    session.definitions_serial(),
-                );
-                if rename != ui.seen_rename {
-                    ui.seen_rename = rename;
-                    if let Some(window) = &ui.rename_window
-                        && window.window().is_visible()
-                    {
-                        rename_ui::refresh(window, &session);
-                    }
-                }
-                if panel_dirty {
-                    refresh_panel(&app, &mut session);
-                }
-            }
-
-            if now.duration_since(ui.last_log_refresh) >= Duration::from_millis(500) {
-                ui.last_log_refresh = now;
-                if let Some(controller) = &ui.atlas
-                    && controller.window.window().is_visible()
-                {
-                    controller.refresh(&lock(&ui.session));
-                }
-                grid_defaults_ui::refresh_status(&app, &lock(&ui.session));
-                app.set_preview_defaults_error(
-                    lock(&ui.session).preview_preferences_error().is_some(),
-                );
-                shortcuts_ui::refresh_hint(&app, &lock(&ui.session));
-                if let Some(window) = &ui.hollow_window
-                    && window.window().is_visible()
-                {
-                    hollow_ui::refresh_changed(window, &lock(&ui.session));
-                }
-                if let Some(window) = &ui.carve_window
-                    && window.window().is_visible()
-                {
-                    carve_ui::refresh_changed(window, &lock(&ui.session));
-                }
-                if let Some(window) = &ui.merge_window
-                    && window.window().is_visible()
-                {
-                    merge_ui::refresh_changed(window, &lock(&ui.session));
-                }
-                if let Some(window) = &ui.components_window
-                    && window.window().is_visible()
-                {
-                    window.set_aspect(
-                        (app.get_viewport_width() / app.get_viewport_height().max(1.0)).max(0.01),
-                    );
-                    components_ui::refresh_changed(window, &lock(&ui.session));
-                }
-                if let Some(window) = &ui.pointfile_window
-                    && window.window().is_visible()
-                {
-                    window.set_aspect(
-                        (app.get_viewport_width() / app.get_viewport_height().max(1.0)).max(0.01),
-                    );
-                    pointfile_ui::refresh_changed(window, &lock(&ui.session));
-                }
-                if let Some(window) = &ui.statistics_window
-                    && window.window().is_visible()
-                {
-                    statistics_ui::refresh_changed(window, &lock(&ui.session));
-                }
-                if let Some(controller) = &ui.object_groups
-                    && controller.window.window().is_visible()
-                {
-                    controller.refresh(&lock(&ui.session));
-                }
-                if let Some(controller) = &ui.working_region
-                    && controller.window.window().is_visible()
-                {
-                    controller.refresh(&mut lock(&ui.session));
-                }
-                if let Some(controller) = &ui.compile_region
-                    && controller.window.window().is_visible()
-                {
-                    controller.refresh(&lock(&ui.session));
-                }
-                if let Some(controller) = &ui.overlay
-                    && controller.window.window().is_visible()
-                {
-                    controller.refresh(&lock(&ui.session));
-                }
-                if let Some(controller) = &ui.linked_path
-                    && controller.window.window().is_visible()
-                {
-                    controller.refresh(&lock(&ui.session));
-                }
-                if let Some(controller) = &ui.cubemap
-                    && controller.window.window().is_visible()
-                {
-                    controller.refresh(&lock(&ui.session));
-                }
-                if let Some(controller) = &ui.layers
-                    && controller.window.window().is_visible()
-                {
-                    controller.refresh(&lock(&ui.session));
-                }
-                if let Some(controller) = &ui.prefabs {
-                    controller.refresh(&lock(&ui.session));
-                }
-                if let Some(controller) = &ui.history
-                    && controller.window.window().is_visible()
-                {
-                    controller.refresh(&lock(&ui.session));
-                }
-                if let Some(controller) = &ui.saved_views
-                    && controller.window.window().is_visible()
-                {
-                    controller.refresh(&lock(&ui.session));
-                }
-                if let Some(controller) = &ui.measurements
-                    && controller.window.window().is_visible()
-                {
-                    controller.refresh(&lock(&ui.session));
-                }
-                if let Some(controller) = &ui.grid_defaults
-                    && controller.window.window().is_visible()
-                {
-                    controller.refresh(&lock(&ui.session));
-                }
-                if let Some(controller) = &ui.navigation_defaults
-                    && controller.window.window().is_visible()
-                {
-                    controller.refresh(&lock(&ui.session));
-                }
-                if let Some(controller) = &ui.preview_defaults
-                    && controller.window.window().is_visible()
-                {
-                    controller.refresh(&lock(&ui.session));
-                }
-                if let Some(controller) = &ui.shortcuts
-                    && controller.window.window().is_visible()
-                {
-                    controller.refresh(&lock(&ui.session));
-                }
-                if let Some(controller) = &ui.sounds
-                    && controller.window.window().is_visible()
-                {
-                    controller.refresh_playback(&mut lock(&ui.session));
-                }
-                if let Some(controller) = &ui.compile_status
-                    && controller.is_visible()
-                {
-                    controller.refresh(&lock(&ui.session));
-                }
-                if let Some(window) = &ui.game_log_window {
-                    let text = lock(&ui.session)
-                        .game_log(game::DEFAULT_LOG_LINES)
-                        .map(|log| log.text())
-                        .unwrap_or_else(|error| error);
-                    window.set_content(text.into());
-                }
-            }
-
-            let entity_picking =
-                lock(&ui.session).get_entity_placement()["draft"]["picking"] == true;
-            let measurement_picking =
-                !lock(&ui.session).measurement_state()["draft"]["picking"].is_null();
-            if let Some(controller) = &ui.overlay {
-                controller.set_viewport((
-                    app.get_viewport_width().round().max(1.0) as u32,
-                    app.get_viewport_height().round().max(1.0) as u32,
-                ));
-            }
-            refresh_overlay_handle_controls(&app, &lock(&ui.session), ui.viewport.camera);
-            refresh_pivot_pick_controls(&app, &lock(&ui.session), ui.viewport.camera);
-            if let Some(controller) = &ui.linked_path {
-                controller.set_viewport((
-                    app.get_viewport_width().round().max(1.0) as u32,
-                    app.get_viewport_height().round().max(1.0) as u32,
-                ));
-            }
-            let path_picking = !lock(&ui.session).linked_path()["preview"]["picking"].is_null();
-            if let Some(controller) = &ui.measurements {
-                controller.set_viewport((
-                    app.get_viewport_width().round().max(1.0) as u32,
-                    app.get_viewport_height().round().max(1.0) as u32,
-                ));
-            }
-            app.set_surface_picking(
-                lock(&ui.session).surface_placement()["picking"] == true
-                    || entity_picking
-                    || measurement_picking
-                    || path_picking,
-            );
-            if let Some(controller) = &ui.entity_placement
-                && controller.window.window().is_visible()
-            {
-                controller.refresh(&lock(&ui.session));
-            }
-            app.set_terrain_triangle_picking(
-                ui.terrain_triangles
-                    .as_ref()
-                    .is_some_and(|controller| controller.is_picking()),
-            );
-            app.set_terrain_center_picking(
-                ui.terrain
-                    .as_ref()
-                    .is_some_and(|controller| controller.is_picking()),
-            );
-            app.set_terrain_stroking(
-                ui.terrain
-                    .as_ref()
-                    .is_some_and(|controller| controller.is_stroking()),
-            );
-            app.set_terrain_handling(
-                ui.terrain
-                    .as_ref()
-                    .is_some_and(|controller| controller.is_handling()),
-            );
-            let scale = app.window().scale_factor();
-            let size = (
-                (app.get_viewport_width() * scale).round() as u32,
-                (app.get_viewport_height() * scale).round() as u32,
-            );
-            if let Some(frame) = ui.viewport.render(&ui.ctx, size, scale) {
-                app.set_frame(frame);
-            }
-            let c = &ui.viewport.camera;
-            let status = if c.projection == Projection::Perspective {
-                format!(
-                    "{:.0} {:.0} {:.0}  yaw {:.0}° pitch {:.0}°  speed {:.0}",
-                    c.position.x,
-                    c.position.y,
-                    c.position.z,
-                    c.yaw_degrees,
-                    c.pitch_degrees,
-                    fly_speed
-                )
-            } else {
-                let center = c.position + c.forward() * render::Camera::ORTHO_DISTANCE;
-                format!(
-                    "{} view · center {:.1} {:.1} {:.1} · {:.1} units tall",
-                    c.projection.name(),
-                    center.x,
-                    center.y,
-                    center.z,
-                    c.ortho_height
-                )
-            };
-            app.set_camera(status.into());
+                    let center = c.position + c.forward() * render::Camera::ORTHO_DISTANCE;
+                    format!(
+                        "{} view · center {:.1} {:.1} {:.1} · {:.1} units tall",
+                        c.projection.name(),
+                        center.x,
+                        center.y,
+                        center.z,
+                        c.ortho_height
+                    )
+                };
+                app.set_camera(status.into());
+            })
         }
     });
 

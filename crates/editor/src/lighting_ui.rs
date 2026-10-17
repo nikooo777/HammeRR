@@ -4,9 +4,15 @@ use std::rc::Rc;
 use map_core::surface::{self, FaceId, SurfaceEdit};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
-use crate::runtime::{SharedSession, lock};
+use crate::runtime::{DocumentAccess, DocumentContinuation};
 use crate::session::{Actor, Session};
 use crate::{LightingGroup, LightingWindow};
+
+#[cfg(test)]
+use crate::runtime::SharedSession;
+
+#[cfg(test)]
+mod admission_tests;
 
 #[derive(Clone)]
 struct Target {
@@ -111,115 +117,161 @@ fn apply(
     Ok(count)
 }
 
+fn edited(window: &LightingWindow, session: &mut Session, target: &RefCell<Option<Target>>) {
+    if let Some(target) = target.borrow_mut().as_mut() {
+        target.cancel_preview(session);
+    }
+    window.set_message("Fields changed. Preview or apply the new settings.".into());
+}
+
+fn callback(
+    window: &slint::Weak<LightingWindow>,
+    continuation: &DocumentContinuation,
+    body: impl FnOnce(LightingWindow, &mut Session),
+) {
+    let Some(window) = window.upgrade() else {
+        return;
+    };
+    let result = continuation.upgrade().and_then(|access| {
+        access.with_session(|session| {
+            body(window.clone_strong(), session);
+            Ok(())
+        })
+    });
+    if let Err(error) = result {
+        window.set_message(error.into());
+    }
+}
+
 impl Controller {
+    #[cfg(test)]
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
+        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
+    }
+
+    pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
+        let continuation = access.downgrade();
         let window = LightingWindow::new()?;
         let target = Rc::new(RefCell::new(None::<Target>));
         window.on_edited({
-            let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
+            let (window, continuation, target) =
+                (window.as_weak(), continuation.clone(), target.clone());
             move || {
-                if let Some(target) = target.borrow_mut().as_mut() {
-                    target.cancel_preview(&mut lock(&shared));
-                }
-                window
-                    .unwrap()
-                    .set_message("Fields changed. Preview or apply the new settings.".into());
+                callback(&window, &continuation, |window, session| {
+                    edited(&window, session, &target)
+                })
             }
         });
         window.on_toggle_group({
-            let window = window.as_weak();
+            let (window, continuation, target) =
+                (window.as_weak(), continuation.clone(), target.clone());
             move |index, checked| {
-                let window = window.unwrap();
-                let groups = window.get_groups();
-                if let Some(mut group) = groups.row_data(index as usize) {
-                    group.state = i32::from(checked);
-                    group.action = if checked { 1 } else { 2 };
-                    groups.set_row_data(index as usize, group);
-                    window.invoke_edited();
-                }
+                callback(&window, &continuation, |window, session| {
+                    let groups = window.get_groups();
+                    if let Some(mut group) = groups.row_data(index as usize) {
+                        group.state = i32::from(checked);
+                        group.action = if checked { 1 } else { 2 };
+                        groups.set_row_data(index as usize, group);
+                        edited(&window, session, &target);
+                    }
+                })
             }
         });
         window.on_clear_groups({
-            let window = window.as_weak();
+            let (window, continuation, target) =
+                (window.as_weak(), continuation.clone(), target.clone());
             move || {
-                let window = window.unwrap();
-                let groups = window.get_groups();
-                for index in 0..groups.row_count() {
-                    if let Some(mut group) = groups.row_data(index) {
-                        group.state = 0;
-                        group.action = 2;
-                        groups.set_row_data(index, group);
+                callback(&window, &continuation, |window, session| {
+                    let groups = window.get_groups();
+                    for index in 0..groups.row_count() {
+                        if let Some(mut group) = groups.row_data(index) {
+                            group.state = 0;
+                            group.action = 2;
+                            groups.set_row_data(index, group);
+                        }
                     }
-                }
-                window.invoke_edited();
+                    edited(&window, session, &target);
+                })
             }
         });
         window.on_reset_groups({
-            let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
+            let (window, continuation, target) =
+                (window.as_weak(), continuation.clone(), target.clone());
             move || {
-                let window = window.unwrap();
-                if let Some(target) = target.borrow().as_ref() {
-                    window.set_groups(groups(&lock(&shared), &target.context.faces));
-                }
-                window.invoke_edited();
+                callback(&window, &continuation, |window, session| {
+                    if let Some(target) = target.borrow().as_ref() {
+                        window.set_groups(groups(session, &target.context.faces));
+                    }
+                    edited(&window, session, &target);
+                })
             }
         });
         window.on_view_changed({
-            let (window, shared) = (window.as_weak(), shared.clone());
+            let (window, continuation) = (window.as_weak(), continuation.clone());
             move || {
-                let window = window.unwrap();
-                let mode =
-                    render::SurfaceView::from_index(window.get_view_mode()).unwrap_or_default();
-                let result = lock(&shared).set_surface_view(mode, window.get_view_group() as u32);
-                window.set_message(result.err().unwrap_or_default().into());
+                callback(&window, &continuation, |window, session| {
+                    let mode =
+                        render::SurfaceView::from_index(window.get_view_mode()).unwrap_or_default();
+                    let result = session.set_surface_view(mode, window.get_view_group() as u32);
+                    window.set_message(result.err().unwrap_or_default().into());
+                })
             }
         });
         window.on_preview_edit({
-            let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
+            let (window, continuation, target) =
+                (window.as_weak(), continuation.clone(), target.clone());
             move || {
-                let window = window.unwrap();
-                if let Some(target) = target.borrow_mut().as_mut() {
-                    let result = apply(&window, &mut lock(&shared), target, true);
-                    window.set_message(
-                        match result {
-                            Ok(count) => format!(
-                                "Preview: {count} faces change. Apply to keep these settings."
-                            ),
-                            Err(error) => error,
-                        }
-                        .into(),
-                    );
-                }
+                callback(&window, &continuation, |window, session| {
+                    if let Some(target) = target.borrow_mut().as_mut() {
+                        let result = apply(&window, session, target, true);
+                        window.set_message(
+                            match result {
+                                Ok(count) => format!(
+                                    "Preview: {count} faces change. Apply to keep these settings."
+                                ),
+                                Err(error) => error,
+                            }
+                            .into(),
+                        );
+                    }
+                })
             }
         });
         window.on_apply({
-            let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
+            let (window, continuation, target) =
+                (window.as_weak(), continuation.clone(), target.clone());
             move || {
-                let window = window.unwrap();
-                if let Some(target) = target.borrow_mut().as_mut() {
-                    match apply(&window, &mut lock(&shared), target, false) {
-                        Ok(_) => {
-                            let _ = window.hide();
+                callback(&window, &continuation, |window, session| {
+                    if let Some(target) = target.borrow_mut().as_mut() {
+                        match apply(&window, session, target, false) {
+                            Ok(_) => {
+                                let _ = window.hide();
+                            }
+                            Err(error) => window.set_message(error.into()),
                         }
-                        Err(error) => window.set_message(error.into()),
                     }
-                }
+                })
             }
         });
         window.on_cancel({
-            let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
+            let (window, continuation, target) =
+                (window.as_weak(), continuation.clone(), target.clone());
             move || {
-                if let Some(target) = target.borrow_mut().as_mut() {
-                    target.cancel_preview(&mut lock(&shared));
+                callback(&window, &continuation, |_, session| {
+                    if let Some(target) = target.borrow_mut().as_mut() {
+                        target.cancel_preview(session);
+                    }
+                });
+                if let Some(window) = window.upgrade() {
+                    let _ = window.hide();
                 }
-                let _ = window.unwrap().hide();
             }
         });
         window.window().on_close_requested({
-            let (shared, target) = (shared.clone(), target.clone());
+            let window = window.as_weak();
             move || {
-                if let Some(target) = target.borrow_mut().as_mut() {
-                    target.cancel_preview(&mut lock(&shared));
+                if let Some(window) = window.upgrade() {
+                    window.invoke_cancel();
                 }
                 slint::CloseRequestResponse::HideWindow
             }

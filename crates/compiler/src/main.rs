@@ -3,7 +3,7 @@ use std::process::ExitCode;
 
 use compiler::{
     CompileContext, Control, FileIdentity, Level, LightingMode, Options, OutputLease, PhysicsMode,
-    WriteReservation, compile_with_context_controlled, finalize_reflections,
+    WriteReservation, compile_with_source_controlled, finalize_reflections, instances,
 };
 use source_formats::gamefs::GameFs;
 use source_formats::vmf::Vmf;
@@ -81,36 +81,46 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
         return Err("output must be a .bsp file distinct from the source map".into());
     }
     options.validate()?;
-    let lease = options
-        .requires_guarded_publication()
+    let source_text = std::fs::read_to_string(&map)?;
+    let vmf = Vmf::parse(&source_text)?;
+    let has_instances = instances::requires_source(&vmf);
+    let guarded = options.requires_guarded_publication() || has_instances;
+    let lease = guarded
         .then(|| OutputLease::acquire(&path, control))
         .transpose()?;
-    let source_identity = options
-        .requires_guarded_publication()
+    let source_identity = (guarded && !has_instances)
         .then(|| FileIdentity::capture(&map, control))
+        .transpose()?;
+    let reservation = guarded
+        .then(|| WriteReservation::new(&path, control))
         .transpose()?;
     let path = lease
         .as_ref()
         .map(|lease| lease.path().to_path_buf())
         .unwrap_or(path);
-    let reservation = options
-        .requires_guarded_publication()
-        .then(|| WriteReservation::new(&path, control))
-        .transpose()?;
-    let source_path = source_identity
-        .as_ref()
-        .map(FileIdentity::path)
-        .unwrap_or(&map);
-    let vmf = Vmf::parse(&std::fs::read_to_string(source_path)?)?;
     if let Some(identity) = &source_identity {
+        identity.verify_bytes(source_text.as_bytes())?;
         identity.verify(control)?;
+    }
+    let source_context = has_instances
+        .then(|| instances::SourceContext::capture(&map, control))
+        .transpose()?;
+    if let Some(source) = &source_context {
+        source.verify_bytes(source_text.as_bytes())?;
     }
     let fs = GameFs::from_gameinfo(game)?;
     let context = options
         .generate_reflections
         .then(|| CompileContext::from_output(&path))
         .transpose()?;
-    let mut output = compile_with_context_controlled(&vmf, &fs, options, context.as_ref(), control);
+    let mut output = compile_with_source_controlled(
+        &vmf,
+        &fs,
+        options,
+        context.as_ref(),
+        source_context.as_ref(),
+        control,
+    );
     if options.generate_reflections
         && let Some(context) = &context
         && output.bsp.is_some()

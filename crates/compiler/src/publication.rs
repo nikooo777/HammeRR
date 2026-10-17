@@ -65,6 +65,21 @@ impl FileStamp {
         self.verify_metadata()
     }
 
+    pub(crate) fn verify_container_identity(&self) -> io::Result<()> {
+        let current = Self::capture_kind(&self.requested, true)?;
+        let same = self.path == current.path && self.kind == current.kind;
+        #[cfg(unix)]
+        let same = same
+            && self.stamp.as_ref().map(|stamp| &stamp.identity[..2])
+                == current.stamp.as_ref().map(|stamp| &stamp.identity[..2]);
+        if !same {
+            return Err(io::Error::other(
+                "Instance referring directory changed identity",
+            ));
+        }
+        Ok(())
+    }
+
     pub fn capture(path: &Path) -> io::Result<Self> {
         Self::capture_kind(path, false)
     }
@@ -139,27 +154,51 @@ impl FileIdentity {
     }
 
     pub fn capture(path: &Path, control: &Control) -> io::Result<Self> {
+        Self::capture_bounded(path, 512 * 1024 * 1024, control)
+    }
+
+    pub fn capture_bounded(path: &Path, limit: u64, control: &Control) -> io::Result<Self> {
+        Self::read_identity(path, limit, false, control).map(|(identity, _)| identity)
+    }
+
+    pub fn read_bounded(path: &Path, limit: u64, control: &Control) -> io::Result<(Self, Vec<u8>)> {
+        let result = Self::read_identity(path, limit, true, control)?;
+        if result.0.stamp.is_none() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "Build source is missing",
+            ));
+        }
+        Ok(result)
+    }
+
+    fn read_identity(
+        path: &Path,
+        limit: u64,
+        retain: bool,
+        control: &Control,
+    ) -> io::Result<(Self, Vec<u8>)> {
         let requested = std::path::absolute(path)?;
         let path = canonical_destination(path)?;
         let metadata = match fs::symlink_metadata(&path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                return Ok(Self {
-                    requested,
-                    path,
-                    stamp: None,
-                    sha256: None,
-                });
+                return Ok((
+                    Self {
+                        requested,
+                        path,
+                        stamp: None,
+                        sha256: None,
+                    },
+                    Vec::new(),
+                ));
             }
             Err(error) => return Err(error),
         };
-        if !metadata.is_file()
-            || metadata.file_type().is_symlink()
-            || metadata.len() > 512 * 1024 * 1024
-        {
-            return Err(io::Error::other(
-                "Build publication requires a regular file of at most 512 MiB",
-            ));
+        if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() > limit {
+            return Err(io::Error::other(format!(
+                "Build source must be a regular file within the {limit}-byte limit"
+            )));
         }
         let before = stamp(&metadata);
         let mut options = OpenOptions::new();
@@ -178,6 +217,7 @@ impl FileIdentity {
         let mut hash = Sha256::new();
         let mut buffer = [0u8; 64 * 1024];
         let mut total = 0u64;
+        let mut bytes = Vec::new();
         loop {
             control.checkpoint().map_err(io::Error::other)?;
             let count = file.read(&mut buffer)?;
@@ -193,6 +233,9 @@ impl FileIdentity {
                 ));
             }
             hash.update(&buffer[..count]);
+            if retain {
+                bytes.extend_from_slice(&buffer[..count]);
+            }
         }
         if total != before.length || stamp(&file.metadata()?) != before {
             return Err(io::Error::other(
@@ -206,17 +249,30 @@ impl FileIdentity {
             sha256: Some(format!("{:x}", hash.finalize())),
         };
         result.verify_metadata()?;
-        Ok(result)
+        Ok((result, bytes))
     }
 
     pub fn verify(&self, control: &Control) -> io::Result<()> {
-        if Self::capture(&self.requested, control)? != *self {
+        let limit = self.stamp.as_ref().map_or(0, |stamp| stamp.length);
+        if Self::capture_bounded(&self.requested, limit, control)? != *self {
             return Err(io::Error::other(format!(
                 "Build source or destination changed: {}",
                 self.requested.display()
             )));
         }
         Ok(())
+    }
+
+    pub fn sha256(&self) -> Option<&str> {
+        self.sha256.as_deref()
+    }
+
+    pub fn same_file(&self, other: &Self) -> bool {
+        #[cfg(unix)]
+        if let (Some(a), Some(b)) = (&self.stamp, &other.stamp) {
+            return a.identity[..2] == b.identity[..2];
+        }
+        self.path == other.path
     }
 
     pub fn verify_bytes(&self, bytes: &[u8]) -> io::Result<()> {
@@ -364,6 +420,8 @@ mod tests {
             temporary,
             destination: path.clone(),
             success: true,
+            instance_dependencies: None,
+            instance_output_stamp: None,
         };
         fs::write(&path, b"external replacement").unwrap();
         assert!(lease.verify(&Control::default()).is_err());
@@ -380,6 +438,8 @@ mod tests {
             temporary: tempfile::NamedTempFile::new_in(directory.path()).unwrap(),
             destination: path.clone(),
             success: true,
+            instance_dependencies: None,
+            instance_output_stamp: None,
         };
         control.cancel().unwrap();
         assert!(prepared.commit_checked(&lease, &control).is_err());

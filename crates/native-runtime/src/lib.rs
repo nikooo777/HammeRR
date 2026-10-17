@@ -69,6 +69,30 @@ pub struct CaptureReceipt {
     pub preservation_passed: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CleanupDisposition {
+    Confirmed,
+    Unconfirmed,
+}
+
+#[derive(Debug)]
+pub struct CaptureFailure {
+    pub error: io::Error,
+    pub cleanup: CleanupDisposition,
+}
+
+impl std::fmt::Display for CaptureFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.error, formatter)
+    }
+}
+
+impl std::error::Error for CaptureFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.error)
+    }
+}
+
 pub trait CaptureObserver {
     fn checkpoint(&mut self) -> io::Result<()>;
     fn sample_progress(&mut self, current: usize, total: usize);
@@ -84,7 +108,7 @@ mod worker;
 
 pub use adapter::{capture_staging_bsp, capture_staging_bsp_for_channel, preflight_vmf};
 pub use guard::{resolve_environment, validate_environment};
-pub use process::capture;
+pub use process::{capture, capture_with_cleanup};
 
 pub fn worker_entry(arguments: Vec<std::ffi::OsString>) -> io::Result<()> {
     match arguments.as_slice() {

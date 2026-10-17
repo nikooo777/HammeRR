@@ -30,6 +30,10 @@ fn checked_engine(path: &Path) -> Result<PathBuf, String> {
 }
 
 impl Session {
+    #[cfg(test)]
+    pub(crate) fn use_test_capture_environment(&self, environment: CaptureEnvironment) {
+        *self.native_capture.cache.borrow_mut() = Some((self.content_epoch, Ok(environment)));
+    }
     fn resolve_native_capture(
         &self,
         engine: Option<&Path>,
@@ -78,6 +82,7 @@ impl Session {
             "steam_root":environment.as_ref().ok().map(|e|&e.steam_root),
             "steam_root_source":if self.native_capture.steam_root.is_some(){"configured"}else{"running_steam_client"},
             "ready":environment.is_ok(),
+            "native_activity":self.native_activity_status(),
             "reason":environment.as_ref().err(),
             "editable":!self.compiling()&&!self.closing,
             "channel":if self.compile_options().lighting == compiler::LightingMode::DirectLdrHdr {"ldr_hdr"}else{"ldr"},

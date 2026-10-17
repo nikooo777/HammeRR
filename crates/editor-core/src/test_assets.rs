@@ -9,6 +9,34 @@ pub fn document(session: crate::runtime::SharedSession) -> crate::runtime::Docum
     crate::runtime::DocumentHandle::start(session).unwrap()
 }
 
+pub struct NativeActivityFixture {
+    _authority: crate::runtime::native_activity::Authority,
+    permit: Option<crate::runtime::native_activity::Permit>,
+}
+
+impl NativeActivityFixture {
+    pub fn fail_cleanup(&mut self, error: &str) {
+        let mut permit = self
+            .permit
+            .take()
+            .expect("fixture owns its native activity");
+        permit.failed_cleanup(error);
+    }
+}
+
+pub fn native_activity(session: &crate::runtime::SharedSession) -> NativeActivityFixture {
+    let authority = crate::runtime::native_activity::Authority::isolated();
+    let client = authority.client(crate::runtime::DocumentId::allocate().unwrap());
+    let permit = client
+        .reserve(crate::runtime::native_activity::Phase::Capture, None, None)
+        .unwrap();
+    crate::runtime::lock(session).use_application_native_activity(client);
+    NativeActivityFixture {
+        _authority: authority,
+        permit: Some(permit),
+    }
+}
+
 pub fn game() -> (tempfile::TempDir, GameFs) {
     let directory = tempfile::tempdir().unwrap();
     let materials = directory.path().join("materials/test");

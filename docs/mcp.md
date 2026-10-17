@@ -143,6 +143,25 @@ Game launch completion belongs to its originating buffer and launch ticket.
 Replacing the map during launch rejects that completion and cleans only its
 managed client. Foreign or repeated completions cannot clear a newer launch.
 
+Managed launches and reflection captures share one process-wide native
+activity. `get_compile_status.native_activity`,
+`get_native_capture_runtime.native_activity` and the `native_activity` field in
+launch/game-log results expose availability and the current owner's activity
+ID, document ID, phase, frozen targets and cleanup error. Its bounded `message`
+is also displayed in capture details and Game Log. Runtime `ready` still
+describes configuration preflight; polling it reserves nothing.
+
+A queued reflective build reserves native capacity only at dispatch. Busy
+dispatch fails before compiler work. Ordinary compilation needs no native
+permit. Optional Play uses its installation captured with the build, and a
+busy or failed Play leaves the successful BSP available. Paired capture and
+capture-to-Play retain one activity ID; the compiler reservation ends before
+optional Play startup. Native cleanup failure stays occupied and makes document
+shutdown fail. `stop_game` controls only this Session's owned client; use the
+exact build token to cancel capture. There is no peer stop, native retry or new
+manual-game discovery. Lower capture preflight retains its existing
+same-installation running-client rejection.
+
 A saved parent can compile bounded single-level world/detail brush instances;
 see [Referenced brush assemblies](instances.md). `create_entity` uses
 `classname: "func_instance"`, an origin and string properties `file` (relative

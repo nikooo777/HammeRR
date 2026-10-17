@@ -167,10 +167,20 @@ impl Application {
             .compile_queue
             .as_mut()
             .map_or(Ok(()), crate::runtime::CompileQueue::shutdown);
-        match (document, queue) {
+        let native = self
+            .compile_queue
+            .as_ref()
+            .map_or(Ok(()), |queue| queue.native().cleanup_result());
+        let drained = match (document, queue) {
             (Ok(()), result) | (result, Ok(())) => result,
             (Err(document), Err(queue)) => Err(format!(
                 "{document}; compiler queue shutdown failed: {queue}"
+            )),
+        };
+        match (drained, native) {
+            (Ok(()), result) | (result, Ok(())) => result,
+            (Err(drained), Err(native)) => Err(format!(
+                "{drained}; native activity shutdown failed: {native}"
             )),
         }
     }

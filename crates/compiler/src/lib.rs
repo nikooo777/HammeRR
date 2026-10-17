@@ -48,8 +48,8 @@ pub use control::{Control, Stage};
 pub use cordons::RegionSummary;
 pub use cubemap_assets::{CompileContext, CubemapAssetManifest, CubemapAssetPhase};
 pub use cubemap_assets::{
-    finalize_reflections, inspect_cubemap_bindings, read_generated_cubemaps,
-    rebase_generated_cubemaps, verify_generated_cubemaps,
+    finalize_reflections, finalize_reflections_with_capture, inspect_cubemap_bindings,
+    read_generated_cubemaps, rebase_generated_cubemaps, verify_generated_cubemaps,
 };
 pub use detail_props::{
     GENERATED_DETAIL_LIGHTING_TINT_KEY, validate_generated_detail_lighting_tint,

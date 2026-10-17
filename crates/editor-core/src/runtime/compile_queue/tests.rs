@@ -5,6 +5,8 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::Duration;
 
+mod native_activity;
+
 const TIMEOUT: Duration = Duration::from_secs(30);
 
 struct Fixture {
@@ -17,21 +19,81 @@ struct Fixture {
 
 impl Fixture {
     fn new(queue: &CompileQueue, claims: &crate::path_claims::Authority) -> Self {
-        let (directory, game, _) = crate::test_assets::game_process(false);
+        Self::new_with_reflections(queue, claims, None)
+    }
+
+    fn new_with_reflections(
+        queue: &CompileQueue,
+        claims: &crate::path_claims::Authority,
+        reflections: Option<bool>,
+    ) -> Self {
+        let (directory, mut game, _) = crate::test_assets::game_process(false);
         let source = directory.path().join("source.vmf");
         let output = directory.path().join("output.bsp");
         let recovery = crate::recovery::Store {
             directory: directory.path().join("recovery"),
         };
-        std::fs::write(
-            &source,
-            crate::test_assets::room().write(&Default::default()),
-        )
-        .unwrap();
+        let mut vmf = crate::test_assets::room();
+        if reflections.is_some() {
+            std::fs::create_dir_all(directory.path().join("materials/dev")).unwrap();
+            std::fs::create_dir_all(directory.path().join("materials/skybox")).unwrap();
+            std::fs::write(
+                directory
+                    .path()
+                    .join("materials/dev/dev_measuregeneric01.vmt"),
+                "LightmappedGeneric { $envmap env_cubemap }",
+            )
+            .unwrap();
+            for face in ["rt", "lf", "bk", "ft", "up", "dn"] {
+                std::fs::write(
+                    directory
+                        .path()
+                        .join(format!("materials/skybox/sky_day01_01{face}.vmt")),
+                    "UnlitGeneric { $unknown fake_capture }",
+                )
+                .unwrap();
+            }
+            game.mounts.push(source_formats::gamefs::MountedPath {
+                ids: vec!["game".into()],
+                mount: source_formats::gamefs::Mount::Directory(directory.path().to_owned()),
+            });
+            let id = vmf.object_ids().chain(vmf.side_ids()).max().unwrap() + 1;
+            let mut sample = source_formats::vmf::Entity::new(id, "env_cubemap");
+            sample.properties.set("origin", "0 0 64");
+            sample.properties.set("cubemapsize", "2");
+            vmf.entities.push(sample);
+            let mut light = source_formats::vmf::Entity::new(id + 1, "light");
+            light.properties.set("origin", "0 0 180");
+            light.properties.set("_light", "255 255 255 200");
+            vmf.entities.push(light);
+        }
+        std::fs::write(&source, vmf.write(&Default::default())).unwrap();
         let mut state = Session::new(Ok(game));
         state.use_application_path_claims(claims.clone());
         state.configure_recovery(Ok(recovery.directory.clone()));
         state.open(Actor::User, &source, true).unwrap();
+        if let Some(hdr) = reflections {
+            state
+                .update_build_settings(
+                    Actor::User,
+                    crate::session::compilation::BuildSettingsUpdate {
+                        lighting: Some(if hdr { "direct_ldr_hdr" } else { "direct_ldr" }),
+                        generate_reflections: Some(true),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            let steam = directory.path().join("steam");
+            std::fs::create_dir(&steam).unwrap();
+            state.use_test_capture_environment(native_runtime::CaptureEnvironment {
+                engine_root: directory.path().to_owned(),
+                steam_root: steam,
+                mounts: vec![native_runtime::ContentMount {
+                    ids: vec!["game".into()],
+                    path: directory.path().to_owned(),
+                }],
+            });
+        }
         let document = DocumentHandle::start_managed(Arc::new(Mutex::new(state)), queue).unwrap();
         Self {
             document,
@@ -72,13 +134,21 @@ impl Fixture {
     }
 
     fn prepare(&self, queue: &QueueClient) -> (Reservation, CompileSubmission) {
+        self.prepare_with_play(queue, false)
+    }
+
+    fn prepare_with_play(
+        &self,
+        queue: &QueueClient,
+        play: bool,
+    ) -> (Reservation, CompileSubmission) {
         let reservation = queue.reserve(self.document.id()).unwrap();
         let operation = self.document.admit().unwrap();
         let mut submission = CompileSubmission::begin(
             self.document.session(),
             Actor::Agent,
             Some(&self.output),
-            false,
+            play,
             None,
         )
         .unwrap();

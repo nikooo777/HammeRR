@@ -119,6 +119,7 @@ fn prepared_assets(
         destination_stamp: Some(destination_stamp),
         control,
         publication: Mutex::new(Publication {
+            before_cleanup: None,
             claims: Some(request.output_claims),
             artifact: None,
             warning: None,

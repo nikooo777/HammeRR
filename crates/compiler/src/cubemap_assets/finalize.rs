@@ -37,6 +37,24 @@ pub fn finalize_reflections(
     environment: &CaptureEnvironment,
     control: &Control,
 ) -> io::Result<Output> {
+    finalize_reflections_with_capture(
+        output,
+        context,
+        game,
+        environment,
+        control,
+        native_runtime::capture,
+    )
+}
+
+pub fn finalize_reflections_with_capture(
+    output: Output,
+    context: &CompileContext,
+    game: &GameFs,
+    environment: &CaptureEnvironment,
+    control: &Control,
+    mut capture: impl FnMut(CaptureRequest, &mut dyn CaptureObserver) -> io::Result<CaptureReceipt>,
+) -> io::Result<Output> {
     control.checkpoint().map_err(io::Error::other)?;
     let Some(manifest) = output.cubemap_assets.clone() else {
         return Ok(output);
@@ -110,7 +128,7 @@ pub fn finalize_reflections(
                 })
                 .collect(),
         };
-        let receipt = native_runtime::capture(
+        let receipt = capture(
             request,
             &mut Observer {
                 control,

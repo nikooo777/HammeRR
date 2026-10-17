@@ -276,6 +276,8 @@ pub struct Session {
     compiling: bool,
     compilation: compilation::State,
     native_capture: native_capture::State,
+    native_activity: Option<crate::runtime::native_activity::Client>,
+    native_cleanup_error: Option<String>,
     content_epoch: u64,
     pending_launch: Option<LaunchOrigin>,
     compiled: Option<CompiledMap>,
@@ -290,6 +292,7 @@ pub struct Session {
 }
 
 pub struct LaunchRequest {
+    native: Option<crate::runtime::native_activity::Permit>,
     artifact_claim: Option<crate::path_claims::Claim>,
     origin: LaunchOrigin,
     install: game::Install,
@@ -315,7 +318,6 @@ impl LaunchOrigin {
     pub(crate) fn active(&self) -> bool {
         self.ticket.active.load(Ordering::Acquire)
     }
-    #[cfg(any(feature = "mcp", test))]
     pub(crate) fn cancel(&self) {
         self.ticket.cancelled.store(true, Ordering::Release);
     }
@@ -351,14 +353,14 @@ impl LaunchRequest {
             .unwrap_or_else(|_| Err("game launch panicked".into()))
     }
 
-    fn run_inner(self) -> Result<game::Run, String> {
+    fn run_inner(mut self) -> Result<game::Run, String> {
         if let Some(claim) = &self.artifact_claim {
             claim.destination().verify().map_err(|error| {
                 format!("Compiled output binding changed; compile again before launching: {error}")
             })?;
         }
         self.verify_instance_dependencies()?;
-        game::Run::launch_controlled(&self.install, &self.bsp, || {
+        game::Run::launch_admitted(&self.install, &self.bsp, self.native.take(), || {
             if self.origin.cancelled() {
                 Err("game launch cancelled".into())
             } else {
@@ -369,6 +371,34 @@ impl LaunchRequest {
 }
 
 impl Session {
+    pub(crate) fn use_application_native_activity(
+        &mut self,
+        client: crate::runtime::native_activity::Client,
+    ) {
+        assert!(self.native_activity.is_none());
+        assert!(!self.launching() && !self.game_running() && !self.compiling());
+        self.native_activity = Some(client);
+    }
+
+    pub fn native_activity_status(&self) -> serde_json::Value {
+        self.native_activity.as_ref().map_or_else(
+            || serde_json::json!({"managed":false,"available":true,"message":"Native activity availability is not tracked.","owner":null}),
+            |client| {
+                let mut status = client.status();
+                status["managed"] = serde_json::json!(true);
+                status
+            },
+        )
+    }
+
+    pub(crate) fn native_cleanup_result(&self) -> Result<(), String> {
+        if let Some(error) = &self.native_cleanup_error {
+            return Err(error.clone());
+        }
+        self.native_activity
+            .as_ref()
+            .map_or(Ok(()), |client| client.cleanup_result())
+    }
     pub(crate) fn use_application_path_claims(&mut self, authority: crate::path_claims::Authority) {
         assert!(self.compiled.is_none());
         assert!(self.compilation.retained_pointfile.is_none());
@@ -480,6 +510,8 @@ impl Session {
             compiling: false,
             compilation: compilation::State::default(),
             native_capture: native_capture::State::default(),
+            native_activity: None,
+            native_cleanup_error: None,
             content_epoch: 0,
             pending_launch: None,
             compiled: None,
@@ -1958,6 +1990,12 @@ impl Session {
     }
 
     pub fn launch_readiness(&self) -> Result<&Path, String> {
+        let path = self.compiled_launch_readiness()?;
+        game::Install::from_game(&self.game)?;
+        Ok(path)
+    }
+
+    fn compiled_launch_readiness(&self) -> Result<&Path, String> {
         self.ensure_partitions_resolved()?;
         self.ensure_entity_placement_resolved()?;
         if self.closing {
@@ -2008,19 +2046,52 @@ impl Session {
         if !compiled.path.is_file() {
             return Err("the compiled BSP is missing; compile the map again".into());
         }
-        game::Install::from_game(&self.game)?;
         Ok(&compiled.path)
     }
 
     pub fn begin_launch(&mut self, actor: Actor) -> Result<LaunchRequest, String> {
-        let bsp = self.launch_readiness()?.to_owned();
+        self.launch_readiness()?;
+        self.begin_launch_frozen(actor, self.freeze_play_install(), None)
+    }
+
+    pub(crate) fn freeze_play_install(&self) -> Result<game::Install, String> {
+        game::Install::from_game(&self.game)
+    }
+
+    pub(crate) fn begin_launch_frozen(
+        &mut self,
+        actor: Actor,
+        install: Result<game::Install, String>,
+        native: Option<crate::runtime::native_activity::Permit>,
+    ) -> Result<LaunchRequest, String> {
+        let bsp = self.compiled_launch_readiness()?.to_owned();
+        let install = install?;
+        install.verify()?;
+        let mut native = match native {
+            Some(permit) => Some(permit),
+            None => self
+                .native_activity
+                .as_ref()
+                .map(|client| {
+                    client.reserve(
+                        crate::runtime::native_activity::Phase::PlayStartup,
+                        None,
+                        Some(install.target()),
+                    )
+                })
+                .transpose()?,
+        };
+        if let Some(permit) = &mut native {
+            permit.phase(crate::runtime::native_activity::Phase::PlayStartup);
+        }
         let request = LaunchRequest {
+            native,
             artifact_claim: self
                 .compiled
                 .as_ref()
                 .and_then(|compiled| compiled.claim.clone()),
             origin: LaunchOrigin::new(self.document_generation),
-            install: game::Install::from_game(&self.game)?,
+            install,
             bsp,
             instance_dependencies: self
                 .compiled
@@ -2042,26 +2113,25 @@ impl Session {
             pending.active() && Arc::ptr_eq(&pending.ticket, &origin.ticket)
         });
         if !matching {
-            drop(result);
-            return Err("game launch result does not match the pending launch".into());
+            return self.reject_launch(
+                result,
+                "game launch result does not match the pending launch",
+            );
         }
         self.pending_launch = None;
         if self.closing {
-            drop(result);
-            return Err("the editor is closing".into());
+            return self.reject_launch(result, "the editor is closing");
         }
         if origin.generation != self.document_generation {
-            drop(result);
             let error =
                 "game launch belongs to an earlier map; compile and launch the current map again";
             self.log(actor, error);
-            return Err(error.into());
+            return self.reject_launch(result, error);
         }
         if origin.cancelled() {
-            drop(result);
             let error = "game launch cancelled";
             self.log(actor, error);
-            return Err(error.into());
+            return self.reject_launch(result, error);
         }
         match result {
             Ok(run) => {
@@ -2077,6 +2147,37 @@ impl Session {
         }
     }
 
+    pub(crate) fn fail_launch_for_origin(
+        &mut self,
+        actor: Actor,
+        origin: &LaunchOrigin,
+        error: String,
+    ) {
+        if self
+            .pending_launch
+            .as_ref()
+            .is_some_and(|pending| Arc::ptr_eq(&pending.ticket, &origin.ticket))
+        {
+            self.pending_launch = None;
+            origin.retire();
+            self.log(actor, format!("game launch failed: {error}"));
+        }
+    }
+
+    fn reject_launch(
+        &mut self,
+        result: Result<game::Run, String>,
+        reason: &str,
+    ) -> Result<game::Log, String> {
+        if let Ok(run) = result
+            && let Err(cleanup) = run.stop()
+        {
+            self.native_cleanup_error = Some(cleanup.clone());
+            return Err(format!("{reason}; owned game cleanup failed: {cleanup}"));
+        }
+        Err(reason.into())
+    }
+
     pub fn poll_game(&mut self) {
         if !self.game_exit_reported
             && let Some(run) = &self.game_run
@@ -2090,10 +2191,13 @@ impl Session {
 
     pub fn game_log(&mut self, lines: usize) -> Result<game::Log, String> {
         self.poll_game();
-        self.game_run
+        let mut log = self
+            .game_run
             .as_ref()
             .ok_or("no game has been launched by HammeRR")?
-            .log(lines)
+            .log(lines)?;
+        log.native_activity = Some(self.native_activity_status());
+        Ok(log)
     }
 
     pub fn stop_game(&mut self, actor: Actor) -> Result<(), String> {
@@ -2109,12 +2213,19 @@ impl Session {
 
     pub fn shutdown(&mut self) {
         self.closing = true;
+        if let Some(origin) = &self.pending_launch {
+            origin.cancel();
+        }
         self.shutdown_definitions_load();
         self.reset_instance_contents();
         self.shutdown_instance_extraction();
         self.shutdown_sound_preview();
         self.cancel_compile_on_shutdown();
-        self.game_run = None;
+        if let Some(run) = self.game_run.take()
+            && let Err(error) = run.stop()
+        {
+            self.native_cleanup_error = Some(error);
+        }
     }
 
     pub(crate) fn instance_workers_busy(&self) -> bool {
@@ -3371,10 +3482,10 @@ mod tests {
         compile(&mut session);
         let request = session.begin_launch(Actor::Agent).unwrap();
         let origin = request.origin();
-        session.shutdown();
-        assert!(session.launching());
         let run = request.run().unwrap();
         let log = run.log(1).unwrap();
+        session.shutdown();
+        assert!(session.launching());
         assert!(
             session
                 .finish_launch(Actor::Agent, &origin, Ok(run))

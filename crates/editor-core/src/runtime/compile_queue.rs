@@ -20,6 +20,9 @@ static PROCESS_QUEUE: AtomicBool = AtomicBool::new(false);
 
 type Outcome = Result<(CompileResult, Option<game::Log>), String>;
 
+#[cfg(test)]
+type BeforeCompletion = Box<dyn FnOnce(&Result<CompileResult, String>) + Send>;
+
 #[derive(Clone)]
 pub(crate) struct QueueStatus(Arc<Observation>);
 
@@ -97,6 +100,12 @@ struct Core {
     changed: Condvar,
     #[cfg(test)]
     before_execute: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    #[cfg(test)]
+    before_play: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    #[cfg(test)]
+    fail_play_spawn: AtomicBool,
+    #[cfg(test)]
+    before_completion: Mutex<Option<BeforeCompletion>>,
 }
 
 impl Core {
@@ -140,6 +149,7 @@ impl Core {
 }
 
 pub(crate) struct CompileQueue {
+    native: super::native_activity::Authority,
     core: Arc<Core>,
     thread: Option<std::thread::JoinHandle<()>>,
     terminal: Option<Result<(), String>>,
@@ -164,6 +174,11 @@ impl CompileQueue {
     }
 
     fn start(process: bool) -> Result<Self, String> {
+        let native = if process {
+            super::native_activity::Authority::process()?
+        } else {
+            super::native_activity::Authority::isolated()
+        };
         let core = Arc::new(Core {
             state: Mutex::new(State {
                 accepting: true,
@@ -178,6 +193,12 @@ impl CompileQueue {
             changed: Condvar::new(),
             #[cfg(test)]
             before_execute: Mutex::new(None),
+            #[cfg(test)]
+            before_play: Mutex::new(None),
+            #[cfg(test)]
+            fail_play_spawn: AtomicBool::new(false),
+            #[cfg(test)]
+            before_completion: Mutex::new(None),
         });
         let worker = core.clone();
         let thread = std::thread::Builder::new()
@@ -185,6 +206,7 @@ impl CompileQueue {
             .spawn(move || worker_main(worker))
             .map_err(|error| error.to_string())?;
         Ok(Self {
+            native,
             core,
             thread: Some(thread),
             terminal: None,
@@ -204,6 +226,10 @@ impl CompileQueue {
 
     pub(crate) fn client(&self) -> QueueClient {
         QueueClient(self.core.clone())
+    }
+
+    pub(crate) fn native(&self) -> &super::native_activity::Authority {
+        &self.native
     }
 
     pub(crate) fn close_admission(&self) {
@@ -404,7 +430,8 @@ impl QueueClient {
                 pending: Some(PendingCompletion {
                     completion: submission.completion(),
                     operation: submission._operation.take(),
-                    reservation,
+                    reservation: Some(reservation),
+                    launch: None,
                 }),
                 #[cfg(test)]
                 before_failure: None,
@@ -523,12 +550,13 @@ struct Entry {
 
 impl Entry {
     fn reservation(&self) -> &Reservation {
-        &self
-            .guard
+        self.guard
             .pending
             .as_ref()
             .expect("queued completion exists")
             .reservation
+            .as_ref()
+            .expect("queued compiler reservation exists")
     }
 
     fn cancel(self) {
@@ -554,23 +582,142 @@ impl Entry {
             before_run,
             ..
         } = self;
+        #[cfg(test)]
+        let before_completion = {
+            let core = guard
+                .pending
+                .as_ref()
+                .unwrap()
+                .reservation
+                .as_ref()
+                .unwrap()
+                .core
+                .upgrade()
+                .unwrap();
+            core.before_completion.lock().unwrap().take()
+        };
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             if !control.cancelled() {
                 before_run();
             }
-            submission.run()
+            #[cfg(test)]
+            {
+                submission.prepare_with(|completion, result, native| {
+                    if let Some(before_completion) = before_completion {
+                        before_completion(result);
+                    }
+                    completion.prepare(result, native)
+                })
+            }
+            #[cfg(not(test))]
+            submission.prepare()
         }));
         match outcome {
-            Ok(outcome) => guard.complete(outcome),
+            Ok(Ok(prepared)) if prepared.launch.is_some() => {
+                #[cfg(test)]
+                let (before_play, fail_play_spawn) = {
+                    let core = guard
+                        .pending
+                        .as_ref()
+                        .unwrap()
+                        .reservation
+                        .as_ref()
+                        .unwrap()
+                        .core
+                        .upgrade()
+                        .unwrap();
+                    let before_play = core.before_play.lock().unwrap().take();
+                    (
+                        before_play,
+                        core.fail_play_spawn.swap(false, Ordering::AcqRel),
+                    )
+                };
+                guard.prepare_play(&prepared);
+                let owner = Arc::new(PlayOwner {
+                    guard: Mutex::new(Some(guard)),
+                });
+                let task = PlayTask {
+                    prepared,
+                    owner: owner.clone(),
+                    #[cfg(test)]
+                    before_play,
+                };
+                if let Err(error) = spawn_play(
+                    task,
+                    #[cfg(test)]
+                    fail_play_spawn,
+                ) && let Some(mut guard) = owner
+                    .guard
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .take()
+                {
+                    guard.fail(format!("Could not schedule optional Play startup: {error}"));
+                }
+            }
+            Ok(Ok(prepared)) => guard.complete(prepared.run()),
+            Ok(Err(error)) => guard.complete(Err(error)),
             Err(_) => guard.fail("Compiler queue submission panicked".into()),
         }
+    }
+}
+
+struct PlayOwner {
+    guard: Mutex<Option<CompletionGuard>>,
+}
+
+struct PlayTask {
+    prepared: super::PreparedCompile,
+    owner: Arc<PlayOwner>,
+    #[cfg(test)]
+    before_play: Option<Box<dyn FnOnce() + Send>>,
+}
+
+fn spawn_play(
+    task: PlayTask,
+    #[cfg(test)] fail: bool,
+) -> std::io::Result<std::thread::JoinHandle<()>> {
+    #[cfg(test)]
+    if fail {
+        drop(task);
+        return Err(std::io::Error::other("injected Play scheduling failure"));
+    }
+    std::thread::Builder::new()
+        .name("compile-play-startup".into())
+        .spawn(move || run_play(task))
+}
+
+fn run_play(task: PlayTask) {
+    let PlayTask {
+        prepared,
+        owner,
+        #[cfg(test)]
+        before_play,
+    } = task;
+    let mut guard = owner
+        .guard
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .take()
+        .expect("Play continuation owns its completion");
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        #[cfg(test)]
+        if let Some(before_play) = before_play {
+            before_play();
+        }
+        prepared.run()
+    }));
+    match outcome {
+        Ok(outcome) => guard.complete(outcome),
+        Err(_) => guard.fail("Optional Play startup worker panicked".into()),
     }
 }
 
 struct PendingCompletion {
     completion: CompileCompletion,
     operation: Option<DocumentOperation>,
-    reservation: Reservation,
+    reservation: Option<Reservation>,
+    launch: Option<super::LaunchCompletion>,
 }
 
 struct CompletionGuard {
@@ -581,13 +728,29 @@ struct CompletionGuard {
 }
 
 impl CompletionGuard {
+    fn prepare_play(&mut self, prepared: &super::PreparedCompile) {
+        let pending = self
+            .pending
+            .as_mut()
+            .expect("Play continuation owns its completion");
+        pending.launch = prepared
+            .launch
+            .as_ref()
+            .map(super::LaunchSubmission::completion);
+        drop(pending.reservation.take());
+    }
+
     fn fail(&mut self, error: String) {
         #[cfg(test)]
         if let Some(before_failure) = self.before_failure.take() {
             before_failure();
         }
         if let Some(pending) = &self.pending {
-            pending.completion.fail(error.clone());
+            if let Some(launch) = &pending.launch {
+                launch.fail(error.clone());
+            } else {
+                pending.completion.fail(error.clone());
+            }
         }
         self.complete(Err(error));
     }

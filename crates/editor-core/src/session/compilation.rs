@@ -54,6 +54,9 @@ struct Job {
 }
 
 pub struct CompileRequest {
+    #[cfg(test)]
+    capture: Option<CaptureBackend>,
+    native_plan: Option<NativeCapturePlan>,
     output_claims: crate::path_claims::OutputClaims,
     token: u64,
     control: compiler::Control,
@@ -75,6 +78,21 @@ pub struct CompileRequest {
     ticket: Option<Ticket>,
 }
 
+#[cfg(test)]
+pub(crate) type CaptureBackend = Box<
+    dyn FnMut(
+            native_runtime::CaptureRequest,
+            &mut dyn native_runtime::CaptureObserver,
+        ) -> Result<native_runtime::CaptureReceipt, native_runtime::CaptureFailure>
+        + Send,
+>;
+
+struct NativeCapturePlan {
+    client: Option<crate::runtime::native_activity::Client>,
+    capture: crate::runtime::native_activity::Target,
+    play: Option<crate::runtime::native_activity::Target>,
+}
+
 pub struct CompileResult {
     origin: CompileOrigin,
     token: u64,
@@ -91,6 +109,8 @@ pub struct CompileResult {
 }
 
 struct Publication {
+    #[cfg(test)]
+    before_cleanup: Option<Box<dyn FnOnce() + Send>>,
     pending: Option<compiler::PreparedWrite>,
     claims: Option<crate::path_claims::OutputClaims>,
     artifact: Option<crate::path_claims::Claim>,
@@ -103,6 +123,15 @@ struct Publication {
     committed: bool,
     error: Option<String>,
     ticket: Option<Ticket>,
+}
+
+#[cfg(test)]
+impl Drop for Publication {
+    fn drop(&mut self) {
+        if let Some(before_cleanup) = self.before_cleanup.take() {
+            before_cleanup();
+        }
+    }
 }
 
 impl State {
@@ -151,6 +180,13 @@ impl Job {
 }
 
 impl CompileResult {
+    #[cfg(test)]
+    pub(crate) fn before_cleanup(&self, hook: impl FnOnce() + Send + 'static) {
+        self.publication
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .before_cleanup = Some(Box::new(hook));
+    }
     fn take_artifact_claim(&self) -> Option<crate::path_claims::Claim> {
         self.publication
             .lock()
@@ -184,6 +220,15 @@ impl CompileResult {
 }
 
 impl CompileRequest {
+    #[cfg(test)]
+    pub(crate) fn capture_with(&mut self, capture: CaptureBackend) {
+        self.capture = Some(capture);
+    }
+    pub(crate) fn freeze_native_play(&mut self, install: Option<&game::Install>) {
+        if let Some(plan) = &mut self.native_plan {
+            plan.play = install.map(|install| install.target().clone());
+        }
+    }
     pub(crate) fn control(&self) -> compiler::Control {
         self.control.clone()
     }
@@ -196,14 +241,36 @@ impl CompileRequest {
         self.run_with(Self::run_inner)
     }
 
+    pub(crate) fn run_admitted(
+        self,
+    ) -> (
+        Result<CompileResult, String>,
+        Option<crate::runtime::native_activity::Permit>,
+    ) {
+        let mut native = None;
+        let result = self.run_controlled(Self::run_inner_admitted, &mut native);
+        (result, native)
+    }
+
     fn run_with(
-        mut self,
+        self,
         run: impl FnOnce(Self) -> Result<CompileResult, String>,
+    ) -> Result<CompileResult, String> {
+        self.run_controlled(|request, _| run(request), &mut None)
+    }
+
+    fn run_controlled(
+        mut self,
+        run: impl FnOnce(
+            Self,
+            &mut Option<crate::runtime::native_activity::Permit>,
+        ) -> Result<CompileResult, String>,
+        native: &mut Option<crate::runtime::native_activity::Permit>,
     ) -> Result<CompileResult, String> {
         let mut ticket = self.ticket.take().expect("compile request owns its ticket");
         ticket.start();
         let control = self.control.clone();
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(self)))
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(self, native)))
             .unwrap_or_else(|_| Err("Compilation worker panicked".into()));
         match result {
             Ok(mut result) => {
@@ -222,7 +289,36 @@ impl CompileRequest {
     }
 
     fn run_inner(self) -> Result<CompileResult, String> {
+        if self
+            .native_plan
+            .as_ref()
+            .is_some_and(|plan| plan.client.is_some())
+        {
+            return Err("Managed reflection capture requires the shared compile submission".into());
+        }
+        self.run_inner_admitted(&mut None)
+    }
+
+    fn run_inner_admitted(
+        self,
+        native: &mut Option<crate::runtime::native_activity::Permit>,
+    ) -> Result<CompileResult, String> {
         self.control.checkpoint()?;
+        *native = if let Some(plan) = &self.native_plan {
+            plan.capture.verify()?;
+            plan.client
+                .as_ref()
+                .map(|client| {
+                    client.reserve(
+                        crate::runtime::native_activity::Phase::Capture,
+                        Some(&plan.capture),
+                        plan.play.as_ref(),
+                    )
+                })
+                .transpose()?
+        } else {
+            None
+        };
         let instances = compiler::instances::requires_source(&self.vmf);
         let guarded = self.options.requires_guarded_publication() || instances;
         let mut lease = None;
@@ -301,7 +397,9 @@ impl CompileRequest {
             return Err("Instance output is missing its retained dependency guard".into());
         }
         if self.options.generate_reflections && output.bsp.is_some() {
-            output = compiler::finalize_reflections(
+            #[cfg(test)]
+            let mut backend = self.capture;
+            output = compiler::finalize_reflections_with_capture(
                 output,
                 self.context
                     .as_ref()
@@ -311,6 +409,35 @@ impl CompileRequest {
                     .as_ref()
                     .ok_or("Native capture environment missing")?,
                 &self.control,
+                |request, observer| {
+                    self.control.checkpoint().map_err(std::io::Error::other)?;
+                    if let Some(plan) = &self.native_plan {
+                        plan.capture.verify().map_err(std::io::Error::other)?;
+                    }
+                    if let Some(permit) = native.as_mut() {
+                        permit.started();
+                    }
+                    #[cfg(test)]
+                    let result = match backend.as_mut() {
+                        Some(capture) => capture(request, observer),
+                        None => native_runtime::capture_with_cleanup(request, observer),
+                    };
+                    #[cfg(not(test))]
+                    let result = native_runtime::capture_with_cleanup(request, observer);
+                    if let Some(permit) = native.as_mut() {
+                        match &result {
+                            Ok(_) => permit.confirmed_clean(),
+                            Err(failure)
+                                if failure.cleanup
+                                    == native_runtime::CleanupDisposition::Confirmed =>
+                            {
+                                permit.confirmed_clean()
+                            }
+                            Err(failure) => permit.failed_cleanup(&failure.to_string()),
+                        }
+                    }
+                    result.map_err(|failure| failure.error)
+                },
             )
             .map_err(|e| e.to_string())?;
             if output.cubemap_assets.as_ref().is_none_or(|manifest| {
@@ -410,6 +537,8 @@ impl CompileRequest {
             destination_stamp: self.destination_stamp,
             control: self.control,
             publication: Mutex::new(Publication {
+                #[cfg(test)]
+                before_cleanup: None,
                 claims,
                 artifact,
                 warning,
@@ -710,6 +839,16 @@ impl Session {
         } else {
             (None, None)
         };
+        let native_plan = environment
+            .as_ref()
+            .map(|environment| {
+                Ok::<_, String>(NativeCapturePlan {
+                    client: self.native_activity.clone(),
+                    capture: crate::runtime::native_activity::Target::capture(environment)?,
+                    play: None,
+                })
+            })
+            .transpose()?;
         let (source_stamp, destination_stamp) =
             if self.compilation.options.requires_guarded_publication() || instances {
                 let source_stamp = (!instances)
@@ -783,6 +922,9 @@ impl Session {
             instance_dependencies: None,
         });
         let request = CompileRequest {
+            #[cfg(test)]
+            capture: None,
+            native_plan,
             output_claims,
             token: self.compilation.serial,
             control,
@@ -916,6 +1058,18 @@ impl Session {
         origin: &CompileOrigin,
         result: &Result<CompileResult, String>,
     ) -> bool {
+        if !self.accepts_compile_completion(origin, result) {
+            return false;
+        }
+        self.finish_compile(actor, result);
+        true
+    }
+
+    fn accepts_compile_completion(
+        &self,
+        origin: &CompileOrigin,
+        result: &Result<CompileResult, String>,
+    ) -> bool {
         if self.compilation.job.as_ref().is_none_or(|job| {
             !job.origin.same(origin)
                 || job.finished.is_some()
@@ -928,7 +1082,6 @@ impl Session {
         {
             return false;
         }
-        self.finish_compile(actor, result);
         true
     }
 
@@ -1106,7 +1259,7 @@ impl Session {
             Ok(path) => json!({"ready":true,"bsp":path.display().to_string(),"reason":null}),
             Err(reason) => json!({"ready":false,"bsp":null,"reason":reason}),
         };
-        json!({"job":job,"launch":launch,"settings":self.compile_settings()})
+        json!({"job":job,"launch":launch,"settings":self.compile_settings(),"native_activity":self.native_activity_status()})
     }
 
     pub fn compile_token(&self) -> Option<u64> {

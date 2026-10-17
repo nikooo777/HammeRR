@@ -7,6 +7,7 @@ use crate::session::compilation::{CompileOrigin, CompileRequest, CompileResult};
 use crate::session::{Actor, LaunchOrigin, LaunchRequest, Session};
 
 mod compile_queue;
+pub(crate) mod native_activity;
 pub use compile_queue::CompileHandle;
 pub(crate) use compile_queue::{CompileQueue, QueueStatus};
 
@@ -33,6 +34,19 @@ pub(crate) struct LaunchSubmission {
     origin: LaunchOrigin,
 }
 
+#[derive(Clone)]
+struct LaunchCompletion {
+    session: SharedSession,
+    actor: Actor,
+    origin: LaunchOrigin,
+}
+
+impl LaunchCompletion {
+    fn fail(&self, error: String) {
+        lock(&self.session).fail_launch_for_origin(self.actor, &self.origin, error);
+    }
+}
+
 #[cfg(any(feature = "mcp", test))]
 pub(crate) struct LaunchCancellation(Option<LaunchOrigin>);
 
@@ -53,6 +67,13 @@ impl Drop for LaunchCancellation {
 }
 
 impl LaunchSubmission {
+    fn completion(&self) -> LaunchCompletion {
+        LaunchCompletion {
+            session: self.session.clone(),
+            actor: self.actor,
+            origin: self.origin.clone(),
+        }
+    }
     pub(crate) fn begin(session: &SharedSession, actor: Actor) -> Result<Self, String> {
         let request = lock(session).begin_launch(actor)?;
         let origin = request.origin();
@@ -155,7 +176,28 @@ pub(crate) struct CompileCompletion {
     session: SharedSession,
     actor: Actor,
     origin: CompileOrigin,
-    play: bool,
+    play: Option<Result<game::Install, String>>,
+}
+
+struct PreparedCompile {
+    result: CompileResult,
+    launch: Option<LaunchSubmission>,
+    _operation: Option<DocumentOperation>,
+}
+
+struct CompileExecution {
+    result: Result<CompileResult, String>,
+    native: Option<native_activity::Permit>,
+}
+
+impl PreparedCompile {
+    fn run(self) -> Result<(CompileResult, Option<game::Log>), String> {
+        let game = self
+            .launch
+            .map(|launch| launch.run_with(LaunchRequest::run))
+            .transpose()?;
+        Ok((self.result, game))
+    }
 }
 
 impl CompileSubmission {
@@ -166,7 +208,7 @@ impl CompileSubmission {
         play: bool,
         expected_generation: Option<u64>,
     ) -> Result<Self, String> {
-        let (request, status) = {
+        let (request, status, play) = {
             let mut state = lock(session);
             if play && (state.game_running() || state.launching()) {
                 return Err(
@@ -174,8 +216,11 @@ impl CompileSubmission {
                         .into(),
                 );
             }
-            let request = state.begin_compile_for_generation(actor, path, expected_generation)?;
-            (request, state.compile_status())
+            let play = play.then(|| state.freeze_play_install());
+            let mut request =
+                state.begin_compile_for_generation(actor, path, expected_generation)?;
+            request.freeze_native_play(play.as_ref().and_then(|install| install.as_ref().ok()));
+            (request, state.compile_status(), play)
         };
         let completion = CompileCompletion {
             session: session.clone(),
@@ -200,9 +245,29 @@ impl CompileSubmission {
     }
 
     pub(crate) fn run(self) -> Result<(CompileResult, Option<game::Log>), String> {
-        let result = self.request.run();
-        let game = self.completion.finish_with(&result, LaunchRequest::run)?;
-        Ok((result?, game))
+        self.prepare()?.run()
+    }
+
+    fn prepare(self) -> Result<PreparedCompile, String> {
+        self.prepare_with(CompileCompletion::prepare)
+    }
+
+    fn prepare_with(
+        self,
+        finish: impl FnOnce(
+            &CompileCompletion,
+            &Result<CompileResult, String>,
+            &mut Option<native_activity::Permit>,
+        ) -> Result<Option<LaunchSubmission>, String>,
+    ) -> Result<PreparedCompile, String> {
+        let (result, native) = self.request.run_admitted();
+        let mut execution = CompileExecution { result, native };
+        let launch = finish(&self.completion, &execution.result, &mut execution.native)?;
+        Ok(PreparedCompile {
+            result: execution.result?,
+            launch,
+            _operation: self._operation,
+        })
     }
 }
 
@@ -211,11 +276,22 @@ impl CompileCompletion {
         lock(&self.session).finish_compile_for_origin(self.actor, &self.origin, &Err(error))
     }
 
+    #[cfg(test)]
     fn finish_with(
         &self,
         result: &Result<CompileResult, String>,
         run: impl FnOnce(LaunchRequest) -> Result<game::Run, String>,
     ) -> Result<Option<game::Log>, String> {
+        self.prepare(result, &mut None)?
+            .map(|submission| submission.run_with(run))
+            .transpose()
+    }
+
+    fn prepare(
+        &self,
+        result: &Result<CompileResult, String>,
+        native: &mut Option<native_activity::Permit>,
+    ) -> Result<Option<LaunchSubmission>, String> {
         let launch_request = {
             let mut state = lock(&self.session);
             if !state.finish_compile_for_origin(self.actor, &self.origin, result) {
@@ -228,8 +304,10 @@ impl CompileCompletion {
             {
                 return Err(error);
             }
-            if self.play && result.as_ref().is_ok_and(|result| result.published()) {
-                match state.begin_launch(self.actor) {
+            if let Some(install) = &self.play
+                && result.as_ref().is_ok_and(|result| result.published())
+            {
+                match state.begin_launch_frozen(self.actor, install.clone(), native.take()) {
                     Ok(request) => Some(request),
                     Err(error) => {
                         state.log(self.actor, format!("game launch failed: {error}"));
@@ -240,13 +318,12 @@ impl CompileCompletion {
                 None
             }
         };
-        launch_request
-            .map(|request| {
-                let origin = request.origin();
-                let result = run(request);
-                lock(&self.session).finish_launch(self.actor, &origin, result)
-            })
-            .transpose()
+        Ok(launch_request.map(|request| LaunchSubmission {
+            origin: request.origin(),
+            request: Some(request),
+            session: self.session.clone(),
+            actor: self.actor,
+        }))
     }
 }
 

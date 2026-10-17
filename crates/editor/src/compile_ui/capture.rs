@@ -85,15 +85,22 @@ impl Form {
                     .unwrap_or("Configure a supported CS:S installation")
             )
         };
+        let activity = state["native_activity"]["message"]
+            .as_str()
+            .unwrap_or("Native activity availability is unknown.");
         window.set_capture_summary(
-            if state["ready"] == true {
-                "Capture runtime ready. Configure capture… shows its folders."
+            if state["ready"] == true && state["native_activity"]["managed"] == true {
+                format!("Capture runtime ready. {activity}")
+            } else if state["ready"] == true {
+                "Capture runtime ready. Configure capture… shows its folders.".to_owned()
             } else {
-                "Capture runtime unavailable. Open Configure capture… for details."
+                "Capture runtime unavailable. Open Configure capture… for details.".to_owned()
             }
             .into(),
         );
-        window.set_capture_details(format!("{readiness}\nCS:S: {engine}\nSteam: {steam}").into());
+        window.set_capture_details(
+            format!("{readiness}\n{activity}\nCS:S: {engine}\nSteam: {steam}").into(),
+        );
         window.set_capture_editable(session.compile_settings()["editable"] == true);
         let baseline = self.baseline.borrow();
         window.set_capture_editing(baseline.is_some());
@@ -240,6 +247,64 @@ mod tests {
     use super::*;
     use crate::compile_ui::Controller;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn native_activity_status_keeps_runtime_errors_and_unrelated_build_controls_available() {
+        i_slint_backend_testing::init_no_event_loop();
+        let (_directory, game, _) = crate::test_assets::game_process(false);
+        let shared = Arc::new(Mutex::new(Session::new(Ok(game))));
+        let mut activity = crate::test_assets::native_activity(&shared);
+        let controller = Controller::new(&shared).unwrap();
+        controller
+            .window
+            .set_message("Earlier runtime configuration error".into());
+        let runtime = lock(&shared).native_capture_runtime();
+        assert_eq!(runtime["ready"], false);
+        let reason = runtime["reason"].as_str().unwrap();
+        let busy = runtime["native_activity"]["message"].as_str().unwrap();
+        controller.refresh(&lock(&shared));
+        assert!(controller.window.get_capture_details().contains(reason));
+        assert!(controller.window.get_capture_details().contains(busy));
+        assert!(
+            controller
+                .window
+                .get_capture_details()
+                .contains("Native activity busy")
+        );
+        assert!(controller.window.get_lighting_enabled());
+        assert!(controller.window.get_capture_editable());
+        assert_eq!(
+            controller.window.get_message(),
+            "Earlier runtime configuration error"
+        );
+        activity.fail_cleanup(&format!(
+            "Owned capture child did not exit. {}",
+            "é".repeat(2048)
+        ));
+        let failed = lock(&shared).native_capture_runtime();
+        assert_eq!(failed["native_activity"]["available"], false);
+        assert_eq!(
+            failed["native_activity"]["owner"]["phase"],
+            "failed_cleanup"
+        );
+        let message = failed["native_activity"]["message"].as_str().unwrap();
+        assert!(message.len() <= 2048);
+        controller.refresh(&lock(&shared));
+        assert!(controller.window.get_capture_details().contains(message));
+        assert!(controller.window.get_capture_details().contains(reason));
+        assert!(
+            controller
+                .window
+                .get_capture_details()
+                .contains("cleanup failed")
+        );
+        assert!(controller.window.get_lighting_enabled());
+        assert!(controller.window.get_capture_editable());
+        assert_eq!(
+            controller.window.get_message(),
+            "Earlier runtime configuration error"
+        );
+    }
 
     #[test]
     fn reflection_controls_toggle_review_cancel_and_freeze_with_the_shared_job() {

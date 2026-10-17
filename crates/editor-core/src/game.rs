@@ -2,14 +2,17 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use source_formats::bsp::{Bsp, PakLimits};
 use source_formats::gamefs::GameFs;
 use tempfile::NamedTempFile;
 
+use crate::runtime::native_activity::{Permit, Phase, Target};
+
 const MAX_LOG_BYTES: u64 = 256 * 1024;
 const WATCH_INTERVAL: Duration = Duration::from_millis(100);
+const STOP_TIMEOUT: Duration = Duration::from_secs(3);
 pub const DEFAULT_LOG_LINES: usize = 200;
 pub const MAX_LOG_LINES: usize = 2000;
 
@@ -18,6 +21,7 @@ pub struct Install {
     root: PathBuf,
     game: PathBuf,
     executable: PathBuf,
+    binding: Target,
 }
 
 impl Install {
@@ -34,11 +38,21 @@ impl Install {
                 executable.display()
             ));
         }
+        let binding = Target::play(&root, &fs.game_dir, &executable)?;
         Ok(Self {
             root,
             game,
             executable,
+            binding,
         })
+    }
+
+    pub(crate) fn target(&self) -> &Target {
+        &self.binding
+    }
+
+    pub(crate) fn verify(&self) -> Result<(), String> {
+        self.binding.verify()
     }
 }
 
@@ -57,12 +71,13 @@ impl Status {
                 Some(code) => format!("CS:S exited with code {code}"),
                 None => "CS:S terminated by a signal".into(),
             },
-            Self::Failed(error) => format!("could not wait for CS:S: {error}"),
+            Self::Failed(error) => format!("CS:S cleanup failed: {error}"),
         }
     }
 }
 
 pub struct Log {
+    pub native_activity: Option<serde_json::Value>,
     pub status: Status,
     pub pid: u32,
     pub map: String,
@@ -73,13 +88,20 @@ pub struct Log {
 
 impl Log {
     pub fn text(&self) -> String {
-        format!(
+        let mut text = format!(
             "{}\nMap: {}\n\nEngine console\n{}\n\nLauncher output\n{}",
             self.status.label(),
             self.map,
             self.console,
             self.launcher
-        )
+        );
+        if let Some(activity) = &self.native_activity
+            && activity["managed"] == true
+            && let Some(message) = activity["message"].as_str()
+        {
+            text.push_str(&format!("\n\n{message}"));
+        }
+        text
     }
 }
 
@@ -95,32 +117,127 @@ pub struct Run {
 
 struct Process {
     child: Child,
-    map: Option<NamedTempFile>,
-    download_list: PathBuf,
+    startup: Startup,
+    cleanup: Option<Result<ExitStatus, String>>,
 }
 
 impl Process {
     fn stop(&mut self) -> Result<ExitStatus, String> {
-        let exit = match self.child.try_wait().map_err(|e| e.to_string())? {
-            Some(exit) => exit,
-            None => {
-                self.child.kill().map_err(|e| e.to_string())?;
-                self.child.wait().map_err(|e| e.to_string())?
+        if let Some(result) = &self.cleanup {
+            return result.clone();
+        }
+        let exit = match self.child.try_wait() {
+            Ok(Some(exit)) => Ok(exit),
+            Ok(None) => stop_child(&mut self.child),
+            Err(error) => {
+                let cleanup = stop_child(&mut self.child);
+                cleanup.map_err(|cleanup| format!("{error}; owned child cleanup: {cleanup}"))
             }
         };
-        self.map = None;
-        match std::fs::remove_file(&self.download_list) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.to_string()),
+        let staging = self.startup.cleanup();
+        let result = match (exit, staging) {
+            (Ok(exit), Ok(())) => Ok(exit),
+            (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
+            (Err(exit), Err(staging)) => Err(format!("{exit}; {staging}")),
+        };
+        if let Some(permit) = &mut self.startup.permit {
+            match &result {
+                Ok(_) => permit.confirmed_clean(),
+                Err(error) => permit.failed_cleanup(error),
+            }
         }
-        Ok(exit)
+        drop(self.startup.permit.take());
+        self.cleanup = Some(result.clone());
+        result
+    }
+}
+
+fn stop_child(child: &mut Child) -> Result<ExitStatus, String> {
+    stop_child_with(child, Child::kill)
+}
+
+fn stop_child_with(
+    child: &mut Child,
+    kill: impl FnOnce(&mut Child) -> std::io::Result<()>,
+) -> Result<ExitStatus, String> {
+    let killed = kill(child);
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(exit)) => return Ok(exit),
+            Err(waited) => {
+                return Err(match &killed {
+                    Ok(()) => waited.to_string(),
+                    Err(killed) => format!("{killed}; child wait: {waited}"),
+                });
+            }
+            Ok(None) => {}
+        }
+        if let Err(error) = &killed {
+            return Err(format!(
+                "Could not stop owned game child: {error}; child exit is unconfirmed"
+            ));
+        }
+        if started.elapsed() >= STOP_TIMEOUT {
+            return Err("Owned game child did not exit within the cleanup deadline".into());
+        }
+        std::thread::sleep(WATCH_INTERVAL);
     }
 }
 
 impl Drop for Process {
     fn drop(&mut self) {
         let _ = self.stop();
+    }
+}
+
+#[derive(Default)]
+struct Startup {
+    map: Option<NamedTempFile>,
+    download_list: Option<PathBuf>,
+    permit: Option<Permit>,
+    cleanup: Option<Result<(), String>>,
+}
+
+impl Startup {
+    fn cleanup(&mut self) -> Result<(), String> {
+        if let Some(result) = &self.cleanup {
+            return result.clone();
+        }
+        let mut failures = Vec::new();
+        if let Some(map) = self.map.take() {
+            let path = map.path().to_owned();
+            if let Err(error) = map.close() {
+                failures.push(format!("Owned map cleanup at {}: {error}", path.display()));
+            }
+        }
+        if let Some(path) = self.download_list.take() {
+            match std::fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => failures.push(format!(
+                    "Owned download-list cleanup at {}: {error}",
+                    path.display()
+                )),
+            }
+        }
+        let result = if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("; "))
+        };
+        self.cleanup = Some(result.clone());
+        result
+    }
+}
+
+impl Drop for Startup {
+    fn drop(&mut self) {
+        if let Err(error) = self.cleanup()
+            && let Some(permit) = &mut self.permit
+        {
+            permit.failed_cleanup(&error);
+        }
     }
 }
 
@@ -206,9 +323,63 @@ impl Run {
     pub(crate) fn launch_controlled(
         install: &Install,
         bsp: &Path,
+        checkpoint: impl FnMut() -> Result<(), String>,
+    ) -> Result<Self, String> {
+        Self::launch_admitted(install, bsp, None, checkpoint)
+    }
+
+    pub(crate) fn launch_admitted(
+        install: &Install,
+        bsp: &Path,
+        permit: Option<Permit>,
+        checkpoint: impl FnMut() -> Result<(), String>,
+    ) -> Result<Self, String> {
+        Self::launch_with_monitor(install, bsp, permit, checkpoint, spawn_monitor)
+    }
+
+    fn launch_with_monitor(
+        install: &Install,
+        bsp: &Path,
+        permit: Option<Permit>,
         mut checkpoint: impl FnMut() -> Result<(), String>,
+        monitor: impl FnOnce(
+            Arc<Mutex<Process>>,
+            Arc<Mutex<Status>>,
+        ) -> std::io::Result<std::thread::JoinHandle<()>>,
+    ) -> Result<Self, String> {
+        let mut startup = Startup {
+            map: None,
+            download_list: None,
+            permit,
+            cleanup: None,
+        };
+        let result = Self::launch_prepared(install, bsp, &mut startup, &mut checkpoint, monitor);
+        match result {
+            Ok(run) => Ok(run),
+            Err(error) => match startup.cleanup() {
+                Ok(()) => Err(error),
+                Err(cleanup) => {
+                    if let Some(permit) = &mut startup.permit {
+                        permit.failed_cleanup(&cleanup);
+                    }
+                    Err(format!("{error}; {cleanup}"))
+                }
+            },
+        }
+    }
+
+    fn launch_prepared(
+        install: &Install,
+        bsp: &Path,
+        startup: &mut Startup,
+        checkpoint: &mut impl FnMut() -> Result<(), String>,
+        monitor: impl FnOnce(
+            Arc<Mutex<Process>>,
+            Arc<Mutex<Status>>,
+        ) -> std::io::Result<std::thread::JoinHandle<()>>,
     ) -> Result<Self, String> {
         checkpoint()?;
+        install.verify()?;
         let source =
             crate::bounded_file::Source::capture(bsp, PakLimits::default().max_bsp_bytes as u64)
                 .map_err(|error| format!("{}: {error}", bsp.display()))?;
@@ -219,7 +390,8 @@ impl Run {
         checkpoint()?;
         let maps = install.game.join("maps");
         std::fs::create_dir_all(&maps).map_err(|e| e.to_string())?;
-        let mut map_file = temporary(&maps, "hammerr_", ".bsp")?;
+        startup.map = Some(temporary(&maps, "hammerr_", ".bsp")?);
+        let map_file = startup.map.as_mut().expect("startup owns the staged map");
         let map = map_file
             .path()
             .file_stem()
@@ -242,6 +414,7 @@ impl Run {
         }
         let libraries = std::env::join_paths(library_paths).map_err(|e| e.to_string())?;
         checkpoint()?;
+        install.verify()?;
         let child = Command::new(&install.executable)
             .current_dir(&install.root)
             .env("LD_LIBRARY_PATH", libraries)
@@ -271,45 +444,36 @@ impl Run {
             .spawn()
             .map_err(|e| format!("{}: {e}", install.executable.display()))?;
         let pid = child.id();
-        let process = Arc::new(Mutex::new(Process {
-            child,
-            map: Some(map_file),
-            download_list: install
+        startup.download_list = Some(
+            install
                 .game
                 .join("downloadlists")
                 .join(format!("{map}.lst")),
+        );
+        if let Some(permit) = &mut startup.permit {
+            permit.phase(Phase::Play);
+            permit.started();
+        }
+        let process = Arc::new(Mutex::new(Process {
+            child,
+            startup: std::mem::take(startup),
+            cleanup: None,
         }));
         let status = Arc::new(Mutex::new(Status::Running));
-        let watched = status.clone();
-        let monitored = process.clone();
-        let monitor = std::thread::Builder::new()
-            .name("game-monitor".into())
-            .spawn(move || {
-                let result = loop {
-                    let result = monitored
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .child
-                        .try_wait();
-                    match result {
-                        Ok(None) => std::thread::sleep(WATCH_INTERVAL),
-                        Ok(Some(exit)) => break Ok(exit),
-                        Err(error) => break Err(error),
-                    }
-                };
-                let finished = match result {
-                    Ok(exit) => exited(exit),
-                    Err(error) => Status::Failed(error.to_string()),
-                };
-                let _ = monitored
+        let monitor = monitor(process.clone(), status.clone());
+        let monitor = match monitor {
+            Ok(monitor) => monitor,
+            Err(error) => {
+                let cleanup = process
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .stop();
-                *watched
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) = finished;
-            });
-        let monitor = monitor.map_err(|e| format!("could not monitor CS:S: {e}"))?;
+                return Err(match cleanup {
+                    Ok(_) => format!("could not monitor CS:S: {error}"),
+                    Err(cleanup) => format!("could not monitor CS:S: {error}; {cleanup}"),
+                });
+            }
+        };
         Ok(Self {
             pid,
             map,
@@ -333,22 +497,26 @@ impl Run {
     }
 
     pub fn stop(&self) -> Result<(), String> {
-        let exit = self
+        let result = self
             .process
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .stop()?;
+            .stop();
         *self
             .status
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = exited(exit);
-        Ok(())
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = match &result {
+            Ok(exit) => exited(*exit),
+            Err(error) => Status::Failed(error.clone()),
+        };
+        result.map(drop)
     }
 
     pub fn log(&self, lines: usize) -> Result<Log, String> {
         let (console, console_truncated) = tail(self.console.path(), lines)?;
         let (launcher, launcher_truncated) = tail(self.launcher.path(), lines)?;
         Ok(Log {
+            native_activity: None,
             status: self.status(),
             pid: self.pid,
             map: self.map.clone(),
@@ -357,6 +525,40 @@ impl Run {
             truncated: console_truncated || launcher_truncated,
         })
     }
+}
+
+fn spawn_monitor(
+    process: Arc<Mutex<Process>>,
+    status: Arc<Mutex<Status>>,
+) -> std::io::Result<std::thread::JoinHandle<()>> {
+    std::thread::Builder::new()
+        .name("game-monitor".into())
+        .spawn(move || monitor_game(process, status))
+}
+
+fn monitor_game(process: Arc<Mutex<Process>>, status: Arc<Mutex<Status>>) {
+    let result = loop {
+        let mut process = process
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(result) = &process.cleanup {
+            break result.clone();
+        }
+        match process.child.try_wait() {
+            Ok(None) => {
+                drop(process);
+                std::thread::sleep(WATCH_INTERVAL);
+            }
+            Ok(Some(_)) | Err(_) => break process.stop(),
+        }
+    };
+    let finished = match result {
+        Ok(exit) => exited(exit),
+        Err(error) => Status::Failed(error),
+    };
+    *status
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = finished;
 }
 
 impl Drop for Run {
@@ -377,6 +579,8 @@ fn exited(exit: ExitStatus) -> Status {
 
 #[cfg(test)]
 mod launch_read_tests;
+#[cfg(test)]
+mod native_activity_tests;
 
 #[cfg(test)]
 mod tests {

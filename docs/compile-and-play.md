@@ -57,6 +57,25 @@ build owned by the editor.
 Switching maps while it starts cannot attach that late process to the replacement
 map. Launch stays busy until owned process cleanup completes.
 
+Game launches and reflection captures share one native activity in this editor
+process. A conflict reports the current owner and installation; it starts no
+waiting game. An ordinary **Compile** can continue while a managed game runs.
+**Run Map** keeps a successful build if its optional game launch fails or finds
+the native activity busy. Optional game startup releases the compiler worker
+before starting the client.
+
+Accepted launches bind their installation and executable. Reflection builds
+also bind their capture installation, Steam root and content mounts. Replacing
+those bindings fails the accepted request. Normal game exit releases native
+capacity after checked cleanup while **Game Log** remains readable. Unconfirmed
+cleanup remains visibly occupied and makes editor shutdown report the failure.
+**Configure capture…** shows the current activity beside runtime configuration
+readiness; **Game Log** shows the same concise status. A valid installation can
+still be busy. Activity conflicts leave ordinary compilation available.
+Manually launched games and other editor processes are outside this launch
+coordination. Reflection capture retains its separate capture lock and existing
+same-installation running-client preflight; it never stops those clients.
+
 Saved maps can compile bounded world/detail [referenced brush assemblies](instances.md).
 Unsupported or missing instance contents fail before publication; prior BSP and
 pointfile remain intact, and **Run Map** does not launch. Hidden helpers remain

@@ -14,6 +14,19 @@ static NEXT_DOCUMENT_ID: AtomicU64 = AtomicU64::new(1);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DocumentId(u64);
 
+impl DocumentId {
+    pub(crate) fn allocate() -> Result<Self, String> {
+        NEXT_DOCUMENT_ID
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+            .map(Self)
+            .map_err(|_| "Document ID capacity exhausted".to_owned())
+    }
+
+    pub(crate) fn value(self) -> u64 {
+        self.0
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DocumentLifecycle {
     Live,
@@ -133,7 +146,14 @@ impl DocumentShutdown {
             return result.clone();
         }
         self.shutdown.drain();
-        let result = self.recovery_worker.drain().map(|_| ());
+        let recovery = self.recovery_worker.drain().map(|_| ());
+        let native = lock(&self.shutdown.session).native_cleanup_result();
+        let result = match (recovery, native) {
+            (Ok(()), result) | (result, Ok(())) => result,
+            (Err(recovery), Err(native)) => Err(format!(
+                "{recovery}; native activity cleanup failed: {native}"
+            )),
+        };
         self.shutdown.admission.finish(&result);
         self.finished = Some(result.clone());
         result
@@ -178,17 +198,26 @@ impl DocumentHandle {
         session: SharedSession,
         queue: &CompileQueue,
     ) -> Result<Self, String> {
-        Self::start_with_queue(session, Some(queue.client()))
+        Self::start_with_services(session, Some(queue.client()), Some(queue.native()))
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     fn start_with_queue(
         session: SharedSession,
         queue: Option<QueueClient>,
     ) -> Result<Self, String> {
-        let id = NEXT_DOCUMENT_ID
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
-            .map(DocumentId)
-            .map_err(|_| "Document ID capacity exhausted".to_owned())?;
+        Self::start_with_services(session, queue, None)
+    }
+
+    fn start_with_services(
+        session: SharedSession,
+        queue: Option<QueueClient>,
+        native: Option<&super::native_activity::Authority>,
+    ) -> Result<Self, String> {
+        let id = DocumentId::allocate()?;
+        if let Some(native) = native {
+            lock(&session).use_application_native_activity(native.client(id));
+        }
         let admission = Arc::new(Admission {
             lifecycle: Mutex::new(DocumentLifecycle::Live),
             operations: AtomicUsize::new(0),

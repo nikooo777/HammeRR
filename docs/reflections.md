@@ -69,13 +69,20 @@ alpha, sphere and header data. Malformed or incomplete captures return explicit
 errors. **Run Map** rebases registered names for both channels while retaining
 their texture data.
 
+The editor reserves one native activity when a reflective build leaves the
+compiler queue. A queued build holds no native capacity. An occupied activity
+fails that exact build before compiler work; there is no native waiting queue.
+Both capture channels, verification and publication retain the same owner.
+**Run Map** transfers that owner directly to its captured Play target after
+capture cleanup, even when the capture and Play installations differ.
+
 ## Limits
 
 - Generation supports one capture bounce per channel: LDR alone or paired LDR/HDR. Additional capture bounces, moving-scene reassignment and reflection preview inside the editor are unavailable. HDR playback still depends on the game setting and hardware; **HDR data ready** describes baked map data.
 - A build supports 1–32 samples at distinct integer positions. Sample size `0` uses the declared 128-pixel default. Explicit cube edges up to 128 pixels are supported; 256 pixels is rejected before launch. The private capture viewport must verify as 1280×720.
 - A supported CS:S installation, running Steam client, native runtime helper, Cage, grim and Bubblewrap must pass preflight. Bubblewrap needs usable Linux user namespaces. Unsupported materials, sample sizes, missing assets or unverified captures fail the build with diagnostics.
 - The capture client reads external files through a read-only filesystem view. Only its owned capture directory is writable; source mounts keep their files and caches. Graphics devices and Steam IPC remain available.
-- Capture rejects authored scripts, script thinkers, script entities and command-executing entity inputs. This is a conservative capture restriction; the saved VMF and published entity lump keep their authored contents. An already running CS:S client blocks capture.
+- Capture rejects authored scripts, script thinkers, script entities and command-executing entity inputs. This is a conservative capture restriction; the saved VMF and published entity lump keep their authored contents. A managed game in this editor process blocks capture. The existing UID-wide capture lock still rejects captures in another process, and capture preflight retains its same-installation running-client check. Those clients are never stopped.
 - Native capture keeps each private channel job within a 256 MiB file budget, including two BSP copies and 64 MiB of scratch admission. BSP staging larger than 96 MiB is rejected. Captured assets and retained diagnostics have additional limits.
 - Packed generation shares a 64 MiB asset budget across both channels, with at most 1,024 material aliases and 4 MiB per captured VTF. HDR samples require VTF 7.4 RGBA16F, seven native faces and a full mip chain. A captured HDR default is optional; any extra LDR default emitted by the HDR pass is validated and reported, while the published LDR default comes from the LDR pass.
 - Active builds freeze compiler settings and runtime configuration. Changing generation afterward makes a previous build stale while its saved settings differ.

@@ -410,6 +410,15 @@ impl Drop for CallerChild {
     }
 }
 
+fn finish_caller(
+    owned: &mut CallerChild,
+    disposition: &mut crate::CleanupDisposition,
+) -> io::Result<()> {
+    owned.finish()?;
+    *disposition = crate::CleanupDisposition::Confirmed;
+    Ok(())
+}
+
 pub(crate) fn supervise(directory: &Path) -> io::Result<()> {
     let directory = directory.canonicalize()?;
     let request: WorkerRequest = util::json_read(&directory.join("request.json"), 2 * 1024 * 1024)?;
@@ -577,8 +586,25 @@ pub(crate) fn supervise(directory: &Path) -> io::Result<()> {
 }
 
 pub fn capture(
+    request: CaptureRequest,
+    observer: &mut dyn CaptureObserver,
+) -> io::Result<CaptureReceipt> {
+    capture_with_cleanup(request, observer).map_err(|failure| failure.error)
+}
+
+pub fn capture_with_cleanup(
+    request: CaptureRequest,
+    observer: &mut dyn CaptureObserver,
+) -> Result<CaptureReceipt, crate::CaptureFailure> {
+    let mut cleanup = crate::CleanupDisposition::Confirmed;
+    capture_inner(request, observer, &mut cleanup)
+        .map_err(|error| crate::CaptureFailure { error, cleanup })
+}
+
+fn capture_inner(
     mut request: CaptureRequest,
     observer: &mut dyn CaptureObserver,
+    disposition: &mut crate::CleanupDisposition,
 ) -> io::Result<CaptureReceipt> {
     observer.checkpoint()?;
     let lease = lease()?;
@@ -677,6 +703,7 @@ pub fn capture(
         directory: directory.clone(),
         audited: false,
     };
+    *disposition = crate::CleanupDisposition::Unconfirmed;
     let start = Instant::now();
     let mut cancel_at = None;
     let mut cancellation = None;
@@ -727,7 +754,7 @@ pub fn capture(
         }
         util::json_read::<WorkerResult>(&directory.join("supervisor-result.json"), 64 * 1024)
     })();
-    let cleanup = owned.finish();
+    let cleanup = finish_caller(&mut owned, disposition);
     if let Err(error) = cleanup {
         return Err(invalid(format!(
             "{}; cleanup/audit: {error}; inspect {}",
@@ -766,6 +793,63 @@ pub fn capture(
 mod tests {
     use super::*;
     use std::os::unix::ffi::OsStrExt;
+
+    struct CancelledObserver;
+
+    impl CaptureObserver for CancelledObserver {
+        fn checkpoint(&mut self) -> io::Result<()> {
+            Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "cancelled before native startup",
+            ))
+        }
+
+        fn sample_progress(&mut self, _current: usize, _total: usize) {}
+    }
+
+    #[test]
+    fn capture_prestart_failure_confirms_no_native_cleanup_is_required() {
+        let request = CaptureRequest {
+            channel: crate::CaptureChannel::Ldr,
+            environment: CaptureEnvironment {
+                engine_root: PathBuf::new(),
+                steam_root: PathBuf::new(),
+                mounts: Vec::new(),
+            },
+            bsp: Vec::new(),
+            map_name: String::new(),
+            samples: Vec::new(),
+        };
+        let failure = capture_with_cleanup(request, &mut CancelledObserver)
+            .err()
+            .unwrap();
+        assert_eq!(failure.cleanup, crate::CleanupDisposition::Confirmed);
+        assert_eq!(failure.error.kind(), io::ErrorKind::Interrupted);
+    }
+
+    #[test]
+    fn capture_started_child_requires_successful_preservation_audit_for_confirmed_cleanup() {
+        let directory = private_directory();
+        fs::write(
+            directory.path().join("private-preservation-before.json"),
+            "{}",
+        )
+        .unwrap();
+        let child = Command::new("sleep").arg("60").spawn().unwrap();
+        let mut owned = CallerChild {
+            child,
+            directory: directory.path().to_owned(),
+            audited: false,
+        };
+        let mut disposition = crate::CleanupDisposition::Unconfirmed;
+        assert!(finish_caller(&mut owned, &mut disposition).is_err());
+        assert_eq!(disposition, crate::CleanupDisposition::Unconfirmed);
+        assert!(owned.child.try_wait().unwrap().is_some());
+        let report: serde_json::Value =
+            util::json_read(&directory.path().join("private-caller-cleanup.json"), 4096).unwrap();
+        assert_eq!(report["supervisor_reaped"], true);
+        assert_eq!(report["preservation_passed"], false);
+    }
 
     fn private_directory() -> tempfile::TempDir {
         let directory = tempfile::tempdir().unwrap();

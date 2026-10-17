@@ -40,6 +40,7 @@ fn running(install: &mut Install, bsp: &Path) -> Run {
     )
     .unwrap();
     std::fs::set_permissions(&install.executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+    install.binding = Target::play(&install.root, &install.game, &install.executable).unwrap();
     run
 }
 

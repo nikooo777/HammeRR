@@ -359,7 +359,7 @@ fn game_log_json(log: &game::Log) -> Value {
         game::Status::Failed(error) => ("failed", None, Some(error.as_str())),
     };
     json!({"status": status, "exit_code": exit_code, "error": error, "pid": log.pid,
-        "map": log.map, "console": log.console, "launcher": log.launcher, "truncated": log.truncated})
+        "map": log.map, "console": log.console, "launcher": log.launcher, "truncated": log.truncated,"native_activity":log.native_activity})
 }
 
 #[derive(Clone)]

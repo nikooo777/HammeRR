@@ -436,6 +436,34 @@ fn model_texture_opacity_keeps_geometry_tint_picking_and_guide_appearance_indepe
     );
 }
 
+#[test]
+fn transparent_model_batches_count_each_missing_material_once() {
+    let mut entity = Entity::new(2, "prop_dynamic");
+    entity.properties.set("origin", "0 0 0");
+    entity.properties.set("rendermode", "2");
+    let mut model = asset();
+    let parts = &mut Arc::get_mut(&mut model).unwrap().model.parts;
+    parts.push(Part {
+        material: parts[0].material,
+        indices: parts[0].indices.clone(),
+    });
+    let instance = Instance::new(&entity, model).unwrap();
+    let mut vmf = Document::empty().vmf().clone();
+    vmf.entities.push(entity);
+    let directory = tempfile::tempdir().unwrap();
+    let mesh = crate::SceneMesh::build_with_models(
+        &vmf,
+        &material_game(directory.path()),
+        &mut crate::MaterialLibrary::default(),
+        &HashSet::new(),
+        &HashSet::new(),
+        &[],
+        &[instance],
+    );
+    assert_eq!(mesh.batches.len(), 2);
+    assert_eq!(mesh.stats.missing_materials, 1);
+}
+
 fn opacity_texture(pixel: [u8; 4]) -> Vec<u8> {
     let mut bytes = vec![0; 80];
     bytes[..4].copy_from_slice(b"VTF\0");

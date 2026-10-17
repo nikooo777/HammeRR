@@ -1,5 +1,6 @@
 use super::*;
-use std::sync::Mutex;
+use crate::recovery;
+use std::sync::{Arc, Mutex};
 
 #[test]
 fn recovery_restore_callback_rejects_review_from_before_peer_save_as() {

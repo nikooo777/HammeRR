@@ -8,6 +8,10 @@ use crate::session::{Actor, LaunchOrigin, LaunchRequest, Session};
 
 mod document;
 pub use document::DocumentHandle;
+mod recovery;
+#[cfg(feature = "mcp")]
+pub(crate) use recovery::RecoverySubmission;
+pub use recovery::start_recovery_snapshot;
 
 pub type SharedSession = Arc<Mutex<Session>>;
 

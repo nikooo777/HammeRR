@@ -6,6 +6,9 @@ mod error_domain_tests;
 #[cfg(test)]
 mod authority_tests;
 
+#[cfg(test)]
+mod submission_tests;
+
 #[tool_router(router = recovery_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
@@ -75,15 +78,24 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Write a manual recovery snapshot without saving over the map, bumping mapversion, changing dirty state or adding undo history. Uses committed content and excludes active previews. Does not hold the Session lock during serialization/file writing; edits made while it writes remain pending for the next snapshot."
+        description = "Write a manual recovery snapshot without saving over the map, bumping mapversion, changing dirty state or adding undo history. Freezes committed content and retention settings before worker scheduling and excludes active previews. Does not hold the Session lock during serialization/file writing; later edits remain pending for the next snapshot. Cancelling a queued call skips its capture; a capture already started finishes normally."
     )]
     pub(in crate::mcp) async fn create_recovery_snapshot(&self) -> ToolResult {
-        let session = self.session.clone();
-        match tokio::task::spawn_blocking(move || {
-            crate::recovery::capture(&session, Actor::Agent, crate::recovery::Kind::Manual)
-        })
-        .await
+        let submission =
+            match crate::runtime::RecoverySubmission::begin(&self.session, Actor::Agent) {
+                Ok(submission) => submission,
+                Err(error) => return fail(error),
+            };
+        let mut cancellation = submission.cancellation();
+        let worker = match submission
+            .schedule_with(|submission| Ok(tokio::task::spawn_blocking(move || submission.run())))
         {
+            Ok(worker) => worker,
+            Err(error) => return fail(error),
+        };
+        let result = worker.await;
+        cancellation.disarm();
+        match result {
             Ok(Ok(entry)) => ok(json!({"snapshot": entry})),
             Ok(Err(error)) => fail(error),
             Err(error) => fail(format!("Recovery worker failed: {error}")),

@@ -1,9 +1,8 @@
-use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use slint::{ComponentHandle, ModelRc, VecModel};
 
-use crate::recovery::{self, Kind, Settings};
+use crate::recovery::{Kind, Settings};
 use crate::runtime::{SharedSession, lock};
 use crate::session::{Actor, Session};
 use crate::{RecoveryRow, RecoveryWindow};
@@ -281,18 +280,5 @@ pub fn bind(window: &RecoveryWindow, shared: &SharedSession) {
 }
 
 fn start_snapshot(session: &SharedSession) -> Result<(), String> {
-    let request = Arc::new(lock(session).begin_recovery_snapshot(Kind::Manual)?);
-    let worker_request = request.clone();
-    let worker_session = session.clone();
-    let spawned = std::thread::Builder::new()
-        .name("map-snapshot".into())
-        .spawn(move || {
-            let _ = recovery::complete_capture(&worker_session, Actor::User, &worker_request);
-        });
-    if let Err(error) = spawned {
-        return lock(session)
-            .finish_recovery_snapshot(Actor::User, &request, Err(error.to_string()))
-            .map(|_| ());
-    }
-    Ok(())
+    crate::runtime::start_recovery_snapshot(session, Actor::User)
 }

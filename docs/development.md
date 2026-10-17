@@ -326,6 +326,18 @@ render overrides, material provenance, reload/rejection, bounds and picking;
 it opens no visible editor or game. The software callback checks that toggling
 normal preview preserves an active transform review.
 
+### Preference write conflicts
+
+```sh
+python3 -B scripts/validate_preference_conflicts.py --binary target/debug/hammerr-headless --output /tmp/hammerr-preference-conflicts-check
+```
+
+Two private stdio processes share Grid, Preview and Navigation defaults plus
+keyboard shortcuts. The fixture checks stale writers, explicit Reload/retry,
+same-target lock contention, missing-file directory alias changes, Navigation
+Apply and shortcut activation. It preserves map/history/camera and an owned
+measurement review, and checks that graphics stay uninitialized.
+
 ### Keyboard shortcuts
 
 ```sh

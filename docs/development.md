@@ -24,7 +24,10 @@ Application owns concrete Favorites and Recent maps authorities; deliberately
 attached Sessions share their lists, storage observations, errors and revisions. Independently
 constructed Sessions keep their own authority. Recovery reconfiguration cannot
 rebind an attached authority. Material catalog and preview updates publish one
-owned Favorites snapshot without locking another Session. MCP tool groups and parameters live under `editor-core/src/mcp/`, while desktop composition and feature bindings live under `editor/src/ui/` and the feature-specific UI modules.
+owned Favorites snapshot without locking another Session. Application also owns
+active shortcuts and a SavedDefaults bundle whose three typed stores share one
+storage-state implementation. Current grid, preview switches and fly speed stay
+Session-local; applying saved values acts only on the originating Session. MCP tool groups and parameters live under `editor-core/src/mcp/`, while desktop composition and feature bindings live under `editor/src/ui/` and the feature-specific UI modules.
 
 `Session` owns geometry-preview state through `session/previews.rs`. Rendering, picking and tool-texture filtering share its displayed-document selector. Feature modules validate replacement drafts before clearing competitors through the coordinator; their own payloads and ownership tokens remain local.
 
@@ -2326,7 +2329,6 @@ page clamping, selected material/filter retention, independent status recovery
 and an unavailable catalog. The existing explicit UI ownership test includes
 retained-child toggle and Reload callbacks after their owner is dropped.
 
-
 ### Shared Favorites authority
 
 ```sh
@@ -2343,7 +2345,6 @@ visible-window refresh. The existing retained-child resource check still covers
 owner release. This is a persistence seam; multiple open documents and document
 targeting are separate work.
 
-
 ### Shared Recent maps authority
 
 ```sh
@@ -2358,3 +2359,36 @@ Reload, compatible idle build restoration and incompatible/compiling documents.
 Primary map Open/Save remain successful on history-storage failure. Other
 Sessions' history, cameras, selection and owned reviews remain independent.
 Existing separate-process writer checks retain their explicit Reload policy.
+
+### Shared shortcuts and saved defaults
+
+```sh
+cargo test -p editor-core --features mcp shortcuts::authority::tests
+cargo test -p editor-core --features mcp saved_defaults::tests
+cargo test -p editor-core --features mcp attached_mcp_sessions
+cargo test -p editor-core --features mcp attached_shortcut_tools
+cargo test -p editor shared_saved_grid_errors -- --test-threads=1
+cargo test -p editor attached_shortcut_forms -- --test-threads=1
+python3 -B scripts/validate_preference_conflicts.py --binary target/debug/hammerr-headless --output /tmp/hammerr-preference-conflicts-check
+```
+
+The shared-state checks distinguish saved defaults from current settings, retain
+origin-local commands, test startup exactly once and reject stale shared forms
+inside the authority guard. Storage failures, reviewed bad-file Reset, original
+directory identity and committed-write errors keep their existing contracts.
+Software controls cover shared hints/forms and the Grid badge without invalidating
+owned geometry or measurement picks.
+
+### Build recipe Reload
+
+```sh
+cargo test -p editor-core --features mcp session::compilation::recipes::reload_tests
+cargo test -p editor compile_ui::recipe_reload_tests -- --test-threads=1
+python3 -B scripts/validate_build_recipes.py --binary target/debug/hammerr-headless --output /tmp/hammerr-build-recipes-check
+```
+
+The existing private validator now exercises changed and repaired storage, failed
+Reload retention, stale actions and owned-review/GPU-lazy state. Session checks
+cover busy/closing admission, unchanged compiler values, applied recipe identity,
+captured jobs and session-only storage. Software callbacks capture the existing
+build window and keep its Reload action available for configured storage errors.

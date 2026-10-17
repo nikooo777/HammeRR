@@ -311,7 +311,7 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | Named build recipes | Portable sky assets |
 | --- | --- |
 | ![Named build recipes and their compiler settings](docs/images/build-recipes.png) | ![Sky asset packing enabled in Build settings](docs/images/build-pack-sky-assets.png) |
-| Recall Fast preview, Final lighting or named custom combinations of native compiler settings. | Include supported LDR/HDR sky materials and textures in the BSP with their original names and bytes. |
+| Save, recall and reload named compiler settings alongside Fast preview and Final lighting. | Include supported LDR/HDR sky materials and textures in the BSP with their original names and bytes. |
 
 | Baked lightmaps |
 | --- |

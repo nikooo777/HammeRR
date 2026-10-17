@@ -36,6 +36,8 @@ Custom recipes save on this computer separately from VMF files and map undo. The
 2. Review the refreshed list and storage status. A failed Reload keeps the previous valid list and current recipe label, displays the error, and blocks custom changes until a successful Reload. **Reload recipes** stays available for repair while no build is active.
 3. Choose a recipe and click **Apply recipe** when you want its settings. Reload itself preserves current compiler settings, map history, camera and pending reviews. It keeps an active recipe label, including a changed name, only when that same saved recipe still matches current values; removed or changed recipes clear the label to **Custom settings**.
 
+![Saved recipes remain available while Reload reports a storage error](images/build-recipes-reload.png)
+
 Reload is unavailable for session-only storage and while a build runs or the editor closes. Completed jobs keep their captured recipe name and settings. Existing registry revisions reject actions prepared before a Reload; review the refreshed list before retrying a stale action.
 
 Both built-in recipes disable sky packing and reflection generation. Missing booleans in older custom recipes default to off; a disabled packing field remains omitted from stored version-1 records. See [Pack portable sky assets](compile-and-play.md#pack-portable-sky-assets).

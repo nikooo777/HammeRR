@@ -240,7 +240,7 @@ returns their current schemas and descriptions.
 | Instance reference authoring | `get_instance_reference`, `set_instance_reference` |
 | Extract brush assemblies | `get_instance_extraction`, `set_instance_extraction` |
 | Instance contents preview | `inspect_instance_contents`, `set_instance_contents` |
-| Prefab library | `get_prefabs`, `inspect_prefab_thumbnail`, `render_prefab_thumbnail`, `save_prefab`, `preview_prefab`, `rename_prefab`, `delete_prefab`; placement uses `apply_paste` / `cancel_paste` |
+| Prefab library | `get_prefabs`, `inspect_prefab_thumbnail`, `render_prefab_thumbnail`, `render_prefab_gallery`, `save_prefab`, `preview_prefab`, `rename_prefab`, `delete_prefab`; placement uses `apply_paste` / `cancel_paste` |
 | Layers | `get_layers`, `begin_layer_edit`, `update_layer_edit`, `apply_layer_edit`, `cancel_layer_edit`, `select_layer_members`, `set_layer_visibility` |
 | Clipboard and transfer | `get_clipboard`, `copy_objects`, `cut_objects`, `import_clipboard`, `export_clipboard`, `preview_paste`, `apply_paste`, `cancel_paste` |
 | Object edits | `move_objects`, `duplicate_objects`, `delete_objects` |

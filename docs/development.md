@@ -61,6 +61,17 @@ cargo test --workspace
 
 Builds use a lot of memory. On smaller machines, limit parallel jobs with `-j`.
 
+Run formatting and strict lint checks for the workspace and the minimal core:
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --features editor-core/mcp,editor-core/test-support -- -D warnings
+cargo clippy -p editor-core --no-default-features --all-targets -- -D warnings
+```
+
+The workspace check includes the optional MCP and desktop test adapters; the
+minimal-core check also compiles unit tests without those features.
+
 When running several validation scripts, build the required binaries together
 and reuse them. GPU tests can run directly from the test executables reported by
 the completed workspace test log, in their crate directory with `--ignored` and

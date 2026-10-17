@@ -23,7 +23,8 @@ Preparation checks the serialized child through the same resolver used by
    **Instance contents** to see the resolved child. Extraction never loads or
    enables the layer automatically. Use [Edit instance reference…](instance-authoring.md)
    to move or rotate the committed reference.
-7. **Cancel** discards only your matching preparation and private staging file.
+7. **Cancel** or Escape discards your matching preparation and private staging
+   file. An agent-owned review closes without cancelling its work.
    **Review shared extraction** transfers a ready or failed review to a new token.
    A stale review must be cancelled and prepared again.
 
@@ -44,7 +45,7 @@ Limits:
 - Extraction currently requires Linux directory-relative staging/publication.
   Cleanup checks the owned inode before removing a private entry, including
   after directory renames; reported cleanup failures preserve replacements.
-- Extract 1–64 root objects, at most 256 brushes and 2048 sides. The child is at
+- Extract 1–64 root objects, at most 256 brushes and 2048 sides, with 128 sides per brush. The child is at
   most 4 MiB and the retained plan at most 16 MiB. Existing compiler bounds,
   parser, convexity, field and aggregate limits also apply.
 - Paths explicitly end in `.vmf`, stay under the saved referring parent, and use

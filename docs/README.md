@@ -53,6 +53,7 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | [Baked lightmaps](baked-lightmaps.md) | Actual compiled LDR/HDR face samples, style and directional-map inspection |
 | [Water](water.md) | Flat world pools, underwater materials, fog and floating objects |
 | [Instance authoring](instance-authoring.md) | Place and edit saved VMF references with readable path and transform controls |
+| [Extract brush assemblies](instance-extraction.md) | Export selected brushes and replace them with a guarded instance reference |
 | [Instance contents](instance-contents.md) | Resolve, inspect, select and frame a flat reference layer |
 | [Referenced instances](instances.md) | Compile saved world/detail assemblies with guarded dependencies |
 | [Compile regions](compile-regions.md) | Previewing and saving bounds for sealed partial-map builds |

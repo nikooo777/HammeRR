@@ -152,23 +152,18 @@ impl Stage {
                 RenameFlags::NOREPLACE,
             ) {
                 Ok(()) => Ok(()),
-                Err(error)
-                    if matches!(
-                        error,
-                        rustix::io::Errno::NOSYS
-                            | rustix::io::Errno::INVAL
-                            | rustix::io::Errno::OPNOTSUPP
-                    ) =>
-                {
-                    rustix::fs::linkat(
-                        &self.directory,
-                        &self.basename,
-                        &self.directory,
-                        name,
-                        AtFlags::empty(),
-                    )
-                    .map_err(|error| EditError::Invalid(error.to_string()))
-                }
+                Err(
+                    rustix::io::Errno::NOSYS
+                    | rustix::io::Errno::INVAL
+                    | rustix::io::Errno::OPNOTSUPP,
+                ) => rustix::fs::linkat(
+                    &self.directory,
+                    &self.basename,
+                    &self.directory,
+                    name,
+                    AtFlags::empty(),
+                )
+                .map_err(|error| EditError::Invalid(error.to_string())),
                 Err(error) => Err(EditError::Invalid(error.to_string())),
             }
         }

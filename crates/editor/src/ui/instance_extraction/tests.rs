@@ -62,6 +62,7 @@ fn software_instance_extraction_callbacks_prepare_review_extract_cancel_and_undo
     controller.refresh();
     assert!(!controller.window.get_owned());
     controller.window.invoke_cancel();
+    assert!(!controller.window.window().is_visible());
     assert!(lock(&shared).get_instance_extraction()["token"].is_number());
     controller.window.invoke_review();
     assert!(controller.window.get_owned());

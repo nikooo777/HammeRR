@@ -94,7 +94,13 @@ impl MaterialInfo {
                     .ok_or_else(|| format!("Blend texture {path} was not found"))
             })
             .transpose()?;
-        Ok(Self::from_resolved(name, material.as_ref(), base, blend, display_texture))
+        Ok(Self::from_resolved(
+            name,
+            material.as_ref(),
+            base,
+            blend,
+            display_texture,
+        ))
     }
 
     fn from_resolved(
@@ -113,7 +119,8 @@ impl MaterialInfo {
 
         Self {
             material_identity: material.map(material_identity),
-            lighting_error: material.map_or_else(|| Some("No resolved material".into()), lighting_error),
+            lighting_error: material
+                .map_or_else(|| Some("No resolved material".into()), lighting_error),
             display_texture,
             normal: None,
             helper: None,

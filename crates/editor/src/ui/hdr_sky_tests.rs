@@ -212,6 +212,11 @@ fn authored_lighting_controls_validate_combined_view_and_keep_owned_drafts() {
     app.invoke_options_changed();
     assert_eq!(lock(&shared).view(), accepted);
     assert_eq!(app.get_lighting_exposure_ev().as_str(), "2");
+    app.show().unwrap();
+    app.window().set_size(slint::PhysicalSize::new(1600, 1000));
+    super::tests::scroll_inspector_to_control(&app, "Unshadowed authored lighting");
+    super::tests::save_ui_snapshot(app.window(), "authored-lighting-controls");
+    app.hide().unwrap();
     app.set_lighting_preview(false);
     app.invoke_options_changed();
     assert!(!lock(&shared).view().lighting_preview);

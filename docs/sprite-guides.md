@@ -24,11 +24,30 @@ framing target.
 
 ![Sprite Name uses the material browser and preserves Cancel](images/sprite-name-material-picker.png)
 
+## Preview authored Additive mode
+
+1. Select the Sprite entity and set **Render Mode** to **Additive**. This must
+   be an explicit authored choice.
+2. Keep **FX Color (R G B)** white, **FX Amount (0 - 255)** at 255 and
+   **Render FX → Normal**. Unsupported appearance settings show a reason beside
+   the ordinary raw image.
+3. Enable **Viewport → Entity images**, then **Additive Sprite guides**.
+4. Inspect the helper status to confirm **authored Additive LDR** is applied.
+   Disable **Additive Sprite guides** to return to the raw RGBA image.
+
+![Installed glow Sprite: raw image on the left, authored Additive on the right](images/additive-sprite-guide.png)
+
 Limits:
 
-- This is an unlit editor image with texture alpha and no fog. Render Mode,
-  FX Color/Amount, Render FX, HDRColorScale, animation, glow, enable state and
-  entity I/O are not evaluated. It does not reproduce the game's sprite shader.
+- The default is an unlit RGBA editor image with no fog. Opt-in Additive guides
+  evaluate only explicitly authored mode 5 under the white/255/FX0 constraints.
+  Unsupported, missing, duplicated or malformed appearance values keep the raw
+  image with a diagnostic. Color/amount modulation, HDRColorScale, animation,
+  glow visibility, enable state and I/O remain unevaluated.
+- Additive RGB uses source-alpha-plus-destination blending, depth testing and
+  no depth writes. Destination alpha is preserved as an editor output policy.
+  Mixed raw/additive guides retain camera-depth order. The editor's color space
+  and guide ordering do not establish native Sprite pixel parity.
 - Supported resources use a direct centered `Sprite` material with
   `$spriteorientation vp_parallel` and one static LDR texture. Oriented sprites,
   nonzero angles, parents, brush entities and specialized light/rope/model

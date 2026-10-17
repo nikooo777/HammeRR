@@ -130,7 +130,7 @@ fn base_path(material: &Material) -> Result<String, String> {
         material.get("$basetexturetransform"),
         DuplicateOperations::Reject,
     )
-    .map_err(|error| error.to_string())?
+    .map_err(|_| "Textured prefab thumbnail base texture transform is malformed or unsupported")?
         != [1.0, 1.0, 0.0, 0.0]
     {
         return Err("Textured prefab thumbnails require an identity base texture transform".into());

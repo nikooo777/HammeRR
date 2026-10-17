@@ -135,10 +135,10 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 
 [Materials and textures →](docs/textures.md)
 
-| Material source |
-| --- |
-| ![Mounted VMT source, Patch includes and resolved declarations](docs/images/material-source.png) |
-| Inspect a material's original text, mounted origin and resolved Patch declarations. |
+| Material source | Material alpha |
+| --- | --- |
+| ![Mounted VMT source, Patch includes and resolved declarations](docs/images/material-source.png) | ![Selected image alpha with source identity and mip details](docs/images/material-alpha-preview.png) |
+| Inspect a material's original text, mounted origin and resolved Patch declarations. | Switch between Color and opaque grayscale Alpha from the selected display image. |
 
 [Material source →](docs/material-source.md)
 
@@ -171,17 +171,24 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 | ![Saved grid size, snapping and visibility controls](docs/images/grid-defaults.png) | ![Saved entity guide and viewport preview choices](docs/images/preview-defaults.png) |
 | Save your startup grid while keeping temporary grid changes independent. | Save startup outlines, entity images, model guides, ropes and sky visibility. |
 
-| Keyboard shortcuts |
-| --- |
-| ![Command bindings with modifier controls and saved preferences](docs/images/keyboard-shortcuts.png) |
-| Configure two bindings each for Undo, Redo, framing, deletion and duplication. |
+| Keyboard shortcuts | Navigation defaults |
+| --- | --- |
+| ![Command bindings with modifier controls and saved preferences](docs/images/keyboard-shortcuts.png) | ![Shared fly speed and explicit startup defaults](docs/images/navigation-defaults.png) |
+| Configure two bindings each for Undo, Redo, framing, deletion and duplication. | Set camera fly speed from the editor or MCP and explicitly save startup defaults. |
 
-[Keyboard shortcuts →](docs/keyboard-shortcuts.md)
+[Keyboard shortcuts →](docs/keyboard-shortcuts.md) · [Navigation defaults →](docs/navigation-defaults.md)
 
 | Working region | Fog preview |
 | --- | --- |
 | ![Working-region bounds and visibility controls](docs/images/working-region.png) | ![Authored fog controller and preview settings](docs/images/fog-preview.png) |
 | Focus the editor on whole objects touching a temporary box, with shared visibility reasons. | Choose an authored controller to preview static linear fog in perspective Textured views. |
+
+| Authored lighting preview |
+| --- |
+| ![Warm point light and cool spotlight in an editor room](docs/images/authored-lighting-preview.png) |
+| Preview unshadowed point and spot lights with quality, exposure and supported normal maps. |
+
+[Authored lighting preview →](docs/lighting-preview.md)
 
 | LDR and HDR skies | Sky asset inspection |
 | --- | --- |
@@ -219,8 +226,8 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 
 | Sprite resource guides |
 | --- |
-| ![Scaled sprite resource image](docs/images/sprite-resource-guide.png) |
-| Browse Sprite materials and place camera-facing resource images at their authored scale. |
+| ![Authored Additive Sprite guide over colored geometry](docs/images/additive-sprite-guide.png) |
+| Place scaled Sprite resource images and preview supported authored Additive mode. |
 
 [Sprite resource guides →](docs/sprite-guides.md)
 
@@ -269,8 +276,8 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 
 | Prefab library |
 | --- |
-| ![Selected prefab with an isolated flat geometry thumbnail](docs/images/prefab-thumbnail.png) |
-| Browse assembly shapes, save and rename prefabs, then place rotated or brush-scaled copies. |
+| ![Selected prefab with an isolated textured thumbnail](docs/images/prefab-textured-thumbnail.png) |
+| Browse flat or textured assembly previews, then place rotated or brush-scaled copies. |
 
 | Transaction history |
 | --- |

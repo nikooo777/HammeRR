@@ -42,10 +42,12 @@ fn material_browser_color_alpha_callbacks_retain_source_drafts_and_explicit_fail
     let alpha = window.get_preview().to_rgba8().unwrap();
     for (color, alpha) in color
         .as_bytes()
-        .chunks_exact(4)
-        .zip(alpha.as_bytes().chunks_exact(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(alpha.as_bytes().as_chunks::<4>().0.iter())
     {
-        assert_eq!(alpha, [color[3], color[3], color[3], 255]);
+        assert_eq!(*alpha, [color[3], color[3], color[3], 255]);
     }
     crate::ui::tests::save_ui_snapshot(window.window(), "material-alpha-preview");
     crate::ui::tests::assert_dialog_button_visible(&window, "Color");

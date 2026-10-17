@@ -190,7 +190,7 @@ fn textured_cache_rechecks_exact_bytes_and_winning_sources_without_erasing_flat(
     let higher = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(higher.path().join("materials/test")).unwrap();
     std::fs::copy(&vmt, higher.path().join("materials/test/checker.vmt")).unwrap();
-    session.game.mounts.insert(
+    Arc::get_mut(&mut session.game).unwrap().mounts.insert(
         0,
         MountedPath {
             ids: vec!["game".into()],
@@ -370,7 +370,7 @@ fn textured_gpu_images_cache_refresh_and_errors_preserve_owned_editor_state() {
     assert_eq!(first.image.pixels, refreshed.image.pixels);
     let path = assets.path().join("materials/test/checker.vtf");
     let mut bytes = std::fs::read(&path).unwrap();
-    for pixel in bytes[80..].chunks_exact_mut(4) {
+    for pixel in bytes[80..].as_chunks_mut::<4>().0.iter_mut() {
         pixel.copy_from_slice(&[220, 45, 40, 255]);
     }
     std::fs::write(&path, &bytes).unwrap();

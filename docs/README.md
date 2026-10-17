@@ -11,6 +11,7 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | [Getting started](getting-started.md) | Requirements, building, launching, game content |
 | [Editor basics](basics.md) | The window, previews and undo, navigation, viewport modes, saved camera views |
 | [Preview defaults](preview-defaults.md) | Save, apply and recover startup visibility for existing images and guides |
+| [Fly speed and navigation defaults](navigation-defaults.md) | Shared camera flight speed and explicit startup defaults |
 | [Keyboard shortcuts](keyboard-shortcuts.md) | Configure viewport Undo, Redo, Frame, Delete and Duplicate bindings |
 | [Recent maps](recent-maps.md) | Reopening retained paths with compatible build settings, removing and clearing entries |
 | [Transaction history](history.md) | Inspecting human/agent edits and navigating retained undo/redo states |
@@ -32,6 +33,7 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | [Material source](material-source.md) | Mounted VMT origins, raw source, Patch includes and resolved declarations |
 | [Atlas-region texturing](atlas-texturing.md) | Fit flat faces into a numeric rectangle of an existing material image |
 | [Normal-map preview](normal-maps.md) | Preview supported flat-brush normal textures under editor directional shading |
+| [Authored lighting preview](lighting-preview.md) | Unshadowed point/spot diffuse light, quality, exposure and supported receivers |
 | [Working region](working-region.md) | Temporary whole-object display bounds and visibility reasons |
 | [Fog preview](fog.md) | Choosing an authored static fog controller for perspective Textured views |
 | [Sky preview and assets](sky.md) | Previewing LDR sky surfaces and inspecting the applied family's LDR/HDR material and texture structure |

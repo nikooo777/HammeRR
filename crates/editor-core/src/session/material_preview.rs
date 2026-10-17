@@ -84,7 +84,7 @@ impl Session {
         });
         let alpha_range = image.as_mut().and_then(|image| {
             let mut range: Option<[u8; 2]> = None;
-            for pixel in image.pixels.chunks_exact_mut(4) {
+            for pixel in image.pixels.as_chunks_mut::<4>().0 {
                 let alpha = pixel[3];
                 range =
                     Some(range.map_or([alpha; 2], |[low, high]| [low.min(alpha), high.max(alpha)]));

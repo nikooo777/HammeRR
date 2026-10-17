@@ -691,9 +691,14 @@ export component MaterialWindow inherits Window {
                         Button { text: "Color"; enabled: root.preview-channel != 0; clicked => { root.preview-channel = 0; root.preview-material(); } }
                         Button { text: "Alpha"; enabled: root.preview-channel != 1; clicked => { root.preview-channel = 1; root.preview-material(); } }
                     }
-                    ScrollView {
+                    details-scroll := ScrollView {
                         vertical-stretch: 1;
-                        Text { text: root.detail; wrap: word-wrap; }
+                        content-width: self.visible-width;
+                        Text {
+                            width: details-scroll.visible-width - 16px;
+                            text: root.detail;
+                            wrap: word-wrap;
+                        }
                     }
                     Button { text: "Source…"; enabled: root.material != ""; clicked => { root.inspect-source(); } }
                     Button { text: root.favorite ? "Remove favorite" : "Add favorite"; enabled: root.material != ""; clicked => { root.toggle-favorite(); } }
@@ -2605,20 +2610,24 @@ export component AppWindow inherits Window {
                         checked <=> root.lighting-preview;
                         toggled => { root.options-changed(); }
                     }
-                    ComboBox {
-                        model: ["Fast · vertex lighting", "Detail · per-fragment lighting"];
-                        current-index <=> root.lighting-quality;
-                        selected => { root.options-changed(); }
-                    }
-                    HorizontalLayout {
-                        Text { text: "Lighting exposure (EV)"; color: #bac2ce; vertical-alignment: center; }
-                        LineEdit {
-                            text <=> root.lighting-exposure-ev;
-                            placeholder-text: "−8 to 8";
-                            accepted => { root.options-changed(); }
+                    if root.lighting-preview: VerticalLayout {
+                        spacing: 8px;
+                        ComboBox {
+                            model: ["Fast · vertex lighting", "Detail · per-fragment lighting"];
+                            current-index <=> root.lighting-quality;
+                            selected => { root.options-changed(); }
                         }
+                        HorizontalLayout {
+                            Text { text: "Lighting exposure (EV)"; color: #bac2ce; vertical-alignment: center; }
+                            LineEdit {
+                                text <=> root.lighting-exposure-ev;
+                                input-type: decimal;
+                                placeholder-text: "−8 to 8";
+                                accepted => { root.options-changed(); }
+                            }
+                        }
+                        Text { text: root.lighting-status + "\nNo shadows, sun, ambient or bounce · editor display"; color: #aeb9c8; wrap: word-wrap; font-size: 12px; }
                     }
-                    if root.lighting-preview: Text { text: root.lighting-status + "\nNo shadows, sun, ambient or bounce · editor display"; color: #aeb9c8; wrap: word-wrap; font-size: 12px; }
                     if root.lighting-error != "": Text { text: root.lighting-error; color: #f0b377; wrap: word-wrap; font-size: 12px; }
                     CheckBox {
                         text: "Entity images";
@@ -2627,6 +2636,7 @@ export component AppWindow inherits Window {
                     }
                     CheckBox {
                         text: "Additive Sprite guides";
+                        enabled: root.entity-images;
                         checked <=> root.additive-sprite-guides;
                         toggled => { root.options-changed(); }
                     }

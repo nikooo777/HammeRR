@@ -52,10 +52,12 @@ fn material_channel_mcp_is_strict_cpu_only_and_preserves_default_png_and_missing
     for (color, alpha) in color
         .2
         .unwrap()
-        .chunks_exact(4)
-        .zip(alpha.2.unwrap().chunks_exact(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(alpha.2.unwrap().as_chunks::<4>().0.iter())
     {
-        assert_eq!(alpha, [color[3], color[3], color[3], 255]);
+        assert_eq!(*alpha, [color[3], color[3], color[3], 255]);
     }
     let missing = inspect(&server, json!({"material":"test/absent","channel":"alpha"}));
     assert_eq!(missing.0["missing"], true);

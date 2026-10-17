@@ -111,7 +111,12 @@ export component PrefabsWindow inherits Window {
                         HorizontalLayout {
                             spacing:8px;
                             Text {text:"Thumbnail";color:#bac2ce;vertical-alignment:center;}
-                            ComboBox {model:["Flat","Textured"];current-index<=>root.thumbnail-style;accessible-label:"Thumbnail style";selected(index)=>{root.thumbnail-style=index;root.thumbnail-style-changed();}}
+                            ComboBox {
+                                model: ["Flat", "Textured"];
+                                current-index <=> root.thumbnail-style;
+                                accessible-label: "Thumbnail style";
+                                selected => { root.thumbnail-style-changed(); }
+                            }
                             Text {text:"320 × 240";color:#bac2ce;vertical-alignment:center;horizontal-stretch:1;}
                             Button {text:root.has-thumbnail?"Refresh thumbnail":"Render thumbnail";enabled:root.can-render-thumbnail||(root.thumbnail-style==1&&root.selected!="");clicked=>{root.render-thumbnail();}}
                         }

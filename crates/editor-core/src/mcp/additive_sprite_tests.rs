@@ -98,7 +98,7 @@ fn additive_sprite_render_reports_retain_uploaded_scene_across_later_edits() {
     let (directory, mut session, id) = fixture();
     let texture = directory.path().join("materials/test/checker.vtf");
     let mut bytes = std::fs::read(&texture).unwrap();
-    for pixel in bytes[80..].chunks_exact_mut(4) {
+    for pixel in bytes[80..].as_chunks_mut::<4>().0.iter_mut() {
         pixel.copy_from_slice(&[0, 0, 0, 255]);
     }
     std::fs::write(texture, bytes).unwrap();

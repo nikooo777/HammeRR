@@ -102,7 +102,7 @@ and expansion are unavailable; `run_map` does not launch after this build failur
 
 ## Tools by task
 
-The shared desktop and private stdio server register 396 tools. `tools/list`
+The shared desktop and private stdio server register 400 tools. `tools/list`
 returns their current schemas and descriptions.
 
 | Task | Tools |
@@ -110,12 +110,14 @@ returns their current schemas and descriptions.
 | Files and inspection | `new_map`, `open_map`, `save_map`, `get_map_info`, `get_map_statistics`, `find_objects`, `get_objects` |
 | Recent maps | `get_recent_maps`, `open_recent_map`, `remove_recent_map`, `clear_recent_maps` |
 | Grid defaults | `get_grid_defaults`, `set_grid_defaults` |
+| Fly speed and navigation defaults | `get_navigation_settings`, `set_navigation_settings`, `set_navigation_defaults` |
 | Preview defaults | `get_preview_defaults`, `set_preview_defaults` |
 | Keyboard shortcuts and viewport commands | `get_keyboard_shortcuts`, `set_keyboard_shortcuts`, `execute_editor_command` |
 | Entity definitions | `get_entity_definitions`, `load_entity_definitions`, `search_entity_classes`, `get_entity_class` |
 | Material source | `get_material_source` |
 | Sky asset inspection | `inspect_sky_assets` |
 | Baked lightmap inspection | `inspect_baked_lightmaps` |
+| Authored lighting preview | `get_lighting_preview`; shared `set_view` and temporary `render_view` settings |
 | Selection and history | `select`, `get_selection`, `set_selection_mode`, `undo`, `redo`, `get_history`, `navigate_history` |
 | Measurement guides | `get_measurements`, `set_measurement` |
 | Overlapping objects | `get_object_hit_candidates`, `cycle_object_hit` |
@@ -503,6 +505,27 @@ Toggling visibility never clears an existing successful or failed asset cache
 entry. After external repairs, use `reload_material_assets` for icons/Sprite
 resources or `reload_model_assets` for model guides.
 
+### Fly speed and navigation defaults
+
+`get_navigation_settings {}` reports current/saved/factory `fly_speed`, bounds,
+Shift/wheel policy, storage readiness/errors and the latest action `snapshot`.
+`get_map_info.navigation` includes the same report. `set_navigation_settings`
+takes `fly_speed`, a finite 25–20000 units per second, matching **Fly speed**
+and perspective right-button wheel changes. Factory speed is 600 and Shift
+moves 4× faster. These temporary edits never save automatically.
+
+`set_navigation_defaults` takes the latest `snapshot` and `action`:
+`save` writes current speed; `apply` restores saved speed; `reload` rereads
+without applying; `reset` explicitly writes factory speed without applying.
+Only Save/Reset write. Malformed/unavailable storage, outside changes and stale
+speed snapshots reject with current valid state preserved; inspect readiness
+and `write_committed` after errors. Files are bounded to 4096 bytes, with
+symlink/nonregular rejection and existing atomic persistence guards.
+
+No action moves the camera, edits source/history/selection or invalidates owned
+map reviews/picks. Camera positions and other sensitivities remain separate.
+See [Fly speed and navigation defaults](navigation-defaults.md).
+
 ### Keyboard shortcuts and viewport commands
 
 `get_keyboard_shortcuts` returns `snapshot`, `current`, `factory_defaults`,
@@ -598,8 +621,33 @@ sampling flags reject. Unsupported faces retain their base image. Limits are
 1024 pixels per texture axis, 16 MiB per VTF, 64 KiB per VMT/Patch file, 128 cached
 admissions and 64 MiB decoded pixels. `reload_material_assets` clears successes
 and failures; external VMT changes require reload before combining new normal
-settings with a cached base. This is fixed editor directional shading; authored
-lights and native appearance parity remain separate. See [Normal-map preview](normal-maps.md).
+settings with a cached base. Ordinary shading uses the fixed editor light;
+Detail authored lighting can compose with normals. Native appearance parity
+remains separate. See [Normal-map preview](normal-maps.md).
+
+### Authored lighting preview
+
+`set_view` and temporary `render_view` accept `lighting_preview` (default false),
+`lighting_quality` (`fast` or `detail`, default Detail) and
+`lighting_exposure_ev` (finite −8..8, default 0). Fast interpolates vertex
+contributions; Detail evaluates fragments and supports `normal_maps`. Active
+Fast plus normal maps rejects atomically. These resource settings preserve
+camera, selection, source/history and owned editing reviews.
+
+`get_lighting_preview {}` uses the shared CPU scene without graphics startup.
+It returns admitted/excluded emitters and flat receiver polygons, bounded
+diagnostics, limits, summary and the captured document/render/region/material
+source stamp. `render_view.lighting_preview.report` belongs to the scene that
+was rendered; temporary overrides leave shared settings unchanged.
+
+Only visible constant unnamed style-0 `light`/`light_spot` entities and opaque
+flat LightmappedGeneric brush receivers are admitted. The 32-light or summed
+radiance limit disables the whole preview with a reason. Zero admitted lights
+make supported receivers black. Excluded surfaces retain ordinary display.
+There are no shadows, sun, ambient, bounce, animation or native brightness
+claims. Display applies linear diffuse contribution, exposure and per-channel
+Reinhard before sRGB output. Non-Textured modes perform no light admission.
+See [Authored lighting preview](lighting-preview.md).
 
 ### Atlas-region face texturing
 
@@ -643,6 +691,14 @@ texture declarations. Read/parse/decode failures appear in `error`; invalid inpu
 paths reject. The report exposes limits and truncation flags. It never substitutes
 a lower-priority source behind a broken winner and changes no cached texture,
 map, selection, preview or history. See [Material source](material-source.md).
+
+`preview_material` accepts optional `channel: "color" | "alpha"`, matching
+the material browser's **Color / Alpha** control. Omitted/null selects Color
+and preserves the existing PNG. Alpha outputs opaque `[a,a,a,255]` from that
+same decoded preview image. Metadata includes `channel`, original decoded
+`alpha_range`, texture reference, cached material identity, `cached`, mip,
+frame and face. Missing assets stay unavailable; errors return no replacement
+image. The current-source inspector is separate from cached preview provenance.
 
 `get_entity_definitions` reports loaded classes, sources, load error and optional
 `map_size: {authored:[first,second], bounds:[minimum,maximum], source, line}`.
@@ -983,11 +1039,27 @@ Ordinary FGD boxes retain bounds, selection outlines, picks, placement, framing
 and working-region membership. Failures retain editable diagnostic markers.
 Oriented/parented sprites, nonzero angles/legacy angle, brush sources, loaded
 MDLs, studio/model helpers, specialized lights and ropes are excluded.
-`runtime_fields_evaluated:false` and `unevaluated_runtime_fields` explicitly
-exclude Render Mode, FX Color/Amount, Render FX, HDRColorScale, glow visibility,
-animation, enable state and I/O. This independent editor image does not establish
-native sprite parity or extend native reflection-capture eligibility.
+Raw guides keep `runtime_fields_evaluated:false`; appearance provenance lives
+in `blend_preview`. Color/amount/FX, HDRColorScale, glow visibility, animation,
+enable state and I/O remain unevaluated. This independent editor image does not
+establish native sprite parity or extend native reflection-capture eligibility.
 See [Sprite resource guides](sprite-guides.md).
+
+`set_view.additive_sprite_guides` and temporary
+`render_view.additive_sprite_guides` opt into authored mode-5 LDR guides;
+`entity_images` remains the parent control. One unique explicitly authored
+Render Mode 5 is required, with white 255 RGB, amount 255 and FX 0 supplied by
+unique authored values or individually labeled FGD defaults. Unsupported,
+missing, duplicate or malformed appearance values retain the raw guide with an
+explicit reason. HDRColorScale remains unevaluated and imposes no LDR constraint.
+
+`helpers.sprite_resource.blend_preview` reports requested/supported/applied
+states, effective policy, raw values and authored/FGD provenance, the evaluated
+guide mode and diagnostics. `render_view.sprite_guides` uses the effective
+temporary flags, up to 256 rows with complete totals/truncation. Shared cached
+images stay immutable. RGB uses SRC_ALPHA/ONE, destination alpha is preserved
+as an editor policy, depth writes remain disabled and mixed guides keep stable
+camera-depth order. Literal icons retain their ordinary alpha policy.
 
 ### Literal FGD model guides
 
@@ -1750,8 +1822,8 @@ to the current map/selection/clipboard state.
 
 | Tool | Arguments and behavior |
 | --- | --- |
-| `inspect_prefab_thumbnail` | Exact `name`; detached CPU geometry/count/bounds diagnostics, cache state, graphics availability and limits. Initializes no graphics. |
-| `render_prefab_thumbnail` | Exact `name`, optional `refresh` (default false); returns the same 320×240 PNG and report as **Render thumbnail / Refresh thumbnail**. |
+| `inspect_prefab_thumbnail` | Exact `name`, optional `style` (`flat` or `textured`, default Flat); detached CPU geometry/material/count/bounds diagnostics, cache state and limits. Initializes no graphics. |
+| `render_prefab_thumbnail` | Exact `name`, optional `style` and `refresh` (default false); returns the same 320×240 PNG and report as **Thumbnail → Flat / Textured → Render thumbnail / Refresh thumbnail**. |
 | `save_prefab` | Latest `snapshot`, new `name` and optional whole-object `ids` (selection by default). Captures before atomically creating a new file. Never overwrites; map/history/clipboard stay unchanged. |
 | `preview_prefab` | Latest `snapshot`, `name`, optional world `position` (defaults to zero), XYZ `rotation` in degrees, positive XYZ `scale`, source-world `pivot` (bounds center when omitted) and `keep_external_links` (false). Scale then rotation precede placement; nonidentity scale requires brushes only. Privately validates before changing clipboard/preview state. Returns `paste.preview.token` for `apply_paste` / `cancel_paste`. |
 | `rename_prefab` | Latest `snapshot`, original `name` and `new_name`. Atomically renames without overwriting an existing entry. Retains VMF bytes, clipboard, selection and map history. |
@@ -1771,16 +1843,29 @@ replaced sources invalidate loaded placement reviews; deletion alone retains the
 detached draft. Direct replacement, private formats and referenced instances are
 unavailable. Rename requires Linux atomic no-replace support.
 
-Thumbnails render flat brush/terrain/model geometry and normal point helpers,
-including authored hidden objects; textures and sky are omitted. The isolated
-scene/camera leave map, selection, clipboard, owned drafts and history unchanged.
-Inspection and rendering reject unresolved instances, invalid geometry and missing
-or unsupported model geometry with explicit errors. Failed rendering returns no
-image and leaves CPU inspection available. At most eight images are cached;
-every retrieval checks exact source bytes, file identity and content/FGD epochs.
-Caps are 2 MiB text, 128 brushes, 1024 sides, 64 sides per brush, 65536 displacement
-vertices, eight model paths, sixteen model instances, 64 material bindings,
-200000 vertices and 600000 indices. Larger assemblies can still use placement.
+Flat remains the default material-free brush/terrain/model thumbnail, including
+ordinary point helpers and authored hidden objects. Textured admits opaque
+static single-base LightmappedGeneric/UnlitGeneric/VertexLitGeneric color images,
+with fixed editor shading and identity base transforms. Shader effects, alpha,
+normal maps, authored lighting and native appearance parity are outside this
+mode. Unsupported sources return an error and no image; Flat is a separate
+explicit choice.
+
+The isolated scene/camera preserve map, selection, clipboard, owned drafts and
+history. Both styles share an eight-image cap, keyed by source/style/content/FGD
+state. Retrieval rechecks exact prefab bytes/identity. Textured also verifies
+bounded winning VMT/Patch/VTF bytes, mounted origins and backing identities,
+including after rendering and before UI publication. Refresh regenerates only
+the selected style. Model geometry follows explicit Reload models semantics.
+
+Geometry caps remain 2 MiB text, 128 brushes, 1024 sides, 64 sides per brush, 65536
+terrain vertices, eight model paths, sixteen instances, 64 material bindings,
+200000 vertices and 600000 indices. Textured adds 2048 pixels per axis, 1 MiB per
+VMT/Patch, 16 MiB per VTF, 64 MiB read bytes per admission/recheck pass, 64 MiB
+decoded mip bytes, 256 asset paths and 1024 physical paths. Its initial shared
+source-guard capture can read at most 80 MiB. Larger assemblies can still use
+placement. Inspection rejects unresolved instances, invalid geometry and missing
+or unsupported model geometry with explicit errors.
 See [Prefab library](prefabs.md).
 
 ### Overlay authoring

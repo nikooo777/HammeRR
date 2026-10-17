@@ -381,6 +381,10 @@ impl BoundDestination {
     }
 
     pub fn read_existing(&self) -> io::Result<Option<Vec<u8>>> {
+        self.read_existing_with(|| {})
+    }
+
+    fn read_existing_with(&self, mut before_read: impl FnMut()) -> io::Result<Option<Vec<u8>>> {
         self.verify()?;
         let Some(existing) = &self.existing else {
             return Ok(None);
@@ -388,17 +392,37 @@ impl BoundDestination {
         let mut bytes = Vec::new();
         #[cfg(unix)]
         {
-            use std::os::unix::fs::FileExt;
+            use std::io::Read;
             let reader = Observation::capture(&self.directory, &self.leaf, true)?
                 .ok_or_else(|| io::Error::other("File destination disappeared while reading"))?;
             if reader.stamp != existing.stamp {
                 return Err(io::Error::other("File destination changed while opening"));
             }
+            let maximum = existing
+                .stamp
+                .length
+                .checked_add(1)
+                .ok_or_else(|| io::Error::other("File destination byte limit overflow"))?;
+            let size = usize::try_from(existing.stamp.length).map_err(|error| {
+                io::Error::other(format!(
+                    "File destination size cannot fit in memory: {error}"
+                ))
+            })?;
+            bytes.try_reserve_exact(size).map_err(|error| {
+                io::Error::other(format!(
+                    "Could not allocate {size} bytes for file destination: {error}"
+                ))
+            })?;
+            let mut bounded = reader.file.as_ref().take(maximum);
             let mut buffer = [0u8; 64 * 1024];
             loop {
-                let count = reader.file.read_at(&mut buffer, bytes.len() as u64)?;
+                before_read();
+                let count = bounded.read(&mut buffer)?;
                 if count == 0 {
                     break;
+                }
+                if count > size - bytes.len() {
+                    return Err(io::Error::other("File destination grew while reading"));
                 }
                 bytes.extend_from_slice(&buffer[..count]);
             }

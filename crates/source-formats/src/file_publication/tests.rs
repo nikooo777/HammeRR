@@ -435,3 +435,36 @@ fn newly_inserted_destination_and_changed_source_preserve_external_bytes() {
         assert_eq!(fs::read(path).unwrap(), b"externally changed source");
     }
 }
+
+#[test]
+fn source_growth_after_reader_admission_rejects_before_collecting_appended_bytes() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("source.vmf");
+    fs::write(&path, b"admitted").unwrap();
+    let destination = BoundDestination::capture(&path, Policy::FollowSource).unwrap();
+    let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
+    let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel(1);
+    let reads = std::sync::atomic::AtomicUsize::new(0);
+    std::thread::scope(|scope| {
+        let read_count = &reads;
+        let reader = scope.spawn(move || {
+            destination.read_existing_with(|| {
+                let previous = read_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if previous == 0 {
+                    ready_tx.send(()).unwrap();
+                    resume_rx.recv().unwrap();
+                }
+            })
+        });
+        ready_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        let mut writer = fs::OpenOptions::new().append(true).open(&path).unwrap();
+        writer.write_all(&[b'x'; 128 * 1024]).unwrap();
+        resume_tx.send(()).unwrap();
+        let error = reader.join().unwrap().unwrap_err();
+        assert!(error.to_string().contains("grew while reading"));
+    });
+    assert_eq!(reads.load(std::sync::atomic::Ordering::Relaxed), 1);
+    assert_eq!(fs::metadata(path).unwrap().len(), 8 + 128 * 1024);
+}

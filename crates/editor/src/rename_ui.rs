@@ -1,8 +1,11 @@
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
-use crate::runtime::{SharedSession, lock};
+use crate::runtime::{DocumentAccess, DocumentContinuation};
 use crate::session::{Actor, Session};
 use crate::{RenameRow, RenameWindow};
+
+#[cfg(test)]
+use crate::runtime::SharedSession;
 
 fn guard(window: &RenameWindow, session: &Session) -> Result<(), String> {
     session.check_rename_draft(
@@ -221,59 +224,85 @@ fn clear_rows(window: &RenameWindow) {
     window.set_other(ModelRc::default());
 }
 
+fn with_rename<R>(
+    window: &slint::Weak<RenameWindow>,
+    access: &DocumentContinuation,
+    body: impl FnOnce(&RenameWindow, &mut Session) -> R,
+) -> Option<R> {
+    let window = window.upgrade()?;
+    match access
+        .upgrade()
+        .and_then(|access| access.with_session(|session| Ok(body(&window, session))))
+    {
+        Ok(result) => Some(result),
+        Err(error) => {
+            window.set_message(error.into());
+            None
+        }
+    }
+}
+
+#[cfg(test)]
 pub fn bind(window: &RenameWindow, shared: &SharedSession) {
+    bind_with_access(window, &DocumentAccess::unmanaged(shared.clone()));
+}
+
+pub fn bind_with_access(window: &RenameWindow, access: &DocumentAccess) {
+    let access = access.downgrade();
     window.on_fields_changed({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.clone());
         move || {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            let result = guard(&window, &session).and_then(|()| {
-                session.update_entity_rename(
-                    window.get_new_name().into(),
-                    window.get_rename_group(),
-                    window.get_accept_review(),
-                )?;
-                session.set_rename_details(window.get_show_details())
+            with_rename(&window, &access, |window, session| {
+                let result = guard(window, session).and_then(|()| {
+                    session.update_entity_rename(
+                        window.get_new_name().into(),
+                        window.get_rename_group(),
+                        window.get_accept_review(),
+                    )?;
+                    session.set_rename_details(window.get_show_details())
+                });
+                refresh(window, session);
+                if let Err(error) = result {
+                    window.set_message(error.into());
+                }
             });
-            refresh(&window, &session);
-            if let Err(error) = result {
-                window.set_message(error.into());
-            }
         }
     });
     window.on_apply({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.clone());
         move || {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            let result =
-                guard(&window, &session).and_then(|()| session.commit_entity_rename(Actor::User));
-            refresh(&window, &session);
-            match result {
-                Ok(_) => {
-                    let _ = window.hide();
+            with_rename(&window, &access, |window, session| {
+                let result =
+                    guard(window, session).and_then(|()| session.commit_entity_rename(Actor::User));
+                refresh(window, session);
+                match result {
+                    Ok(_) => {
+                        let _ = window.hide();
+                    }
+                    Err(error) => window.set_message(error.into()),
                 }
-                Err(error) => window.set_message(error.into()),
-            }
+            });
         }
     });
     window.on_cancel({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.clone());
         move || {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            if guard(&window, &session).is_ok() {
-                session.cancel_entity_rename();
-            }
-            let _ = window.hide();
+            let Some(origin) = window.upgrade() else {
+                return;
+            };
+            with_rename(&window, &access, |window, session| {
+                if guard(window, session).is_ok() {
+                    session.cancel_entity_rename();
+                }
+            });
+            let _ = origin.hide();
         }
     });
     window.window().on_close_requested({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let window = window.as_weak();
         move || {
-            let mut session = lock(&shared);
-            if guard(&window.unwrap(), &session).is_ok() {
-                session.cancel_entity_rename();
+            if let Some(window) = window.upgrade() {
+                window.invoke_cancel();
             }
             slint::CloseRequestResponse::HideWindow
         }

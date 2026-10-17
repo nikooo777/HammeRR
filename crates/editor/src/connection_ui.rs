@@ -2,9 +2,12 @@ use map_core::ObjectId;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::identity::{id_string, parse_id};
-use crate::runtime::{SharedSession, lock};
+use crate::runtime::{DocumentAccess, DocumentContinuation};
 use crate::session::{Actor, ConnectionFields, ConnectionRecord, Session};
 use crate::{ConnectionRow, ConnectionWindow};
+
+#[cfg(test)]
+use crate::runtime::SharedSession;
 
 fn source(window: &ConnectionWindow) -> Result<u32, String> {
     match parse_id(window.get_source_id().as_str())? {
@@ -198,96 +201,124 @@ fn result(window: &ConnectionWindow, session: &Session, result: Result<(), Strin
     }
 }
 
+fn with_connection<R>(
+    window: &slint::Weak<ConnectionWindow>,
+    access: &DocumentContinuation,
+    body: impl FnOnce(&ConnectionWindow, &mut Session) -> R,
+) -> Option<R> {
+    let window = window.upgrade()?;
+    match access
+        .upgrade()
+        .and_then(|access| access.with_session(|session| Ok(body(&window, session))))
+    {
+        Ok(result) => Some(result),
+        Err(error) => {
+            window.set_message(error.into());
+            None
+        }
+    }
+}
+
+#[cfg(test)]
 pub fn bind(window: &ConnectionWindow, shared: &SharedSession) {
+    bind_with_access(window, &DocumentAccess::unmanaged(shared.clone()));
+}
+
+pub fn bind_with_access(window: &ConnectionWindow, access: &DocumentAccess) {
+    let access = access.downgrade();
     window.on_add({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.clone());
         move || {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            let edit = guard(&window, &session)
-                .and_then(|()| session.begin_connection_edit(source(&window)?, None));
-            result(&window, &session, edit);
+            with_connection(&window, &access, |window, session| {
+                let edit = guard(window, session)
+                    .and_then(|()| session.begin_connection_edit(source(window)?, None));
+                result(window, session, edit);
+            });
         }
     });
     window.on_choose({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.clone());
         move |id, index| {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            let edit = guard(&window, &session).and_then(|()| match parse_id(id.as_str())? {
-                ObjectId::Entity(source) => session.begin_connection_edit(
-                    source,
-                    Some(index.try_into().map_err(|_| "Invalid connection index")?),
-                ),
-                _ => Err("Choose an entity".into()),
+            with_connection(&window, &access, |window, session| {
+                let edit = guard(window, session).and_then(|()| match parse_id(id.as_str())? {
+                    ObjectId::Entity(source) => session.begin_connection_edit(
+                        source,
+                        Some(index.try_into().map_err(|_| "Invalid connection index")?),
+                    ),
+                    _ => Err("Choose an entity".into()),
+                });
+                result(window, session, edit);
             });
-            result(&window, &session, edit);
         }
     });
     window.on_delete_connection({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.clone());
         move |index| {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            let edit = guard(&window, &session).and_then(|()| {
-                session.delete_entity_connection(
-                    Actor::User,
-                    source(&window)?,
-                    index.try_into().map_err(|_| "Invalid connection index")?,
-                )
+            with_connection(&window, &access, |window, session| {
+                let edit = guard(window, session).and_then(|()| {
+                    session.delete_entity_connection(
+                        Actor::User,
+                        source(window)?,
+                        index.try_into().map_err(|_| "Invalid connection index")?,
+                    )
+                });
+                result(window, session, edit);
             });
-            result(&window, &session, edit);
         }
     });
     window.on_fields_changed({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.clone());
         move || {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            let edit = draft_guard(&window, &session).and_then(|()| {
-                session.update_connection_draft(ConnectionFields {
-                    output: window.get_output().into(),
-                    target: window.get_target().into(),
-                    input: window.get_input().into(),
-                    parameter: window.get_parameter().into(),
-                    delay: window.get_delay().into(),
-                    times: window.get_times().into(),
-                })
+            with_connection(&window, &access, |window, session| {
+                let edit = draft_guard(window, session).and_then(|()| {
+                    session.update_connection_draft(ConnectionFields {
+                        output: window.get_output().into(),
+                        target: window.get_target().into(),
+                        input: window.get_input().into(),
+                        parameter: window.get_parameter().into(),
+                        delay: window.get_delay().into(),
+                        times: window.get_times().into(),
+                    })
+                });
+                result(window, session, edit);
             });
-            result(&window, &session, edit);
         }
     });
     window.on_filter_changed({
-        let (window, shared) = (window.as_weak(), shared.clone());
-        move || refresh(&window.unwrap(), &lock(&shared))
+        let (window, access) = (window.as_weak(), access.clone());
+        move || {
+            with_connection(&window, &access, |window, session| refresh(window, session));
+        }
     });
     window.on_apply({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.clone());
         move || {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            let edit = draft_guard(&window, &session)
-                .and_then(|()| session.commit_connection_edit(Actor::User).map(|_| ()));
-            result(&window, &session, edit);
+            with_connection(&window, &access, |window, session| {
+                let edit = draft_guard(window, session)
+                    .and_then(|()| session.commit_connection_edit(Actor::User).map(|_| ()));
+                result(window, session, edit);
+            });
         }
     });
     window.on_cancel({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.clone());
         move || {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            if draft_guard(&window, &session).is_ok() {
-                session.cancel_connection_edit();
-            }
-            let _ = window.hide();
+            let Some(origin) = window.upgrade() else {
+                return;
+            };
+            with_connection(&window, &access, |window, session| {
+                if draft_guard(window, session).is_ok() {
+                    session.cancel_connection_edit();
+                }
+            });
+            let _ = origin.hide();
         }
     });
     window.window().on_close_requested({
-        let (shared, window) = (shared.clone(), window.as_weak());
+        let window = window.as_weak();
         move || {
-            let mut session = lock(&shared);
-            if draft_guard(&window.unwrap(), &session).is_ok() {
-                session.cancel_connection_edit();
+            if let Some(window) = window.upgrade() {
+                window.invoke_cancel();
             }
             slint::CloseRequestResponse::HideWindow
         }

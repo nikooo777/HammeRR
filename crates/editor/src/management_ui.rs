@@ -4,11 +4,14 @@ use std::rc::Rc;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::identity::parse_id;
-use crate::runtime::{DocumentAccess, DocumentContinuation, SharedSession, lock};
+use crate::runtime::{DocumentAccess, DocumentContinuation};
 use crate::session::{Actor, ObjectFilter, PropertyChange, PropertyTarget, SelectMode, Session};
 use crate::{
     ColorWindow, ManagedFieldRow, MaterialWindow, ObjectReportRow, PropertiesWindow, ReportWindow,
 };
+
+#[cfg(test)]
+use crate::runtime::{SharedSession, lock};
 
 fn token(window: &PropertiesWindow) -> Result<u64, String> {
     window
@@ -625,72 +628,105 @@ pub fn refresh_report(window: &ReportWindow, session: &Session) {
     }
 }
 
+fn with_report<R>(
+    window: &slint::Weak<ReportWindow>,
+    access: &DocumentContinuation,
+    body: impl FnOnce(&ReportWindow, &mut Session) -> R,
+) -> Option<R> {
+    let window = window.upgrade()?;
+    match access
+        .upgrade()
+        .and_then(|access| access.with_session(|session| Ok(body(&window, session))))
+    {
+        Ok(result) => Some(result),
+        Err(error) => {
+            window.set_message(error.into());
+            None
+        }
+    }
+}
+
+#[cfg(test)]
 pub fn bind_report(window: &ReportWindow, shared: &SharedSession) {
+    bind_report_with_access(window, &DocumentAccess::unmanaged(shared.clone()));
+}
+
+pub fn bind_report_with_access(window: &ReportWindow, access: &DocumentAccess) {
+    let access = access.downgrade();
     window.on_search({
-        let (window, shared) = (window.as_weak(), shared.clone());
-        move || refresh_report(&window.unwrap(), &lock(&shared))
+        let (window, access) = (window.as_weak(), access.clone());
+        move || {
+            with_report(&window, &access, |window, session| {
+                refresh_report(window, session);
+            });
+        }
     });
     window.on_select_result({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.clone());
         move |id, frame| {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            let result = if window.get_generation() != session.document_generation().to_string()
-                || window.get_revision() != session.document().revision().to_string()
-            {
-                Err("Map changed; refresh results before selecting".into())
-            } else {
-                parse_id(&id).and_then(|id| {
-                    session.select(&[id], SelectMode::Replace)?;
-                    if frame {
-                        session.frame_selection(Actor::User, window.get_aspect())?;
-                    }
-                    Ok(())
-                })
-            };
-            window.set_message(result.err().unwrap_or_default().into());
+            with_report(&window, &access, |window, session| {
+                let result = if window.get_generation() != session.document_generation().to_string()
+                    || window.get_revision() != session.document().revision().to_string()
+                {
+                    Err("Map changed; refresh results before selecting".into())
+                } else {
+                    parse_id(&id).and_then(|id| {
+                        session.select(&[id], SelectMode::Replace)?;
+                        if frame {
+                            session.frame_selection(Actor::User, window.get_aspect())?;
+                        }
+                        Ok(())
+                    })
+                };
+                window.set_message(result.err().unwrap_or_default().into());
+            });
         }
     });
     window.on_select_all({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.clone());
         move |frame| {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            let mode = match window.get_selection_mode() {
-                1 => SelectMode::Add,
-                2 => SelectMode::Remove,
-                3 => SelectMode::Toggle,
-                _ => SelectMode::Replace,
-            };
-            let result = filter(&window).and_then(|filter| {
-                session.select_report(Actor::User, &filter, mode, frame, window.get_aspect())
+            with_report(&window, &access, |window, session| {
+                let mode = match window.get_selection_mode() {
+                    1 => SelectMode::Add,
+                    2 => SelectMode::Remove,
+                    3 => SelectMode::Toggle,
+                    _ => SelectMode::Replace,
+                };
+                let result = filter(window).and_then(|filter| {
+                    session.select_report(Actor::User, &filter, mode, frame, window.get_aspect())
+                });
+                window.set_message(
+                    result
+                        .map(|count| format!("Selected {count} matching objects"))
+                        .unwrap_or_else(|error| error)
+                        .into(),
+                );
             });
-            window.set_message(
-                result
-                    .map(|count| format!("Selected {count} matching objects"))
-                    .unwrap_or_else(|error| error)
-                    .into(),
-            );
         }
     });
     window.on_visibility_action({
-        let (window, shared) = (window.as_weak(), shared.clone());
+        let (window, access) = (window.as_weak(), access.clone());
         move |action| {
-            let window = window.unwrap();
-            let mut session = lock(&shared);
-            let ids = session.selected_ids();
-            let result = session.set_visibility(Actor::User, &action, &ids);
-            refresh_report(&window, &session);
-            window.set_message(result.err().unwrap_or_default().into());
+            with_report(&window, &access, |window, session| {
+                let ids = session.selected_ids();
+                let result = session.set_visibility(Actor::User, &action, &ids);
+                refresh_report(window, session);
+                window.set_message(result.err().unwrap_or_default().into());
+            });
         }
     });
     window.on_cancel({
         let window = window.as_weak();
         move || {
-            let _ = window.unwrap().hide();
+            if let Some(window) = window.upgrade() {
+                let _ = window.hide();
+            }
         }
     });
 }
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod entity_report_admission_tests;

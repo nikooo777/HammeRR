@@ -209,6 +209,7 @@ fn append_entity(
 
 pub struct Emission {
     pub model_entities: Vec<usize>,
+    pub world_leaf_nodes: Vec<Option<usize>>,
     pub bsp: Bsp,
     pub smoothing_sources: Vec<Option<Arc<crate::faces::SmoothingSource>>>,
 }
@@ -249,6 +250,13 @@ pub fn build(
             }
         }
         mappings.push(mapping);
+    }
+    let mut world_leaf_nodes = vec![None; leaves.len()];
+    for node in models[0].tree.preorder() {
+        control.checkpoint()?;
+        if models[0].tree.nodes[node].split.is_none() {
+            world_leaf_nodes[(-1 - mappings[0][node]) as usize] = Some(node);
+        }
     }
     let mut geometry = Geometry {
         edges: vec![bsp::Edge::default()],
@@ -542,6 +550,7 @@ pub fn build(
     }
     Ok(Emission {
         model_entities: models.iter().map(|model| model.entity).collect(),
+        world_leaf_nodes,
         bsp,
         smoothing_sources,
     })

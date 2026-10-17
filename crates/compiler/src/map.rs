@@ -52,8 +52,6 @@ fn bounds_error(object: String) -> Diagnostic {
 
 /// Entities that the compiler consumes instead of passing to the game.
 const CONSUMED: &[&str] = &["func_detail"];
-/// Entities whose compile support doesn't exist yet; dropped with a warning.
-const UNSUPPORTED: &[&str] = &["func_viscluster"];
 
 pub fn unresolved_instance_class(classname: &str) -> bool {
     ["func_instance", "func_instance_parms"]
@@ -76,9 +74,6 @@ pub fn unresolved_instance_diagnostic(entity: &Entity) -> Option<Diagnostic> {
 
 pub fn unsupported_entity_class(classname: &str) -> bool {
     unresolved_instance_class(classname)
-        || UNSUPPORTED
-            .iter()
-            .any(|name| name.eq_ignore_ascii_case(classname))
 }
 
 #[derive(Debug, Clone)]
@@ -186,6 +181,9 @@ pub struct Map<'a> {
     pub(crate) area_portals: Vec<crate::areas::PortalBrush>,
     pub(crate) overlays: crate::overlays::Plan,
     pub(crate) hints: Vec<crate::hints::Hint>,
+    pub(crate) visclusters: Vec<crate::visclusters::Definition>,
+    pub(crate) viscluster_attempts: usize,
+    pub(crate) viscluster_work: usize,
     brush_side_count: usize,
 }
 
@@ -216,6 +214,9 @@ impl<'a> Map<'a> {
             area_portals: Vec::new(),
             overlays: crate::overlays::Plan::default(),
             hints: Vec::new(),
+            visclusters: Vec::new(),
+            viscluster_attempts: 0,
+            viscluster_work: 0,
             brush_side_count: 0,
         };
         if let Err(error) = vmf.validate_ids() {
@@ -272,6 +273,10 @@ impl<'a> Map<'a> {
             }
             if classname.eq_ignore_ascii_case("env_cubemap") {
                 map.add_cubemap(entity, report);
+                continue;
+            }
+            if classname.eq_ignore_ascii_case("func_viscluster") {
+                crate::visclusters::load(&mut map, entity, report, control)?;
                 continue;
             }
             if classname.eq_ignore_ascii_case("func_occluder") {

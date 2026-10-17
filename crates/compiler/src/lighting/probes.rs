@@ -8,7 +8,6 @@ use super::shadows::{ShadowIndex, Triangle};
 use super::{Occluder, encode_color};
 use crate::map::Map;
 use crate::tree::Tree;
-use crate::visibility::Visibility;
 use crate::{Diagnostic, Report};
 
 const MIN_PROBE_SPACING: f64 = 128.0;
@@ -27,7 +26,7 @@ pub(super) struct Context<'a> {
     pub kind: LightingKind,
     pub map: &'a Map<'a>,
     pub tree: &'a Tree,
-    pub visibility: &'a Visibility,
+    pub world_leaf_nodes: &'a [Option<usize>],
     pub prop_shadows: &'a ShadowIndex<super::props::PropTriangle>,
     pub prop_bounds: &'a ShadowIndex<super::props::ProbeBounds>,
     pub shadows: &'a ShadowIndex<Occluder>,
@@ -201,16 +200,12 @@ pub(super) fn bake(
     let cone = (1.0 - 2.0 / ctx.directions.len() as f64).acos().tan();
     let leaves = bsp.records::<Leaf>().map_err(|error| error.to_string())?;
     let _ambient_allocation = budget.reserve_bytes(
-        leaves.len() * (size_of::<LeafAmbientIndex>() + size_of::<Leaf>())
-            + ctx.visibility.count * size_of::<Option<usize>>()
+        leaves.len()
+            * (size_of::<LeafAmbientIndex>() + size_of::<Leaf>() + size_of::<Option<usize>>())
             + MAX_AMBIENT_SAMPLES * size_of::<LeafAmbientSample>(),
     )?;
-    let mut nodes = vec![None; ctx.visibility.count];
-    for (node, cluster) in ctx.visibility.clusters.iter().enumerate() {
-        budget.consume(1)?;
-        if let Some(cluster) = cluster {
-            nodes[*cluster] = Some(node);
-        }
+    if ctx.world_leaf_nodes.len() != leaves.len() {
+        return Err("Model ambient world-leaf mapping disagrees with emitted leaves".into());
     }
     let mut indices = vec![LeafAmbientIndex::default(); leaves.len()];
     let mut samples = Vec::with_capacity(MAX_AMBIENT_SAMPLES);
@@ -220,11 +215,17 @@ pub(super) fn bake(
         if leaf.cluster < 0 || leaf.contents & contents::SOLID != 0 {
             continue;
         }
-        let node = nodes
-            .get(leaf.cluster as usize)
+        let node = ctx
+            .world_leaf_nodes
+            .get(index)
             .copied()
             .flatten()
-            .ok_or("Model ambient leaf has no world volume")?;
+            .filter(|&node| {
+                node < ctx.tree.nodes.len()
+                    && ctx.tree.nodes[node].split.is_none()
+                    && !ctx.tree.nodes[node].solid()
+            })
+            .ok_or("Model ambient leaf has no exact world volume")?;
         let probes = candidates(ctx, node, leaf, budget)?;
         if probes.is_empty() {
             missing += 1;

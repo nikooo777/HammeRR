@@ -81,7 +81,7 @@ fn visible_instance_helpers_fail_before_full_map_or_region_construction() {
 }
 
 #[test]
-fn hidden_instances_keep_baseline_bsp_bytes_and_visclusters_remain_warnings() {
+fn hidden_instances_keep_baseline_bsp_bytes() {
     let game = common::empty_game();
     let mut source = common::room();
     let baseline = compiler::compile(&source, &game).bsp.unwrap().to_bytes();
@@ -99,16 +99,4 @@ fn hidden_instances_keep_baseline_bsp_bytes_and_visclusters_remain_warnings() {
     assert!(!output.report.has_errors(), "{:?}", output.report);
     assert_eq!(output.bsp.unwrap().to_bytes(), baseline);
     assert_eq!(source, before);
-
-    let mut source = common::room();
-    let id = source.object_ids().chain(source.side_ids()).max().unwrap() + 1;
-    source.entities.push(Entity::new(id, "FUNC_VISCLUSTER"));
-    let output = compiler::compile(&source, &game);
-    assert!(!output.report.has_errors(), "{:?}", output.report);
-    assert_eq!(output.bsp.unwrap().to_bytes(), baseline);
-    assert!(output.report.diagnostics.iter().any(|diagnostic| {
-        diagnostic.level == compiler::Level::Warning
-            && diagnostic.object == Some(format!("entity:{id}"))
-            && diagnostic.message.contains("was left out")
-    }));
 }

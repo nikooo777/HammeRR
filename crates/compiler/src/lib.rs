@@ -9,6 +9,7 @@ mod detail_props;
 mod emit;
 pub mod faces;
 mod hints;
+pub mod instances;
 pub mod lighting;
 mod lighting_origins;
 pub mod map;
@@ -373,6 +374,8 @@ pub struct HdrLightingStats {
 
 #[derive(Debug, Default, serde::Serialize)]
 pub struct Stats {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instances: Option<instances::InstanceStats>,
     pub compile_region: Option<RegionSummary>,
     pub lighting_mode: LightingMode,
     pub hdr: Option<HdrLightingStats>,
@@ -505,6 +508,7 @@ fn serialize_elapsed<S: serde::Serializer>(
 
 #[derive(Debug)]
 pub struct Output {
+    pub instance_dependencies: Option<instances::DependencyGuard>,
     pub bsp: Option<Bsp>,
     pub report: Report,
     pub leak: Option<Leak>,
@@ -518,12 +522,15 @@ pub struct PreparedWrite {
     temporary: tempfile::NamedTempFile,
     destination: std::path::PathBuf,
     success: bool,
+    instance_dependencies: Option<instances::DependencyGuard>,
+    instance_output_stamp: Option<FileStamp>,
 }
 
 #[derive(Debug)]
 pub struct WriteReservation {
     temporary: tempfile::NamedTempFile,
     destination: std::path::PathBuf,
+    requested: std::path::PathBuf,
 }
 
 impl WriteReservation {
@@ -542,12 +549,17 @@ impl WriteReservation {
         Ok(Self {
             temporary,
             destination,
+            requested: std::path::absolute(path)?,
         })
     }
 }
 
 impl PreparedWrite {
     pub fn commit(self, control: &Control) -> io::Result<bool> {
+        if self.instance_dependencies.is_some() {
+            let lease = OutputLease::acquire(&self.destination, control)?;
+            return self.commit_checked(&lease, control);
+        }
         control.publish(|| {
             self.temporary
                 .persist(&self.destination)
@@ -566,7 +578,16 @@ impl PreparedWrite {
         control: &Control,
         validate: impl FnOnce() -> io::Result<()>,
     ) -> io::Result<bool> {
+        if let Some(dependencies) = &self.instance_dependencies {
+            dependencies.verify(control)?;
+        }
         control.publish(|| {
+            if let Some(dependencies) = &self.instance_dependencies {
+                dependencies.verify_metadata()?;
+            }
+            if let Some(stamp) = &self.instance_output_stamp {
+                stamp.verify_lease(lease)?;
+            }
             validate()?;
             lease.verify_commit(&self.destination)?;
             self.temporary
@@ -612,6 +633,26 @@ impl Output {
     ) -> io::Result<Option<PreparedWrite>> {
         control.checkpoint().map_err(io::Error::other)?;
         let path = &reservation.destination;
+        let instance_output_stamp = self
+            .instance_dependencies
+            .as_ref()
+            .map(|_| {
+                let (requested, destination) = if self.bsp.is_none() && self.leak.is_some() {
+                    (
+                        reservation.requested.with_extension("lin"),
+                        path.with_extension("lin"),
+                    )
+                } else {
+                    (reservation.requested.clone(), path.to_owned())
+                };
+                let stamp = FileStamp::capture(&requested)?;
+                stamp.verify_path(&destination)?;
+                Ok::<_, io::Error>(stamp)
+            })
+            .transpose()?;
+        if let Some(dependencies) = &self.instance_dependencies {
+            dependencies.verify(control)?;
+        }
         if self
             .cubemap_assets
             .as_ref()
@@ -677,6 +718,8 @@ impl Output {
             temporary,
             destination,
             success,
+            instance_dependencies: self.instance_dependencies.clone(),
+            instance_output_stamp,
         }))
     }
 }
@@ -1173,8 +1216,20 @@ pub fn compile_with_context_controlled(
     context: Option<&CompileContext>,
     control: &Control,
 ) -> Output {
+    compile_with_source_controlled(vmf, fs, options, context, None, control)
+}
+
+pub fn compile_with_source_controlled(
+    vmf: &Vmf,
+    fs: &GameFs,
+    options: Options,
+    context: Option<&CompileContext>,
+    source: Option<&instances::SourceContext>,
+    control: &Control,
+) -> Output {
     let start = Instant::now();
     let mut output = Output {
+        instance_dependencies: None,
         bsp: None,
         report: Report::default(),
         leak: None,
@@ -1185,11 +1240,40 @@ pub fn compile_with_context_controlled(
     output.stats.lighting_mode = options.lighting;
     output.stats.physics_mode = options.physics;
     output.stats.visibility_mode = options.visibility;
-    if let Err(message) = build(vmf, fs, &mut output, options, context, control) {
-        output
-            .report
-            .diagnostics
-            .push(Diagnostic::error(message, None, None));
+    let prepared = if let Err(message) = options
+        .validate()
+        .and_then(|_| control.advance(Stage::Loading))
+    {
+        Err(Diagnostic::error(message, None, None))
+    } else if source.is_some() && instances::requires_source(vmf) && options.generate_reflections {
+        Err(Diagnostic::error(
+            "Generate reflections is unsupported for referenced brush instances",
+            None,
+            None,
+        ))
+    } else {
+        instances::prepare(vmf, source, control, &mut output.report)
+    };
+    match prepared {
+        Err(diagnostic) => output.report.diagnostics.push(diagnostic),
+        Ok(prepared) => {
+            output.instance_dependencies = prepared.dependencies.clone();
+            output.stats.instances = prepared.stats.clone();
+            if let Err(message) = build(
+                prepared.vmf.as_ref(),
+                fs,
+                &mut output,
+                options,
+                context,
+                control,
+            ) {
+                output
+                    .report
+                    .diagnostics
+                    .push(Diagnostic::error(message, None, None));
+            }
+            prepared.annotate(&mut output.report);
+        }
     }
     if control.cancelled() {
         output.bsp = None;

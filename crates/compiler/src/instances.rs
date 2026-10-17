@@ -1,0 +1,671 @@
+use std::borrow::Cow;
+use std::collections::{BTreeMap, BTreeSet};
+use std::io;
+use std::path::{Component, Path, PathBuf};
+
+use glam::DVec3;
+use map_core::{BrushGeometry, Document, ObjectId, edit};
+use source_formats::{
+    keyvalues,
+    vmf::{Entity, Solid, Vmf, parse_vec3},
+};
+
+use crate::{Control, Diagnostic, FileIdentity, FileStamp, Report};
+
+pub const MAX_INSTANCES: usize = 256;
+pub const MAX_FILES: usize = 32;
+pub const MAX_FILE_BYTES: usize = 4 * 1024 * 1024;
+pub const MAX_TOTAL_BYTES: usize = 32 * 1024 * 1024;
+pub const MAX_OBJECTS: usize = 16_384;
+pub const MAX_SIDES: usize = 65_536;
+pub const MAX_BRUSH_SIDES: usize = 128;
+pub const MAX_FILE_NODES: usize = 131_072;
+pub const MAX_TOTAL_NODES: usize = 1_048_576;
+pub const MAX_DEPTH: usize = 32;
+pub const MAX_FIELD_BYTES: usize = 512;
+pub const MAX_GEOMETRY_WORK: usize = 64_000_000;
+const MAX_PARENT_BYTES: u64 = 128 * 1024 * 1024;
+
+#[derive(Clone, Debug)]
+pub struct SourceContext {
+    requested: PathBuf,
+    alias: FileStamp,
+    directory_alias: Option<FileStamp>,
+    root: FileIdentity,
+    directory: PathBuf,
+}
+
+impl SourceContext {
+    pub fn capture(path: &Path, control: &Control) -> io::Result<Self> {
+        let requested = std::path::absolute(path)?;
+        let alias = FileStamp::capture_container(&requested)?;
+        let parent = requested
+            .parent()
+            .ok_or_else(|| io::Error::other("Instance source has no parent directory"))?;
+        let directory_alias = parent
+            .file_name()
+            .map(|_| FileStamp::capture_container(parent))
+            .transpose()?;
+        let directory = parent.canonicalize()?;
+        let root =
+            FileIdentity::capture_bounded(&requested.canonicalize()?, MAX_PARENT_BYTES, control)?;
+        if root.sha256().is_none() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "Save the parent VMF before resolving instances",
+            ));
+        }
+        let context = Self {
+            requested,
+            alias,
+            directory_alias,
+            root,
+            directory,
+        };
+        context.verify_metadata()?;
+        Ok(context)
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.requested
+    }
+    pub fn root_identity(&self) -> &FileIdentity {
+        &self.root
+    }
+    pub fn verify_bytes(&self, bytes: &[u8]) -> io::Result<()> {
+        self.root.verify_bytes(bytes)?;
+        self.verify_metadata()
+    }
+    pub fn verify(&self, control: &Control) -> io::Result<()> {
+        self.verify_metadata()?;
+        self.root.verify(control)?;
+        self.verify_metadata()
+    }
+    pub fn verify_metadata(&self) -> io::Result<()> {
+        self.alias.verify_metadata()?;
+        if let Some(alias) = &self.directory_alias {
+            alias.verify_container_identity()?;
+        }
+        if self.requested.canonicalize()? != self.root.path()
+            || self
+                .requested
+                .parent()
+                .ok_or_else(|| io::Error::other("Instance source has no parent directory"))?
+                .canonicalize()?
+                != self.directory
+        {
+            return Err(io::Error::other(
+                "Instance referring filename or directory changed",
+            ));
+        }
+        self.root.verify_metadata()
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct DependencyGuard {
+    source: SourceContext,
+    files: Vec<(String, FileIdentity)>,
+}
+
+impl DependencyGuard {
+    pub fn verify_metadata(&self) -> io::Result<()> {
+        self.source.verify_metadata()?;
+        for (relative, identity) in &self.files {
+            if resolve(&self.source, relative)? != identity.path() {
+                return Err(io::Error::other("Instance dependency resolution changed"));
+            }
+            identity.verify_metadata()?;
+        }
+        Ok(())
+    }
+
+    pub fn verify(&self, control: &Control) -> io::Result<()> {
+        self.verify_metadata()?;
+        self.source.verify(control)?;
+        for (_, identity) in &self.files {
+            identity.verify(control)?;
+        }
+        self.verify_metadata()
+    }
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct DependencyInfo {
+    pub path: String,
+    pub bytes: usize,
+    pub sha256: String,
+}
+
+#[derive(Clone, Debug, Default, serde::Serialize)]
+pub struct InstanceStats {
+    pub instances: usize,
+    pub files: usize,
+    pub world_brushes: usize,
+    pub detail_brushes: usize,
+    pub dependencies: Vec<DependencyInfo>,
+}
+
+pub fn requires_source(vmf: &Vmf) -> bool {
+    vmf.entities.iter().any(|entity| {
+        !entity.hidden
+            && entity
+                .classname()
+                .is_some_and(|class| class.eq_ignore_ascii_case("func_instance"))
+    })
+}
+
+fn field(value: &str) -> Result<(), String> {
+    if value.len() > MAX_FIELD_BYTES || value.contains('\0') {
+        return Err(format!(
+            "Instance field exceeds {MAX_FIELD_BYTES} bytes or contains NUL"
+        ));
+    }
+    Ok(())
+}
+
+fn vector(entity: &Entity, key: &str) -> Result<DVec3, String> {
+    let Some(value) = entity.properties.get(key) else {
+        return Ok(DVec3::ZERO);
+    };
+    field(value)?;
+    parse_vec3(value)
+        .filter(|point| point.is_finite() && point.as_vec3().is_finite())
+        .ok_or_else(|| format!("Instance {key} requires three finite coordinates"))
+}
+
+fn filename(value: &str) -> Result<String, String> {
+    field(value)?;
+    let relative = value.replace('\\', "/");
+    if relative.is_empty()
+        || relative.contains(':')
+        || relative.bytes().any(|byte| byte.is_ascii_control())
+        || !Path::new(&relative)
+            .components()
+            .all(|part| matches!(part, Component::Normal(_) | Component::CurDir))
+        || !Path::new(&relative)
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("vmf"))
+    {
+        return Err("Instance file must be a relative .vmf path without traversal, absolute roots or drive prefixes".into());
+    }
+    Ok(Path::new(&relative)
+        .components()
+        .filter(|part| !matches!(part, Component::CurDir))
+        .collect::<PathBuf>()
+        .to_string_lossy()
+        .into_owned())
+}
+
+fn resolve(source: &SourceContext, relative: &str) -> io::Result<PathBuf> {
+    let relative = filename(relative).map_err(io::Error::other)?;
+    let mut path = source.directory.clone();
+    for part in Path::new(&relative).components() {
+        path.push(part);
+        let metadata = std::fs::symlink_metadata(&path)?;
+        if metadata.file_type().is_symlink() {
+            return Err(io::Error::other(
+                "Instance dependency paths cannot contain symlinks",
+            ));
+        }
+    }
+    Ok(path)
+}
+
+pub fn helper_admission(entity: &Entity) -> Result<(), String> {
+    if !entity
+        .classname()
+        .is_some_and(|class| class.eq_ignore_ascii_case("func_instance"))
+    {
+        return Err("Only func_instance supports brush-only expansion; parameter helpers remain unsupported".into());
+    }
+    if !entity.solids.is_empty()
+        || entity
+            .connections
+            .as_ref()
+            .is_some_and(|pairs| !pairs.is_empty())
+        || !entity.extra.is_empty()
+    {
+        return Err("Brush instances cannot have brushes, connections or opaque blocks".into());
+    }
+    let mut keys = BTreeSet::new();
+    for (key, value) in entity.properties.iter() {
+        field(key)?;
+        field(value)?;
+        let key = key.to_ascii_lowercase();
+        if !keys.insert(key.clone()) {
+            return Err(format!("Instance repeats property {key}"));
+        }
+        if key.starts_with("replace") {
+            if !value.trim().is_empty() {
+                return Err(
+                    "Instance replacements are not supported by brush-only expansion".into(),
+                );
+            }
+        } else if !matches!(
+            key.as_str(),
+            "classname" | "origin" | "angles" | "file" | "fixup_style" | "targetname" | "name"
+        ) {
+            return Err(format!(
+                "Instance property {key} is unsupported by brush-only expansion"
+            ));
+        }
+    }
+    filename(
+        entity
+            .properties
+            .get("file")
+            .ok_or("Instance file is missing")?,
+    )?;
+    let origin = vector(entity, "origin")?;
+    if origin.abs().max_element() > crate::map::MAX_COMPILE_COORD {
+        return Err("Instance origin exceeds Source compile bounds".into());
+    }
+    vector(entity, "angles")?;
+    if let Some(style) = entity.properties.get("fixup_style")
+        && !matches!(style.trim(), "0" | "1" | "2")
+    {
+        return Err("Instance fixup_style must be 0, 1 or 2".into());
+    }
+    Ok(())
+}
+
+fn checked_solid(solid: &Solid) -> Result<(), String> {
+    if solid.sides.len() > MAX_BRUSH_SIDES
+        || !solid.extra.is_empty()
+        || !solid.extra_properties.0.is_empty()
+    {
+        return Err(format!(
+            "Child brush {} exceeds {MAX_BRUSH_SIDES} sides or has opaque metadata",
+            solid.id
+        ));
+    }
+    for side in &solid.sides {
+        field(&side.material)?;
+        if !side.rotation.is_finite() || side.lightmap_scale == 0 {
+            return Err(format!(
+                "Child side {} has invalid rotation or lightmap scale",
+                side.id
+            ));
+        }
+        if side.displacement.is_some()
+            || !side.extra.is_empty()
+            || !side.extra_properties.0.is_empty()
+        {
+            return Err(format!(
+                "Child side {} has unsupported terrain or opaque metadata",
+                side.id
+            ));
+        }
+        for axis in [&side.u_axis, &side.v_axis] {
+            if !axis.axis.is_finite()
+                || axis.axis.length_squared() <= 0.0
+                || !axis.scale.is_finite()
+                || axis.scale == 0.0
+                || !axis.offset.is_finite()
+                || !(axis.axis / axis.scale).as_vec3().is_finite()
+                || !(axis.offset as f32).is_finite()
+            {
+                return Err(format!(
+                    "Child side {} has invalid texture coordinates",
+                    side.id
+                ));
+            }
+        }
+    }
+    let geometry = BrushGeometry::from_solid(solid)
+        .map_err(|error| format!("Child brush {}: {error}", solid.id))?;
+    if !geometry.mins.is_finite()
+        || !geometry.maxs.is_finite()
+        || !geometry.mins.cmplt(geometry.maxs).all()
+        || geometry.mins.abs().max(geometry.maxs.abs()).max_element()
+            > crate::map::MAX_COMPILE_COORD
+    {
+        return Err(format!(
+            "Child brush {} exceeds finite Source compile bounds",
+            solid.id
+        ));
+    }
+    Ok(())
+}
+
+fn child_admission(child: &Vmf) -> Result<(), String> {
+    child.validate_ids().map_err(|error| error.to_string())?;
+    if child
+        .extra
+        .iter()
+        .any(|node| !node.key.eq_ignore_ascii_case("cordons"))
+        || !child.world.extra.is_empty()
+        || !child.visgroups_extra.is_empty()
+    {
+        return Err("Instance child has unknown or compiler-owned map metadata".into());
+    }
+    if map_core::compile_region::active(child)
+        .map_err(|error| error.to_string())?
+        .is_some()
+    {
+        return Err("Active child compile regions are unsupported".into());
+    }
+    for entity in child.entities.iter().filter(|entity| !entity.hidden) {
+        for (key, value) in entity.properties.iter() {
+            field(key)?;
+            field(value)?;
+        }
+        if !entity
+            .classname()
+            .is_some_and(|class| class.eq_ignore_ascii_case("func_detail"))
+        {
+            return Err(format!(
+                "Child entity {} ({}) is unsupported; only world/func_detail brushes and one instance level are supported",
+                entity.id,
+                entity.classname().unwrap_or("missing class")
+            ));
+        }
+        if !entity.extra.is_empty()
+            || entity
+                .connections
+                .as_ref()
+                .is_some_and(|pairs| !pairs.is_empty())
+        {
+            return Err("Child detail entity has opaque blocks or connections".into());
+        }
+        let mut seen = BTreeSet::new();
+        for (key, value) in entity.properties.iter() {
+            if !seen.insert(key.to_ascii_lowercase()) {
+                return Err(format!("Child detail repeats {key}"));
+            }
+            match key.to_ascii_lowercase().as_str() {
+                "classname" => {}
+                "origin" | "angles" if vector(entity, key)? == DVec3::ZERO => {}
+                "mindxlevel" | "maxdxlevel" if value.trim().parse::<u32>().ok() == Some(0) => {}
+                _ => return Err(format!("Child detail property {key} is unsupported")),
+            }
+        }
+    }
+    Ok(())
+}
+
+struct Child {
+    vmf: Vmf,
+    identity: FileIdentity,
+    bytes: usize,
+}
+
+pub(crate) struct Prepared<'a> {
+    pub vmf: Cow<'a, Vmf>,
+    pub dependencies: Option<DependencyGuard>,
+    pub stats: Option<InstanceStats>,
+    provenance: BTreeMap<String, (u32, String, u32)>,
+}
+
+impl Prepared<'_> {
+    pub fn annotate(&self, report: &mut Report) {
+        for diagnostic in &mut report.diagnostics {
+            if let Some((owner, path, original)) = diagnostic
+                .object
+                .as_ref()
+                .and_then(|object| self.provenance.get(object))
+            {
+                diagnostic.message = format!(
+                    "{} (instance {path}, child object {original})",
+                    diagnostic.message
+                );
+                diagnostic.object = Some(format!("entity:{owner}"));
+            }
+        }
+    }
+}
+
+pub(crate) fn prepare<'a>(
+    vmf: &'a Vmf,
+    source: Option<&SourceContext>,
+    control: &Control,
+    report: &mut Report,
+) -> Result<Prepared<'a>, Diagnostic> {
+    let mut prepared = Prepared {
+        vmf: Cow::Borrowed(vmf),
+        dependencies: None,
+        stats: None,
+        provenance: BTreeMap::new(),
+    };
+    if !requires_source(vmf) {
+        return Ok(prepared);
+    }
+    let Some(source) = source else {
+        return Ok(prepared);
+    };
+    let helpers = vmf
+        .entities
+        .iter()
+        .filter(|entity| {
+            !entity.hidden
+                && entity
+                    .classname()
+                    .is_some_and(|class| class.eq_ignore_ascii_case("func_instance"))
+        })
+        .take(MAX_INSTANCES + 1)
+        .collect::<Vec<_>>();
+    let failure = |entity: &Entity, message: String| {
+        Diagnostic::error(
+            map_core::entity_helpers::bounded_preview(&message, MAX_FIELD_BYTES),
+            Some(format!("entity:{}", entity.id)),
+            entity.origin().filter(|point| point.is_finite()),
+        )
+    };
+    let first = helpers[0];
+    if let Some(diagnostic) = vmf
+        .entities
+        .iter()
+        .filter(|entity| {
+            entity
+                .classname()
+                .is_some_and(|class| class.eq_ignore_ascii_case("func_instance_parms"))
+        })
+        .find_map(crate::map::unresolved_instance_diagnostic)
+    {
+        return Err(diagnostic);
+    }
+    let check = |result: Result<(), String>| result.map_err(|error| failure(first, error));
+    check(vmf.validate_ids().map_err(|error| error.to_string()))?;
+    if helpers.len() > MAX_INSTANCES
+        || vmf.object_ids().take(MAX_OBJECTS + 1).count() > MAX_OBJECTS
+        || vmf.side_ids().take(MAX_SIDES + 1).count() > MAX_SIDES
+    {
+        return Err(failure(
+            first,
+            "Instance expansion exceeds object, side or occurrence limits".into(),
+        ));
+    }
+    source
+        .verify(control)
+        .map_err(|error| failure(first, error.to_string()))?;
+    for helper in &helpers {
+        helper_admission(helper).map_err(|error| failure(helper, error))?;
+    }
+    let mut files = BTreeMap::<String, Child>::new();
+    let mut bytes = 0usize;
+    let mut nodes = 0usize;
+    let mut work = 0usize;
+    let mut objects = vmf.object_ids().count();
+    let mut sides = vmf.side_ids().count();
+    let mut stats = InstanceStats::default();
+    let mut document =
+        Document::try_new(vmf.clone()).map_err(|error| failure(first, error.to_string()))?;
+    for helper in &helpers {
+        let result: Result<(), String> = (|| {
+            control.checkpoint()?;
+            let relative = filename(helper.properties.get("file").unwrap())?;
+            let file_count = files.len();
+            if let std::collections::btree_map::Entry::Vacant(slot) = files.entry(relative.clone())
+            {
+                if file_count >= MAX_FILES {
+                    return Err(format!("Instances exceed {MAX_FILES} unique files"));
+                }
+                let path = resolve(source, &relative)
+                    .map_err(|error| format!("Instance {relative}: {error}"))?;
+                let limit = MAX_FILE_BYTES.min(MAX_TOTAL_BYTES.saturating_sub(bytes));
+                let (identity, input) = FileIdentity::read_bounded(&path, limit as u64, control)
+                    .map_err(|error| format!("Instance {relative}: {error}"))?;
+                if identity.same_file(&source.root) {
+                    return Err(format!("Instance {relative} forms a self-reference cycle"));
+                }
+                bytes = bytes.saturating_add(input.len());
+                if bytes > MAX_TOTAL_BYTES {
+                    return Err(format!("Instance sources exceed {MAX_TOTAL_BYTES} bytes"));
+                }
+                let text = std::str::from_utf8(&input).map_err(|error| error.to_string())?;
+                let parsed = keyvalues::parse_bounded(
+                    text,
+                    MAX_DEPTH,
+                    MAX_FILE_NODES.min(MAX_TOTAL_NODES.saturating_sub(nodes)),
+                )
+                .map_err(|error| error.to_string())?;
+                let mut stack = parsed.iter().collect::<Vec<_>>();
+                while let Some(node) = stack.pop() {
+                    nodes += 1;
+                    if let Some(children) = node.children() {
+                        stack.extend(children);
+                    }
+                }
+                if nodes > MAX_TOTAL_NODES {
+                    return Err(format!("Instance sources exceed {MAX_TOTAL_NODES} nodes"));
+                }
+                let child = Vmf::from_nodes(&parsed).map_err(|error| error.to_string())?;
+                child_admission(&child)?;
+                let ignored = child
+                    .world
+                    .properties
+                    .iter()
+                    .filter(|(key, _)| {
+                        !key.eq_ignore_ascii_case("classname")
+                            && !key.eq_ignore_ascii_case("mapversion")
+                    })
+                    .map(|(key, _)| key)
+                    .collect::<Vec<_>>();
+                if !ignored.is_empty() {
+                    let keys = ignored
+                        .iter()
+                        .take(16)
+                        .map(|key| map_core::entity_helpers::bounded_preview(key, 64))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    report.diagnostics.push(Diagnostic::warning(format!("Instance {relative}: {} child world settings are ignored ({keys}; showing at most 16 keys); root world settings remain authoritative", ignored.len()), Some(format!("entity:{}", helper.id)), helper.origin()));
+                }
+                slot.insert(Child {
+                    vmf: child,
+                    identity,
+                    bytes: input.len(),
+                });
+            }
+            let child = &files[&relative].vmf;
+            let world = child.world.solids.iter().filter(|solid| !solid.hidden);
+            let detail = child
+                .entities
+                .iter()
+                .filter(|entity| !entity.hidden)
+                .flat_map(|entity| entity.solids.iter().filter(|solid| !solid.hidden));
+            let mut additions = Vec::new();
+            for (solid, is_detail) in world
+                .map(|solid| (solid, false))
+                .chain(detail.map(|solid| (solid, true)))
+            {
+                control.checkpoint()?;
+                objects = objects.saturating_add(1 + usize::from(is_detail));
+                sides = sides.saturating_add(solid.sides.len());
+                work = work.saturating_add(solid.sides.len().saturating_pow(3));
+                if objects > MAX_OBJECTS || sides > MAX_SIDES || work > MAX_GEOMETRY_WORK {
+                    return Err("Instance expansion exceeds combined objects, sides or geometry-work limits".into());
+                }
+                checked_solid(solid)?;
+                additions.push((solid, is_detail));
+            }
+            let angles = vector(helper, "angles")?;
+            let transform = edit::Transform {
+                translation: vector(helper, "origin")?,
+                rotation: DVec3::new(angles.z, angles.x, angles.y),
+                texture_lock: true,
+                texture_scale_lock: Some(true),
+                ..Default::default()
+            };
+            document
+                .edit("expand brush instance", |tx| {
+                    for (original, is_detail) in &additions {
+                        control.checkpoint().map_err(map_core::EditError::Invalid)?;
+                        let mut solid = (**original).clone();
+                        solid.id = tx.new_object_id()?;
+                        solid.editor = None;
+                        prepared.provenance.insert(
+                            format!("solid:{}", solid.id),
+                            (helper.id, relative.clone(), original.id),
+                        );
+                        for side in &mut solid.sides {
+                            let original_side = side.id;
+                            side.id = tx.new_side_id()?;
+                            prepared.provenance.insert(
+                                format!("side:{}", side.id),
+                                (helper.id, relative.clone(), original_side),
+                            );
+                        }
+                        let id = if *is_detail {
+                            let id = tx.new_object_id()?;
+                            let mut detail = Entity::new(id, "func_detail");
+                            detail.solids.push(solid);
+                            prepared.provenance.insert(
+                                format!("entity:{id}"),
+                                (helper.id, relative.clone(), original.id),
+                            );
+                            stats.detail_brushes += 1;
+                            tx.add_entity(detail)?
+                        } else {
+                            stats.world_brushes += 1;
+                            tx.add_solid(solid)?
+                        };
+                        edit::transform(tx, &[id], transform)?;
+                        match id {
+                            ObjectId::Solid(id) => checked_solid(tx.solid_mut(id)?),
+                            ObjectId::Entity(id) => checked_solid(&tx.entity_mut(id)?.solids[0]),
+                        }
+                        .map_err(map_core::EditError::Invalid)?;
+                    }
+                    Ok(())
+                })
+                .map_err(|error| error.to_string())?;
+            stats.instances += 1;
+            Ok(())
+        })();
+        result.map_err(|error| failure(helper, error))?;
+    }
+    document
+        .edit("consume instance helpers", |tx| {
+            for helper in &helpers {
+                tx.remove(ObjectId::Entity(helper.id))?;
+            }
+            Ok(())
+        })
+        .map_err(|error| failure(first, error.to_string()))?;
+    let expanded = document.into_vmf();
+    check(expanded.validate_ids().map_err(|error| error.to_string()))?;
+    stats.files = files.len();
+    stats.dependencies = files
+        .iter()
+        .map(|(path, child)| DependencyInfo {
+            path: path.clone(),
+            bytes: child.bytes,
+            sha256: child.identity.sha256().unwrap().to_owned(),
+        })
+        .collect();
+    report.diagnostics.push(Diagnostic::info(format!("Expanded {} brush instances from {} files: {} world brushes, {} detail brushes; referenced contents are not shown in the editor viewport", stats.instances, stats.files, stats.world_brushes, stats.detail_brushes), None, None));
+    prepared.dependencies = Some(DependencyGuard {
+        source: source.clone(),
+        files: files
+            .into_iter()
+            .map(|(path, child)| (path, child.identity))
+            .collect(),
+    });
+    prepared.stats = Some(stats);
+    prepared.vmf = Cow::Owned(expanded);
+    Ok(prepared)
+}
+
+#[cfg(test)]
+mod tests;

@@ -54,7 +54,7 @@ impl Fixture {
             primitive,
             polygon,
             repeat,
-            source: _,
+            source,
             family,
         };
         fixture.initialize();

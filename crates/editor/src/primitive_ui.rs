@@ -305,21 +305,20 @@ pub fn bind_with_access(window: &PrimitiveWindow, access: &DocumentAccess) {
     window.on_cancel({
         let (window, target) = (window.as_weak(), access.downgrade());
         move || {
-            with_window(&window, &target, |window, shared| {
-                cancel(window, shared);
-            });
-            if let Some(window) = window.upgrade() {
+            let hide = with_window(&window, &target, cancel).unwrap_or(true);
+            if hide && let Some(window) = window.upgrade() {
                 let _ = window.hide();
             }
         }
     });
     window.window().on_close_requested({
-        let window = window.as_weak();
+        let (window, target) = (window.as_weak(), access.downgrade());
         move || {
-            if let Some(window) = window.upgrade() {
-                window.invoke_cancel();
+            if with_window(&window, &target, cancel).unwrap_or(true) {
+                slint::CloseRequestResponse::HideWindow
+            } else {
+                slint::CloseRequestResponse::KeepWindowShown
             }
-            slint::CloseRequestResponse::HideWindow
         }
     });
 }

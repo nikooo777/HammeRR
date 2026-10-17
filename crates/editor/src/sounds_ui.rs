@@ -7,7 +7,7 @@ use slint::ComponentHandle;
 
 use crate::{
     SoundBrowserWindow, SoundChoiceRow,
-    runtime::{SharedSession, lock},
+    runtime::{DocumentAccess, DocumentContinuation, SharedSession, lock},
     session::{Actor, Session},
 };
 
@@ -27,6 +27,26 @@ pub struct Controller {
     catalog: Rc<RefCell<Catalog>>,
     owned_playback: Rc<Cell<Option<u64>>>,
     displayed_playback: Rc<Cell<Option<u64>>>,
+}
+
+fn admitted(
+    window: &slint::Weak<SoundBrowserWindow>,
+    target: &DocumentContinuation,
+    body: impl FnOnce(SoundBrowserWindow, &SharedSession),
+) {
+    let Some(window) = window.upgrade() else {
+        return;
+    };
+    let result = target.upgrade().and_then(|target| {
+        target.with_shared(|shared| {
+            body(window.clone_strong(), shared);
+            Ok(())
+        })
+    });
+    if let Err(error) = result {
+        window.set_can_apply(false);
+        window.set_message(error.into());
+    }
 }
 
 fn choice(report: &serde_json::Value) -> Option<Choice> {
@@ -215,7 +235,13 @@ fn catalog(window: &SoundBrowserWindow, session: &mut Session, state: &mut Catal
 }
 
 impl Controller {
+    #[cfg(test)]
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
+        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
+    }
+
+    pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
+        let target = access.downgrade();
         let window = SoundBrowserWindow::new()?;
         window
             .window()
@@ -226,46 +252,64 @@ impl Controller {
         let owned_playback = Rc::new(Cell::new(None::<u64>));
         let displayed_playback = Rc::new(Cell::new(None::<u64>));
         window.on_search({
-            let (window, shared, state) = (window.as_weak(), shared.clone(), catalog_state.clone());
+            let (window, target, state) = (window.as_weak(), target.clone(), catalog_state.clone());
             move || {
-                let mut state = state.borrow_mut();
-                state.offset = 0;
-                catalog(&window.unwrap(), &mut lock(&shared), &mut state);
+                admitted(&window, &target, |window, shared| {
+                    let mut state = state.borrow_mut();
+                    state.offset = 0;
+                    catalog(&window, &mut lock(shared), &mut state);
+                })
             }
         });
         window.on_group_changed({
             let window = window.as_weak();
-            move || window.unwrap().invoke_search()
+            move || {
+                if let Some(window) = window.upgrade() {
+                    window.invoke_search();
+                }
+            }
         });
         window.on_page({
-            let (window, shared, state) = (window.as_weak(), shared.clone(), catalog_state.clone());
+            let (window, target, state) = (window.as_weak(), target.clone(), catalog_state.clone());
             move |direction| {
-                let mut state = state.borrow_mut();
-                state.offset = if direction < 0 {
-                    state.offset.saturating_sub(PAGE_SIZE)
-                } else {
-                    state.offset + PAGE_SIZE
-                };
-                catalog(&window.unwrap(), &mut lock(&shared), &mut state);
+                admitted(&window, &target, |window, shared| {
+                    let mut state = state.borrow_mut();
+                    state.offset = if direction < 0 {
+                        state.offset.saturating_sub(PAGE_SIZE)
+                    } else {
+                        state.offset + PAGE_SIZE
+                    };
+                    catalog(&window, &mut lock(shared), &mut state);
+                })
             }
         });
         window.on_inspect({
-            let (window, shared, token, seen) = (
+            let (window, target, token, seen) = (
                 window.as_weak(),
-                shared.clone(),
+                target.clone(),
                 token.clone(),
                 seen.clone(),
             );
-            move || inspect(&window.unwrap(), &mut lock(&shared), token.get(), &seen)
+            move || {
+                admitted(&window, &target, |window, shared| {
+                    inspect(&window, &mut lock(shared), token.get(), &seen)
+                })
+            }
         });
         window.on_variant_changed({
             let window = window.as_weak();
-            move || window.unwrap().invoke_inspect()
+            move || {
+                if let Some(window) = window.upgrade() {
+                    window.invoke_inspect();
+                }
+            }
         });
         window.on_choose({
             let window = window.as_weak();
             move |value| {
-                let window = window.unwrap();
+                let Some(window) = window.upgrade() else {
+                    return;
+                };
                 window.set_value(value);
                 window.set_variant(0);
                 window.invoke_inspect();
@@ -274,112 +318,129 @@ impl Controller {
         window.on_invalidate({
             let window = window.as_weak();
             move || {
-                let window = window.unwrap();
+                let Some(window) = window.upgrade() else {
+                    return;
+                };
                 window.set_can_apply(false);
                 window.set_message("Inspect the sound before applying it.".into());
             }
         });
         window.on_volume_changed({
-            let (window, shared) = (window.as_weak(), shared.clone());
+            let (window, target) = (window.as_weak(), target.clone());
             move || {
-                let window = window.unwrap();
-                if let Err(error) =
-                    lock(&shared).set_sound_preview_volume(window.get_volume() / 100.0)
-                {
-                    window.set_message(error.into());
-                }
+                admitted(&window, &target, |window, shared| {
+                    if let Err(error) =
+                        lock(shared).set_sound_preview_volume(window.get_volume() / 100.0)
+                    {
+                        window.set_message(error.into());
+                    }
+                })
             }
         });
         window.on_play({
-            let (window, shared, owned) =
-                (window.as_weak(), shared.clone(), owned_playback.clone());
+            let (window, target, owned) =
+                (window.as_weak(), target.clone(), owned_playback.clone());
             move || {
-                let window = window.unwrap();
-                match lock(&shared).play_sound_preview(
-                    &window.get_value(),
-                    window.get_variant().max(0) as usize,
-                    None,
-                ) {
-                    Ok(report) => owned.set(report["token"].as_u64()),
-                    Err(error) => window.set_message(error.into()),
-                }
+                admitted(&window, &target, |window, shared| {
+                    match lock(shared).play_sound_preview(
+                        &window.get_value(),
+                        window.get_variant().max(0) as usize,
+                        None,
+                    ) {
+                        Ok(report) => owned.set(report["token"].as_u64()),
+                        Err(error) => window.set_message(error.into()),
+                    }
+                })
             }
         });
         window.on_stop({
-            let (window, shared, displayed) =
-                (window.as_weak(), shared.clone(), displayed_playback.clone());
+            let (window, target, displayed) =
+                (window.as_weak(), target.clone(), displayed_playback.clone());
             move || {
-                if let Some(token) = displayed.take()
-                    && let Err(error) = lock(&shared).stop_sound_preview(token)
-                {
-                    window.unwrap().set_message(error.into());
-                }
+                let token = displayed.take();
+                admitted(&window, &target, |window, shared| {
+                    if let Some(token) = token
+                        && let Err(error) = lock(shared).stop_sound_preview(token)
+                    {
+                        window.set_message(error.into());
+                    }
+                });
             }
         });
         window.on_reload({
-            let (window, shared) = (window.as_weak(), shared.clone());
+            let (window, target) = (window.as_weak(), target.clone());
             move || {
-                lock(&shared).reload_sound_assets();
-                window
-                    .unwrap()
-                    .set_message("Sounds reloaded. Cancel and reopen this choice.".into());
+                admitted(&window, &target, |window, shared| {
+                    lock(shared).reload_sound_assets();
+                    window.set_message("Sounds reloaded. Cancel and reopen this choice.".into());
+                })
             }
         });
         window.on_apply({
-            let (window, shared, token, seen) = (
+            let (window, target, token, seen) = (
                 window.as_weak(),
-                shared.clone(),
+                target.clone(),
                 token.clone(),
                 seen.clone(),
             );
             move || {
-                let window = window.unwrap();
-                let result = token
-                    .get()
-                    .ok_or("Reopen the sound browser".to_owned())
-                    .and_then(|token| {
-                        let mut session = lock(&shared);
-                        let report = session.sound_choice(token)?;
-                        if *seen.borrow() != choice(&report) {
-                            present(&window, &report, &seen);
-                            return Ok(false);
+                admitted(&window, &target, |window, shared| {
+                    let result = token
+                        .get()
+                        .ok_or("Reopen the sound browser".to_owned())
+                        .and_then(|token| {
+                            let mut session = lock(shared);
+                            let report = session.sound_choice(token)?;
+                            if *seen.borrow() != choice(&report) {
+                                present(&window, &report, &seen);
+                                return Ok(false);
+                            }
+                            session.apply_sound_choice(Actor::User, token)?;
+                            Ok(true)
+                        });
+                    match result {
+                        Ok(true) => window.invoke_cancel(),
+                        Ok(false) => window.set_message(
+                            "Sound choice changed. Review it before Use sound.".into(),
+                        ),
+                        Err(error) => {
+                            window.set_can_apply(false);
+                            window.set_message(error.into());
                         }
-                        session.apply_sound_choice(Actor::User, token)?;
-                        Ok(true)
-                    });
-                match result {
-                    Ok(true) => window.invoke_cancel(),
-                    Ok(false) => window
-                        .set_message("Sound choice changed. Review it before Use sound.".into()),
-                    Err(error) => {
-                        window.set_can_apply(false);
-                        window.set_message(error.into());
                     }
-                }
+                })
             }
         });
         window.on_cancel({
-            let (window, shared, token, owned) = (
+            let (window, target, token, owned) = (
                 window.as_weak(),
-                shared.clone(),
+                target.clone(),
                 token.clone(),
                 owned_playback.clone(),
             );
             move || {
-                let mut session = lock(&shared);
-                if let Some(token) = token.take() {
-                    let _ = session.cancel_sound_choice(token);
+                let token = token.take();
+                let owned = owned.take();
+                admitted(&window, &target, |_, shared| {
+                    let mut session = lock(shared);
+                    if let Some(token) = token {
+                        let _ = session.cancel_sound_choice(token);
+                    }
+                    if let Some(token) = owned {
+                        let _ = session.stop_sound_preview(token);
+                    }
+                });
+                if let Some(window) = window.upgrade() {
+                    let _ = window.hide();
                 }
-                if let Some(token) = owned.take() {
-                    let _ = session.stop_sound_preview(token);
-                }
-                let _ = window.unwrap().hide();
             }
         });
         window.window().on_close_requested({
             let window = window.as_weak();
             move || {
-                window.unwrap().invoke_cancel();
+                if let Some(window) = window.upgrade() {
+                    window.invoke_cancel();
+                }
                 slint::CloseRequestResponse::HideWindow
             }
         });
@@ -466,6 +527,9 @@ impl Controller {
             .set_volume(session.sound_preview_volume() * 100.0);
     }
 }
+
+#[cfg(test)]
+mod admission_tests;
 
 #[cfg(test)]
 mod tests {

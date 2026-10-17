@@ -1,6 +1,6 @@
 use crate::{
     ParticleBrowserWindow, ParticleChoiceRow,
-    runtime::{SharedSession, lock},
+    runtime::{DocumentAccess, DocumentContinuation, SharedSession, lock},
     session::{Actor, Session},
 };
 use slint::ComponentHandle;
@@ -23,6 +23,26 @@ pub struct Controller {
     token: Rc<Cell<Option<u64>>>,
     seen: Rc<RefCell<Option<Choice>>>,
     catalog: Rc<RefCell<Catalog>>,
+}
+
+fn admitted(
+    window: &slint::Weak<ParticleBrowserWindow>,
+    target: &DocumentContinuation,
+    body: impl FnOnce(ParticleBrowserWindow, &SharedSession),
+) {
+    let Some(window) = window.upgrade() else {
+        return;
+    };
+    let result = target.upgrade().and_then(|target| {
+        target.with_shared(|shared| {
+            body(window.clone_strong(), shared);
+            Ok(())
+        })
+    });
+    if let Err(error) = result {
+        window.set_can_apply(false);
+        window.set_message(error.into());
+    }
 }
 
 fn choice(report: &serde_json::Value) -> Option<Choice> {
@@ -182,7 +202,13 @@ fn catalog(window: &ParticleBrowserWindow, session: &mut Session, state: &mut Ca
 }
 
 impl Controller {
+    #[cfg(test)]
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
+        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
+    }
+
+    pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
+        let target = access.downgrade();
         let window = ParticleBrowserWindow::new()?;
         window
             .window()
@@ -191,106 +217,124 @@ impl Controller {
         let seen = Rc::new(RefCell::new(None));
         let catalog_state = Rc::new(RefCell::new(Catalog::default()));
         window.on_search({
-            let (window, shared, state) = (window.as_weak(), shared.clone(), catalog_state.clone());
+            let (window, target, state) = (window.as_weak(), target.clone(), catalog_state.clone());
             move || {
-                let mut state = state.borrow_mut();
-                state.offset = 0;
-                catalog(&window.unwrap(), &mut lock(&shared), &mut state);
+                admitted(&window, &target, |window, shared| {
+                    let mut state = state.borrow_mut();
+                    state.offset = 0;
+                    catalog(&window, &mut lock(shared), &mut state);
+                })
             }
         });
         window.on_group_changed({
             let window = window.as_weak();
-            move || window.unwrap().invoke_search()
+            move || {
+                if let Some(window) = window.upgrade() {
+                    window.invoke_search();
+                }
+            }
         });
         window.on_page({
-            let (window, shared, state) = (window.as_weak(), shared.clone(), catalog_state.clone());
+            let (window, target, state) = (window.as_weak(), target.clone(), catalog_state.clone());
             move |direction| {
-                let mut state = state.borrow_mut();
-                state.offset = if direction < 0 {
-                    state.offset.saturating_sub(PAGE_SIZE)
-                } else {
-                    state.offset.saturating_add(PAGE_SIZE)
-                };
-                catalog(&window.unwrap(), &mut lock(&shared), &mut state);
+                admitted(&window, &target, |window, shared| {
+                    let mut state = state.borrow_mut();
+                    state.offset = if direction < 0 {
+                        state.offset.saturating_sub(PAGE_SIZE)
+                    } else {
+                        state.offset.saturating_add(PAGE_SIZE)
+                    };
+                    catalog(&window, &mut lock(shared), &mut state);
+                })
             }
         });
         window.on_choose({
-            let (window, shared, token, seen) = (
+            let (window, target, token, seen) = (
                 window.as_weak(),
-                shared.clone(),
+                target.clone(),
                 token.clone(),
                 seen.clone(),
             );
             move |name| {
-                let window = window.unwrap();
-                let result = token
-                    .get()
-                    .ok_or("Reopen the particle browser".to_owned())
-                    .and_then(|token| lock(&shared).choose_particle(token, &name));
-                match result {
-                    Ok(report) => present(&window, &report, &seen),
-                    Err(error) => {
-                        window.set_can_apply(false);
-                        window.set_message(error.into());
+                admitted(&window, &target, |window, shared| {
+                    let result = token
+                        .get()
+                        .ok_or("Reopen the particle browser".to_owned())
+                        .and_then(|token| lock(shared).choose_particle(token, &name));
+                    match result {
+                        Ok(report) => present(&window, &report, &seen),
+                        Err(error) => {
+                            window.set_can_apply(false);
+                            window.set_message(error.into());
+                        }
                     }
-                }
+                })
             }
         });
         window.on_reload({
-            let (window, shared) = (window.as_weak(), shared.clone());
+            let (window, target) = (window.as_weak(), target.clone());
             move || {
-                lock(&shared).reload_particle_assets();
-                let window = window.unwrap();
-                window.set_can_apply(false);
-                window.set_message("Particles reloaded. Cancel and reopen this choice.".into());
+                admitted(&window, &target, |window, shared| {
+                    lock(shared).reload_particle_assets();
+                    window.set_can_apply(false);
+                    window.set_message("Particles reloaded. Cancel and reopen this choice.".into());
+                })
             }
         });
         window.on_apply({
-            let (window, shared, token, seen) = (
+            let (window, target, token, seen) = (
                 window.as_weak(),
-                shared.clone(),
+                target.clone(),
                 token.clone(),
                 seen.clone(),
             );
             move || {
-                let window = window.unwrap();
-                let result = token
-                    .get()
-                    .ok_or("Reopen the particle browser".to_owned())
-                    .and_then(|token| {
-                        let mut session = lock(&shared);
-                        let report = session.particle_choice(token)?;
-                        if *seen.borrow() != choice(&report) {
-                            present(&window, &report, &seen);
-                            return Ok(false);
+                admitted(&window, &target, |window, shared| {
+                    let result = token
+                        .get()
+                        .ok_or("Reopen the particle browser".to_owned())
+                        .and_then(|token| {
+                            let mut session = lock(shared);
+                            let report = session.particle_choice(token)?;
+                            if *seen.borrow() != choice(&report) {
+                                present(&window, &report, &seen);
+                                return Ok(false);
+                            }
+                            session.apply_particle_choice(Actor::User, token)?;
+                            Ok(true)
+                        });
+                    match result {
+                        Ok(true) => window.invoke_cancel(),
+                        Ok(false) => window
+                            .set_message("Particle choice changed. Review it before Apply.".into()),
+                        Err(error) => {
+                            window.set_can_apply(false);
+                            window.set_message(error.into());
                         }
-                        session.apply_particle_choice(Actor::User, token)?;
-                        Ok(true)
-                    });
-                match result {
-                    Ok(true) => window.invoke_cancel(),
-                    Ok(false) => window
-                        .set_message("Particle choice changed. Review it before Apply.".into()),
-                    Err(error) => {
-                        window.set_can_apply(false);
-                        window.set_message(error.into());
                     }
-                }
+                })
             }
         });
         window.on_cancel({
-            let (window, shared, token) = (window.as_weak(), shared.clone(), token.clone());
+            let (window, target, token) = (window.as_weak(), target.clone(), token.clone());
             move || {
-                if let Some(token) = token.take() {
-                    let _ = lock(&shared).cancel_particle_choice(token);
+                let token = token.take();
+                admitted(&window, &target, |_, shared| {
+                    if let Some(token) = token {
+                        let _ = lock(shared).cancel_particle_choice(token);
+                    }
+                });
+                if let Some(window) = window.upgrade() {
+                    let _ = window.hide();
                 }
-                let _ = window.unwrap().hide();
             }
         });
         window.window().on_close_requested({
             let window = window.as_weak();
             move || {
-                window.unwrap().invoke_cancel();
+                if let Some(window) = window.upgrade() {
+                    window.invoke_cancel();
+                }
                 slint::CloseRequestResponse::HideWindow
             }
         });
@@ -355,3 +399,6 @@ impl Controller {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod admission_tests;

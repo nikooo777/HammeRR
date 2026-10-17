@@ -31,6 +31,7 @@ use materials::*;
 mod navigation;
 use navigation::*;
 mod instance_contents;
+mod instance_extraction;
 mod instance_reference;
 mod object_picking;
 mod transform_pivot;
@@ -1971,6 +1972,7 @@ pub(super) fn run(
     bind_view_controls(&app, session_of(&ui));
     instance_contents::bind(&app, session_of(&ui));
     instance_reference::bind(&app, session_of(&ui));
+    instance_extraction::bind(&app, session_of(&ui));
     app.on_key({
         let (app, ui) = (app.as_weak(), ui.clone());
         move |text, down, control, shift, alt, meta| {

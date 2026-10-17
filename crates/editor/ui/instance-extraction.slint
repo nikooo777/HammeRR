@@ -1,0 +1,38 @@
+import { Button, LineEdit } from "std-widgets.slint";
+
+export component InstanceExtractionWindow inherits Window {
+    title: "Extract selection to instance - HammeRR";
+    preferred-width: 760px;
+    preferred-height: 530px;
+    background: #20242b;
+    in-out property <string> file;
+    in property <string> summary;
+    in property <string> message;
+    in property <bool> active;
+    in property <bool> owned;
+    in property <bool> ready;
+    in property <bool> busy;
+    callback prepare();
+    callback extract();
+    callback review();
+    callback cancel();
+    VerticalLayout {
+        padding: 20px;
+        spacing: 14px;
+        Text { text: "Extract selection to instance"; color: #e2e8f0; font-size: 20px; }
+        Text { text: "New child VMF · explicit relative path under the saved parent"; color: #cbd6e4; }
+        LineEdit { text <=> root.file; enabled: !root.active; placeholder-text: "assemblies/platform.vmf"; }
+        Text { text: "Pivot: World origin (0, 0, 0) · planes and texture axes stay unchanged"; color: #a7b5c8; wrap: word-wrap; }
+        Text { text: root.summary; color: #cbd6e4; wrap: word-wrap; vertical-stretch: 1; }
+        Text { text: root.message; color: #f4b268; wrap: word-wrap; }
+        Text { text: "Undo restores the parent objects. The exported child stays on disk; Redo changes only the parent. Refresh instance contents explicitly after extraction."; color: #a7b5c8; wrap: word-wrap; }
+        HorizontalLayout {
+            spacing: 10px;
+            Button { text: "Prepare extraction"; enabled: !root.active; clicked => { root.prepare(); } }
+            Button { text: "Review shared extraction"; enabled: root.active && !root.owned && !root.busy; clicked => { root.review(); } }
+            Rectangle { horizontal-stretch: 1; background: transparent; }
+            Button { text: "Extract"; enabled: root.ready && root.owned && !root.busy; clicked => { root.extract(); } }
+            Button { text: "Cancel"; enabled: !root.active || root.owned; clicked => { root.cancel(); } }
+        }
+    }
+}

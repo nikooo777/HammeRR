@@ -288,11 +288,11 @@ fn model_authored_lighting_gpu_matches_compiler_fast_detail_scaled_world_normals
                 let uploaded = renderer.upload(&context, &mesh, session.materials());
                 let pixels = renderer.render_to_rgba(&context, &uploaded, &camera, &view, 65, 65);
                 let contribution = if quality == render::lighting::Quality::Fast {
-                    (light.contribution(points[0], normals[0])
-                        + light.contribution(points[1], normals[1]))
+                    (light.contribution(points[0], normals[0]).unwrap()
+                        + light.contribution(points[1], normals[1]).unwrap())
                         * 0.5
                 } else {
-                    light.contribution(origin, detail_normal)
+                    light.contribution(origin, detail_normal).unwrap()
                 };
                 let expected = displayed(contribution * tint, f64::from(exposure));
                 for channel in 0..3 {

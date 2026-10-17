@@ -2165,7 +2165,20 @@ export component AppWindow inherits Window {
                     clicked => { root.stop-game(); }
                 }
 
-                ToolbarSeparator { }
+                Rectangle { horizontal-stretch: 1; }
+            }
+        }
+
+        Rectangle {
+            height: 44px;
+            background: #1a1d23;
+
+            HorizontalLayout {
+                padding-left: 10px;
+                padding-right: 10px;
+                padding-top: 6px;
+                padding-bottom: 6px;
+                spacing: 8px;
 
                 Button {
                     text: "Undo";
@@ -2223,7 +2236,7 @@ export component AppWindow inherits Window {
                     horizontal-stretch: 1;
                 }
 
-                Text {
+                toolbar-mcp-status := Text {
                     text: root.mcp-status;
                     color: #6fbf73;
                     vertical-alignment: center;

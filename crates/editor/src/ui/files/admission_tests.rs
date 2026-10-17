@@ -195,3 +195,99 @@ fn explicit_save_completion_repairs_stale_source_and_cancel_preserves_state() {
     assert_eq!(lock(&shared).history_snapshot(), history);
     document.shutdown().unwrap();
 }
+
+#[test]
+fn two_toolbar_rows_keep_controls_reachable_and_invoke_save_as() {
+    use i_slint_backend_testing::ElementHandle;
+    use std::cell::Cell;
+
+    software_backend();
+    let app = AppWindow::new().unwrap();
+    app.set_can_undo(true);
+    app.set_can_redo(true);
+    app.set_has_selection(true);
+    app.set_game_running(true);
+    app.set_projection_index(0);
+    app.set_mcp_status("MCP · http://127.0.0.1:29082/mcp".into());
+    let saves = Rc::new(Cell::new(0));
+    app.on_save_map_as({
+        let saves = saves.clone();
+        move || saves.set(saves.get() + 1)
+    });
+    app.show().unwrap();
+    let rows: [&[&str]; 2] = [
+        &[
+            "New",
+            "Open…",
+            "Recent…",
+            "Save",
+            "Save as…",
+            "Build settings…",
+            "Compile region…",
+            "Compile",
+            "Run Map",
+            "Game Log",
+            "Stop Map",
+        ],
+        &[
+            "Undo",
+            "Redo",
+            "History…",
+            "Add brush",
+            "Delete",
+            "Working region…",
+            "Tool textures",
+            "Leak path",
+        ],
+    ];
+    for width in [1280, 1600] {
+        app.window().set_size(slint::PhysicalSize::new(width, 960));
+        app.window().take_snapshot().unwrap();
+        assert_eq!(app.window().size().width, width);
+        let mut second_row_end = 0.0;
+        for (row, labels) in rows.iter().enumerate() {
+            let top = row as f32 * 44.0;
+            let mut previous_right = 0.0;
+            for label in *labels {
+                let control = ElementHandle::find_by_accessible_label(&app, label)
+                    .next()
+                    .unwrap_or_else(|| panic!("Missing toolbar control {label}"));
+                let position = control.absolute_position();
+                let size = control.size();
+                assert!(size.width > 0.0 && size.height > 0.0, "{label}");
+                assert!(control.computed_opacity() > 0.0, "{label}");
+                assert!(
+                    position.x >= previous_right - 0.5,
+                    "{label} overlaps at {width}"
+                );
+                assert!(
+                    position.x + size.width <= width as f32 + 0.5,
+                    "{label} clips at {width}"
+                );
+                assert!(position.y >= top - 0.5, "{label} is in the wrong row");
+                assert!(
+                    position.y + size.height <= top + 44.5,
+                    "{label} clips vertically"
+                );
+                previous_right = position.x + size.width;
+            }
+            second_row_end = previous_right;
+        }
+        let status = ElementHandle::find_by_element_id(&app, "AppWindow::toolbar-mcp-status")
+            .next()
+            .unwrap();
+        let position = status.absolute_position();
+        let size = status.size();
+        assert!(size.width > 0.0 && size.height > 0.0);
+        assert!(position.x >= second_row_end);
+        assert!(position.x + size.width <= width as f32 + 0.5);
+        assert!(position.y >= 44.0 && position.y + size.height <= 88.5);
+        ElementHandle::find_by_accessible_label(&app, "Save as…")
+            .next()
+            .unwrap()
+            .invoke_accessible_default_action();
+    }
+    assert_eq!(saves.get(), 2);
+    crate::ui::tests::save_ui_snapshot(app.window(), "save-as-controls");
+    app.hide().unwrap();
+}

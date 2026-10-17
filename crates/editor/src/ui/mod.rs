@@ -214,6 +214,21 @@ fn bind_model_guide_reload(app: &AppWindow, shared: SharedSession) {
     });
 }
 
+fn prepare_scene_refresh(
+    session: &mut Session,
+    previous: render::SceneKey,
+    options: &mut render::ViewOptions,
+) -> Option<render::SceneKey> {
+    session.preflight_instance_contents();
+    let view = session.view();
+    let next = session.render_scene_key(view);
+    if next == previous {
+        return None;
+    }
+    *options = view;
+    Some(next)
+}
+
 fn bind_view_controls(app: &AppWindow, shared: SharedSession) {
     app.on_options_changed({
         let app = app.as_weak();
@@ -2869,9 +2884,10 @@ pub(super) fn run(
                 } else {
                     session.publish_camera(ui.viewport.camera);
                 }
-                session.preflight_instance_contents();
-                let scene_key = session.render_scene_key(session.view());
-                if scene_key != ui.seen_scene {
+                let previous_scene = ui.seen_scene;
+                if let Some(scene_key) =
+                    prepare_scene_refresh(&mut session, previous_scene, &mut ui.viewport.options)
+                {
                     if session.scene_serial() != ui.seen_scene.serial {
                         ui.brush_drag = None;
                     }

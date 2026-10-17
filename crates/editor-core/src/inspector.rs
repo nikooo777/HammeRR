@@ -111,9 +111,7 @@ fn field(entity: &Entity, class: Option<&Class>, key: String) -> Field {
             .properties
             .get("model")
             .is_some_and(|path| render::models::model_path(path).is_ok())
-        && !class
-            .and_then(|class| class.property("model"))
-            .is_some_and(|property| property.kind == "sprite")
+        && !crate::sprite_resource::is_source(class)
         && !entity
             .classname()
             .is_some_and(|name| name.eq_ignore_ascii_case("prop_static"));
@@ -280,7 +278,7 @@ fn field(entity: &Entity, class: Option<&Class>, key: String) -> Field {
                 }
             }
         }
-        "material" | "decal" => result.control = Control::Material,
+        "material" | "decal" | "sprite" => result.control = Control::Material,
         "sound" => {
             result.control = Control::Sound;
             result.advanced = false;

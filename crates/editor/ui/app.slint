@@ -594,6 +594,7 @@ export struct MaterialTile { name: string, preview: image, favorite: bool }
 export struct MaterialTileRow { tiles: [MaterialTile] }
 
 export component MaterialWindow inherits Window {
+    in property <bool> sprite-resource;
     title: "Choose Material - HammeRR";
     preferred-width: 1180px;
     preferred-height: 760px;
@@ -2541,7 +2542,7 @@ export component AppWindow inherits Window {
                         checked <=> root.entity-model-guides;
                         toggled => { root.options-changed(); }
                     }
-                    Text { text: "Literal FGD resources · boxes remain when off"; color: #aeb9c8; wrap: word-wrap; font-size: 12px; }
+                    Text { text: "FGD resource guides · boxes remain when off"; color: #aeb9c8; wrap: word-wrap; font-size: 12px; }
                     CheckBox {
                         text: "2D sky preview";
                         checked <=> root.sky-preview;

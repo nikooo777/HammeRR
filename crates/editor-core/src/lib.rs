@@ -16,6 +16,7 @@ pub mod runtime;
 pub mod session;
 pub mod sky_assets;
 pub mod spatial;
+pub mod sprite_resource;
 pub mod startup;
 pub mod steam;
 

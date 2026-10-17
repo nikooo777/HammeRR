@@ -19,7 +19,7 @@ pub const MAX_INSTANCES: usize = 256;
 pub const MAX_AXIS: u32 = 512;
 pub const MAX_MATERIAL_BYTES: usize = 64 * 1024;
 pub const MAX_TEXTURE_BYTES: usize = 4 * 1024 * 1024;
-pub const LIMITS: &str = "Literal one-argument iconsprite only; direct Sprite material with vp_parallel and centered spriteorigin. Static single-frame, single-face, depth-one LDR VTF, at most 512 pixels per axis. Material 64 KiB, texture 4 MiB, 64 cached success/failure entries and 32 MiB encoded bytes per material generation, 256 visible icons. Independent editor image: 32 Source-unit long axis with texture aspect ratio, live camera right/up, unlit RGBA alpha, no fog. Native Sprite render modes, animation, sprite(), env_sprite, models, specialized lights and ropes are not evaluated. Original box bounds, picking and framing remain unchanged. Reload material assets clears cached admission and failures.";
+pub const LIMITS: &str = "Literal one-argument iconsprite only; direct Sprite material with vp_parallel and centered spriteorigin. Static single-frame, single-face, depth-one LDR VTF, at most 512 pixels per axis. Material 64 KiB, texture 4 MiB, 64 cached success/failure entries and 32 MiB encoded bytes per material generation, 256 visible icons. Independent editor image: 32 Source-unit long axis with texture aspect ratio, live camera right/up, unlit RGBA alpha, no fog. Native Sprite render modes and animation are not evaluated. Sprite resource guides report their separate positive-scale policy and share these asset/image budgets; models, specialized lights and ropes remain independent. Original box bounds, picking and framing remain unchanged. Reload material assets clears cached admission and failures.";
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Serialize)]
@@ -105,6 +105,7 @@ pub struct Asset {
 #[derive(Debug, Clone)]
 pub struct Instance {
     pub center: [f32; 3],
+    pub world_size: [f32; 2],
     pub asset: Arc<Asset>,
 }
 #[derive(Debug, Default)]
@@ -127,7 +128,31 @@ impl Library {
                 material: None,
             });
         }
-        let key = name.to_ascii_lowercase();
+        self.load_path(fs, name, canonical(name, false))
+    }
+    pub fn load_material_path(&self, fs: &GameFs, path: &str) -> Arc<Asset> {
+        if path.len() > 256 {
+            return Arc::new(Asset {
+                id: 0,
+                report: Report::failure(path, "invalid", "Editor image VMT path exceeds 256 bytes"),
+                material: None,
+            });
+        }
+        let canonical = asset_relative(path)
+            .map_err(|error| error.to_string())
+            .and_then(|path| {
+                if path.len() > 256 || !path.starts_with("materials/") || !path.ends_with(".vmt") {
+                    return Err("Editor image requires a bounded full virtual VMT path".into());
+                }
+                Ok(path)
+            });
+        self.load_path(fs, path, canonical)
+    }
+    fn load_path(&self, fs: &GameFs, name: &str, path: Result<String, String>) -> Arc<Asset> {
+        let key = path
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|_| format!("invalid:{}", name.to_ascii_lowercase()));
         let mut cache = self.0.borrow_mut();
         if let Some(asset) = cache.entries.get(&key) {
             return asset.clone();
@@ -144,7 +169,8 @@ impl Library {
             });
         }
         let mut report = Report::failure(name, "unavailable", "Icon asset unavailable");
-        let result = load(fs, name, &mut report, MAX_CACHE_BYTES - cache.bytes);
+        let result =
+            path.and_then(|path| load(fs, &path, &mut report, MAX_CACHE_BYTES - cache.bytes));
         let (material, bytes) = match result {
             Ok((material, bytes)) => {
                 report.status = "ready";
@@ -190,10 +216,10 @@ fn load(
     report: &mut Report,
     budget: usize,
 ) -> Result<(MaterialInfo, usize), String> {
-    let path = canonical(name, false)?;
-    report.material.clone_from(&path);
+    let path = name;
+    report.material = path.into();
     let mounted = fs
-        .read_asset_limited(&path, MAX_MATERIAL_BYTES.min(budget))
+        .read_asset_limited(path, MAX_MATERIAL_BYTES.min(budget))
         .map_err(|error| format!("{path}: {error}"))?
         .ok_or_else(|| format!("Missing icon material {path}"))?;
     report.source = Some(mounted.origin.into());
@@ -307,7 +333,7 @@ fn load(
         32.0 * vtf.width as f32 / axis,
         32.0 * vtf.height as f32 / axis,
     ];
-    let mut material = MaterialInfo::untextured(&path);
+    let mut material = MaterialInfo::untextured(path);
     material.width = vtf.width;
     material.height = vtf.height;
     material.base = Some(vtf);

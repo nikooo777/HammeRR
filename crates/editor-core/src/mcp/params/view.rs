@@ -257,7 +257,7 @@ pub struct BeginSurfacePlacementPickArgs {
 pub struct SetViewArgs {
     /// Show selected object/face edges and model brackets. Defaults on; selection, picking and tool guides remain active.
     pub selection_outlines: Option<bool>,
-    /// Show literal FGD icon images; false keeps ordinary boxes without resource admission.
+    /// Show literal FGD icons and static Sprite resource guides; false keeps ordinary boxes without image admission.
     pub entity_images: Option<bool>,
     /// Show literal FGD studio/studioprop editor meshes; false keeps ordinary boxes.
     pub entity_model_guides: Option<bool>,
@@ -283,7 +283,7 @@ pub struct SetViewArgs {
 pub struct RenderArgs {
     /// Temporary selected-edge/model-bracket visibility override; leaves shared settings and picking unchanged.
     pub selection_outlines: Option<bool>,
-    /// Show literal FGD icon images; false keeps ordinary boxes without resource admission.
+    /// Show literal FGD icons and static Sprite resource guides; false keeps ordinary boxes without image admission.
     pub entity_images: Option<bool>,
     /// Show literal FGD studio/studioprop editor meshes; false keeps ordinary boxes.
     pub entity_model_guides: Option<bool>,

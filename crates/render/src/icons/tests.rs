@@ -63,6 +63,33 @@ fn static_rgba_icon_retains_alpha_aspect_and_exact_winning_sources() {
     assert_eq!(pixels.pixels, [200, 100, 50, 0, 10, 20, 30, 255]);
     assert!(Arc::ptr_eq(&asset, &library.load(&fs, "ICON")));
 }
+
+#[test]
+fn normalized_image_assets_share_cache_without_collapsing_nested_materials_paths() {
+    let (directory, fs) = fixture();
+    let nested = directory.path().join("materials/materials");
+    std::fs::create_dir(&nested).unwrap();
+    std::fs::copy(
+        directory.path().join("materials/icon.vmt"),
+        nested.join("icon.vmt"),
+    )
+    .unwrap();
+    let library = Library::default();
+    let icon = library.load(&fs, "icon");
+    for alias in ["icon.vmt", "materials/icon.vmt", "MATERIALS\\ICON.VMT"] {
+        assert!(Arc::ptr_eq(&icon, &library.load(&fs, alias)));
+    }
+    assert!(Arc::ptr_eq(
+        &icon,
+        &library.load_material_path(&fs, "materials/icon.vmt")
+    ));
+    let distinct = library.load_material_path(&fs, "materials/materials/icon.vmt");
+    assert_eq!(distinct.report.status, "ready");
+    assert_eq!(distinct.report.material, "materials/materials/icon.vmt");
+    assert!(!Arc::ptr_eq(&icon, &distinct));
+    assert_eq!(library.0.borrow().entries.len(), 2);
+    assert!(library.load(&fs, "sprites/icon.spr").material.is_none());
+}
 #[test]
 fn legacy_no_depth_and_alpha_only_are_color_images_but_uv_data_is_not() {
     let (directory, fs) = fixture();

@@ -14,6 +14,7 @@ mod lines;
 mod models;
 mod projectors;
 mod spheres;
+mod sprites;
 
 #[derive(Debug, Serialize)]
 pub struct Report {
@@ -29,6 +30,8 @@ pub struct Report {
     pub spheres: Vec<spheres::Report>,
     pub icon_sprite: Option<render::icons::Report>,
     pub icon_limits: &'static str,
+    pub sprite_resource: Option<sprites::Report>,
+    pub sprite_resource_limits: &'static str,
     pub model_guide: Option<models::Report>,
     pub model_guide_limits: &'static str,
     pub sphere_limits: &'static str,
@@ -105,6 +108,13 @@ impl Session {
         {
             appearance.unsupported.retain(|name| name != &guide.helper);
         }
+        let (icon_sprite, sprite_resource) = self.inspected_images(id);
+        if sprite_resource
+            .as_ref()
+            .is_some_and(|report| report.declaration_supported)
+        {
+            appearance.unsupported.retain(|name| name != "sprite");
+        }
         let evaluation = self.working_evaluation(document);
         let model = evaluation
             .models
@@ -156,7 +166,6 @@ impl Session {
                 appearance.unsupported.join(", ")
             );
         }
-        let icon_sprite = self.inspected_icon(id);
         if let Some(guide) = &model_guide {
             status += &format!(
                 ". FGD model guide: {}; {}({}); flat editor mesh only, ordinary helper bounds and picking",
@@ -195,6 +204,40 @@ impl Session {
                 status += &format!(". Icon VTF source: {}", source.summary());
             }
             if let Some(error) = &icon.error {
+                status += &format!(" ({error})");
+            }
+        }
+        if let Some(sprite) = &sprite_resource {
+            status += &format!(
+                ". Sprite resource guide: {}; {}; independent live-camera unlit RGBA image, runtime FX unevaluated, box bounds retained",
+                if sprite.displayed {
+                    "displayed"
+                } else {
+                    sprite.suppression_reason.unwrap_or(sprite.state)
+                },
+                sprite.resolved_vmt.as_deref().unwrap_or("unresolved VMT")
+            );
+            for input in [&sprite.model, &sprite.scale] {
+                if input.value_source == "fgd_default" {
+                    status += &format!(
+                        ". FGD default {}={}",
+                        input.property,
+                        input.raw.as_deref().unwrap_or_default()
+                    );
+                }
+            }
+            if let Some(size) = sprite.world_size {
+                status += &format!(" ({} × {} Source units)", size[0], size[1]);
+            }
+            if let Some(image) = &sprite.image {
+                if let Some(source) = &image.source {
+                    status += &format!(". Sprite VMT source: {}", source.summary());
+                }
+                if let Some(source) = &image.texture_source {
+                    status += &format!(". Sprite VTF source: {}", source.summary());
+                }
+            }
+            if let Some(error) = &sprite.error {
                 status += &format!(" ({error})");
             }
         }
@@ -317,6 +360,8 @@ impl Session {
             sphere_limits: spheres::LIMITS,
             icon_sprite,
             icon_limits: render::icons::LIMITS,
+            sprite_resource,
+            sprite_resource_limits: sprites::LIMITS,
             model_guide,
             model_guide_limits: models::LIMITS,
             lines,

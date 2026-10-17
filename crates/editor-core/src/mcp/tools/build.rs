@@ -164,11 +164,12 @@ impl EditorServer {
         Parameters(args): Parameters<CompileArgs>,
     ) -> ToolResult {
         run(|| {
-            start_compile(
+            crate::runtime::start_compile_for_generation(
                 &self.session,
                 Actor::Agent,
                 args.path.as_deref().map(std::path::Path::new),
                 false,
+                args.expected_generation,
             )
         })
     }

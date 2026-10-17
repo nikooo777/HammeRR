@@ -241,9 +241,12 @@ pub(super) fn command_key(
             "x" => app.invoke_cut_objects(),
             "v" => app.invoke_paste_objects(),
             "n" => {
-                let ui2 = ui.clone();
-                confirm_discard(ui, move || {
-                    drop(lock(&session_of(&ui2)).new_map(Actor::User, true));
+                let (app, shared) = (app.as_weak(), session_of(ui));
+                confirm_discard(ui, move |review| {
+                    let result = lock(&shared).new_map_reviewed(Actor::User, true, &review);
+                    if let Some(app) = app.upgrade() {
+                        report(&app, result.map(|()| "New map".into()));
+                    }
                 });
             }
             _ => return false,

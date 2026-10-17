@@ -30,7 +30,10 @@ async fn instance_rejection_reports_blocking_run_and_background_mcp_build_failur
     let server = EditorServer::new(shared.clone(), None);
     let failed = value(
         server
-            .compile_map(Parameters(CompileArgs { path: None }))
+            .compile_map(Parameters(CompileArgs {
+                path: None,
+                expected_generation: None,
+            }))
             .await,
         true,
     );
@@ -40,14 +43,22 @@ async fn instance_rejection_reports_blocking_run_and_background_mcp_build_failur
     assert_eq!(failed["diagnostics"][0]["level"], "error");
     assert_eq!(failed["diagnostics"][0]["object"], format!("entity:{id}"));
     let run = value(
-        server.run_map(Parameters(CompileArgs { path: None })).await,
+        server
+            .run_map(Parameters(CompileArgs {
+                path: None,
+                expected_generation: None,
+            }))
+            .await,
         true,
     );
     assert_eq!(run["success"], false);
     assert!(run["game"].is_null());
     assert_eq!(run["diagnostics"], failed["diagnostics"]);
     let started = value(
-        server.start_compile(Parameters(CompileArgs { path: None })),
+        server.start_compile(Parameters(CompileArgs {
+            path: None,
+            expected_generation: None,
+        })),
         false,
     );
     let token = started["job"]["token"].clone();

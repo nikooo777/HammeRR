@@ -2,6 +2,50 @@ use super::*;
 use std::sync::Mutex;
 
 #[test]
+fn recovery_restore_callback_rejects_review_from_before_peer_save_as() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: false,
+        },
+    )))
+    .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let mut state = Session::new(Err("no assets needed".into()));
+    state.configure_recovery(Ok(directory.path().join("recovery")));
+    let request = state.begin_recovery_snapshot(Kind::Manual).unwrap();
+    let entry = state
+        .finish_recovery_snapshot(Actor::User, &request, request.run())
+        .unwrap();
+    let shared = Arc::new(Mutex::new(state));
+    let window = RecoveryWindow::new().unwrap();
+    bind(&window, &shared);
+    refresh(&window, &lock(&shared));
+    window.set_selected_id(entry.id.into());
+    window.set_discard_changes(true);
+    let review = window.get_map_review();
+    let revision = lock(&shared).document().revision();
+    let copy = directory.path().join("copy.vmf");
+    lock(&shared).save(Actor::Agent, Some(&copy)).unwrap();
+    assert_eq!(lock(&shared).document().revision(), revision);
+    let source = lock(&shared).document().vmf().clone();
+    let history = lock(&shared).history_snapshot();
+    let saved = std::fs::read(&copy).unwrap();
+    window.invoke_restore_snapshot();
+    assert!(window.get_message().contains("Map changed"));
+    assert_ne!(window.get_map_review(), review);
+    assert!(!window.get_discard_changes());
+    assert_eq!(lock(&shared).path(), Some(copy.as_path()));
+    assert_eq!(lock(&shared).document().vmf(), &source);
+    assert_eq!(lock(&shared).history_snapshot(), history);
+    assert_eq!(std::fs::read(&copy).unwrap(), saved);
+    window.invoke_restore_snapshot();
+    assert!(lock(&shared).path().is_none());
+    assert!(lock(&shared).document().is_dirty());
+}
+
+#[test]
 fn recovery_warning_keeps_error_domains_with_listing_failures_and_skipped_entries() {
     slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
         i_slint_backend_testing::TestingBackendOptions {

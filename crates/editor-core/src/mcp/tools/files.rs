@@ -51,6 +51,8 @@ impl EditorServer {
             "map_checks": {"report":session.map_check_report().map(|report|report.token.to_string()),"stale":session.map_checks_stale()},
             "path": session.path().map(|p| p.display().to_string()),
             "title": session.title(),
+            "generation": session.document_generation(),
+            "replacement_review": session.buffer_replacement_review().token(),
             "unsaved_changes": doc.is_dirty(),
             "game": session.game().game_dir.display().to_string(),
             "game_error": session.game_error(),
@@ -124,13 +126,21 @@ impl EditorServer {
         ok(result)
     }
 
-    #[tool(description = "Open a .vmf map file in the editor.")]
+    #[tool(
+        description = "Open a .vmf map file in the editor. Optional expected_review is the opaque replacement_review from get_map_info; a stale review rejects without replacing the map. discard_changes remains required for unsaved edits."
+    )]
     pub(in crate::mcp) fn open_map(&self, Parameters(args): Parameters<OpenMapArgs>) -> ToolResult {
         run(|| {
-            let message = self.session().open(
+            let mut session = self.session();
+            let review = match args.expected_review.as_deref() {
+                Some(token) => session.buffer_replacement_review_from_token(token)?,
+                None => session.buffer_replacement_review(),
+            };
+            let message = session.open_reviewed(
                 Actor::Agent,
                 &PathBuf::from(&args.path),
                 args.discard_changes,
+                &review,
             )?;
             Ok(json!({ "message": message }))
         })
@@ -160,10 +170,15 @@ impl EditorServer {
     ) -> ToolResult {
         run(|| {
             let mut session = self.session();
-            let message = session.open_recent_map(
+            let review = match args.expected_review.as_deref() {
+                Some(token) => session.buffer_replacement_review_from_token(token)?,
+                None => session.buffer_replacement_review(),
+            };
+            let message = session.open_recent_map_reviewed(
                 Actor::Agent,
                 Path::new(&args.path),
                 args.discard_changes,
+                &review,
             )?;
             Ok(
                 json!({"message": message, "recent_maps": session.recent_maps(), "build_settings": session.compile_settings()}),
@@ -196,10 +211,17 @@ impl EditorServer {
         })
     }
 
-    #[tool(description = "Start a new empty map.")]
+    #[tool(
+        description = "Start a new empty map. Optional expected_review is the opaque replacement_review from get_map_info; a stale review rejects without replacing the map. discard_changes remains required for unsaved edits."
+    )]
     pub(in crate::mcp) fn new_map(&self, Parameters(args): Parameters<NewMapArgs>) -> ToolResult {
         run(|| {
-            self.session().new_map(Actor::Agent, args.discard_changes)?;
+            let mut session = self.session();
+            let review = match args.expected_review.as_deref() {
+                Some(token) => session.buffer_replacement_review_from_token(token)?,
+                None => session.buffer_replacement_review(),
+            };
+            session.new_map_reviewed(Actor::Agent, args.discard_changes, &review)?;
             Ok(json!({ "message": "new map" }))
         })
     }
@@ -207,9 +229,10 @@ impl EditorServer {
     #[tool(description = "Save the map as .vmf, to its current file or a new path.")]
     pub(in crate::mcp) fn save_map(&self, Parameters(args): Parameters<SaveMapArgs>) -> ToolResult {
         run(|| {
-            let path = self.session().save(
+            let path = self.session().save_for_generation(
                 Actor::Agent,
                 args.path.as_ref().map(PathBuf::from).as_deref(),
+                args.expected_generation,
             )?;
             Ok(json!({ "saved": path.display().to_string() }))
         })
@@ -300,3 +323,5 @@ impl EditorServer {
 
 #[cfg(test)]
 mod recent_tests;
+#[cfg(test)]
+mod replacement_tests;

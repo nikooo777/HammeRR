@@ -7,12 +7,7 @@ use crate::session::{Actor, Session};
 use crate::{RecentMapRow, RecentMapsWindow};
 
 fn map_guard(session: &Session) -> String {
-    format!(
-        "{}:{}:{:?}",
-        session.document_generation(),
-        session.document().revision(),
-        session.partition_preview_token()
-    )
+    session.buffer_replacement_review().token()
 }
 
 pub fn refresh(window: &RecentMapsWindow, session: &Session) {
@@ -143,18 +138,16 @@ pub fn bind(window: &RecentMapsWindow, shared: &SharedSession) {
         move || {
             let window = window.unwrap();
             let mut session = lock(&shared);
-            if window.get_map_guard() != map_guard(&session) {
-                window.set_message(
-                    "The current map changed; review it before opening another map.".into(),
-                );
-                refresh(&window, &session);
-                return;
-            }
-            let result = session.open_recent_map(
-                Actor::User,
-                Path::new(window.get_selected_path().as_str()),
-                window.get_discard_changes(),
-            );
+            let result = session
+                .buffer_replacement_review_from_token(&window.get_map_guard())
+                .and_then(|review| {
+                    session.open_recent_map_reviewed(
+                        Actor::User,
+                        Path::new(window.get_selected_path().as_str()),
+                        window.get_discard_changes(),
+                        &review,
+                    )
+                });
             match result {
                 Ok(message) => {
                     window.set_message(message.into());

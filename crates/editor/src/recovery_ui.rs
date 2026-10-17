@@ -40,13 +40,13 @@ pub fn refresh(window: &RecoveryWindow, session: &Session) {
     let (settings, status) = session.recovery_status_snapshot();
     window.set_busy(session.recovery_busy());
     window.set_available(status["available"].as_bool().unwrap_or(false));
-    window.set_dirty_map(session.document().is_dirty());
-    let generation = session.document_generation().to_string();
-    let revision = session.document().revision().to_string();
-    if window.get_map_generation() != generation || window.get_map_revision() != revision {
+    window.set_dirty_map(
+        session.document().is_dirty() || session.partition_preview_token().is_some(),
+    );
+    let review = session.buffer_replacement_review().token();
+    if window.get_map_review() != review {
         window.set_discard_changes(false);
-        window.set_map_generation(generation.into());
-        window.set_map_revision(revision.into());
+        window.set_map_review(review.into());
     }
     if !window.get_settings_dirty() {
         window.set_autosave_enabled(settings.settings.enabled);
@@ -255,15 +255,20 @@ pub fn bind(window: &RecoveryWindow, shared: &SharedSession) {
         let (window, session) = (window.as_weak(), shared.clone());
         move || {
             let window = window.unwrap();
-            let result = lock(&session).restore_recovery_snapshot(
-                Actor::User,
-                &window.get_selected_id(),
-                window.get_discard_changes(),
-                Some((
-                    window.get_map_generation().parse().unwrap_or(u64::MAX),
-                    window.get_map_revision().parse().unwrap_or(u64::MAX),
-                )),
-            );
+            let result = {
+                let mut session = lock(&session);
+                session
+                    .buffer_replacement_review_from_token(&window.get_map_review())
+                    .and_then(|review| {
+                        session.restore_recovery_snapshot_reviewed(
+                            Actor::User,
+                            &window.get_selected_id(),
+                            window.get_discard_changes(),
+                            None,
+                            &review,
+                        )
+                    })
+            };
             match result {
                 Ok(()) => {
                     let _ = window.hide();

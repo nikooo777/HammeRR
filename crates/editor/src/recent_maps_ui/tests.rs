@@ -3,6 +3,48 @@ use slint::Model;
 use std::sync::{Arc, Mutex};
 
 #[test]
+fn recent_open_callback_rejects_review_from_before_peer_save_as() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: false,
+        },
+    )))
+    .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("source.vmf");
+    let copy = directory.path().join("copy.vmf");
+    std::fs::write(&path, "world { id 1 classname worldspawn }").unwrap();
+    let mut state = Session::new(Err("no assets needed".into()));
+    state.configure_recent_maps(Ok(directory.path().join("preferences")));
+    state.open(Actor::User, &path, false).unwrap();
+    let shared = Arc::new(Mutex::new(state));
+    let window = RecentMapsWindow::new().unwrap();
+    bind(&window, &shared);
+    refresh(&window, &lock(&shared));
+    window.set_selected_path(path.display().to_string().into());
+    window.set_discard_changes(true);
+    let review = window.get_map_guard();
+    let revision = lock(&shared).document().revision();
+    lock(&shared).save(Actor::Agent, Some(&copy)).unwrap();
+    assert_eq!(lock(&shared).document().revision(), revision);
+    let source = lock(&shared).document().vmf().clone();
+    let history = lock(&shared).history_snapshot();
+    let saved = std::fs::read(&copy).unwrap();
+    window.invoke_open_selected();
+    assert!(window.get_message().contains("Map changed"));
+    assert_ne!(window.get_map_guard(), review);
+    assert!(!window.get_discard_changes());
+    assert_eq!(lock(&shared).path(), Some(copy.as_path()));
+    assert_eq!(lock(&shared).document().vmf(), &source);
+    assert_eq!(lock(&shared).history_snapshot(), history);
+    assert_eq!(std::fs::read(&copy).unwrap(), saved);
+    window.invoke_open_selected();
+    assert_eq!(lock(&shared).path(), Some(path.as_path()));
+}
+
+#[test]
 fn reload_saved_list_callback_recovers_a_conflict_and_preserves_the_owned_review() {
     slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
         i_slint_backend_testing::TestingBackendOptions {

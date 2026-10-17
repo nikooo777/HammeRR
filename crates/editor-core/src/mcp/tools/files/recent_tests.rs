@@ -98,6 +98,7 @@ fn attached_mcp_servers_share_recent_maps_and_keep_the_originating_documents() {
         value(server.open_map(Parameters(OpenMapArgs {
             path: path.display().to_string(),
             discard_changes: false,
+            expected_review: None,
         })));
     }
     assert_eq!(
@@ -171,6 +172,7 @@ fn attached_mcp_servers_share_recent_maps_and_keep_the_originating_documents() {
     let copy = directory.path().join("copy.vmf");
     value(first_server.save_map(Parameters(SaveMapArgs {
         path: Some(copy.display().to_string()),
+        expected_generation: None,
     })));
     assert!(copy.is_file());
     std::fs::write(directory.path().join(crate::recent_maps::FILE_NAME), saved).unwrap();

@@ -27,7 +27,10 @@ async fn instance_dependency_mcp_builds_report_counts_background_freshness_and_f
     let server = EditorServer::new(shared.clone(), None);
     let built = value(
         server
-            .compile_map(Parameters(CompileArgs { path: None }))
+            .compile_map(Parameters(CompileArgs {
+                path: None,
+                expected_generation: None,
+            }))
             .await,
         false,
     );
@@ -40,7 +43,10 @@ async fn instance_dependency_mcp_builds_report_counts_background_freshness_and_f
         "child.vmf"
     );
     let started = value(
-        server.start_compile(Parameters(CompileArgs { path: None })),
+        server.start_compile(Parameters(CompileArgs {
+            path: None,
+            expected_generation: None,
+        })),
         false,
     );
     let token = started["job"]["token"].clone();
@@ -69,7 +75,12 @@ async fn instance_dependency_mcp_builds_report_counts_background_freshness_and_f
     let result = server.launch_game().await.unwrap();
     assert!(result.is_error.unwrap_or(false));
     let failed = value(
-        server.run_map(Parameters(CompileArgs { path: None })).await,
+        server
+            .run_map(Parameters(CompileArgs {
+                path: None,
+                expected_generation: None,
+            }))
+            .await,
         true,
     );
     assert_eq!(failed["success"], false);

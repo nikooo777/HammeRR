@@ -82,6 +82,10 @@ These optional guards preserve existing immediate calls when omitted. Reviews
 belong to one Session; they do not transfer between processes or documents.
 Other uncommitted draft types are outside this replacement review.
 
+New/Open/Recent/Restore and both Save forms reject once document shutdown has
+begun, even with an earlier matching review or generation. These file guards do
+not provide multiple-document routing or general lifecycle leases.
+
 For a delayed Save or Compile request, retain `get_map_info.generation` and pass
 it as `expected_generation` to `save_map`, `start_compile`, `compile_map` or
 `run_map`. Replacing the buffer rejects the request before writing or starting a
@@ -114,6 +118,12 @@ To build the map, set the build options once, then compile:
 ```
 
 `start_compile` returns a job token right away; poll `get_compile_status` and stop with `cancel_compile`. `compile_map` and `run_map` wait for the build to finish. `launch_game` does the same as **Play built map**.
+
+Standalone launch captures its exact Session, map generation and build before
+worker scheduling. Queued work cannot choose a replacement map later. Abandoned
+or cancelled pending work retires only its own launch, after request/process
+cleanup. A game already accepted by the Session remains owned by it; use
+`stop_game` to stop that game.
 
 Game launch completion belongs to its originating buffer and launch ticket.
 Replacing the map during launch rejects that completion and cleans only its

@@ -22,14 +22,17 @@ pub(crate) struct LaunchSubmission {
     origin: LaunchOrigin,
 }
 
+#[cfg(any(feature = "mcp", test))]
 pub(crate) struct LaunchCancellation(Option<LaunchOrigin>);
 
+#[cfg(feature = "mcp")]
 impl LaunchCancellation {
     pub(crate) fn disarm(&mut self) {
         self.0 = None;
     }
 }
 
+#[cfg(any(feature = "mcp", test))]
 impl Drop for LaunchCancellation {
     fn drop(&mut self) {
         if let Some(origin) = &self.0 {
@@ -50,10 +53,12 @@ impl LaunchSubmission {
         })
     }
 
+    #[cfg(any(feature = "mcp", test))]
     pub(crate) fn cancellation(&self) -> LaunchCancellation {
         LaunchCancellation(Some(self.origin.clone()))
     }
 
+    #[cfg(any(feature = "mcp", test))]
     pub(crate) fn run(self) -> Result<game::Log, String> {
         self.run_with(LaunchRequest::run)
     }
@@ -73,8 +78,7 @@ impl LaunchSubmission {
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(request)))
                 .unwrap_or_else(|_| Err("game launch worker panicked".into()))
         };
-        let completed = lock(&self.session).finish_launch(self.actor, &self.origin, result);
-        completed
+        lock(&self.session).finish_launch(self.actor, &self.origin, result)
     }
 }
 

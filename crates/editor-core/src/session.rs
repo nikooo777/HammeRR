@@ -310,6 +310,7 @@ impl LaunchOrigin {
     pub(crate) fn active(&self) -> bool {
         self.ticket.active.load(Ordering::Acquire)
     }
+    #[cfg(any(feature = "mcp", test))]
     pub(crate) fn cancel(&self) {
         self.ticket.cancelled.store(true, Ordering::Release);
     }

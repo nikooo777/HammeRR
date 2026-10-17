@@ -2548,3 +2548,23 @@ parser runs, failed/foreign/superseded completion, ordinary map edits, and clean
 before final recovery. The UI case closes its software windows without pumping
 notifications and checks that the Session worker still finishes. The loader uses
 cooperative checks; it cannot preempt a filesystem syscall stalled in the kernel.
+
+### Terminal file and standalone launch admission
+
+```sh
+cargo test -p editor-core --features mcp,test-support drained_document_rejects_retained_file_operations_without_side_effects
+cargo test -p editor-core --features mcp,test-support retained_mcp_server_rejects_file_operations_after_document_drain
+cargo test -p editor-core --features mcp,test-support runtime::launch_submission_tests
+cargo test -p editor-core --features mcp,test-support mcp_queued_launch_is_admitted_before_worker_and_cancelled_waiter_retires_it
+```
+
+The file cases complete real document shutdown, then retain matching reviews,
+Session/MCP handles and generation while checking rejection before file reads,
+backup or publication. Source/destination/recovery bytes, history and a live peer
+stay intact. Active-session replacement during compilation retains its existing
+regression coverage.
+
+Launch cases use fake clients and deterministic barriers, including an occupied
+Tokio blocking pool. They check admission before scheduling, dropped work under
+a held Session lock, exact-origin cancellation/retirement, panics, peer isolation
+and process/file cleanup before idle. The user's game is never started.

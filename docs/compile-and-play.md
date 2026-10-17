@@ -36,6 +36,10 @@ HammeRR includes its own native compiler, so it builds Counter-Strike: Source ma
 
 Builds run in the background, and closing Build details leaves them running. Scroll the window to inspect settings, statistics and **Diagnostics**; the build controls and **Close** stay at the bottom. Output is written in one step at the end: a failed or cancelled build never replaces the previous BSP or pointfile. Use [Baked lightmaps](baked-lightmaps.md) to inspect actual samples after a lit build.
 
+**Play built map** captures its current map/build before scheduling the launch.
+Switching maps while it starts cannot attach that late process to the replacement
+map. Launch stays busy until owned process cleanup completes.
+
 Saved maps can compile bounded world/detail [referenced brush assemblies](instances.md).
 Unsupported or missing instance contents fail before publication; prior BSP and
 pointfile remain intact, and **Run Map** does not launch. Hidden helpers remain

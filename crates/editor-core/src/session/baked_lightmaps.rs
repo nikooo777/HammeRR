@@ -179,7 +179,7 @@ impl Session {
                 "Instance source/dependencies changed or cannot be verified: {error}"
             ));
         }
-        if self.compiling {
+        if self.compiling() {
             diagnostics
                 .push("A new build is running; this is the previous successful build".to_owned());
         }

@@ -31,6 +31,8 @@ fn owned_compile_failures_update_only_their_running_job() {
     assert!(failed.fail("worker could not start".into()));
     let terminal = identity(&shared);
     assert_eq!(terminal.0["status"], "failed");
+    assert!(terminal.2);
+    assert!(CompileSubmission::begin(&shared, Actor::User, None, false, None).is_err());
     assert!(!failed.fail("late worker join failure".into()));
     assert_eq!(identity(&shared), terminal);
     drop(first);
@@ -47,13 +49,46 @@ fn owned_compile_failures_update_only_their_running_job() {
 }
 
 #[test]
+fn abandoned_submission_accepts_one_exact_scheduling_failure() {
+    let (_directory, shared) = fixture();
+    let submission = CompileSubmission::begin(&shared, Actor::Agent, None, false, None).unwrap();
+    let completion = submission.completion();
+    let queued = move || submission.run();
+    let session = lock(&shared);
+    drop(queued);
+    assert!(!session.compiling());
+    drop(session);
+    assert!(
+        identity(&shared).0["result"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("before execution")
+    );
+    assert!(completion.fail("worker could not be scheduled".into()));
+    let terminal = identity(&shared);
+    let job = lock(&shared).compile_status()["job"].clone();
+    assert_eq!(
+        terminal.0["result"]["error"],
+        "worker could not be scheduled"
+    );
+    assert!(!completion.fail("duplicate failure".into()));
+    assert_eq!(identity(&shared), terminal);
+    assert_eq!(lock(&shared).compile_status()["job"], job);
+    let newer = CompileSubmission::begin(&shared, Actor::User, None, false, None).unwrap();
+    let running = identity(&shared);
+    assert!(!completion.fail("old failure after a new compile".into()));
+    assert_eq!(identity(&shared), running);
+    drop(newer);
+}
+
+#[test]
 fn duplicate_success_and_late_failures_do_not_relaunch_or_change_newer_jobs() {
     let (_directory, shared) = fixture();
     let first = CompileSubmission::begin(&shared, Actor::Agent, None, true, None).unwrap();
     let completion = first.completion();
     let result = first.request.run();
     assert!(result.as_ref().unwrap().output.bsp.is_some());
-    assert!(lock(&shared).finish_compile_for_token(Actor::Agent, completion.token, &result));
+    assert!(lock(&shared).finish_compile_for_origin(Actor::Agent, &completion.origin, &result));
     let terminal = identity(&shared);
     assert_eq!(terminal.0["status"], "completed");
     assert!(!completion.fail("late blocking-task join failure".into()));

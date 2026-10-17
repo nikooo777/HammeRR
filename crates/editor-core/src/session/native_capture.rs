@@ -79,7 +79,7 @@ impl Session {
             "steam_root_source":if self.native_capture.steam_root.is_some(){"configured"}else{"running_steam_client"},
             "ready":environment.is_ok(),
             "reason":environment.as_ref().err(),
-            "editable":!self.compiling&&!self.closing,
+            "editable":!self.compiling()&&!self.closing,
             "channel":if self.compile_options().lighting == compiler::LightingMode::DirectLdrHdr {"ldr_hdr"}else{"ldr"},
             "supported_channels":["ldr","hdr"], "default_sample_size":128, "maximum_sample_size":128,
         })
@@ -91,7 +91,7 @@ impl Session {
         engine_root: Option<&Path>,
         steam_root: Option<&Path>,
     ) -> Result<Value, String> {
-        if self.compiling || self.closing {
+        if self.compiling() || self.closing {
             return Err(
                 "Wait for the active build to finish before changing the native runtime".into(),
             );

@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use serde_json::Value;
 
 use crate::game;
-use crate::session::compilation::{CompileRequest, CompileResult};
+use crate::session::compilation::{CompileOrigin, CompileRequest, CompileResult};
 use crate::session::{Actor, LaunchOrigin, LaunchRequest, Session};
 
 mod document;
@@ -150,7 +150,7 @@ pub(crate) struct CompileSubmission {
 pub(crate) struct CompileCompletion {
     session: SharedSession,
     actor: Actor,
-    token: u64,
+    origin: CompileOrigin,
     play: bool,
 }
 
@@ -176,7 +176,7 @@ impl CompileSubmission {
         let completion = CompileCompletion {
             session: session.clone(),
             actor,
-            token: request.token(),
+            origin: request.origin(),
             play,
         };
         Ok(Self {
@@ -204,7 +204,7 @@ impl CompileSubmission {
 
 impl CompileCompletion {
     pub(crate) fn fail(&self, error: String) -> bool {
-        lock(&self.session).finish_compile_for_token(self.actor, self.token, &Err(error))
+        lock(&self.session).finish_compile_for_origin(self.actor, &self.origin, &Err(error))
     }
 
     fn finish_with(
@@ -214,7 +214,7 @@ impl CompileCompletion {
     ) -> Result<Option<game::Log>, String> {
         let launch_request = {
             let mut state = lock(&self.session);
-            if !state.finish_compile_for_token(self.actor, self.token, result) {
+            if !state.finish_compile_for_origin(self.actor, &self.origin, result) {
                 return Ok(None);
             }
             if let Some(error) = result

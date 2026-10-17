@@ -163,6 +163,43 @@ fn never_run_worker_drops_recovery_request_and_token_before_last_runtime_owner_d
     assert_eq!(store.list().unwrap().entries.len(), 1);
 }
 
+#[test]
+fn never_run_compile_drops_request_and_operation_before_last_runtime_owner_drain() {
+    let (directory, game) = crate::test_assets::game();
+    let mut state = Session::new(Ok(game));
+    state.configure_recovery(Ok(directory.path().join("recovery")));
+    state
+        .create_block(Actor::User, DVec3::ZERO, DVec3::splat(16.0), "test", false)
+        .unwrap();
+    let shared = Arc::new(Mutex::new(state));
+    let document = DocumentHandle::start(shared.clone()).unwrap();
+    let server = EditorServer::for_document(document.clone(), None);
+    let request = server.admitted().unwrap();
+    let path = directory.path().join("abandoned.bsp");
+    let submission =
+        CompileSubmission::begin(&shared, Actor::Agent, Some(&path), false, None).unwrap();
+    let worker = request.worker(move || submission.run());
+    assert!(lock(&shared).compiling());
+    assert_eq!(document.active_operations(), 1);
+    drop(request);
+    drop(server);
+    drop(document);
+    let (send, receive) = mpsc::channel();
+    let thread = std::thread::spawn(move || {
+        drop(worker);
+        send.send(()).unwrap();
+    });
+    receive
+        .recv_timeout(TIMEOUT)
+        .expect("abandoned compile blocked final runtime-owner drop");
+    thread.join().unwrap();
+    let state = lock(&shared);
+    assert!(!state.compiling());
+    assert_eq!(state.compile_status()["job"]["status"], "failed");
+    assert_eq!(state.recovery_entries().unwrap().entries.len(), 1);
+    assert!(!path.exists() && !path.with_extension("lin").exists());
+}
+
 #[tokio::test]
 async fn failed_terminal_dispatch_retains_exact_shutdown_error_without_retry() {
     let (directory, document, server) = fixture();

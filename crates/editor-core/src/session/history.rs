@@ -137,7 +137,7 @@ impl Session {
     }
 
     pub fn history_navigation_blocked(&self) -> Option<String> {
-        if self.compiling || self.launching() || self.closing {
+        if self.compiling() || self.launching() || self.closing {
             return Some(
                 "Wait for the build, launch or shutdown to finish before navigating history."
                     .into(),

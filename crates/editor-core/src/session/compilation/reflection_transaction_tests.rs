@@ -107,6 +107,7 @@ fn prepared_assets(
         instance_source_path: None,
     });
     let result = CompileResult {
+        origin: request.origin,
         token: request.token,
         output,
         path: destination,
@@ -129,6 +130,10 @@ fn prepared_assets(
             published: false,
             committed: false,
             error: None,
+            ticket: request.ticket.map(|mut ticket| {
+                ticket.start();
+                ticket
+            }),
         }),
     };
     (directory, session, result)

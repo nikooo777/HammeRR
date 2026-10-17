@@ -150,7 +150,7 @@ impl Session {
             )
             .collect::<Vec<_>>();
         json!({"revision":self.compilation.recipes.revision(snapshot.revision),"recipes":recipes,"active":snapshot.identity(self.compilation.recipes.active.as_ref(),self.compilation.options),
-            "editable":!self.compiling&&!self.closing,"custom_editable":!self.compiling&&!self.closing&&!snapshot.load_failed,
+            "editable":!self.compiling()&&!self.closing,"custom_editable":!self.compiling()&&!self.closing&&!snapshot.load_failed,
             "persistence":if snapshot.load_failed{"blocked"}else if snapshot.path.is_some(){"persistent"}else{"session"},"path":snapshot.path,"error":snapshot.error,
             "limits":{"custom_recipes":MAX_RECIPES,"name_bytes":MAX_NAME_BYTES,"file_bytes":MAX_FILE_BYTES},"settings":Settings::from(self.compilation.options),
             "job_rule":"Active builds block settings and recipe actions in their originating document. Peers may edit saved recipes; jobs retain their captured recipe name and options. Applying different settings makes previous output stale; names alone do not."})
@@ -159,7 +159,7 @@ impl Session {
         if self.closing {
             return Err("The editor is closing".into());
         }
-        if self.compiling {
+        if self.compiling() {
             return Err(
                 "Wait for the active compile to finish before changing build recipes".into(),
             );

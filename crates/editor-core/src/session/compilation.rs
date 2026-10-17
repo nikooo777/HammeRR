@@ -3,6 +3,12 @@ use serde_json::{Value, json};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+mod ownership;
+pub(crate) use ownership::Origin as CompileOrigin;
+use ownership::Ticket;
+#[cfg(test)]
+mod ownership_tests;
+
 #[cfg(test)]
 mod instance_dependency_tests;
 #[cfg(test)]
@@ -27,6 +33,7 @@ pub struct State {
 }
 
 struct Job {
+    origin: CompileOrigin,
     token: u64,
     control: compiler::Control,
     path: PathBuf,
@@ -63,9 +70,12 @@ pub struct CompileRequest {
     instance_source: Option<compiler::instances::SourceContext>,
     pointfile_stamp: Option<compiler::FileStamp>,
     destination_stamp: Option<compiler::FileStamp>,
+    origin: CompileOrigin,
+    ticket: Option<Ticket>,
 }
 
 pub struct CompileResult {
+    origin: CompileOrigin,
     token: u64,
     pub output: compiler::Output,
     pub path: PathBuf,
@@ -91,15 +101,52 @@ struct Publication {
     published: bool,
     committed: bool,
     error: Option<String>,
+    ticket: Option<Ticket>,
+}
+
+impl State {
+    pub(super) fn busy(&self, pending: bool) -> bool {
+        self.job.as_ref().map_or(pending, |job| {
+            job.origin.busy() || (pending && job.origin.terminal().is_none())
+        })
+    }
+}
+
+impl Job {
+    fn status(&self) -> &'static str {
+        self.terminal()
+            .map_or(self.status, |terminal| terminal.status)
+    }
+
+    fn terminal(&self) -> Option<&ownership::Terminal> {
+        if self.finished.is_some() {
+            None
+        } else {
+            self.origin.terminal()
+        }
+    }
+
+    fn elapsed(&self) -> Duration {
+        self.finished
+            .or_else(|| self.terminal().map(|terminal| terminal.elapsed))
+            .unwrap_or_else(|| self.started.elapsed())
+    }
+
+    fn result(&self) -> Option<Value> {
+        self.terminal().map_or_else(
+            || self.result.clone(),
+            |terminal| Some(json!({"success":false,"error":terminal.error})),
+        )
+    }
 }
 
 impl CompileResult {
-    fn artifact_claim(&self) -> Option<crate::path_claims::Claim> {
+    fn take_artifact_claim(&self) -> Option<crate::path_claims::Claim> {
         self.publication
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .artifact
-            .clone()
+            .take()
     }
 
     fn publication_warning(&self) -> Option<String> {
@@ -127,13 +174,37 @@ impl CompileResult {
 }
 
 impl CompileRequest {
-    pub(crate) fn token(&self) -> u64 {
-        self.token
+    pub(crate) fn origin(&self) -> CompileOrigin {
+        self.origin.clone()
     }
 
     pub fn run(self) -> Result<CompileResult, String> {
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.run_inner()))
-            .unwrap_or_else(|_| Err("Compilation worker panicked".into()))
+        self.run_with(Self::run_inner)
+    }
+
+    fn run_with(
+        mut self,
+        run: impl FnOnce(Self) -> Result<CompileResult, String>,
+    ) -> Result<CompileResult, String> {
+        let mut ticket = self.ticket.take().expect("compile request owns its ticket");
+        ticket.start();
+        let control = self.control.clone();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(self)))
+            .unwrap_or_else(|_| Err("Compilation worker panicked".into()));
+        match result {
+            Ok(mut result) => {
+                result
+                    .publication
+                    .get_mut()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .ticket = Some(ticket);
+                Ok(result)
+            }
+            Err(error) => {
+                ticket.fail(error.clone(), control.cancelled());
+                Err(error)
+            }
+        }
     }
 
     fn run_inner(self) -> Result<CompileResult, String> {
@@ -313,6 +384,7 @@ impl CompileRequest {
             }
         };
         Ok(CompileResult {
+            origin: self.origin,
             token: self.token,
             output,
             path,
@@ -335,6 +407,7 @@ impl CompileRequest {
                 published,
                 committed,
                 error: None,
+                ticket: None,
             }),
         })
     }
@@ -431,7 +504,7 @@ impl Session {
             .map(|(count, label)| json!({"bounces": count, "label": label}))
             .collect::<Vec<_>>();
         json!({"pack_sky_assets":self.compilation.options.pack_sky_assets,"sky_packing_description":"Pack the complete exact authored sky family, original materials, Patch dependencies and supported LDR/HDR textures during Compile or Run Map. Default off. Incomplete or unsupported families fail without publication or automatic family fallback. Does not pack unrelated assets or select the game's rendering channel.","generate_reflections":self.compilation.options.generate_reflections,"reflection_description":"Generate one native reflection bounce during Compile or Run Map. Direct LDR captures LDR; Direct LDR + HDR captures and verifies both channels before publication. Requires a verified CS:S capture runtime. Fullbright generation is unsupported.","smoothing_angle":self.compilation.options.smoothing_angle,"smoothing_angle_range":{"min":0,"max":90,"unit":"degrees","disabled":0},"bounces":self.compilation.options.bounces,"bounce_choices":bounce_choices,"visibility":self.compilation.options.visibility.name(), "visibility_choices":visibility_choices, "sky_quality":self.compilation.options.sky_quality.name(),"sky_choices":sky_choices,"lighting":self.compilation.options.lighting.name(),"physics":self.compilation.options.physics.name(),
-            "recipe":self.active_build_recipe(),"editable":!self.compiling && !self.closing,"choices":choices,"physics_choices":physics_choices})
+            "recipe":self.active_build_recipe(),"editable":!self.compiling() && !self.closing,"choices":choices,"physics_choices":physics_choices})
     }
 
     pub fn set_compile_settings(&mut self, actor: Actor, lighting: &str) -> Result<Value, String> {
@@ -522,7 +595,7 @@ impl Session {
         if self.closing {
             return Err("The editor is closing".into());
         }
-        if self.compiling {
+        if self.compiling() {
             return Err(
                 "Wait for the active compile to finish before changing build settings".into(),
             );
@@ -559,7 +632,7 @@ impl Session {
         if self.closing {
             return Err("the editor is closing".into());
         }
-        if self.compiling {
+        if self.compiling() {
             return Err("a map compilation is already running".into());
         }
         if self.launching() {
@@ -671,7 +744,9 @@ impl Session {
                 .map(|path| baked_lightmaps::BuildIdentity::source(path, &control))
                 .transpose()
         };
+        let origin = CompileOrigin::new();
         self.compilation.job = Some(Job {
+            origin: origin.clone(),
             token: self.compilation.serial,
             control: control.clone(),
             path: path.clone(),
@@ -686,7 +761,7 @@ impl Session {
             options: self.compilation.options,
             region: self.compile_region_build_scope(),
             recipe: self.active_build_recipe(),
-            started: Instant::now(),
+            started: origin.started(),
             finished: None,
             status: "running",
             result: None,
@@ -710,6 +785,8 @@ impl Session {
             instance_source,
             pointfile_stamp,
             destination_stamp,
+            origin: origin.clone(),
+            ticket: Some(Ticket::new(origin)),
         };
         self.compiling = true;
         self.log(actor, "compiling map");
@@ -818,19 +895,20 @@ impl Session {
         outcome
     }
 
-    pub(crate) fn finish_compile_for_token(
+    pub(crate) fn finish_compile_for_origin(
         &mut self,
         actor: Actor,
-        token: u64,
+        origin: &CompileOrigin,
         result: &Result<CompileResult, String>,
     ) -> bool {
-        if !self.compiling
-            || self
-                .compilation
-                .job
+        if self
+            .compilation
+            .job
+            .as_ref()
+            .is_none_or(|job| !job.origin.same(origin) || job.finished.is_some())
+            || result
                 .as_ref()
-                .is_none_or(|job| job.token != token || job.finished.is_some())
-            || result.as_ref().is_ok_and(|result| result.token != token)
+                .is_ok_and(|result| !result.origin.same(origin))
         {
             return false;
         }
@@ -844,9 +922,8 @@ impl Session {
                 .compilation
                 .job
                 .as_ref()
-                .is_none_or(|job| job.token != result.token)
+                .is_none_or(|job| !job.origin.same(&result.origin) || job.finished.is_some())
             {
-                self.log(actor, "Discarded completion from a replaced compile job");
                 return;
             }
             if result.options.requires_guarded_publication()
@@ -896,7 +973,7 @@ impl Session {
                     .map(|job| job.inspection_source.clone())
                     .unwrap_or_else(|| Err("Build source identity is unavailable".into()));
                 self.compiled = Some(CompiledMap {
-                    claim: result.artifact_claim(),
+                    claim: result.take_artifact_claim(),
                     face_origins: result.output.face_origins.clone(),
                     path: result.path.clone(),
                     snapshot,
@@ -919,7 +996,7 @@ impl Session {
                     ),
                 });
             } else if result.output.leak.is_some()
-                && let Some(claim) = result.artifact_claim()
+                && let Some(claim) = result.take_artifact_claim()
             {
                 self.compilation.retained_pointfile = Some(claim);
             }
@@ -980,18 +1057,32 @@ impl Session {
             }
         };
         self.log(actor, message);
+        if let Ok(result) = result {
+            let mut publication = result
+                .publication
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            publication.pending = None;
+            publication.claims = None;
+            publication.lease = None;
+            publication.pointfile_lease = None;
+            publication.sources = None;
+            if let Some(ticket) = publication.ticket.take() {
+                ticket.accept();
+            }
+        }
     }
 
     pub fn compile_status(&self) -> Value {
         let job = self.compilation.job.as_ref().map(|job| {
             let progress = job.control.progress();
             let dependency_issue=self.instance_dependency_issue(job.instance_dependencies.as_ref(),&job.source_path);
-            let mut status=json!({"token":job.token.to_string(),"status":if job.status=="running" && progress.cancel_requested {"cancelling"} else {job.status},
-                "stage":progress.stage.name(),"stage_label":progress.stage.label(),"cancellable":job.status=="running" && progress.cancellable && !progress.cancel_requested,
-                "elapsed_ms":job.finished.unwrap_or_else(||job.started.elapsed()).as_millis(),
+            let mut status=json!({"token":job.token.to_string(),"status":if job.status()=="running" && progress.cancel_requested {"cancelling"} else {job.status()},
+                "stage":progress.stage.name(),"stage_label":progress.stage.label(),"cancellable":job.status()=="running" && progress.cancellable && !progress.cancel_requested,
+                "elapsed_ms":job.elapsed().as_millis(),
                 "path":job.path.display().to_string(),"generation":job.snapshot.generation,"revision":job.snapshot.revision,
                 "compile_region":job.region,"recipe":job.recipe,"native_runtime":job.native_runtime,"reflections":{"channel":if job.options.lighting==compiler::LightingMode::DirectLdrHdr {"ldr_hdr"} else {"ldr"},"samples_complete":progress.reflection_samples_complete,"samples_total":progress.reflection_samples_total},"settings":{"pack_sky_assets":job.options.pack_sky_assets,"generate_reflections":job.options.generate_reflections,"smoothing_angle":job.options.smoothing_angle,"bounces":job.options.bounces,"lighting":job.options.lighting.name(),"physics":job.options.physics.name(),"sky_quality":job.options.sky_quality.name(),"visibility":job.options.visibility.name()},
-                "stale":!self.current_snapshot(&job.snapshot) || job.options != self.compilation.options || ((job.options.requires_guarded_publication() || job.instance_dependencies.is_some()) && job.content_epoch != self.content_epoch) || dependency_issue.is_some(),"result":job.result});
+                "stale":!self.current_snapshot(&job.snapshot) || job.options != self.compilation.options || ((job.options.requires_guarded_publication() || job.instance_dependencies.is_some()) && job.content_epoch != self.content_epoch) || dependency_issue.is_some(),"result":job.result()});
             if job.instance_dependencies.is_some() { status["instance_dependencies"]=json!({"current":dependency_issue.is_none(),"error":dependency_issue}); }
             status
         });
@@ -1013,7 +1104,7 @@ impl Session {
             .as_ref()
             .filter(|job| job.token == token)
             .ok_or("Compile job was replaced")?;
-        if job.status != "running" {
+        if job.status() != "running" {
             return Err("Compile job is already finished".into());
         }
         job.control.cancel()?;
@@ -1026,7 +1117,7 @@ impl Session {
             return String::new();
         };
         let progress = job.control.progress();
-        match job.status {
+        match job.status() {
             "running" if progress.cancel_requested => "Cancelling compilation…".into(),
             "running" => format!("Compiling · {}", progress.stage.label()),
             "completed" => format!(
@@ -1058,7 +1149,7 @@ impl Session {
     pub fn compile_cancellable(&self) -> bool {
         self.compilation.job.as_ref().is_some_and(|job| {
             let progress = job.control.progress();
-            job.status == "running" && progress.cancellable && !progress.cancel_requested
+            job.status() == "running" && progress.cancellable && !progress.cancel_requested
         })
     }
 

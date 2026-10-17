@@ -227,7 +227,7 @@ fn actual_plain_bsp_and_lin_claims_survive_later_failure_and_cancellation() {
     let result = owner.begin_compile(Actor::User, Some(&bsp)).unwrap().run();
     assert!(result.as_ref().unwrap().published());
     owner.finish_compile(Actor::User, &result);
-    drop(result);
+    let bsp_result = result;
     let bsp_bytes = fs::read(&bsp).unwrap();
     let wall = owner.document().vmf().world.solids.last().unwrap().id;
     owner
@@ -240,7 +240,7 @@ fn actual_plain_bsp_and_lin_claims_survive_later_failure_and_cancellation() {
         .run();
     assert!(result.as_ref().unwrap().output.leak.is_some());
     owner.finish_compile(Actor::User, &result);
-    drop(result);
+    let pointfile_result = result;
     let pointfile = leaking.with_extension("lin");
     let pointfile_bytes = fs::read(&pointfile).unwrap();
     let status = owner.compile_status();
@@ -260,6 +260,12 @@ fn actual_plain_bsp_and_lin_claims_survive_later_failure_and_cancellation() {
     assert_eq!(fs::read(&pointfile).unwrap(), pointfile_bytes);
     let same_role = owner.begin_compile(Actor::User, Some(&bsp)).unwrap();
     drop(same_role);
+    assert!(!owner.compiling());
+    assert_eq!(owner.compile_status()["job"]["status"], "failed");
+    assert!(peer.save(Actor::Agent, Some(&bsp)).is_err());
+    assert!(peer.save(Actor::Agent, Some(&pointfile)).is_err());
+    assert_eq!(fs::read(&bsp).unwrap(), bsp_bytes);
+    assert_eq!(fs::read(&pointfile).unwrap(), pointfile_bytes);
     owner.finish_compile(Actor::User, &Err("abandoned same-role rebuild".into()));
     let cancelled = root.path().join("cancelled.bsp");
     let request = owner.begin_compile(Actor::User, Some(&cancelled)).unwrap();
@@ -282,6 +288,8 @@ fn actual_plain_bsp_and_lin_claims_survive_later_failure_and_cancellation() {
     owner.new_map(Actor::User, true).unwrap();
     peer.save(Actor::Agent, Some(&bsp)).unwrap();
     peer.save(Actor::Agent, Some(&pointfile)).unwrap();
+    assert!(bsp_result.as_ref().unwrap().published());
+    assert!(pointfile_result.as_ref().unwrap().output.leak.is_some());
 }
 
 #[test]

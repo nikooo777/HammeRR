@@ -141,7 +141,7 @@ impl Session {
             entry,
             reorder,
             preserve_incompatible,
-            self.compiling,
+            self.compiling(),
         );
         let _ = self.log_recent_map_result(result);
     }
@@ -153,7 +153,7 @@ impl Session {
     }
 
     pub(super) fn restore_recent_map_context(&mut self, path: &Path) {
-        if self.compiling || self.closing {
+        if self.compiling() || self.closing {
             return;
         }
         let Ok(path) = recent_maps::absolute_path(path) else {

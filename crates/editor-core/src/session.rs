@@ -372,7 +372,7 @@ impl Session {
     pub(crate) fn use_application_path_claims(&mut self, authority: crate::path_claims::Authority) {
         assert!(self.compiled.is_none());
         assert!(self.compilation.retained_pointfile.is_none());
-        assert!(!self.compiling);
+        assert!(!self.compiling());
         self.file_claims.attach(authority);
     }
 
@@ -1932,7 +1932,7 @@ impl Session {
     }
 
     pub fn compiling(&self) -> bool {
-        self.compiling
+        self.compilation.busy(self.compiling)
     }
 
     pub fn launching(&self) -> bool {
@@ -1968,7 +1968,7 @@ impl Session {
                 "CS:S is already launching or running; close it before running another map".into(),
             );
         }
-        if self.compiling {
+        if self.compiling() {
             return Err("wait for map compilation to finish".into());
         }
         let compiled = self

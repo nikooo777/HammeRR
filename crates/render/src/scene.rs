@@ -63,6 +63,7 @@ pub struct Vertex {
     pub smoothing: u32,
     pub opacity: f32,
     pub texture_alpha: u32,
+    pub tangent: [f32; 4],
 }
 
 #[repr(C)]
@@ -94,6 +95,7 @@ pub struct SceneStats {
 
 #[derive(Debug)]
 pub struct SceneMesh {
+    pub normal_maps: crate::normal_maps::Report,
     pub issues: Vec<SceneIssue>,
     pub skybox: Option<std::sync::Arc<crate::sky::Skybox>>,
     pub icons: Vec<crate::icons::Instance>,
@@ -140,6 +142,7 @@ pub struct FaceOverlay {
 }
 
 struct Builder<'a> {
+    normal_maps: crate::normal_maps::Report,
     icons: &'a BTreeMap<u32, crate::icons::Instance>,
     displayed_icons: Vec<crate::icons::Instance>,
     helper_bounds: Vec<Vec3>,
@@ -332,6 +335,58 @@ impl Builder<'_> {
         let info = self.library.get(material);
         let tool = info.tool;
         let size = glam::DVec2::new(f64::from(info.width), f64::from(info.height));
+        let dimensions = [info.width, info.height];
+        let missing_base = info.base.is_none() || info.missing;
+        let mut tangent = [0.0; 4];
+        if self.normal_maps.active && !tool {
+            let asset = self.library.normal_map(self.fs, material);
+            if !self
+                .normal_maps
+                .materials
+                .iter()
+                .any(|report| report.material == asset.report.material)
+            {
+                if self.normal_maps.materials.len() < crate::normal_maps::MAX_ASSETS {
+                    self.normal_maps.materials.push(asset.report.clone());
+                } else {
+                    self.normal_maps.materials_truncated = true;
+                }
+            }
+            let result = if asset.image.is_some() && missing_base {
+                Err("Normal preview needs an available base display texture to establish its UV dimensions".into())
+            } else if asset.image.is_some() {
+                crate::normal_maps::tangent(
+                    side,
+                    normal,
+                    points,
+                    dimensions,
+                    asset.report.transform,
+                )
+                .map(Some)
+            } else if let Some(error) = &asset.report.error {
+                Err(error.clone())
+            } else {
+                Ok(None)
+            };
+            match result {
+                Ok(Some(value)) => {
+                    tangent = value;
+                    self.normal_maps.applied_faces += 1;
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    self.normal_maps.rejected_faces += 1;
+                    if self.normal_maps.errors.len() < crate::normal_maps::MAX_ASSETS {
+                        self.normal_maps.errors.push(format!(
+                            "Face {} · {}: {error}",
+                            side.id, asset.report.material
+                        ));
+                    } else {
+                        self.normal_maps.errors_truncated = true;
+                    }
+                }
+            }
+        }
         self.push_wire_loop(points.iter().map(|point| point.as_vec3()), tool);
         let first = self.vertices.len() as u32;
         for &point in points {
@@ -344,6 +399,7 @@ impl Builder<'_> {
                 smoothing: side.smoothing_groups.unwrap_or(0),
                 opacity: 1.0,
                 texture_alpha: 0,
+                tangent,
             });
         }
         for index in 1..points.len() as u32 - 1 {
@@ -403,6 +459,7 @@ impl Builder<'_> {
                 smoothing: side.smoothing_groups.unwrap_or(0),
                 opacity: 1.0,
                 texture_alpha: 0,
+                tangent: [0.0; 4],
             });
         }
         self.indices[material].extend(triangles.iter().flatten().map(|&i| first + i as u32));
@@ -498,6 +555,7 @@ impl Builder<'_> {
                     smoothing: 0,
                     opacity: 1.0,
                     texture_alpha: 0,
+                    tangent: [0.0; 4],
                 });
             }
             self.indices[material].extend([
@@ -541,6 +599,7 @@ impl Builder<'_> {
                 smoothing: 0,
                 opacity: 1.0,
                 texture_alpha: 0,
+                tangent: [0.0; 4],
             });
         }
         self.indices[material].extend([first, first + 1, first + 2]);
@@ -686,6 +745,7 @@ impl Builder<'_> {
                 texture_alpha: u32::from(
                     instance.appearance.mode == source_formats::render_color::TEXTURE,
                 ),
+                tangent: [0.0; 4],
             });
         }
         let materials = instance.asset.materials();
@@ -1043,11 +1103,40 @@ impl SceneMesh {
         skybox: Option<std::sync::Arc<crate::sky::Skybox>>,
         include: impl Fn(ObjectId) -> bool,
     ) -> Self {
+        Self::build_with_normal_maps_filtered(
+            vmf, fs, library, selection, overlays, entities, guides, skybox, false, include,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_with_normal_maps_filtered(
+        vmf: &Vmf,
+        fs: &GameFs,
+        library: &mut MaterialLibrary,
+        selection: (&HashSet<ObjectId>, &HashSet<FaceId>),
+        overlays: &[FaceOverlay],
+        entities: (
+            &[crate::models::Instance],
+            &BTreeMap<ObjectId, map_core::entity_helpers::Appearance>,
+        ),
+        guides: (
+            &BTreeMap<u32, crate::icons::Instance>,
+            &[crate::models::Instance],
+        ),
+        skybox: Option<std::sync::Arc<crate::sky::Skybox>>,
+        normal_maps: bool,
+        include: impl Fn(ObjectId) -> bool,
+    ) -> Self {
         let (icons, model_guides) = guides;
         let (models, helpers) = entities;
         let (selected, selected_faces) = selection;
         let terrain = terrain::prepare(vmf);
         let mut builder = Builder {
+            normal_maps: crate::normal_maps::Report {
+                requested: normal_maps,
+                active: normal_maps,
+                ..Default::default()
+            },
             icons,
             displayed_icons: Vec::new(),
             helper_bounds: Vec::new(),
@@ -1158,6 +1247,7 @@ impl SceneMesh {
         }
         stats.missing_materials = missing_materials.len();
         let mut mesh = Self {
+            normal_maps: builder.normal_maps,
             icons: builder.displayed_icons,
             issues: terrain.issues,
             skybox,
@@ -1203,6 +1293,7 @@ impl SceneMesh {
                         smoothing: 0,
                         opacity: 1.0,
                         texture_alpha: 0,
+                        tangent: [0.0; 4],
                     });
                     self.mins = self.mins.min(point.as_vec3());
                     self.maxs = self.maxs.max(point.as_vec3());

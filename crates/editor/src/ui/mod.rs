@@ -141,6 +141,7 @@ fn session_of(ui: &SharedUi) -> SharedSession {
 }
 
 fn refresh_view_controls(app: &AppWindow, session: &Session) {
+    app.set_normal_maps(session.view().normal_maps);
     app.set_show_tools(session.view().tool_textures);
     app.set_show_leak(session.view().leak_path);
     app.set_sky_preview(session.view().sky_preview);
@@ -196,7 +197,17 @@ fn bind_view_controls(app: &AppWindow, shared: SharedSession) {
         move || {
             let app = app.unwrap();
             let mut session = lock(&shared);
-            let mut view = session.view();
+            let mut view = match session.resolve_view_update(editor_core::session::ViewUpdate {
+                normal_maps: Some(app.get_normal_maps()),
+                ..Default::default()
+            }) {
+                Ok(view) => view,
+                Err(error) => {
+                    app.set_message(error.into());
+                    refresh_view_controls(&app, &session);
+                    return;
+                }
+            };
             view.tool_textures = app.get_show_tools();
             view.sky_preview = app.get_sky_preview();
             view.rope_preview = app.get_rope_preview();
@@ -2747,6 +2758,7 @@ pub(super) fn run(
                     }
                     ui.seen_scene = scene_key;
                     let mesh = session.build_scene();
+                    app.set_normal_map_status(mesh.normal_maps.summary().into());
                     let mut preview_error = mesh.issue_summary();
                     if let Some(report) = session.material_reload_report()
                         && report.failed > 0

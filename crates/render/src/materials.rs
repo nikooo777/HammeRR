@@ -1,6 +1,7 @@
 //! CPU-side material loading: VMT parameters plus the textures to display.
 
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -18,6 +19,8 @@ pub const MAX_RELOAD_FAILURES: usize = 100;
 
 #[derive(Debug)]
 pub struct MaterialInfo {
+    pub normal: Option<Arc<crate::normal_maps::Asset>>,
+    material_identity: Option<u64>,
     /// Material name as used in the map, lowercase (`de_cbble/cobbleroad01`).
     pub name: String,
     pub base: Option<Vtf>,
@@ -38,6 +41,10 @@ pub struct MaterialInfo {
 }
 
 impl MaterialInfo {
+    pub fn matches_material(&self, material: &Material) -> bool {
+        self.material_identity == Some(material_identity(material))
+    }
+
     pub fn load(fs: &GameFs, name: &str) -> Self {
         let name = name.to_ascii_lowercase();
         match Self::load_checked(fs, &name) {
@@ -82,6 +89,8 @@ impl MaterialInfo {
         }) || matches!(name, "tools/toolsskybox" | "tools/toolsskybox2d");
 
         Ok(Self {
+            material_identity: material.as_ref().map(material_identity),
+            normal: None,
             helper: None,
             error: None,
             missing: base.is_none(),
@@ -100,6 +109,8 @@ impl MaterialInfo {
     /// A flat-colored material for editor helpers such as entity boxes.
     pub fn untextured(name: &str) -> Self {
         Self {
+            material_identity: None,
+            normal: None,
             helper: None,
             name: name.to_owned(),
             base: None,
@@ -116,6 +127,34 @@ impl MaterialInfo {
     }
 }
 
+fn hash_nodes(
+    nodes: &[source_formats::keyvalues::Node],
+    hash: &mut std::collections::hash_map::DefaultHasher,
+) {
+    nodes.len().hash(hash);
+    for node in nodes {
+        node.key.hash(hash);
+        match &node.value {
+            source_formats::keyvalues::Value::String(value) => {
+                0u8.hash(hash);
+                value.hash(hash);
+            }
+            source_formats::keyvalues::Value::Block(nodes) => {
+                1u8.hash(hash);
+                hash_nodes(nodes, hash);
+            }
+        }
+    }
+}
+
+pub fn material_identity(material: &Material) -> u64 {
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    material.shader.hash(&mut hash);
+    material.params.hash(&mut hash);
+    hash_nodes(&material.blocks, &mut hash);
+    hash.finish()
+}
+
 fn read_vtf(fs: &GameFs, path: &str) -> Result<Option<Vtf>, String> {
     fs.read(path)
         .map_err(|error| format!("{path}: {error}"))?
@@ -130,6 +169,7 @@ pub type MaterialId = usize;
 /// rebuild geometry. Ids are stable for the library's lifetime.
 #[derive(Debug)]
 pub struct MaterialLibrary {
+    normals: crate::normal_maps::Library,
     pub icons: crate::icons::Library,
     hdr_skybox: Option<Arc<crate::sky::Skybox>>,
     generation: u64,
@@ -142,6 +182,7 @@ pub struct MaterialLibrary {
 impl Default for MaterialLibrary {
     fn default() -> Self {
         Self {
+            normals: crate::normal_maps::Library::default(),
             generation: NEXT_GENERATION.fetch_add(1, Ordering::Relaxed),
             icons: crate::icons::Library::default(),
             hdr_skybox: None,
@@ -189,6 +230,7 @@ impl MaterialLibrary {
 
     pub fn reload(&mut self, fs: &GameFs) -> ReloadReport {
         let mut report = ReloadReport::default();
+        self.normals.clear();
         self.icons.clear();
         self.hdr_skybox = None;
         for (id, material) in self.materials.iter_mut().enumerate().skip(1) {
@@ -311,6 +353,24 @@ impl MaterialLibrary {
 
     pub fn get(&self, id: MaterialId) -> &MaterialInfo {
         &self.materials[id]
+    }
+
+    pub fn normal_map(&mut self, fs: &GameFs, id: MaterialId) -> Arc<crate::normal_maps::Asset> {
+        if let Some(asset) = &self.materials[id].normal {
+            return asset.clone();
+        }
+        let asset = self.normals.load_matching(
+            fs,
+            &self.materials[id].name,
+            self.materials[id].material_identity,
+        );
+        if asset.retained {
+            self.materials[id].normal = Some(asset.clone());
+            if asset.image.is_some() {
+                self.generation = NEXT_GENERATION.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        asset
     }
 
     pub fn len(&self) -> usize {

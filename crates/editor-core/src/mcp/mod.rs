@@ -548,6 +548,9 @@ mod hdr_sky_tests;
 #[cfg(test)]
 mod baked_lightmap_tests;
 
+#[cfg(test)]
+mod normal_map_tests;
+
 impl EditorServer {
     fn tool_router() -> ToolRouter<Self> {
         Self::assets_tools()

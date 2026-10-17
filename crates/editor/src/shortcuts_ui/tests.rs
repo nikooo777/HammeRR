@@ -10,8 +10,7 @@ fn key_index(key: &str) -> i32 {
     keys().iter().position(|value| value == key).unwrap() as i32
 }
 
-#[test]
-fn shortcut_controls_save_atomically_report_conflicts_and_preserve_text_field_editing() {
+fn software_backend() {
     slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
         i_slint_backend_testing::TestingBackendOptions {
             renderer_name: Some("software".into()),
@@ -20,6 +19,28 @@ fn shortcut_controls_save_atomically_report_conflicts_and_preserve_text_field_ed
         },
     )))
     .unwrap();
+}
+
+fn dispatch_chord(app: &AppWindow, modifiers: &[Key], text: &str) {
+    for key in modifiers {
+        app.window().dispatch_event(WindowEvent::KeyPressed {
+            text: key_text(*key).into(),
+        });
+    }
+    app.window()
+        .dispatch_event(WindowEvent::KeyPressed { text: text.into() });
+    app.window()
+        .dispatch_event(WindowEvent::KeyReleased { text: text.into() });
+    for key in modifiers.iter().rev() {
+        app.window().dispatch_event(WindowEvent::KeyReleased {
+            text: key_text(*key).into(),
+        });
+    }
+}
+
+#[test]
+fn shortcut_controls_save_atomically_report_conflicts_and_preserve_text_field_editing() {
+    software_backend();
     let directory = tempfile::tempdir().unwrap();
     let mut session = Session::new(Err("no assets needed".into()));
     session.configure_recovery(Ok(directory.path().to_owned()));
@@ -112,14 +133,19 @@ fn shortcut_controls_save_atomically_report_conflicts_and_preserve_text_field_ed
     app.on_key({
         let (app, shared) = (app.as_weak(), shared.clone());
         move |text, down, control, shift, alt, meta| {
-            down && dispatch_key(
+            route_viewport_key(
                 &app.unwrap(),
-                &mut lock(&shared),
-                &text,
-                control,
-                shift,
-                alt,
-                meta,
+                &shared,
+                ViewportKey {
+                    text: &text,
+                    down,
+                    control,
+                    shift,
+                    alt,
+                    meta,
+                },
+                |_, _, _| false,
+                |_, _| false,
             )
         }
     });
@@ -179,6 +205,157 @@ fn shortcut_controls_save_atomically_report_conflicts_and_preserve_text_field_ed
     lock(&shared).undo(Actor::User).unwrap();
     assert_eq!(lock(&shared).document().vmf(), &before);
     assert!(!app.invoke_key("z".into(), true, true, false, true, false));
+    assert_eq!(lock(&shared).document().vmf(), &before);
+    app.hide().unwrap();
+}
+
+#[test]
+fn viewport_key_router_guards_fixed_commands_navigation_and_keeps_releases() {
+    software_backend();
+    let mut session = Session::new(Err("no assets needed".into()));
+    let id = session
+        .create_block(
+            Actor::User,
+            DVec3::ZERO,
+            DVec3::splat(64.0),
+            "test/material",
+            false,
+        )
+        .unwrap();
+    let before = session.document().vmf().clone();
+    let shared = Arc::new(Mutex::new(session));
+    let app = AppWindow::new().unwrap();
+    let fixed = Rc::new(RefCell::new(Vec::new()));
+    let navigation = Rc::new(RefCell::new(Vec::new()));
+    app.on_key({
+        let (app, shared, fixed, navigation) = (
+            app.as_weak(),
+            shared.clone(),
+            fixed.clone(),
+            navigation.clone(),
+        );
+        move |text, down, control, shift, alt, meta| {
+            route_viewport_key(
+                &app.unwrap(),
+                &shared,
+                ViewportKey {
+                    text: &text,
+                    down,
+                    control,
+                    shift,
+                    alt,
+                    meta,
+                },
+                |text, control, shift| {
+                    assert!(shared.try_lock().is_ok());
+                    fixed.borrow_mut().push((text.to_owned(), control, shift));
+                    (control && text.eq_ignore_ascii_case("s"))
+                        || text == key_text(Key::UpArrow)
+                        || text == key_text(Key::Escape)
+                },
+                |text, down| {
+                    assert!(shared.try_lock().is_ok());
+                    navigation.borrow_mut().push((text.to_owned(), down));
+                    text == "w" || text == key_text(Key::Shift)
+                },
+            )
+        }
+    });
+
+    let up = key_text(Key::UpArrow);
+    for (text, control, alt, meta) in [
+        ("s", true, true, false),
+        ("s", true, false, true),
+        (up.as_str(), false, true, false),
+        (up.as_str(), false, false, true),
+        ("w", false, true, false),
+        ("w", false, false, true),
+        ("z", true, true, false),
+        ("z", true, false, true),
+    ] {
+        assert!(!app.invoke_key(text.into(), true, control, false, alt, meta));
+    }
+    assert!(fixed.borrow().is_empty());
+    assert!(navigation.borrow().is_empty());
+    assert_eq!(lock(&shared).document().vmf(), &before);
+
+    for shift in [false, true] {
+        assert!(!app.invoke_key("w".into(), true, true, shift, false, false));
+    }
+    assert!(navigation.borrow().is_empty());
+    fixed.borrow_mut().clear();
+    assert!(app.invoke_key("s".into(), true, true, true, false, false));
+    assert!(app.invoke_key(up.clone().into(), true, false, true, false, false));
+    assert!(app.invoke_key(
+        key_text(Key::Escape).into(),
+        true,
+        false,
+        true,
+        false,
+        false
+    ));
+    assert_eq!(
+        *fixed.borrow(),
+        vec![
+            ("s".into(), true, true),
+            (up, false, true),
+            (key_text(Key::Escape), false, true),
+        ]
+    );
+    assert!(navigation.borrow().is_empty());
+    fixed.borrow_mut().clear();
+
+    assert!(app.invoke_key(
+        key_text(Key::Delete).into(),
+        true,
+        false,
+        false,
+        false,
+        false
+    ));
+    assert!(!lock(&shared).document().contains(id));
+    assert!(app.invoke_key("z".into(), true, true, false, false, false));
+    assert_eq!(lock(&shared).document().vmf(), &before);
+    assert!(fixed.borrow().is_empty());
+    assert!(navigation.borrow().is_empty());
+
+    for shift in [false, true] {
+        assert!(app.invoke_key("w".into(), true, false, shift, false, false));
+        assert!(app.invoke_key("w".into(), false, true, shift, true, true));
+    }
+    assert_eq!(
+        *navigation.borrow(),
+        vec![
+            ("w".into(), true),
+            ("w".into(), false),
+            ("w".into(), true),
+            ("w".into(), false),
+        ]
+    );
+    assert_eq!(fixed.borrow().len(), 2);
+
+    let opens = Rc::new(std::cell::Cell::new(0));
+    app.on_open_map({
+        let opens = opens.clone();
+        move || opens.set(opens.get() + 1)
+    });
+    app.show().unwrap();
+    app.window().set_size(slint::PhysicalSize::new(1600, 1000));
+    app.window().take_snapshot().unwrap();
+    for down in [true, false] {
+        let position = slint::LogicalPosition::new(600.0, 400.0);
+        let button = PointerEventButton::Left;
+        app.window().dispatch_event(if down {
+            WindowEvent::PointerPressed { position, button }
+        } else {
+            WindowEvent::PointerReleased { position, button }
+        });
+    }
+    dispatch_chord(&app, &[Key::Control, Key::Alt], "o");
+    dispatch_chord(&app, &[Key::Control, Key::Meta], "o");
+    assert_eq!(opens.get(), 0);
+    dispatch_chord(&app, &[Key::Control], "o");
+    assert_eq!(opens.get(), 1);
     assert_eq!(lock(&shared).document().vmf(), &before);
     app.hide().unwrap();
 }

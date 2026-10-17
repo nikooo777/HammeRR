@@ -40,6 +40,11 @@ cargo test --workspace
 
 Builds use a lot of memory. On smaller machines, limit parallel jobs with `-j`.
 
+When running several validation scripts, build the required binaries together
+and reuse them. GPU tests can run directly from the test executables reported by
+the completed workspace test log, in their crate directory with `--ignored` and
+an exact test name. This avoids rebuilding other feature/profile combinations.
+
 For application changes that do not need the UI, build and test without compiling Slint:
 
 ```sh
@@ -2119,3 +2124,40 @@ admits fixed cross/tri records; `--allow-detail-styles` and
 `--detail-style-state on|off` admit and control styled fixtures. Default readers
 remain strict about white, unstyled plain-sprite/model records unless the
 corresponding baked-color, shape and style options are selected.
+
+### Authored lighting and Additive Sprite guides
+
+```sh
+python3 -B scripts/validate_authored_lighting_preview.py --binary target/debug/hammerr-headless --output /tmp/hammerr-lighting-preview-check
+python3 -B scripts/validate_additive_sprite_guides.py --binary target/debug/hammerr-headless --output /tmp/hammerr-additive-guides-check
+```
+
+Use new private output directories. The lighting script checks actual point/spot
+renders, quality/exposure controls, explicit unshadowed behavior, unsupported and
+over-budget states, draft preservation and normal-map composition. It retains a
+room/ramp VMF, raw PNGs and the corresponding scene reports. The Sprite script
+checks independent blend references, temporary/shared flags, appearance
+provenance, immutable shared assets and source/history/bounds preservation.
+Neither script launches an editor window or the game.
+
+Explicit GPU checks include `authored_lighting_gpu_matches_compiler_oracle_and_preserves_off_and_diagnostic_pixels`,
+`authored_lighting_mcp_render_override_reports_the_rendered_snapshot_and_restores_pixels`,
+`additive_sprite_render_reports_retain_uploaded_scene_across_later_edits` and
+`additive_sprite_rgb_matches_independent_blend_reference_and_mixed_camera_order`.
+
+### Material channels and textured prefab thumbnails
+
+```sh
+python3 -B scripts/validate_material_channels.py --binary target/debug/hammerr-headless --output /tmp/hammerr-material-channels-check
+python3 -B scripts/validate_prefab_textured_thumbnails.py --binary target/debug/hammerr-headless --output /tmp/hammerr-prefab-textures-check
+```
+
+Material channels compare default Color PNGs, decoded Alpha pixels, cached
+source identity, reload/error handling and graphics laziness. Prefab checks
+cover strict Flat/Textured selection, detached material budgets, Patch sources,
+asset/prefab replacement, explicit refresh, error recovery and unchanged editor
+state. Add `--cpu-only` to the prefab script for inspection without a GPU.
+
+The ordinary workspace suite covers shared navigation settings/defaults and
+unresolved-instance rejection across compiler, Session and blocking/background
+MCP paths. Software UI tests cover their controls without desktop input.

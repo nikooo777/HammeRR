@@ -271,7 +271,17 @@ impl Default for ViewOptions {
     }
 }
 
-pub type SceneKey = (u64, crate::sky::Channel, bool, bool, bool, bool, bool, bool, bool);
+pub type SceneKey = (
+    u64,
+    crate::sky::Channel,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+);
 
 impl ViewOptions {
     pub fn scene_key(self, serial: u64) -> SceneKey {

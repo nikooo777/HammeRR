@@ -3,7 +3,7 @@
 # Normal-map preview
 
 Preview surface detail from a supported brush material's normal texture under
-the editor's directional light.
+the editor's directional light or the Detail authored-light preview.
 
 1. Select **Textured** in **Viewport** and apply a material with a supported
    `$bumpmap` to a flat brush face.
@@ -23,8 +23,11 @@ Limits:
 - Only flat `LightmappedGeneric` world/detail/brush-entity polygons are covered.
   Terrain, models, resource images, helpers and tool surfaces are excluded.
   Other viewport modes perform no normal admission.
-- This is fixed editor directional shading. Authored lights, specular,
-  reflections, animation and native game brightness are independent.
+- Ordinary shading uses the fixed editor directional light. Enable
+  [Authored lighting preview](lighting-preview.md) with **Detail · per-fragment
+  lighting** to combine supported point/spot lights and normals. Fast lighting
+  cannot use normal maps. Specular, reflections, animation and native game
+  brightness remain outside these previews.
 - One static RGB/BGR/RGBA/BGRA8888 or DXT1/3/5 normal texture is supported.
   Signed/swizzled, HDR, SSBump and specialized VTF sampling flags are unsupported.
   RGB Z must be at least 128; alpha is ignored. Sampling uses linear RGB,

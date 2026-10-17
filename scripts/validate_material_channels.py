@@ -54,7 +54,7 @@ def validate(args):
     try:
         schemas = {tool["name"]: tool["inputSchema"] for tool in client.rpc("tools/list", {})["tools"]}
         assert "channel" in schemas["preview_material"]["properties"]
-        block = client.call("create_block", {"mins": [0, 0, 0], "maxs": [32, 32, 32], "material": "audit/surface"})["objects"][0]["id"]
+        block = client.call("create_block", {"mins": [0, 0, 0], "maxs": [32, 32, 32], "material": "audit/surface"})["id"]
         client.call("get_normal_map_preview")
         client.call("transform_objects", {"ids": [block], "translation": [16, 0, 0], "preview": True})
         original = client.call("get_map_info")

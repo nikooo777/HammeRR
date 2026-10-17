@@ -54,7 +54,7 @@ pub fn alpha_game() -> (tempfile::TempDir, GameFs) {
         [0, 0, 255, 128],
         [255, 255, 0, 255],
     ];
-    for (index, pixel) in bytes[80..].chunks_exact_mut(4).enumerate() {
+    for (index, pixel) in bytes[80..].as_chunks_mut::<4>().0.iter_mut().enumerate() {
         pixel.copy_from_slice(&colors[index % 64 / 16]);
     }
     std::fs::write(path, bytes).unwrap();

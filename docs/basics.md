@@ -51,6 +51,10 @@ In Top, Front and Side, the arrow keys move within the view's plane and PgUp/PgD
 
 Framing fits the viewport's width and height and keeps the camera's direction and field of view.
 
+Set **Viewport → Fly speed** for perspective flight, or hold the right mouse
+button and scroll to adjust it. Save startup speed in **Navigation defaults…**;
+see [Fly speed and navigation defaults](navigation-defaults.md).
+
 ## Grid and snapping
 
 **Grid** sets the spacing, from 0.125 to 4096 units. **Snap** and **Show grid** are independent. Values typed into numeric fields are always exact; they are never snapped.

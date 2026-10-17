@@ -33,10 +33,12 @@ fn material_channels_preserve_color_bytes_and_inspect_decoded_alpha_without_edit
         (0, 0, 0)
     );
     for (expected, actual) in bytes[80..]
-        .chunks_exact(4)
-        .zip(alpha.image.unwrap().pixels.chunks_exact(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(alpha.image.unwrap().pixels.as_chunks::<4>().0.iter())
     {
-        assert_eq!(actual, [expected[3], expected[3], expected[3], 255]);
+        assert_eq!(*actual, [expected[3], expected[3], expected[3], 255]);
     }
     assert_eq!(session.document().vmf(), &source);
     assert_eq!(session.history_snapshot(), history);
@@ -55,7 +57,7 @@ fn material_channels_keep_cached_pixels_and_source_together_until_reload() {
     assert!(before.source.as_ref().unwrap().cached);
     let folder = directory.path().join("materials/test");
     let mut replacement = std::fs::read(folder.join("checker.vtf")).unwrap();
-    for pixel in replacement[80..].chunks_exact_mut(4) {
+    for pixel in replacement[80..].as_chunks_mut::<4>().0.iter_mut() {
         pixel.copy_from_slice(&[11, 22, 33, 47]);
     }
     std::fs::write(folder.join("replacement.vtf"), replacement).unwrap();
@@ -84,8 +86,10 @@ fn material_channels_keep_cached_pixels_and_source_together_until_reload() {
             .image
             .unwrap()
             .pixels
-            .chunks_exact(4)
-            .all(|pixel| pixel == [47, 47, 47, 255])
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|pixel| *pixel == [47, 47, 47, 255])
     );
 }
 
@@ -122,7 +126,9 @@ fn material_alpha_preserves_missing_and_failure_states_instead_of_white_substitu
     rgb[52..56].copy_from_slice(&2u32.to_le_bytes());
     rgb.extend(
         bytes[80..]
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .flat_map(|pixel| pixel[..3].iter().copied()),
     );
     std::fs::write(folder.join("opaque.vtf"), rgb).unwrap();

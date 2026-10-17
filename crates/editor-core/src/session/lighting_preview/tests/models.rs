@@ -218,6 +218,9 @@ fn model_authored_lighting_gpu_matches_compiler_fast_detail_scaled_world_normals
             ]),
         )
         .unwrap();
+    session
+        .select(&[], crate::session::SelectMode::Replace)
+        .unwrap();
     let context = render::GpuContext::new().unwrap();
     let mut renderer = render::Renderer::new(&context);
     let camera =
@@ -285,6 +288,12 @@ fn model_authored_lighting_gpu_matches_compiler_fast_detail_scaled_world_normals
                 let mesh = session.build_scene_for_view(view);
                 assert_eq!(mesh.lighting.report.models.admitted_instances, 1);
                 assert_eq!(mesh.lighting.report.models.admitted_triangles, 2);
+                assert!(
+                    mesh.vertices
+                        .iter()
+                        .filter(|vertex| vertex.lighting_receiver != 0)
+                        .all(|vertex| vertex.color == [64, 128, 255, 0])
+                );
                 let uploaded = renderer.upload(&context, &mesh, session.materials());
                 let pixels = renderer.render_to_rgba(&context, &uploaded, &camera, &view, 65, 65);
                 let contribution = if quality == render::lighting::Quality::Fast {

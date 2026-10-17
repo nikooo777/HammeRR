@@ -44,6 +44,7 @@ pub mod grid_preferences;
 pub mod groups;
 pub mod history;
 pub mod hollowing;
+pub mod instance_contents;
 pub mod layers;
 mod lighting_preview;
 pub mod linked_path;
@@ -170,6 +171,7 @@ pub enum SelectMode {
 }
 
 pub struct Session {
+    instance_contents: instance_contents::State,
     compile_region: compile_region::State,
     overlay: overlay::State,
     cubemap_bindings: cubemap_bindings::State,
@@ -300,6 +302,7 @@ impl Session {
             ),
         };
         Self {
+            instance_contents: instance_contents::State::default(),
             geometry: previews::State::default(),
             compile_region: compile_region::State::default(),
             overlay: overlay::State::default(),
@@ -1186,6 +1189,7 @@ impl Session {
     }
 
     fn replace_document(&mut self, document: Document, path: Option<PathBuf>) {
+        self.reset_instance_contents();
         self.native_capture.invalidate();
         self.groups.draft = None;
         self.layers.clear_document_draft();
@@ -1534,8 +1538,17 @@ impl Session {
         if let Some(camera) = self.saved_cameras[projection.index()] {
             return camera;
         }
-        let bounds = self.selection_bounds().or_else(|| {
-            self.object_bounds_in(&self.document, &self.document.objects().collect::<Vec<_>>())
+        let bounds = if self.face_mode {
+            self.selection_bounds()
+        } else {
+            self.framing_bounds_in(&self.document, &self.selected_ids(), None)
+        }
+        .or_else(|| {
+            self.framing_bounds_in(
+                &self.document,
+                &self.document.objects().collect::<Vec<_>>(),
+                None,
+            )
         });
         let (mins, maxs) = bounds.unwrap_or((DVec3::splat(-384.0), DVec3::splat(384.0)));
         if projection == Projection::Perspective {
@@ -1555,12 +1568,15 @@ impl Session {
     }
 
     pub fn frame_selection(&mut self, actor: Actor, aspect: f32) -> Result<(), String> {
+        self.preflight_instance_contents();
         if !aspect.is_finite() || aspect <= 0.0 {
             return Err("Viewport aspect must be positive and finite".into());
         }
         let bounds = if self.selection.is_empty() && self.face_selection.is_empty() {
             let document = self.render_document();
-            self.object_bounds_in(document, &document.objects().collect::<Vec<_>>())
+            self.framing_bounds_in(document, &document.objects().collect::<Vec<_>>(), None)
+        } else if !self.face_mode {
+            self.framing_bounds_in(self.render_document(), &self.selected_ids(), None)
         } else {
             self.selection_bounds_in(self.render_document())
         };
@@ -1891,6 +1907,7 @@ impl Session {
 
     pub fn shutdown(&mut self) {
         self.closing = true;
+        self.reset_instance_contents();
         self.shutdown_sound_preview();
         self.cancel_compile_on_shutdown();
         self.game_run = None;

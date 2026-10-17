@@ -887,3 +887,35 @@ fn unsupported_geometry_self_cycles_and_native_capture_stay_explicit() {
             .contains("Generate reflections")
     );
 }
+
+#[test]
+fn cheap_source_location_freezes_parent_identity_before_worker_hashing() {
+    let (directory, parent, _, _) = fixture();
+    let path = directory.path().join("parent.vmf");
+    let location = SourceLocation::capture(&path).unwrap();
+    std::fs::write(&path, b"externally changed parent").unwrap();
+    assert!(location.hydrate(&Control::default()).is_err());
+    std::fs::write(&path, parent.write(&Default::default())).unwrap();
+    let context = SourceLocation::capture(&path)
+        .unwrap()
+        .hydrate(&Control::default())
+        .unwrap();
+    let mut report = Report::default();
+    let prepared = resolve(&parent, Some(&context), &Control::default(), &mut report).unwrap();
+    let brushes = prepared.generated_brushes().collect::<Vec<_>>();
+    assert_eq!(brushes.len(), 2);
+    assert_eq!(brushes.iter().filter(|brush| brush.detail).count(), 1);
+    assert!(brushes.iter().all(
+        |brush| brush.owner == parent.entities.last().unwrap().id && brush.file == "child.vmf"
+    ));
+    assert!(prepared.dependencies().is_some());
+    for brush in brushes {
+        for side in &brush.solid.sides {
+            let origin = prepared.face_origin(side.id).unwrap();
+            assert_eq!(
+                (origin.0, origin.1, origin.2),
+                (brush.owner, brush.file, brush.original)
+            );
+        }
+    }
+}

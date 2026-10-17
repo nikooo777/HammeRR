@@ -24,7 +24,79 @@ pub const MAX_TOTAL_NODES: usize = 1_048_576;
 pub const MAX_DEPTH: usize = 32;
 pub const MAX_FIELD_BYTES: usize = 512;
 pub const MAX_GEOMETRY_WORK: usize = 64_000_000;
-const MAX_PARENT_BYTES: u64 = 128 * 1024 * 1024;
+pub const MAX_PARENT_BYTES: u64 = 128 * 1024 * 1024;
+
+#[derive(Clone, Debug)]
+pub struct SourceLocation {
+    requested: PathBuf,
+    alias: FileStamp,
+    directory_alias: Option<FileStamp>,
+    root: FileStamp,
+    directory: PathBuf,
+}
+
+impl SourceLocation {
+    pub fn capture(path: &Path) -> io::Result<Self> {
+        let requested = std::path::absolute(path)?;
+        let alias = FileStamp::capture_container(&requested)?;
+        let parent = requested
+            .parent()
+            .ok_or_else(|| io::Error::other("Instance source has no parent directory"))?;
+        let directory_alias = parent
+            .file_name()
+            .map(|_| FileStamp::capture_container(parent))
+            .transpose()?;
+        let directory = parent.canonicalize()?;
+        let physical = requested.canonicalize()?;
+        if std::fs::metadata(&physical)?.len() > MAX_PARENT_BYTES {
+            return Err(io::Error::other("Saved instance parent exceeds 128 MiB"));
+        }
+        let location = Self {
+            requested,
+            alias,
+            directory_alias,
+            root: FileStamp::capture(&physical)?,
+            directory,
+        };
+        location.verify_metadata()?;
+        Ok(location)
+    }
+
+    pub fn verify_metadata(&self) -> io::Result<()> {
+        self.alias.verify_metadata()?;
+        if let Some(alias) = &self.directory_alias {
+            alias.verify_container_identity()?;
+        }
+        if self.requested.canonicalize()? != self.root.path()
+            || self
+                .requested
+                .parent()
+                .map(Path::canonicalize)
+                .transpose()?
+                .as_deref()
+                != Some(self.directory.as_path())
+        {
+            return Err(io::Error::other(
+                "Instance referring filename or directory changed",
+            ));
+        }
+        self.root.verify_metadata()
+    }
+
+    pub fn hydrate(self, control: &Control) -> io::Result<SourceContext> {
+        self.verify_metadata()?;
+        let root = FileIdentity::capture_bounded(self.root.path(), MAX_PARENT_BYTES, control)?;
+        self.root.verify_identity(&root)?;
+        self.verify_metadata()?;
+        Ok(SourceContext {
+            requested: self.requested,
+            alias: self.alias,
+            directory_alias: self.directory_alias,
+            root,
+            directory: self.directory,
+        })
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct SourceContext {
@@ -37,33 +109,7 @@ pub struct SourceContext {
 
 impl SourceContext {
     pub fn capture(path: &Path, control: &Control) -> io::Result<Self> {
-        let requested = std::path::absolute(path)?;
-        let alias = FileStamp::capture_container(&requested)?;
-        let parent = requested
-            .parent()
-            .ok_or_else(|| io::Error::other("Instance source has no parent directory"))?;
-        let directory_alias = parent
-            .file_name()
-            .map(|_| FileStamp::capture_container(parent))
-            .transpose()?;
-        let directory = parent.canonicalize()?;
-        let root =
-            FileIdentity::capture_bounded(&requested.canonicalize()?, MAX_PARENT_BYTES, control)?;
-        if root.sha256().is_none() {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                "Save the parent VMF before resolving instances",
-            ));
-        }
-        let context = Self {
-            requested,
-            alias,
-            directory_alias,
-            root,
-            directory,
-        };
-        context.verify_metadata()?;
-        Ok(context)
+        SourceLocation::capture(path)?.hydrate(control)
     }
 
     pub fn path(&self) -> &Path {
@@ -112,7 +158,7 @@ impl DependencyGuard {
     pub fn verify_metadata(&self) -> io::Result<()> {
         self.source.verify_metadata()?;
         for (relative, identity) in &self.files {
-            if resolve(&self.source, relative)? != identity.path() {
+            if resolve_path(&self.source, relative)? != identity.path() {
                 return Err(io::Error::other("Instance dependency resolution changed"));
             }
             identity.verify_metadata()?;
@@ -197,7 +243,7 @@ fn filename(value: &str) -> Result<String, String> {
         .into_owned())
 }
 
-fn resolve(source: &SourceContext, relative: &str) -> io::Result<PathBuf> {
+fn resolve_path(source: &SourceContext, relative: &str) -> io::Result<PathBuf> {
     let relative = filename(relative).map_err(io::Error::other)?;
     let mut path = source.directory.clone();
     for part in Path::new(&relative).components() {
@@ -391,17 +437,60 @@ struct Child {
     bytes: usize,
 }
 
-pub(crate) struct Prepared<'a> {
-    pub vmf: Cow<'a, Vmf>,
-    pub dependencies: Option<DependencyGuard>,
-    pub stats: Option<InstanceStats>,
+pub struct PreparedInstances<'a> {
+    pub(crate) vmf: Cow<'a, Vmf>,
+    pub(crate) dependencies: Option<DependencyGuard>,
+    pub(crate) stats: Option<InstanceStats>,
     provenance: BTreeMap<String, (u32, String, u32, Option<u32>)>,
 }
 
-impl Prepared<'_> {
+pub(crate) type Prepared<'a> = PreparedInstances<'a>;
+
+pub struct InstanceBrush<'a> {
+    pub owner: u32,
+    pub file: &'a str,
+    pub original: u32,
+    pub detail: bool,
+    pub solid: &'a Solid,
+}
+
+impl PreparedInstances<'_> {
+    pub fn dependencies(&self) -> Option<&DependencyGuard> {
+        self.dependencies.as_ref()
+    }
+
+    pub fn stats(&self) -> Option<&InstanceStats> {
+        self.stats.as_ref()
+    }
+
+    pub fn generated_brushes(&self) -> impl Iterator<Item = InstanceBrush<'_>> {
+        self.vmf
+            .world
+            .solids
+            .iter()
+            .map(|solid| (solid, false))
+            .chain(
+                self.vmf
+                    .entities
+                    .iter()
+                    .flat_map(|entity| entity.solids.iter().map(|solid| (solid, true))),
+            )
+            .filter_map(move |(solid, detail)| {
+                let (owner, file, original, _) =
+                    self.provenance.get(&format!("solid:{}", solid.id))?;
+                Some(InstanceBrush {
+                    owner: *owner,
+                    file,
+                    original: *original,
+                    detail,
+                    solid,
+                })
+            })
+    }
+
     pub fn face_origin(&self, side: u32) -> Option<(u32, &str, u32, u32)> {
-        let (owner, file, side, solid) = self.provenance.get(&format!("side:{side}"))?;
-        Some((*owner, file, (*solid)?, *side))
+        let (owner, file, original, solid) = self.provenance.get(&format!("side:{side}"))?;
+        Some((*owner, file, (*solid)?, *original))
     }
 
     pub fn annotate(&self, report: &mut Report) {
@@ -419,6 +508,34 @@ impl Prepared<'_> {
             }
         }
     }
+}
+
+pub fn resolve<'a>(
+    vmf: &'a Vmf,
+    source: Option<&SourceContext>,
+    control: &Control,
+    report: &mut Report,
+) -> Result<PreparedInstances<'a>, Diagnostic> {
+    if let Some(diagnostic) = vmf
+        .entities
+        .iter()
+        .filter(|entity| {
+            entity
+                .classname()
+                .is_some_and(|class| class.eq_ignore_ascii_case("func_instance_parms"))
+        })
+        .find_map(crate::map::unresolved_instance_diagnostic)
+    {
+        return Err(diagnostic);
+    }
+    if requires_source(vmf) && source.is_none() {
+        return Err(Diagnostic::error(
+            "Save the parent VMF before resolving instances",
+            None,
+            None,
+        ));
+    }
+    prepare(vmf, source, control, report)
 }
 
 pub(crate) fn prepare<'a>(
@@ -506,7 +623,7 @@ pub(crate) fn prepare<'a>(
                 if file_count >= MAX_FILES {
                     return Err(format!("Instances exceed {MAX_FILES} unique files"));
                 }
-                let path = resolve(source, &relative)
+                let path = resolve_path(source, &relative)
                     .map_err(|error| format!("Instance {relative}: {error}"))?;
                 let limit = MAX_FILE_BYTES.min(MAX_TOTAL_BYTES.saturating_sub(bytes));
                 let (identity, input) = FileIdentity::read_bounded(&path, limit as u64, control)
@@ -664,7 +781,14 @@ pub(crate) fn prepare<'a>(
             sha256: child.identity.sha256().unwrap().to_owned(),
         })
         .collect();
-    report.diagnostics.push(Diagnostic::info(format!("Expanded {} brush instances from {} files: {} world brushes, {} detail brushes; referenced contents are not shown in the editor viewport", stats.instances, stats.files, stats.world_brushes, stats.detail_brushes), None, None));
+    report.diagnostics.push(Diagnostic::info(
+        format!(
+            "Expanded {} brush instances from {} files: {} world brushes, {} detail brushes",
+            stats.instances, stats.files, stats.world_brushes, stats.detail_brushes
+        ),
+        None,
+        None,
+    ));
     prepared.dependencies = Some(DependencyGuard {
         source: source.clone(),
         files: files

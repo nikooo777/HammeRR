@@ -5,6 +5,139 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 #[test]
+fn viewport_escape_cancels_owned_atlas_preview_and_preserves_agent_review() {
+    use slint::platform::{PointerEventButton, WindowEvent};
+
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: false,
+        },
+    )))
+    .unwrap();
+    let (_directory, game) = crate::test_assets::game();
+    let mut session = Session::new(Ok(game));
+    let ObjectId::Solid(solid) = session
+        .create_block(
+            Actor::User,
+            DVec3::ZERO,
+            DVec3::splat(64.0),
+            "test/checker",
+            false,
+        )
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    let face = map_core::surface::FaceId {
+        solid,
+        side: session.document().solid(solid).unwrap().sides[0].id,
+    };
+    session.select_faces(&[face], SelectMode::Replace).unwrap();
+    let atlas = session.inspect_material_atlas("test/checker").unwrap();
+    let snapshot = atlas.report["snapshot"].as_str().unwrap();
+    let rectangle = session::atlas_texturing::Rectangle {
+        x: 16,
+        y: 8,
+        width: 32,
+        height: 16,
+    };
+    let before = session.document().vmf().clone();
+    let history = session.history_snapshot();
+    let camera = session.camera();
+    session
+        .preview_atlas_fit(
+            Actor::User,
+            &[face],
+            "test/checker",
+            rectangle,
+            snapshot,
+            None,
+        )
+        .unwrap();
+    let shared = Arc::new(Mutex::new(session));
+    let app = AppWindow::new().unwrap();
+    app.on_key({
+        let (app, shared) = (app.as_weak(), shared.clone());
+        move |text, down, control, shift, alt, meta| {
+            let app = app.unwrap();
+            shortcuts_ui::route_viewport_key(
+                &app,
+                &shared,
+                shortcuts_ui::ViewportKey {
+                    text: &text,
+                    down,
+                    control,
+                    shift,
+                    alt,
+                    meta,
+                },
+                |text, control, _| {
+                    if !control && text == key_text(Key::Escape) {
+                        cancel_viewport_face_preview(&app, &mut lock(&shared));
+                        true
+                    } else {
+                        false
+                    }
+                },
+                |_, _| false,
+            )
+        }
+    });
+    app.show().unwrap();
+    app.window().set_size(slint::PhysicalSize::new(1600, 1000));
+    app.window().take_snapshot().unwrap();
+    for down in [true, false] {
+        let position = slint::LogicalPosition::new(600.0, 400.0);
+        let button = PointerEventButton::Left;
+        app.window().dispatch_event(if down {
+            WindowEvent::PointerPressed { position, button }
+        } else {
+            WindowEvent::PointerReleased { position, button }
+        });
+    }
+    app.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Escape.into(),
+    });
+    app.window().dispatch_event(WindowEvent::KeyReleased {
+        text: Key::Escape.into(),
+    });
+    assert!(!lock(&shared).has_face_preview());
+    assert_eq!(lock(&shared).render_document().vmf(), &before);
+    assert_eq!(lock(&shared).history_snapshot(), history);
+    lock(&shared)
+        .preview_atlas_fit(
+            Actor::Agent,
+            &[face],
+            "test/checker",
+            rectangle,
+            snapshot,
+            None,
+        )
+        .unwrap();
+    let token = lock(&shared).face_preview_token();
+    let preview = lock(&shared).render_document().vmf().clone();
+    app.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Escape.into(),
+    });
+    app.window().dispatch_event(WindowEvent::KeyReleased {
+        text: Key::Escape.into(),
+    });
+    assert_eq!(lock(&shared).face_preview_token(), token);
+    assert_eq!(lock(&shared).render_document().vmf(), &preview);
+    assert!(app.get_message().contains("belongs to another actor"));
+    assert_eq!(lock(&shared).document().vmf(), &before);
+    assert_eq!(lock(&shared).history_snapshot(), history);
+    assert_eq!(lock(&shared).selected_faces(), vec![face]);
+    assert_eq!(lock(&shared).camera(), camera);
+    lock(&shared)
+        .cancel_owned_face_preview(Actor::Agent, token)
+        .unwrap();
+    app.hide().unwrap();
+}
+
+#[test]
 pub(crate) fn selection_outlines_control_shares_default_and_agent_view_without_map_changes() {
     slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
         i_slint_backend_testing::TestingBackendOptions {

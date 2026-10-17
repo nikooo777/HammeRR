@@ -195,6 +195,13 @@ pub(super) fn copy_clipboard_selection(app: &AppWindow, ui: &SharedUi, cut: bool
     }
 }
 
+pub(super) fn cancel_viewport_face_preview(app: &AppWindow, session: &mut Session) {
+    let token = session.face_preview_token();
+    if let Err(error) = session.cancel_owned_face_preview(Actor::User, token) {
+        app.set_message(error.into());
+    }
+}
+
 /// Keyboard commands; returns whether the key was handled.
 pub(super) fn command_key(
     app: &AppWindow,
@@ -337,9 +344,7 @@ pub(super) fn command_key(
             return true;
         }
         if session.has_face_preview() {
-            if let Err(error) = session.cancel_owned_face_preview(Actor::User, None) {
-                app.set_message(error.into());
-            }
+            cancel_viewport_face_preview(app, &mut session);
         } else if session.face_mode() {
             drop(session.select_faces(&[], SelectMode::Replace));
         } else {

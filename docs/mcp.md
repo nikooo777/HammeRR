@@ -29,6 +29,11 @@ While the editor runs, it serves MCP over HTTP at `http://127.0.0.1:7377/mcp`. A
 
 Use `--mcp-port <port>` to change the port, or `--no-mcp` to turn the server off.
 
+Editor exit stops new HTTP connections and closes active sessions. Network
+shutdown has a two-second grace period; a timeout remains a reported exit error.
+Owned blocking work finishes before the service is released. Multiple documents
+and an MCP document Close command remain unavailable.
+
 ### Without a window
 
 `hammerr-headless` serves MCP over stdin/stdout in a private session. It uses the same tools and editing operations as the desktop editor. Rendering still works; graphics start on the first render.

@@ -6,15 +6,15 @@ use std::collections::BTreeMap;
 
 use std::io::Cursor;
 
-use std::net::SocketAddr;
-
 use std::path::{Path, PathBuf};
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
+mod http;
 mod params;
 mod rendering;
 mod tools;
+pub use http::{HttpServer, spawn_http};
 use params::*;
 use rendering::{Offscreen, OffscreenState};
 
@@ -547,39 +547,6 @@ impl ServerHandler for EditorServer {
             ))
             .with_instructions(INSTRUCTIONS)
     }
-}
-
-/// Serves MCP over streamable HTTP at `http://<addr>/mcp` until the process
-/// exits. Runs on its own thread with its own async runtime.
-pub fn spawn_http(server: EditorServer, addr: SocketAddr) -> Result<SocketAddr, String> {
-    use rmcp::transport::streamable_http_server::{
-        StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
-    };
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
-        .enable_all()
-        .build()
-        .map_err(|e| e.to_string())?;
-    let listener = runtime
-        .block_on(tokio::net::TcpListener::bind(addr))
-        .map_err(|e| format!("MCP server could not listen on {addr}: {e}"))?;
-    let local = listener.local_addr().map_err(|e| e.to_string())?;
-    std::thread::Builder::new()
-        .name("mcp-http".into())
-        .spawn(move || {
-            let service: StreamableHttpService<EditorServer, LocalSessionManager> =
-                StreamableHttpService::new(
-                    move || Ok(server.clone()),
-                    Default::default(),
-                    StreamableHttpServerConfig::default(),
-                );
-            let router = axum::Router::new().nest_service("/mcp", service);
-            if let Err(e) = runtime.block_on(async { axum::serve(listener, router).await }) {
-                eprintln!("MCP server stopped: {e}");
-            }
-        })
-        .map_err(|e| e.to_string())?;
-    Ok(local)
 }
 
 /// Serves MCP over stdin/stdout until the client disconnects.

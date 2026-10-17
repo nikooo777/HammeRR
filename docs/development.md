@@ -2740,3 +2740,46 @@ drain behind a busy peer, exact scheduling failures and an actual worker unwind.
 Managed MCP consumers use the same queue without parking a Tokio worker while
 waiting. Background validation polls queued/running/cancelling through the
 shared `ACTIVE_JOB_STATUSES` helper.
+
+### Native activity ownership
+
+```sh
+cargo test -p native-runtime --lib
+cargo test -p editor-core --features mcp,test-support runtime::native_activity::tests
+cargo test -p editor-core --features mcp,test-support runtime::compile_queue::tests
+cargo test -p editor-core --features mcp,test-support game::native_activity_tests
+cargo test -p editor native_activity_status_keeps_runtime_errors_and_unrelated_build_controls_available
+```
+
+These use private authorities, fake child processes and controlled capture
+receipts. They cover frozen installation bindings, nonblocking special-file
+rejection, exact capture-to-Play ownership, worker/publication unwind order,
+checked cleanup, retained logs/results and shared UI/MCP status. They require
+no game or desktop input. Native engine capture and appearance parity remain
+separate checks.
+
+### Owned document-window retirement
+
+```sh
+cargo test -p editor ui::document_window::tests:: -- --ignored
+```
+
+The four fixtures construct actual document-window owners using the software
+window backend and an offscreen GPU. They exercise visible direct/nested
+windows, all four timer owners, frame/input cleanup, a live peer, deliberately
+retained MCP ownership and memoized hide/borrow failures. No desktop windows
+or input are used. The acknowledgement covers owned UI references; retained
+MCP servers and Session/render caches have their own lifetimes.
+
+### Owned HTTP transport
+
+```sh
+cargo test -p editor-core --features mcp,test-support mcp::http::tests
+```
+
+Real loopback clients exercise initialization and tool dispatch, idle SSE
+sessions, blocked admitted work, stalled request bodies, memoized shutdown
+errors, cache ownership and same-address rebinding. The server runtime retires
+before its last idle document anchor. These checks open no desktop windows and
+require no game. Stop/join acknowledges local service teardown; it does not
+acknowledge delivery of a future MCP Close result.

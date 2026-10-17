@@ -70,6 +70,7 @@ const ACTIVITY_SHOWN: usize = 30;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse()?;
+    let mut http = None;
     let application = Application::open(&args)?;
     let document = application.document();
     let result = (|| {
@@ -89,7 +90,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mcp_status = match args.mcp_port {
             Some(port) => {
                 match mcp::spawn_http(server, SocketAddr::from((Ipv4Addr::LOCALHOST, port))) {
-                    Ok(addr) => format!("MCP http://{addr}/mcp"),
+                    Ok(server) => {
+                        let status = format!("MCP http://{}/mcp", server.local_addr());
+                        http = Some(server);
+                        status
+                    }
                     Err(message) => message,
                 }
             }
@@ -98,5 +103,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         ui::run(document, ctx, mcp_status, application.open_message.clone())
     })();
-    application.finish(result)
+    if let Some(server) = &mut http {
+        server.stop();
+    }
+    let result = application.finish(result);
+    match http {
+        Some(server) => server.finish(result),
+        None => result,
+    }
 }

@@ -1,3 +1,5 @@
+pub mod model_lighting;
+
 use source_formats::bsp::Bsp;
 use source_formats::gamefs::{GameFs, Mount, MountedPath};
 use std::os::unix::fs::PermissionsExt;

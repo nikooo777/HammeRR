@@ -11,6 +11,7 @@ use source_formats::vmf::{Color, Entity, Solid, Vmf};
 use crate::helpers::bulb_model;
 use crate::materials::{MaterialId, MaterialLibrary};
 
+mod model_lighting;
 #[cfg(test)]
 mod selection_outline_tests;
 mod terrain;
@@ -853,6 +854,8 @@ impl Builder<'_> {
                 lighting_receiver: 0,
             });
         }
+        let mut lighting = (self.lighting.report.active && material_override.is_none())
+            .then(|| model_lighting::Admission::new(instance));
         let materials = instance.asset.materials();
         for part in model.parts_for_body(instance.body) {
             let material_index = model.skins[instance.skin][part.material];
@@ -873,6 +876,14 @@ impl Builder<'_> {
                     }
                 }
             };
+            if let Some(lighting) = &mut lighting {
+                lighting.part(
+                    part,
+                    self.library.get(material),
+                    &self.vertices[first as usize..],
+                    self.tool_textures,
+                );
+            }
             let indices = part.indices.iter().map(|&index| first + index);
             if material_override.is_none()
                 && instance.appearance.mode == source_formats::render_color::TEXTURE
@@ -913,6 +924,13 @@ impl Builder<'_> {
                     }
                 }
             }
+        }
+        if let Some(lighting) = lighting {
+            lighting.finish(
+                instance,
+                &mut self.vertices[first as usize..],
+                &mut self.lighting.report,
+            );
         }
         self.stats.model_entities += 1;
     }

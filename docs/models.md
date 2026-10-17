@@ -85,6 +85,38 @@ authored `modelscale` property in the BSP, but its native effect depends on the
 entity class. Animation, timed scale inputs, physics/collision and native
 appearance parity are not evaluated by this preview.
 
+## Preview authored lighting
+
+1. Under **VIEWPORT**, enable **Unshadowed authored lighting** in **Textured** view.
+2. Choose **Detail · per-fragment lighting** or **Fast · vertex lighting**, then
+   adjust **Lighting exposure (EV)**. Fast can miss small light pools on large
+   model triangles.
+3. Read the lighting status for admitted/excluded model instances, selected parts
+   and drawn triangles. One unsupported selected material leaves the entire
+   model under ordinary shading, with a reason naming its entity and material.
+4. After changing a model material, use **Reload material assets**. Its cached
+   display and lighting admission refresh together. Use **Reload models** for
+   changed geometry.
+
+Models use the same bounded unshadowed point/spot lights as brushes and terrain.
+Selected bodygroups and skins, supported uniform scale, rotated world normals,
+RGB tint and selection tint are included. Only opaque single-base
+`VertexLitGeneric` materials and **Normal** render mode (0) qualify. The basic
+material subset accepts `$basetexture` and nonshading metadata; declared bump,
+normal, blend/detail, environment, Phong, half-Lambert, color/alpha modulation,
+texture transforms, animation, proxies and nested fallback/effect blocks are
+excluded. **Texture · opacity** (2) keeps its ordinary display even at amount 255.
+
+Receiver positions must fit ±16384 and every drawn selected triangle needs safe
+finite world normals. Base images must be static single-frame 2D LDR RGB/BGR/
+RGBA/BGRA8888 or DXT1/3/5. Rejection preserves model geometry, source and history.
+Hidden/region-excluded models, blank-body helpers and literal FGD mesh guides do
+not enter model receiver counts. Suppressed tool-material batches contribute zero
+drawn triangles. No model normal-map composition, shadows, sunlight, ambient,
+bounce, animation, physics or native brightness parity is provided. The preview
+starts off; temporary MCP `render_view` lighting options leave shared settings
+unchanged. `get_lighting_preview` reports the same CPU admission without graphics.
+
 Limits: MDL versions 44/48 with VVD4 and DX90 VTX7 companions and LOD 0. Unsupported, missing or malformed model geometry retains a helper; inspection reports the reason. Attachment positions follow default local bone poses; animated, procedural/IK and included-model virtual attachment results are not evaluated. Attachment parenting and placement tools remain planned. Animation playback, procedural/IK poses, flexes, other render modes and baked prop lighting remain planned. Tint preview supports integer RGB channels from 0 to 255; an authored fourth component is preserved when editing RGB and does not control opacity. Nonwhite static-prop tints, nonnormal render modes and unsupported Render FX are rejected by the current compiler output and retain a helper; these are writer limits. `prop_static` requires a model built as a static prop and body 0; use a compatible dynamic entity for reference poses, scale or other bodygroup selections. Entirely blank choices show an editor helper, which remains selectable. Bodygroup choices and supported scales change displayed geometry; preview mesh hits and bounds do not validate engine collision shapes. Marquee and volume selection use loaded models’ transformed asset bounds; point picking intersects triangles even at zero opacity. Hidden models are excluded from region matching. Unsupported assets retain their existing helper bounds. **Reload models** refreshes model geometry; **Reload material assets** refreshes cached material contents and repeats material-path lookup using the cached MDL directories. If no candidate exists, the existing bare-name lookup remains visible in **Show materials** and missing images use the missing-texture display. Search failures expose a material-resolution error and discard the previous display bindings. See [Reload changed materials](textures.md#reload-changed-materials).
 
 HammeRR limits each companion file to 64 MiB, the model cache to 128 entries and 256 MiB, and a scene to one million model vertices and six million model indices. Reference pose decoding supports up to 256 bones and three weights per vertex. Entities beyond those budgets retain helpers. These are editor resource limits. Inspection and rendering preserve map properties and Undo history.

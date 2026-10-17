@@ -14,6 +14,8 @@ fn fixture() -> (tempfile::TempDir, Application, PathBuf) {
     state.use_application_recent_maps(recent_maps.clone());
     state.use_application_shortcuts(shortcuts.clone());
     state.use_application_saved_defaults(saved_defaults.clone());
+    let build_recipes = build_recipes::Authority::configured(Ok(path.clone()));
+    state.use_application_build_recipes(build_recipes.clone());
     state.configure_recovery(Ok(path.clone()));
     state
         .create_block(
@@ -36,6 +38,7 @@ fn fixture() -> (tempfile::TempDir, Application, PathBuf) {
         recent_maps,
         shortcuts,
         saved_defaults,
+        build_recipes,
         session,
         open_message: None,
         finished: None,

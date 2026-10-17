@@ -5,6 +5,8 @@ mod instance_dependency_tests;
 #[cfg(test)]
 mod instance_rejection_tests;
 #[cfg(test)]
+mod recipe_authority_tests;
+#[cfg(test)]
 mod reflection_settings_tests;
 #[cfg(test)]
 mod sky_packing_settings_tests;
@@ -55,14 +57,14 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect built-in Fast preview/Final lighting and up to 32 custom build recipes, their exact supported compiler settings, active recipe identity, registry revision, storage errors and frozen-job rules. Does not build or change the map."
+        description = "Inspect built-in Fast preview/Final lighting and up to 32 custom build recipes, their exact supported compiler settings, active recipe identity, per-Session action revision, storage errors and frozen-job rules. Does not build or change the map."
     )]
     pub(in crate::mcp) fn get_build_recipes(&self) -> ToolResult {
         ok(self.session().build_recipes())
     }
 
     #[tool(
-        description = "Reload the complete saved build recipe list through the same Session operation as Reload recipes in Build settings/Build details. Failed bounded read or validation preserves the valid list and active identity, exposes an error and blocks custom writes until repair and successful Reload. Optional revision rejects stale requests; active builds and closing block Reload. Current compiler options, map/history/camera, pending reviews and captured jobs are unchanged. Active identity is retained with its saved name only if the same recipe still matches current options. Does not apply settings, initialize graphics, coordinate writers or share recipe state across Sessions."
+        description = "Reload the complete saved build recipe list through the same Session operation as Reload recipes in Build settings/Build details. Failed bounded read or validation preserves the valid list and active identity, exposes an error and blocks custom writes until repair and successful Reload. Optional revision rejects stale requests; an active build in the originating document and closing block Reload. Current compiler options, map/history/camera, pending reviews and captured jobs are unchanged. Active identity is retained with its saved name only if the same recipe still matches current options. Attached Sessions share the saved list; current options and jobs stay document-local. Does not apply settings, initialize graphics or coordinate separate processes."
     )]
     pub(in crate::mcp) fn reload_build_recipes(
         &self,
@@ -75,7 +77,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Save current shared compiler settings as a named custom recipe, or replace an existing custom recipe with replace_id. Names are unique ignoring case and at most 80 UTF-8 bytes. Built-ins are immutable. Atomic bounded persistence leaves preferences unchanged on failure. Active builds block edits; VMF and undo remain unchanged."
+        description = "Save current document compiler settings as a named custom recipe, or replace an existing custom recipe with replace_id. Names are unique ignoring case and at most 80 UTF-8 bytes. Built-ins are immutable. Atomic bounded persistence leaves preferences unchanged on failure. Active builds in the originating document block edits; optional action revision rejects changed recipes or local settings; VMF and undo remain unchanged."
     )]
     pub(in crate::mcp) fn save_build_recipe(
         &self,
@@ -92,7 +94,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Rename an existing custom build recipe without changing its settings. Built-ins are immutable; active builds block edits. Existing jobs retain their captured name. Optional revision rejects stale edits; VMF and undo remain unchanged."
+        description = "Rename an existing custom build recipe without changing its settings. Built-ins are immutable; active builds in the originating document block edits. Existing jobs retain their captured name. Optional action revision rejects changed saved recipes or local settings; VMF and undo remain unchanged."
     )]
     pub(in crate::mcp) fn rename_build_recipe(
         &self,
@@ -105,7 +107,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Delete an existing custom build recipe. Current compiler settings and completed job provenance remain unchanged; deleting the active recipe clears its current label. Built-ins cannot be deleted; active builds block edits. Optional revision rejects stale edits; VMF and undo remain unchanged."
+        description = "Delete an existing custom build recipe. Current compiler settings and completed job provenance remain unchanged; deleting the active recipe clears its current label. Built-ins cannot be deleted; active builds in the originating document block edits. Optional action revision rejects changed saved recipes or local settings; VMF and undo remain unchanged."
     )]
     pub(in crate::mcp) fn delete_build_recipe(
         &self,
@@ -118,7 +120,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Apply all settings from a built-in or custom recipe through shared Session build settings. Does not start a build. Active builds block applying; different values stale prior output. Final lighting selects Direct LDR, engine physics, Detailed visibility/sampling, four bounces and 45-degree smoothing; it retains the experimental compiler's limits. Optional revision rejects stale edits; VMF and undo remain unchanged."
+        description = "Apply all settings from a built-in or custom recipe through shared Session build settings. Does not start a build. Active builds in the originating document block applying; different values stale prior output. Final lighting selects Direct LDR, engine physics, Detailed visibility/sampling, four bounces and 45-degree smoothing; it retains the experimental compiler's limits. Optional action revision rejects changed saved recipes or local settings; VMF and undo remain unchanged."
     )]
     pub(in crate::mcp) fn apply_build_recipe(
         &self,

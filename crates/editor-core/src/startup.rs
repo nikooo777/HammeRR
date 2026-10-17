@@ -1,6 +1,6 @@
 use crate::runtime::{SharedSession, lock};
 use crate::session::{Actor, Session};
-use crate::{material_favorites, recent_maps, recovery, shortcuts, steam};
+use crate::{build_recipes, material_favorites, recent_maps, recovery, shortcuts, steam};
 use source_formats::{fgd::Catalog, gamefs::GameFs};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -114,6 +114,7 @@ pub struct Application {
     pub recent_maps: recent_maps::Authority,
     pub shortcuts: shortcuts::Authority,
     pub saved_defaults: crate::saved_defaults::SavedDefaults,
+    pub build_recipes: build_recipes::Authority,
     pub session: SharedSession,
     pub open_message: Option<Result<String, String>>,
     finished: Option<Result<(), String>>,
@@ -141,6 +142,8 @@ impl Application {
         lock(&session).use_application_recent_maps(recent_maps.clone());
         let shortcuts = shortcuts::Authority::configured(directory.clone());
         lock(&session).use_application_shortcuts(shortcuts.clone());
+        let build_recipes = build_recipes::Authority::configured(directory.clone());
+        lock(&session).use_application_build_recipes(build_recipes.clone());
         lock(&session).configure_recovery(directory);
         let worker = recovery::Worker::start(&session)?;
         let shutdown = ShutdownGuard {
@@ -171,6 +174,7 @@ impl Application {
             recent_maps,
             shortcuts,
             saved_defaults,
+            build_recipes,
             session,
             open_message,
             finished: None,

@@ -1,314 +1,161 @@
-use std::collections::HashSet;
-use std::fs;
-use std::io::Read;
-use std::path::{Path, PathBuf};
-
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
-
 use super::Session;
-use crate::session::Actor;
-
-const FILE_NAME: &str = "build-recipes.json";
-const VERSION: u32 = 1;
-const MAX_RECIPES: usize = 32;
-const MAX_NAME_BYTES: usize = 80;
-const MAX_FILE_BYTES: usize = 65_536;
-const MAX_ERROR_BYTES: usize = 512;
-
-#[derive(Clone, Serialize)]
-pub(super) struct Identity {
-    id: String,
-    name: String,
-}
-
+pub(super) use crate::build_recipes::Identity;
+use crate::build_recipes::{
+    self, Authority, Edit, MAX_FILE_BYTES, MAX_NAME_BYTES, MAX_RECIPES, Snapshot, builtins,
+};
 use crate::build_settings::BuildSettings as Settings;
+use crate::session::Actor;
+use serde_json::{Value, json};
+use std::cell::Cell;
+use std::path::PathBuf;
 
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Recipe {
-    id: String,
-    name: String,
-    settings: Settings,
+pub(super) enum Binding {
+    Independent(Authority),
+    Application(Authority),
 }
-
-impl Recipe {
-    fn identity(&self) -> Identity {
-        Identity {
-            id: self.id.clone(),
-            name: self.name.clone(),
-        }
-    }
-
-    fn json(&self, builtin: bool) -> Value {
-        let options = self
-            .settings
-            .options()
-            .expect("recipe settings are validated");
-        let description = format!(
-            "{} · {} · {} · {} · {} · {}° brush smoothing · reflections {} · sky packing {}",
-            options.lighting.label(),
-            options.physics.label(),
-            options.visibility.label(),
-            options.sky_quality.label(),
-            compiler::bounce_label(options.bounces),
-            options.smoothing_angle,
-            if options.generate_reflections {
-                "on"
-            } else {
-                "off"
-            },
-            if options.pack_sky_assets { "on" } else { "off" }
-        );
-        json!({"id":self.id,"name":self.name,"builtin":builtin,"settings":self.settings,"description":description})
-    }
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct File {
-    version: u32,
-    next_id: u64,
-    recipes: Vec<Recipe>,
-}
-
-impl Default for File {
+impl Default for Binding {
     fn default() -> Self {
-        Self {
-            version: VERSION,
-            next_id: 1,
-            recipes: Vec::new(),
+        Self::Independent(Authority::default())
+    }
+}
+impl Binding {
+    fn authority(&self) -> &Authority {
+        match self {
+            Self::Independent(authority) | Self::Application(authority) => authority,
         }
     }
 }
 
 pub(super) struct State {
-    file: File,
-    revision: u64,
-    path: Option<PathBuf>,
-    disk: Option<Vec<u8>>,
-    load_failed: bool,
-    error: Option<String>,
+    binding: Binding,
     pub(super) active: Option<Identity>,
+    local_revision: u64,
+    observed: Cell<(u64, u64)>,
+    revision: Cell<u64>,
 }
-
 impl Default for State {
     fn default() -> Self {
         Self {
-            file: File::default(),
-            revision: 1,
-            path: None,
-            disk: None,
-            load_failed: false,
-            error: None,
+            binding: Binding::default(),
             active: Some(builtins()[0].identity()),
+            local_revision: 0,
+            observed: Cell::new((0, 0)),
+            revision: Cell::new(0),
         }
     }
 }
-
-fn builtins() -> [Recipe; 2] {
-    [
-        Recipe {
-            id: "fast".into(),
-            name: "Fast preview".into(),
-            settings: compiler::Options::default().into(),
-        },
-        Recipe {
-            id: "final".into(),
-            name: "Final lighting".into(),
-            settings: compiler::Options {
-                lighting: compiler::LightingMode::DirectLdr,
-                physics: compiler::PhysicsMode::Engine,
-                sky_quality: compiler::SkyQuality::Detailed,
-                visibility: compiler::VisibilityMode::Detailed,
-                bounces: compiler::MAX_LIGHT_BOUNCES,
-                smoothing_angle: 45,
-                generate_reflections: false,
-                pack_sky_assets: false,
-            }
-            .into(),
-        },
-    ]
-}
-
-fn recipe_name(name: &str) -> Result<String, String> {
-    let name = name.trim();
-    if name.is_empty() || name.len() > MAX_NAME_BYTES || name.chars().any(char::is_control) {
-        return Err(format!(
-            "Recipe name must contain 1–{MAX_NAME_BYTES} bytes without control characters"
-        ));
-    }
-    Ok(name.into())
-}
-
-fn validate(file: &File) -> Result<(), String> {
-    if file.version != VERSION || file.recipes.len() > MAX_RECIPES || file.next_id == 0 {
-        return Err("Unsupported or oversized build recipe file".into());
-    }
-    let mut ids = HashSet::new();
-    let mut names = builtins()
-        .map(|recipe| recipe.name.to_lowercase())
-        .into_iter()
-        .collect::<HashSet<_>>();
-    for recipe in &file.recipes {
-        let id = recipe
-            .id
-            .strip_prefix("custom:")
-            .and_then(|id| id.parse::<u64>().ok())
-            .filter(|id| *id > 0 && *id < file.next_id)
-            .ok_or("Invalid custom recipe identifier")?;
-        if !ids.insert(id) || !names.insert(recipe.name.to_lowercase()) {
-            return Err("Duplicate build recipe identifier or name".into());
+impl State {
+    fn revision(&self, shared: u64) -> u64 {
+        let current = (shared, self.local_revision);
+        if self.observed.get() != current {
+            self.revision.set(
+                self.revision
+                    .get()
+                    .checked_add(1)
+                    .expect("Build recipe form revisions exhausted"),
+            );
+            self.observed.set(current);
         }
-        if recipe_name(&recipe.name)? != recipe.name {
-            return Err("Stored recipe name must not have surrounding whitespace".into());
+        self.revision.get()
+    }
+    pub(super) fn set_active(&mut self, active: Option<Identity>) {
+        if self.active != active {
+            self.active = active;
+            self.changed_local();
         }
-        recipe.settings.options()?;
     }
-    Ok(())
-}
-
-fn read(path: &Path) -> Result<Option<Vec<u8>>, String> {
-    let file = match fs::File::open(path) {
-        Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(format!("{}: {error}", path.display())),
-    };
-    let mut bytes = Vec::new();
-    file.take(MAX_FILE_BYTES as u64 + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|error| format!("{}: {error}", path.display()))?;
-    if bytes.len() > MAX_FILE_BYTES {
-        return Err(format!("Build recipe file exceeds {MAX_FILE_BYTES} bytes"));
+    pub(super) fn changed_local(&mut self) {
+        self.local_revision = self
+            .local_revision
+            .checked_add(1)
+            .expect("Build recipe local revisions exhausted");
     }
-    Ok(Some(bytes))
-}
-
-fn load(path: &Path) -> Result<(File, Option<Vec<u8>>), String> {
-    let disk = read(path)?;
-    let file = match &disk {
-        Some(bytes) => serde_json::from_slice(bytes).map_err(|error| error.to_string())?,
-        None => File::default(),
-    };
-    validate(&file)?;
-    Ok((file, disk))
 }
 
 impl Session {
-    pub fn configure_build_recipes(&mut self, directory: Result<PathBuf, String>) {
-        let path = match std::env::var_os("HAMMERR_BUILD_RECIPES") {
-            Some(path) if path.is_empty() => {
-                Err("HAMMERR_BUILD_RECIPES must be a file path".into())
-            }
-            Some(path) => Ok(PathBuf::from(path)),
-            None => directory.map(|directory| directory.join(FILE_NAME)),
-        };
-        self.configure_build_recipes_at(path);
+    pub fn with_build_recipes(
+        game: Result<source_formats::gamefs::GameFs, String>,
+        authority: Authority,
+    ) -> Self {
+        let mut session = Self::new(game);
+        session.use_application_build_recipes(authority);
+        session
     }
-
+    pub(crate) fn use_application_build_recipes(&mut self, authority: Authority) {
+        self.compilation.recipes.binding = Binding::Application(authority);
+        self.compilation.recipes.changed_local();
+        if let Some(error) = self
+            .compilation
+            .recipes
+            .binding
+            .authority()
+            .snapshot()
+            .error
+        {
+            self.log(Actor::System, error);
+        }
+    }
+    pub fn configure_build_recipes(&mut self, directory: Result<PathBuf, String>) {
+        if matches!(self.compilation.recipes.binding, Binding::Independent(_)) {
+            self.configure_build_recipes_at(build_recipes::configured_path(directory));
+        }
+    }
     fn configure_build_recipes_at(&mut self, path: Result<PathBuf, String>) {
-        let loaded = path
-            .as_ref()
-            .map_err(Clone::clone)
-            .and_then(|path| load(path));
-        let state = &mut self.compilation.recipes;
-        state.path = path.ok();
-        state.revision += 1;
-        match loaded {
-            Ok((file, disk)) => {
-                state.file = file;
-                state.disk = disk;
-                state.load_failed = false;
-                state.error = None;
-                if state
+        let result = match &self.compilation.recipes.binding {
+            Binding::Independent(authority) => authority.configure_at(path),
+            Binding::Application(_) => return,
+        };
+        match result {
+            Ok(()) => {
+                if self
+                    .compilation
+                    .recipes
                     .active
                     .as_ref()
                     .is_some_and(|active| active.id.starts_with("custom:"))
                 {
-                    state.active = None;
+                    self.compilation.recipes.set_active(None);
                 }
             }
-            Err(error) => {
-                state.load_failed = true;
-                let error = format!("Build recipes could not load: {error}");
-                state.error = Some(error.clone());
-                self.log(Actor::System, error);
-            }
+            Err(error) => self.log(Actor::System, error),
         }
     }
-
+    pub(super) fn active_build_recipe(&self) -> Option<Identity> {
+        let snapshot = self.compilation.recipes.binding.authority().snapshot();
+        snapshot.identity(
+            self.compilation.recipes.active.as_ref(),
+            self.compilation.options,
+        )
+    }
     pub fn build_recipes(&self) -> Value {
-        let state = &self.compilation.recipes;
+        self.build_recipes_observation().0
+    }
+    pub fn build_recipes_observation(&self) -> (Value, u64) {
+        let snapshot = self.compilation.recipes.binding.authority().snapshot();
+        (
+            self.build_recipes_with_snapshot(&snapshot),
+            snapshot.revision,
+        )
+    }
+    fn build_recipes_with_snapshot(&self, snapshot: &Snapshot) -> Value {
         let recipes = builtins()
             .iter()
             .map(|recipe| recipe.json(true))
-            .chain(state.file.recipes.iter().map(|recipe| recipe.json(false)))
+            .chain(
+                snapshot
+                    .file
+                    .recipes
+                    .iter()
+                    .map(|recipe| recipe.json(false)),
+            )
             .collect::<Vec<_>>();
-        json!({
-            "revision":state.revision,"recipes":recipes,"active":state.active,
-            "editable":!self.compiling && !self.closing,
-            "custom_editable":!self.compiling && !self.closing && !state.load_failed,
-            "persistence":if state.load_failed {"blocked"} else if state.path.is_some() {"persistent"} else {"session"},
-            "path":state.path,"error":state.error,
-            "limits":{"custom_recipes":MAX_RECIPES,"name_bytes":MAX_NAME_BYTES,"file_bytes":MAX_FILE_BYTES},
-            "settings":Settings::from(self.compilation.options),
-            "job_rule":"Active builds freeze settings and recipe changes. Jobs retain their original recipe name and options. Applying different settings makes previous output stale; names alone do not.",
-        })
+        json!({"revision":self.compilation.recipes.revision(snapshot.revision),"recipes":recipes,"active":snapshot.identity(self.compilation.recipes.active.as_ref(),self.compilation.options),
+            "editable":!self.compiling&&!self.closing,"custom_editable":!self.compiling&&!self.closing&&!snapshot.load_failed,
+            "persistence":if snapshot.load_failed{"blocked"}else if snapshot.path.is_some(){"persistent"}else{"session"},"path":snapshot.path,"error":snapshot.error,
+            "limits":{"custom_recipes":MAX_RECIPES,"name_bytes":MAX_NAME_BYTES,"file_bytes":MAX_FILE_BYTES},"settings":Settings::from(self.compilation.options),
+            "job_rule":"Active builds block settings and recipe actions in their originating document. Peers may edit saved recipes; jobs retain their captured recipe name and options. Applying different settings makes previous output stale; names alone do not."})
     }
-
-    pub fn reload_build_recipes(
-        &mut self,
-        actor: Actor,
-        expected_revision: Option<u64>,
-    ) -> Result<Value, String> {
-        self.check_build_recipe_edit(expected_revision)?;
-        let path =
-            self.compilation.recipes.path.as_deref().ok_or(
-                "Build recipe storage is unavailable; session-only recipes remain editable",
-            )?;
-        let loaded = load(path);
-        let options = self.compilation.options;
-        let state = &mut self.compilation.recipes;
-        state.revision += 1;
-        match loaded {
-            Ok((file, disk)) => {
-                state.active = state.active.as_ref().and_then(|active| {
-                    builtins()
-                        .into_iter()
-                        .chain(file.recipes.iter().cloned())
-                        .find(|recipe| {
-                            recipe.id == active.id
-                                && recipe
-                                    .settings
-                                    .options()
-                                    .is_ok_and(|saved| saved == options)
-                        })
-                        .map(|recipe| recipe.identity())
-                });
-                state.file = file;
-                state.disk = disk;
-                state.load_failed = false;
-                state.error = None;
-                self.log(
-                    actor,
-                    "Reloaded build recipes; current build settings are unchanged",
-                );
-                Ok(self.build_recipes())
-            }
-            Err(error) => {
-                state.load_failed = true;
-                let error = map_core::entity_helpers::bounded_preview(
-                    &format!("Build recipes could not reload: {error}"),
-                    MAX_ERROR_BYTES,
-                );
-                state.error = Some(error.clone());
-                self.log(actor, &error);
-                Err(error)
-            }
-        }
-    }
-
-    fn check_build_recipe_edit(&self, expected_revision: Option<u64>) -> Result<(), String> {
+    fn check_build_recipe_edit(&self, expected: Option<u64>) -> Result<Option<u64>, String> {
         if self.closing {
             return Err("The editor is closing".into());
         }
@@ -317,61 +164,59 @@ impl Session {
                 "Wait for the active compile to finish before changing build recipes".into(),
             );
         }
-        if expected_revision.is_some_and(|revision| revision != self.compilation.recipes.revision) {
-            return Err(
-                "Build recipes changed; reload the list before applying this action".into(),
-            );
+        if let Some(expected) = expected {
+            let snapshot = self.compilation.recipes.binding.authority().snapshot();
+            if expected != self.compilation.recipes.revision(snapshot.revision) {
+                return Err(
+                    "Build recipes changed; reload the list before applying this action".into(),
+                );
+            }
+            Ok(Some(snapshot.revision))
+        } else {
+            Ok(None)
         }
-        Ok(())
     }
-
-    fn find_build_recipe(&self, id: &str) -> Result<Recipe, String> {
-        builtins()
-            .into_iter()
-            .chain(self.compilation.recipes.file.recipes.iter().cloned())
-            .find(|recipe| recipe.id == id)
-            .ok_or_else(|| "Build recipe no longer exists".into())
+    fn recipe_result<T>(&mut self, result: Result<T, String>) -> Result<T, String> {
+        if let Err(error) = &result
+            && error.starts_with("Build recipes could not save:")
+        {
+            self.log(Actor::System, error);
+        }
+        result
     }
-
-    fn publish_build_recipes(&mut self, file: File) -> Result<(), String> {
-        validate(&file)?;
-        let state = &mut self.compilation.recipes;
-        let result: Result<(), String> = (|| {
-            if state.load_failed {
-                return Err("Build recipes did not load; fix storage and Reload recipes before editing custom recipes".into());
+    pub fn reload_build_recipes(
+        &mut self,
+        actor: Actor,
+        expected_revision: Option<u64>,
+    ) -> Result<Value, String> {
+        let expected = self.check_build_recipe_edit(expected_revision)?;
+        let result = self
+            .compilation
+            .recipes
+            .binding
+            .authority()
+            .reload(expected);
+        match result {
+            Ok(snapshot) => {
+                let active = snapshot.identity(
+                    self.compilation.recipes.active.as_ref(),
+                    self.compilation.options,
+                );
+                self.compilation.recipes.set_active(active);
+                self.log(
+                    actor,
+                    "Reloaded build recipes; current build settings are unchanged",
+                );
+                Ok(self.build_recipes_with_snapshot(&snapshot))
             }
-            let bytes = serde_json::to_vec_pretty(&file).map_err(|error| error.to_string())?;
-            if bytes.len() > MAX_FILE_BYTES {
-                return Err("Build recipes exceed the storage limit".into());
-            }
-            if let Some(path) = &state.path {
-                if read(path)? != state.disk {
-                    return Err(
-                        "Build recipes changed on disk; Reload recipes before editing".into(),
-                    );
+            Err(error) => {
+                if error.starts_with("Build recipes could not reload:") {
+                    self.log(actor, &error);
                 }
-                let directory = path
-                    .parent()
-                    .filter(|path| !path.as_os_str().is_empty())
-                    .unwrap_or(Path::new("."));
-                fs::create_dir_all(directory).map_err(|error| error.to_string())?;
-                crate::recovery::atomic_write(path, &bytes)?;
-                state.disk = Some(bytes);
+                Err(error)
             }
-            Ok(())
-        })();
-        if let Err(error) = result {
-            let error = format!("Build recipes could not save: {error}");
-            state.error = Some(error.clone());
-            self.log(Actor::System, &error);
-            return Err(error);
         }
-        state.file = file;
-        state.revision += 1;
-        state.error = None;
-        Ok(())
     }
-
     pub fn save_build_recipe(
         &mut self,
         actor: Actor,
@@ -379,43 +224,20 @@ impl Session {
         replace_id: Option<&str>,
         expected_revision: Option<u64>,
     ) -> Result<Value, String> {
-        self.check_build_recipe_edit(expected_revision)?;
-        let name = recipe_name(name)?;
-        let mut file = self.compilation.recipes.file.clone();
-        let id = match replace_id {
-            Some(id) => {
-                if !file.recipes.iter().any(|recipe| recipe.id == id) {
-                    return Err(
-                        "Choose an existing custom recipe; built-in recipes cannot change".into(),
-                    );
-                }
-                id.to_owned()
-            }
-            None => {
-                if file.recipes.len() == MAX_RECIPES {
-                    return Err(format!("Keep at most {MAX_RECIPES} custom build recipes"));
-                }
-                let id = format!("custom:{}", file.next_id);
-                file.next_id = file
-                    .next_id
-                    .checked_add(1)
-                    .ok_or("Build recipe identifiers exhausted")?;
-                id
-            }
-        };
-        let recipe = Recipe {
-            id: id.clone(),
-            name,
-            settings: self.compilation.options.into(),
-        };
-        file.recipes.retain(|recipe| recipe.id != id);
-        file.recipes.push(recipe.clone());
-        self.publish_build_recipes(file)?;
-        self.compilation.recipes.active = Some(recipe.identity());
+        let expected = self.check_build_recipe_edit(expected_revision)?;
+        let result = self.compilation.recipes.binding.authority().edit(
+            expected,
+            Edit::Save {
+                name,
+                replace: replace_id,
+                settings: self.compilation.options.into(),
+            },
+        );
+        let (recipe, snapshot) = self.recipe_result(result)?;
+        self.compilation.recipes.set_active(Some(recipe.identity()));
         self.log(actor, format!("Saved build recipe {}", recipe.name));
-        Ok(self.build_recipes())
+        Ok(self.build_recipes_with_snapshot(&snapshot))
     }
-
     pub fn rename_build_recipe(
         &mut self,
         actor: Actor,
@@ -423,40 +245,14 @@ impl Session {
         name: &str,
         expected_revision: Option<u64>,
     ) -> Result<Value, String> {
-        self.check_build_recipe_edit(expected_revision)?;
-        let name = recipe_name(name)?;
-        let mut file = self.compilation.recipes.file.clone();
-        let recipe = file
+        let expected = self.check_build_recipe_edit(expected_revision)?;
+        let result = self
+            .compilation
             .recipes
-            .iter_mut()
-            .find(|recipe| recipe.id == id)
-            .ok_or("Choose an existing custom recipe; built-in recipes cannot change")?;
-        recipe.name = name.clone();
-        self.publish_build_recipes(file)?;
-        if let Some(active) = &mut self.compilation.recipes.active
-            && active.id == id
-        {
-            active.name = name.clone();
-        }
-        self.log(actor, format!("Renamed build recipe to {name}"));
-        Ok(self.build_recipes())
-    }
-
-    pub fn delete_build_recipe(
-        &mut self,
-        actor: Actor,
-        id: &str,
-        expected_revision: Option<u64>,
-    ) -> Result<Value, String> {
-        self.check_build_recipe_edit(expected_revision)?;
-        let mut file = self.compilation.recipes.file.clone();
-        let index = file
-            .recipes
-            .iter()
-            .position(|recipe| recipe.id == id)
-            .ok_or("Choose an existing custom recipe; built-in recipes cannot be deleted")?;
-        let recipe = file.recipes.remove(index);
-        self.publish_build_recipes(file)?;
+            .binding
+            .authority()
+            .edit(expected, Edit::Rename { id, name });
+        let (recipe, snapshot) = self.recipe_result(result)?;
         if self
             .compilation
             .recipes
@@ -464,36 +260,70 @@ impl Session {
             .as_ref()
             .is_some_and(|active| active.id == id)
         {
-            self.compilation.recipes.active = None;
+            self.compilation.recipes.set_active(Some(recipe.identity()));
+        }
+        self.log(actor, format!("Renamed build recipe to {}", recipe.name));
+        Ok(self.build_recipes_with_snapshot(&snapshot))
+    }
+    pub fn delete_build_recipe(
+        &mut self,
+        actor: Actor,
+        id: &str,
+        expected_revision: Option<u64>,
+    ) -> Result<Value, String> {
+        let expected = self.check_build_recipe_edit(expected_revision)?;
+        let result = self
+            .compilation
+            .recipes
+            .binding
+            .authority()
+            .edit(expected, Edit::Delete { id });
+        let (recipe, snapshot) = self.recipe_result(result)?;
+        if self
+            .compilation
+            .recipes
+            .active
+            .as_ref()
+            .is_some_and(|active| active.id == id)
+        {
+            self.compilation.recipes.set_active(None);
         }
         self.log(actor, format!("Deleted build recipe {}", recipe.name));
-        Ok(self.build_recipes())
+        Ok(self.build_recipes_with_snapshot(&snapshot))
     }
-
     pub fn apply_build_recipe(
         &mut self,
         actor: Actor,
         id: &str,
         expected_revision: Option<u64>,
     ) -> Result<Value, String> {
-        self.check_build_recipe_edit(expected_revision)?;
-        let recipe = self.find_build_recipe(id)?;
+        let expected = self.check_build_recipe_edit(expected_revision)?;
+        let (recipe, snapshot) = self
+            .compilation
+            .recipes
+            .binding
+            .authority()
+            .find(id, expected)?;
         self.update_build_settings(actor, recipe.settings.update())?;
-        self.compilation.recipes.active = Some(recipe.identity());
+        self.compilation.recipes.set_active(Some(recipe.identity()));
         self.log(actor, format!("Applied build recipe {}", recipe.name));
-        Ok(self.build_recipes())
+        Ok(self.build_recipes_with_snapshot(&snapshot))
     }
 }
 
+#[cfg(test)]
+mod authority_tests;
 #[cfg(test)]
 mod reload_tests;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::build_recipes::{FILE_NAME, File, Recipe, VERSION, validate};
     use crate::session::compilation::BuildSettingsUpdate;
     use map_core::Document;
     use source_formats::keyvalues::WriteOptions;
+    use std::fs;
 
     fn session() -> Session {
         Session::new(Err("no game needed".into()))
@@ -543,11 +373,18 @@ mod tests {
             let revision = saved["revision"].as_u64().unwrap();
             session.apply_build_recipe(actor, "fast", None).unwrap();
             assert_eq!(session.compile_settings()["lighting"], "fullbright");
+            assert!(
+                session
+                    .apply_build_recipe(actor, &id, Some(revision))
+                    .is_err()
+            );
+            let revision = session.build_recipes()["revision"].as_u64().unwrap();
             session
                 .apply_build_recipe(actor, &id, Some(revision))
                 .unwrap();
             assert_eq!(session.compile_settings()["lighting"], "direct_ldr");
             assert_eq!(session.compile_settings()["physics"], "none");
+            let revision = session.build_recipes()["revision"].as_u64().unwrap();
             session
                 .rename_build_recipe(actor, &id, "Night pass", Some(revision))
                 .unwrap();

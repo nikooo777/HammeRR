@@ -286,3 +286,37 @@ fn oversized_replacement_is_reviewed_before_explicit_reset_for_every_store() {
         assert_eq!(kind.state(&session)["ready"], true);
     }
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn guard_drop_unlocks_while_a_duplicate_descriptor_remains_open() {
+    let directory = tempfile::tempdir().unwrap();
+    let acquire = || {
+        WriteLock::acquire(
+            directory.path(),
+            ".preferences.lock",
+            "test preferences",
+            "Reload defaults",
+        )
+    };
+    let guard = acquire().unwrap();
+    let duplicate = guard.file.try_clone().unwrap();
+    let identity = duplicate.metadata().unwrap();
+    assert!(acquire().is_err());
+    drop(guard);
+
+    let successor = acquire().unwrap();
+    {
+        use std::os::unix::fs::MetadataExt;
+        let current = successor.file.metadata().unwrap();
+        assert_eq!(
+            (current.dev(), current.ino()),
+            (identity.dev(), identity.ino())
+        );
+    }
+    assert!(acquire().is_err());
+    drop(duplicate);
+    assert!(acquire().is_err());
+    drop(successor);
+    let _next = acquire().unwrap();
+}

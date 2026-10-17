@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 const FORMAT_VERSION: u32 = 1;
 const MAX_MANIFEST_BYTES: u64 = 32 * 1024;
+pub const MAX_SETTINGS_BYTES: u64 = 32 * 1024;
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -140,13 +141,39 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), String> {
 impl Store {
     pub fn load_settings(&self) -> Result<Settings, String> {
         let path = self.directory.join("settings.json");
-        let data = match fs::read(&path) {
-            Ok(data) => data,
+        let mut options = fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32);
+        }
+        let file = match options.open(&path) {
+            Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 return Ok(Settings::default());
             }
             Err(error) => return Err(format!("{}: {error}", path.display())),
         };
+        let metadata = file
+            .metadata()
+            .map_err(|error| format!("{}: {error}", path.display()))?;
+        if !metadata.is_file() || metadata.len() > MAX_SETTINGS_BYTES {
+            return Err(format!(
+                "{} must be a regular file of at most {MAX_SETTINGS_BYTES} bytes",
+                path.display()
+            ));
+        }
+        let mut data = Vec::new();
+        file.take(MAX_SETTINGS_BYTES + 1)
+            .read_to_end(&mut data)
+            .map_err(|error| format!("{}: {error}", path.display()))?;
+        if data.len() as u64 > MAX_SETTINGS_BYTES {
+            return Err(format!(
+                "{} exceeds {MAX_SETTINGS_BYTES} bytes",
+                path.display()
+            ));
+        }
         let settings: Settings =
             serde_json::from_slice(&data).map_err(|e| format!("{}: {e}", path.display()))?;
         settings.validate()?;
@@ -598,3 +625,70 @@ mod tests {
 
 #[cfg(test)]
 mod worker_tests;
+
+#[cfg(test)]
+mod settings_reload_tests {
+    use super::*;
+
+    #[test]
+    fn settings_loader_is_bounded_and_keeps_absent_defaults() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = Store {
+            directory: directory.path().to_owned(),
+        };
+        assert_eq!(store.load_settings().unwrap(), Settings::default());
+        let path = directory.path().join("settings.json");
+        fs::write(&path, vec![b' '; MAX_SETTINGS_BYTES as usize + 1]).unwrap();
+        assert!(store.load_settings().unwrap_err().contains("32768"));
+        fs::remove_file(&path).unwrap();
+        fs::create_dir(&path).unwrap();
+        assert!(store.load_settings().unwrap_err().contains("regular file"));
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn settings_loader_rejects_fifo_promptly_and_follows_regular_symlinks() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = Store {
+            directory: directory.path().to_owned(),
+        };
+        let path = directory.path().join("settings.json");
+        rustix::fs::mkfifoat(
+            rustix::fs::CWD,
+            &path,
+            rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
+        )
+        .unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let fifo_store = store.clone();
+        let worker = std::thread::spawn(move || sender.send(fifo_store.load_settings()).unwrap());
+        let result = receiver
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .expect("FIFO settings read must reject promptly");
+        worker.join().unwrap();
+        assert!(result.unwrap_err().contains("regular file"));
+        fs::remove_file(&path).unwrap();
+        let target = directory.path().join("target.json");
+        let settings = Settings {
+            enabled: false,
+            interval_seconds: 90,
+            keep_per_map: 3,
+        };
+        fs::write(&target, serde_json::to_vec(&settings).unwrap()).unwrap();
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+        assert_eq!(store.load_settings().unwrap(), settings);
+        let original = fs::metadata(&target).unwrap().permissions();
+        let mut readonly = original.clone();
+        readonly.set_readonly(true);
+        fs::set_permissions(&target, readonly).unwrap();
+        assert_eq!(store.load_settings().unwrap(), settings);
+        assert!(
+            store
+                .save_settings(&Settings::default())
+                .unwrap_err()
+                .contains("read-only")
+        );
+        assert!(fs::symlink_metadata(&path).unwrap().is_symlink());
+        fs::set_permissions(&target, original).unwrap();
+    }
+}

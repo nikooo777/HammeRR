@@ -63,6 +63,19 @@ impl EditorServer {
     }
 
     #[tool(
+        description = "Reload recovery/settings.json through the same Session operation as Recovery -> Reload settings. Reads a regular target up to 32768 bytes; valid regular-file symlinks are followed and an absent file supplies factory defaults. Optional expected_revision rejects stale settings requests before reading. Failed read/validation preserves current settings and revision, retaining a settings_error. Success adopts saved settings and advances settings_revision; snapshot/retention/drain errors, requests, map/history/camera and previews remain unchanged. Does not write storage, reset the autosave clock, initialize graphics or coordinate writers."
+    )]
+    pub(in crate::mcp) fn reload_recovery_settings(
+        &self,
+        Parameters(args): Parameters<ReloadRecoverySettingsArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session()
+                .reload_recovery_settings(Actor::Agent, args.expected_revision)
+        })
+    }
+
+    #[tool(
         description = "Write a manual recovery snapshot without saving over the map, bumping mapversion, changing dirty state or adding undo history. Uses committed content and excludes active previews. Does not hold the Session lock during serialization/file writing; edits made while it writes remain pending for the next snapshot."
     )]
     pub(in crate::mcp) async fn create_recovery_snapshot(&self) -> ToolResult {

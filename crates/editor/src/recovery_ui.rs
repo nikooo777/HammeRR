@@ -172,10 +172,18 @@ pub fn bind(window: &RecoveryWindow, shared: &SharedSession) {
     window.on_reload_settings({
         let (window, session) = (window.as_weak(), shared.clone());
         move || {
-            let window = window.unwrap();
-            window.set_settings_dirty(false);
-            window.set_message("".into());
-            refresh(&window, &lock(&session));
+            let Some(window) = window.upgrade() else {
+                return;
+            };
+            let mut session = lock(&session);
+            match session.reload_recovery_settings(Actor::User, None) {
+                Ok(_) => {
+                    window.set_settings_dirty(false);
+                    window.set_message("Saved recovery settings reloaded.".into());
+                }
+                Err(error) => window.set_message(error.into()),
+            }
+            refresh(&window, &session);
         }
     });
     window.on_apply_settings({

@@ -179,6 +179,23 @@ def validate_error_domains(binary, output):
         repaired = client.call("get_recovery")["status"]
         assert repaired["settings_error"] is None and repaired["snapshot_error"] == failed["snapshot_error"]
         assert repaired["error"] == failed["snapshot_error"]
+        saved_settings = {"enabled": False, "interval_seconds": 90, "keep_per_map": 3}
+        settings.write_text(json.dumps(saved_settings))
+        reloaded = client.call("reload_recovery_settings", {"expected_revision": repaired["settings_revision"]})
+        assert reloaded["settings"] == saved_settings
+        assert reloaded["snapshot_error"] == failed["snapshot_error"] and reloaded["settings_error"] is None
+        client.call("reload_recovery_settings", {"expected_revision": repaired["settings_revision"]}, error=True)
+        assert client.call("get_recovery")["status"]["settings_revision"] == reloaded["settings_revision"]
+        for invalid in [b"malformed settings", b" " * 32_769]:
+            settings.write_bytes(invalid)
+            client.call("reload_recovery_settings", error=True)
+            refused = client.call("get_recovery")["status"]
+            assert refused["settings"] == saved_settings and refused["settings_revision"] == reloaded["settings_revision"]
+            assert refused["settings_error"] and refused["snapshot_error"] == failed["snapshot_error"]
+            assert settings.read_bytes() == invalid and protected() == original
+        settings.write_text(json.dumps(saved_settings))
+        client.call("reload_recovery_settings")
+        assert client.call("get_recovery")["status"]["settings_error"] is None
         client.call("create_recovery_snapshot")
         final = client.call("get_recovery")["status"]
         assert all(final[field] is None for field in ["error", "settings_error", "snapshot_error", "retention_error", "drain_error"])
@@ -187,7 +204,8 @@ def validate_error_domains(binary, output):
         code, trailing = close_with_status(client)
         assert code == 0 and not trailing.strip(), (code, trailing)
         result.update({"status": "passed", "exit_code": code, "initial": initial,
-                       "captured": captured, "failed": failed, "repaired": repaired, "final": final})
+                       "captured": captured, "failed": failed, "repaired": repaired,
+                       "reloaded": reloaded, "reload_refused": refused, "final": final})
     except Exception as error:
         result.update({"status": "failed", "error": f"{type(error).__name__}: {error}"})
         raise

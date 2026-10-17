@@ -52,6 +52,37 @@ fn recovery_warning_keeps_error_domains_with_listing_failures_and_skipped_entrie
     window.invoke_apply_settings();
     assert!(lock(&shared).recovery_status()["settings_error"].is_null());
     assert!(window.get_warning().contains("snapshot write failed"));
+    window.set_interval_seconds(180);
+    window.set_keep_count(12);
+    window.set_autosave_enabled(false);
+    window.set_settings_dirty(true);
+    std::fs::write(path.join("settings.json"), b"broken").unwrap();
+    window.invoke_reload_settings();
+    assert!(window.get_settings_dirty());
+    assert_eq!(window.get_interval_seconds(), 180);
+    assert_eq!(window.get_keep_count(), 12);
+    assert!(!window.get_autosave_enabled());
+    assert!(window.get_message().contains("could not reload"));
+    assert!(window.get_warning().contains("snapshot write failed"));
+    window.show().unwrap();
+    crate::ui::tests::save_ui_snapshot(window.window(), "recovery-settings-reload");
+    let replacement = Settings {
+        enabled: true,
+        interval_seconds: 90,
+        keep_per_map: 3,
+    };
+    std::fs::write(
+        path.join("settings.json"),
+        serde_json::to_vec(&replacement).unwrap(),
+    )
+    .unwrap();
+    window.invoke_reload_settings();
+    assert!(!window.get_settings_dirty());
+    assert_eq!(window.get_interval_seconds(), 90);
+    assert_eq!(window.get_keep_count(), 3);
+    assert!(window.get_autosave_enabled());
+    assert!(window.get_warning().contains("snapshot write failed"));
+    window.invoke_cancel();
     let state = lock(&shared);
     assert_eq!(state.document().vmf(), &source);
     assert_eq!(state.history_snapshot(), history);

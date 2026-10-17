@@ -136,6 +136,7 @@ Build wedges, cylinders, cones, spheres and arches from exact dimensions.
 - Curves are polygons that fit inside the bounds. The preview reports the actual size and face count.
 - Arch bounds describe the full ellipse: a 180° sweep builds half of it and 360° builds a ring.
 - Arches are made of several convex brushes. Every shape is ordinary VMF geometry that you can keep editing.
+- If another shape replaces the preview, **Cancel** or window close reports the change and keeps the dialog open for review. During [editor shutdown](basics.md#closing-the-editor), dismissal remains available without clearing the preview.
 
 | Shape controls | Shapes built by an agent |
 | --- | --- |

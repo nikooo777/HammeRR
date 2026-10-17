@@ -76,6 +76,7 @@ Search the notes, or find those relevant to the selection, a point or an area. E
 - Notes are editor-only and never compiled.
 - Limits: 200-character summaries, 4 KiB per note, 1 MiB per map.
 - Region change tracking currently covers the whole map. Other editors' handling of these notes hasn't been tested.
+- If **Cancel** or window close reports a replaced note draft while the editor is open, the dialog stays open for review. It leaves the replacement draft untouched.
 
 ![Design notes, region bounds and edit controls](images/design-context.png)
 
@@ -99,7 +100,11 @@ before scheduling. Later edits remain pending for the next snapshot. Closing
 waits for admitted capture and cleanup; abandoned queued requests release their
 own activity without reporting a successful snapshot.
 
-Normal exit cancels instance Contents/Extraction work and FGD loading and waits for their owned result/staging cleanup, then waits for in-flight recovery and captures outstanding committed changes once when autosave is enabled. A failed exit snapshot or recovery-worker drain is reported on stderr and returns a failing process exit status, including both headless modes. If another application error also occurred, the final error retains both causes. The original map is never treated as saved by an exit snapshot.
+Normal exit cancels instance Contents/Extraction work and FGD loading, then waits for their owned result/staging cleanup and map actions already in progress. It then waits for in-flight recovery and captures outstanding committed changes once when autosave is enabled. Unapplied previews are excluded. A failed exit snapshot or recovery-worker drain is reported on stderr and returns a failing process exit status, including both headless modes. If another application error also occurred, the final error retains both causes. The original map is never treated as saved by an exit snapshot.
+
+An exit-recovery failure remains terminal: repairing storage does not retry
+shutdown or make retained tool windows editable again. **Cancel** and window
+close still dismiss those windows; see [Closing the editor](basics.md#closing-the-editor).
 
 Recovery retains settings, snapshot-folder configuration, capture, retention and shutdown failures separately. Saving settings clears only settings errors; a successful snapshot clears only capture and retention errors. Recovery displays unresolved causes together with listing warnings, and MCP reports the same causes separately as well as in its combined error. A settings warning alone does not turn a successful exit snapshot into a shutdown failure.
 

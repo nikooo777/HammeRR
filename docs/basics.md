@@ -28,6 +28,23 @@ Undo, Redo, Frame selection, Delete selection or Duplicate selection; see
 [Keyboard shortcuts](keyboard-shortcuts.md). Text fields keep their normal
 editing keys, and the Frame hint follows the active binding.
 
+## Closing the editor
+
+Tool windows stay with the document that opened them. Once closing begins,
+new searches, selections, picking, framing, previews, reviews, edits and Apply
+commands are rejected. This includes entity, geometry, terrain, placement,
+measurement, path, texture, overlay, volume selection, compile region, cubemap,
+report, checks and design-note dialogs.
+
+**Cancel** and window close still dismiss a dialog during shutdown. Rejected
+cleanup leaves its pending preview alone. An older dialog cannot discard
+another actor's replacement draft. Existing source and review checks still
+apply while the editor is open.
+
+Actions already in progress can finish before the final recovery snapshot.
+A shutdown error keeps new actions blocked even after storage is repaired;
+see [Autosave and recovery](map-tools.md#autosave-and-recovery).
+
 ## Working with an AI agent
 
 You and any connected agent share one editing session: the map, the selection, the camera, open previews and the undo history. An agent's edits appear live and show up in Activity, and you can undo them like your own. An agent can set up a preview for you to apply, or the other way around. See [AI agents and MCP](mcp.md).

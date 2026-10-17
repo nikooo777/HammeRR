@@ -1850,6 +1850,13 @@ export component AppWindow inherits Window {
     in-out property <string> pivot-x: "0";
     in-out property <string> pivot-y: "0";
     in-out property <string> pivot-z: "0";
+    in property <bool> pivot-picking;
+    in property <bool> can-pick-pivot;
+    in property <bool> can-cancel-pivot-pick;
+    in property <string> pivot-pick-notice;
+    in property <string> pivot-pick-source;
+    callback pick-transform-pivot();
+    callback cancel-transform-pivot-pick();
     in-out property <bool> transform-texture-lock: true;
     in-out property <bool> transform-texture-scale-lock: true;
     in-out property <bool> transform-reflect-x: true;
@@ -2238,7 +2245,7 @@ export component AppWindow inherits Window {
                     }
 
                     touch := TouchArea {
-                        mouse-cursor: root.flying ? MouseCursor.move : (root.surface-picking || root.overlay-handling || ((root.drawing-block || root.clipping) && root.projection-index != 0)) ? MouseCursor.crosshair : MouseCursor.default;
+                        mouse-cursor: root.flying ? MouseCursor.move : (root.surface-picking || root.overlay-handling || root.pivot-picking || ((root.drawing-block || root.clipping) && root.projection-index != 0)) ? MouseCursor.crosshair : MouseCursor.default;
                         pointer-event(event) => {
                             if (event.kind == PointerEventKind.down) {
                                 focus.focus();
@@ -2308,7 +2315,24 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                if !root.drawing-block && !root.clipping && !root.overlay-handling: Rectangle {
+                if root.pivot-pick-notice != "": Rectangle {
+                    x: 12px;
+                    y: root.pivot-picking ? 64px : 136px;
+                    width: min(760px, parent.width - 24px);
+                    height: 64px;
+                    background: #20252eee;
+                    border-color: #394252;
+                    border-width: 1px;
+                    border-radius: 8px;
+                    HorizontalLayout {
+                        padding: 10px;
+                        spacing: 12px;
+                        Text { text: root.pivot-pick-notice; wrap: word-wrap; color: #91b9e9; }
+                        if root.can-cancel-pivot-pick: Button { text: "Cancel pivot pick"; clicked => { root.cancel-transform-pivot-pick(); } }
+                    }
+                }
+
+                if !root.drawing-block && !root.clipping && !root.overlay-handling && !root.pivot-picking: Rectangle {
                     x: 12px;
                     y: 64px;
                     width: min(root.handles-mode-index == 4 ? 550px : root.handles-mode-index == 5 ? 610px : 900px, parent.width - 24px);
@@ -2778,6 +2802,8 @@ export component AppWindow inherits Window {
                                 }
                             }
                             if root.transform-pivot-mode == 0: Text { text: root.selection-pivot; color: #8a909c; font-size: 12px; }
+                            Button { text: "Pick pivot…"; enabled: root.can-pick-pivot; clicked => { root.pick-transform-pivot(); } }
+                            if root.pivot-pick-source != "": Text { text: root.pivot-pick-source; color: #8a909c; font-size: 12px; wrap: word-wrap; }
                             if root.transform-pivot-mode == 2: TransformVector {
                                 enabled: !root.has-transform-preview;
                                 x-value <=> root.pivot-x;

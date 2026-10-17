@@ -80,6 +80,7 @@ pub mod terrain_handles;
 pub mod terrain_strokes;
 pub mod terrain_triangles;
 pub mod terrain_vertices;
+pub mod transform_pivot;
 pub mod volume;
 pub mod working_region;
 pub use clipping::ClipPreview;
@@ -208,6 +209,7 @@ pub struct Session {
     clip_handles: clip_drag::Options,
     clip_drag: Option<clip_drag::Drag>,
     transform_tool: TransformTool,
+    transform_pivot: transform_pivot::State,
     transform_drag: Option<TransformDrag>,
     area_preview: Option<AreaPreview>,
     pointfile: pointfiles::State,
@@ -326,6 +328,7 @@ impl Session {
             clip_handles: clip_drag::Options::default(),
             clip_drag: None,
             transform_tool: TransformTool::default(),
+            transform_pivot: transform_pivot::State::default(),
             transform_drag: None,
             area_preview: None,
             pointfile: pointfiles::State::default(),

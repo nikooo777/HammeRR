@@ -1,17 +1,49 @@
 use super::*;
 use crate::InstanceExtractionWindow;
+use crate::runtime::{DocumentAccess, DocumentContinuation};
 use std::cell::Cell;
 
 struct Controller {
     window: InstanceExtractionWindow,
-    shared: SharedSession,
+    target: DocumentContinuation,
     token: Cell<Option<u64>>,
     timer: slint::Timer,
 }
 
 impl Controller {
+    fn with_shared<R>(
+        &self,
+        report_error: bool,
+        body: impl FnOnce(&SharedSession) -> R,
+    ) -> Option<R> {
+        match self
+            .target
+            .upgrade()
+            .and_then(|access| access.with_shared(|shared| Ok(body(shared))))
+        {
+            Ok(result) => Some(result),
+            Err(error) => {
+                if report_error {
+                    self.window.set_message(error.into());
+                }
+                None
+            }
+        }
+    }
+
+    #[cfg(test)]
     fn refresh(&self) {
-        let report = lock(&self.shared).get_instance_extraction();
+        self.with_shared(true, |shared| self.refresh_admitted(shared));
+    }
+
+    fn tick(&self) {
+        if self.window.window().is_visible() {
+            self.with_shared(false, |shared| self.refresh_admitted(shared));
+        }
+    }
+
+    fn refresh_admitted(&self, shared: &SharedSession) {
+        let report = lock(shared).get_instance_extraction();
         self.token.set(report["token"].as_u64());
         let active = self.token.get().is_some();
         let owned = report["owner"].as_str() == Some(Actor::User.label());
@@ -40,55 +72,69 @@ impl Controller {
     }
 
     fn start(&self, publishing: bool) {
-        self.window.set_message("".into());
-        let request = {
-            let mut session = lock(&self.shared);
-            if publishing {
-                self.token
-                    .get()
-                    .ok_or_else(|| "Prepare the extraction first".to_owned())
-                    .and_then(|token| session.publish_instance_extraction(Actor::User, token))
-            } else {
-                session.begin_instance_extraction(Actor::User, self.window.get_file().as_str())
-            }
-        };
-        match request {
-            Ok(request) => {
-                let token = request.token();
-                let shared = self.shared.clone();
-                if let Err(error) = std::thread::Builder::new()
-                    .name("instance-extraction".into())
-                    .spawn(move || {
-                        let result = request.run();
-                        let _ = lock(&shared).finish_instance_extraction(Actor::User, result);
-                    })
-                {
-                    let _ = lock(&self.shared).cancel_instance_extraction(Actor::User, token);
-                    self.window
-                        .set_message(format!("Could not start extraction worker: {error}").into());
+        self.with_shared(true, |shared| {
+            self.window.set_message("".into());
+            let request = {
+                let mut session = lock(shared);
+                if publishing {
+                    self.token
+                        .get()
+                        .ok_or_else(|| "Prepare the extraction first".to_owned())
+                        .and_then(|token| session.publish_instance_extraction(Actor::User, token))
+                } else {
+                    session.begin_instance_extraction(Actor::User, self.window.get_file().as_str())
                 }
+            };
+            match request {
+                Ok(request) => {
+                    let token = request.token();
+                    let worker_session = shared.clone();
+                    if let Err(error) = std::thread::Builder::new()
+                        .name("instance-extraction".into())
+                        .spawn(move || {
+                            let result = request.run();
+                            let _ = lock(&worker_session)
+                                .finish_instance_extraction(Actor::User, result);
+                        })
+                    {
+                        let _ = lock(shared).cancel_instance_extraction(Actor::User, token);
+                        self.window.set_message(
+                            format!("Could not start extraction worker: {error}").into(),
+                        );
+                    }
+                }
+                Err(error) => self.window.set_message(error.into()),
             }
-            Err(error) => self.window.set_message(error.into()),
-        }
-        self.refresh();
+            self.refresh_admitted(shared);
+        });
     }
 
     fn cancel(&self) {
-        if self.window.get_owned()
-            && let Some(token) = self.token.get()
-            && let Err(error) = lock(&self.shared).cancel_instance_extraction(Actor::User, token)
-        {
-            self.window.set_message(error.into());
-            return;
+        let accepted = self.with_shared(true, |shared| {
+            if self.window.get_owned()
+                && let Some(token) = self.token.get()
+                && let Err(error) = lock(shared).cancel_instance_extraction(Actor::User, token)
+            {
+                self.window.set_message(error.into());
+                return false;
+            }
+            self.refresh_admitted(shared);
+            true
+        });
+        if accepted != Some(false) {
+            let _ = self.window.hide();
         }
-        self.refresh();
-        let _ = self.window.hide();
     }
 
+    #[cfg(test)]
     fn new(shared: SharedSession) -> Result<Rc<Self>, slint::PlatformError> {
+        Self::new_with_access(&DocumentAccess::unmanaged(shared))
+    }
+
+    fn new_with_access(access: &DocumentAccess) -> Result<Rc<Self>, slint::PlatformError> {
         let controller = Rc::new(Self {
             window: InstanceExtractionWindow::new()?,
-            shared,
+            target: access.downgrade(),
             token: Cell::new(None),
             timer: slint::Timer::default(),
         });
@@ -111,14 +157,16 @@ impl Controller {
         controller.window.on_review({
             let weak = Rc::downgrade(&controller);
             move || {
-                if let Some(controller) = weak.upgrade()
-                    && let Some(token) = controller.token.get()
-                {
-                    match lock(&controller.shared).review_instance_extraction(Actor::User, token) {
-                        Ok(_) => controller.window.set_message("".into()),
-                        Err(error) => controller.window.set_message(error.into()),
-                    }
-                    controller.refresh();
+                if let Some(controller) = weak.upgrade() {
+                    controller.with_shared(true, |shared| {
+                        if let Some(token) = controller.token.get() {
+                            match lock(shared).review_instance_extraction(Actor::User, token) {
+                                Ok(_) => controller.window.set_message("".into()),
+                                Err(error) => controller.window.set_message(error.into()),
+                            }
+                            controller.refresh_admitted(shared);
+                        }
+                    });
                 }
             }
         });
@@ -146,10 +194,8 @@ impl Controller {
             .start(slint::TimerMode::Repeated, Duration::from_millis(250), {
                 let weak = Rc::downgrade(&controller);
                 move || {
-                    if let Some(controller) = weak.upgrade()
-                        && controller.window.window().is_visible()
-                    {
-                        controller.refresh();
+                    if let Some(controller) = weak.upgrade() {
+                        controller.tick();
                     }
                 }
             });
@@ -157,17 +203,37 @@ impl Controller {
     }
 }
 
+#[cfg(test)]
 pub(super) fn bind(app: &AppWindow, shared: SharedSession) {
-    match Controller::new(shared) {
-        Ok(controller) => app.on_extract_instance({
-            move || {
-                controller.refresh();
-                controller.window.set_message("".into());
-                let _ = controller.window.show();
-            }
-        }),
+    bind_with_access(app, &DocumentAccess::unmanaged(shared));
+}
+
+pub(super) fn bind_with_access(app: &AppWindow, access: &DocumentAccess) {
+    match Controller::new_with_access(access) {
+        Ok(controller) => bind_controller(app, controller),
         Err(error) => app.set_message(format!("Instance extraction unavailable: {error}").into()),
     }
+}
+
+fn bind_controller(app: &AppWindow, controller: Rc<Controller>) {
+    app.on_extract_instance({
+        let app = app.as_weak();
+        move || {
+            let Some(app) = app.upgrade() else {
+                return;
+            };
+            if controller
+                .with_shared(true, |shared| {
+                    controller.refresh_admitted(shared);
+                    controller.window.set_message("".into());
+                    let _ = controller.window.show();
+                })
+                .is_none()
+            {
+                app.set_message(controller.window.get_message());
+            }
+        }
+    });
 }
 
 #[cfg(test)]

@@ -1,4 +1,5 @@
 use super::*;
+use crate::runtime::{DocumentAccess, DocumentContinuation};
 use std::cell::Cell;
 
 use crate::InstanceReferenceWindow;
@@ -6,7 +7,7 @@ use session::instance_reference::Changes;
 
 struct Controller {
     window: InstanceReferenceWindow,
-    shared: SharedSession,
+    target: DocumentContinuation,
     token: Cell<Option<u64>>,
     generation: Cell<u64>,
     edits: Cell<u64>,
@@ -17,6 +18,32 @@ struct Controller {
 }
 
 impl Controller {
+    fn with_shared<R>(
+        &self,
+        report_error: bool,
+        body: impl FnOnce(&SharedSession) -> R,
+    ) -> Option<R> {
+        match self
+            .target
+            .upgrade()
+            .and_then(|access| access.with_shared(|shared| Ok(body(shared))))
+        {
+            Ok(result) => Some(result),
+            Err(error) => {
+                if report_error {
+                    self.window.set_message(error.into());
+                }
+                None
+            }
+        }
+    }
+
+    fn tick(&self) {
+        if self.window.window().is_visible() {
+            self.with_shared(false, |shared| self.refresh_admitted(shared));
+        }
+    }
+
     fn present(&self, report: &serde_json::Value) {
         self.token.set(report["token"].as_u64());
         let owned = report["owner"].as_str() == Some(Actor::User.label());
@@ -112,8 +139,8 @@ impl Controller {
         );
     }
 
-    fn refresh(&self) {
-        let mut session = lock(&self.shared);
+    fn refresh_admitted(&self, shared: &SharedSession) {
+        let mut session = lock(shared);
         let report = session.get_instance_reference();
         self.present(&report);
         self.window.set_contents(
@@ -136,13 +163,18 @@ impl Controller {
         }
     }
 
+    #[cfg(test)]
     fn open(&self, entity: Option<u32>) {
+        self.with_shared(true, |shared| self.open_admitted(shared, entity));
+    }
+
+    fn open_admitted(&self, shared: &SharedSession, entity: Option<u32>) {
         self.generation.set(self.generation.get().wrapping_add(1));
         self.edits.set(self.edits.get().wrapping_add(1));
         self.reset_fields();
-        let result = lock(&self.shared).begin_instance_reference(Actor::User, entity);
+        let result = lock(shared).begin_instance_reference(Actor::User, entity);
         self.result(result);
-        self.refresh();
+        self.refresh_admitted(shared);
         let _ = self.window.show();
     }
 
@@ -157,47 +189,49 @@ impl Controller {
     }
 
     fn edited(&self, field: i32) {
-        self.edits.set(self.edits.get().wrapping_add(1));
-        let Some(token) = self.token.get() else {
-            return;
-        };
-        let mut changes = Changes::default();
-        match field {
-            0 => changes.file = Some(self.window.get_file().into()),
-            1 => {
-                changes.origin = Some(format!(
-                    "{} {} {}",
-                    self.window.get_origin_x(),
-                    self.window.get_origin_y(),
-                    self.window.get_origin_z()
-                ))
+        self.with_shared(true, |shared| {
+            self.edits.set(self.edits.get().wrapping_add(1));
+            let Some(token) = self.token.get() else {
+                return;
+            };
+            let mut changes = Changes::default();
+            match field {
+                0 => changes.file = Some(self.window.get_file().into()),
+                1 => {
+                    changes.origin = Some(format!(
+                        "{} {} {}",
+                        self.window.get_origin_x(),
+                        self.window.get_origin_y(),
+                        self.window.get_origin_z()
+                    ))
+                }
+                2 => {
+                    changes.angles = Some(format!(
+                        "{} {} {}",
+                        self.window.get_pitch(),
+                        self.window.get_yaw(),
+                        self.window.get_roll()
+                    ))
+                }
+                _ => return,
             }
-            2 => {
-                changes.angles = Some(format!(
-                    "{} {} {}",
-                    self.window.get_pitch(),
-                    self.window.get_yaw(),
-                    self.window.get_roll()
-                ))
+            let result = lock(shared).update_instance_reference(Actor::User, token, changes);
+            match result {
+                Ok(report) => {
+                    self.editing.set(true);
+                    self.result(Ok(report));
+                    self.editing.set(false);
+                }
+                Err(error) => {
+                    self.reset_fields();
+                    let report = lock(shared).get_instance_reference();
+                    self.present(&report);
+                    self.window.set_message(
+                        format!("{error}; rejected inputs were restored to the shared form").into(),
+                    );
+                }
             }
-            _ => return,
-        }
-        let result = lock(&self.shared).update_instance_reference(Actor::User, token, changes);
-        match result {
-            Ok(report) => {
-                self.editing.set(true);
-                self.result(Ok(report));
-                self.editing.set(false);
-            }
-            Err(error) => {
-                self.reset_fields();
-                let report = lock(&self.shared).get_instance_reference();
-                self.present(&report);
-                self.window.set_message(
-                    format!("{error}; rejected inputs were restored to the shared form").into(),
-                );
-            }
-        }
+        });
     }
 
     fn complete_file(&self, token: u64, generation: u64, edits: u64, picker: u64, path: &Path) {
@@ -211,73 +245,104 @@ impl Controller {
                 .set_message("File selection expired; Browse again to use a new selection".into());
             return;
         }
-        let result = lock(&self.shared).instance_reference_file(Actor::User, token, path);
-        self.edits.set(self.edits.get().wrapping_add(1));
-        self.result(result);
+        self.with_shared(true, |shared| {
+            let result = lock(shared).instance_reference_file(Actor::User, token, path);
+            self.edits.set(self.edits.get().wrapping_add(1));
+            self.result(result);
+        });
     }
 
     fn browse(self: &Rc<Self>) {
-        let Some(token) = self.token.get() else {
-            return;
-        };
-        let generation = self.generation.get();
-        let edits = self.edits.get();
-        self.picker.set(self.picker.get().wrapping_add(1));
-        let picker = self.picker.get();
-        let directory = lock(&self.shared)
-            .path()
-            .and_then(|path| path.parent())
-            .map(Path::to_owned);
-        let mut dialog = rfd::AsyncFileDialog::new()
-            .set_title("Choose instance VMF")
-            .add_filter("Valve Map File", &["vmf"]);
-        if let Some(directory) = directory {
-            dialog = dialog.set_directory(directory);
-        }
-        let weak = Rc::downgrade(self);
-        slint::spawn_local(async move {
-            let Some(file) = dialog.pick_file().await else {
+        self.with_shared(true, |shared| {
+            let Some(token) = self.token.get() else {
                 return;
             };
-            if let Some(controller) = weak.upgrade() {
-                controller.complete_file(token, generation, edits, picker, file.path());
+            let generation = self.generation.get();
+            let edits = self.edits.get();
+            self.picker.set(self.picker.get().wrapping_add(1));
+            let picker = self.picker.get();
+            let directory = lock(shared)
+                .path()
+                .and_then(|path| path.parent())
+                .map(Path::to_owned);
+            let mut dialog = rfd::AsyncFileDialog::new()
+                .set_title("Choose instance VMF")
+                .add_filter("Valve Map File", &["vmf"]);
+            if let Some(directory) = directory {
+                dialog = dialog.set_directory(directory);
             }
-        })
-        .expect("event loop is running");
+            let weak = Rc::downgrade(self);
+            slint::spawn_local(async move {
+                let Some(file) = dialog.pick_file().await else {
+                    return;
+                };
+                if let Some(controller) = weak.upgrade() {
+                    controller.complete_file(token, generation, edits, picker, file.path());
+                }
+            })
+            .expect("event loop is running");
+        });
     }
 
     fn refresh_contents(&self) {
-        let request = lock(&self.shared).begin_instance_contents_refresh(Actor::User);
-        match request {
-            Ok(request) => {
-                let token = request.token();
-                let shared = self.shared.clone();
-                let spawned = std::thread::Builder::new()
-                    .name("instance-contents".into())
-                    .spawn(move || {
-                        let result = request.run();
-                        let _ = lock(&shared).finish_instance_contents_refresh(Actor::User, result);
-                    });
-                if let Err(error) = spawned {
-                    let _ = lock(&self.shared).fail_instance_contents_refresh(
-                        Actor::User,
-                        token,
-                        format!("Could not start instance refresh: {error}"),
+        self.with_shared(true, |shared| {
+            let request = lock(shared).begin_instance_contents_refresh(Actor::User);
+            match request {
+                Ok(request) => {
+                    let token = request.token();
+                    let worker_session = shared.clone();
+                    let spawned = std::thread::Builder::new()
+                        .name("instance-contents".into())
+                        .spawn(move || {
+                            let result = request.run();
+                            let _ = lock(&worker_session)
+                                .finish_instance_contents_refresh(Actor::User, result);
+                        });
+                    if let Err(error) = spawned {
+                        let _ = lock(shared).fail_instance_contents_refresh(
+                            Actor::User,
+                            token,
+                            format!("Could not start instance refresh: {error}"),
+                        );
+                    }
+                    self.window.set_message(
+                        "Refreshing committed references; form edits remain unapplied".into(),
                     );
                 }
-                self.window.set_message(
-                    "Refreshing committed references; form edits remain unapplied".into(),
-                );
+                Err(error) => self.window.set_message(error.into()),
             }
-            Err(error) => self.window.set_message(error.into()),
-        }
-        self.refresh();
+            self.refresh_admitted(shared);
+        });
     }
 
+    fn cancel(&self) {
+        let accepted = self.with_shared(true, |shared| {
+            if self.window.get_owned()
+                && let Some(token) = self.token.get()
+                && let Err(error) = lock(shared).cancel_instance_reference(Actor::User, token)
+            {
+                self.window.set_message(error.into());
+                return false;
+            }
+            true
+        });
+        if accepted == Some(false) {
+            return;
+        }
+        self.generation.set(self.generation.get().wrapping_add(1));
+        self.token.set(None);
+        let _ = self.window.hide();
+    }
+
+    #[cfg(test)]
     fn new(shared: SharedSession) -> Result<Rc<Self>, slint::PlatformError> {
+        Self::new_with_access(&DocumentAccess::unmanaged(shared))
+    }
+
+    fn new_with_access(access: &DocumentAccess) -> Result<Rc<Self>, slint::PlatformError> {
         let controller = Rc::new(Self {
             window: InstanceReferenceWindow::new()?,
-            shared,
+            target: access.downgrade(),
             token: Cell::new(None),
             generation: Cell::new(0),
             edits: Cell::new(0),
@@ -305,27 +370,29 @@ impl Controller {
         controller.window.on_check_file({
             let weak = Rc::downgrade(&controller);
             move || {
-                if let Some(controller) = weak.upgrade()
-                    && let Some(token) = controller.token.get()
-                {
-                    let result =
-                        lock(&controller.shared).check_instance_reference(Actor::User, token);
-                    controller.result(result);
+                if let Some(controller) = weak.upgrade() {
+                    controller.with_shared(true, |shared| {
+                        if let Some(token) = controller.token.get() {
+                            let result = lock(shared).check_instance_reference(Actor::User, token);
+                            controller.result(result);
+                        }
+                    });
                 }
             }
         });
         controller.window.on_review({
             let weak = Rc::downgrade(&controller);
             move || {
-                if let Some(controller) = weak.upgrade()
-                    && let Some(token) = controller.token.get()
-                {
-                    let result =
-                        lock(&controller.shared).review_instance_reference(Actor::User, token);
-                    controller
-                        .generation
-                        .set(controller.generation.get().wrapping_add(1));
-                    controller.result(result);
+                if let Some(controller) = weak.upgrade() {
+                    controller.with_shared(true, |shared| {
+                        if let Some(token) = controller.token.get() {
+                            let result = lock(shared).review_instance_reference(Actor::User, token);
+                            controller
+                                .generation
+                                .set(controller.generation.get().wrapping_add(1));
+                            controller.result(result);
+                        }
+                    });
                 }
             }
         });
@@ -340,21 +407,22 @@ impl Controller {
         controller.window.on_apply({
             let weak = Rc::downgrade(&controller);
             move || {
-                if let Some(controller) = weak.upgrade()
-                    && let Some(token) = controller.token.get()
-                {
-                    let result =
-                        lock(&controller.shared).apply_instance_reference(Actor::User, token);
-                    match result {
-                        Ok(_) => {
-                            controller
-                                .generation
-                                .set(controller.generation.get().wrapping_add(1));
-                            controller.token.set(None);
-                            let _ = controller.window.hide();
+                if let Some(controller) = weak.upgrade() {
+                    controller.with_shared(true, |shared| {
+                        if let Some(token) = controller.token.get() {
+                            let result = lock(shared).apply_instance_reference(Actor::User, token);
+                            match result {
+                                Ok(_) => {
+                                    controller
+                                        .generation
+                                        .set(controller.generation.get().wrapping_add(1));
+                                    controller.token.set(None);
+                                    let _ = controller.window.hide();
+                                }
+                                Err(error) => controller.window.set_message(error.into()),
+                            }
                         }
-                        Err(error) => controller.window.set_message(error.into()),
-                    }
+                    });
                 }
             }
         });
@@ -362,19 +430,7 @@ impl Controller {
             let weak = Rc::downgrade(&controller);
             move || {
                 if let Some(controller) = weak.upgrade() {
-                    if controller.window.get_owned()
-                        && let Some(token) = controller.token.get()
-                        && let Err(error) =
-                            lock(&controller.shared).cancel_instance_reference(Actor::User, token)
-                    {
-                        controller.window.set_message(error.into());
-                        return;
-                    }
-                    controller
-                        .generation
-                        .set(controller.generation.get().wrapping_add(1));
-                    controller.token.set(None);
-                    let _ = controller.window.hide();
+                    controller.cancel();
                 }
             }
         });
@@ -392,10 +448,8 @@ impl Controller {
             .start(slint::TimerMode::Repeated, Duration::from_millis(250), {
                 let weak = Rc::downgrade(&controller);
                 move || {
-                    if let Some(controller) = weak.upgrade()
-                        && controller.window.window().is_visible()
-                    {
-                        controller.refresh();
+                    if let Some(controller) = weak.upgrade() {
+                        controller.tick();
                     }
                 }
             });
@@ -403,24 +457,53 @@ impl Controller {
     }
 }
 
+#[cfg(test)]
 pub(super) fn bind(app: &AppWindow, shared: SharedSession) {
-    let controller = match Controller::new(shared.clone()) {
+    bind_with_access(app, &DocumentAccess::unmanaged(shared));
+}
+
+pub(super) fn bind_with_access(app: &AppWindow, access: &DocumentAccess) {
+    let controller = match Controller::new_with_access(access) {
         Ok(controller) => controller,
         Err(error) => {
             app.set_message(format!("Instance reference controls unavailable: {error}").into());
             return;
         }
     };
+    bind_controller(app, controller);
+}
+
+fn bind_controller(app: &AppWindow, controller: Rc<Controller>) {
     app.on_create_instance_reference({
-        let controller = controller.clone();
-        move || controller.open(None)
+        let (app, controller) = (app.as_weak(), controller.clone());
+        move || {
+            let Some(app) = app.upgrade() else {
+                return;
+            };
+            if controller
+                .with_shared(true, |shared| controller.open_admitted(shared, None))
+                .is_none()
+            {
+                app.set_message(controller.window.get_message());
+            }
+        }
     });
     app.on_edit_instance_reference({
-        let controller = controller.clone();
+        let app = app.as_weak();
         move || {
-            let id = single_selected_entity(&lock(&shared));
-            if let Some(id) = id {
-                controller.open(Some(id));
+            let Some(app) = app.upgrade() else {
+                return;
+            };
+            if controller
+                .with_shared(true, |shared| {
+                    let id = single_selected_entity(&lock(shared));
+                    if let Some(id) = id {
+                        controller.open_admitted(shared, Some(id));
+                    }
+                })
+                .is_none()
+            {
+                app.set_message(controller.window.get_message());
             }
         }
     });

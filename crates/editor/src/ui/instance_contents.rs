@@ -1,11 +1,12 @@
 use super::*;
+use crate::runtime::{DocumentAccess, DocumentContinuation};
 use std::cell::Cell;
 
 use crate::InstanceContentsWindow;
 
 struct Controller {
     window: InstanceContentsWindow,
-    shared: SharedSession,
+    target: DocumentContinuation,
     offset: Cell<usize>,
     token: Cell<Option<u64>>,
     timer: slint::Timer,
@@ -30,8 +31,49 @@ fn coordinates(value: &serde_json::Value) -> String {
 }
 
 impl Controller {
+    fn with_shared<R>(
+        &self,
+        report_error: bool,
+        body: impl FnOnce(&SharedSession) -> R,
+    ) -> Option<R> {
+        match self
+            .target
+            .upgrade()
+            .and_then(|access| access.with_shared(|shared| Ok(body(shared))))
+        {
+            Ok(result) => Some(result),
+            Err(error) => {
+                if report_error {
+                    self.window.set_message(error.into());
+                }
+                None
+            }
+        }
+    }
+
     fn refresh(&self) {
-        let mut session = lock(&self.shared);
+        self.with_shared(true, |shared| self.refresh_admitted(shared));
+    }
+
+    fn tick(&self) {
+        if self.window.window().is_visible() {
+            self.with_shared(false, |shared| self.refresh_admitted(shared));
+        }
+    }
+
+    fn page(&self, next: bool) {
+        self.with_shared(true, |shared| {
+            self.offset.set(if next {
+                self.offset.get().saturating_add(64)
+            } else {
+                self.offset.get().saturating_sub(64)
+            });
+            self.refresh_admitted(shared);
+        });
+    }
+
+    fn refresh_admitted(&self, shared: &SharedSession) {
+        let mut session = lock(shared);
         let state = match session.inspect_instance_contents(self.offset.get(), 64) {
             Ok(state) => state,
             Err(error) => {
@@ -145,62 +187,77 @@ impl Controller {
     }
 
     fn action(&self, action: &str) {
-        self.window.set_message("".into());
-        let Some(token) = self.token.get() else {
-            self.window
-                .set_message("Inspect the current instance contents first".into());
-            return;
-        };
-        let mut session = lock(&self.shared);
-        let result = match action {
-            "cancel" => session.cancel_instance_contents_refresh(Actor::User, token),
-            "clear" => session.clear_instance_contents(Actor::User, token),
-            "frame" => {
-                let ids = session.selected_ids();
-                session.frame_instance_contents(Actor::User, token, &ids, self.window.get_aspect())
+        self.with_shared(true, |shared| {
+            self.window.set_message("".into());
+            let Some(token) = self.token.get() else {
+                self.window
+                    .set_message("Inspect the current instance contents first".into());
+                return;
+            };
+            let mut session = lock(shared);
+            let result = match action {
+                "cancel" => session.cancel_instance_contents_refresh(Actor::User, token),
+                "clear" => session.clear_instance_contents(Actor::User, token),
+                "frame" => {
+                    let ids = session.selected_ids();
+                    session.frame_instance_contents(
+                        Actor::User,
+                        token,
+                        &ids,
+                        self.window.get_aspect(),
+                    )
+                }
+                _ => unreachable!(),
+            };
+            if let Err(error) = result {
+                self.window.set_message(error.into());
             }
-            _ => unreachable!(),
-        };
-        if let Err(error) = result {
-            self.window.set_message(error.into());
-        }
-        drop(session);
-        self.refresh();
+            drop(session);
+            self.refresh_admitted(shared);
+        });
     }
 
     fn start(&self) {
-        self.window.set_message("".into());
-        let started = { lock(&self.shared).begin_instance_contents_refresh(Actor::User) };
-        let request = match started {
-            Ok(request) => request,
-            Err(error) => {
-                self.window.set_message(error.into());
-                self.refresh();
-                return;
+        self.with_shared(true, |shared| {
+            self.window.set_message("".into());
+            let started = { lock(shared).begin_instance_contents_refresh(Actor::User) };
+            let request = match started {
+                Ok(request) => request,
+                Err(error) => {
+                    self.window.set_message(error.into());
+                    self.refresh_admitted(shared);
+                    return;
+                }
+            };
+            let token = request.token();
+            let worker_session = shared.clone();
+            let spawned = std::thread::Builder::new()
+                .name("instance-contents".into())
+                .spawn(move || {
+                    let result = request.run();
+                    let _ =
+                        lock(&worker_session).finish_instance_contents_refresh(Actor::User, result);
+                });
+            if let Err(error) = spawned {
+                let _ = lock(shared).fail_instance_contents_refresh(
+                    Actor::User,
+                    token,
+                    format!("Could not start instance refresh: {error}"),
+                );
             }
-        };
-        let token = request.token();
-        let shared = self.shared.clone();
-        let spawned = std::thread::Builder::new()
-            .name("instance-contents".into())
-            .spawn(move || {
-                let result = request.run();
-                let _ = lock(&shared).finish_instance_contents_refresh(Actor::User, result);
-            });
-        if let Err(error) = spawned {
-            let _ = lock(&self.shared).fail_instance_contents_refresh(
-                Actor::User,
-                token,
-                format!("Could not start instance refresh: {error}"),
-            );
-        }
-        self.refresh();
+            self.refresh_admitted(shared);
+        });
     }
 
+    #[cfg(test)]
     fn new(shared: SharedSession) -> Result<Rc<Self>, slint::PlatformError> {
+        Self::new_with_access(&DocumentAccess::unmanaged(shared))
+    }
+
+    fn new_with_access(access: &DocumentAccess) -> Result<Rc<Self>, slint::PlatformError> {
         let controller = Rc::new(Self {
             window: InstanceContentsWindow::new()?,
-            shared,
+            target: access.downgrade(),
             offset: Cell::new(0),
             token: Cell::new(None),
             timer: slint::Timer::default(),
@@ -241,10 +298,7 @@ impl Controller {
             let weak = Rc::downgrade(&controller);
             move || {
                 if let Some(controller) = weak.upgrade() {
-                    controller
-                        .offset
-                        .set(controller.offset.get().saturating_sub(64));
-                    controller.refresh();
+                    controller.page(false);
                 }
             }
         });
@@ -252,10 +306,7 @@ impl Controller {
             let weak = Rc::downgrade(&controller);
             move || {
                 if let Some(controller) = weak.upgrade() {
-                    controller
-                        .offset
-                        .set(controller.offset.get().saturating_add(64));
-                    controller.refresh();
+                    controller.page(true);
                 }
             }
         });
@@ -273,10 +324,8 @@ impl Controller {
             {
                 let weak = Rc::downgrade(&controller);
                 move || {
-                    if let Some(controller) = weak.upgrade()
-                        && controller.window.window().is_visible()
-                    {
-                        controller.refresh();
+                    if let Some(controller) = weak.upgrade() {
+                        controller.tick();
                     }
                 }
             },
@@ -286,25 +335,41 @@ impl Controller {
     }
 }
 
+#[cfg(test)]
 pub(super) fn bind(app: &AppWindow, shared: SharedSession) {
-    let controller = match Controller::new(shared) {
+    bind_with_access(app, &DocumentAccess::unmanaged(shared));
+}
+
+pub(super) fn bind_with_access(app: &AppWindow, access: &DocumentAccess) {
+    let controller = match Controller::new_with_access(access) {
         Ok(controller) => controller,
         Err(error) => {
             app.set_message(format!("Instance controls unavailable: {error}").into());
             return;
         }
     };
-    let app = app.as_weak();
-    app.unwrap().on_inspect_instance_contents({
-        let app = app.clone();
+    bind_controller(app, controller);
+}
+
+fn bind_controller(app: &AppWindow, controller: Rc<Controller>) {
+    app.on_inspect_instance_contents({
+        let app = app.as_weak();
         move || {
-            if let Some(app) = app.upgrade() {
-                controller
-                    .window
-                    .set_aspect(app.get_viewport_width() / app.get_viewport_height().max(1.0));
+            let Some(app) = app.upgrade() else {
+                return;
+            };
+            if controller
+                .with_shared(true, |shared| {
+                    controller
+                        .window
+                        .set_aspect(app.get_viewport_width() / app.get_viewport_height().max(1.0));
+                    controller.refresh_admitted(shared);
+                    let _ = controller.window.show();
+                })
+                .is_none()
+            {
+                app.set_message(controller.window.get_message());
             }
-            controller.refresh();
-            let _ = controller.window.show();
         }
     });
 }

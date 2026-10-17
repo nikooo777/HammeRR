@@ -179,3 +179,83 @@ fn rendered(server: &EditorServer, args: Value) -> (Vec<u8>, Value) {
     let report = serde_json::from_str(&result.content[1].as_text().unwrap().text).unwrap();
     (png, report)
 }
+
+#[test]
+#[ignore = "requires offscreen GPU; root runs explicitly with --ignored"]
+fn tool_terrain_temporary_visibility_rebuilds_retained_lighting_counts_and_pixels() {
+    let (directory, game) = crate::test_assets::game();
+    std::fs::write(
+        directory.path().join("materials/test/terrain-tool.vmt"),
+        "LightmappedGeneric { $basetexture test/checker %compilenodraw 1 }",
+    )
+    .unwrap();
+    let mut session = Session::new(Ok(game));
+    let ObjectId::Solid(solid) = session
+        .create_block(
+            Actor::User,
+            DVec3::new(-32.0, -32.0, -8.0),
+            DVec3::new(32.0, 32.0, 0.0),
+            "test/checker",
+            false,
+        )
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    let side = session
+        .document()
+        .solid(solid)
+        .unwrap()
+        .sides
+        .iter()
+        .find(|side| Plane::from_points(side.plane.0).unwrap().normal == DVec3::Z)
+        .unwrap()
+        .id;
+    let face = map_core::surface::FaceId { solid, side };
+    session.create_terrain(Actor::User, &[face], 2, 0).unwrap();
+    session
+        .edit(Actor::User, "mixed-parent tool terrain", |tx| {
+            for side in &mut tx.solid_mut(solid)?.sides {
+                assert_eq!(side.material, "test/checker");
+                if side.id == face.side {
+                    side.material = "test/terrain-tool".into();
+                }
+            }
+            Ok(())
+        })
+        .unwrap();
+    session.set_view(ViewOptions {
+        grid_visible: false,
+        ..session.view()
+    });
+    let source = session.document().vmf().clone();
+    let history = session.document().undo_labels().count();
+    let camera = session.camera();
+    let view = session.view();
+    let selection = session.selected_ids();
+    let shared = Arc::new(Mutex::new(session));
+    let server = EditorServer::new(shared.clone(), None);
+    let mut args = json!({"width":65,"height":65,"camera":{"projection":"perspective","position":[0,0,96],"look_at":[0,0,0]},"selection_outlines":false,"lighting_preview":true,"tool_textures":true});
+    let shown = rendered(&server, args.clone());
+    args["tool_textures"] = json!(false);
+    let hidden = rendered(&server, args.clone());
+    args["tool_textures"] = json!(true);
+    let restored = rendered(&server, args);
+    assert_ne!(shown.0, hidden.0);
+    assert_eq!(shown.0, restored.0);
+    for (rendered, triangles) in [(&shown, 32), (&hidden, 0), (&restored, 32)] {
+        let report = &rendered.1["lighting_preview"]["report"];
+        assert_eq!(report["terrain"]["excluded_surfaces"], 1);
+        assert_eq!(report["terrain"]["excluded_triangles"], triangles);
+        assert_eq!(
+            report["source"]["scene_serial"],
+            shown.1["lighting_preview"]["report"]["source"]["scene_serial"]
+        );
+    }
+    let session = lock(&shared);
+    assert_eq!(session.document().vmf(), &source);
+    assert_eq!(session.document().undo_labels().count(), history);
+    assert_eq!(session.camera(), camera);
+    assert_eq!(session.view(), view);
+    assert_eq!(session.selected_ids(), selection);
+}

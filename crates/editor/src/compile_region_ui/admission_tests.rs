@@ -46,25 +46,31 @@ fn fixture(family: Family) -> Fixture {
     let directory = tempfile::tempdir().unwrap();
     let mut session = Session::new(Ok(game));
     session.configure_recovery(Ok(directory.path().join("recovery")));
-    let ObjectId::Solid(solid) = session
-        .create_block(
-            Actor::User,
-            DVec3::ZERO,
-            DVec3::splat(64.0),
-            "test/checker",
-            false,
-        )
-        .unwrap()
-    else {
-        unreachable!()
-    };
-    let faces = session.document().solid(solid).unwrap().sides[..2]
-        .iter()
-        .map(|side| FaceId {
-            solid,
-            side: side.id,
-        })
-        .collect::<Vec<_>>();
+    let mut faces = Vec::new();
+    for x in [0.0, 128.0] {
+        let ObjectId::Solid(solid) = session
+            .create_block(
+                Actor::User,
+                DVec3::new(x, 0.0, 0.0),
+                DVec3::new(x + 64.0, 64.0, 64.0),
+                "test/checker",
+                false,
+            )
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let side = session
+            .document()
+            .solid(solid)
+            .unwrap()
+            .sides
+            .iter()
+            .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal == DVec3::Z)
+            .unwrap()
+            .id;
+        faces.push(FaceId { solid, side });
+    }
     session.select_faces(&faces, SelectMode::Replace).unwrap();
     let shared = Arc::new(Mutex::new(session));
     let document = crate::test_assets::document(shared.clone());

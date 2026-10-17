@@ -144,6 +144,7 @@ pub struct FaceOverlay {
 }
 
 struct Builder<'a> {
+    tool_textures: bool,
     lighting: crate::lighting::Preview,
     normal_maps: crate::normal_maps::Report,
     icons: &'a BTreeMap<u32, crate::icons::Instance>,
@@ -519,6 +520,11 @@ impl Builder<'_> {
         let mut lighting_receiver = 0;
         if self.lighting.report.active {
             let info = self.library.get(material);
+            let drawn_triangles = if info.tool && !self.tool_textures {
+                0
+            } else {
+                triangles.len()
+            };
             let reason = if !owner_supported {
                 Some("Terrain authored lighting requires world or func_detail terrain")
             } else if info.tool {
@@ -531,7 +537,7 @@ impl Builder<'_> {
                     .or_else(|| terrain::lighting_error(mesh, normals))
             };
             if let Some(reason) = reason.map(str::to_owned) {
-                self.exclude_terrain(face, &side.material, triangles.len(), &reason);
+                self.exclude_terrain(face, &side.material, drawn_triangles, &reason);
             } else {
                 lighting_receiver = 1;
                 self.lighting.report.terrain.admitted_surfaces += 1;
@@ -1233,6 +1239,7 @@ impl SceneMesh {
             entities,
             guides,
             skybox,
+            true,
             normal_maps,
             false,
             include,
@@ -1255,6 +1262,7 @@ impl SceneMesh {
             &[crate::models::Instance],
         ),
         skybox: Option<std::sync::Arc<crate::sky::Skybox>>,
+        tool_textures: bool,
         normal_maps: bool,
         lighting: bool,
         include: impl Fn(ObjectId) -> bool,
@@ -1264,6 +1272,7 @@ impl SceneMesh {
         let (selected, selected_faces) = selection;
         let terrain = terrain::prepare(vmf);
         let mut builder = Builder {
+            tool_textures,
             lighting: crate::lighting::Preview {
                 report: crate::lighting::Report {
                     requested: lighting,

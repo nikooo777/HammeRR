@@ -1,5 +1,3 @@
-use std::io::Read;
-
 use serde::Serialize;
 
 use super::*;
@@ -134,23 +132,11 @@ impl Session {
     }
 
     pub fn load_pointfile(&mut self, actor: Actor, path: &Path) -> Result<(), String> {
-        let metadata = std::fs::metadata(path).map_err(|error| error.to_string())?;
-        if !metadata.is_file() || metadata.len() > MAX_BYTES {
-            return Err("Choose a regular pointfile no larger than 2 MiB".into());
-        }
-        let file =
-            std::fs::File::open(path).map_err(|error| format!("{}: {error}", path.display()))?;
-        let metadata = file.metadata().map_err(|error| error.to_string())?;
-        if !metadata.is_file() || metadata.len() > MAX_BYTES {
-            return Err("Choose a regular pointfile no larger than 2 MiB".into());
-        }
-        let mut text = String::new();
-        file.take(MAX_BYTES + 1)
-            .read_to_string(&mut text)
-            .map_err(|error| error.to_string())?;
-        if text.len() as u64 > MAX_BYTES {
-            return Err("Pointfile exceeds 2 MiB".into());
-        }
+        self.ensure_not_closing()?;
+        let bytes = crate::bounded_file::Source::capture(path, MAX_BYTES)
+            .and_then(crate::bounded_file::Source::read)
+            .map_err(|error| format!("{}: {error}", path.display()))?;
+        let text = String::from_utf8(bytes).map_err(|error| error.to_string())?;
         let points = parse(&text)?;
         let count = points.len();
         self.reset_pointfile();
@@ -251,6 +237,9 @@ impl Session {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod loading_tests;
 
 #[cfg(test)]
 mod tests {

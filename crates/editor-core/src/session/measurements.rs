@@ -88,8 +88,12 @@ fn measurement_json(measurement: &Measurement, vmf: &Vmf) -> Value {
             .flatten()
             .map(|id| {
                 let point = measurement.resolve_endpoint(vmf, endpoint);
-                json!({"kind":"entity_origin","object":format!("entity:{id}"),
-                "available":point.is_ok(),"error":point.err()})
+                match measurement.local_offset(endpoint).ok().flatten() {
+                    Some(offset) => json!({"kind":"entity_local","object":format!("entity:{id}"),
+                        "local_offset":offset.to_array(),"available":point.is_ok(),"error":point.err()}),
+                    None => json!({"kind":"entity_origin","object":format!("entity:{id}"),
+                        "available":point.is_ok(),"error":point.err()}),
+                }
             })
     };
     json!({"id":measurement.id,"name":measurement.name,
@@ -215,7 +219,7 @@ impl Session {
             "edit_error":self.measurement_context().err(),
             "limits":{"measurements":measurements::MAX_MEASUREMENTS,"name_characters":measurements::MAX_NAME_CHARS,
                 "coordinate_extent":measurements::MAX_COORDINATE,"pick_viewport_dimension":MAX_PICK_VIEWPORT_SIZE},
-            "attachments":"Attach an endpoint to a point entity's authored origin. References follow origin changes, retain stable entity IDs through duplicate/delete/Undo, and become unavailable when the target is missing, ambiguous, a brush entity, or has no valid finite origin. Reports use committed source coordinates; viewport/render_view guides follow the render document during transform previews. Detach freezes only a resolvable origin. Explicit world_endpoint replaces a reference, including an unavailable one. Brush, surface and arbitrary local-offset anchors are unsupported.",
+            "attachments":"Attach an endpoint to a point entity's authored origin, or capture its current world point in the entity's rigid local frame with attach_local. Local points follow authored Source orientation and translation with unit axes; model scale, parenting and mesh vertices are not evaluated. Absent angles mean zero; invalid or ambiguous authored orientation makes local attachments unavailable. References retain stable IDs through duplicate/delete/Undo. Missing, ambiguous, brush or invalid-origin targets remain unavailable with stored world provenance and no fallback. Reports use committed coordinates; viewport/render_view guides follow the render document during transform previews. Detach freezes only a resolvable point. Explicit world_endpoint replaces either attachment, including an unavailable one. Brush/surface attachments are unsupported.",
             "picking":"Preview a ruler, then arm unattached start/end picking. Rays and viewport pixels use the first visible brush, terrain triangle or supported model mesh; misses preserve endpoints. No grid/plane fallback or snapping. Surface picks stay world points. Guides never enter picking."})
     }
 
@@ -251,7 +255,7 @@ impl Session {
                         .unwrap_or_else(|_| existing.stored_endpoint(endpoint));
                     if measurement.stored_endpoint(endpoint) != point {
                         return Err(format!(
-                            "The {} endpoint is attached to an entity origin; Detach or explicitly replace it with a world endpoint before editing coordinates",
+                            "The {} endpoint is attached to an entity; Detach or explicitly replace it with a world endpoint before editing coordinates",
                             endpoint.label()
                         ));
                     }
@@ -448,6 +452,25 @@ impl Session {
             unreachable!()
         };
         measurement.set_origin_reference(endpoint.into(), Some(id));
+        measurement.set_stored_endpoint(endpoint.into(), point);
+        self.replace_measurement_endpoint(measurement)
+    }
+
+    pub fn attach_measurement_local(
+        &mut self,
+        actor: Actor,
+        token: u64,
+        endpoint: Endpoint,
+        object: ObjectId,
+    ) -> Result<Value, String> {
+        let mut measurement = self.editable_measurement(actor, token)?;
+        let point = measurement.resolve_endpoint(self.document.vmf(), endpoint.into())?;
+        let (origin, basis) = measurements::entity_local_pose(self.document.vmf(), object)?;
+        let ObjectId::Entity(id) = object else {
+            unreachable!()
+        };
+        let offset = basis.transpose() * (point - origin);
+        measurement.set_local_reference(endpoint.into(), id, offset)?;
         measurement.set_stored_endpoint(endpoint.into(), point);
         self.replace_measurement_endpoint(measurement)
     }

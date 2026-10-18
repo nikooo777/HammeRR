@@ -10,7 +10,7 @@ use crate::{EditError, Transaction};
 
 mod origins;
 pub(crate) use origins::reserved_origin_ids;
-pub use origins::{Endpoint, entity_origin};
+pub use origins::{Endpoint, entity_local_pose, entity_origin};
 
 pub const KEY: &str = "hammerr_measurements";
 pub const MAX_MEASUREMENTS: usize = 128;
@@ -46,6 +46,8 @@ impl Measurement {
         }
         let start_origin = self.origin_reference(Endpoint::Start)?;
         let end_origin = self.origin_reference(Endpoint::End)?;
+        self.local_offset(Endpoint::Start)?;
+        self.local_offset(Endpoint::End)?;
         if self.start == self.end && start_origin.is_none() && end_origin.is_none() {
             return Err("Measurement endpoints must be distinct".into());
         }
@@ -143,7 +145,8 @@ impl Measurements {
         let nodes = node
             .children()
             .ok_or("Measurements must be a metadata block")?;
-        if field(nodes, "version")? != "1" {
+        let version = field(nodes, "version")?;
+        if !matches!(version, "1" | "2") {
             return Err("Unsupported measurement metadata version; metadata is preserved".into());
         }
         let mut result = Self::default();
@@ -186,7 +189,21 @@ impl Measurements {
             });
         }
         result.validate()?;
+        if version == "1" && result.has_local_attachments() {
+            return Err(
+                "Local measurement attachments require metadata version 2; metadata is preserved"
+                    .into(),
+            );
+        }
         Ok(result)
+    }
+
+    fn has_local_attachments(&self) -> bool {
+        self.measurements.iter().any(|measurement| {
+            [Endpoint::Start, Endpoint::End]
+                .into_iter()
+                .any(|endpoint| measurement.local_offset(endpoint).ok().flatten().is_some())
+        })
     }
 
     pub fn validate(&self) -> Result<(), String> {
@@ -231,6 +248,7 @@ impl Measurements {
     pub fn write(self, tx: &mut Transaction) -> Result<(), EditError> {
         let previous = Self::parse(tx.vmf()).map_err(EditError::Invalid)?;
         self.validate().map_err(EditError::Invalid)?;
+        let needs_local_version = self.has_local_attachments();
         let node = if self.measurements.is_empty() && self.extra.is_empty() {
             None
         } else {
@@ -241,7 +259,11 @@ impl Measurements {
             let mut nodes = Vec::new();
             for node in original_fields {
                 if node.key == "version" {
-                    nodes.push(node.clone());
+                    nodes.push(if needs_local_version && node.as_str() == Some("1") {
+                        Node::string("version", "2")
+                    } else {
+                        node.clone()
+                    });
                 } else if node.key == "measurement" {
                     let id = field(node.children().unwrap(), "id")
                         .unwrap()
@@ -261,7 +283,10 @@ impl Measurements {
                 }
             }
             if original.is_none() {
-                nodes.push(Node::string("version", "1"));
+                nodes.push(Node::string(
+                    "version",
+                    if needs_local_version { "2" } else { "1" },
+                ));
             }
             nodes.extend(pending.iter().map(Measurement::to_node));
             nodes.extend(pending_extra);
@@ -424,7 +449,7 @@ mod tests {
         }
         let cases = vec![
             vec![Node::string(KEY, "bad")],
-            vec![Node::block(KEY, vec![Node::string("version", "2")])],
+            vec![Node::block(KEY, vec![Node::string("version", "3")])],
             vec![Node::block(
                 KEY,
                 vec![Node::string("version", "1"), Node::string("version", "1")],

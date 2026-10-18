@@ -593,7 +593,7 @@ At most 256 transactions can be traversed in one request. See [History](history.
 
 `get_measurements` reports saved rulers, the owned draft, limits, errors and a
 snapshot. `set_measurement` supports `preview`, `review`, `apply`, `cancel`,
-`delete`, `frame`, `view`, `attach_origin`, `detach_origin`, `world_endpoint`,
+`delete`, `frame`, `view`, `attach_origin`, `attach_local`, `detach_origin`, `world_endpoint`,
 `begin_pick`, `pick_ray`, `pick_pixel` and `cancel_pick`.
 Rulers use editor-only metadata and the shared guide mesh, with no BSP output.
 
@@ -615,20 +615,36 @@ exact unsnapped world points.
 To attach an owned preview endpoint to a point entity, call `set_measurement`
 with `action:"attach_origin"`, its `token`, `endpoint:"start"|"end"` and
 `object:"entity:<id>"`. The endpoint references that entity's authored origin
-by stable ID. `detach_origin` takes `token` and `endpoint` and freezes a resolvable
-origin into a world point. `world_endpoint` takes those fields plus exact
+by stable ID. Use `action:"attach_local"` with the same fields to capture its
+current resolved world endpoint in that entity's rigid unit-axis frame. The
+result follows authored Source orientation and translation, preserving its
+local offset; model scale, parenting and mesh vertices are not evaluated.
+`detach_origin` takes `token` and `endpoint` and freezes either resolvable entity
+attachment into a world point. `world_endpoint` takes those fields plus exact
 `point:[x,y,z]`, explicitly replacing even an unavailable reference. Each
 successful action returns a new token without changing the map/history;
 Apply resolves again and saves one Undo step. Numeric Preview preserves
 attachments and rejects implicit coordinate changes; detach or use
 `world_endpoint` before numeric edits or surface picking.
 
+Local frames use Source pitch/yaw/roll, with `angles` taking precedence over
+scalar `angle`, including vertical -1/-2 and authored light pitch conventions.
+Absent orientation means zero; invalid stored orientation makes only local
+attachments unavailable. Origins/resolved points stay within ±65536 units;
+local offset components need only be finite. Local Apply upgrades measurement
+metadata to version2; Cancel preserves the original block and Undo restores it
+exactly. Removing local modifiers retains version2. Older builds preserve that
+block with measurement editing disabled; retained origin-ID keys protect orphan
+references from unrelated ID reuse.
+
 Measurement rows report resolved `start`/`end`, `distance`, `components`,
 `available`, `error`, original `stored_start`/`stored_end` and per-endpoint
-`attachments` with kind, object ID and availability/error. Inspection resolves
+`attachments` with kind, object ID and availability/error. Local attachments
+report `kind:"entity_local"` and finite `local_offset:[x,y,z]`. Inspection resolves
 against `coordinate_source:"committed_document"`; rendered guides follow the
 displayed transform draft. Missing/deleted entities, duplicate IDs/origins,
-invalid origins, brush entities and coincident resolved endpoints remain
+invalid origins, invalid/duplicate active local orientation, brush entities and
+coincident resolved endpoints remain
 unavailable, draw no guide and reject Frame/Apply. References never silently
 freeze, detach or retarget; duplication keeps the original target. Explicit
 world replacement can repair an unavailable endpoint. Target visibility does not

@@ -49,6 +49,8 @@ export component MeasurementsWindow inherits Window {
     callback cancel-pick();
     callback attach-start-origin();
     callback attach-end-origin();
+    callback attach-start-local();
+    callback attach-end-local();
     callback detach-start-origin();
     callback detach-end-origin();
     callback world-start();
@@ -71,7 +73,7 @@ export component MeasurementsWindow inherits Window {
                 Rectangle { horizontal-stretch: 1; }
                 CheckBox { text: "Show guides"; checked <=> root.show-guides; toggled => { root.view-changed(); } }
             }
-            Text { text: "Persistent rulers · exact world points or point-entity origins · X red, Y green, Z blue"; color: #b6c1cf; wrap: word-wrap; }
+            Text { text: "Persistent rulers · world points, entity origins or rigid entity-local points · X red, Y green, Z blue"; color: #b6c1cf; wrap: word-wrap; }
             Rectangle {
                 background: #191f28;
                 border-radius: 6px;
@@ -133,6 +135,7 @@ export component MeasurementsWindow inherits Window {
                 spacing: 8px;
                 LineEdit { text <=> root.start-origin-object; placeholder-text: "entity:<id> or selection"; accessible-label: "Start origin object"; enabled: root.can-attach; }
                 Button { text: "Attach start origin"; enabled: root.can-attach; clicked => { root.attach-start-origin(); } }
+                Button { text: "Attach start local"; enabled: root.can-attach; clicked => { root.attach-start-local(); } }
                 Button { text: "Detach start"; enabled: root.can-attach && root.start-attached; clicked => { root.detach-start-origin(); } }
                 Button { text: "Use start world"; enabled: root.can-attach && root.start-attached; clicked => { root.world-start(); } }
             }
@@ -141,6 +144,7 @@ export component MeasurementsWindow inherits Window {
                 spacing: 8px;
                 LineEdit { text <=> root.end-origin-object; placeholder-text: "entity:<id> or selection"; accessible-label: "End origin object"; enabled: root.can-attach; }
                 Button { text: "Attach end origin"; enabled: root.can-attach; clicked => { root.attach-end-origin(); } }
+                Button { text: "Attach end local"; enabled: root.can-attach; clicked => { root.attach-end-local(); } }
                 Button { text: "Detach end"; enabled: root.can-attach && root.end-attached; clicked => { root.detach-end-origin(); } }
                 Button { text: "Use end world"; enabled: root.can-attach && root.end-attached; clicked => { root.world-end(); } }
             }

@@ -202,8 +202,8 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 
 | Measurement guides | Rope preview |
 | --- | --- |
-| ![Ruler endpoint attached to an entity origin](docs/images/measurements-origin-attachment.png) | ![Authored rope spans with a static sag preview](docs/images/rope-preview.png) |
-| Pick surface points, enter exact coordinates or attach ruler endpoints to entity origins. | Inspect linked rope spans with authored slack, width and subdivision. |
+| ![Ruler points attached in a rigid entity-local frame](docs/images/measurement-local-attachment.png) | ![Authored rope spans with a static sag preview](docs/images/rope-preview.png) |
+| Pick exact ruler endpoints or attach them to entity origins and local frames. | Inspect linked rope spans with authored slack, width and subdivision. |
 
 [Editor basics →](docs/basics.md) · [Selecting →](docs/selection.md) · [Preview defaults →](docs/preview-defaults.md) · [Measurements →](docs/measurements.md)
 

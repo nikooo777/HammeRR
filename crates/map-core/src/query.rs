@@ -430,36 +430,37 @@ pub fn bounds_of(doc: &Document, ids: &[ObjectId]) -> Option<(DVec3, DVec3)> {
     union(ids.iter().filter_map(|&id| bounds(doc, id)))
 }
 
+pub fn point_entity_angles(entity: &Entity) -> Option<DVec3> {
+    let mut angles = match entity.properties.get("angles") {
+        Some(value) => source_formats::vmf::parse_vec3(value)?,
+        None => DVec3::ZERO,
+    };
+    if entity.properties.get("angles").is_none()
+        && let Some(value) = entity.properties.get("angle")
+    {
+        let angle = value.trim().parse::<f64>().ok()?;
+        angles = match angle {
+            -1.0 => DVec3::new(-90.0, 0.0, 0.0),
+            -2.0 => DVec3::new(90.0, 0.0, 0.0),
+            _ => DVec3::new(0.0, angle, 0.0),
+        };
+    }
+    if matches!(entity.classname(), Some("light_spot" | "light_environment"))
+        && let Some(value) = entity.properties.get("pitch")
+    {
+        let pitch = value.trim().parse::<f64>().ok()?;
+        angles.x = -pitch;
+    }
+    angles.is_finite().then_some(angles)
+}
+
 pub fn local_basis(doc: &Document, id: ObjectId) -> Option<glam::DMat3> {
     let solid = match id {
         ObjectId::Solid(id) => doc.solid(id)?,
         ObjectId::Entity(id) => {
             let entity = doc.entity(id)?;
             if entity.solids.is_empty() {
-                let mut angles = match entity.properties.get("angles") {
-                    Some(value) => source_formats::vmf::parse_vec3(value)?,
-                    None => DVec3::ZERO,
-                };
-                if entity.properties.get("angles").is_none()
-                    && let Some(value) = entity.properties.get("angle")
-                {
-                    let angle = value.trim().parse::<f64>().ok()?;
-                    angles = match angle {
-                        -1.0 => DVec3::new(-90.0, 0.0, 0.0),
-                        -2.0 => DVec3::new(90.0, 0.0, 0.0),
-                        _ => DVec3::new(0.0, angle, 0.0),
-                    };
-                }
-                if matches!(entity.classname(), Some("light_spot" | "light_environment"))
-                    && let Some(value) = entity.properties.get("pitch")
-                {
-                    let pitch = value.trim().parse::<f64>().ok()?;
-                    angles.x = -pitch;
-                }
-                if !angles.is_finite() {
-                    return None;
-                }
-                let radians = angles.map(f64::to_radians);
+                let radians = point_entity_angles(entity)?.map(f64::to_radians);
                 return Some(glam::DMat3::from_quat(glam::DQuat::from_euler(
                     glam::EulerRot::ZYX,
                     radians.y,

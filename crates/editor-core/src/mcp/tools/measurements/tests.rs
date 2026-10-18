@@ -372,3 +372,53 @@ fn mcp_measurement_surface_actions_share_tokens_exact_coordinates_and_pixel_view
         assert!(serde_json::from_value::<MeasurementArgs>(invalid).is_err());
     }
 }
+
+#[test]
+fn mcp_local_capture_shares_reviewed_ownership_and_rigid_attachment_reports() {
+    let mut session = Session::new(Err("no assets needed".into()));
+    let object = session
+        .edit(Actor::User, "local target", |tx| {
+            map_core::edit::create_entity(
+                tx,
+                "logic_relay",
+                Some(DVec3::new(16.0, 32.0, 64.0)),
+                &[("angles".into(), "0 90 0".into())],
+                Vec::new(),
+            )
+        })
+        .unwrap();
+    let shared = Arc::new(Mutex::new(session));
+    let server = EditorServer::new(shared.clone(), None);
+    let source = lock(&shared).document().vmf().clone();
+    let draft = preview(&server, None);
+    let attached = action(
+        &server,
+        json!({"action":"attach_local", "token":draft["draft"]["token"], "endpoint":"start", "object":id_string(object)}),
+    );
+    let report = &attached["draft"]["measurement"];
+    assert_eq!(report["attachments"]["start"]["kind"], "entity_local");
+    assert_eq!(report["attachments"]["start"]["object"], id_string(object));
+    let offset: [f64; 3] =
+        serde_json::from_value(report["attachments"]["start"]["local_offset"].clone()).unwrap();
+    assert!(DVec3::from_array(offset).abs_diff_eq(DVec3::new(-56.5, 32.25, -55.875), 1e-10));
+    assert_eq!(lock(&shared).document().vmf(), &source);
+    assert!(serde_json::from_value::<MeasurementArgs>(json!({"action":"attach_local", "token":1, "endpoint":"start", "object":id_string(object), "offset":[0,0,0]})).is_err());
+    let reviewed = lock(&shared)
+        .review_measurement(Actor::User, attached["draft"]["token"].as_u64().unwrap())
+        .unwrap();
+    let current = reviewed["draft"]["token"].as_u64().unwrap();
+    let wire_before = value(server.get_measurements());
+    assert!(server.set_measurement(Parameters(serde_json::from_value(json!({"action":"attach_local", "token":current, "endpoint":"end", "object":id_string(object)})).unwrap())).unwrap().is_error.unwrap_or(false));
+    assert_eq!(lock(&shared).measurement_state(), reviewed);
+    assert_eq!(value(server.get_measurements()), wire_before);
+    lock(&shared)
+        .apply_measurement(Actor::User, current)
+        .unwrap();
+    assert_eq!(
+        value(server.get_measurements())["measurements"][0]["attachments"]["start"],
+        report["attachments"]["start"]
+    );
+    lock(&shared).undo(Actor::User).unwrap();
+    assert_eq!(lock(&shared).document().vmf(), &source);
+    assert!(server.offscreen.lock().unwrap().renderer.is_none());
+}

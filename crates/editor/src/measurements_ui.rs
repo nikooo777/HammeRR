@@ -146,10 +146,23 @@ fn refresh(window: &MeasurementsWindow, session: &Session, form: &RefCell<Form>)
         let attached = attachment.is_some_and(|data| !data.is_null());
         let status = attachment.filter(|data|!data.is_null()).map(|data| {
             let object = data["object"].as_str().unwrap_or("entity");
+            let target = if data["kind"] == "entity_local" {
+                match serde_json::from_value::<[f64; 3]>(data["local_offset"].clone()) {
+                    Ok(offset) => {
+                        let [x, y, z] = offset.map(|value| {
+                            if value.abs() < 0.0005 { 0.0 } else { value }
+                        });
+                        format!("local point ({x:.3}, {y:.3}, {z:.3})")
+                    }
+                    Err(_) => "local point with invalid coordinates".into(),
+                }
+            } else {
+                "origin".into()
+            };
             match data["error"].as_str() {
-                Some(error) if !current => format!("{name}: {object} origin unavailable — {error}. Select the ruler again to review stored coordinates."),
-                Some(error) => format!("{name}: {object} origin unavailable — {error}. Stored coordinates shown; Use {name} world explicitly replaces this reference."),
-                None => format!("{name}: follows {object} origin. Detach freezes its current exact world point."),
+                Some(error) if !current => format!("{name}: {object} {target} unavailable — {error}. Select the ruler again to review stored coordinates."),
+                Some(error) => format!("{name}: {object} {target} unavailable — {error}. Stored coordinates shown; Use {name} world explicitly replaces this reference."),
+                None => format!("{name}: follows {object} {target}. Detach freezes its current world point."),
             }
         }).unwrap_or_else(||format!("{name}: exact world point. Enter an entity ID or leave blank to use the selected point entity."));
         match endpoint {
@@ -313,6 +326,7 @@ fn cancel_owned(session: &mut Session, form: &RefCell<Form>) {
 #[derive(Clone, Copy)]
 enum OriginAction {
     Attach,
+    AttachLocal,
     Detach,
     World,
 }
@@ -334,7 +348,7 @@ fn change_origin(
         .owned_token
         .ok_or("Preview or Review the measurement before changing attachments")?;
     match action {
-        OriginAction::Attach => {
+        OriginAction::Attach | OriginAction::AttachLocal => {
             let text = match endpoint {
                 Endpoint::Start => window.get_start_origin_object(),
                 Endpoint::End => window.get_end_origin_object(),
@@ -347,7 +361,12 @@ fn change_origin(
             } else {
                 crate::identity::parse_id(&text)?
             };
-            session.attach_measurement_origin(Actor::User, token, endpoint, object)
+            match action {
+                OriginAction::Attach => {
+                    session.attach_measurement_origin(Actor::User, token, endpoint, object)
+                }
+                _ => session.attach_measurement_local(Actor::User, token, endpoint, object),
+            }
         }
         OriginAction::Detach => session.detach_measurement_origin(Actor::User, token, endpoint),
         OriginAction::World => {
@@ -393,14 +412,26 @@ impl Controller {
         for endpoint in [Endpoint::Start, Endpoint::End] {
             for action in [
                 OriginAction::Attach,
+                OriginAction::AttachLocal,
                 OriginAction::Detach,
                 OriginAction::World,
             ] {
                 let (window_ref, access, form) = (window.as_weak(), access.clone(), form.clone());
                 let callback = move || {
                     with_session(&window_ref, &access, |window, session| {
+                        let other_object = match endpoint {
+                            Endpoint::Start => window.get_end_origin_object(),
+                            Endpoint::End => window.get_start_origin_object(),
+                        };
                         match change_origin(window, session, &form, endpoint, action)
-                        .and_then(|state|adopt(window, session, &form, &state)) {
+                        .and_then(|state| {
+                            adopt(window, session, &form, &state)?;
+                            match endpoint {
+                                Endpoint::Start => window.set_end_origin_object(other_object),
+                                Endpoint::End => window.set_start_origin_object(other_object),
+                            }
+                            Ok(())
+                        }) {
                         Ok(()) => window.set_message("Endpoint preview updated. Check the ruler, then Apply to save in one Undo step.".into()),
                         Err(error) => window.set_message(error.into()),
                     }
@@ -412,6 +443,12 @@ impl Controller {
                         window.on_attach_start_origin(callback)
                     }
                     (Endpoint::End, OriginAction::Attach) => window.on_attach_end_origin(callback),
+                    (Endpoint::Start, OriginAction::AttachLocal) => {
+                        window.on_attach_start_local(callback)
+                    }
+                    (Endpoint::End, OriginAction::AttachLocal) => {
+                        window.on_attach_end_local(callback)
+                    }
                     (Endpoint::Start, OriginAction::Detach) => {
                         window.on_detach_start_origin(callback)
                     }

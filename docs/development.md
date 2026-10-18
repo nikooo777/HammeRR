@@ -2860,3 +2860,21 @@ rotation and uniform scale, exact first-hit vertex identity, cached reload guard
 shared Preview/Cancel/Apply and Undo. The software placement case writes
 `model-vertex-snap.png` when `HAMMERR_UI_SNAPSHOTS` names an existing directory;
 it does not create a desktop window or use input.
+
+### Entity-local ruler attachments
+
+```sh
+cargo test -p map-core local_points
+cargo test -p map-core local_pose
+cargo test -p map-core local_metadata
+cargo test -p editor-core --features mcp,test-support local_capture
+cargo test -p editor measurement_local_controls_capture_reviewed_points_cancel_and_repair_bad_pose
+cargo test -p compiler --test measurement_metadata
+```
+
+The existing ruler fixtures cover rigid Source pose following, strict unavailable
+states and explicit repair, owned UI/MCP capture, version-1 preservation until
+Apply, version-2 metadata and exact Undo, raw orphan-ID reservation and unchanged
+compiled BSP bytes. The software control case writes
+`measurement-local-attachment.png` when `HAMMERR_UI_SNAPSHOTS` names an existing
+directory. These checks require no game or desktop input.

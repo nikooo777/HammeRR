@@ -366,3 +366,169 @@ fn origin_actions_guard_ownership_tokens_unsupported_targets_and_numeric_or_pick
     );
     session.cancel_measurement(Actor::User, stale).unwrap();
 }
+
+#[test]
+fn local_capture_renews_owned_tokens_and_guides_follow_actual_rotated_preview() {
+    let mut session = Session::new(Err("no assets needed".into()));
+    let object = point_entity(&mut session, DVec3::new(16.25, 32.5, 64.75));
+    let ObjectId::Entity(id) = object else {
+        panic!()
+    };
+    session
+        .edit(Actor::User, "source orientation", |tx| {
+            edit::set_properties(tx, id, &[("angles".into(), Some("20 35 -15".into()))])
+        })
+        .unwrap();
+    let source = session.document.vmf().clone();
+    let history = session.document.undo_labels().count();
+    let current = preview(&mut session, Actor::Agent, request(None));
+    let before = session.measurement_state();
+    assert!(
+        session
+            .attach_measurement_local(Actor::User, current, Endpoint::Start, object)
+            .is_err()
+    );
+    assert_eq!(session.measurement_state(), before);
+    let reviewed = session.review_measurement(Actor::User, current).unwrap();
+    let reviewed_token = token(&reviewed);
+    let stamp = session.measurement_stamp();
+    let captured = session
+        .attach_measurement_local(Actor::User, reviewed_token, Endpoint::Start, object)
+        .unwrap();
+    assert_ne!(token(&captured), reviewed_token);
+    assert_ne!(session.measurement_stamp(), stamp);
+    assert_eq!(
+        captured["draft"]["measurement"]["attachments"]["start"]["kind"],
+        "entity_local"
+    );
+    assert_eq!(
+        captured["draft"]["measurement"]["stored_start"],
+        json!(request(None).start.to_array())
+    );
+    let point: [f64; 3] =
+        serde_json::from_value(captured["draft"]["measurement"]["start"].clone()).unwrap();
+    assert!(DVec3::from_array(point).abs_diff_eq(request(None).start, 1e-10));
+    assert!(
+        session
+            .attach_measurement_local(Actor::User, reviewed_token, Endpoint::End, object)
+            .is_err()
+    );
+    assert_eq!(session.measurement_state(), captured);
+    session
+        .cancel_measurement(Actor::User, token(&captured))
+        .unwrap();
+    assert_eq!(session.document.vmf(), &source);
+    assert_eq!(session.document.undo_labels().count(), history);
+    let current = preview(&mut session, Actor::User, request(None));
+    let captured = session
+        .attach_measurement_local(Actor::User, current, Endpoint::Start, object)
+        .unwrap();
+    session
+        .apply_measurement(Actor::User, token(&captured))
+        .unwrap();
+    assert_eq!(session.document.undo_labels().count(), history + 1);
+    let metadata = session.document.vmf().extra.clone();
+    let transform = edit::Transform {
+        rotation: DVec3::Z * 90.0,
+        translation: DVec3::new(-4.0, 7.0, 10.0),
+        ..Default::default()
+    };
+    let original = request(None).start;
+    let expected = DVec3::new(-original.y, original.x, original.z) + transform.translation;
+    session
+        .preview_transform(Actor::User, &[object], transform, Some(DVec3::ZERO))
+        .unwrap();
+    let state = session.measurement_state();
+    let committed: [f64; 3] =
+        serde_json::from_value(state["measurements"][0]["start"].clone()).unwrap();
+    assert!(DVec3::from_array(committed).abs_diff_eq(original, 1e-10));
+    assert_eq!(state["coordinate_source"], "committed_document");
+    let mut mesh = session.build_scene();
+    mesh.lines.clear();
+    session.append_measurement_guides(&mut mesh);
+    let line = mesh
+        .lines
+        .iter()
+        .find(|line| line.color == [255, 210, 100, 255])
+        .unwrap();
+    assert!(glam::Vec3::from_array(line.position).abs_diff_eq(expected.as_vec3(), 1e-4));
+    assert_eq!(session.document.vmf().extra, metadata);
+    session.cancel_transform_preview();
+    session
+        .transform_objects(Actor::Agent, &[object], transform, Some(DVec3::ZERO))
+        .unwrap();
+    let moved: [f64; 3] =
+        serde_json::from_value(session.measurement_state()["measurements"][0]["start"].clone())
+            .unwrap();
+    assert!(DVec3::from_array(moved).abs_diff_eq(expected, 1e-5));
+    assert_eq!(session.document.vmf().extra, metadata);
+
+    session
+        .edit(Actor::User, "invalid orientation", |tx| {
+            edit::set_properties(tx, id, &[("angles".into(), Some("invalid".into()))])
+        })
+        .unwrap();
+    let state = session.measurement_state();
+    assert!(state["measurements"][0]["start"].is_null());
+    assert!(state["measurements"][0]["distance"].is_null());
+    assert_eq!(
+        state["measurements"][0]["stored_start"],
+        json!(original.to_array())
+    );
+    mesh.lines.clear();
+    session.append_measurement_guides(&mut mesh);
+    assert!(mesh.lines.is_empty());
+    let current = saved_preview(&mut session, Actor::User);
+    let unavailable = session.measurement_state();
+    assert!(
+        session
+            .detach_measurement_origin(Actor::User, current, Endpoint::Start)
+            .is_err()
+    );
+    assert!(session.apply_measurement(Actor::User, current).is_err());
+    assert!(
+        session
+            .frame_measurement(
+                None,
+                Some(current),
+                16.0 / 9.0,
+                &session.measurement_stamp()
+            )
+            .is_err()
+    );
+    assert_eq!(session.measurement_state(), unavailable);
+    let repaired = session
+        .set_measurement_world_endpoint(Actor::User, current, Endpoint::Start, original)
+        .unwrap();
+    assert!(repaired["draft"]["measurement"]["attachments"]["start"].is_null());
+    let origin_only = session
+        .attach_measurement_origin(Actor::User, token(&repaired), Endpoint::Start, object)
+        .unwrap();
+    assert_eq!(
+        origin_only["draft"]["measurement"]["attachments"]["start"]["kind"],
+        "entity_origin"
+    );
+    assert_eq!(origin_only["draft"]["measurement"]["available"], true);
+    session
+        .apply_measurement(Actor::User, token(&origin_only))
+        .unwrap();
+    assert_eq!(
+        session.document.vmf().extra[0]
+            .children()
+            .unwrap()
+            .iter()
+            .find(|node| node.key == "version")
+            .unwrap()
+            .as_str(),
+        Some("2")
+    );
+    session.undo(Actor::User).unwrap();
+    assert_eq!(
+        session.measurement_state()["measurements"][0]["attachments"]["start"]["kind"],
+        "entity_local"
+    );
+    assert_eq!(
+        session.measurement_state()["measurements"][0]["available"],
+        false
+    );
+}

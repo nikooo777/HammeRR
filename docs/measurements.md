@@ -54,11 +54,39 @@ Keep a ruler endpoint at a point entity's authored origin as that entity moves.
 
 ![Ruler endpoints explicitly attached to point-entity origins](images/measurements-origin-attachment.png)
 
+## Attach an endpoint in an entity's local frame
+
+Keep a clearance point at a fixed offset from a point entity as its authored
+origin and orientation change.
+
+1. Enter or surface-pick the desired world endpoint, then click **Preview**.
+   For an agent's draft, click **Review preview** first.
+2. Enter `entity:<id>` beside **Attach start local** or **Attach end local**.
+   Leave it empty to use the single selected point entity.
+3. Click **Attach start local** or **Attach end local**. The current point is
+   captured in the entity's rigid local frame. The world position stays the
+   same, within double-precision roundoff; the status shows its local offset.
+4. Click **Apply**, then move or rotate the entity. The ruler follows the
+   authored origin and Source orientation. A transform preview moves the guide;
+   inspection continues to report committed coordinates until Apply.
+5. Use **Detach start** or **Detach end** to freeze the resolved world point.
+   If the target or orientation is unavailable, use **Use start world** or
+   **Use end world** to explicitly replace the attachment with the stored
+   coordinates. Edit and preview those coordinates before attaching again.
+
+![Ruler points captured in a rigid entity-local frame](images/measurement-local-attachment.png)
+
 MCP uses `get_measurements` and `set_measurement`. The latter supports `preview`,
 `review`, `apply`, `cancel`, `delete`, `frame`, `view`, `begin_pick`, `pick_ray`,
-`pick_pixel`, `cancel_pick`, `attach_origin`, `detach_origin` and `world_endpoint`;
+`pick_pixel`, `cancel_pick`, `attach_origin`, `attach_local`, `detach_origin` and `world_endpoint`;
 inspection provides the snapshot and ownership token needed for guarded actions. UI and MCP use the same
 Session operations and rendered guide mesh.
+
+`attach_local` takes the owned `token`, `endpoint` (`start` or `end`) and
+`object` (`entity:<id>`). It captures the endpoint already in the draft;
+`attachments` reports `kind: "entity_local"` and `local_offset` alongside the
+retained object ID, availability and error. `detach_origin` detaches either
+kind of entity attachment. Every attachment action returns a new token.
 
 For MCP surface picks, preview first, then pass the owned token, `endpoint`
 (`start` or `end`), `width`, `height` and latest `pick_snapshot` to `begin_pick`.
@@ -79,11 +107,20 @@ Limits:
   renderer's single precision. Readouts display six decimal places.
 - Numeric and surface-picked endpoints retain unsnapped world coordinates and
   do not follow geometry. Explicit origin attachments follow point-entity
-  origins only; brush/surface attachments, local offsets and runtime parenting
-  are unsupported. Dimension labels and configurable 3D workplanes remain absent.
+  origins independently of angles. Local attachments use unit axes and follow
+  authored Source pitch/yaw/roll and translation. They do not follow model scale,
+  runtime parenting or mesh vertices. Brush/surface attachments, dimension
+  labels and configurable 3D workplanes remain absent.
+- Local X/Y/Z use the right-handed entity frame: at zero angles, X is forward,
+  Y is left and Z is up. `angles` takes precedence over scalar `angle`; scalar
+  `-1` and `-2` point up and down. Authored `pitch` retains the editor's existing
+  light-spot/environment convention. Absent angles default to zero. Malformed,
+  nonfinite or duplicate active orientation properties make a local attachment
+  unavailable. Local offsets need finite values; the ±65536 bound applies to
+  the origin and resolved world point, rather than to each local component.
 - Missing, duplicate or invalid origin targets retain their reference and show
   an unavailable ruler with no line or distance. Detach requires a resolvable
-  origin; explicit world replacement can repair an unavailable reference.
+  point; explicit world replacement can repair an unavailable reference.
   Hidden point entities remain valid origin targets. Duplicating a target
   leaves the ruler attached to the original ID.
 - Surface picks follow authored visibility, tool filters and the working
@@ -102,7 +139,12 @@ Limits:
   remain unchanged until **Apply**; edits to the numeric form require another
   **Preview**.
 - Rulers use the editor-only `hammerr_measurements` VMF block and never become
-  BSP geometry or entities. Unknown extension fields are retained. Unsupported
+  BSP geometry or entities. World/origin rulers retain version-1 metadata until
+  a local attachment is applied. Local attachments upgrade that block to
+  version 2, which older builds preserve with measurement editing disabled.
+  Cancel leaves the original block unchanged; Undo restores the exact previous
+  version and fields. Removing local attachments retains version 2. Unknown
+  extension fields are retained. Unsupported
   versions, malformed records, duplicate IDs/names and excessive imported counts
   produce an explicit error in the window and MCP inspection; original metadata
   is preserved and measurement edits are disabled. Other-editor round trips

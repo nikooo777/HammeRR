@@ -406,3 +406,126 @@ fn measurement_surface_controls_pick_exact_endpoints_cancel_and_guard_replaced_o
     window.invoke_cancel();
     assert_eq!(lock(&shared).measurement_state(), replacement);
 }
+
+#[test]
+fn measurement_local_controls_capture_reviewed_points_cancel_and_repair_bad_pose() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: false,
+        },
+    )))
+    .unwrap();
+    let mut session = Session::new(Err("no assets needed".into()));
+    let object = session
+        .edit(Actor::User, "local target", |tx| {
+            map_core::edit::create_entity(
+                tx,
+                "logic_relay",
+                Some(DVec3::new(16.0, 32.0, 64.0)),
+                &[("angles".into(), "0 90 0".into())],
+                Vec::new(),
+            )
+        })
+        .unwrap();
+    let source = session.document().vmf().clone();
+    let history = session.document().undo_labels().count();
+    let snapshot = session.measurement_stamp();
+    session
+        .preview_measurement(
+            Actor::Agent,
+            Request {
+                id: None,
+                name: "Door hinge clearance".into(),
+                start: DVec3::new(32.0, 48.0, 72.0),
+                end: DVec3::new(96.0, 32.0, 96.0),
+            },
+            &snapshot,
+        )
+        .unwrap();
+    let shared = Arc::new(Mutex::new(session));
+    let controller = Controller::new(&shared).unwrap();
+    let window = &controller.window;
+    controller.show(&lock(&shared)).unwrap();
+    let foreign = lock(&shared).measurement_state();
+    window.invoke_attach_start_local();
+    assert_eq!(lock(&shared).measurement_state(), foreign);
+    window.invoke_review();
+    window.set_start_origin_object(crate::identity::id_string(object).into());
+    window.set_end_origin_object(crate::identity::id_string(object).into());
+    window.invoke_attach_start_local();
+    assert_eq!(
+        window.get_end_origin_object(),
+        crate::identity::id_string(object)
+    );
+    window.invoke_attach_end_local();
+    assert!(window.get_ready(), "{}", window.get_message());
+    assert!(window.get_start_attached() && window.get_end_attached());
+    assert!(window.get_start_origin_status().contains("local point"));
+    let captured = lock(&shared).measurement_state();
+    for endpoint in ["start", "end"] {
+        assert_eq!(
+            captured["draft"]["measurement"]["attachments"][endpoint]["kind"],
+            "entity_local"
+        );
+        let point: [f64; 3] =
+            serde_json::from_value(captured["draft"]["measurement"][endpoint].clone()).unwrap();
+        let expected: [f64; 3] =
+            serde_json::from_value(foreign["draft"]["measurement"][endpoint].clone()).unwrap();
+        assert!(DVec3::from_array(point).abs_diff_eq(DVec3::from_array(expected), 1e-10));
+    }
+    for label in ["Attach start local", "Attach end local", "Apply", "Cancel"] {
+        crate::ui::tests::assert_dialog_button_visible(window, label);
+    }
+    crate::ui::tests::save_ui_snapshot(window.window(), "measurement-local-attachment");
+    assert_eq!(lock(&shared).document().vmf(), &source);
+    assert_eq!(lock(&shared).document().undo_labels().count(), history);
+    window.invoke_cancel();
+    assert_eq!(lock(&shared).document().vmf(), &source);
+    assert!(lock(&shared).measurement_state()["draft"].is_null());
+    controller.show(&lock(&shared)).unwrap();
+    edit(window, "Measurement name", "Door hinge clearance");
+    edit(window, "Start X", "32");
+    edit(window, "Start Y", "48");
+    edit(window, "Start Z", "72");
+    edit(window, "End X", "96");
+    edit(window, "End Y", "32");
+    edit(window, "End Z", "96");
+    window.invoke_preview();
+    window.set_start_origin_object(crate::identity::id_string(object).into());
+    window.invoke_attach_start_local();
+    window.invoke_apply();
+    assert_eq!(lock(&shared).document().undo_labels().count(), history + 1);
+    let map_core::ObjectId::Entity(id) = object else {
+        panic!()
+    };
+    lock(&shared)
+        .edit(Actor::Agent, "bad orientation", |tx| {
+            map_core::edit::set_properties(tx, id, &[("angles".into(), Some("bad".into()))])
+        })
+        .unwrap();
+    window.invoke_choose("1".into());
+    window.invoke_preview();
+    assert!(window.get_start_attached());
+    assert!(!window.get_ready());
+    assert!(window.get_start_origin_status().contains("unavailable"));
+    assert!(window.get_result().contains("Unavailable"));
+    let unavailable = lock(&shared).measurement_state();
+    window.invoke_detach_start_origin();
+    assert_eq!(lock(&shared).measurement_state(), unavailable);
+    window.invoke_world_start();
+    assert!(!window.get_start_attached());
+    assert!(window.get_ready(), "{}", window.get_message());
+    window.invoke_apply();
+    assert!(lock(&shared).measurement_state()["measurements"][0]["attachments"]["start"].is_null());
+    lock(&shared).undo(Actor::User).unwrap();
+    assert_eq!(
+        lock(&shared).measurement_state()["measurements"][0]["attachments"]["start"]["kind"],
+        "entity_local"
+    );
+    assert_eq!(
+        lock(&shared).measurement_state()["measurements"][0]["available"],
+        false
+    );
+}

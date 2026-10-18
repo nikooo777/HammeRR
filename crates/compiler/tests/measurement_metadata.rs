@@ -50,4 +50,29 @@ fn measurement_metadata_has_no_effect_on_bsp_bytes_or_entity_lump() {
         compiler::compile(&vmf, &game).bsp.unwrap().to_bytes(),
         before
     );
+
+    document
+        .edit("unavailable local reference", |tx| {
+            let mut metadata = Measurements::parse(tx.vmf()).unwrap();
+            metadata.measurements[0]
+                .set_local_reference(
+                    map_core::measurements::Endpoint::Start,
+                    999999,
+                    DVec3::new(16.25, -32.5, 64.75),
+                )
+                .unwrap();
+            metadata.write(tx)
+        })
+        .unwrap();
+    let vmf = Vmf::parse(&document.vmf().write(&Default::default())).unwrap();
+    assert!(
+        Measurements::parse(&vmf).unwrap().measurements[0]
+            .local_offset(map_core::measurements::Endpoint::Start)
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(
+        compiler::compile(&vmf, &game).bsp.unwrap().to_bytes(),
+        before
+    );
 }

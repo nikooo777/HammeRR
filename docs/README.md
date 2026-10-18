@@ -15,7 +15,7 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | [Keyboard shortcuts](keyboard-shortcuts.md) | Configure viewport Undo, Redo, Frame, Delete and Duplicate bindings |
 | [Recent maps](recent-maps.md) | Reopening retained paths with compatible build settings, removing and clearing entries |
 | [Transaction history](history.md) | Inspecting human/agent edits and navigating retained undo/redo states |
-| [Measurement guides](measurements.md) | Named persistent rulers, surface endpoint picks, exact distances and axis components |
+| [Measurement guides](measurements.md) | Persistent rulers, exact surface picks and entity-origin/local attachments |
 | [Selecting](selection.md) | Click, area, volume and paint selection |
 | [Cut, copy and paste](clipboard.md) | Detached object transfer, placement previews, native VMF text and safe references |
 | [Prefab library](prefabs.md) | Save, search, inspect Flat/Textured thumbnails and place reusable assemblies |

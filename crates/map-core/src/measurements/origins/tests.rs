@@ -528,3 +528,269 @@ fn malformed_origin_metadata_is_preserved_and_cannot_be_overwritten() {
         assert_eq!(document.undo_labels().count(), 0);
     }
 }
+
+#[test]
+fn local_points_upgrade_metadata_follow_real_pose_and_reserve_orphan_ids() {
+    let (mut document, object) = source();
+    let ObjectId::Entity(id) = object else {
+        panic!()
+    };
+    document
+        .edit("orientation", |tx| {
+            edit::set_properties(tx, id, &[("angles".into(), Some("20 35 -15".into()))])
+        })
+        .unwrap();
+    let mut measurement = ruler();
+    measurement.start = DVec3::new(12.25, -17.5, 40.75);
+    let mut fields = measurement.to_node().children().unwrap().to_vec();
+    *fields.iter_mut().find(|node| node.key == "start").unwrap() =
+        Node::string("start", "+12.250 -17.50 40.7500");
+    fields.swap(0, 3);
+    let original_record = Node::block("measurement", fields);
+    let mut vmf = document.into_vmf();
+    vmf.extra.push(Node::block(
+        KEY,
+        vec![
+            Node::string("future_root", "keep first"),
+            original_record.clone(),
+            Node::string("version", "1"),
+        ],
+    ));
+    let mut document = Document::new(vmf.clone());
+    let mut metadata = Measurements::parse(document.vmf()).unwrap();
+    document
+        .edit("unchanged v1", |tx| metadata.clone().write(tx))
+        .unwrap();
+    assert_eq!(document.vmf(), &vmf);
+    let (origin, basis) = entity_local_pose(document.vmf(), object).unwrap();
+    let expected_basis = DMat3::from_rotation_z(35f64.to_radians())
+        * DMat3::from_rotation_y(20f64.to_radians())
+        * DMat3::from_rotation_x((-15f64).to_radians());
+    assert!(basis.abs_diff_eq(expected_basis, 1e-12));
+    let offset = basis.transpose() * (measurement.start - origin);
+    metadata.measurements[0]
+        .set_local_reference(Endpoint::Start, id, offset)
+        .unwrap();
+    assert_eq!(document.vmf(), &vmf);
+    document
+        .edit("local attachment", |tx| metadata.clone().write(tx))
+        .unwrap();
+    let version2 = document.vmf().clone();
+    let nodes = version2.extra[0].children().unwrap();
+    assert_eq!(nodes.last().unwrap().as_str(), Some("2"));
+    assert_eq!(nodes[0], vmf.extra[0].children().unwrap()[0]);
+    for field in original_record.children().unwrap() {
+        assert!(nodes[1].children().unwrap().contains(field));
+    }
+    let reopened = Vmf::parse(&version2.write(&Default::default())).unwrap();
+    assert_eq!(Measurements::parse(&reopened).unwrap(), metadata);
+    document.undo().unwrap();
+    assert_eq!(document.vmf(), &vmf);
+    document.redo().unwrap();
+    assert_eq!(document.vmf(), &version2);
+
+    let rotation = DMat3::from_rotation_z(41f64.to_radians())
+        * DMat3::from_rotation_y((-23f64).to_radians())
+        * DMat3::from_rotation_x(17f64.to_radians());
+    let translation = DVec3::new(3.125, -4.25, 5.5);
+    document
+        .edit("rotate and translate", |tx| {
+            edit::transform(
+                tx,
+                &[object],
+                edit::Transform {
+                    rotation: DVec3::new(17.0, -23.0, 41.0),
+                    translation,
+                    ..Default::default()
+                },
+            )
+        })
+        .unwrap();
+    let resolved = metadata.measurements[0].resolved(document.vmf()).unwrap();
+    assert!(
+        resolved
+            .start
+            .abs_diff_eq(rotation * measurement.start + translation, 1e-5)
+    );
+    assert_eq!(document.vmf().extra, version2.extra);
+    assert_eq!(metadata.measurements[0].start, measurement.start);
+    document
+        .edit("delete target", |tx| edit::delete(tx, &[object]))
+        .unwrap();
+    assert!(metadata.measurements[0].resolved(document.vmf()).is_err());
+    let mut reopened =
+        Document::new(Vmf::parse(&document.vmf().write(&Default::default())).unwrap());
+    let created = reopened
+        .edit("new entity", |tx| {
+            edit::create_entity(tx, "logic_relay", Some(DVec3::ZERO), &[], Vec::new())
+        })
+        .unwrap();
+    assert_eq!(created, ObjectId::Entity(id + 1));
+    assert_eq!(reopened.vmf().extra, version2.extra);
+    assert!(reserved_origin_ids(reopened.vmf()).contains(&id));
+}
+
+#[test]
+fn local_pose_uses_source_orientation_and_never_falls_back_for_invalid_angles() {
+    let (document, object) = source();
+    let ObjectId::Entity(id) = object else {
+        panic!()
+    };
+    let base = document.vmf().clone();
+    let mut measurement = ruler();
+    let offset = DVec3::new(9.25, -7.5, 3.125);
+    measurement
+        .set_local_reference(Endpoint::Start, id, offset)
+        .unwrap();
+    let origin = entity_origin(&base, object).unwrap();
+    assert_eq!(entity_local_pose(&base, object).unwrap().1, DMat3::IDENTITY);
+    let asymmetric = DMat3::from_rotation_z(35f64.to_radians())
+        * DMat3::from_rotation_y(20f64.to_radians())
+        * DMat3::from_rotation_x((-15f64).to_radians());
+    for (properties, expected) in [
+        (
+            vec![("angle", "90")],
+            DMat3::from_rotation_z(std::f64::consts::FRAC_PI_2),
+        ),
+        (
+            vec![("angle", "-1")],
+            DMat3::from_rotation_y(-std::f64::consts::FRAC_PI_2),
+        ),
+        (
+            vec![("angle", "-2")],
+            DMat3::from_rotation_y(std::f64::consts::FRAC_PI_2),
+        ),
+        (
+            vec![("angles", "20 35 -15"), ("angle", "inactive invalid")],
+            asymmetric,
+        ),
+        (
+            vec![
+                ("classname", "light_spot"),
+                ("angles", "5 35 -15"),
+                ("pitch", "-20"),
+            ],
+            asymmetric,
+        ),
+        (
+            vec![("angle", "1e308")],
+            DMat3::from_rotation_z(1e308f64.rem_euclid(360.0).to_radians()),
+        ),
+    ] {
+        let mut vmf = base.clone();
+        for (key, value) in properties {
+            vmf.entities[0].properties.set(key, value);
+        }
+        let point = measurement.resolve_endpoint(&vmf, Endpoint::Start).unwrap();
+        assert!(point.abs_diff_eq(origin + expected * offset, 1e-10));
+    }
+    for properties in [
+        vec![("angles", "NaN 0 0"), ("angle", "90")],
+        vec![("angles", "20 35")],
+        vec![("angle", "inf")],
+        vec![("angles", "0 90 0"), ("ANGLES", "0 0 0")],
+        vec![("angle", "90"), ("ANGLE", "0")],
+        vec![("classname", "light_environment"), ("pitch", "invalid")],
+        vec![
+            ("classname", "light_spot"),
+            ("angles", "NaN 35 -15"),
+            ("pitch", "-20"),
+        ],
+        vec![
+            ("classname", "light_spot"),
+            ("pitch", "-20"),
+            ("PITCH", "20"),
+        ],
+    ] {
+        let mut vmf = base.clone();
+        for (key, value) in properties {
+            if key == "classname" {
+                vmf.entities[0].properties.set(key, value);
+            } else {
+                vmf.entities[0]
+                    .properties
+                    .0
+                    .push((key.into(), value.into()));
+            }
+        }
+        assert!(measurement.resolve_endpoint(&vmf, Endpoint::Start).is_err());
+        assert_eq!(entity_origin(&vmf, object).unwrap(), origin);
+        assert_eq!(
+            measurement.origin_reference(Endpoint::Start).unwrap(),
+            Some(id)
+        );
+        assert_eq!(measurement.start, ruler().start);
+    }
+    let mut huge = base;
+    huge.entities[0].properties.set("origin", "-65536 0 0");
+    measurement
+        .set_local_reference(Endpoint::Start, id, DVec3::new(131072.0, 0.0, 0.0))
+        .unwrap();
+    measurement.validate().unwrap();
+    assert_eq!(
+        measurement
+            .resolve_endpoint(&huge, Endpoint::Start)
+            .unwrap(),
+        DVec3::new(65536.0, 0.0, 0.0)
+    );
+    huge.entities[0].properties.set("origin", "0 0 0");
+    assert!(
+        measurement
+            .resolve_endpoint(&huge, Endpoint::Start)
+            .is_err()
+    );
+}
+
+#[test]
+fn local_metadata_requires_version_two_and_valid_companion_fields() {
+    let mut measurement = ruler();
+    measurement
+        .set_local_reference(Endpoint::Start, 42, DVec3::new(1.25, -2.5, 3.75))
+        .unwrap();
+    let mut vmf = Document::empty().into_vmf();
+    vmf.extra.push(Node::block(
+        KEY,
+        vec![Node::string("version", "1"), measurement.to_node()],
+    ));
+    let original = vmf.clone();
+    assert!(Measurements::parse(&vmf).unwrap_err().contains("version 2"));
+    let mut document = Document::new(vmf);
+    assert!(
+        document
+            .edit("refuse overwrite", |tx| Measurements::default().write(tx))
+            .is_err()
+    );
+    assert_eq!(document.vmf(), &original);
+    for extra in [
+        vec![Node::string("start_entity_local_offset", "1 2 3")],
+        vec![
+            Node::string("start_entity_origin", "42"),
+            Node::string("start_entity_local_offset", "NaN 2 3"),
+        ],
+        vec![
+            Node::string("start_entity_origin", "42"),
+            Node::block("start_entity_local_offset", Vec::new()),
+        ],
+        vec![
+            Node::string("start_entity_origin", "42"),
+            Node::string("start_entity_local_offset", "1 2 3"),
+            Node::string("start_entity_local_offset", "4 5 6"),
+        ],
+    ] {
+        let mut malformed = ruler();
+        malformed.extra = extra;
+        let mut vmf = Document::empty().into_vmf();
+        vmf.extra.push(Node::block(
+            KEY,
+            vec![Node::string("version", "2"), malformed.to_node()],
+        ));
+        assert!(Measurements::parse(&vmf).is_err());
+        let mut document = Document::new(vmf.clone());
+        assert!(
+            document
+                .edit("preserve malformed", |tx| Measurements::default().write(tx))
+                .is_err()
+        );
+        assert_eq!(document.vmf(), &vmf);
+    }
+}

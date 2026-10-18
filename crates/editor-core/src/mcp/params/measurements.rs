@@ -39,6 +39,11 @@ pub enum MeasurementArgs {
         endpoint: crate::session::measurements::Endpoint,
         object: String,
     },
+    AttachLocal {
+        token: u64,
+        endpoint: crate::session::measurements::Endpoint,
+        object: String,
+    },
     DetachOrigin {
         token: u64,
         endpoint: crate::session::measurements::Endpoint,

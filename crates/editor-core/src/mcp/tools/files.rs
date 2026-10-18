@@ -3,6 +3,30 @@ use super::super::*;
 #[tool_router(router = files_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
+        description = "Close this fixed document and quit its owning editor process. Requires the exact review_token from get_map_info.document_close; discard_changes explicitly permits that reviewed unsaved map/draft loss. Stale/busy/foreign or missing-consent requests leave the document open. Accepted Close is irreversible and survives client cancellation: it stops owned game/audio, cancels and physically drains owned work/recovery, and retires the actual native UI. The result reports completed document/UI cleanup; the host then verifies local response output and exits. Output/transport/process-exit failures remain host errors and cannot be attested by their own response. No document selector or multiple-document support."
+    )]
+    pub(in crate::mcp) async fn close_document(
+        &self,
+        Parameters(args): Parameters<CloseDocumentArgs>,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> ToolResult {
+        let Some(terminal) = &self.terminal else {
+            return fail("An owning terminal host is required for Close");
+        };
+        let response =
+            match terminal.commit_mcp(self, &args.review_token, args.discard_changes, &context) {
+                Ok(response) => response,
+                Err(error) => return fail(error),
+            };
+        match response.await {
+            Ok(result) => Ok(result),
+            Err(_) => {
+                fail("The accepted Close result owner was lost; terminal cleanup remains required")
+            }
+        }
+    }
+
+    #[tool(
         description = "Authored map statistics shared with Map statistics in the editor. Counts committed data including hidden objects and nested entity brushes; previews are excluded. Objects count world brushes plus entities, brush_sides count authored planes (not rendered or compiled faces). Lists materials by side usage, entity classes by entity count, external model paths by entity references, lightmap scales and displacement powers by side count. Material paths normalize case, slashes, materials/ and .vmt. Hidden brushes inherit entity visibility. Counts are not compiled BSP budgets or asset validation. Rows sort by descending usage then name. Default 50 rows, maximum 200; follow next_offset for all entries.",
         annotations(read_only_hint = true)
     )]

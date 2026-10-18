@@ -9,6 +9,8 @@ use crate::session::Actor;
 use serde_json::Value;
 
 const SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(10);
+#[cfg(feature = "mcp")]
+const MAX_CLOSE_TOKEN_BYTES: usize = 128;
 static NEXT_DOCUMENT_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -195,6 +197,14 @@ pub struct DocumentCloseReview {
 }
 
 impl DocumentCloseReview {
+    pub(crate) fn token(&self) -> String {
+        format!(
+            "document-close-v1:{}:{}",
+            self.document.value(),
+            self.session.token()
+        )
+    }
+
     pub fn requires_discard(&self) -> bool {
         self.session.requires_discard()
     }
@@ -202,11 +212,7 @@ impl DocumentCloseReview {
     pub fn inspection(&self) -> Value {
         let mut result = self.session.inspection();
         result["document_id"] = serde_json::json!(self.document.value());
-        result["review_token"] = serde_json::json!(format!(
-            "document-close-v1:{}:{}",
-            self.document.value(),
-            self.session.token()
-        ));
+        result["review_token"] = serde_json::json!(self.token());
         result
     }
 }
@@ -305,7 +311,30 @@ impl DocumentHandle {
         review: &DocumentCloseReview,
         discard_changes: bool,
     ) -> Result<(), String> {
-        if review.document != self.id() {
+        self.commit_close(Some(review), None, discard_changes, || Ok(()))
+    }
+
+    #[cfg(feature = "mcp")]
+    pub(crate) fn commit_close_token<R>(
+        &self,
+        token: &str,
+        discard_changes: bool,
+        reserve: impl FnOnce() -> Result<R, String>,
+    ) -> Result<R, String> {
+        if token.len() > MAX_CLOSE_TOKEN_BYTES {
+            return Err("The Close review token exceeds its limit".into());
+        }
+        self.commit_close(None, Some(token), discard_changes, reserve)
+    }
+
+    fn commit_close<R>(
+        &self,
+        review: Option<&DocumentCloseReview>,
+        token: Option<&str>,
+        discard_changes: bool,
+        reserve: impl FnOnce() -> Result<R, String>,
+    ) -> Result<R, String> {
+        if review.is_some_and(|review| review.document != self.id()) {
             return Err(
                 "Close was reviewed for another document; review this document and try again"
                     .into(),
@@ -326,6 +355,17 @@ impl DocumentHandle {
             }
         }
         let mut session = lock(self.session());
+        let current;
+        let review = match review {
+            Some(review) => review,
+            None => {
+                current = self.close_review_for(&session);
+                if token != Some(current.token().as_str()) {
+                    return Err("Map, draft or activity changed since Close was reviewed; review the current document and try again".into());
+                }
+                &current
+            }
+        };
         session.ensure_document_close_review(&review.session, discard_changes)?;
         let mut lifecycle = self
             .0
@@ -339,10 +379,11 @@ impl DocumentHandle {
         if self.0.admission.operations.load(Ordering::Acquire) != 0 {
             return Err("Close is busy with an admitted request or worker. Wait for it to finish, or cancel it using its normal control, then review Close again".into());
         }
+        let reserved = reserve()?;
         *lifecycle = DocumentLifecycle::Draining;
         drop(lifecycle);
         session.commit_terminal_closing();
-        Ok(())
+        Ok(reserved)
     }
 
     #[cfg(test)]

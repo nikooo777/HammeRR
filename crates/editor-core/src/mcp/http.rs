@@ -15,7 +15,9 @@ use tokio::task::JoinSet;
 use super::EditorServer;
 
 mod connection;
+mod terminal;
 pub use connection::ConnectionReceipt;
+pub use terminal::{HttpTerminalResponse, TerminalAttempt, TerminalResponseReceipt};
 
 const HTTP_WORKERS: usize = 2;
 const NETWORK_SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
@@ -162,7 +164,9 @@ async fn serve(
     let sessions = Arc::new(LocalSessionManager::default());
     let service: StreamableHttpService<EditorServer, LocalSessionManager> =
         StreamableHttpService::new(move || Ok(server.clone()), sessions.clone(), config);
-    let router = axum::Router::new().nest_service("/mcp", service);
+    let router = axum::Router::new()
+        .nest_service("/mcp", service)
+        .layer(axum::middleware::from_fn(terminal::observe));
     let (shutdown, shutdown_requested) = watch::channel(());
     let mut connections = JoinSet::new();
     let mut errors = Vec::new();

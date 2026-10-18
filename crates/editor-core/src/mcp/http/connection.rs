@@ -17,6 +17,12 @@ pub struct ConnectionReceipt {
 }
 
 impl ConnectionReceipt {
+    #[cfg(test)]
+    pub(super) fn test_pair() -> (Self, impl FnOnce(Result<(), String>)) {
+        let (receipt, completion, _) = Self::new();
+        (receipt, move |result| completion.finish(result))
+    }
+
     pub fn result(&self) -> Option<Result<(), String>> {
         self.result.borrow().clone()
     }

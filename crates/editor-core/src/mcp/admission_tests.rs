@@ -44,7 +44,7 @@ fn complete(result: Result<CallToolResponse, ErrorData>) -> CallToolResult {
 }
 
 #[tokio::test]
-async fn map_info_exposes_the_same_fixed_document_close_observation_without_a_close_tool() {
+async fn map_info_exposes_the_same_fixed_document_close_observation() {
     let (_directory, document, server) = fixture();
     let (running, _client) = service(server.clone());
     let result = complete(
@@ -61,7 +61,7 @@ async fn map_info_exposes_the_same_fixed_document_close_observation_without_a_cl
         document.document_close_review().unwrap().inspection()
     );
     assert_eq!(value["document_close"]["discard_required"], false);
-    assert!(server.tool_router.get("close_document").is_none());
+    assert!(server.tool_router.get("close_document").is_some());
     running.cancel().await.unwrap();
     document.shutdown().unwrap();
 }

@@ -16,6 +16,8 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 use viewport::{Viewport, key_text};
 
+const UI_CLOSE_ACK_TIMEOUT: Duration = Duration::from_secs(10);
+
 mod clipping;
 use clipping::*;
 mod entities;
@@ -584,8 +586,10 @@ fn report(app: &AppWindow, result: Result<String, String>) {
 pub(super) fn run(
     document: DocumentHandle,
     ctx: GpuContext,
-    mcp_status: String,
     open_message: Option<Result<String, String>>,
+    configure: impl FnOnce(
+        mcp::TerminalUi,
+    ) -> Result<(mcp::TerminalClose, String), Box<dyn std::error::Error>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     slint::BackendSelector::new()
         .require_wgpu_30(slint::wgpu_30::WGPUConfiguration::Manual {
@@ -596,8 +600,29 @@ pub(super) fn run(
         })
         .select()?;
 
-    let window = create_document_window(document.clone(), ctx, mcp_status, open_message)?;
+    let window =
+        create_document_window(document.clone(), ctx, "MCP starting".into(), open_message)?;
     let host = DocumentHost::new(window, document);
+    let retirement = host.borrow().retirement();
+    let terminal_ui = mcp::TerminalUi::new(
+        move |document| {
+            retirement
+                .request(document)?
+                .recv_timeout(UI_CLOSE_ACK_TIMEOUT)
+                .map_err(|error| format!("UI retirement acknowledgement failed: {error}"))?
+                .map(|_| ())
+        },
+        || {
+            slint::quit_event_loop()
+                .map_err(|error| format!("Could not quit after accepted Close: {error}"))
+        },
+    );
+    let (terminal, status) = configure(terminal_ui)?;
+    if terminal.document_id() != host.borrow().document_id() {
+        return Err("The terminal Close owner belongs to another document host".into());
+    }
+    host.borrow().window.app().set_mcp_status(status.into());
+    host.borrow_mut().terminal_close = Some(terminal);
     let shown = host.borrow().window.app().show();
     let primary = shown
         .and_then(|()| slint::run_event_loop_until_quit())

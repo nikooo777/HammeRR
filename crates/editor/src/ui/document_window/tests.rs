@@ -618,6 +618,161 @@ fn native_terminal_close_uses_queued_owned_retirement_before_explicit_quit() {
 }
 
 #[test]
+#[ignore = "requires a GPU adapter and the real Slint event loop"]
+fn retained_terminal_worker_retires_actual_host_and_quits_without_a_strong_app() {
+    software_event_loop();
+    let target = fixture(GpuContext::new().unwrap());
+    let source = target.directory.path().join("retained-terminal-close.vmf");
+    lock(&target.shared)
+        .save(Actor::User, Some(&source))
+        .unwrap();
+    let weak_ui = target.owner.weak_ui();
+    let contents = Rc::downgrade(target.owner.contents.as_ref().unwrap());
+    let server = EditorServer::for_document(target.document.clone(), None);
+    let host = DocumentHost::new(target.owner, target.document.clone());
+    let retirement = host.borrow().retirement();
+    let ui = mcp::TerminalUi::new(
+        move |document| {
+            retirement
+                .request(document)?
+                .recv_timeout(HOST_ACK_TIMEOUT)
+                .map_err(|error| error.to_string())?
+                .map(|_| ())
+        },
+        || slint::quit_event_loop().map_err(|error| error.to_string()),
+    );
+    let mut terminal = mcp::TerminalOwner::start(target.document.clone(), Some(ui)).unwrap();
+    host.borrow_mut().terminal_close = Some(terminal.handle());
+    let app = host.borrow().window.app().clone_strong();
+    let weak_app = app.as_weak();
+    app.show().unwrap();
+    app.invoke_map_checks();
+    let operation = target.document.admit().unwrap();
+    app.window()
+        .dispatch_event(slint::platform::WindowEvent::CloseRequested);
+    assert!(app.get_message().contains("busy"));
+    assert_eq!(target.document.lifecycle(), DocumentLifecycle::Live);
+    drop(operation);
+    let (done, completion) = mpsc::sync_channel(1);
+    let watchdog = std::thread::spawn(move || {
+        if completion.recv_timeout(HOST_ACK_TIMEOUT * 2).is_err() {
+            let _ = slint::quit_event_loop();
+        }
+    });
+    app.window()
+        .dispatch_event(slint::platform::WindowEvent::CloseRequested);
+    drop(app);
+    let primary = slint::run_event_loop_until_quit().map_err(Into::into);
+    let _ = done.send(());
+    watchdog.join().unwrap();
+    host.borrow_mut().finish(primary).unwrap();
+    terminal.shutdown().unwrap();
+    assert_eq!(terminal.handle().result(), Some(Ok(())));
+    assert_eq!(host.borrow().window.retired, Some(Ok(UiRetired)));
+    assert!(weak_app.upgrade().is_none());
+    assert!(weak_ui.upgrade().is_none());
+    assert!(contents.upgrade().is_none());
+    assert_eq!(target.document.lifecycle(), DocumentLifecycle::Finished);
+    assert!(target.document.admit().is_err());
+    assert!(Arc::strong_count(&target.shared) > 1);
+    drop(server);
+}
+
+#[test]
+#[ignore = "requires a GPU adapter and the real Slint event loop"]
+fn mcp_terminal_close_keeps_the_retired_real_host_running_until_exact_output() {
+    thread_local! {
+        static OWNERS: RefCell<Option<(WeakUi, slint::Weak<AppWindow>)>> = const { RefCell::new(None) };
+    }
+    software_event_loop();
+    let target = fixture(GpuContext::new().unwrap());
+    let host = DocumentHost::new(target.owner, target.document.clone());
+    let retirement = host.borrow().retirement();
+    let ui = mcp::TerminalUi::new(
+        move |document| {
+            retirement
+                .request(document)?
+                .recv_timeout(HOST_ACK_TIMEOUT)
+                .map_err(|error| error.to_string())?
+                .map(|_| ())
+        },
+        || slint::quit_event_loop().map_err(|error| error.to_string()),
+    );
+    let mut terminal = mcp::TerminalOwner::start(target.document.clone(), Some(ui)).unwrap();
+    host.borrow_mut().terminal_close = Some(terminal.handle());
+    let app = host.borrow().window.app().clone_strong();
+    let weak_app = app.as_weak();
+    let weak_ui = host.borrow().window.weak_ui();
+    OWNERS.with(|owners| *owners.borrow_mut() = Some((weak_ui.clone(), weak_app.clone())));
+    app.show().unwrap();
+    app.invoke_map_checks();
+    drop(app);
+    let token = target
+        .document
+        .document_close_review()
+        .unwrap()
+        .inspection()["review_token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let server = EditorServer::for_document(target.document.clone(), None)
+        .with_terminal_close(terminal.handle())
+        .unwrap();
+    let pending = terminal.handle();
+    let (checked, inspection) = mpsc::sync_channel(1);
+    let worker = std::thread::spawn(move || {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            mcp::validate_terminal_close_output(server, token, move || {
+                if pending.result().is_some() {
+                    return Err("Close finished before its exact output".into());
+                }
+                slint::invoke_from_event_loop(move || {
+                    let retired = OWNERS.with(|owners| {
+                        owners.borrow().as_ref().is_some_and(|(ui, app)| {
+                            ui.upgrade().is_none() && app.upgrade().is_none()
+                        })
+                    });
+                    let _ = checked.send(retired);
+                })
+                .map_err(|error| error.to_string())?;
+                if !inspection
+                    .recv_timeout(HOST_ACK_TIMEOUT)
+                    .map_err(|error| error.to_string())?
+                {
+                    return Err("Actual UI owners survived the retirement acknowledgement".into());
+                }
+                if pending.result().is_some() {
+                    return Err("Close finished while its exact output was held".into());
+                }
+                Ok(())
+            })
+        }));
+        if !matches!(&result, Ok(Ok(()))) {
+            let _ = slint::quit_event_loop();
+        }
+        result.unwrap()
+    });
+    let (done, completion) = mpsc::sync_channel(1);
+    let watchdog = std::thread::spawn(move || {
+        if completion.recv_timeout(HOST_ACK_TIMEOUT * 3).is_err() {
+            let _ = slint::quit_event_loop();
+        }
+    });
+    let primary = slint::run_event_loop_until_quit().map_err(Into::into);
+    let _ = done.send(());
+    watchdog.join().unwrap();
+    host.borrow_mut().finish(primary).unwrap();
+    worker.join().unwrap().unwrap();
+    terminal.shutdown().unwrap();
+    assert_eq!(terminal.handle().result(), Some(Ok(())));
+    assert_eq!(host.borrow().window.retired, Some(Ok(UiRetired)));
+    assert!(weak_ui.upgrade().is_none());
+    assert!(weak_app.upgrade().is_none());
+    assert_eq!(target.document.lifecycle(), DocumentLifecycle::Finished);
+    let _ = OWNERS.with(|owners| owners.borrow_mut().take());
+}
+
+#[test]
 #[ignore = "requires a GPU adapter for the real DocumentWindow viewport"]
 fn failed_host_schedule_repeats_its_error_until_actual_owner_finish() {
     software();

@@ -71,6 +71,7 @@ const ACTIVITY_SHOWN: usize = 30;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse()?;
     let mut http = None;
+    let mut terminal = None;
     let application = Application::open(&args)?;
     let document = application.document();
     let result = (|| {
@@ -85,24 +86,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let ctx = GpuContext::new()?;
-        let server = EditorServer::for_document(document.clone(), Some(ctx.clone()));
-
-        let mcp_status = match args.mcp_port {
-            Some(port) => {
-                match mcp::spawn_http(server, SocketAddr::from((Ipv4Addr::LOCALHOST, port))) {
-                    Ok(server) => {
-                        let status = format!("MCP http://{}/mcp", server.local_addr());
-                        http = Some(server);
-                        status
+        let server_ctx = ctx.clone();
+        ui::run(
+            document.clone(),
+            ctx,
+            application.open_message.clone(),
+            |terminal_ui| {
+                let owner = mcp::TerminalOwner::start(document.clone(), Some(terminal_ui))?;
+                let handle = owner.handle();
+                let server = EditorServer::for_document(document.clone(), Some(server_ctx))
+                    .with_terminal_close(handle.clone())?;
+                let mcp_status = match args.mcp_port {
+                    Some(port) => {
+                        match mcp::spawn_http(server, SocketAddr::from((Ipv4Addr::LOCALHOST, port)))
+                        {
+                            Ok(server) => {
+                                let status = format!("MCP http://{}/mcp", server.local_addr());
+                                http = Some(server);
+                                status
+                            }
+                            Err(message) => message,
+                        }
                     }
-                    Err(message) => message,
-                }
-            }
-            None => "MCP off".into(),
-        };
-
-        ui::run(document, ctx, mcp_status, application.open_message.clone())
+                    None => "MCP off".into(),
+                };
+                terminal = Some(owner);
+                Ok((handle, mcp_status))
+            },
+        )
     })();
+    let result = match terminal {
+        Some(owner) => owner.finish(result),
+        None => result,
+    };
     if let Some(server) = &mut http {
         server.stop();
     }

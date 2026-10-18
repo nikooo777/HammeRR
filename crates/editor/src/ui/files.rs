@@ -35,9 +35,21 @@ fn finish_terminal_close(
     discard_changes: bool,
     host: &WeakHost,
 ) {
-    let Some(_host) = host.upgrade() else {
+    let Some(retained_host) = host.upgrade() else {
         return;
     };
+    let terminal = retained_host.borrow().terminal_close.clone();
+    if let Some(terminal) = terminal {
+        if owner.upgrade().is_none() || app.upgrade().is_none() {
+            return;
+        }
+        if let Err(error) = terminal.commit_native(review, discard_changes)
+            && let Some(app) = app.upgrade()
+        {
+            app.set_message(error.into());
+        }
+        return;
+    }
     if complete_terminal_close(app, owner, continuation, review, discard_changes) != Ok(true) {
         return;
     }

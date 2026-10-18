@@ -10,6 +10,91 @@ use tokio::sync::Notify;
 const TIMEOUT: Duration = Duration::from_secs(5);
 const IO_CAPACITY: usize = 4096;
 
+#[tokio::test]
+async fn terminal_ticket_requires_its_unique_nonce_and_exact_normalized_result() {
+    let (mut transport, output) = transport(tokio::io::empty(), tokio::io::sink());
+    let id = RequestId::Number(71);
+    let terminal = TerminalAttempt::new().unwrap();
+    let (ticket, receipt) = output
+        .reserve(
+            id.clone(),
+            Some(rmcp::model::ProtocolVersion::V_2025_03_26),
+            terminal.clone(),
+        )
+        .unwrap();
+    bounded(transport.send(response(id.clone()))).await.unwrap();
+    assert_eq!(receipt.outcome(), None);
+    let result = ticket
+        .bind(CallToolResult::structured(json!({"closed":true})))
+        .unwrap();
+    assert!(result.result_type.is_none());
+    assert_eq!(
+        result
+            .meta
+            .as_ref()
+            .unwrap()
+            .get("io.hammerr/terminal-attempt"),
+        Some(&json!(terminal.value().to_string()))
+    );
+    let wrong_nonce = TerminalAttempt::new()
+        .unwrap()
+        .mark_result(None, result.clone());
+    bounded(transport.send(JsonRpcMessage::response(
+        rmcp::model::ServerResult::CallToolResult(wrong_nonce),
+        id.clone(),
+    )))
+    .await
+    .unwrap();
+    assert_eq!(receipt.outcome(), None);
+    let mut wrong_result = result.clone();
+    wrong_result.is_error = Some(true);
+    bounded(transport.send(JsonRpcMessage::response(
+        rmcp::model::ServerResult::CallToolResult(wrong_result),
+        id.clone(),
+    )))
+    .await
+    .unwrap();
+    assert_eq!(receipt.outcome(), None);
+    bounded(transport.send(JsonRpcMessage::response(
+        rmcp::model::ServerResult::CallToolResult(result),
+        id,
+    )))
+    .await
+    .unwrap();
+    assert!(bounded(receipt.wait()).await.is_ok());
+}
+
+#[tokio::test]
+async fn terminal_ticket_drop_and_never_polled_exact_send_retain_failure() {
+    let (mut transport, output) = transport(tokio::io::empty(), tokio::io::sink());
+    let (ticket, receipt) = output
+        .reserve(RequestId::Number(72), None, TerminalAttempt::new().unwrap())
+        .unwrap();
+    drop(ticket);
+    assert_eq!(
+        bounded(receipt.wait()).await,
+        Err(StdioFenceError::BindingLost)
+    );
+    let (mut transport_two, output_two) = super::transport(tokio::io::empty(), tokio::io::sink());
+    let id = RequestId::Number(73);
+    let (ticket, receipt) = output_two
+        .reserve(id.clone(), None, TerminalAttempt::new().unwrap())
+        .unwrap();
+    let result = ticket
+        .bind(CallToolResult::structured(json!({"closed":true})))
+        .unwrap();
+    let send = transport_two.send(JsonRpcMessage::response(
+        rmcp::model::ServerResult::CallToolResult(result),
+        id,
+    ));
+    drop(send);
+    assert_eq!(
+        bounded(receipt.wait()).await,
+        Err(StdioFenceError::SendAborted)
+    );
+    bounded(transport.close()).await.unwrap();
+}
+
 async fn bounded<F: Future>(future: F) -> F::Output {
     tokio::time::timeout(TIMEOUT, future)
         .await
@@ -273,7 +358,7 @@ async fn cancelled_receipt_waiter_remains_failed_after_the_io_send_finishes() {
 }
 
 #[tokio::test]
-async fn premature_close_and_drop_fail_before_an_existing_send_can_later_succeed() {
+async fn premature_close_and_drop_cancel_an_existing_send_without_overwriting_failure() {
     for drop_transport in [false, true] {
         let (mut transport, output, gate, _peer) = gated(tokio::io::empty());
         let receipt = output.arm(RequestId::Number(7)).unwrap();
@@ -288,11 +373,30 @@ async fn premature_close_and_drop_fail_before_an_existing_send_can_later_succeed
             StdioFenceError::TransportClosed
         };
         assert_eq!(receipt.outcome(), Some(Err(expected)));
-        gate.release(Ok(()));
-        bounded(send).await.unwrap().unwrap();
+        assert_eq!(
+            bounded(send).await.unwrap().unwrap_err().kind(),
+            io::ErrorKind::NotConnected
+        );
         assert_eq!(bounded(receipt.wait()).await, Err(expected));
         assert_eq!(output.arm(RequestId::Number(8)).unwrap_err(), expected);
     }
+}
+
+#[tokio::test]
+async fn close_cancels_a_pending_writer_before_acquiring_its_inner_mutex() {
+    let (mut transport, output, gate, _peer) = gated(tokio::io::empty());
+    let receipt = output.arm(RequestId::Number(81)).unwrap();
+    let send = tokio::spawn(transport.send(response(RequestId::Number(81))));
+    gate.entered().await;
+    bounded(transport.close()).await.unwrap();
+    assert_eq!(
+        bounded(send).await.unwrap().unwrap_err().kind(),
+        io::ErrorKind::NotConnected
+    );
+    assert_eq!(
+        bounded(receipt.wait()).await,
+        Err(StdioFenceError::TransportClosed)
+    );
 }
 
 #[tokio::test]

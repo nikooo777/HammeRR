@@ -4,6 +4,170 @@ use rmcp::handler::server::tool::ToolCallContext;
 
 use super::*;
 
+const COMPOSED_CLOSE_TIMEOUT: Duration = Duration::from_secs(10);
+const COMPOSED_CLOSE_MAX_BYTES: usize = 256 * 1024;
+
+async fn close_bounded<F: Future>(future: F) -> F::Output {
+    tokio::time::timeout(COMPOSED_CLOSE_TIMEOUT, future)
+        .await
+        .expect("Composed HTTP Close fixture timed out")
+}
+
+fn close_request(
+    address: SocketAddr,
+    value: Value,
+    session: Option<&str>,
+    close: bool,
+) -> axum::http::Request<axum::body::Body> {
+    let mut request = axum::http::Request::builder()
+        .method(axum::http::Method::POST)
+        .uri("/mcp")
+        .header(axum::http::header::HOST, address.to_string())
+        .header(
+            axum::http::header::ACCEPT,
+            "application/json, text/event-stream",
+        )
+        .header(axum::http::header::CONTENT_TYPE, "application/json")
+        .header("MCP-Protocol-Version", "2025-03-26");
+    if let Some(session) = session {
+        request = request.header("Mcp-Session-Id", session);
+    }
+    if close {
+        request = request.header(axum::http::header::CONNECTION, "close");
+    }
+    request
+        .body(axum::body::Body::from(value.to_string()))
+        .unwrap()
+}
+
+async fn close_response(response: hyper::Response<hyper::body::Incoming>) -> Value {
+    use futures_util::StreamExt;
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let json = response.headers()[axum::http::header::CONTENT_TYPE]
+        .to_str()
+        .unwrap()
+        .starts_with("application/json");
+    let body = close_bounded(axum::body::to_bytes(
+        axum::body::Body::new(response.into_body()),
+        COMPOSED_CLOSE_MAX_BYTES,
+    ))
+    .await
+    .unwrap();
+    if json {
+        return serde_json::from_slice(&body).unwrap();
+    }
+    let mut events = Box::pin(sse_stream::SseStream::new(axum::body::Body::from(body)));
+    while let Some(event) = close_bounded(events.next()).await {
+        if let Some(data) = event.unwrap().data.filter(|data| !data.is_empty()) {
+            let message: Value = serde_json::from_str(&data).unwrap();
+            if message.get("result").is_some() || message.get("error").is_some() {
+                return message;
+            }
+        }
+    }
+    panic!("The production HTTP response omitted its JSON-RPC result")
+}
+
+#[test]
+fn production_http_close_uses_fresh_review_and_finishes_before_client_sender_drop() {
+    let (_directory, document, server) = fixture();
+    let mut owner = crate::mcp::TerminalOwner::start(document.clone(), None).unwrap();
+    let terminal = owner.handle();
+    let server = server.with_terminal_close(terminal.clone()).unwrap();
+    let mut http = spawn_http(server, address()).unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+    let address = http.local_addr();
+    let stream = close_bounded(tokio::net::TcpStream::connect(address))
+        .await
+        .unwrap();
+    let (mut client, connection) = close_bounded(hyper::client::conn::http1::handshake(
+        hyper_util::rt::TokioIo::new(stream),
+    ))
+    .await
+    .unwrap();
+    let driver = tokio::spawn(connection);
+    close_bounded(client.ready()).await.unwrap();
+    let response = close_bounded(client.send_request(close_request(address,
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"production-http-close","version":"1"}}}),
+        None, false,
+    ))).await.unwrap();
+    let session = response.headers()["mcp-session-id"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(
+        close_response(response).await["result"]["serverInfo"]["name"],
+        "hammerr"
+    );
+    close_bounded(client.ready()).await.unwrap();
+    let initialized = close_bounded(client.send_request(close_request(
+        address,
+        json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+        Some(&session),
+        false,
+    )))
+    .await
+    .unwrap();
+    assert_eq!(initialized.status(), axum::http::StatusCode::ACCEPTED);
+    assert!(
+        close_bounded(axum::body::to_bytes(
+            axum::body::Body::new(initialized.into_body()),
+            COMPOSED_CLOSE_MAX_BYTES
+        ))
+        .await
+        .unwrap()
+        .is_empty()
+    );
+    close_bounded(client.ready()).await.unwrap();
+    let info = close_bounded(client.send_request(close_request(address,
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_map_info","arguments":{}}}),
+        Some(&session), false,
+    ))).await.unwrap();
+    let info = close_response(info).await;
+    let info: Value =
+        serde_json::from_str(info["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        info["document_close"],
+        document.document_close_review().unwrap().inspection()
+    );
+    let token = info["document_close"]["review_token"].as_str().unwrap();
+    close_bounded(client.ready()).await.unwrap();
+    let response = close_bounded(client.send_request(close_request(address,
+        json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"close_document","arguments":{"review_token":token}}}),
+        Some(&session), true,
+    ))).await.unwrap();
+    let closed = close_response(response).await;
+    assert_eq!(closed["id"], 3);
+    assert_eq!(closed["result"]["isError"], false);
+    assert_eq!(closed["result"]["structuredContent"]["closed"], true);
+    assert_eq!(closed["result"]["structuredContent"]["ui"], "headless");
+    assert_eq!(
+        closed["result"]["structuredContent"]["document_id"],
+        info["document_close"]["document_id"]
+    );
+    assert!(closed["result"]["_meta"]["io.hammerr/terminal-attempt"].is_string());
+    assert_eq!(
+        closed["result"]["_meta"]["io.hammerr/terminal-attempt"],
+        closed["result"]["structuredContent"]["attempt"]
+    );
+    owner.shutdown().unwrap();
+    assert_eq!(terminal.result(), Some(Ok(())));
+    assert_eq!(
+        document.lifecycle(),
+        crate::runtime::DocumentLifecycle::Finished
+    );
+    assert!(document.admit().is_err());
+    close_bounded(driver).await.unwrap().unwrap();
+    http.shutdown().unwrap();
+    assert!(client.is_closed());
+    drop(client);
+    });
+}
+
 #[test]
 fn per_connection_receipt_reaches_mcp_parts_and_observes_graceful_completion() {
     let (_directory, _document, mut server) = fixture();

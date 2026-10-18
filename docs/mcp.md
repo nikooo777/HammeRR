@@ -31,15 +31,39 @@ Use `--mcp-port <port>` to change the port, or `--no-mcp` to turn the server off
 
 Editor exit stops new HTTP connections and closes active sessions. Network
 shutdown has a two-second grace period; a timeout remains a reported exit error.
-Owned blocking work finishes before the service is released. Multiple documents
-and an MCP document Close command remain unavailable.
+Owned blocking work finishes before the service is released. `close_document`
+closes the current document and quits its owning editor process. Multiple
+documents remain unavailable.
 
 `get_map_info.document_close` inspects the same state used by the editor's close
 confirmation. It reports an opaque `review_token`, `document_id`,
 `unsaved_changes`, pending `drafts`, `discard_required`, owned `work` and
 `closing`. The review itself does not discard drafts, stop playback or cancel
 jobs. It belongs to that document and expires when its reviewed state changes; it is
-separate from `replacement_review` and cannot close the document.
+separate from `replacement_review`.
+
+### Close the document and editor
+
+1. Call `get_map_info` and inspect `document_close`, including unsaved changes,
+   drafts and owned work.
+2. Pass its exact `review_token` to `close_document`. Leave `discard_changes`
+   false unless you intend to discard those reviewed unsaved changes and drafts.
+3. If the review is stale, consent is missing or a request is busy, the document
+   stays open. Inspect the current state before retrying.
+4. Accepted Close is terminal. It stops owned game/audio, drains document work
+   and recovery, and retires the desktop UI. It continues if the caller cancels
+   or disconnects; do not send further editing calls.
+
+The completed result reports `document_id`, a decimal-string `attempt`,
+`terminal: true`, `closed`, `ui` (`headless`, `retired` or `failed`) and a nullable
+bounded `error`. `closed` describes document/UI cleanup. A failed cleanup leaves
+admission closed and reports an error; it does not reopen the document.
+
+The host verifies output of this exact result before quitting. Private stdio
+exits with stdin still open. HTTP additionally requires completion of the
+original POST body and its connection; a resumed GET cannot replace it. Output
+failure or timeout remains a process-exit error after document cleanup. The
+response does not attest remote consumption or later host/transport success.
 
 ### Without a window
 
@@ -63,6 +87,12 @@ separate from `replacement_review` and cannot close the document.
      }
    }
    ```
+
+Use an MCP client's process pipes, or redirect both standard streams to pipes or
+regular files. Direct terminal, socket and device descriptors are unsupported;
+other platforms without Unix pipe readiness reject process stdio explicitly.
+Pipe reads and writes are cancellable, including an unread full output pipe.
+Failure to deliver the accepted result remains a process error.
 
 The server accepts `--game` and `--fgd` as described in [Getting started](getting-started.md). `editor --headless` remains available with the same stdio tools. The standalone server opens no editor window and serves no HTTP endpoint. Engine-physics builds need `hammerr-physics`, and generated reflections need `hammerr-native-runtime`, beside the executable. Build these helpers with `cargo build --release -p compiler -p native-runtime`.
 
@@ -263,12 +293,12 @@ for source, geometry and memory limits.
 
 ## Tools by task
 
-The shared desktop and private stdio server register 411 tools. `tools/list`
+The shared desktop and private stdio server register 417 tools. `tools/list`
 returns their current schemas and descriptions.
 
 | Task | Tools |
 | --- | --- |
-| Files and inspection | `new_map`, `open_map`, `save_map`, `get_map_info`, `get_map_statistics`, `find_objects`, `get_objects` |
+| Files and inspection | `close_document`, `new_map`, `open_map`, `save_map`, `get_map_info`, `get_map_statistics`, `find_objects`, `get_objects` |
 | Recent maps | `get_recent_maps`, `open_recent_map`, `remove_recent_map`, `clear_recent_maps`, `reload_recent_maps` |
 | Grid defaults | `get_grid_defaults`, `set_grid_defaults` |
 | Fly speed and navigation defaults | `get_navigation_settings`, `set_navigation_settings`, `set_navigation_defaults` |

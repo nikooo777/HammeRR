@@ -10,15 +10,24 @@ use std::path::{Path, PathBuf};
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
+mod close;
 mod http;
 mod params;
 mod rendering;
 mod stdio;
 mod tools;
-pub use http::{ConnectionReceipt, HttpServer, spawn_http};
+#[cfg(feature = "test-support")]
+pub use close::validate_terminal_close_output;
+pub use close::{TerminalClose, TerminalOwner, TerminalUi};
+pub use http::{
+    ConnectionReceipt, HttpServer, HttpTerminalResponse, TerminalAttempt, TerminalResponseReceipt,
+    spawn_http,
+};
 use params::*;
 use rendering::{Offscreen, OffscreenState};
-pub use stdio::{StdioAttempt, StdioFenceError, StdioOutput, StdioReceipt, StdioResponseFlushed};
+pub use stdio::{
+    StdioAttempt, StdioFenceError, StdioOutput, StdioReceipt, StdioResponseFlushed, StdioTicket,
+};
 
 use base64::Engine;
 
@@ -370,6 +379,7 @@ pub struct EditorServer {
     operation: Option<DocumentOperation>,
     _document: Option<DocumentHandle>,
     stdio_output: Option<StdioOutput>,
+    terminal: Option<TerminalClose>,
     offscreen: Arc<Mutex<OffscreenState>>,
     model_renderer: Arc<Mutex<crate::model_preview::PreviewRenderer>>,
     tool_router: ToolRouter<Self>,
@@ -382,6 +392,7 @@ impl EditorServer {
             _document: None,
             operation: None,
             stdio_output: None,
+            terminal: None,
             model_renderer: Arc::default(),
             offscreen: Arc::new(Mutex::new(OffscreenState {
                 renderer: ctx.map(Offscreen::new),
@@ -399,6 +410,16 @@ impl EditorServer {
 
     pub fn stdio_output(&self) -> Option<StdioOutput> {
         self.stdio_output.clone()
+    }
+
+    pub fn with_terminal_close(mut self, terminal: TerminalClose) -> Result<Self, String> {
+        if self.operation.is_some()
+            || self._document.as_ref().map(DocumentHandle::id) != Some(terminal.document_id())
+        {
+            return Err("MCP terminal Close requires its idle owning document".into());
+        }
+        self.terminal = Some(terminal);
+        Ok(self)
     }
 
     fn document_access(&self) -> crate::runtime::DocumentAccess {
@@ -539,6 +560,10 @@ impl ServerHandler for EditorServer {
         request: rmcp::model::CallToolRequestParams,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<rmcp::model::CallToolResponse, ErrorData> {
+        if request.name.as_ref() == close::TOOL_NAME {
+            let context = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
+            return self.tool_router.call(context).await;
+        }
         let server = match self.admitted() {
             Ok(server) => server,
             Err(error) => return fail(error).map(Into::into),
@@ -559,17 +584,73 @@ impl ServerHandler for EditorServer {
 
 /// Serves MCP over stdin/stdout until the client disconnects.
 pub fn serve_stdio(mut server: EditorServer) -> Result<(), String> {
+    let flags;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .map_err(|e| e.to_string())?;
-    runtime.block_on(async {
-        let (read, write) = rmcp::transport::stdio();
-        let (transport, output) = stdio::transport(read, write);
-        server.stdio_output = Some(output);
-        let running = server.serve(transport).await.map_err(|e| e.to_string())?;
-        running.waiting().await.map(drop).map_err(|e| e.to_string())
-    })
+    let owner = if server.terminal.is_none() {
+        server
+            ._document
+            .clone()
+            .map(|document| {
+                let owner = TerminalOwner::start(document, None)?;
+                server.terminal = Some(owner.handle());
+                Ok::<_, String>(owner)
+            })
+            .transpose()?
+    } else {
+        None
+    };
+    let (read, write, process_flags) = {
+        let _entered = runtime.enter();
+        stdio::process_transport()?
+    };
+    flags = process_flags;
+    let result = runtime.block_on(run_stdio(server, read, write));
+    let result = match owner {
+        Some(mut owner) => match (result, owner.shutdown()) {
+            (Ok(()), result) | (result, Ok(())) => result,
+            (Err(service), Err(close)) => Err(format!("{service}; terminal Close failed: {close}")),
+        },
+        None => result,
+    };
+    drop(runtime);
+    match (result, flags.finish()) {
+        (Ok(()), result) | (result, Ok(())) => result,
+        (Err(service), Err(flags)) => Err(format!("{service}; {flags}")),
+    }
+}
+
+async fn run_stdio<R, W>(mut server: EditorServer, read: R, write: W) -> Result<(), String>
+where
+    R: tokio::io::AsyncRead + Send + Unpin + 'static,
+    W: tokio::io::AsyncWrite + Send + Unpin + 'static,
+{
+    let (transport, output) = stdio::transport(read, write);
+    server.stdio_output = Some(output);
+    let terminal = server.terminal.clone();
+    let running = server
+        .serve(transport)
+        .await
+        .map_err(|error| error.to_string())?;
+    if let Some(terminal) = terminal {
+        let stop = Mutex::new(Some(running.cancellation_token()));
+        terminal.set_transport_stop(move || {
+            if let Some(stop) = stop.lock().unwrap_or_else(PoisonError::into_inner).take() {
+                stop.cancel();
+            }
+        });
+    }
+    match running.waiting().await.map_err(|error| error.to_string())? {
+        rmcp::service::QuitReason::Closed | rmcp::service::QuitReason::Cancelled => Ok(()),
+        rmcp::service::QuitReason::JoinError(error) => {
+            Err(format!("MCP stdio service failed: {error}"))
+        }
+        reason => Err(format!(
+            "MCP stdio service stopped unexpectedly: {reason:?}"
+        )),
+    }
 }
 
 #[cfg(test)]

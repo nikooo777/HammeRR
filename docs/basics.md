@@ -47,8 +47,19 @@ EOF and runtime-error exits still perform unconditional terminal cleanup.
 Close review can conservatively expire after selection, view or gesture changes.
 It covers shared Session drafts; text typed only into a local form is not a
 saved map change. There is still one public document. MCP can inspect the same
-close state through `get_map_info.document_close`; a completed MCP Close command
-is not exposed.
+close state through `get_map_info.document_close`. Pass its exact `review_token`
+to `close_document`; set `discard_changes: true` only to discard the reviewed
+unsaved changes and drafts. A stale or busy request leaves the document open.
+Accepted MCP Close continues if the caller disconnects. It reports the completed
+document cleanup and owned UI retirement, then verifies local response output
+before quitting. A private stdio editor exits even if its input remains open.
+Later output, transport or process-exit errors remain host failures; the response
+does not prove the remote client consumed it. Multiple open documents remain
+unavailable.
+
+Process stdio accepts Unix pipes and redirected regular files. Launch through an
+MCP client with piped standard streams; terminal, socket and device descriptors
+are rejected.
 
 Tool windows stay with the document that opened them. Once closing begins,
 new searches, selections, picking, framing, previews, reviews, edits and Apply

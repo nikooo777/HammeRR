@@ -2946,3 +2946,25 @@ whole-owner/group/type-filter rules, actual model/rope/instance/FGD helper paths
 strict no-op/failure guards, preview protection, committed-ID lifecycle and
 unchanged source/build scope. The inline control fixture writes
 `editor-visibility.png` through `HAMMERR_UI_SNAPSHOTS` without desktop input.
+
+
+### Public terminal Close
+
+```sh
+cargo test -p editor-core --features mcp,test-support mcp::close::tests
+cargo test -p editor-core --features mcp,test-support mcp::http::terminal::tests
+cargo test -p editor-core --features mcp,test-support production_http_close_uses_fresh_review_and_finishes_before_client_sender_drop
+cargo test -p editor-core --features mcp,test-support mcp::stdio::process::tests
+python3 -B scripts/validate_stdio_close_exit.py --binary target/debug/hammerr-headless --binary target/debug/editor --output /tmp/hammerr-stdio-close-exit
+cargo test -p editor --features editor-core/test-support -- --ignored --exact ui::document_window::tests::retained_terminal_worker_retires_actual_host_and_quits_without_a_strong_app
+cargo test -p editor --features editor-core/test-support -- --ignored --exact ui::document_window::tests::mcp_terminal_close_keeps_the_retired_real_host_running_until_exact_output
+```
+
+The core fixtures exercise ordinary-request refusal, stale/consent/cancellation
+before acceptance, retained cleanup after handler loss, exact stdio send/flush
+and completion with input still open. Standard Hyper/rmcp fixtures exercise
+legacy SSE, stateless SSE and JSON using the original response body and owned
+connection, including an independently held flush barrier and sticky failures.
+The two explicit UI cases use software Slint windows and real offscreen GPU
+resources to prove actual host retirement, hidden-loop progress and response
+ordering. Run each UI case in its own process without desktop input.

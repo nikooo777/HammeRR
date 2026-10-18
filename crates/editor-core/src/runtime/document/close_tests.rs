@@ -175,3 +175,60 @@ fn accepted_close_marks_session_terminal_before_cleanup_and_preserves_failed_dra
     assert_eq!(document.shutdown(), Err(error));
     assert!(store.list().unwrap().entries.is_empty());
 }
+
+#[cfg(feature = "mcp")]
+#[test]
+fn token_close_validates_before_reserving_and_reservation_failure_preserves_live() {
+    let (_directory, document, shared, store) = fixture();
+    let token = document.document_close_review().unwrap().token();
+    let reserved = std::cell::Cell::new(0);
+    let reserve = || {
+        reserved.set(reserved.get() + 1);
+        Ok(())
+    };
+    assert!(
+        document
+            .commit_close_token("foreign", true, reserve)
+            .is_err()
+    );
+    assert_eq!(reserved.get(), 0);
+    let operation = document.admit().unwrap();
+    assert!(
+        document
+            .commit_close_token(&token, true, reserve)
+            .unwrap_err()
+            .contains("busy")
+    );
+    assert_eq!(reserved.get(), 0);
+    drop(operation);
+    edit(&mut lock(&shared));
+    assert!(
+        document
+            .commit_close_token(&token, true, reserve)
+            .unwrap_err()
+            .contains("changed")
+    );
+    let current = document.document_close_review().unwrap().token();
+    assert!(
+        document
+            .commit_close_token(&current, false, reserve)
+            .unwrap_err()
+            .contains("discard")
+    );
+    assert_eq!(reserved.get(), 0);
+    let before = lock(&shared).history_snapshot();
+    assert_eq!(
+        document.commit_close_token(&current, true, || Err::<(), _>("output unavailable".into())),
+        Err("output unavailable".into())
+    );
+    assert_eq!(document.lifecycle(), DocumentLifecycle::Live);
+    assert_eq!(lock(&shared).history_snapshot(), before);
+    assert!(store.list().unwrap().entries.is_empty());
+    document
+        .commit_close_token(&current, true, reserve)
+        .unwrap();
+    assert_eq!(reserved.get(), 1);
+    assert_eq!(document.lifecycle(), DocumentLifecycle::Draining);
+    assert!(document.admit().is_err());
+    document.shutdown().unwrap();
+}

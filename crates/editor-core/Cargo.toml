@@ -7,7 +7,7 @@ rust-version.workspace = true
 
 [features]
 default = []
-mcp = ["dep:axum", "dep:base64", "dep:hyper", "dep:hyper-util", "dep:png", "dep:rmcp", "dep:tokio"]
+mcp = ["dep:axum", "dep:base64", "dep:futures-util", "dep:hyper", "dep:hyper-util", "dep:png", "dep:rmcp", "dep:sse-stream", "dep:tokio"]
 test-support = []
 
 [[bin]]
@@ -21,6 +21,7 @@ native-runtime = { path = "../native-runtime" }
 arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }
 axum = { version = "0.8.9", optional = true }
 base64 = { version = "0.23.1", optional = true }
+futures-util = { version = "0.3.34", optional = true }
 glam.workspace = true
 hyper = { version = "1.12.0", features = ["http1", "server"], optional = true }
 hyper-util = { version = "0.1.21", features = ["http1", "server", "service", "tokio"], optional = true }
@@ -32,9 +33,13 @@ schemars = "1.2.2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sha2 = "0.10.9"
+sse-stream = { version = "0.2.6", optional = true }
 source-formats.workspace = true
-tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "net", "sync", "io-std"], optional = true }
+tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "net", "sync", "io-std", "fs"], optional = true }
 tempfile = "3.27.0"
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1.1.5", features = ["fs"] }
+
+[dev-dependencies]
+hyper = { version = "1.12.0", features = ["client", "http1"] }

@@ -77,6 +77,7 @@ pub(super) struct DocumentHost {
     pub(super) window: DocumentWindow,
     document: DocumentHandle,
     retirement: RetirementHandle,
+    pub(super) terminal_close: Option<mcp::TerminalClose>,
     terminal: bool,
     terminal_finished: bool,
     terminal_error: Option<String>,
@@ -99,6 +100,7 @@ impl DocumentHost {
             window,
             document,
             retirement,
+            terminal_close: None,
             terminal: false,
             terminal_finished: false,
             terminal_error: None,
@@ -135,6 +137,10 @@ impl DocumentHost {
 
     pub(super) fn retirement(&self) -> RetirementHandle {
         self.retirement.clone()
+    }
+
+    pub(super) fn document_id(&self) -> runtime::DocumentId {
+        self.document.id()
     }
 
     pub(super) fn accept_terminal_close(host: &WeakHost) {

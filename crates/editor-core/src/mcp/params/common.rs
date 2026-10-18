@@ -1,6 +1,14 @@
 use super::*;
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(in crate::mcp) struct CloseDocumentArgs {
+    pub review_token: String,
+    #[serde(default)]
+    pub discard_changes: bool,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub(in crate::mcp) struct StatisticsArgs {
     #[serde(default)]
     pub(in crate::mcp) section: crate::session::statistics::Section,

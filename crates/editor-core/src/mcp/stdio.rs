@@ -3,13 +3,20 @@ use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
+use super::TerminalAttempt;
 use rmcp::RoleServer;
-use rmcp::model::{ClientNotification, JsonRpcMessage, RequestId, ServerJsonRpcMessage};
+use rmcp::model::{
+    CallToolResult, ClientNotification, JsonRpcMessage, ProtocolVersion, RequestId,
+    ServerJsonRpcMessage,
+};
 use rmcp::service::{RxJsonRpcMessage, TxJsonRpcMessage};
 use rmcp::transport::Transport;
 use rmcp::transport::async_rw::AsyncRwTransport;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, watch};
+
+mod process;
+pub(super) use process::process_transport;
 
 const MAX_RECEIPT_ID_BYTES: usize = 1024;
 static NEXT_ATTEMPT: AtomicU64 = AtomicU64::new(1);
@@ -41,6 +48,7 @@ pub enum StdioFenceError {
     TransportClosed,
     TransportDropped,
     ObserverLost,
+    BindingLost,
 }
 
 impl fmt::Display for StdioFenceError {
@@ -75,6 +83,9 @@ impl fmt::Display for StdioFenceError {
             Self::ObserverLost => {
                 formatter.write_str("The stdio response completion observer was lost")
             }
+            Self::BindingLost => {
+                formatter.write_str("The exact terminal stdio response was not bound")
+            }
         }
     }
 }
@@ -87,12 +98,14 @@ type Outcome = Result<StdioResponseFlushed, StdioFenceError>;
 struct Completion {
     outcome: Option<Outcome>,
     sender: Option<oneshot::Sender<Outcome>>,
+    expected: Option<CallToolResult>,
 }
 
 #[derive(Debug)]
 struct Attempt {
     identity: StdioResponseFlushed,
     completion: Mutex<Completion>,
+    terminal: bool,
 }
 
 impl Attempt {
@@ -132,12 +145,14 @@ struct State {
 #[derive(Clone, Debug)]
 pub struct StdioOutput {
     state: Arc<Mutex<State>>,
+    closed: watch::Sender<bool>,
 }
 
 impl StdioOutput {
     fn new() -> Self {
         Self {
             state: Arc::default(),
+            closed: watch::channel(false).0,
         }
     }
 
@@ -145,6 +160,30 @@ impl StdioOutput {
     /// returns. Earlier cancellation is not retained. This transport cannot arm
     /// again or disambiguate a request ID reused by the peer.
     pub fn arm(&self, request_id: RequestId) -> Result<StdioReceipt, StdioFenceError> {
+        self.arm_with(request_id, false)
+    }
+
+    pub fn reserve(
+        &self,
+        request_id: RequestId,
+        protocol: Option<ProtocolVersion>,
+        terminal: TerminalAttempt,
+    ) -> Result<(StdioTicket, StdioReceipt), StdioFenceError> {
+        let receipt = self.arm_with(request_id, true)?;
+        let ticket = StdioTicket {
+            attempt: receipt.attempt.clone(),
+            protocol,
+            terminal,
+            bound: false,
+        };
+        Ok((ticket, receipt))
+    }
+
+    fn arm_with(
+        &self,
+        request_id: RequestId,
+        terminal: bool,
+    ) -> Result<StdioReceipt, StdioFenceError> {
         if matches!(&request_id, RequestId::String(id) if id.len() > MAX_RECEIPT_ID_BYTES) {
             return Err(StdioFenceError::RequestIdTooLong);
         }
@@ -170,7 +209,9 @@ impl StdioOutput {
             completion: Mutex::new(Completion {
                 outcome: None,
                 sender: Some(sender),
+                expected: None,
             }),
+            terminal,
         });
         state.used = true;
         state.attempt = Some(attempt.clone());
@@ -187,6 +228,21 @@ impl StdioOutput {
             .cloned()
     }
 
+    fn matching_message(&self, message: &ServerJsonRpcMessage) -> Option<Arc<Attempt>> {
+        let attempt = self.matching(response_id(message)?)?;
+        let matches = !attempt.terminal
+            || attempt
+                .completion
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .expected
+                .as_ref()
+                .is_some_and(|expected| {
+                    TerminalAttempt::matches_result(&attempt.identity.request_id, expected, message)
+                });
+        matches.then_some(attempt)
+    }
+
     fn finish(&self, error: StdioFenceError) {
         let attempt = {
             let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
@@ -197,6 +253,45 @@ impl StdioOutput {
         };
         if let Some(attempt) = attempt {
             attempt.resolve(Err(error));
+        }
+        self.closed.send_replace(true);
+    }
+}
+
+pub struct StdioTicket {
+    attempt: Arc<Attempt>,
+    protocol: Option<ProtocolVersion>,
+    terminal: TerminalAttempt,
+    bound: bool,
+}
+
+impl StdioTicket {
+    pub fn bind(mut self, result: CallToolResult) -> Result<CallToolResult, StdioFenceError> {
+        let result = self.terminal.mark_result(self.protocol.as_ref(), result);
+        {
+            let mut completion = self
+                .attempt
+                .completion
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if let Some(outcome) = &completion.outcome {
+                return Err(outcome
+                    .as_ref()
+                    .err()
+                    .copied()
+                    .unwrap_or(StdioFenceError::AlreadyUsed));
+            }
+            completion.expected = Some(result.clone());
+        }
+        self.bound = true;
+        Ok(result)
+    }
+}
+
+impl Drop for StdioTicket {
+    fn drop(&mut self) {
+        if !self.bound {
+            self.attempt.resolve(Err(StdioFenceError::BindingLost));
         }
     }
 }
@@ -290,12 +385,22 @@ where
         &mut self,
         item: TxJsonRpcMessage<RoleServer>,
     ) -> impl Future<Output = io::Result<()>> + Send + 'static {
-        let guard = response_id(&item)
-            .and_then(|id| self.output.matching(id))
-            .map(SendGuard);
+        let guard = self.output.matching_message(&item).map(SendGuard);
         let send = self.inner.send(item);
+        let mut closed = self.output.closed.subscribe();
         async move {
-            let result = send.await;
+            let already_closed = *closed.borrow();
+            let result = if already_closed {
+                Err(io::Error::new(
+                    io::ErrorKind::NotConnected,
+                    "Stdio transport is closed",
+                ))
+            } else {
+                tokio::select! {
+                    result = send => result,
+                    _ = closed.changed() => Err(io::Error::new(io::ErrorKind::NotConnected, "Stdio transport closed during send")),
+                }
+            };
             if let Some(guard) = guard {
                 guard.finish(&result);
             }

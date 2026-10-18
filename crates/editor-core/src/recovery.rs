@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -143,57 +143,6 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), String> {
 }
 
 impl Store {
-    pub fn load_settings(&self) -> Result<Settings, String> {
-        let path = self.directory.join("settings.json");
-        let mut options = fs::OpenOptions::new();
-        options.read(true);
-        #[cfg(target_os = "linux")]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32);
-        }
-        let file = match options.open(&path) {
-            Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(Settings::default());
-            }
-            Err(error) => return Err(format!("{}: {error}", path.display())),
-        };
-        let metadata = file
-            .metadata()
-            .map_err(|error| format!("{}: {error}", path.display()))?;
-        if !metadata.is_file() || metadata.len() > MAX_SETTINGS_BYTES {
-            return Err(format!(
-                "{} must be a regular file of at most {MAX_SETTINGS_BYTES} bytes",
-                path.display()
-            ));
-        }
-        let mut data = Vec::new();
-        file.take(MAX_SETTINGS_BYTES + 1)
-            .read_to_end(&mut data)
-            .map_err(|error| format!("{}: {error}", path.display()))?;
-        if data.len() as u64 > MAX_SETTINGS_BYTES {
-            return Err(format!(
-                "{} exceeds {MAX_SETTINGS_BYTES} bytes",
-                path.display()
-            ));
-        }
-        let settings: Settings =
-            serde_json::from_slice(&data).map_err(|e| format!("{}: {e}", path.display()))?;
-        settings.validate()?;
-        Ok(settings)
-    }
-
-    pub fn save_settings(&self, settings: &Settings) -> Result<(), String> {
-        settings.validate()?;
-        fs::create_dir_all(&self.directory)
-            .map_err(|e| format!("{}: {e}", self.directory.display()))?;
-        atomic_write(
-            &self.directory.join("settings.json"),
-            &serde_json::to_vec_pretty(settings).map_err(|e| e.to_string())?,
-        )
-    }
-
     fn entry(&self, id: &str) -> Result<Entry, String> {
         if !valid_id(id) {
             return Err("Invalid recovery snapshot ID".into());

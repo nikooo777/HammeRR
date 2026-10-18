@@ -2585,8 +2585,19 @@ replaced only after success. Reload neither captures nor prunes snapshots.
 valid regular-file symlinks remain supported. An absent file loads factory
 settings. Startup load errors disable autosave with a visible settings error;
 manual snapshots and previous-file backups remain available. Explicit validated
-Apply can repair the file. Settings publication retains its existing atomic
-write behavior; independent writers have no shared lock or automatic merge.
+Apply can repair a malformed or oversized source observed by startup or Reload;
+read or identity failures require a new Reload observation before writing.
+
+Participating Linux writers use a stable advisory lock in the physical settings
+destination's directory, so regular-file symlink aliases share the same lock.
+Exact-source checks and the originally requested directory binding reject stale
+publication; call `reload_recovery_settings`, review the settings and retry the
+explicit edit. Lock contention is retryable without Reload. Older/manual writers
+that ignore the lock remain outside this guarantee, and separate-process values
+are never merged automatically. If publication commits but verification fails,
+the settings and revision are adopted while the call returns a retained
+`settings_error` stating that they were written. Further writes require Reload;
+failed Reload retains that publication warning alongside its own error.
 See [Autosave and recovery](map-tools.md#autosave-and-recovery).
 
 ### Recovery shutdown

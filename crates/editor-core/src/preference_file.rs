@@ -4,6 +4,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use source_formats::file_publication::{BoundDestination, CommittedReceipt};
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Source {
     Missing,
@@ -27,7 +29,18 @@ pub(crate) fn read_source(path: &Path, max_file_bytes: u64, label: &str) -> Resu
     if !metadata.is_file() {
         return Err(format!("{} must be a regular file", path.display()));
     }
-    let file = File::open(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(
+            (rustix::fs::OFlags::NONBLOCK | rustix::fs::OFlags::NOFOLLOW).bits() as i32,
+        );
+    }
+    let file = options
+        .open(path)
+        .map_err(|error| format!("{}: {error}", path.display()))?;
     let opened = file.metadata().map_err(|error| error.to_string())?;
     #[cfg(unix)]
     {
@@ -74,6 +87,7 @@ pub(crate) struct ObservedSource {
     pub source: Source,
     file_name: &'static str,
     directory: DirectoryBinding,
+    following: Option<BoundDestination>,
 }
 
 pub(crate) use source_formats::file_publication::DirectoryBinding;
@@ -234,6 +248,45 @@ impl CoordinatedFile<'_> {
             source,
             directory,
             file_name: self.file_name,
+            following: None,
+        })
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn observe_following(&self) -> Result<ObservedSource, String> {
+        use source_formats::file_publication::Policy;
+
+        let directory = DirectoryBinding::capture(self.directory, self.label, self.reload)?;
+        let destination = BoundDestination::capture(&self.path(), Policy::FollowSource)
+            .map_err(|error| format!("{}: {error}", self.path().display()))?;
+        let source = read_source(destination.physical_path(), self.max_bytes, self.label)?;
+        destination.verify().map_err(|error| error.to_string())?;
+        directory.verify()?;
+        Ok(ObservedSource {
+            source,
+            directory,
+            file_name: self.file_name,
+            following: Some(destination),
+        })
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn observe_following(&self) -> Result<ObservedSource, String> {
+        let directory = DirectoryBinding::capture(self.directory, self.label, self.reload)?;
+        let path = self.path();
+        let path = match fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.is_symlink() => {
+                path.canonicalize().map_err(|error| error.to_string())?
+            }
+            _ => path,
+        };
+        let source = read_source(&path, self.max_bytes, self.label)?;
+        directory.verify()?;
+        Ok(ObservedSource {
+            source,
+            directory,
+            file_name: self.file_name,
+            following: None,
         })
     }
 
@@ -277,6 +330,100 @@ impl CoordinatedFile<'_> {
         expected: &ObservedSource,
     ) -> Result<Publication, SaveError> {
         self.publish_with(data, expected, crate::recovery::atomic_write)
+    }
+
+    pub fn publish_following(
+        &self,
+        data: &[u8],
+        expected: &ObservedSource,
+    ) -> Result<Publication, SaveError> {
+        self.publish_following_with(data, expected, publish_bound)
+    }
+
+    pub fn publish_following_with(
+        &self,
+        data: &[u8],
+        expected: &ObservedSource,
+        publish: impl FnOnce(&BoundDestination, &[u8]) -> Result<CommittedReceipt, String>,
+    ) -> Result<Publication, SaveError> {
+        let label = self.label;
+        let reload = self.reload;
+        if !cfg!(target_os = "linux") {
+            return Err(SaveError::failure(format!(
+                "Coordinated {label} writes require Linux"
+            )));
+        }
+        if data.len() as u64 > self.max_bytes {
+            return Err(SaveError::failure(format!(
+                "{label} must fit in {} bytes",
+                self.max_bytes
+            )));
+        }
+        self.verify_expected(expected)?;
+        let destination = expected
+            .following
+            .as_ref()
+            .ok_or_else(|| SaveError::failure(format!("Inspect {label} before writing")))?;
+        if destination.physical_path().file_name() == Some(std::ffi::OsStr::new(self.lock_name)) {
+            return Err(SaveError::failure(format!(
+                "{label} destination cannot be its coordination lock"
+            )));
+        }
+        let verify_destination = || {
+            destination.verify().map_err(|error| SaveError {
+                conflict: true,
+                message: format!("{label} changed outside this session; {reload}: {error}"),
+            })
+        };
+        verify_destination()?;
+        let directory = destination
+            .physical_path()
+            .parent()
+            .ok_or_else(|| SaveError::failure("Settings destination has no parent"))?;
+        let guard = WriteLock::acquire(directory, self.lock_name, label, reload)
+            .map_err(SaveError::failure)?;
+        self.verify_expected(expected)?;
+        verify_destination()?;
+        let current = self.observe_following().map_err(SaveError::failure)?;
+        if current.source != expected.source {
+            return Err(SaveError {
+                conflict: true,
+                message: format!(
+                    "{label} changed in another editor or outside this session; {reload} before changing it"
+                ),
+            });
+        }
+        guard.verify().map_err(SaveError::failure)?;
+        let receipt = publish(destination, data).map_err(SaveError::failure)?;
+        let source = (|| {
+            if let Some(warning) = receipt.warning {
+                return Err(warning);
+            }
+            guard.verify()?;
+            expected.directory.verify()?;
+            receipt
+                .destination
+                .verify()
+                .map_err(|error| error.to_string())?;
+            let source = self.observe_following()?;
+            guard.verify()?;
+            receipt
+                .destination
+                .verify()
+                .map_err(|error| error.to_string())?;
+            if matches!(&source.source, Source::File { bytes, .. } if bytes == data) {
+                Ok(source)
+            } else {
+                Err(format!("{label} changed after publication"))
+            }
+        })()
+        .map_err(|error| {
+            format!(
+                "{label} were written but could not verify the {}; {reload}: {error}",
+                self.saved_description
+            )
+        });
+        Ok(Publication { source })
     }
 
     pub fn publish_with(
@@ -330,6 +477,14 @@ impl CoordinatedFile<'_> {
             });
         Ok(Publication { source })
     }
+}
+
+fn publish_bound(destination: &BoundDestination, data: &[u8]) -> Result<CommittedReceipt, String> {
+    use std::io::Write;
+
+    let mut stage = destination.stage().map_err(|error| error.to_string())?;
+    stage.write_all(data).map_err(|error| error.to_string())?;
+    stage.commit().map_err(|error| error.to_string())
 }
 
 #[cfg(test)]

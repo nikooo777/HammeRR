@@ -294,3 +294,95 @@ fn draining_one_origin_preserves_the_other_worker_and_document_failure() {
     assert_eq!(lock(&second).recovery_status()["pending_changes"], false);
     assert!(lock(&second).recovery_status()["snapshot_error"].is_null());
 }
+
+#[test]
+fn independent_settings_conflict_and_reload_preserve_document_errors_and_live_capture() {
+    let directory = tempfile::tempdir().unwrap();
+    let settings_path = directory.path().join("settings");
+    let mut first = Session::new(Err("no assets".into()));
+    let mut second = Session::new(Err("no assets".into()));
+    first.configure_recovery(Ok(settings_path.clone()));
+    second.configure_recovery(Ok(settings_path));
+    second
+        .create_block(
+            Actor::User,
+            glam::DVec3::ZERO,
+            glam::DVec3::splat(64.0),
+            "retained",
+            false,
+        )
+        .unwrap();
+    let failed = second.begin_recovery_snapshot(Kind::Manual).unwrap();
+    second
+        .finish_recovery_snapshot(Actor::User, &failed, Err("retained capture failure".into()))
+        .unwrap_err();
+    second.report_recovery_worker_error("retained drain failure".into());
+    let live = second.begin_recovery_snapshot(Kind::Manual).unwrap();
+    let source = second.document().vmf().clone();
+    let history = second.history_snapshot();
+    let camera = second.camera();
+    let attempt = second.recovery.last_attempt;
+    let key = second.recovery.document_key.clone();
+    let revision = second.recovery_settings_revision();
+    first
+        .update_recovery_settings(
+            Actor::User,
+            SettingsUpdate {
+                interval_seconds: Some(60),
+                keep_per_map: Some(4),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+    let conflict = second
+        .update_recovery_settings(
+            Actor::Agent,
+            SettingsUpdate {
+                keep_per_map: Some(3),
+                ..Default::default()
+            },
+            Some(revision),
+        )
+        .unwrap_err();
+    assert!(conflict.contains("Reload settings"), "{conflict}");
+    assert_eq!(second.recovery_settings_revision(), revision);
+    assert_eq!(second.recovery_settings(), Settings::default());
+    assert_eq!(
+        second.recovery_status()["snapshot_error"],
+        "retained capture failure"
+    );
+    assert_eq!(
+        second.recovery_status()["drain_error"],
+        "retained drain failure"
+    );
+    second
+        .reload_recovery_settings(Actor::Agent, Some(revision))
+        .unwrap();
+    assert!(second.recovery_status()["settings_error"].is_null());
+    assert_eq!(
+        second.recovery_status()["snapshot_error"],
+        "retained capture failure"
+    );
+    assert_eq!(
+        second.recovery_status()["drain_error"],
+        "retained drain failure"
+    );
+    assert_eq!(second.recovery_settings().interval_seconds, 60);
+    assert_eq!(second.recovery_settings().keep_per_map, 4);
+    assert!(second.recovery_busy());
+    assert_eq!(live.keep, 10);
+    assert_eq!(second.recovery.last_attempt, attempt);
+    assert_eq!(second.recovery.document_key, key);
+    assert_eq!(second.document().vmf(), &source);
+    assert_eq!(second.history_snapshot(), history);
+    assert_eq!(second.camera(), camera);
+    second
+        .finish_recovery_snapshot(Actor::User, &live, live.run())
+        .unwrap();
+    assert!(second.recovery_status()["snapshot_error"].is_null());
+    assert_eq!(
+        second.recovery_status()["drain_error"],
+        "retained drain failure"
+    );
+}

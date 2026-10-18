@@ -2480,6 +2480,25 @@ manual capture, keeps snapshot failures across settings repair, and exercises
 valid, malformed and oversized saved-settings Reload without changing the map.
 No graphics, game, desktop window or input is used.
 
+### Coordinated recovery settings
+
+```sh
+cargo test -p editor-core --features mcp recovery::settings::tests
+cargo test -p editor-core --features mcp independent_settings_conflict
+cargo test -p editor-core --features mcp independent_recovery_servers
+python3 -B scripts/validate_recovery_settings.py --binary target/debug/hammerr-headless --output /tmp/hammerr-recovery-settings-check
+```
+
+The Rust checks cover separate authorities, stale-source refusal, observed
+malformed/oversized repair, unreadable-source admission, regular-file symlink
+aliases, nonblocking physical-destination lock contention, original-directory
+replacement and committed-but-unverified publication. Session/MCP checks preserve
+independent capture/drain errors, in-flight retention, map/history/camera and lazy
+graphics. The private validator starts two isolated stdio processes and checks
+the same conflict/Reload path, alias locking, both requested/physical-directory
+replacement, an owned transform review and successful process exits. Its output
+directory must be new. It starts no desktop window, graphics or game process.
+
 ### Coordinated material favorites
 
 ```sh

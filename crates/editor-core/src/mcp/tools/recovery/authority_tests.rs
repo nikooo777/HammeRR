@@ -99,3 +99,48 @@ fn paired_recovery_servers_merge_concurrent_partial_updates_and_reject_stale_for
         assert!(server.offscreen.lock().unwrap().renderer.is_none());
     }
 }
+
+#[test]
+fn independent_recovery_servers_report_disk_conflicts_and_reload_without_graphics() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut first = Session::new(Err("no assets".into()));
+    let mut second = Session::new(Err("no assets".into()));
+    first.configure_recovery(Ok(directory.path().into()));
+    second.configure_recovery(Ok(directory.path().into()));
+    let first = EditorServer::new(Arc::new(Mutex::new(first)), None);
+    let second = EditorServer::new(Arc::new(Mutex::new(second)), None);
+    let initial = inspect(&second);
+    update(&first, json!({"interval_seconds":60,"keep_per_map":4}));
+    let result = second
+        .set_recovery_settings(Parameters(
+            serde_json::from_value(json!({"enabled":false})).unwrap(),
+        ))
+        .unwrap();
+    assert!(result.is_error.unwrap());
+    assert!(
+        result.content[0]
+            .as_text()
+            .unwrap()
+            .text
+            .contains("Reload settings")
+    );
+    let conflicted = inspect(&second);
+    assert_eq!(conflicted["settings"], initial["settings"]);
+    assert_eq!(
+        conflicted["settings_revision"],
+        initial["settings_revision"]
+    );
+    assert!(conflicted["settings_error"].is_string());
+    value(second.reload_recovery_settings(Parameters(
+        serde_json::from_value(json!({"expected_revision":initial["settings_revision"]})).unwrap(),
+    )));
+    let repaired = update(&second, json!({"enabled":false}));
+    assert_eq!(
+        repaired["settings"],
+        json!({"enabled":false,"interval_seconds":60,"keep_per_map":4})
+    );
+    assert!(repaired["settings_error"].is_null());
+    for server in [&first, &second] {
+        assert!(server.offscreen.lock().unwrap().renderer.is_none());
+    }
+}

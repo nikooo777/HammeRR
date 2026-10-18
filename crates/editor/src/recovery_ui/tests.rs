@@ -103,6 +103,9 @@ fn recovery_warning_keeps_error_domains_with_listing_failures_and_skipped_entrie
     assert!(window.get_warning().contains("snapshot write failed"));
     assert!(window.get_warning().contains("incomplete or unreadable"));
     std::fs::remove_dir(path.join("settings.json")).unwrap();
+    window.invoke_reload_settings();
+    assert!(lock(&shared).recovery_status()["settings_error"].is_null());
+    assert!(window.get_warning().contains("snapshot write failed"));
     window.set_interval_seconds(60);
     window.set_settings_dirty(true);
     window.invoke_apply_settings();

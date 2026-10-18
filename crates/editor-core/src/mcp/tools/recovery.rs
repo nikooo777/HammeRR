@@ -45,7 +45,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Configure persistent autosave settings through the same operation as Recovery settings. enabled controls periodic/exit autosaves; manual snapshots and previous-file backups remain available. Interval is 30–3600 seconds, retention 1–50 snapshots per map. Omitted values merge with the latest settings under the shared Application authority lock. expected_revision rejects forms made stale by any attached Session. Changes do not edit the map."
+        description = "Configure persistent autosave settings through the same operation as Recovery settings. enabled controls periodic/exit autosaves; manual snapshots and previous-file backups remain available. Interval is 30–3600 seconds, retention 1–50 snapshots per map. Omitted values merge with the latest settings under the shared Application authority lock. expected_revision rejects forms made stale by any attached Session. Participating Linux writers lock the physical destination; changed sources or directories require reload_recovery_settings before retrying. A committed but unverified write adopts its settings/revision and returns a retained settings_error requiring Reload. Changes do not edit the map."
     )]
     pub(in crate::mcp) fn set_recovery_settings(
         &self,
@@ -65,7 +65,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Reload recovery/settings.json through the same Session operation as Recovery -> Reload settings. Reads a regular target up to 32768 bytes; valid regular-file symlinks are followed and an absent file supplies factory defaults. Optional expected_revision rejects stale settings requests before reading. Failed read/validation preserves current settings and revision, retaining a settings_error. Success adopts saved settings and advances settings_revision; storage/snapshot/retention/drain errors, requests, map/history/camera and previews remain unchanged. Does not write storage, reset the autosave clock, initialize graphics or coordinate separate processes or outside writers."
+        description = "Reload recovery/settings.json through the same Session operation as Recovery -> Reload settings, including recovery from independent-writer conflicts. Reads a regular target up to 32768 bytes; valid regular-file symlinks are followed and an absent file supplies factory defaults. Optional expected_revision rejects stale settings requests before reading. Failed read/validation preserves current settings and revision, retaining a settings_error. An observed malformed or oversized file can be repaired by explicit validated settings Apply. Success adopts saved settings and advances settings_revision; storage/snapshot/retention/drain errors, requests, map/history/camera and previews remain unchanged. Does not write storage, reset the autosave clock or initialize graphics."
     )]
     pub(in crate::mcp) fn reload_recovery_settings(
         &self,

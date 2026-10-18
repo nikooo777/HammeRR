@@ -502,6 +502,11 @@ To edit several entities at once, select them and open **Edit selected entity pr
 
 Names are changed through **References and rename…**.
 
+Raw VMF property keys and values cannot contain literal double quotes.
+Properties reject these inputs before applying changes; backslashes are kept
+literally and do not escape quotes. Context notes use their own text encoding
+and can contain quotes.
+
 During document shutdown, the Properties dialog and its Color/Material pickers
 reject new reads, edits and Apply actions. Existing staged targets stay exact;
 **Cancel** still closes each window and cannot discard a replacement draft.

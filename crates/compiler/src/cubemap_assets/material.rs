@@ -460,10 +460,11 @@ impl<'a> Graph<'a> {
             .into_iter()
             .collect();
         ensure_writable(&nodes)?;
-        let bytes = keyvalues::write(
+        let bytes = keyvalues::try_write(
             &[Node::block(material.shader, nodes)],
             &keyvalues::WriteOptions::default(),
         )
+        .map_err(|error| error.to_string())?
         .into_bytes();
         if bytes.len() > MAX_MATERIAL_BYTES
             || self.entries.values().map(Vec::len).sum::<usize>() + bytes.len()

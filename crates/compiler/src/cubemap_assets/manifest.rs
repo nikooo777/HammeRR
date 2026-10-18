@@ -824,10 +824,11 @@ pub(super) fn rebase(
         let mut nodes = material_nodes(&material);
         rebase_nodes(&mut nodes, &references, &alias_references);
         ensure_writable(&nodes).map_err(invalid)?;
-        entry.data = keyvalues::write(
+        entry.data = keyvalues::try_write(
             &[Node::block(material.shader, nodes)],
             &keyvalues::WriteOptions::default(),
         )
+        .map_err(|error| invalid(error.to_string()))?
         .into_bytes();
         alias.sha256 = hash(&entry.data);
         alias.dependencies = alias

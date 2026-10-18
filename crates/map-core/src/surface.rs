@@ -290,6 +290,8 @@ pub(crate) fn update(
         if material.trim().is_empty() {
             return Err(invalid("material must not be empty"));
         }
+        source_formats::keyvalues::validate_string(material)
+            .map_err(|error| invalid(&error.to_string()))?;
         side.material = material.trim().to_ascii_uppercase();
     }
     if let Some(rotation) = edit.rotation {

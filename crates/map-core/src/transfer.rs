@@ -283,7 +283,10 @@ impl Payload {
         vmf.extra
             .push(Node::block(KEY, vec![Node::string("version", "1")]));
         let document = Document::try_new(vmf)?;
-        let text = document.vmf().write(&keyvalues::WriteOptions::default());
+        let text = document
+            .vmf()
+            .try_write(&keyvalues::WriteOptions::default())
+            .map_err(|error| invalid(error.to_string()))?;
         if text.len() > MAX_BYTES {
             return Err(invalid("Clipboard payload exceeds 8 MiB"));
         }

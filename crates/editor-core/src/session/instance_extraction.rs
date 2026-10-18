@@ -175,7 +175,10 @@ fn prepare(
     control: &Control,
     cleanup: staging::Cleanup,
 ) -> Result<Ready, String> {
-    let input = plan.child.write(&Default::default());
+    let input = plan
+        .child
+        .try_write(&Default::default())
+        .map_err(|error| error.to_string())?;
     if input.len() > instances::MAX_FILE_BYTES {
         return Err("Extracted child exceeds 4 MiB".into());
     }

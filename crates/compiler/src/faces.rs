@@ -39,24 +39,41 @@ pub struct Face {
     pub displacement: Option<usize>,
 }
 
-pub fn lightmap_bounds(winding: &Winding, info: &TexInfo) -> ([i32; 2], [i32; 2]) {
+impl Face {
+    pub(crate) fn lightmap_bounds(&self, info: &TexInfo) -> Result<([i32; 2], [i32; 2]), String> {
+        lightmap_bounds(&self.winding, info).map_err(|error| match self.source_sides.first() {
+            Some(id) => format!("side:{id}: {error}"),
+            None => error,
+        })
+    }
+}
+
+pub fn lightmap_bounds(winding: &Winding, info: &TexInfo) -> Result<([i32; 2], [i32; 2]), String> {
     let mut mins = [0; 2];
     let mut size = [0; 2];
     for axis in 0..2 {
         let v = info.lightmap_vecs[axis];
         let direction = DVec3::new(v[0] as f64, v[1] as f64, v[2] as f64);
-        let (lo, hi) =
-            winding
-                .0
-                .iter()
-                .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), &point| {
-                    let value = direction.dot(point) + v[3] as f64;
-                    (lo.min(value), hi.max(value))
-                });
-        mins[axis] = lo.floor() as i32;
-        size[axis] = hi.ceil() as i32 - mins[axis];
+        let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+        for &point in &winding.0 {
+            let value = direction.dot(point) + v[3] as f64;
+            if !value.is_finite() {
+                return Err("Lightmap projection must stay finite".into());
+            }
+            lo = lo.min(value);
+            hi = hi.max(value);
+        }
+        let (lo, hi) = (lo.floor(), hi.ceil());
+        if !lo.is_finite() || !hi.is_finite() || lo < i32::MIN as f64 || hi > i32::MAX as f64 {
+            return Err("Lightmap bounds exceed native signed 32-bit coordinates".into());
+        }
+        mins[axis] = lo as i32;
+        size[axis] = (hi as i32)
+            .checked_sub(mins[axis])
+            .filter(|size| *size >= 0)
+            .ok_or("Lightmap extent exceeds native signed 32-bit range")?;
     }
-    (mins, size)
+    Ok((mins, size))
 }
 
 fn subdivide(
@@ -76,7 +93,7 @@ fn subdivide(
     let mut pending = vec![face];
     while let Some(face) = pending.pop() {
         control.checkpoint()?;
-        let (mins, size) = lightmap_bounds(&face.winding, info);
+        let (mins, size) = face.lightmap_bounds(info)?;
         let Some(axis) = (0..2).find(|&axis| size[axis] > MAX_LIGHTMAP_EXTENT) else {
             output.push(face);
             continue;

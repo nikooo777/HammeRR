@@ -37,6 +37,13 @@ Leave out the filename to start with an empty map. HammeRR finds Counter-Strike:
 
 Saving increments the VMF's map version and uses standard VMF formatting while retaining imported properties and extra blocks. Round trips through other editors haven't been verified yet.
 
+Imports accept at most 256 nested blocks. An excessive or malformed import
+leaves the current map intact. Raw property keys/values, classnames, material
+names and group names cannot contain literal double quotes; invalid edits are
+rejected. Quoted unknown block names, including names containing spaces, remain
+quoted when saved. Serialization failures leave the existing file intact and
+appear as save or recovery errors.
+
 Saving through a file symlink updates its target and preserves the link and target permissions. Broken or looping links are refused. Failed saves preserve unsaved changes; repair the path or choose another destination and save again.
 
 Open maps and build outputs reserve their physical files inside the application,

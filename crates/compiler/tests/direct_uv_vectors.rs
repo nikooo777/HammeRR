@@ -11,6 +11,41 @@ use source_formats::{
     vmf::Vmf,
 };
 
+#[test]
+fn extreme_finite_source_projections_fail_without_panics_or_output_replacement() {
+    let directory = tempfile::tempdir().unwrap();
+    let destination = directory.path().join("previous.bsp");
+    std::fs::write(&destination, b"previous output").unwrap();
+    for (axis, scale, offset, expected) in [
+        (1e12, 0.25, 0.0, "Lightmap bounds"),
+        (1.0, 1e-300, 0.0, "finite native floats"),
+        (1e300, 0.25, 0.0, "finite native floats"),
+        (1.0, 0.25, 1e300, "finite native floats"),
+    ] {
+        let mut source = common::room();
+        for side in &mut source.world.solids[0].sides {
+            side.u_axis.axis.x = axis;
+            side.u_axis.scale = scale;
+            side.u_axis.offset = offset;
+        }
+        let source = Vmf::parse(&source.try_write(&Default::default()).unwrap()).unwrap();
+        let output = compiler::compile(&source, &common::empty_game());
+        assert!(output.bsp.is_none());
+        assert!(
+            output
+                .report
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.level == compiler::Level::Error
+                    && diagnostic.message.contains(expected)),
+            "{:?}",
+            output.report
+        );
+        assert!(!output.write(&destination).unwrap());
+        assert_eq!(std::fs::read(&destination).unwrap(), b"previous output");
+    }
+}
+
 fn projected(rows: [[f32; 4]; 2], point: DVec3) -> DVec2 {
     DVec2::from_array(rows.map(|row| {
         point.dot(DVec3::new(

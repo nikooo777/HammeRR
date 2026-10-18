@@ -158,20 +158,8 @@ impl Map<'_> {
             let terrain_contents = material_info.contents | extra_contents;
             let plane = support::find_authored(&mut self.planes, geometry, face, control)?
                 .ok_or("Cannot preserve displacement base plane support")?;
-            let source_texinfo = self.texinfo(side, material, DVec3::ZERO);
+            let source_texinfo = self.texinfo(side, material, DVec3::ZERO)?;
             let mut info = self.texinfos.infos[source_texinfo];
-            if info
-                .texture_vecs
-                .iter()
-                .chain(&info.lightmap_vecs)
-                .flatten()
-                .any(|value| !value.is_finite())
-            {
-                return Err(
-                    "Displacement texture/lightmap projections must fit finite native floats"
-                        .into(),
-                );
-            }
             info.flags = (info.flags | surf::NOLIGHT) & !surf::BUMPLIGHT;
             let texinfo = self.texinfos.add(info);
             let first = mesh.base_positions[0];

@@ -261,13 +261,19 @@ impl RecoveryRequest {
             outcome: None,
         };
         before_write();
-        let outcome = self.store.write(
-            &self.document_key,
-            self.source_path.as_deref(),
-            &self.title,
-            self.kind.clone(),
-            self.vmf.write(&WriteOptions::default()).as_bytes(),
-        );
+        let outcome = self
+            .vmf
+            .try_write(&WriteOptions::default())
+            .map_err(|error| format!("Cannot serialize recovery snapshot: {error}"))
+            .and_then(|text| {
+                self.store.write(
+                    &self.document_key,
+                    self.source_path.as_deref(),
+                    &self.title,
+                    self.kind.clone(),
+                    text.as_bytes(),
+                )
+            });
         writing.outcome = Some(outcome.clone());
         outcome
     }
@@ -809,6 +815,38 @@ mod tests {
         session
             .finish_recovery_snapshot(Actor::User, &request, result)
             .unwrap()
+    }
+
+    #[test]
+    fn serialization_errors_preserve_existing_files_and_finish_recovery_requests() {
+        let (directory, mut session, _) = fixture();
+        let destination = directory.path().join("previous.vmf");
+        std::fs::write(&destination, b"previous map").unwrap();
+        let mut vmf = session.document.vmf().clone();
+        vmf.world.properties.set("message", "hello \"world\"");
+        session.document = Document::new(vmf);
+        assert!(
+            session
+                .save(Actor::User, Some(&destination))
+                .unwrap_err()
+                .contains("quotes")
+        );
+        assert_eq!(std::fs::read(destination).unwrap(), b"previous map");
+        let request = session.begin_recovery_snapshot(Kind::Manual).unwrap();
+        let result = request.run();
+        assert!(
+            result
+                .as_ref()
+                .unwrap_err()
+                .contains("serialize recovery snapshot")
+        );
+        assert!(
+            session
+                .finish_recovery_snapshot(Actor::User, &request, result)
+                .is_err()
+        );
+        assert!(!session.recovery_busy());
+        assert!(session.recovery_entries().unwrap().entries.is_empty());
     }
 
     #[test]

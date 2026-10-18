@@ -5,7 +5,7 @@ use glam::DVec3;
 use source_formats::bsp::{self, Bsp, GameLump, Lump, contents, lump};
 use source_formats::vmf::format_vec3;
 
-use crate::faces::{self, Face};
+use crate::faces::Face;
 use crate::map::Map;
 use crate::tree::Tree;
 
@@ -139,7 +139,7 @@ impl Geometry {
             self.normal_indices.push(plane);
         }
         let info = &map.texinfos.infos[face.texinfo];
-        let (lightmap_mins, lightmap_size) = faces::lightmap_bounds(&face.winding, info);
+        let (lightmap_mins, lightmap_size) = face.lightmap_bounds(info)?;
         Ok(bsp::Face {
             plane,
             side: (face.plane & 1) as u8,

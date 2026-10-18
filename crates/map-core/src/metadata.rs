@@ -22,11 +22,13 @@ impl InputBudget {
         if self.nodes > MAX_NODES || self.bytes > MAX_BYTES {
             return Err(invalid("Metadata exceeds 131072 nodes or 8 MiB"));
         }
-        if key.contains(['\0', '"']) || value.contains(['\0', '"']) {
-            return Err(invalid(
-                "VMF metadata fields cannot contain NUL bytes or literal quotes",
-            ));
+        if key.contains('\0') || value.contains('\0') {
+            return Err(invalid("VMF metadata fields cannot contain NUL bytes"));
         }
+        source_formats::keyvalues::validate_string(key)
+            .map_err(|error| invalid(error.to_string()))?;
+        source_formats::keyvalues::validate_string(value)
+            .map_err(|error| invalid(error.to_string()))?;
         Ok(())
     }
     pub(crate) fn properties(

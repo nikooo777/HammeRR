@@ -311,6 +311,10 @@ fn write_parent(editor: &mut Option<Properties>, parent: Option<u32>) {
 }
 
 pub fn apply(tx: &mut Transaction, edit: &Edit) -> Result<u32, EditError> {
+    if !edit.ungroup {
+        source_formats::keyvalues::validate_string(&edit.name)
+            .map_err(|error| invalid(error.to_string()))?;
+    }
     let original = Graph::read(tx.document())?;
     if !edit.ungroup
         && (edit.name.chars().count() > MAX_NAME_CHARS || edit.name.chars().any(char::is_control))

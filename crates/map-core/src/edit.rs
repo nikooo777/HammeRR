@@ -43,6 +43,8 @@ pub fn new_side(
     points: [DVec3; 3],
     material: &str,
 ) -> Result<Side, EditError> {
+    source_formats::keyvalues::validate_string(material)
+        .map_err(|error| invalid(error.to_string()))?;
     let plane =
         crate::Plane::from_points(points).ok_or_else(|| invalid("collinear plane points"))?;
     let (u, v) = world_texture_axes(plane.normal);
@@ -174,6 +176,14 @@ pub fn create_entity(
     if classname.trim().is_empty() {
         return Err(invalid("classname must not be empty"));
     }
+    source_formats::keyvalues::validate_string(classname)
+        .map_err(|error| invalid(error.to_string()))?;
+    for (key, value) in properties {
+        source_formats::keyvalues::validate_string(key)
+            .map_err(|error| invalid(error.to_string()))?;
+        source_formats::keyvalues::validate_string(value)
+            .map_err(|error| invalid(error.to_string()))?;
+    }
     let mut entity = Entity::new(tx.new_object_id()?, classname);
     for (key, value) in properties {
         if key.eq_ignore_ascii_case("classname") {
@@ -196,6 +206,14 @@ pub fn set_properties(
     entity: u32,
     changes: &[(String, Option<String>)],
 ) -> Result<(), EditError> {
+    for (key, value) in changes {
+        source_formats::keyvalues::validate_string(key)
+            .map_err(|error| invalid(error.to_string()))?;
+        if let Some(value) = value {
+            source_formats::keyvalues::validate_string(value)
+                .map_err(|error| invalid(error.to_string()))?;
+        }
+    }
     let entity = tx.entity_mut(entity)?;
     for (key, value) in changes {
         match value {
@@ -335,6 +353,8 @@ pub fn set_material(
     targets: &[FaceTarget],
     material: &str,
 ) -> Result<usize, EditError> {
+    source_formats::keyvalues::validate_string(material)
+        .map_err(|error| invalid(error.to_string()))?;
     if material.trim().is_empty() {
         return Err(invalid("material must not be empty"));
     }
@@ -413,6 +433,75 @@ pub fn entity_origin(entity: &Entity) -> Option<DVec3> {
 mod tests {
     use super::*;
     use crate::{BrushGeometry, Document};
+
+    #[test]
+    fn unrepresentable_edits_roll_back_without_consuming_ids_or_history() {
+        let mut doc = Document::empty();
+        let before = doc.vmf().clone();
+        for (classname, properties) in [
+            ("bad\"class", vec![]),
+            ("audit", vec![("message".into(), "hello \"world\"".into())]),
+            ("audit", vec![("bad\"key".into(), "value".into())]),
+        ] {
+            assert!(
+                doc.edit("invalid entity", |tx| create_entity(
+                    tx,
+                    classname,
+                    None,
+                    &properties,
+                    Vec::new()
+                ))
+                .is_err()
+            );
+            assert_eq!(doc.vmf(), &before);
+            assert_eq!(doc.revision(), 0);
+        }
+        assert!(
+            doc.edit("invalid material", |tx| create_block(
+                tx,
+                DVec3::ZERO,
+                DVec3::splat(32.0),
+                "bad\"material"
+            ))
+            .is_err()
+        );
+        assert_eq!(doc.vmf(), &before);
+        let id = doc
+            .edit("valid entity", |tx| {
+                create_entity(tx, "audit", None, &[], Vec::new())
+            })
+            .unwrap();
+        assert_eq!(id, ObjectId::Entity(2));
+        assert_eq!(doc.revision(), 1);
+        let before = doc.vmf().clone();
+        assert!(
+            doc.edit("invalid update", |tx| set_properties(
+                tx,
+                2,
+                &[("message".into(), Some("hello \"world\"".into()))]
+            ))
+            .is_err()
+        );
+        assert!(
+            doc.edit("invalid group", |tx| crate::groups::apply(
+                tx,
+                &crate::groups::Edit {
+                    group: None,
+                    name: "bad\"group".into(),
+                    parent: None,
+                    members: vec![crate::groups::Member::Object(id)],
+                    ungroup: false
+                }
+            ))
+            .is_err()
+        );
+        assert_eq!(doc.vmf(), &before);
+        assert_eq!(doc.revision(), 1);
+        doc.vmf().try_write(&Default::default()).unwrap();
+        doc.undo().unwrap();
+        assert_eq!(doc.vmf().entities.len(), 0);
+        assert!(doc.undo().is_none());
+    }
 
     #[test]
     fn blocks_have_outward_planes_and_exact_bounds() {

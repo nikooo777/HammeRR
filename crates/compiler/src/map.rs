@@ -566,7 +566,7 @@ impl<'a> Map<'a> {
                 ));
                 return Ok(());
             }
-            let texinfo = self.texinfo(side, material, origin);
+            let texinfo = self.texinfo(side, material, origin)?;
             sides.push(MapSide {
                 source_id: Some(side.id),
                 plane,
@@ -730,7 +730,7 @@ impl<'a> Map<'a> {
         Ok(())
     }
 
-    fn texinfo(&mut self, side: &Side, material: usize, origin: DVec3) -> usize {
+    fn texinfo(&mut self, side: &Side, material: usize, origin: DVec3) -> Result<usize, String> {
         let flags = self.materials.get(material).surface;
         let texdata = self.texture_data(material);
         let lightmap_scale = if side.lightmap_scale == 0 {
@@ -757,12 +757,25 @@ impl<'a> Map<'a> {
                 (axis.offset * axis.scale / lightmap_scale + origin.dot(a)) as f32,
             ]
         };
-        self.texinfos.add(bsp::TexInfo {
+        let info = bsp::TexInfo {
             texture_vecs: [vec(&side.u_axis), vec(&side.v_axis)],
             lightmap_vecs: [lightmap_vec(&side.u_axis), lightmap_vec(&side.v_axis)],
             flags,
             texdata: texdata as i32,
-        })
+        };
+        if info
+            .texture_vecs
+            .iter()
+            .chain(&info.lightmap_vecs)
+            .flatten()
+            .any(|value| !value.is_finite())
+        {
+            return Err(format!(
+                "side:{}: texture/lightmap projections must fit finite native floats",
+                side.id
+            ));
+        }
+        Ok(self.texinfos.add(info))
     }
 
     pub(crate) fn texture_data(&mut self, material: usize) -> usize {

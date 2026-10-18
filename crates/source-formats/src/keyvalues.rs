@@ -7,6 +7,8 @@
 
 use std::fmt;
 
+pub const MAX_NESTING: usize = 256;
+
 mod flat_blocks;
 pub use flat_blocks::{
     FlatBlock, FlatBlockLimits, parse_flat_blocks_bounded, parse_flat_blocks_controlled,
@@ -187,13 +189,13 @@ impl<'a> Lexer<'a> {
 /// Parses strictly: unclosed blocks are errors. Use for files we write back,
 /// where silently accepting a truncated file would lose data on save.
 pub fn parse(src: &str) -> Result<Vec<Node>, ParseError> {
-    parse_impl(src, false, None)
+    parse_impl(src, false, Some((MAX_NESTING, usize::MAX)))
 }
 
 /// Parses the way the engine reads game files: blocks left open at the end
 /// of the file are closed, and `/* */` comments are skipped.
 pub fn parse_lenient(src: &str) -> Result<Vec<Node>, ParseError> {
-    parse_impl(src, true, None)
+    parse_impl(src, true, Some((MAX_NESTING, usize::MAX)))
 }
 
 pub fn parse_bounded(
@@ -204,7 +206,7 @@ pub fn parse_bounded(
     if let Some(offset) = src.find('\0') {
         return Err(ParseError::at(src, offset, ParseErrorKind::NulByte));
     }
-    parse_impl(src, false, Some((max_depth, max_nodes)))
+    parse_impl(src, false, Some((max_depth.min(MAX_NESTING), max_nodes)))
 }
 
 pub fn parse_lenient_bounded(
@@ -215,7 +217,7 @@ pub fn parse_lenient_bounded(
     if let Some(offset) = src.find('\0') {
         return Err(ParseError::at(src, offset, ParseErrorKind::NulByte));
     }
-    parse_impl(src, true, Some((max_depth, max_nodes)))
+    parse_impl(src, true, Some((max_depth.min(MAX_NESTING), max_nodes)))
 }
 
 fn parse_impl(
@@ -309,26 +311,61 @@ pub struct WriteOptions {
     pub line_ending: LineEnding,
 }
 
-/// Writes nodes in Hammer's layout: tab indentation, bare block names, quoted
-/// key/value pairs. The format cannot represent a `"` inside a string, so
-/// callers must keep quotes out of keys and values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum WriteError {
+    #[error("VMF strings cannot contain literal quotes")]
+    Quote,
+    #[error("KeyValues nesting exceeds {MAX_NESTING} levels")]
+    NestingLimit,
+}
+
+pub fn validate_string(value: &str) -> Result<(), WriteError> {
+    if value.contains('"') {
+        return Err(WriteError::Quote);
+    }
+    Ok(())
+}
+
+pub fn validate_nodes(nodes: &[Node]) -> Result<(), WriteError> {
+    let mut pending = vec![(nodes.iter(), 0)];
+    while let Some((nodes, depth)) = pending.last_mut() {
+        let Some(node) = nodes.next() else {
+            pending.pop();
+            continue;
+        };
+        validate_string(&node.key)?;
+        match &node.value {
+            Value::String(value) => validate_string(value)?,
+            Value::Block(children) => {
+                let depth = *depth + 1;
+                if depth > MAX_NESTING {
+                    return Err(WriteError::NestingLimit);
+                }
+                pending.push((children.iter(), depth));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Writes known-valid nodes. Use `try_write` for fallible publication.
+/// Panics if strings contain literal quotes or nesting exceeds `MAX_NESTING`.
 pub fn write(nodes: &[Node], options: &WriteOptions) -> String {
+    try_write(nodes, options).expect("KeyValues must be representable")
+}
+
+pub fn try_write(nodes: &[Node], options: &WriteOptions) -> Result<String, WriteError> {
+    validate_nodes(nodes)?;
     let mut out = String::new();
     write_nodes(&mut out, nodes, 0, options.line_ending.as_str());
-    out
+    Ok(out)
 }
 
 fn write_nodes(out: &mut String, nodes: &[Node], depth: usize, newline: &str) {
     for node in nodes {
-        debug_assert!(
-            !node.key.contains('"'),
-            "key contains a quote: {:?}",
-            node.key
-        );
         indent(out, depth);
         match &node.value {
             Value::String(value) => {
-                debug_assert!(!value.contains('"'), "value contains a quote: {value:?}");
                 out.push('"');
                 out.push_str(&node.key);
                 out.push_str("\" \"");
@@ -337,7 +374,20 @@ fn write_nodes(out: &mut String, nodes: &[Node], depth: usize, newline: &str) {
                 out.push_str(newline);
             }
             Value::Block(children) => {
+                let quote = node.key.is_empty()
+                    || node.key.starts_with("//")
+                    || node.key.starts_with("/*")
+                    || node
+                        .key
+                        .bytes()
+                        .any(|byte| byte.is_ascii_whitespace() || matches!(byte, b'{' | b'}'));
+                if quote {
+                    out.push('"');
+                }
                 out.push_str(&node.key);
+                if quote {
+                    out.push('"');
+                }
                 out.push_str(newline);
                 indent(out, depth);
                 out.push('{');

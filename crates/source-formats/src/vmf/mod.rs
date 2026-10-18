@@ -123,6 +123,7 @@ impl Vmf {
     }
 
     pub fn from_nodes(nodes: &[Node]) -> Result<Self, Error> {
+        keyvalues::validate_nodes(nodes).map_err(|error| invalid("(root)", error.to_string()))?;
         let mut version_info = None;
         let mut visgroups = None;
         let mut visgroups_extra = Vec::new();
@@ -214,6 +215,10 @@ impl Vmf {
 
     pub fn write(&self, options: &WriteOptions) -> String {
         keyvalues::write(&self.to_nodes(), options)
+    }
+
+    pub fn try_write(&self, options: &WriteOptions) -> Result<String, keyvalues::WriteError> {
+        keyvalues::try_write(&self.to_nodes(), options)
     }
 
     /// All solids in the map: world brushes first, then brush entities.

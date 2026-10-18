@@ -1128,6 +1128,11 @@ impl Session {
         if key.trim().is_empty() {
             return Err("property name must not be empty".into());
         }
+        source_formats::keyvalues::validate_string(key).map_err(|error| error.to_string())?;
+        if let Some(value) = value {
+            source_formats::keyvalues::validate_string(value)
+                .map_err(|error| format!("{key}: {error}"))?;
+        }
         if classname.eq_ignore_ascii_case("worldspawn")
             && key.eq_ignore_ascii_case(compiler::GENERATED_DETAIL_LIGHTING_TINT_KEY)
         {
@@ -1488,7 +1493,8 @@ impl Session {
         let text = self
             .document
             .snapshot_for_save()
-            .write(&WriteOptions::default());
+            .try_write(&WriteOptions::default())
+            .map_err(|error| format!("Cannot save map: {error}"))?;
         let destination = match &self.file_claims.source {
             Some(claim) if !explicit_destination => claim.destination(),
             _ => source_formats::file_publication::BoundDestination::capture(
@@ -3267,6 +3273,56 @@ mod tests {
         .unwrap();
         session.materials = MaterialLibrary::default();
         assert!(!session.material_preview("test/broken").unwrap().missing);
+    }
+
+    #[test]
+    fn rejected_quoted_properties_and_deep_imports_preserve_the_saveable_session() {
+        for actor in [Actor::User, Actor::Agent] {
+            let directory = tempfile::tempdir().unwrap();
+            let mut session = Session::new(Err("no assets required".into()));
+            let ObjectId::Entity(id) = session
+                .create_entity(actor, "audit", Some(DVec3::ZERO), BTreeMap::new())
+                .unwrap()
+            else {
+                unreachable!()
+            };
+            let before = session.document.vmf().clone();
+            let history = session.history_snapshot();
+            let selection = session.selected_ids();
+            assert!(
+                session
+                    .set_entity_properties(
+                        actor,
+                        id,
+                        &[("message".into(), Some("hello \"world\"".into()))]
+                    )
+                    .unwrap_err()
+                    .contains("quotes")
+            );
+            let deep = directory.path().join("deep.vmf");
+            std::fs::write(
+                &deep,
+                format!(
+                    "world {{ id 1 }} {}value kept{}",
+                    "vendor { ".repeat(65_536),
+                    "} ".repeat(65_536)
+                ),
+            )
+            .unwrap();
+            assert!(
+                session
+                    .open(actor, &deep, true)
+                    .unwrap_err()
+                    .contains("nesting")
+            );
+            assert_eq!(session.document.vmf(), &before);
+            assert_eq!(session.history_snapshot(), history);
+            assert_eq!(session.selected_ids(), selection);
+            let destination = directory.path().join("valid.vmf");
+            session.save(actor, Some(&destination)).unwrap();
+            let saved = Vmf::parse(&std::fs::read_to_string(destination).unwrap()).unwrap();
+            assert_eq!(saved.entities, before.entities);
+        }
     }
 
     #[test]

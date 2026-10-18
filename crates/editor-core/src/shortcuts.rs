@@ -29,10 +29,14 @@ pub enum Command {
     SnapToGrid,
     ToolTextures,
     SelectionOutlines,
+    SelectTool,
+    MoveTool,
+    RotateTool,
+    ScaleTool,
 }
 
 impl Command {
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 19] = [
         Self::Undo,
         Self::Redo,
         Self::FrameSelection,
@@ -48,6 +52,10 @@ impl Command {
         Self::SnapToGrid,
         Self::ToolTextures,
         Self::SelectionOutlines,
+        Self::SelectTool,
+        Self::MoveTool,
+        Self::RotateTool,
+        Self::ScaleTool,
     ];
 
     pub fn label(self) -> &'static str {
@@ -67,6 +75,10 @@ impl Command {
             Self::SnapToGrid => "Snap to grid",
             Self::ToolTextures => "Tool textures",
             Self::SelectionOutlines => "Selection outlines",
+            Self::SelectTool => "Select tool",
+            Self::MoveTool => "Move handles",
+            Self::RotateTool => "Rotate handles",
+            Self::ScaleTool => "Scale handles",
         }
     }
 }
@@ -151,6 +163,14 @@ pub struct Bindings {
     pub tool_textures: Slots,
     #[serde(default)]
     pub selection_outlines: Slots,
+    #[serde(default)]
+    pub select_tool: Slots,
+    #[serde(default)]
+    pub move_tool: Slots,
+    #[serde(default)]
+    pub rotate_tool: Slots,
+    #[serde(default)]
+    pub scale_tool: Slots,
 }
 
 fn chord(key: &str, control: bool, shift: bool) -> Option<Chord> {
@@ -182,6 +202,10 @@ impl Default for Bindings {
             snap_to_grid: [None, None],
             tool_textures: [None, None],
             selection_outlines: [None, None],
+            select_tool: [None, None],
+            move_tool: [None, None],
+            rotate_tool: [None, None],
+            scale_tool: [None, None],
         }
     }
 }
@@ -204,6 +228,10 @@ impl Bindings {
             Command::SnapToGrid => &self.snap_to_grid,
             Command::ToolTextures => &self.tool_textures,
             Command::SelectionOutlines => &self.selection_outlines,
+            Command::SelectTool => &self.select_tool,
+            Command::MoveTool => &self.move_tool,
+            Command::RotateTool => &self.rotate_tool,
+            Command::ScaleTool => &self.scale_tool,
         }
     }
 
@@ -224,6 +252,10 @@ impl Bindings {
             Command::SnapToGrid => &mut self.snap_to_grid,
             Command::ToolTextures => &mut self.tool_textures,
             Command::SelectionOutlines => &mut self.selection_outlines,
+            Command::SelectTool => &mut self.select_tool,
+            Command::MoveTool => &mut self.move_tool,
+            Command::RotateTool => &mut self.rotate_tool,
+            Command::ScaleTool => &mut self.scale_tool,
         }
     }
 

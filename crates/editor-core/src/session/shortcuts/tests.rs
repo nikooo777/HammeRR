@@ -399,6 +399,85 @@ fn viewport_toggle_commands_keep_the_existing_setting_draft_cleanup() {
 }
 
 #[test]
+fn transform_tool_commands_preserve_options_and_same_tool_preview() {
+    use render::handles::Mode;
+
+    for actor in [Actor::User, Actor::Agent] {
+        let (_directory, mut session) = fixture();
+        let id = session
+            .create_block(Actor::User, DVec3::ZERO, DVec3::splat(64.0), "test", false)
+            .unwrap();
+        let settings = super::super::TransformTool {
+            local: true,
+            pivot: Some(DVec3::new(8.0, 16.0, 24.0)),
+            texture_lock: false,
+            texture_scale_lock: Some(false),
+            angle_step: 7.5,
+            ..Default::default()
+        };
+        session.set_transform_tool(actor, settings).unwrap();
+        let before = session.document().vmf().clone();
+        let history = session.history_snapshot();
+        let camera = session.camera();
+        let bindings = session.shortcut_bindings();
+        for (command, mode, name) in [
+            (Command::MoveTool, Some(Mode::Move), "move"),
+            (Command::RotateTool, Some(Mode::Rotate), "rotate"),
+            (Command::ScaleTool, Some(Mode::Scale), "scale"),
+            (Command::SelectTool, None, "select"),
+        ] {
+            let result = session
+                .execute_editor_command(actor, command, f32::NAN)
+                .unwrap();
+            assert_eq!(result["tool"], name);
+            assert_eq!(
+                session.transform_tool(),
+                super::super::TransformTool { mode, ..settings }
+            );
+            assert_eq!(session.selected_ids(), vec![id]);
+            assert!(!session.face_mode());
+            assert_eq!(session.document().vmf(), &before);
+            assert_eq!(session.history_snapshot(), history);
+            assert_eq!(session.camera(), camera);
+            assert_eq!(session.shortcut_bindings(), bindings);
+        }
+        session
+            .execute_editor_command(actor, Command::MoveTool, 1.0)
+            .unwrap();
+        session
+            .preview_transform(
+                actor,
+                &[id],
+                map_core::edit::Transform {
+                    translation: DVec3::X * 16.0,
+                    ..Default::default()
+                },
+                settings.pivot,
+            )
+            .unwrap();
+        let preview = session.render_document().vmf().clone();
+        let epoch = session.interaction_epoch();
+        session
+            .execute_editor_command(actor, Command::MoveTool, 1.0)
+            .unwrap();
+        assert_eq!(session.render_document().vmf(), &preview);
+        assert_eq!(session.interaction_epoch(), epoch);
+        session
+            .execute_editor_command(actor, Command::SelectTool, 1.0)
+            .unwrap();
+        assert!(session.transform_preview().is_none());
+        session.set_face_mode(true);
+        session
+            .execute_editor_command(actor, Command::RotateTool, 1.0)
+            .unwrap();
+        assert!(session.face_mode());
+        assert_eq!(session.document().vmf(), &before);
+        assert_eq!(session.history_snapshot(), history);
+        assert_eq!(session.camera(), camera);
+    }
+}
+
+#[test]
 fn selection_mode_commands_keep_same_mode_drafts_and_retire_changed_mode_gestures() {
     let (_directory, mut session) = fixture();
     let ObjectId::Solid(solid) = session

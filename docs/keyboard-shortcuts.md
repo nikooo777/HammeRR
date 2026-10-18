@@ -2,18 +2,22 @@
 
 # Keyboard shortcuts
 
-Choose two bindings each for Undo, Redo, Frame selection, Delete selection and
-Duplicate selection, Perspective, Top, Front and Side projection commands, and
-Objects and Faces selection modes, and Show grid, Snap to grid, Tool textures
-and Selection outlines toggles. Projection, selection-mode and toggle commands
-start **Unbound**, including when an older saved shortcuts file loads.
-Bindings work while the viewport has keyboard focus; text fields
-keep their normal editing keys.
+Choose up to two bindings for each viewport command. Text fields keep their
+normal editing keys.
+
+| Area | Commands |
+| --- | --- |
+| Editing | Undo, Redo, Frame selection, Delete selection, Duplicate selection |
+| Projection | Perspective, Top, Front, Side |
+| Selection | Objects, Faces |
+| Visibility and grid | Show grid, Snap to grid, Tool textures, Selection outlines |
+| Transform tools | Select tool, Move handles, Rotate handles, Scale handles |
+
+Projection, selection-mode, toggle and transform-tool commands start **Unbound**,
+including when an older saved shortcuts file loads.
 
 1. In **Viewport**, click **Keyboard shortcuts…**.
-2. Choose a command, including **Perspective**, **Top**, **Front**, **Side**,
-   **Objects**, **Faces**, **Show grid**, **Snap to grid**, **Tool textures** or
-   **Selection outlines**. Scroll the command list to reach later rows.
+2. Choose a command in the list. Scroll to reach later rows.
    Compare **Current form** with **Factory bindings**.
 3. Set **Primary** and **Alternate** using the key dropdowns and **Ctrl** and
    **Shift** switches. Choose **Unbound** to remove a slot.
@@ -31,6 +35,11 @@ keep their normal editing keys.
    Toggle bindings invert the corresponding setting in the receiving viewport.
    **Snap to grid** matches the **Snap** checkbox; toggling a live setting does
    not save grid or preview defaults.
+   **Select tool**, **Move handles**, **Rotate handles** and **Scale handles**
+   match the viewport tool dropdown. They preserve your axes, pivot, texture
+   settings, angle snap and Objects/Faces mode. Changing tools cancels
+   pending transforms and held paint strokes; releasing the old gesture cannot apply it. Repeating
+   the active tool keeps its current transform preview.
 6. **Reload saved** loads and activates the saved file. **Reset saved shortcuts**
    explicitly writes and activates factory values. **Cancel**, Escape or closing
    the window discards unsaved form changes; it does not undo a saved change.
@@ -42,9 +51,10 @@ Limits:
 - Keys are logical A–Z, F1–F12, Delete and Backspace, with exact Ctrl/Shift
   modifiers. Alt/Meta bindings, physical scan codes and key sequences are absent.
 - Escape, arrows, PageUp/PageDown, camera W/A/S/D/Q/E with or without Shift, and
-  Ctrl+N/O/S/C/X/V remain reserved. File, clipboard, camera movement and tool
-  bindings cannot be changed here. Command availability still follows editing
-  context.
+  Ctrl+N/O/S/C/X/V remain reserved. File, clipboard, camera movement, brush
+  drawing and clipping bindings cannot be changed here. Command availability
+  still follows editing context; transform handles require eligible object
+  selection and the existing tool context.
 - An unavailable saved file shows an error and preserves active bindings.
   Save remains disabled until Reload succeeds or you explicitly Reset.
   Outside changes require another inspection. Symlinked/nonregular targets and

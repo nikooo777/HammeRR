@@ -30,10 +30,11 @@ def validate(binary, output):
         unbound_commands = {
             "perspective", "top", "front", "side", "objects", "faces",
             "show_grid", "snap_to_grid", "tool_textures", "selection_outlines",
+            "select_tool", "move_tool", "rotate_tool", "scale_tool",
         }
         expected_commands = original_commands | unbound_commands
         check(initial["ready"] and not initial["stored"] and {row["command"] for row in initial["commands"]} == expected_commands and set(factory) == expected_commands, "shared command identifiers and factory aliases are discoverable without creating storage")
-        check(all(factory[command] == [None, None] for command in unbound_commands), "projection, selection-mode and viewport-toggle factory bindings start unbound")
+        check(len(expected_commands) == 19 and all(factory[command] == [None, None] for command in unbound_commands), "all 19 commands are discoverable and extension factory bindings start unbound")
         check(path == output / "recovery/shortcuts.json" and not path.exists(), "shortcut storage stays in the private recovery directory")
         block = client.call("create_block", {"mins": [0, 0, 0], "maxs": [64, 64, 64]})["id"]
         before = client.call("get_objects", {"ids": [block]})
@@ -56,6 +57,12 @@ def validate(binary, output):
             for enabled in [False, True]:
                 toggled = client.call("execute_editor_command", {"command": command})
                 check(toggled["command"] == command and toggled[field] is enabled, f"typed {command} toggles the actual {field} boolean to {enabled}")
+        tool_settings = client.call("get_transform_handles")["state"]["settings"]
+        for mode in ["move", "rotate", "scale", "select"]:
+            command = f"{mode}_tool"
+            changed = client.call("execute_editor_command", {"command": command})
+            expected_tool = {**tool_settings, "mode": mode}
+            check(changed["tool"] == mode and client.call("get_transform_handles")["state"]["settings"] == expected_tool, f"typed {command} selects the shared tool while preserving its other options")
         check(path.read_bytes() == saved_bytes and state(client)["current"] == custom, "viewport commands do not rewrite or rebind saved shortcuts")
         check(client.call("get_objects", {"ids": [block]}) == before and client.call("get_history")["undo_count"] == history and client.call("get_camera") == camera and client.call("get_selection") == selection, "viewport toggles preserve authored state, history, camera and selection")
         stale = initial["snapshot"]

@@ -836,6 +836,126 @@ mod tests {
     }
 
     #[test]
+    fn tool_commands_retire_held_paint_and_invalid_settings_preserve_it() {
+        use crate::session::paint::Operation;
+        use crate::shortcuts::Command;
+
+        for operation in [Operation::Selection, Operation::Material] {
+            for command in [
+                Command::SelectTool,
+                Command::MoveTool,
+                Command::RotateTool,
+                Command::ScaleTool,
+            ] {
+                let mut session = fixture(Projection::Top, None);
+                let map_core::ObjectId::Solid(source) = session
+                    .create_block(
+                        Actor::User,
+                        DVec3::new(256.0, -16.0, 0.0),
+                        DVec3::new(288.0, 16.0, 32.0),
+                        "metal/sample",
+                        false,
+                    )
+                    .unwrap()
+                else {
+                    panic!()
+                };
+                session
+                    .sample_face_texture(map_core::surface::FaceId {
+                        solid: source,
+                        side: session.document().solid(source).unwrap().sides[0].id,
+                    })
+                    .unwrap();
+                session.select(&[], SelectMode::Replace).unwrap();
+                session
+                    .set_paint_operation(Actor::User, true, 6.0, operation)
+                    .unwrap();
+                let before = session.document().vmf().clone();
+                let history = session.history_snapshot();
+                let pointer = Pointer {
+                    position: DVec2::new(400.0, 300.0),
+                    size: (800, 600),
+                };
+                let mut interaction = Interaction::default();
+                assert!(interaction.down(&mut session, pointer, false).unwrap());
+                assert!(interaction.moved(&mut session, pointer).unwrap());
+                let stroke = session.paint_stroke().unwrap();
+                let token = stroke.token;
+                if operation == Operation::Selection {
+                    assert!(!stroke.objects.is_empty());
+                } else {
+                    assert!(stroke.texture.as_ref().unwrap().changed > 0);
+                    assert_ne!(session.render_document().vmf(), &before);
+                }
+                let preview = session.render_document().vmf().clone();
+                let serials = (session.scene_serial(), session.view_serial());
+                assert!(
+                    session
+                        .set_transform_tool(
+                            Actor::Agent,
+                            TransformTool {
+                                angle_step: f64::NAN,
+                                ..session.transform_tool()
+                            },
+                        )
+                        .is_err()
+                );
+                assert!(
+                    session
+                        .set_paint_operation(Actor::Agent, false, f64::NAN, operation)
+                        .is_err()
+                );
+                session
+                    .set_paint_operation(Actor::Agent, true, 6.0, operation)
+                    .unwrap();
+                assert_eq!(session.paint_stroke().unwrap().token, token);
+                assert_eq!(session.render_document().vmf(), &preview);
+                assert_eq!((session.scene_serial(), session.view_serial()), serials);
+                session
+                    .execute_editor_command(Actor::Agent, command, f32::NAN)
+                    .unwrap();
+                assert!(!session.paint_enabled());
+                assert!(session.paint_stroke().is_none());
+                assert!(interaction.moved(&mut session, pointer).unwrap());
+                assert!(interaction.up(&mut session, pointer).unwrap());
+                assert_eq!(session.document().vmf(), &before);
+                assert_eq!(session.render_document().vmf(), &before);
+                assert_eq!(session.history_snapshot(), history);
+                assert!(session.selected_ids().is_empty());
+                assert!(session.selected_faces().is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn tool_commands_retire_held_handles_before_late_release() {
+        let mut session = fixture(Projection::Top, Some(Mode::Move));
+        let before = session.document().vmf().clone();
+        let history = session.history_snapshot();
+        let pointer = Pointer {
+            position: DVec2::new(660.0, 400.0),
+            size: (1200, 800),
+        };
+        let end = Pointer {
+            position: pointer.position + DVec2::X * 50.0,
+            ..pointer
+        };
+        let mut interaction = Interaction::default();
+        assert!(interaction.down(&mut session, pointer, false).unwrap());
+        interaction.moved(&mut session, end).unwrap();
+        assert!(session.transform_preview().is_some());
+        session
+            .execute_editor_command(Actor::Agent, crate::shortcuts::Command::ScaleTool, 1.0)
+            .unwrap();
+        assert_eq!(session.transform_tool().mode, Some(Mode::Scale));
+        assert!(session.transform_drag().is_none());
+        assert!(session.transform_preview().is_none());
+        assert!(interaction.up(&mut session, end).unwrap());
+        assert_eq!(session.document().vmf(), &before);
+        assert_eq!(session.history_snapshot(), history);
+    }
+
+    #[test]
     fn texture_gestures_commit_the_shared_preview_in_every_projection() {
         for projection in [
             Projection::Top,

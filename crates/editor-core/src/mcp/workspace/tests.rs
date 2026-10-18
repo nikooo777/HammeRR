@@ -123,6 +123,62 @@ async fn production_stdio_pins_two_documents_and_only_last_close_stops_open_inpu
         128.0
     );
     let before = lock(peer.session()).document().vmf().clone();
+    lock(peer.session())
+        .preview_block(glam::DVec3::splat(512.0), glam::DVec3::splat(576.0))
+        .unwrap();
+    let peer_tool = lock(peer.session()).transform_tool();
+    let peer_preview = lock(peer.session()).block_preview();
+    let peer_selection = lock(peer.session()).selected_ids();
+    let peer_history = lock(peer.session()).history_snapshot();
+    let bindings = rpc(
+        &mut client_write,
+        &mut lines,
+        100,
+        "get_keyboard_shortcuts",
+        json!({"document_id":first.selector()}),
+    )
+    .await;
+    let bindings = value(&bindings["result"]);
+    let mut configured = crate::shortcuts::Bindings::default();
+    configured.move_tool[0] = Some(crate::shortcuts::Chord {
+        key: "F8".into(),
+        control: false,
+        shift: false,
+    });
+    let saved = rpc(
+        &mut client_write,
+        &mut lines,
+        101,
+        "set_keyboard_shortcuts",
+        json!({"document_id":first.selector(),"action":"save","snapshot":bindings["snapshot"],"bindings":configured}),
+    )
+    .await;
+    assert_eq!(value(&saved["result"])["ready"], true);
+    assert_eq!(lock(peer.session()).shortcut_bindings(), configured);
+    for (index, (command, tool)) in [
+        ("move_tool", "move"),
+        ("rotate_tool", "rotate"),
+        ("scale_tool", "scale"),
+        ("select_tool", "select"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let result = rpc(
+            &mut client_write,
+            &mut lines,
+            102 + index as u64,
+            "execute_editor_command",
+            json!({"document_id":first.selector(),"command":command}),
+        )
+        .await;
+        assert_eq!(value(&result["result"])["tool"], tool);
+        assert_eq!(lock(peer.session()).transform_tool(), peer_tool);
+        assert_eq!(lock(peer.session()).block_preview(), peer_preview);
+        assert_eq!(lock(peer.session()).selected_ids(), peer_selection);
+        assert_eq!(lock(peer.session()).history_snapshot(), peer_history);
+        assert_eq!(lock(peer.session()).document().vmf(), &before);
+    }
     let token = original.document_close_review().unwrap().token();
     let strict = rpc(&mut client_write, &mut lines, 7, "close_document", json!({"document_id":first.selector(),"review_token":token,"discard_changes":true,"unexpected":1})).await;
     assert_eq!(strict["error"]["code"], -32602);

@@ -165,6 +165,28 @@ impl Session {
                 self.set_face_mode(enabled);
                 result["mode"] = json!(if self.face_mode() { "faces" } else { "objects" });
             }
+            Command::SelectTool | Command::MoveTool | Command::RotateTool | Command::ScaleTool => {
+                let (mode, name) = match command {
+                    Command::MoveTool => (Some(render::handles::Mode::Move), "move"),
+                    Command::RotateTool => (Some(render::handles::Mode::Rotate), "rotate"),
+                    Command::ScaleTool => (Some(render::handles::Mode::Scale), "scale"),
+                    _ => (None, "select"),
+                };
+                self.set_transform_tool(
+                    actor,
+                    super::TransformTool {
+                        mode,
+                        ..self.transform_tool()
+                    },
+                )?;
+                self.set_paint_operation(
+                    actor,
+                    false,
+                    self.paint_radius(),
+                    super::paint::Operation::Selection,
+                )?;
+                result["tool"] = json!(name);
+            }
             Command::ShowGrid => {
                 self.set_spatial(
                     actor,

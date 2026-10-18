@@ -128,6 +128,10 @@ fn configured_view_keys_use_the_originating_admitted_callback_and_remember_camer
         ("snap_to_grid", "F5"),
         ("tool_textures", "F6"),
         ("selection_outlines", "F7"),
+        ("select_tool", "F1"),
+        ("move_tool", "F2"),
+        ("rotate_tool", "F3"),
+        ("scale_tool", "F12"),
     ] {
         controller.window.invoke_choose(command.into());
         assert_eq!(controller.window.get_selected(), command);
@@ -252,6 +256,59 @@ fn configured_view_keys_use_the_originating_admitted_callback_and_remember_camer
     assert_eq!(lock(&shared).document().vmf(), &before);
     assert_eq!(lock(&shared).history_snapshot(), history);
     assert_eq!(peer.camera(), peer_camera);
+    let peer_tool = peer.transform_tool();
+    for (key, mode) in [
+        (slint::platform::Key::F2, Some(render::handles::Mode::Move)),
+        (
+            slint::platform::Key::F3,
+            Some(render::handles::Mode::Rotate),
+        ),
+        (
+            slint::platform::Key::F12,
+            Some(render::handles::Mode::Scale),
+        ),
+        (slint::platform::Key::F1, None),
+    ] {
+        assert!(app.invoke_key(
+            crate::viewport::key_text(key).into(),
+            true,
+            false,
+            false,
+            false,
+            false,
+        ));
+        assert_eq!(lock(&shared).transform_tool().mode, mode);
+        assert_eq!(peer.transform_tool(), peer_tool);
+    }
+    assert_eq!(lock(&shared).document().vmf(), &before);
+    assert_eq!(lock(&shared).history_snapshot(), history);
+    assert!(app.invoke_key(
+        crate::viewport::key_text(slint::platform::Key::F2).into(),
+        true,
+        false,
+        false,
+        false,
+        false,
+    ));
+    {
+        let mut session = lock(&shared);
+        session
+            .select(
+                &[map_core::ObjectId::Solid(before.world.solids[0].id)],
+                crate::session::SelectMode::Replace,
+            )
+            .unwrap();
+        session
+            .begin_transform_drag(render::handles::Handle::X, None)
+            .unwrap();
+        session
+            .update_transform_drag(None, Some(glam::DVec2::new(32.0, 0.0)))
+            .unwrap();
+        session.commit_transform_preview(Actor::User).unwrap();
+        assert_ne!(session.document().vmf(), &before);
+        session.undo(Actor::User).unwrap();
+        assert_eq!(session.document().vmf(), &before);
+    }
     document.shutdown().unwrap();
     let bytes = std::fs::read(
         directory
@@ -268,6 +325,10 @@ fn configured_view_keys_use_the_originating_admitted_callback_and_remember_camer
         slint::platform::Key::F5,
         slint::platform::Key::F6,
         slint::platform::Key::F7,
+        slint::platform::Key::F1,
+        slint::platform::Key::F2,
+        slint::platform::Key::F3,
+        slint::platform::Key::F12,
     ] {
         assert!(app.invoke_key(
             crate::viewport::key_text(key).into(),
@@ -285,6 +346,11 @@ fn configured_view_keys_use_the_originating_admitted_callback_and_remember_camer
     assert_eq!(toggles(&lock(&shared)), closed_toggles);
     assert_eq!(toggles(&peer), peer_toggles);
     assert_eq!(peer.camera(), peer_camera);
+    assert_eq!(peer.transform_tool(), peer_tool);
+    assert_eq!(
+        lock(&shared).transform_tool().mode,
+        Some(render::handles::Mode::Move)
+    );
     assert_eq!(
         std::fs::read(
             directory

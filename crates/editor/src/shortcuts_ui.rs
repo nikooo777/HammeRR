@@ -1,7 +1,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use editor_core::shortcuts::{Bindings, Chord, Command, Snapshot};
-use slint::{ComponentHandle, VecModel, platform::Key};
+use slint::{ComponentHandle, Model, VecModel, platform::Key};
 
 use crate::{
     AppWindow, ShortcutRow, ShortcutsWindow,
@@ -12,6 +12,7 @@ use crate::{
 
 struct Form {
     bindings: Bindings,
+    rows: Rc<VecModel<ShortcutRow>>,
     selected: Command,
     snapshot: String,
     dirty: bool,
@@ -65,20 +66,30 @@ fn refresh(window: &ShortcutsWindow, session: &Session, form: &RefCell<Form>) {
     refresh_with_snapshot(window, &session.keyboard_shortcuts_snapshot(), form);
 }
 
+fn command_rows(bindings: &Bindings) -> Vec<ShortcutRow> {
+    let factory = Bindings::default();
+    Command::ALL
+        .into_iter()
+        .map(|command| ShortcutRow {
+            command: serde_json::to_value(command)
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .into(),
+            label: command.label().into(),
+            current: bindings.label(command).into(),
+            factory: factory.label(command).into(),
+        })
+        .collect()
+}
+
 fn refresh_with_snapshot(window: &ShortcutsWindow, snapshot: &Snapshot, form: &RefCell<Form>) {
     let current = form.borrow();
-    let factory = Bindings::default();
-    let rows = Command::ALL.map(|command| ShortcutRow {
-        command: serde_json::to_value(command)
-            .unwrap()
-            .as_str()
-            .unwrap()
-            .into(),
-        label: command.label().into(),
-        current: current.bindings.label(command).into(),
-        factory: factory.label(command).into(),
-    });
-    window.set_commands(Rc::new(VecModel::from(rows.to_vec())).into());
+    for (index, row) in command_rows(&current.bindings).into_iter().enumerate() {
+        if current.rows.row_data(index).as_ref() != Some(&row) {
+            current.rows.set_row_data(index, row);
+        }
+    }
     let state = snapshot.report();
     let stale = current.snapshot != snapshot.stamp();
     let validation = current.bindings.clone().validated();
@@ -143,8 +154,12 @@ impl Controller {
 
     pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let window = ShortcutsWindow::new()?;
+        let bindings = Bindings::default();
+        let rows = Rc::new(VecModel::from(command_rows(&bindings)));
+        window.set_commands(rows.clone().into());
         let form = Rc::new(RefCell::new(Form {
-            bindings: Bindings::default(),
+            bindings,
+            rows,
             selected: Command::Undo,
             snapshot: String::new(),
             dirty: false,

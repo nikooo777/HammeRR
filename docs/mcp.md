@@ -876,8 +876,9 @@ only with viewport focus; text fields retain native text editing.
 
 `bindings` must contain `undo`, `redo`, `frame_selection`, `delete_selection`
 and `duplicate_selection`. Optional `perspective`, `top`, `front`, `side`,
-`objects`, `faces`, `show_grid`, `snap_to_grid`, `tool_textures` and
-`selection_outlines` slots default to unbound when omitted, including existing
+`objects`, `faces`, `show_grid`, `snap_to_grid`, `tool_textures`,
+`selection_outlines`, `select_tool`, `move_tool`, `rotate_tool` and `scale_tool`
+slots default to unbound when omitted, including existing
 version-1 files. Loading preserves the existing file bytes until an explicit Save.
 Each value is exactly two nullable slots; each
 nonnull chord is `{"key":"F","control":false,"shift":false}`. Keys are
@@ -913,6 +914,17 @@ ordinary selections and drafts. Object-type filters remain configured across
 mode changes. Camera, source and Undo remain unchanged. Existing
 explicit-ID/offset object tools remain
 available. See [Keyboard shortcuts](keyboard-shortcuts.md).
+
+`select_tool`, `move_tool`, `rotate_tool` and `scale_tool` match **Select tool**,
+**Move handles**, **Rotate handles** and **Scale handles** in the shortcut form.
+They use the viewport tool dropdown's shared transform/paint operations and
+return `tool: "select"`, `"move"`, `"rotate"` or `"scale"`. Axes, pivot, texture
+policies, angle snap, camera and Objects/Faces mode stay configured. Actual tool
+changes reuse the existing cancellation of pending transform/area/component
+work and held paint strokes, so an old pointer release cannot commit them.
+Unchanged settings preserve pending transform work. Transform handles
+still require eligible object selection and the ordinary tool context. Commands
+affect only the routed document and do not write map/history or saved defaults.
 
 `show_grid`, `snap_to_grid`, `tool_textures` and `selection_outlines` invert the
 originating Session's live setting and return its actual `grid_visible`, `snap`,

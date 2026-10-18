@@ -256,35 +256,18 @@ fn shortcut_controls_save_atomically_report_conflicts_and_preserve_text_field_ed
         "Snap to grid",
         "Tool textures",
         "Selection outlines",
+        "Select tool",
+        "Move handles",
+        "Rotate handles",
+        "Scale handles",
     ];
-    let scroll_to_commands = || {
-        let list = i_slint_backend_testing::ElementHandle::find_by_element_id(
-            &controller.window,
-            "ShortcutsWindow::commands-list",
-        )
-        .next()
-        .unwrap();
-        controller.window.window().take_snapshot().unwrap();
-        for _ in 0..Command::ALL.len() {
-            list.scroll(0.0, -10_000.0);
-            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(250));
-            controller.window.window().take_snapshot().unwrap();
-            let top = list.absolute_position().y;
-            let bottom = top + list.size().height;
-            if visible_commands.iter().all(|label| {
-                i_slint_backend_testing::ElementHandle::find_by_accessible_label(
-                    &controller.window,
-                    label,
-                )
-                .next()
-                .is_some_and(|row| {
-                    let y = row.absolute_position().y;
-                    y >= top - 1.0 && y + row.size().height <= bottom + 1.0
-                })
-            }) {
-                break;
-            }
-        }
+    let list = i_slint_backend_testing::ElementHandle::find_by_element_id(
+        &controller.window,
+        "ShortcutsWindow::commands-list",
+    )
+    .next()
+    .unwrap();
+    let assert_commands_visible = || {
         let top = list.absolute_position().y;
         let bottom = top + list.size().height;
         for label in visible_commands {
@@ -307,16 +290,42 @@ fn shortcut_controls_save_atomically_report_conflicts_and_preserve_text_field_ed
             crate::ui::tests::assert_dialog_button_visible(&controller.window, label);
         }
     };
+    let scroll_to_commands = || {
+        controller.window.window().take_snapshot().unwrap();
+        for _ in 0..Command::ALL.len() {
+            list.scroll(0.0, -10_000.0);
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(250));
+            controller.window.window().take_snapshot().unwrap();
+            let top = list.absolute_position().y;
+            let bottom = top + list.size().height;
+            if visible_commands.iter().all(|label| {
+                i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+                    &controller.window,
+                    label,
+                )
+                .next()
+                .is_some_and(|row| {
+                    let y = row.absolute_position().y;
+                    y >= top - 1.0 && y + row.size().height <= bottom + 1.0
+                })
+            }) {
+                break;
+            }
+        }
+        assert_commands_visible();
+    };
     scroll_to_commands();
     i_slint_backend_testing::ElementHandle::find_by_accessible_label(
         &controller.window,
-        "Tool textures",
+        "Move handles",
     )
     .next()
     .unwrap()
     .invoke_accessible_default_action();
-    scroll_to_commands();
-    assert_eq!(controller.window.get_selected_label(), "Tool textures");
+    i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(250));
+    controller.window.window().take_snapshot().unwrap();
+    assert_commands_visible();
+    assert_eq!(controller.window.get_selected_label(), "Move handles");
     assert_eq!(controller.window.get_primary_key(), 0);
     crate::ui::tests::save_ui_snapshot(controller.window.window(), "keyboard-shortcuts");
     controller.window.invoke_choose("undo".into());

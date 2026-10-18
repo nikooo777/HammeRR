@@ -21,6 +21,8 @@ use rmcp::ServiceExt;
 mod routing;
 pub use routing::WorkspaceServer;
 #[cfg(test)]
+mod save_all_tests;
+#[cfg(test)]
 mod tests;
 
 const COMMAND_LIMIT: usize = 4;
@@ -90,6 +92,7 @@ enum Command {
     New(Actor, bool, CommandReply),
     Open(Actor, PathBuf, bool, CommandReply),
     Show(String, CommandReply),
+    SaveAll(startup::SaveAllRequest, CommandReply),
 }
 
 struct CompletedClose {
@@ -339,6 +342,29 @@ impl Workspace {
         receive
             .await
             .map_err(|_| "The workspace command owner stopped".to_owned())?
+    }
+
+    pub async fn save_all_named_maps(&self, actor: Actor) -> Result<Value, String> {
+        let (send, receive) = oneshot::channel();
+        {
+            let mut queue = self.0.queue.lock().unwrap_or_else(PoisonError::into_inner);
+            if queue.stopping {
+                return Err("The workspace is closing".into());
+            }
+            if !queue.commands.is_empty() {
+                return Err(
+                    "The workspace command queue is busy; wait and retry Save all named maps"
+                        .into(),
+                );
+            }
+            let request = self.0.factory.prepare_save_all_named(actor)?;
+            queue.commands.push_back(Command::SaveAll(request, send));
+        }
+        self.0.changed.notify_one();
+        receive.await.map_err(|_| {
+            "The Save all named maps owner stopped; inspect each document before retrying"
+                .to_owned()
+        })?
     }
 
     fn enqueue(&self, command: Command) -> Result<(), String> {
@@ -777,6 +803,9 @@ fn run_commands(workspace: &Workspace, runtime: &tokio::runtime::Runtime) {
                 if !response.is_closed() {
                     let _ = response.send(create(workspace, runtime, actor, Some(&path), present));
                 }
+            }
+            Command::SaveAll(request, response) => {
+                let _ = response.send(Ok(request.run()));
             }
             Command::Show(selector, response) => {
                 if !response.is_closed() {

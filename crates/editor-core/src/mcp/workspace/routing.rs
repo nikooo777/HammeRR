@@ -63,6 +63,7 @@ pub(super) fn tools() -> Result<Vec<Tool>, String> {
     }
     tools.extend([
         command::<EmptyArgs>("list_documents", "List up to two fixed documents, opaque routing selectors, cached map/work state, visibility and capacity. Read-only; does not poll game or UI state."),
+        command::<EmptyArgs>("save_all_named_maps", "Save all named maps through the same Open documents… action. Takes no arguments or document selector. Freezes up to two admitted document identities before scheduling, then attempts each once using its own Session.save and original source claim. Clean named maps verify their original source identity without writing. Unnamed dirty maps require Save as, pending reviews are preserved and block saving, and stale/busy/closing/source/write errors remain per-document results. Partial results return isError with complete:false/status:not_complete. No path invention, file chooser, focus, window show, rollback across documents or automatic retry."),
         command::<EmptyArgs>("new_document", "Create a second independent untitled document without replacing an existing buffer. Desktop creation is hidden until show_document; headless creation stays headless. Rejects full or busy workspace."),
         command::<OpenArgs>("open_document", "Open an absolute VMF path in a new independent document, without replacing existing buffers. Requires a free workspace slot and path claims. Desktop creation is hidden until show_document."),
         command::<ShowArgs>("show_document", "Show and focus the exact desktop document identified by its opaque document_id from list_documents. Headless workspaces reject; unknown or closing selectors never fall back."),
@@ -184,7 +185,7 @@ impl ServerHandler for WorkspaceServer {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(rmcp::model::ServerCapabilities::builder().enable_tools().build())
             .with_server_info(rmcp::model::Implementation::new("hammerr", env!("CARGO_PKG_VERSION")))
-            .with_instructions(format!("{}\nWorkspace: use list_documents to obtain opaque document_id selectors. Every document tool accepts this optional top-level string. Omission is allowed only with exactly one live document. Each call stays pinned to that document; focus never changes routing. new_document/open_document add a second independent buffer; show_document explicitly presents it. Existing new_map/open_map still replace their pinned buffer. Results carry io.hammerr/document metadata without changing content payloads.", crate::mcp::INSTRUCTIONS))
+            .with_instructions(format!("{}\nWorkspace: use list_documents to obtain opaque document_id selectors. Every document tool accepts this optional top-level string. Omission is allowed only with exactly one live document. Each call stays pinned to that document; focus never changes routing. new_document/open_document add a second independent buffer; show_document explicitly presents it. save_all_named_maps takes no selector and saves the fixed admitted named-map set with explicit per-document failures; unnamed dirty maps require Save as and pending reviews remain unchanged. Existing new_map/open_map still replace their pinned buffer. Results carry io.hammerr/document metadata without changing content payloads.", crate::mcp::INSTRUCTIONS))
     }
 
     async fn call_tool(
@@ -194,7 +195,11 @@ impl ServerHandler for WorkspaceServer {
     ) -> Result<CallToolResponse, ErrorData> {
         if matches!(
             request.name.as_ref(),
-            "list_documents" | "new_document" | "open_document" | "show_document"
+            "list_documents"
+                | "save_all_named_maps"
+                | "new_document"
+                | "open_document"
+                | "show_document"
         ) {
             let pinned = if request.name == "show_document" {
                 request
@@ -220,6 +225,10 @@ impl ServerHandler for WorkspaceServer {
                     let _: EmptyArgs = parse(request.arguments)?;
                     self.0.list_documents()
                 }
+                "save_all_named_maps" => {
+                    let _: EmptyArgs = parse(request.arguments)?;
+                    self.0.save_all_named_maps(Actor::Agent).await
+                }
                 "new_document" => {
                     let _: EmptyArgs = parse(request.arguments)?;
                     self.0.new_document(Actor::Agent, false).await
@@ -243,7 +252,12 @@ impl ServerHandler for WorkspaceServer {
             return match value {
                 Ok(value) => {
                     let target = value.get("document_id").zip(value.get("runtime_document_id")).map(|(selector, id)| json!({"document_id":selector,"runtime_document_id":id}));
+                    let incomplete =
+                        request.name == "save_all_named_maps" && value["complete"] != true;
                     let mut result = crate::mcp::ok(value)?;
+                    if incomplete {
+                        result.is_error = Some(true);
+                    }
                     if let Some(target) = target {
                         stamp_result(&mut result, &target);
                     }

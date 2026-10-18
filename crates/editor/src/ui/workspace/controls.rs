@@ -5,12 +5,14 @@ use serde_json::Value;
 pub(super) struct Controller {
     pub(super) window: OpenDocumentsWindow,
     pub(super) origin: runtime::DocumentId,
+    save_results: RefCell<Option<Value>>,
 }
 
 pub(super) enum Operation {
     New,
     Open(std::path::PathBuf),
     Show(String),
+    SaveAll,
 }
 
 fn current(owner: &SharedOwner, controller: &Rc<Controller>) -> bool {
@@ -50,15 +52,53 @@ pub(super) fn refresh(owner: &SharedOwner) {
             controller
                 .window
                 .set_can_create(report["can_create"] == true);
+            controller
+                .window
+                .set_can_save_all(report["busy"] != true && !documents.is_empty());
+            let results = controller.save_results.borrow();
             controller.window.set_rows(ModelRc::new(VecModel::from(
-                documents.iter().map(row).collect::<Vec<_>>(),
+                documents
+                    .iter()
+                    .map(|value| row(value, results.as_ref()))
+                    .collect::<Vec<_>>(),
             )));
         }
         Err(error) => controller.window.set_message(error.into()),
     }
 }
 
-fn row(value: &Value) -> OpenDocumentRow {
+fn save_status(status: &str) -> &str {
+    match status {
+        "saved" => "Saved",
+        "unchanged" => "Unchanged; no file written",
+        "unnamed_clean" => "Unnamed; no committed changes",
+        "needs_save_as" => "Needs Save as…",
+        "pending_review" => "Pending review",
+        "stale" => "Map changed; retry",
+        "busy" => "Busy; retry",
+        "closing" => "Closing",
+        "failed" => "Unavailable",
+        "error" => "Save failed",
+        _ => "Not saved",
+    }
+}
+
+fn row(value: &Value, results: Option<&Value>) -> OpenDocumentRow {
+    let save = results
+        .and_then(|results| results["documents"].as_array())
+        .and_then(|documents| {
+            documents
+                .iter()
+                .find(|document| document["document_id"] == value["document_id"])
+        })
+        .map(|document| {
+            format!(
+                "\nLast Save all result: {} · {}",
+                save_status(document["status"].as_str().unwrap_or("not_saved")),
+                document["message"].as_str().unwrap_or("Not saved")
+            )
+        })
+        .unwrap_or_default();
     let title = value["title"].as_str().unwrap_or("Untitled map");
     let dirty = value["unsaved_changes"] == true;
     let error = value["error"]
@@ -69,7 +109,7 @@ fn row(value: &Value) -> OpenDocumentRow {
         selector: value["document_id"].as_str().unwrap().into(),
         title: format!("{title}{}", if dirty { " · Unsaved changes" } else { "" }).into(),
         detail: format!(
-            "{}\nDocument {} · {} · {} · {}{error}",
+            "{}\nDocument {} · {} · {} · {}{error}{save}",
             value["path"].as_str().unwrap_or("Not saved"),
             value["runtime_document_id"],
             value["lifecycle"].as_str().unwrap_or("unknown"),
@@ -104,6 +144,7 @@ pub(super) fn submit(
             Operation::New => workspace.new_document(Actor::User, true).await,
             Operation::Open(path) => workspace.open_document(Actor::User, &path, true).await,
             Operation::Show(selector) => workspace.show_document(&selector).await,
+            Operation::SaveAll => workspace.save_all_named_maps(Actor::User).await,
         };
         let (Some(owner), Some(controller)) = (owner.upgrade(), controller.upgrade()) else {
             return;
@@ -112,6 +153,11 @@ pub(super) fn submit(
             return;
         }
         controller.window.set_busy(false);
+        if let Ok(value) = &result
+            && value.get("complete").is_some()
+        {
+            *controller.save_results.borrow_mut() = Some(value.clone());
+        }
         controller.window.set_message(match result {
             Ok(value) => value["message"]
                 .as_str()
@@ -132,9 +178,17 @@ pub(super) fn open(owner: &SharedOwner, origin: runtime::DocumentId) {
             return;
         }
     };
-    let controller = Rc::new(Controller { window, origin });
+    let controller = Rc::new(Controller {
+        window,
+        origin,
+        save_results: RefCell::new(None),
+    });
     let weak = Rc::downgrade(&controller);
     let target = Rc::downgrade(owner);
+    controller.window.on_save_all_named_maps({
+        let (owner, controller) = (target.clone(), weak.clone());
+        move || submit(&owner, &controller, Operation::SaveAll)
+    });
     controller.window.on_new_document({
         let (owner, controller) = (target.clone(), weak.clone());
         move || submit(&owner, &controller, Operation::New)

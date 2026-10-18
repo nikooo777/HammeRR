@@ -9,7 +9,7 @@ mod workspace;
 use workspace::Services;
 pub use workspace::{
     CloseDisposition, CloseReservation, DOCUMENT_LIMIT, DocumentVisibility, PreparedDocument,
-    Workspace, WorkspaceDocument, WorkspaceDocumentState,
+    SaveAllRequest, Workspace, WorkspaceDocument, WorkspaceDocumentState,
 };
 
 const USAGE: &str = "\

@@ -489,3 +489,147 @@ fn actual_failed_retirement_remains_visible_and_final_peer_close_reports_the_err
     assert!(workspace_error.contains("injected hide failure"));
     assert!(application_error.contains("injected hide failure"));
 }
+
+#[test]
+#[ignore = "requires a GPU adapter and the software Slint event loop"]
+fn actual_save_all_button_reports_unnamed_peer_then_saves_two_named_maps_without_showing_it() {
+    software(true);
+    let (directory, game) = crate::test_assets::game();
+    let application = crate::test_assets::application(Ok(game), directory.path().join("recovery"));
+    let factory = application.workspace();
+    let a = application.document();
+    let first_path = directory.path().join("save-all-a.vmf");
+    let second_path = directory.path().join("save-all-b.vmf");
+    lock(a.session())
+        .save(Actor::User, Some(&first_path))
+        .unwrap();
+    let ctx = GpuContext::new().unwrap();
+    let (owner, commands, selector_a, app_a) = attach(&application, ctx);
+    let workspace = commands.workspace();
+    let result = Rc::new(RefCell::new(None));
+    let (flow_owner, flow_result) = (owner.clone(), result.clone());
+    let (stop, stopped) = mpsc::sync_channel(1);
+    let watchdog = std::thread::spawn(move || {
+        if stopped.recv_timeout(TIMEOUT * 3).is_err() {
+            let _ = slint::quit_event_loop();
+        }
+    });
+    slint::spawn_local(async move {
+        let flow = async {
+            let created = workspace.new_document(Actor::Agent, false).await?;
+            let selector_b = created["document_id"]
+                .as_str()
+                .ok_or("Missing peer selector")?
+                .to_owned();
+            let b = factory.resolve(Some(&selector_b))?.document();
+            let app_b = host(&flow_owner, &selector_b)?
+                .borrow()
+                .window
+                .app()
+                .clone_strong();
+            for (document, x) in [(&a, 0.0), (&b, 64.0)] {
+                lock(document.session()).create_block(
+                    Actor::User,
+                    DVec3::new(x, 0.0, 0.0),
+                    DVec3::new(x + 16.0, 16.0, 16.0),
+                    "test/checker",
+                    false,
+                )?;
+            }
+            let peer_source = lock(b.session()).document().vmf().clone();
+            let peer_camera = lock(b.session()).camera();
+            let peer_history = lock(b.session()).history_snapshot();
+            app_a.invoke_open_documents();
+            let controller = flow_owner.borrow().dialog.as_ref().unwrap().clone();
+            let list = controller.window.clone_strong();
+            list.window().set_size(slint::PhysicalSize::new(900, 850));
+            list.window()
+                .take_snapshot()
+                .map_err(|error| error.to_string())?;
+            i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+                &list,
+                "Save all named maps",
+            )
+            .next()
+            .ok_or("Missing actual Save all button")?
+            .invoke_accessible_default_action();
+            wait_for(|| !list.get_busy() && list.get_message().contains("not complete")).await?;
+            let rows = list.get_rows();
+            if !rows.iter().any(|row| {
+                row.selector == selector_b
+                    && row.detail.contains("Needs Save as")
+                    && row.detail.contains("Save as")
+            }) {
+                return Err(
+                    "The actual list omitted the unnamed peer's Save as requirement".into(),
+                );
+            }
+            if app_b.window().is_visible()
+                || lock(b.session()).document().vmf() != &peer_source
+                || lock(b.session()).camera() != peer_camera
+                || lock(b.session()).history_snapshot() != peer_history
+            {
+                return Err("Save all showed or changed the unnamed peer".into());
+            }
+            crate::ui::tests::save_ui_snapshot_at_current_time(
+                list.window(),
+                "save-all-named-maps",
+            );
+            crate::ui::tests::assert_dialog_button_visible(&list, "Save all named maps");
+            lock(b.session()).save(Actor::User, Some(&second_path))?;
+            for (document, x) in [(&a, 128.0), (&b, 192.0)] {
+                lock(document.session()).create_block(
+                    Actor::User,
+                    DVec3::new(x, 0.0, 0.0),
+                    DVec3::new(x + 16.0, 16.0, 16.0),
+                    "test/checker",
+                    false,
+                )?;
+            }
+            i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+                &list,
+                "Save all named maps",
+            )
+            .next()
+            .ok_or("Missing retained Save all button")?
+            .invoke_accessible_default_action();
+            wait_for(|| !list.get_busy() && list.get_message().contains("2 saved")).await?;
+            if lock(a.session()).document().is_dirty()
+                || lock(b.session()).document().is_dirty()
+                || app_b.window().is_visible()
+            {
+                return Err(
+                    "Save all did not save both fixed maps or showed the hidden peer".into(),
+                );
+            }
+            if !list
+                .get_rows()
+                .iter()
+                .all(|row| row.detail.contains("Last Save all result: Saved"))
+            {
+                return Err("The actual list lost per-map successful save results".into());
+            }
+            workspace.close_native(&selector_b, &b.document_close_review()?, false)?;
+            wait_for(|| factory.documents().len() == 1).await?;
+            workspace.close_native(&selector_a, &a.document_close_review()?, false)?;
+            Ok::<(), String>(())
+        }
+        .await;
+        let failed = flow.is_err();
+        *flow_result.borrow_mut() = Some(flow);
+        if failed {
+            let _ = slint::quit_event_loop();
+        }
+    })
+    .unwrap();
+    let primary = slint::run_event_loop_until_quit().map_err(Into::into);
+    let _ = stop.send(());
+    watchdog.join().unwrap();
+    let ui_result = owner.borrow_mut().finish(primary);
+    let workspace_result = commands.finish(Ok(()));
+    let application_result = application.finish(Ok(()));
+    assert_eq!(result.borrow_mut().take().unwrap(), Ok(()));
+    ui_result.unwrap();
+    workspace_result.unwrap();
+    application_result.unwrap();
+}

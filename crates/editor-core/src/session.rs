@@ -29,6 +29,7 @@ mod buffer_replacement;
 mod document_close;
 #[cfg(test)]
 mod launch_origin_tests;
+mod save_all;
 pub use buffer_replacement::BufferReplacementReview;
 pub use document_close::DocumentCloseReview;
 pub mod carving;

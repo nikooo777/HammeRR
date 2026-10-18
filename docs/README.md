@@ -13,7 +13,7 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | [Preview defaults](preview-defaults.md) | Save, apply and recover startup visibility for existing images and guides |
 | [Fly speed and navigation defaults](navigation-defaults.md) | Shared camera flight speed and explicit startup defaults |
 | [Keyboard shortcuts](keyboard-shortcuts.md) | Editing, projection and Objects/Faces command bindings |
-| [Open documents](open-documents.md) | Two independent map windows, explicit MCP targeting and reviewed Close |
+| [Open documents](open-documents.md) | Two independent map windows, Save all named maps, explicit MCP targeting and reviewed Close |
 | [Recent maps](recent-maps.md) | Reopening retained paths with compatible build settings, removing and clearing entries |
 | [Transaction history](history.md) | Inspecting human/agent edits and navigating retained undo/redo states |
 | [Measurement guides](measurements.md) | Persistent rulers, exact surface picks and entity-origin/local attachments |

@@ -15,9 +15,11 @@ export component OpenDocumentsWindow inherits Window {
     in property <[OpenDocumentRow]> rows;
     in property <string> summary;
     in property <bool> can-create;
+    in property <bool> can-save-all;
     in-out property <bool> busy;
     in-out property <string> message;
     callback new-document();
+    callback save-all-named-maps();
     callback open-document();
     callback show-document(string);
     callback close-document(string);
@@ -32,6 +34,7 @@ export component OpenDocumentsWindow inherits Window {
             spacing: 10px;
             Button { text: "New document"; enabled: root.can-create && !root.busy; clicked => { root.new-document(); } }
             Button { text: "Open document…"; enabled: root.can-create && !root.busy; clicked => { root.open-document(); } }
+            Button { text: "Save all named maps"; enabled: root.can-save-all && !root.busy; clicked => { root.save-all-named-maps(); } }
             Button { text: "Refresh"; enabled: !root.busy; clicked => { root.refresh(); } }
         }
         ListView {

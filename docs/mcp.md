@@ -71,6 +71,46 @@ document. Shared saved settings and catalogs remain application-wide.
 
 See [Open documents](open-documents.md) for the human controls and limits.
 
+### Save all named maps
+
+`save_all_named_maps {}` calls the same **Open documents… → Save all named maps**
+operation. It is a workspace tool and accepts no arguments, including no
+`document_id`, destination or background override. It freezes the admitted set
+of at most two existing documents before scheduling writes on the retained
+workspace worker. Every target keeps its fixed runtime identity and managed
+operation through completion. The handler waits for the report; dropping the
+accepted waiter does not redirect or repeat a save.
+
+The report includes `complete`, `status` (`complete` or `not_complete`), counts
+`saved`, `unchanged` and `not_saved`, a readable `message`, and `documents` with
+opaque `document_id`, numeric `runtime_document_id`, title, path, captured
+generation/revision, `status`, `saved`, `unsaved_changes`, `needs_save_as`,
+`pending_reviews`, `message` and any `error`. Unavailable or busy targets may
+lack capture fields. Per-document outcomes are:
+
+| Status | Meaning |
+| --- | --- |
+| `saved` | One ordinary `Session.save` wrote the dirty named map and updated normal map-version, backup, recent-map and dirty state. |
+| `unchanged` | The named map was clean; its original bound source/directory/symlink/file identity was verified and no file or history was rewritten. |
+| `unnamed_clean` | An unnamed map has no committed changes or pending reviews; no file was invented or written. |
+| `needs_save_as` | A dirty unnamed map needs an explicit `save_map` path or human **Save as…** before retrying. |
+| `pending_review` | Pending property, geometry or other reviews block this document; their names remain in `pending_reviews` and nothing is discarded or written. |
+| `stale` | The captured buffer generation, revision, filename or save/replacement guard changed before its attempt. |
+| `busy`, `closing`, `failed`, `error` | The fixed target could not be inspected, admitted or saved; the message identifies the reason. |
+
+Any outcome needing attention produces `complete:false`, `status:not_complete`
+and MCP `isError:true`, while preserving the full partial report. A successful
+peer write remains saved; this operation neither rolls back earlier writes nor
+retries failed documents automatically. A changed external source is an error
+even for a clean in-memory map. Workspace admission/queue rejection before a
+fixed set is accepted returns an ordinary tool error and performs no save.
+
+Results describe sequential per-document attempts, not one atomic workspace
+snapshot; edits after a document's attempt can make it dirty again. The shared
+operation opens no chooser and does not show, focus or close a window, invent a
+path, change source claims to another document or perform bulk Quit. See
+[Save all named maps](open-documents.md#save-all-named-maps).
+
 ### Close a document
 
 1. Call `get_map_info` and inspect `document_close`, including unsaved changes,
@@ -335,7 +375,7 @@ The shared desktop and private stdio server expose workspace and document tools.
 
 | Task | Tools |
 | --- | --- |
-| Workspace | `list_documents`, `new_document`, `open_document`, `show_document` |
+| Workspace | `list_documents`, `new_document`, `open_document`, `show_document`, `save_all_named_maps` |
 | Files and inspection | `close_document`, `new_map`, `open_map`, `save_map`, `get_map_info`, `get_map_statistics`, `find_objects`, `get_objects` |
 | Recent maps | `get_recent_maps`, `open_recent_map`, `remove_recent_map`, `clear_recent_maps`, `reload_recent_maps` |
 | Grid defaults | `get_grid_defaults`, `set_grid_defaults` |

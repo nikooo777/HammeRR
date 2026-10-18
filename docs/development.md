@@ -1817,6 +1817,7 @@ cargo test -p editor-core --features mcp session::colors::tests
 cargo test -p editor-core --features mcp color_space_tools
 cargo test -p editor --bin editor hsv_hsl -- --test-threads=1
 cargo test -p editor --bin editor achromatic_hue_can_be_chosen -- --test-threads=1
+python3 -B scripts/validate_colors_and_save_all.py --binary target/debug/hammerr-headless --binary target/debug/editor --output /tmp/hammerr-colors-save-all-check
 ```
 
 Literal primary/secondary and nontrivial colors verify both conversions, with
@@ -3140,18 +3141,27 @@ files use Tokio file ownership; terminal, socket and device descriptors reject.
 ```sh
 cargo test -p editor-core --features mcp,test-support startup::workspace::tests
 cargo test -p editor-core --features mcp,test-support mcp::workspace::tests
+cargo test -p editor-core --features mcp,test-support startup::workspace::save_all::tests
+cargo test -p editor-core --features mcp,test-support mcp::workspace::save_all_tests
 cargo test -p editor-core --features mcp,test-support production_workspace_http_closes_peer_then_last_document_on_same_connection
 cargo test -p editor cancelled_presentation_cannot_acknowledge_work_and_cleanup_quit_survives_waiter_loss
 cargo test -p editor --features editor-core/test-support -- --ignored --exact ui::workspace::tests::two_actual_hosts_keep_peer_edits_and_release_closed_claims_before_reopen_and_last_close
 cargo test -p editor --features editor-core/test-support -- --ignored --exact ui::workspace::tests::actual_failed_retirement_remains_visible_and_final_peer_close_reports_the_error
+cargo test -p editor --features editor-core/test-support -- --ignored --exact ui::workspace::tests::actual_save_all_button_reports_unnamed_peer_then_saves_two_named_maps_without_showing_it
 ```
 
 Factory and transport fixtures exercise capacity, fixed selectors, independent
 state, source/output claims, failed-host admission, retained cleanup, worker
-panic and peer/final Close on real stdio and HTTP. The two explicit UI cases
+panic and peer/final Close on real stdio and HTTP. The three explicit UI cases
 use actual software Slint hosts and offscreen GPU resources. Run each in its own
 process without desktop input. `HAMMERR_UI_SNAPSHOTS` writes
-`open-documents.png`; create the target directory first. The control fixture
+`open-documents.png` and `save-all-named-maps.png`; create the target directory first. The control fixture
 also checks a hidden MCP host, explicit Show, last-visible-window refusal,
 reopening a closed source while a client retains its handle and final Quit.
 These checks do not establish desktop focus behavior or a process memory budget.
+
+The `validate_colors_and_save_all.py` check also exercises two real document Sessions:
+partial named/unnamed saves, pending-review preservation, two-file success,
+clean-source verification without rewriting and externally changed source
+failures. Each binary runs with private content/settings; repository demo maps
+are fingerprinted and preserved.

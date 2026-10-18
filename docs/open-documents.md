@@ -31,11 +31,50 @@ Final process shutdown reports retained cleanup errors.
 Shared saved settings and catalogs remain shared. Current editor state and
 render caches belong to their fixed documents. Two documents are an admission
 limit, not a promise about total memory use. This release has separate windows;
-there are no tabs, bulk Quit/Save All, workspace restore, or different mounted
+there are no tabs, bulk Quit, workspace restore, or different mounted
 content profiles in the same process.
 
+## Save all named maps
+
+Save committed changes in the open maps that already have filenames, and see
+which documents need further attention.
+
+1. Click **Open documents…** in a map window's toolbar, then **Save all named
+   maps**. The action saves the fixed admitted documents in the background using
+   each map's existing filename; it does not show or focus their windows.
+2. Read the summary and **Last Save all result** under each map. **Saved** means
+   that map was written once. **Unchanged; no file written** means its clean
+   source identity was verified without rewriting the file or creating a backup.
+3. For **Needs Save as…**, use **Save as…** in that map's window to choose its
+   filename, then retry. An unnamed map with no committed changes needs no write
+   and is reported separately.
+4. For **Pending review**, apply or cancel that map's property, geometry or other
+   active reviews, then retry. Save all preserves reviews and does not write the
+   affected map. Other eligible documents can still be saved.
+5. For **Save failed**, repair the reported file or source-identity problem before
+   retrying. **Map changed; retry**, **Busy; retry** and **Closing** identify maps
+   whose accepted snapshot could not be saved. A partial result says **not
+   complete** and lists each affected document; successful writes remain saved.
+
+![Save all reports a named save and an unnamed map requiring Save as](images/save-all-named-maps.png)
+
+MCP `save_all_named_maps {}` performs the same operation without a document
+selector. It returns every fixed document's result and marks partial completion
+as an error while retaining successful results. Each document is attempted at
+most once. Clean named maps keep their source bytes, file timestamp and history;
+a successful dirty save uses ordinary Save behavior, including map version,
+backup, recent-map and dirty-state updates. A changed external file is reported
+as an error even when the in-memory map is clean.
+
+Save all is a sequence of independent per-document results, not one atomic
+workspace snapshot. A new edit after a map's attempt can make it dirty again;
+the list continues to show its current unsaved state alongside the last result.
+Source or filename changes before a captured attempt produce a stale result.
+There is no rollback of a peer's successful write, automatic retry, invented
+filename, modal Save As sequence or combined Save All and Quit workflow.
+
 MCP uses `list_documents`, `new_document`, `open_document`, `show_document` and
-`close_document`. Pass the opaque `document_id` from the list to document tools.
+`close_document`; `save_all_named_maps` handles the fixed workspace set. Pass the opaque `document_id` from the list to document tools.
 Omitting it works only when exactly one live document remains; focus and
 last-used document never choose an MCP target. Close uses the exact
 `get_map_info.document_close.review_token` and explicit discard consent for

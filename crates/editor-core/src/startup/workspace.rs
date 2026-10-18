@@ -5,6 +5,9 @@ use std::fmt;
 use std::path::Path;
 use std::sync::{Condvar, PoisonError, Weak};
 
+mod save_all;
+pub use save_all::SaveAllRequest;
+
 pub const DOCUMENT_LIMIT: usize = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -410,7 +413,7 @@ fn ensure_available(state: &State) -> Result<(), String> {
     if !state.accepting {
         Err("The application is closing".into())
     } else if state.membership.is_some() {
-        Err("Another document creation or close is in progress; wait and retry".into())
+        Err("Another workspace document operation is in progress; wait and retry".into())
     } else {
         Ok(())
     }

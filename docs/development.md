@@ -2782,11 +2782,14 @@ their own lifetimes.
 
 ```sh
 cargo test -p editor-core --features mcp,test-support mcp::http::tests
+cargo test -p editor-core --features mcp,test-support mcp::http::connection::tests
 ```
 
 Real loopback clients exercise initialization and tool dispatch, idle SSE
 sessions, blocked admitted work, stalled request bodies, memoized shutdown
-errors, cache ownership and same-address rebinding. The server runtime retires
-before its last idle document anchor. These checks open no desktop windows and
+errors, cache ownership and same-address rebinding. Per-connection checks cover
+keepalive request metadata, graceful completion, late flush failures and driver
+cancellation/runtime drop. Ordinary client disconnects remain local errors.
+The server runtime retires before its last idle document anchor. These checks open no desktop windows and
 require no game. Stop/join acknowledges local service teardown; it does not
 acknowledge delivery of a future MCP Close result.

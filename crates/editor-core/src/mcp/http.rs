@@ -1,4 +1,4 @@
-use std::future::IntoFuture;
+use std::io::ErrorKind;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -9,9 +9,13 @@ use rmcp::transport::streamable_http_server::{
     session::local::LocalSessionManager,
 };
 use tokio::runtime::Runtime;
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, watch};
+use tokio::task::JoinSet;
 
 use super::EditorServer;
+
+mod connection;
+pub use connection::ConnectionReceipt;
 
 const HTTP_WORKERS: usize = 2;
 const NETWORK_SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
@@ -150,7 +154,7 @@ impl HttpThread {
 async fn serve(
     server: EditorServer,
     listener: tokio::net::TcpListener,
-    stopped: oneshot::Receiver<()>,
+    mut stopped: oneshot::Receiver<()>,
     network_grace: Duration,
 ) -> Result<(), String> {
     let config = StreamableHttpServerConfig::default();
@@ -159,24 +163,39 @@ async fn serve(
     let service: StreamableHttpService<EditorServer, LocalSessionManager> =
         StreamableHttpService::new(move || Ok(server.clone()), sessions.clone(), config);
     let router = axum::Router::new().nest_service("/mcp", service);
-    let (shutdown, shutdown_requested) = oneshot::channel();
-    let serving = axum::serve(listener, router)
-        .with_graceful_shutdown(async move {
-            let _ = shutdown_requested.await;
-        })
-        .into_future();
-    tokio::pin!(serving);
-    let served = tokio::select! {
-        result = &mut serving => Some(result),
-        _ = stopped => None,
-    };
+    let (shutdown, shutdown_requested) = watch::channel(());
+    let mut connections = JoinSet::new();
+    let mut errors = Vec::new();
+    loop {
+        tokio::select! {
+            _ = &mut stopped => break,
+            accepted = listener.accept() => {
+                match accepted {
+                    Ok((stream, _)) => {
+                        connections.spawn(connection::serve(
+                            stream,
+                            router.clone(),
+                            shutdown_requested.clone(),
+                        ));
+                    }
+                    Err(error) if matches!(error.kind(), ErrorKind::Interrupted | ErrorKind::ConnectionAborted | ErrorKind::ConnectionRefused | ErrorKind::ConnectionReset) => {}
+                    Err(error) => {
+                        errors.push(format!("MCP HTTP listener failed: {error}"));
+                        break;
+                    }
+                }
+            }
+            joined = connections.join_next(), if !connections.is_empty() => {
+                if let Some(Err(error)) = joined {
+                    errors.push(format!("MCP HTTP connection task failed: {error}"));
+                    break;
+                }
+            }
+        }
+    }
+    drop(listener);
     cancellation.cancel();
     let _ = shutdown.send(());
-    let mut errors = Vec::new();
-    let completed = served.is_some();
-    if let Some(Err(error)) = served {
-        errors.push(format!("MCP HTTP serving failed: {error}"));
-    }
     let drain = async {
         let ids: Vec<_> = sessions.sessions.read().await.keys().cloned().collect();
         for id in ids {
@@ -184,8 +203,10 @@ async fn serve(
                 errors.push(format!("MCP session {id} could not close: {error}"));
             }
         }
-        if !completed && let Err(error) = serving.await {
-            errors.push(format!("MCP HTTP serving failed: {error}"));
+        while let Some(joined) = connections.join_next().await {
+            if let Err(error) = joined {
+                errors.push(format!("MCP HTTP connection task failed: {error}"));
+            }
         }
     };
     if tokio::time::timeout(network_grace, drain).await.is_err() {
@@ -193,6 +214,7 @@ async fn serve(
             "MCP HTTP network shutdown exceeded {} ms",
             network_grace.as_millis()
         ));
+        connections.abort_all();
     }
     if errors.is_empty() {
         Ok(())

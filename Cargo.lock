@@ -1245,6 +1245,8 @@ dependencies = [
  "base64",
  "compiler",
  "glam",
+ "hyper",
+ "hyper-util",
  "map-core",
  "native-runtime",
  "png",

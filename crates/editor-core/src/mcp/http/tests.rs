@@ -308,3 +308,5 @@ fn operation_bearing_transport_anchor_is_rejected_without_pinning_admission() {
     assert_eq!(document.active_operations(), 0);
     document.shutdown().unwrap();
 }
+
+mod driver;

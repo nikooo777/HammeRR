@@ -14,7 +14,7 @@ mod http;
 mod params;
 mod rendering;
 mod tools;
-pub use http::{HttpServer, spawn_http};
+pub use http::{ConnectionReceipt, HttpServer, spawn_http};
 use params::*;
 use rendering::{Offscreen, OffscreenState};
 

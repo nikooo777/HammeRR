@@ -7,7 +7,7 @@ rust-version.workspace = true
 
 [features]
 default = []
-mcp = ["dep:axum", "dep:base64", "dep:png", "dep:rmcp", "dep:tokio"]
+mcp = ["dep:axum", "dep:base64", "dep:hyper", "dep:hyper-util", "dep:png", "dep:rmcp", "dep:tokio"]
 test-support = []
 
 [[bin]]
@@ -22,6 +22,8 @@ arboard = { version = "3.6.1", default-features = false, features = ["wayland-da
 axum = { version = "0.8.9", optional = true }
 base64 = { version = "0.23.1", optional = true }
 glam.workspace = true
+hyper = { version = "1.12.0", features = ["http1", "server"], optional = true }
+hyper-util = { version = "0.1.21", features = ["http1", "server", "service", "tokio"], optional = true }
 map-core.workspace = true
 png = { version = "0.18.1", optional = true }
 render.workspace = true

@@ -162,7 +162,9 @@ fn production_http_close_uses_fresh_review_and_finishes_before_client_sender_dro
     );
     assert!(document.admit().is_err());
     close_bounded(driver).await.unwrap().unwrap();
+    assert!(std::net::TcpStream::connect_timeout(&address, COMPOSED_CLOSE_TIMEOUT).is_ok());
     http.shutdown().unwrap();
+    assert!(std::net::TcpStream::connect_timeout(&address, COMPOSED_CLOSE_TIMEOUT).is_err());
     assert!(client.is_closed());
     drop(client);
     });
@@ -304,7 +306,9 @@ fn production_workspace_http_closes_peer_then_last_document_on_same_connection()
     );
     assert!(document.admit().is_err());
     close_bounded(driver).await.unwrap().unwrap();
+    assert!(std::net::TcpStream::connect_timeout(&address, COMPOSED_CLOSE_TIMEOUT).is_ok());
     http.shutdown().unwrap();
+    assert!(std::net::TcpStream::connect_timeout(&address, COMPOSED_CLOSE_TIMEOUT).is_err());
     assert!(client.is_closed());
     drop(client);
     application.finish(Ok(())).unwrap();

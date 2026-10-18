@@ -6,6 +6,43 @@ use tokio::net::unix::pipe;
 
 const TIMEOUT: Duration = Duration::from_secs(5);
 
+#[tokio::test]
+async fn aliased_fifo_flags_restore_on_finish_drop_and_partial_construction_failure() {
+    use rustix::fs::{CWD, Mode, fcntl_getfl, mkfifoat};
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("duplex.fifo");
+    mkfifoat(CWD, &path, Mode::RUSR | Mode::WUSR).unwrap();
+    let fifo = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .unwrap();
+    let original = fcntl_getfl(&fifo).unwrap();
+    for finish in [true, false] {
+        let (read, write, guard) = from_owned_fds(
+            fifo.try_clone().unwrap().into(),
+            fifo.try_clone().unwrap().into(),
+        )
+        .unwrap();
+        assert!(
+            fcntl_getfl(&fifo)
+                .unwrap()
+                .contains(rustix::fs::OFlags::NONBLOCK)
+        );
+        drop(read);
+        drop(write);
+        if finish {
+            guard.finish().unwrap();
+        } else {
+            drop(guard);
+        }
+        assert_eq!(fcntl_getfl(&fifo).unwrap(), original);
+    }
+    let (socket, _peer) = std::os::unix::net::UnixStream::pair().unwrap();
+    assert!(from_owned_fds(fifo.try_clone().unwrap().into(), socket.into()).is_err());
+    assert_eq!(fcntl_getfl(&fifo).unwrap(), original);
+}
+
 #[test]
 fn closing_a_full_os_output_pipe_drops_pending_codec_bytes_and_exits_the_runtime() {
     use rmcp::model::{CallToolResult, ContentBlock, JsonRpcMessage, RequestId, ServerResult};

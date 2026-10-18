@@ -23,6 +23,8 @@ const HTTP_WORKERS: usize = 2;
 const NETWORK_SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 
 #[must_use]
+/// Owns the listener and runtime independently of document/workspace owners.
+/// Call `shutdown` or `finish` to observe errors; Drop reports them to stderr.
 pub struct HttpServer {
     local_addr: SocketAddr,
     stop: Option<oneshot::Sender<()>>,
@@ -101,6 +103,8 @@ fn spawn(
     spawn_anchor(HttpAnchor::Document(server), addr, network_grace)
 }
 
+/// Closing the final document does not retire this separately owned listener.
+/// The host must stop/finish the returned server, as desktop startup does.
 pub fn spawn_workspace_http(
     server: WorkspaceServer,
     addr: SocketAddr,

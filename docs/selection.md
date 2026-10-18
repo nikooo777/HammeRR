@@ -11,6 +11,11 @@ The **Selection** dropdown in the inspector switches between:
 
 Click to select, Ctrl+click to toggle. Loaded models use their visible triangles for point picking. Model entities belong to **Objects** mode; their mesh triangles are not editable brush faces.
 
+An incoming transform preview retires older selection strokes and marquee
+gestures. Releasing an old drag cannot apply its selection over the new preview.
+Material reload likewise ends unfinished paint, area and volume selections;
+start again using the refreshed visibility.
+
 ## Pick object types
 
 Keep objects visible while limiting which types can start an object selection.

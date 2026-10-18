@@ -44,6 +44,12 @@ Workspace owns multiple-document admission and routing; saved authorities remain
 
 `Session` owns geometry-preview state through `session/previews.rs`. Rendering, picking and tool-texture filtering share its displayed-document selector. Feature modules validate replacement drafts before clearing competitors through the coordinator; their own payloads and ownership tokens remain local.
 
+When embedding workspace MCP, retain the returned `HttpServer` as a separate
+owner. After terminal workspace Close and `WorkspaceOwner::shutdown`, call
+`HttpServer::shutdown` or `finish` to stop accepts, drain connections and observe
+network errors. Workspace document retirement does not drop that listener.
+Desktop startup performs this composition after the final window quits.
+
 Persisted compiler options share `editor-core/src/build_settings.rs` across
 recipes and recent maps. Shared and temporary view requests resolve through
 `Session::resolve_view_update`; temporary requests do not commit that result.
@@ -53,6 +59,23 @@ retaining their own admission rules. Desktop face dialogs use the narrow
 context and ownership guards in `editor/src/face_edit_ui.rs`.
 
 ## Build and test
+
+Save/import, material semantics and gesture lifecycle regressions:
+
+```sh
+cargo test -p source-formats --lib --test vmf_extensions
+cargo test -p map-core --lib edit::tests
+cargo test -p compiler --test compile --test direct_uv_vectors
+cargo test -p editor-core --features mcp --lib rejected_quoted_properties
+cargo test -p editor-core --features mcp --lib serialization_errors_preserve
+cargo test -p editor-core --features mcp --lib incoming_transform_retires
+cargo test -p editor-core --features mcp --lib reload_retires_captured
+cargo test -p editor-core --features mcp --lib aliased_fifo_flags_restore
+cargo test -p editor-core --features mcp --lib production_workspace_http_closes
+```
+
+Bundle these under the resource-capped pipeline below. Broader package runs
+already include them; avoid repeating individual filters after that gate passes.
 
 ```sh
 cargo build --release -p editor -p editor-core -p compiler -p native-runtime

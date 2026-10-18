@@ -73,10 +73,15 @@ fn from_owned_fds(
         FileType::from_raw_mode(fstat(&read).map_err(|error| error.to_string())?.st_mode);
     let write_kind =
         FileType::from_raw_mode(fstat(&write).map_err(|error| error.to_string())?.st_mode);
+    if read_kind == FileType::Fifo {
+        preserve(&read, &mut guard)?;
+    }
+    if write_kind == FileType::Fifo {
+        preserve(&write, &mut guard)?;
+    }
     let read: ProcessRead = match read_kind {
         FileType::RegularFile => Box::pin(tokio::fs::File::from_std(std::fs::File::from(read))),
         FileType::Fifo => {
-            preserve(&read, &mut guard)?;
             Box::pin(tokio::net::unix::pipe::Receiver::from_owned_fd(read)
                 .map_err(|error| format!("Cannot use MCP stdin pipe: {error}"))?)
         }
@@ -85,7 +90,6 @@ fn from_owned_fds(
     let write: ProcessWrite = match write_kind {
         FileType::RegularFile => Box::pin(tokio::fs::File::from_std(std::fs::File::from(write))),
         FileType::Fifo => {
-            preserve(&write, &mut guard)?;
             Box::pin(tokio::net::unix::pipe::Sender::from_owned_fd(write)
                 .map_err(|error| format!("Cannot use MCP stdout pipe: {error}"))?)
         }

@@ -155,6 +155,12 @@ These optional guards preserve existing immediate calls when omitted. Reviews
 belong to one Session; they do not transfer between processes or documents.
 Other uncommitted draft types are outside this replacement review.
 
+VMF import rejects nesting beyond 256 blocks while preserving the current
+document. Raw property keys/values, classnames, material names and group names
+reject literal double quotes. `save_map` and recovery report serialization
+errors without publishing malformed files. Quoted unknown block names survive
+save and reopen.
+
 New/Open/Recent/Restore and both Save forms reject once document shutdown has
 begun, even with an earlier matching review or generation. These file guards do
 not replace the explicit workspace selector or provide general lifecycle leases.
@@ -2499,8 +2505,11 @@ bindings visibly, retain geometry/bounds/picking, and appear as `material_error`
 in model inspection. Repair files and reload again; rerun map checks or compile
 to validate the map.
 
-Reload preserves map data, selection, camera, Undo history and active draft
-geometry. View-dependent snapshots may need renewed review. It uses existing
+Reload preserves map data, selection, camera, Undo history and standalone draft
+geometry. It retires paint, volume and marquee selection previews. Their old
+tokens cannot update or commit against changed material visibility. Start a
+fresh gesture after reload. Other view-dependent snapshots may need renewed
+review. It uses existing
 mounts only, with no file watcher, archive/content remount, model-geometry or
 particle reload, or running-game cache refresh. Changed MDL/VVD/VTX data still
 requires `reload_model_assets`. Valid model choices and attachment guides remain

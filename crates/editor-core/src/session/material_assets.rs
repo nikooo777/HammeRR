@@ -25,6 +25,8 @@ impl Session {
     }
 
     pub fn reload_material_assets(&mut self, actor: Actor) -> Report {
+        self.cancel_geometry_drags();
+        self.cancel_selection_previews();
         self.content_epoch = self.content_epoch.wrapping_add(1);
         let models = self.models.borrow_mut().reload_materials(&self.game);
         let mut result = self
@@ -78,6 +80,104 @@ mod tests {
     use glam::DVec3;
     use map_core::edit::Transform;
     use map_core::query::Ray;
+
+    #[test]
+    fn reload_retires_captured_selection_eligibility_for_paint_volume_and_marquee() {
+        use crate::session::{Actor, Pointer, SelectMode, paint, volume};
+        use glam::DVec2;
+        use map_core::region::Match;
+        use render::{Camera, Projection};
+        for kind in ["paint", "volume", "area"] {
+            let (directory, game) = crate::test_assets::game();
+            let mut session = Session::new(Ok(game));
+            session
+                .create_block(
+                    Actor::User,
+                    DVec3::ZERO,
+                    DVec3::splat(64.0),
+                    "test/checker",
+                    false,
+                )
+                .unwrap();
+            session.select(&[], SelectMode::Replace).unwrap();
+            session.set_camera(Camera::planar(
+                Projection::Top,
+                glam::Vec3::splat(32.0),
+                256.0,
+            ));
+            let mut view = session.view();
+            view.tool_textures = false;
+            session.set_view(view);
+            let ray = Ray {
+                origin: DVec3::new(32.0, 32.0, 128.0),
+                direction: -DVec3::Z,
+            };
+            assert!(session.pick(&ray).is_some());
+            let before = session.document.vmf().clone();
+            let history = session.history_snapshot();
+            let token = match kind {
+                "paint" => session
+                    .begin_paint_selection(paint::Spec {
+                        camera: session.camera(),
+                        pointer: Pointer {
+                            position: DVec2::new(16.0, 128.0),
+                            size: (256, 256),
+                        },
+                        radius: 4.0,
+                        mode: SelectMode::Replace,
+                        faces: false,
+                    })
+                    .unwrap(),
+                "volume" => session
+                    .preview_volume_selection(volume::Spec {
+                        mins: DVec3::splat(-1.0),
+                        maxs: DVec3::splat(65.0),
+                        rule: Match::Intersecting,
+                        mode: SelectMode::Replace,
+                        faces: false,
+                    })
+                    .unwrap(),
+                _ => {
+                    session
+                        .preview_area_selection(
+                            Actor::User,
+                            session.camera(),
+                            Pointer {
+                                position: DVec2::new(96.0, 96.0),
+                                size: (256, 256),
+                            },
+                            DVec2::new(160.0, 160.0),
+                            Match::Intersecting,
+                            SelectMode::Replace,
+                        )
+                        .unwrap();
+                    0
+                }
+            };
+            std::fs::write(
+                directory.path().join("materials/test/checker.vmt"),
+                "LightmappedGeneric { $basetexture test/checker %compilenodraw 1 }",
+            )
+            .unwrap();
+            session.reload_material_assets(Actor::Agent);
+            assert!(session.pick(&ray).is_none());
+            match kind {
+                "paint" => {
+                    assert!(
+                        session
+                            .update_paint_selection(token, &[DVec2::splat(128.0)])
+                            .is_err()
+                    );
+                    assert!(session.commit_paint_selection(Actor::User, token).is_err());
+                }
+                "volume" => assert!(session.commit_volume_selection(Actor::User, token).is_err()),
+                _ => assert!(session.commit_area_selection().is_err()),
+            }
+            assert!(session.selected_ids().is_empty());
+            assert_eq!(session.document.vmf(), &before);
+            assert_eq!(session.history_snapshot(), history);
+        }
+    }
 
     #[test]
     fn reload_replaces_cached_pixels_failures_and_repairs_without_changing_source_or_draft() {

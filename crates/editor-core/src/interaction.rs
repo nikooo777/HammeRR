@@ -836,6 +836,49 @@ mod tests {
     }
 
     #[test]
+    fn incoming_transform_retires_held_selection_gestures_without_losing_its_preview() {
+        for paint in [false, true] {
+            let mut session = fixture(Projection::Top, None);
+            let ids = session.selected_ids();
+            let before = session.document().vmf().clone();
+            let history = session.history_snapshot();
+            if paint {
+                session.set_paint_tool(Actor::User, true, 12.0).unwrap();
+            }
+            let start = Pointer {
+                position: DVec2::new(400.0, 300.0),
+                size: (800, 600),
+            };
+            let end = Pointer {
+                position: DVec2::new(500.0, 380.0),
+                ..start
+            };
+            let mut interaction = Interaction::default();
+            interaction.down(&mut session, start, true).unwrap();
+            interaction.moved(&mut session, end).unwrap();
+            let old_token = session.paint_stroke().map(|stroke| stroke.token);
+            let transform = map_core::edit::Transform {
+                translation: DVec3::X * 16.0,
+                ..Default::default()
+            };
+            session
+                .preview_transform(Actor::Agent, &ids, transform, None)
+                .unwrap();
+            let incoming = session.render_document().vmf().clone();
+            if let Some(token) = old_token {
+                assert!(session.commit_paint_selection(Actor::User, token).is_err());
+            }
+            interaction.up(&mut session, end).unwrap();
+            assert!(session.transform_preview().is_some());
+            assert!(session.paint_stroke().is_none());
+            assert_eq!(session.selected_ids(), ids);
+            assert_eq!(session.document().vmf(), &before);
+            assert_eq!(session.render_document().vmf(), &incoming);
+            assert_eq!(session.history_snapshot(), history);
+        }
+    }
+
+    #[test]
     fn tool_commands_retire_held_paint_and_invalid_settings_preserve_it() {
         use crate::session::paint::Operation;
         use crate::shortcuts::Command;

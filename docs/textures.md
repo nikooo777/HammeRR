@@ -62,8 +62,10 @@ An unavailable preview does not by itself mean a material is invalid for
 compilation: valid tool or untextured materials can have no display texture.
 Unreadable display assets replace stale images with the missing-texture fallback.
 
-Reload leaves map data, selection, camera, Undo history and draft geometry
-unchanged. View-dependent review guards can require another review before Apply.
+Reload leaves map data, selection, camera, Undo history and standalone draft
+geometry unchanged. Unfinished paint, area and volume selections end when
+materials reload; start a fresh gesture with the refreshed visibility.
+View-dependent review guards can require another review before Apply.
 It refreshes cached materials and the catalog through existing mounts; it does
 not watch files, remount content or archives, reload model geometry or particles,
 or refresh a running game's asset cache. Model material lookup uses the cached

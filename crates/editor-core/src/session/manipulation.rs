@@ -578,14 +578,17 @@ impl Session {
             self.cancel_transform_preview();
         }
         self.select(ids, SelectMode::Replace)?;
-        self.clear_geometry_previews_except(&[previews::Kind::Transform, previews::Kind::Paint]);
-
-        self.clear_volume_selection();
+        self.clear_geometry_previews_except(&[previews::Kind::Transform]);
+        if self.transform_drag.is_none() {
+            self.cancel_selection_previews();
+        } else {
+            self.clear_volume_selection();
+            self.area_preview = None;
+        }
         self.clip_tool = false;
 
         self.cancel_block_preview();
         self.spatial.draw_block = false;
-        self.area_preview = None;
         self.geometry.transform_preview = Some(TransformPreview {
             document,
             ids: ids.to_vec(),
@@ -912,6 +915,11 @@ impl Session {
         }
     }
 
+    pub(super) fn cancel_selection_previews(&mut self) {
+        self.cancel_area_selection();
+        self.clear_volume_selection();
+    }
+
     pub fn commit_area_selection(&mut self) -> Result<Selection, String> {
         let preview = self
             .area_preview
@@ -937,12 +945,16 @@ impl Session {
         Ok(preview.matches)
     }
 
-    pub fn interaction_camera_changed(&mut self) {
+    pub(super) fn cancel_geometry_drags(&mut self) {
         self.restore_clip_drag();
         self.clear_component_drag();
         if self.transform_drag.is_some() {
             self.cancel_transform_preview();
         }
+    }
+
+    pub fn interaction_camera_changed(&mut self) {
+        self.cancel_geometry_drags();
         self.cancel_area_selection();
     }
 

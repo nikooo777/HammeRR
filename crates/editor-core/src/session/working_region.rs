@@ -283,11 +283,10 @@ impl Session {
     }
 
     pub(super) fn invalidate_display_visibility_gestures(&mut self) {
-        self.interaction_camera_changed();
-        self.clear_paint_stroke();
+        self.cancel_geometry_drags();
+        self.cancel_selection_previews();
         self.working_region_cancel_terrain_drag();
         self.working_region_end_terrain_stroke();
-        self.clear_volume_selection();
         self.cancel_block_preview();
         self.clip_epoch += 1;
         self.interaction_epoch += 1;

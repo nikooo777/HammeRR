@@ -9,6 +9,11 @@ HammeRR is in active development.
 
 ## Editor
 
+VMF import limits nesting to 256 blocks and preserves quoted unknown block
+names on save. Literal quotes cannot be applied to raw VMF fields;
+save/recovery serialization errors remain explicit. Material reload retires
+captured selection gestures while retaining standalone geometry drafts.
+
 | Area | State |
 | --- | --- |
 | AI access | Shared Session operations serve desktop HTTP MCP and private stdio MCP. Root and child UI actions that access the Session, and new document tool calls, reject during shutdown; admitted requests and queued workers drain against their original Session. Local dialog dismissal preserves pending edits when admission is closed. Desktop exit stops and joins its HTTP service; stalled network shutdown remains an exit error. MCP selects a fixed document with an opaque `document_id`; omission works only with one live document. `close_document` shares reviewed cleanup, keeps a live peer and transport available, and quits after exact response output when the final document closes. `hammerr-headless` builds independently of the Slint UI; editing and compilation leave graphics uninitialized until rendering is requested. |
@@ -69,6 +74,9 @@ HammeRR is in active development.
 | Sounds | Mounted WAV/MP3 search, folder/script/used groups, manifest sound-script metadata and wave variants, isolated audition/volume, agent audio export and atomic sound-field choices work through shared Session/MCP operations. Game mixing, soundscapes, voice/sentence synthesis, map-specific overrides and ambiguous script resolution are planned. |
 
 ## Compiler
+
+Builds reject projections outside finite float or signed lightmap bounds.
+Alpha-tested materials use non-solid window contents and do not seal the world.
 
 | Feature | Works | Not yet |
 | --- | --- | --- |

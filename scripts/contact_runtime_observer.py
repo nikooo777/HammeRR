@@ -39,6 +39,9 @@ BRACES = {
     for kind in ("side_brace", "back_brace")
 }
 MAX_REPORT_BYTES = 32 * 1024 * 1024
+DIRECT_WAKE_MODE = "disable-direct-wake"
+DIRECT_WAKE_WINDOW_SECONDS = 5.0
+DIRECT_WAKE_OPTION = {"schema": 1, "method": "IPhysicsObject::Wake", "slot": 25, "target_elf": 0x37210, "observation_only": False}
 
 
 def digest(path):
@@ -46,8 +49,9 @@ def digest(path):
 
 
 def prepare(library, release_mode, root, game, output, command, environment, *, initial_profile=False, trigger_state=False):
-    assert release_mode in {"kill", "disable", "disable-wake", "disable-refresh"}
-    intervention = release_mode == "disable-refresh"
+    assert release_mode in {"kill", "disable", "disable-wake", "disable-refresh", DIRECT_WAKE_MODE}
+    direct_wake = release_mode == DIRECT_WAKE_MODE
+    intervention = release_mode == "disable-refresh" or direct_wake
     assert not (initial_profile and intervention), "Initial profiles are observation-only"
     assert not (trigger_state and intervention), "Trigger-state observation forbids native intervention"
     assert not environment.get("LD_PRELOAD"), (
@@ -82,7 +86,7 @@ def prepare(library, release_mode, root, game, output, command, environment, *, 
     profile.write_text(source.replace(marker, f'plugin_load "{plugin}"\n' + marker))
     reject_configuration_writes(profile)
     receipt = {
-        "schema": 1,
+        "schema": 2 if direct_wake else 1,
         "release_mode": release_mode,
         "observation_only": not intervention,
         "library": str(library),
@@ -93,6 +97,8 @@ def prepare(library, release_mode, root, game, output, command, environment, *, 
         "instrumented_profile_sha256": digest(profile),
         "load_before_private_map": True,
     }
+    if direct_wake:
+        receipt["direct_wake_control"] = dict(DIRECT_WAKE_OPTION)
     if initial_profile:
         receipt["initial_object_profile"] = {"schema": 2, "objects": 7, "observation_only": True}
     if trigger_state:
@@ -108,7 +114,7 @@ def prepare(library, release_mode, root, game, output, command, environment, *, 
         "HAMMERR_CONTACT_GAME_ROOT": str(root),
         "HAMMERR_CONTACT_PRIVATE_GAME": str(game),
         "HAMMERR_CONTACT_REPORT": str(output / "contact-observer.jsonl"),
-        "HAMMERR_CONTACT_INTERVENTION": "single-recheck" if intervention else "none",
+        "HAMMERR_CONTACT_INTERVENTION": "single-wake" if direct_wake else "single-recheck" if intervention else "none",
         "HAMMERR_CONTACT_INITIAL_PROFILE": "1" if initial_profile else "0",
         "HAMMERR_CONTACT_TRIGGER_STATE": "1" if trigger_state else "0",
     }
@@ -156,10 +162,140 @@ def trigger_state_summary(rows):
     return {"contact_rows": len(rows), "nontrigger_pair_rows": nontrigger, "trigger_pair_rows": len(rows) - nontrigger}
 
 
+def verify_intervention_records(grouped, release_mode):
+    if release_mode != "disable-refresh":
+        assert not any(name.startswith("refresh_") for name in grouped)
+    if release_mode != DIRECT_WAKE_MODE:
+        assert not any(name.startswith("wake_") for name in grouped)
+
+
+def verify_direct_wake_option(receipt, start, enabled):
+    assert type(receipt["schema"]) is int and receipt["schema"] == (2 if enabled else 1)
+    assert type(start["schema"]) is int and start["schema"] == (2 if enabled else 1)
+    if enabled:
+        option = receipt["direct_wake_control"]
+        assert option.keys() == DIRECT_WAKE_OPTION.keys()
+        for field, expected in DIRECT_WAKE_OPTION.items():
+            assert type(option[field]) is type(expected) and option[field] == expected
+        assert start["intervention"] == "single-wake"
+        assert type(start["direct_wake_schema"]) is int and start["direct_wake_schema"] == 1
+    else:
+        assert "direct_wake_control" not in receipt
+        assert "intervention" not in start and "direct_wake_schema" not in start
+
+
+def verify_direct_wake(records, grouped, samples, contacts_by_sample, first_disabled,
+                       last_solid, definite, offset, release, retry):
+    expected = {"wake_arm", "wake_call", "wake_after", "wake_contact",
+                "wake_activation", "wake_window_end"}
+    assert {name for name in grouped if name.startswith("wake_")} <= expected
+    arms, calls = grouped.get("wake_arm", []), grouped.get("wake_call", [])
+    afters, ends = grouped.get("wake_after", []), grouped.get("wake_window_end", [])
+    assert len(arms) == len(afters) == len(ends) == 1 and len(calls) == 2
+    arm, after, end = arms[0], afters[0], ends[0]
+    enter, returned = calls
+    assert enter["stage"] == "enter" and returned["stage"] == "return"
+    assert (arm["sample"], arm["frame"]) == (first_disabled["sample"], first_disabled["frame"])
+    assert arm["last_solid_time"] == last_solid["simulation_time"]
+    assert arm["first_disabled_time"] == first_disabled["simulation_time"]
+    active_time = arm["last_active_brace_contact_time"]
+    assert math.isfinite(active_time)
+    assert first_disabled["simulation_time"] - 7.5 < active_time < last_solid["simulation_time"]
+    assert any(samples[row["sample"]]["simulation_time"] == active_time
+               and samples[row["sample"]]["awake"] is True for row in definite)
+    call_id = enter["sample"]
+    assert type(call_id) is int and first_disabled["sample"] < call_id < len(samples) - 2
+    before, next_frame = samples[call_id:call_id + 2]
+    assert enter["frame"] == before["frame"]
+    assert enter["simulation_time"] == before["simulation_time"]
+    assert 2.0 - 1e-6 <= enter["simulation_time"] - first_disabled["simulation_time"] <= 2.2 + 1e-6
+    assert release < enter["simulation_time"] - offset[1]
+    assert enter["simulation_time"] - offset[0] < retry
+    assert type(enter["slot"]) is int and enter["slot"] == 25
+    assert type(enter["target_elf"]) is int and enter["target_elf"] == 0x37210
+    assert enter["snapshot_destroyed"] is True and enter["in_simulation"] is False
+    assert enter["asleep"] is True and before["awake"] is False
+    assert math.isfinite(enter["settled_since"])
+    settled = [row for row in samples
+               if enter["settled_since"] <= row["simulation_time"] <= enter["simulation_time"]]
+    assert len(settled) >= 5 and enter["simulation_time"] - enter["settled_since"] >= 0.5
+    assert settled[0]["simulation_time"] == enter["settled_since"]
+    assert all(row["awake"] is False
+               and all(abs(value) <= 0.05 for value in row["velocity"] + row["angular_velocity"])
+               for row in settled)
+    before_contacts = contacts_by_sample[call_id]
+    brace_names = {"blocked_door_side_brace", "blocked_door_back_brace"}
+    before_braces = [row for row in before_contacts if row["name"] in brace_names]
+    assert enter["contacts"] == before["contacts"] == len(before_contacts)
+    assert enter["brace_contacts"] == len(before_braces) > 0
+    for row in (enter, returned, after):
+        assert row["sample"] == call_id and row["frame"] == before["frame"]
+        for field in ("object", "owner", "collide"):
+            assert pointer(row[field]) == before[field]
+        assert row["simulation_time"] == before["simulation_time"]
+    assert enter["crate_index"] == before["crate_index"]
+    assert after["snapshot_destroyed"] is True and after["in_simulation"] is False
+    assert type(after["awake"]) is bool
+    vector(after["velocity"])
+    vector(after["angular_velocity"])
+    after_contacts = grouped.get("wake_contact", [])
+    assert all(row["sample"] == call_id and row["stage"] == "after" for row in after_contacts)
+    assert after["contacts"] == len(after_contacts) <= 4096
+    after_braces = [row for row in after_contacts if row["name"] in brace_names]
+    assert after["brace_contacts"] == len(after_braces)
+    assert records.index(arm) < records.index(before) < records.index(enter)
+    assert records.index(enter) < records.index(returned) < records.index(after) < records.index(next_frame)
+    assert all(records.index(returned) < records.index(row) < records.index(after) for row in after_contacts)
+    end_id = end["sample"]
+    assert type(end_id) is int and call_id + 1 <= end_id < len(samples)
+    window = samples[first_disabled["sample"]:end_id + 1]
+    assert [row["frame"] for row in window] == list(range(first_disabled["frame"], end["frame"] + 1))
+    assert all(type(row["frame"]) is int and type(row["awake"]) is bool for row in window)
+    assert all(0 < b["simulation_time"] - a["simulation_time"] <= 0.03
+               for a, b in itertools.pairwise(window))
+    assert next_frame["frame"] == before["frame"] + 1
+    assert (end["frame"], end["simulation_time"]) == (samples[end_id]["frame"], samples[end_id]["simulation_time"])
+    assert DIRECT_WAKE_WINDOW_SECONDS - 1e-6 <= end["simulation_time"] - first_disabled["simulation_time"] <= DIRECT_WAKE_WINDOW_SECONDS + 0.03 + 1e-6
+    assert end["simulation_time"] - offset[1] > retry
+    assert records.index(samples[end_id]) < records.index(end)
+    awake = [row for row in samples[call_id + 1:end_id + 1]
+             if row["awake"] is True and row["simulation_time"] > enter["simulation_time"]]
+    activations = grouped.get("wake_activation", [])
+    assert len(activations) == (1 if awake else 0)
+    activation = awake[0] if awake else None
+    if activation:
+        observed = activations[0]
+        assert all(observed[field] == activation[field] for field in ("sample", "frame", "simulation_time"))
+        assert records.index(activation) < records.index(observed) <= records.index(end)
+        if activation["sample"] < end_id:
+            assert records.index(observed) < records.index(samples[activation["sample"] + 1])
+    admitted = activation is not None and activation["simulation_time"] - offset[0] < retry
+    return {
+        "schema": 1, "direct_calls": 1, "method": "IPhysicsObject::Wake", "slot": 25,
+        "target_elf": 0x37210, "admitted": admitted,
+        "simulation_time": enter["simulation_time"],
+        "script_elapsed_interval": [enter["simulation_time"] - bound for bound in reversed(offset)],
+        "seconds_after_first_native_disabled": enter["simulation_time"] - first_disabled["simulation_time"],
+        "same_owner_object_collide": True, "asleep_settled_before_call": True,
+        "before_brace_contacts": len(before_braces), "after_brace_contacts": len(after_braces),
+        "awake_after_call": after["awake"], "next_frame_awake": next_frame["awake"],
+        "activation": None if activation is None else {
+            "sample": activation["sample"], "frame": activation["frame"],
+            "simulation_time": activation["simulation_time"],
+            "script_elapsed_interval": [activation["simulation_time"] - bound for bound in reversed(offset)],
+            "brace_contacts": sum(row["name"] in brace_names for row in contacts_by_sample.get(activation["sample"], [])),
+        },
+        "dense_observation_frames": len(window), "observation_end_time": end["simulation_time"],
+        "all_snapshots_destroyed": True,
+        "limits": "One Wake request with observed activation before retry is a mechanism control, not Disable-only recovery, compiler attribution or proof of unchanged hull bytes.",
+    }
+
+
 def verify(output, release_mode, *, initial_profile=False, trigger_state=False):
-    intervention = release_mode == "disable-refresh"
+    direct_wake = release_mode == DIRECT_WAKE_MODE
+    intervention = release_mode == "disable-refresh" or direct_wake
     report = {
-        "schema": 1,
+        "schema": 2 if direct_wake else 1,
         "observation_only": not intervention,
         "success": False,
         "release_mode": release_mode,
@@ -201,11 +337,11 @@ def verify(output, release_mode, *, initial_profile=False, trigger_state=False):
         report["invalidations"] = grouped.get("invalidated", [])
         assert not report["invalidations"], report["invalidations"]
         assert not grouped.get("unload"), "Observer unloaded before capture termination"
-        assert len(grouped.get("start", [])) == 1 and grouped["start"][0]["schema"] == 1
+        assert len(grouped.get("start", [])) == 1
+        verify_direct_wake_option(receipt, grouped["start"][0], direct_wake)
         assert grouped["start"][0]["observation_only"] is (not intervention)
         verify_trigger_state_option(receipt, grouped["start"][0], trigger_state)
-        if not intervention:
-            assert not any(name.startswith("refresh_") for name in grouped)
+        verify_intervention_records(grouped, release_mode)
         assert len(grouped.get("loaded", [])) == 1 and grouped["loaded"][0]["success"]
         assert (
             len(grouped.get("level_init", [])) == len(grouped.get("activate", [])) == 1
@@ -286,6 +422,7 @@ def verify(output, release_mode, *, initial_profile=False, trigger_state=False):
             assert 0 <= row["contacts"] <= 4096
         contacts = grouped.get("contact", [])
         refresh_contacts = grouped.get("refresh_contact", [])
+        wake_contacts = grouped.get("wake_contact", [])
         entities = grouped.get("entity", [])
         assert len(entities) == len(samples) * len(STABLE | BRACES)
         by_sample, contacts_by_sample = {}, {}
@@ -331,7 +468,7 @@ def verify(output, release_mode, *, initial_profile=False, trigger_state=False):
                 )
                 == 1
             )
-        for row in contacts + refresh_contacts:
+        for row in contacts + refresh_contacts + wake_contacts:
             verify_contact_trigger_state(row, trigger_state)
             assert 0 <= row["sample"] < len(samples)
             if row["event"] == "contact":
@@ -600,7 +737,7 @@ def verify(output, release_mode, *, initial_profile=False, trigger_state=False):
             if trigger_state:
                 report["post_disable_before_retry"]["contact_trigger_state"] = trigger_state_summary(retained)
             report["obstruction_brace_contacts"] = len(definite)
-            if intervention:
+            if release_mode == "disable-refresh":
                 arms = grouped.get("refresh_arm", [])
                 calls = grouped.get("refresh_call", [])
                 afters = grouped.get("refresh_after", [])
@@ -689,6 +826,15 @@ def verify(output, release_mode, *, initial_profile=False, trigger_state=False):
                     "all_snapshots_destroyed": True,
                     "limits": "The method requests waking; this does not isolate waking from contact reconciliation, establish recovery, or prove a compiler defect.",
                 }
+            if direct_wake:
+                report["experimental_direct_wake"] = verify_direct_wake(
+                    records, grouped, samples, contacts_by_sample, first_disabled,
+                    last_solid, definite, offset, release[0], retry,
+                )
+                report["telemetry_valid"] = True
+                assert report["experimental_direct_wake"]["admitted"], (
+                    "No directly observed activation with advancing simulation before retry"
+                )
         if initial_profile:
             report["initial_object_profiles"]["success"] = True
         if trigger_state:

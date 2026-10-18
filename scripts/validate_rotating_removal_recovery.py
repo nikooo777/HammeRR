@@ -21,6 +21,9 @@ DISABLE_SCHEMA = 7
 DISABLE_RELEASE = "disable_both_perpendicular_braces_without_wake"
 REFRESH_SCHEMA = 8
 REFRESH_RELEASE = "disable_braces_and_recheck_same_crate_contacts_once"
+DIRECT_WAKE_SCHEMA = 9
+DIRECT_WAKE_RELEASE = "disable_braces_and_direct_wake_same_crate_once_before_retry"
+DIRECT_WAKE_MODE = "disable-direct-wake"
 SETTLED_SAMPLE_COUNT = 5
 SETTLED_SECONDS = 0.5
 MOVETYPE_VPHYSICS = 6
@@ -118,6 +121,16 @@ CONTACT_THINK = """
     }
     return 0.1;
 """.replace("__NAMES__", json.dumps(NAMES)).replace("__BRACES__", json.dumps(BRACES))
+
+
+def fixture_identity(release_mode):
+    return {
+        "kill": (FIXTURE_SCHEMA, "remove_both_perpendicular_braces_with_kill"),
+        "disable-wake": (EXPERIMENTAL_SCHEMA, DISABLE_WAKE_RELEASE),
+        "disable": (DISABLE_SCHEMA, DISABLE_RELEASE),
+        "disable-refresh": (REFRESH_SCHEMA, REFRESH_RELEASE),
+        DIRECT_WAKE_MODE: (DIRECT_WAKE_SCHEMA, DIRECT_WAKE_RELEASE),
+    }[release_mode]
 
 
 def callback_name(name, output):
@@ -377,9 +390,9 @@ def fixture(args):
         assert client.call("get_selection") == selection
         assert client.call("get_camera") == camera
         report = {
-            "schema": FIXTURE_SCHEMA,
+            "schema": fixture_identity(args.release_mode)[0],
             "obstruction": "movable_prop_braced_by_removable_brushes",
-            "release": "remove_both_perpendicular_braces_with_kill",
+            "release": fixture_identity(args.release_mode)[1],
             "bsp": str(bsp),
             "bsp_sha256": digest(bsp),
             "source": str(vmf),
@@ -390,15 +403,6 @@ def fixture(args):
             "runtime_checked": False,
             "desktop_input": False,
         }
-        if args.release_mode == "disable-wake":
-            report["schema"] = EXPERIMENTAL_SCHEMA
-            report["release"] = DISABLE_WAKE_RELEASE
-        elif args.release_mode == "disable":
-            report["schema"] = DISABLE_SCHEMA
-            report["release"] = DISABLE_RELEASE
-        elif args.release_mode == "disable-refresh":
-            report["schema"] = REFRESH_SCHEMA
-            report["release"] = REFRESH_RELEASE
         (args.output / "compile.json").write_text(json.dumps(report, indent=2) + "\n")
         return report
     finally:
@@ -521,7 +525,7 @@ def check(args):
     if release_mode == "disable-wake":
         assert len(wakes) == 1 and wakes[0]["name"] == "blocked_crate"
         assert wakes[0]["phase"] == 3 and wakes[0]["time"] == phases[2][0], wakes
-    elif release_mode in {"disable", "disable-refresh"}:
+    elif release_mode in {"disable", "disable-refresh", DIRECT_WAKE_MODE}:
         assert not wakes, "This Disable mode must not queue Wake"
 
     def rows(name, phase, source=None):
@@ -769,6 +773,15 @@ def check(args):
                 "teleport or replacement is authored. A pass applies to this "
                 "observed fixture and does not establish a contact-cache cause."
             )
+            if release_mode == DIRECT_WAKE_MODE:
+                report["release_method"] = "Disable plus one directly observed native Wake before retry"
+                report["native_direct_wake_telemetry_required"] = True
+                report["experimental_limits"] = (
+                    "One direct public Wake is required by separate native telemetry, with "
+                    "advancing simulation time and observed activation before retry. "
+                    "No contact refresh/deletion or other mutation is enabled. "
+                    "This control does not establish Disable-only recovery or compiler causation."
+                )
             if release_mode == "disable-refresh":
                 report["native_contact_refresh_telemetry_required"] = True
                 report["experimental_limits"] = (
@@ -797,7 +810,7 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--runtime", action="store_true")
     parser.add_argument(
-        "--release-mode", choices=["kill", "disable", "disable-wake", "disable-refresh"], default="kill"
+        "--release-mode", choices=["kill", "disable", "disable-wake", "disable-refresh", DIRECT_WAKE_MODE], default="kill"
     )
     parser.add_argument("--reuse-fixture", type=Path)
     parser.add_argument("--contact-observer-library", type=Path)
@@ -810,14 +823,14 @@ def main():
     args.game_dir = args.game_dir.resolve()
     args.output = args.output.resolve()
     args.output.mkdir(parents=True, exist_ok=True)
-    if args.release_mode == "disable-refresh":
-        assert args.contact_observer_library, "disable-refresh requires the native contact library"
+    if args.release_mode in {"disable-refresh", DIRECT_WAKE_MODE}:
+        assert args.contact_observer_library, f"{args.release_mode} requires the native contact library"
     if args.contact_initial_profile:
         assert args.contact_observer_library, "--contact-initial-profile requires the native contact library"
-        assert args.release_mode != "disable-refresh", "Initial profiles are observation-only"
+        assert args.release_mode not in {"disable-refresh", DIRECT_WAKE_MODE}, "Initial profiles are observation-only"
     if args.contact_trigger_state:
         assert args.contact_observer_library, "--contact-trigger-state requires the native contact library"
-        assert args.release_mode != "disable-refresh", "Trigger-state observation forbids native intervention"
+        assert args.release_mode not in {"disable-refresh", DIRECT_WAKE_MODE}, "Trigger-state observation forbids native intervention"
     if args.contact_observer_library:
         args.contact_observer_library = args.contact_observer_library.resolve(strict=True)
         assert args.runtime or args.worker, "--contact-observer-library requires --runtime"
@@ -855,18 +868,7 @@ def main():
     if args.reuse_fixture:
         assert args.runtime, "--reuse-fixture requires --runtime"
         compiled = json.loads(args.reuse_fixture.read_text())
-        expected_schema = (
-            EXPERIMENTAL_SCHEMA if args.release_mode == "disable-wake" else FIXTURE_SCHEMA
-        )
-        expected_release = (
-            DISABLE_WAKE_RELEASE
-            if args.release_mode == "disable-wake"
-            else "remove_both_perpendicular_braces_with_kill"
-        )
-        if args.release_mode == "disable":
-            expected_schema, expected_release = DISABLE_SCHEMA, DISABLE_RELEASE
-        elif args.release_mode == "disable-refresh":
-            expected_schema, expected_release = REFRESH_SCHEMA, REFRESH_RELEASE
+        expected_schema, expected_release = fixture_identity(args.release_mode)
         assert compiled["schema"] == expected_schema
         assert compiled["release"] == expected_release
         for kind in ["bsp", "source"]:

@@ -21,6 +21,7 @@ enum {
     MAX_CONTACTS = 4096,
     MAX_REPORT_BYTES = 32 * 1024 * 1024,
     SAMPLE_STRIDE = 7,
+    WAKE_OBSERVATION_SECONDS = 5,
     TRACKED_COUNT = 7,
     STABLE_COUNT = 3,
     SOLID_NONE = 0,
@@ -77,10 +78,13 @@ static int report_fd = -1;
 static bool invalidated, activated, entered, loaded, level_init_seen, initial_shutdown_seen;
 static unsigned long frame_count, sample_count;
 static long simulation_thread;
-static bool refresh_enabled, refresh_called, refresh_solid_seen, refresh_disabled_seen;
+static bool refresh_enabled, wake_enabled, intervention_called, intervention_solid_seen,
+    intervention_disabled_seen;
+static bool wake_dense_sampling, wake_activation_seen, wake_window_done;
+static float intervention_time;
 static float last_solid_time, first_disabled_time, last_active_contact_time = NAN;
 static float settled_since = NAN;
-static unsigned long refresh_frame;
+static unsigned long intervention_frame;
 static const char *snapshot_stage;
 static size_t blocked_brace_contacts;
 
@@ -123,6 +127,18 @@ static void fail(const char *reason) {
         emit("{\"event\":\"invalidated\",\"reason\":\"%s\",\"frame\":%lu,\"sample\":%lu}\n", reason,
              frame_count, sample_count);
     invalidated = true;
+}
+
+static const char *intervention_prefix(void) { return wake_enabled ? "wake" : "refresh"; }
+
+static void fail_intervention(const char *reason) {
+    char message[128];
+    int length = snprintf(message, sizeof(message), "%s_%s", intervention_prefix(), reason);
+    if (length <= 0 || (size_t)length >= sizeof(message)) {
+        report_failure();
+        return;
+    }
+    fail(message);
 }
 
 static bool refresh_mappings(void) {
@@ -301,9 +317,11 @@ static bool process_guard(void) {
     const char *report = getenv("HAMMERR_CONTACT_REPORT");
     const char *root = getenv("HAMMERR_CONTACT_GAME_ROOT");
     const char *mode = getenv("HAMMERR_CONTACT_INTERVENTION");
-    if (mode && strcmp(mode, "none") && strcmp(mode, "single-recheck"))
+    if (mode && strcmp(mode, "none") && strcmp(mode, "single-recheck") &&
+        strcmp(mode, "single-wake"))
         return false;
     refresh_enabled = mode && !strcmp(mode, "single-recheck");
+    wake_enabled = mode && !strcmp(mode, "single-wake");
     const char *profile = getenv("HAMMERR_CONTACT_INITIAL_PROFILE");
     if (profile && strcmp(profile, "0") && strcmp(profile, "1"))
         return false;
@@ -312,7 +330,7 @@ static bool process_guard(void) {
     if (trigger_state && strcmp(trigger_state, "0") && strcmp(trigger_state, "1"))
         return false;
     trigger_state_enabled = trigger_state && !strcmp(trigger_state, "1");
-    if ((initial_profile_enabled || trigger_state_enabled) && refresh_enabled)
+    if ((initial_profile_enabled || trigger_state_enabled) && (refresh_enabled || wake_enabled))
         return false;
     char executable[PATH_MAX], actual_game[PATH_MAX], actual_root[PATH_MAX],
         expected_report[PATH_MAX], path[PATH_MAX];
@@ -363,9 +381,12 @@ static bool process_guard(void) {
     report_fd = open(report, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
     if (report_fd < 0)
         return false;
-    emit("{\"event\":\"start\",\"schema\":1,\"pid\":%ld,\"observation_only\":%s%s}\n",
-         (long)getpid(), refresh_enabled ? "false" : "true",
-         trigger_state_enabled ? ",\"contact_trigger_state\":true,\"contact_trigger_state_schema\":1" : "");
+    emit("{\"event\":\"start\",\"schema\":%d,\"pid\":%ld,\"observation_only\":%s%s%s}\n",
+         wake_enabled ? 2 : 1, (long)getpid(), (refresh_enabled || wake_enabled) ? "false" : "true",
+         wake_enabled ? ",\"intervention\":\"single-wake\",\"direct_wake_schema\":1" : "",
+         trigger_state_enabled
+             ? ",\"contact_trigger_state\":true,\"contact_trigger_state_schema\":1"
+             : "");
     Module *modules[] = {&engine, &server, &physics};
     const char *relative[] = {"bin/linux64/engine.so", "cstrike/bin/linux64/server.so",
                               "bin/linux64/vphysics.so"};
@@ -883,7 +904,7 @@ static bool contacts(void *object, size_t *count) {
                 fail("unrepresentable_contact_name");
                 break;
             }
-            if (refresh_enabled) {
+            if (refresh_enabled || wake_enabled) {
                 for (size_t tracked_index = 0; tracked_index < TRACKED_COUNT; tracked_index++) {
                     Tracked *item = &tracked[tracked_index];
                     if (strcmp(name, item->name))
@@ -891,7 +912,7 @@ static bool contacts(void *object, size_t *count) {
                     if (!item->present || owner != item->entity || edict != item->edict ||
                         item->index != index || other != item->object ||
                         other_collide != item->collide) {
-                        fail("refresh_contact_identity_mismatch");
+                        fail_intervention("contact_identity_mismatch");
                         break;
                     }
                 }
@@ -906,25 +927,26 @@ static bool contacts(void *object, size_t *count) {
                 if (!object_trigger_state(source, &source_trigger) ||
                     !object_trigger_state(other, &other_trigger))
                     break;
-                int length = snprintf(trigger_fields, sizeof(trigger_fields),
-                                      ",\"trigger_state_schema\":1,\"source_is_trigger\":%s,"
-                                      "\"other_is_trigger\":%s",
-                                      source_trigger ? "true" : "false",
-                                      other_trigger ? "true" : "false");
+                int length =
+                    snprintf(trigger_fields, sizeof(trigger_fields),
+                             ",\"trigger_state_schema\":1,\"source_is_trigger\":%s,"
+                             "\"other_is_trigger\":%s",
+                             source_trigger ? "true" : "false", other_trigger ? "true" : "false");
                 if (length <= 0 || (size_t)length >= sizeof(trigger_fields)) {
                     fail("trigger_state_record_size");
                     break;
                 }
             }
-            const char *event = snapshot_stage ? "refresh_contact" : "contact";
+            const char *event =
+                snapshot_stage ? (wake_enabled ? "wake_contact" : "refresh_contact") : "contact";
             const char *stage = snapshot_stage ? "\"stage\":\"after\"," : "";
-            emit(
-                "{\"event\":\"%s\",%s\"sample\":%lu,\"source\":\"%p\",\"other\":\"%p\","
-                "\"owner\":\"%p\",\"edict\":\"%p\",\"index\":%d,\"name\":\"%s\",\"classname\":\"%"
-                "s\",\"other_awake\":%s,\"other_collide\":\"%p\",\"point\":[%.9g,%.9g,%.9g],\"normal\":[%.9g,%.9g,%.9g]%s}\n",
-                event, stage, sample_count, source, other, owner, edict, index, name, classname,
-                other_sleeping ? "false" : "true", other_collide, point.x, point.y, point.z,
-                normal.x, normal.y, normal.z, trigger_fields);
+            emit("{\"event\":\"%s\",%s\"sample\":%lu,\"source\":\"%p\",\"other\":\"%p\","
+                 "\"owner\":\"%p\",\"edict\":\"%p\",\"index\":%d,\"name\":\"%s\",\"classname\":\"%"
+                 "s\",\"other_awake\":%s,\"other_collide\":\"%p\",\"point\":[%.9g,%.9g,%.9g],"
+                 "\"normal\":[%.9g,%.9g,%.9g]%s}\n",
+                 event, stage, sample_count, source, other, owner, edict, index, name, classname,
+                 other_sleeping ? "false" : "true", other_collide, point.x, point.y, point.z,
+                 normal.x, normal.y, normal.z, trigger_fields);
             (*count)++;
             next(snapshot);
         }
@@ -937,7 +959,7 @@ static bool settled_vector(Vector value) {
     return fabsf(value.x) <= 0.05f && fabsf(value.y) <= 0.05f && fabsf(value.z) <= 0.05f;
 }
 
-static bool refresh_identities(void) {
+static bool intervention_identities(void) {
     size_t environment_count, object_count;
     if (!refresh_mappings() || !resolve_tracked() ||
         !enumerate_objects(&environment_count, &object_count))
@@ -945,27 +967,27 @@ static bool refresh_identities(void) {
     for (size_t index = 0; index < TRACKED_COUNT; index++) {
         Tracked *item = &tracked[index];
         if (!item->present || item->object_count != 1 || !item->collide) {
-            fail("refresh_missing_same_object");
+            fail_intervention("missing_same_object");
             return false;
         }
         if (index >= STABLE_COUNT &&
             (!observe_brace_solid(item, false) || !(item->solid_flags & FSOLID_NOT_SOLID))) {
-            fail("refresh_brace_not_disabled");
+            fail_intervention("brace_not_disabled");
             return false;
         }
     }
     return verify_physics_name(&tracked[0], false);
 }
 
-static bool maybe_refresh(float time, bool sleeping, Vector velocity, Vector angular,
-                          size_t contact_count) {
-    if (!refresh_enabled)
+static bool maybe_intervene(float time, bool sleeping, Vector velocity, Vector angular,
+                            size_t contact_count) {
+    if (!refresh_enabled && !wake_enabled)
         return true;
     bool all_solid = true, all_disabled = true;
     for (size_t index = STABLE_COUNT; index < TRACKED_COUNT; index++) {
         Tracked *item = &tracked[index];
         if (!item->present) {
-            fail("refresh_brace_missing");
+            fail_intervention("brace_missing");
             return false;
         }
         bool disabled = (item->solid_flags & FSOLID_NOT_SOLID) != 0;
@@ -973,91 +995,112 @@ static bool maybe_refresh(float time, bool sleeping, Vector velocity, Vector ang
         all_disabled &= disabled;
     }
     if (!all_solid && !all_disabled) {
-        fail("refresh_mixed_brace_transition");
+        fail_intervention("mixed_brace_transition");
         return false;
     }
     if (all_solid) {
-        if (refresh_disabled_seen) {
-            fail("refresh_brace_reenabled");
+        if (intervention_disabled_seen) {
+            fail_intervention("brace_reenabled");
             return false;
         }
-        refresh_solid_seen = true;
+        intervention_solid_seen = true;
         last_solid_time = time;
         if (!sleeping && blocked_brace_contacts)
             last_active_contact_time = time;
         return true;
     }
-    if (!refresh_disabled_seen) {
-        if (!refresh_solid_seen || !isfinite(last_active_contact_time) ||
-            time - last_solid_time <= 0 ||
-            time - last_solid_time > 0.2f) {
-            fail("refresh_missing_solid_transition");
+    if (!intervention_disabled_seen) {
+        if (!intervention_solid_seen || !isfinite(last_active_contact_time) ||
+            time - last_solid_time <= 0 || time - last_solid_time > 0.2f) {
+            fail_intervention("missing_solid_transition");
             return false;
         }
         first_disabled_time = time;
-        refresh_disabled_seen = true;
-        emit("{\"event\":\"refresh_arm\",\"sample\":%lu,\"frame\":%lu,\"last_solid_time\":%.9g,"
+        intervention_disabled_seen = true;
+        emit("{\"event\":\"%s_arm\",\"sample\":%lu,\"frame\":%lu,\"last_solid_time\":%.9g,"
              "\"first_disabled_time\":%.9g,\"last_active_brace_contact_time\":%.9g}\n",
-             sample_count, frame_count, last_solid_time, first_disabled_time,
+             intervention_prefix(), sample_count, frame_count, last_solid_time, first_disabled_time,
              last_active_contact_time);
+    }
+    if (wake_enabled) {
+        wake_dense_sampling = !wake_window_done;
+        if (intervention_called && !wake_window_done && !wake_activation_seen &&
+            time > intervention_time && !sleeping) {
+            wake_activation_seen = true;
+            emit("{\"event\":\"wake_activation\",\"sample\":%lu,\"frame\":%lu,\"simulation_time\":%"
+                 ".9g}\n",
+                 sample_count, frame_count, time);
+        }
+        if (!wake_window_done && time - first_disabled_time >= WAKE_OBSERVATION_SECONDS) {
+            wake_window_done = true;
+            wake_dense_sampling = false;
+            emit("{\"event\":\"wake_window_end\",\"sample\":%lu,\"frame\":%lu,\"simulation_time\":%"
+                 ".9g}\n",
+                 sample_count, frame_count, time);
+        }
     }
     bool settled = sleeping && settled_vector(velocity) && settled_vector(angular);
     if (!settled)
         settled_since = NAN;
     else if (!isfinite(settled_since))
         settled_since = time;
-    if (refresh_called || time - first_disabled_time < 2.0f)
+    if (intervention_called || time - first_disabled_time < 2.0f)
         return !invalidated;
     if (time - first_disabled_time > 2.2f || !settled || !isfinite(settled_since) ||
         time - settled_since < 0.5f || !blocked_brace_contacts ||
         !isfinite(last_active_contact_time) ||
         last_active_contact_time <= first_disabled_time - 7.5f ||
-        last_active_contact_time >= last_solid_time || !refresh_identities()) {
-        fail("refresh_preconditions_failed");
+        last_active_contact_time >= last_solid_time || !intervention_identities()) {
+        fail_intervention("preconditions_failed");
         return false;
     }
     Tracked *crate = &tracked[0];
-    typedef void (*Recheck)(void *);
+    typedef void (*Intervene)(void *);
     typedef bool (*InSimulation)(const void *);
     typedef bool (*Asleep)(const void *);
     typedef void (*Velocity)(const void *, Vector *, Vector *);
     typedef float (*SimulationTime)(const void *);
-    Recheck recheck = (Recheck)method(crate->object, 0x1948a8, 28, &physics, 0x38100);
+    unsigned slot = wake_enabled ? 25 : 28;
+    unsigned target = wake_enabled ? 0x37210 : 0x38100;
+    Intervene action = (Intervene)method(crate->object, 0x1948a8, slot, &physics, target);
     InSimulation in_simulation =
         (InSimulation)method(crate->environment, 0x198288, 36, &physics, 0x2bb80);
     Asleep asleep = (Asleep)method(crate->object, 0x1948a8, 3, &physics, 0x37a20);
     Velocity velocity_at = (Velocity)method(crate->object, 0x1948a8, 52, &physics, 0x37cc0);
     SimulationTime time_at =
         (SimulationTime)method(crate->environment, 0x198288, 39, &physics, 0x2bb40);
-    if (!recheck || !in_simulation || !asleep || !velocity_at || !time_at ||
+    if (!action || !in_simulation || !asleep || !velocity_at || !time_at ||
         in_simulation(crate->environment)) {
-        fail("refresh_unsafe_call_phase");
+        fail_intervention("unsafe_call_phase");
         return false;
     }
-    if (!emit("{\"event\":\"refresh_call\",\"stage\":\"enter\",\"sample\":%lu,\"frame\":%lu,"
+    intervention_called = true;
+    intervention_frame = frame_count;
+    intervention_time = time;
+    if (!emit("{\"event\":\"%s_call\",\"stage\":\"enter\",\"sample\":%lu,\"frame\":%lu,"
               "\"simulation_time\":%.9g,\"object\":\"%p\",\"owner\":\"%p\",\"collide\":\"%p\","
               "\"crate_index\":%d,\"contacts\":%zu,\"brace_contacts\":%zu,\"asleep\":true,"
               "\"settled_since\":%.9g,\"snapshot_destroyed\":true,\"in_simulation\":false,"
-              "\"slot\":28,\"target_elf\":229632}\n",
-              sample_count, frame_count, time, crate->object, crate->entity, crate->collide,
-              crate->index, contact_count, blocked_brace_contacts, settled_since))
+              "\"slot\":%u,\"target_elf\":%u}\n",
+              intervention_prefix(), sample_count, frame_count, time, crate->object, crate->entity,
+              crate->collide, crate->index, contact_count, blocked_brace_contacts, settled_since,
+              slot, target))
         return false;
-    refresh_called = true;
-    refresh_frame = frame_count;
-    recheck(crate->object);
+    action(crate->object);
     float return_time = time_at(crate->environment);
     if (!isfinite(return_time)) {
-        emit("{\"event\":\"refresh_call\",\"stage\":\"return\",\"sample\":%lu,\"frame\":%lu,"
-             "\"finite_time\":false}\n", sample_count, frame_count);
-        fail("refresh_nonfinite_return_time");
+        emit("{\"event\":\"%s_call\",\"stage\":\"return\",\"sample\":%lu,\"frame\":%lu,"
+             "\"finite_time\":false}\n",
+             intervention_prefix(), sample_count, frame_count);
+        fail_intervention("nonfinite_return_time");
         return false;
     }
-    if (!emit("{\"event\":\"refresh_call\",\"stage\":\"return\",\"sample\":%lu,\"frame\":%lu,"
+    if (!emit("{\"event\":\"%s_call\",\"stage\":\"return\",\"sample\":%lu,\"frame\":%lu,"
               "\"simulation_time\":%.9g,\"object\":\"%p\",\"owner\":\"%p\",\"collide\":\"%p\"}\n",
-              sample_count, frame_count, return_time, crate->object,
+              intervention_prefix(), sample_count, frame_count, return_time, crate->object,
               crate->entity, crate->collide) ||
-        !refresh_identities() || in_simulation(crate->environment)) {
-        fail("refresh_return_identity_or_phase");
+        !intervention_identities() || in_simulation(crate->environment)) {
+        fail_intervention("return_identity_or_phase");
         return false;
     }
     velocity = (Vector){NAN, NAN, NAN};
@@ -1066,7 +1109,7 @@ static bool maybe_refresh(float time, bool sleeping, Vector velocity, Vector ang
     time = time_at(crate->environment);
     sleeping = asleep(crate->object);
     if (!finite_vector(velocity) || !finite_vector(angular) || !isfinite(time)) {
-        fail("refresh_nonfinite_return_state");
+        fail_intervention("nonfinite_return_state");
         return false;
     }
     snapshot_stage = "after";
@@ -1074,13 +1117,14 @@ static bool maybe_refresh(float time, bool sleeping, Vector velocity, Vector ang
     snapshot_stage = NULL;
     if (!captured)
         return false;
-    emit("{\"event\":\"refresh_after\",\"sample\":%lu,\"frame\":%lu,\"simulation_time\":%.9g,"
+    emit("{\"event\":\"%s_after\",\"sample\":%lu,\"frame\":%lu,\"simulation_time\":%.9g,"
          "\"object\":\"%p\",\"owner\":\"%p\",\"collide\":\"%p\",\"awake\":%s,"
          "\"velocity\":[%.9g,%.9g,%.9g],\"angular_velocity\":[%.9g,%.9g,%.9g],"
-         "\"contacts\":%zu,\"brace_contacts\":%zu,\"snapshot_destroyed\":true,\"in_simulation\":false}\n",
-         sample_count, frame_count, time, crate->object, crate->entity, crate->collide,
-         sleeping ? "false" : "true", velocity.x, velocity.y, velocity.z, angular.x, angular.y,
-         angular.z, contact_count, blocked_brace_contacts);
+         "\"contacts\":%zu,\"brace_contacts\":%zu,\"snapshot_destroyed\":true,\"in_simulation\":"
+         "false}\n",
+         intervention_prefix(), sample_count, frame_count, time, crate->object, crate->entity,
+         crate->collide, sleeping ? "false" : "true", velocity.x, velocity.y, velocity.z, angular.x,
+         angular.y, angular.z, contact_count, blocked_brace_contacts);
     return !invalidated;
 }
 
@@ -1139,7 +1183,7 @@ static void observe(void) {
          sample_count, frame_count, simulation_thread, time, environment_count, object_count,
          crate->index, crate->object, crate->entity, crate->collide, sleeping ? "false" : "true",
          velocity.x, velocity.y, velocity.z, angular.x, angular.y, angular.z, contact_count);
-    if (invalidated || !maybe_refresh(time, sleeping, velocity, angular, contact_count))
+    if (invalidated || !maybe_intervene(time, sleeping, velocity, angular, contact_count))
         return;
     sample_count++;
 }
@@ -1187,6 +1231,8 @@ static void plugin_unpause(void *self) {
 }
 static const char *plugin_description(void *self) {
     (void)self;
+    if (wake_enabled)
+        return "HammeRR private single direct Wake experiment";
     return refresh_enabled ? "HammeRR private single contact refresh experiment"
                            : "HammeRR private read-only contact observer";
 }
@@ -1221,7 +1267,7 @@ static void plugin_frame(void *self, bool simulating) {
     simulation_thread = thread;
     entered = true;
     if (frame_count++ % SAMPLE_STRIDE == 0 ||
-        (refresh_called && frame_count == refresh_frame + 1))
+        (intervention_called && frame_count == intervention_frame + 1) || wake_dense_sampling)
         observe();
     entered = false;
 }
@@ -1230,8 +1276,8 @@ static void plugin_shutdown(void *self) {
     if (loaded && !invalidated && !level_init_seen && !activated && !entered && !frame_count &&
         !sample_count && !initial_shutdown_seen) {
         initial_shutdown_seen = true;
-        emit(
-            "{\"event\":\"initial_shutdown\",\"frame\":0,\"sample\":0,\"before_target_init\":true}\n");
+        emit("{\"event\":\"initial_shutdown\",\"frame\":0,\"sample\":0,\"before_target_init\":true}"
+             "\n");
         return;
     }
     activated = false;

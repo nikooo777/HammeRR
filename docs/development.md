@@ -1235,6 +1235,8 @@ python3 -B scripts/validate_rotating_removal_recovery.py --binary target/debug/h
 python3 -B scripts/validate_rotating_removal_recovery.py --binary target/debug/hammerr-headless --output /tmp/hammerr-initial-contact-profile --runtime --release-mode disable --contact-observer-library target/debug/hammerr_contact_observer.so --contact-initial-profile
 python3 -B scripts/validate_rotating_removal_recovery.py --binary target/debug/hammerr-headless --output /tmp/hammerr-contact-trigger-state --runtime --release-mode disable --contact-observer-library target/debug/hammerr_contact_observer.so --contact-trigger-state
 python3 -B scripts/validate_rotating_removal_recovery.py --binary target/debug/hammerr-headless --output /tmp/hammerr-refresh-contact-client --runtime --release-mode disable-refresh --contact-observer-library target/debug/hammerr_contact_observer.so
+cc -shared -fPIC -std=c11 -O2 -Wall -Wextra -Werror -fvisibility=hidden scripts/contact_runtime_probe.c -ldl -lm -o target/debug/hammerr_contact_observer_direct_wake_v1.so
+python3 -B scripts/validate_rotating_removal_recovery.py --binary target/debug/hammerr-headless --output /tmp/hammerr-direct-wake-contact-v1 --runtime --release-mode disable-direct-wake --contact-observer-library target/debug/hammerr_contact_observer_direct_wake_v1.so
 python3 -B -m unittest discover -s scripts -p test_contact_runtime_observer.py
 ```
 
@@ -1295,6 +1297,29 @@ changes. No separate Wake, impulse, motion setter, teleport or replacement is
 issued. The call itself may wake the crate, so the result cannot isolate contact
 deletion from waking. Full gameplay recovery remains required; this opt-in probe
 does not change normal map compilation or game launch behavior.
+
+The separate experimental `--release-mode disable-direct-wake` directly calls
+public `Wake` once on the same crate, using the refresh experiment's guarded
+2.0–2.2 native seconds after all four braces become disabled. It requires the
+library and its own schema-9 fixture receipt; prior Kill, authored Wake, Disable
+and contact-refresh receipts do not select this control. It authors no Wake
+input and invokes no contact refresh/deletion, motion setter, impulse, teleport
+or replacement. Initial-profile and trigger-state options remain observation-only
+and reject this intervention mode.
+
+The crate must have actual brace contacts and remain asleep with near-zero
+velocity for at least 0.5 seconds before the call. Native observations run every
+safe frame from the first disabled sample through five native seconds after it.
+The decoder requires that complete window to cover the unchanged retry, with
+advancing simulation time and directly observed awake state before retry to
+admit the control. Immediate awake state alone cannot admit it. Call, snapshot,
+identity, dense-window and activation evidence stays in the raw stream and
+`experimental_direct_wake` analysis. Missing or late activation leaves an
+explicit unadmitted control even when the rest of its telemetry is valid.
+Full gameplay recovery remains independently required; no aggregate passes on
+telemetry alone. This mechanism experiment does not establish Disable-only
+recovery or compiler causation. Use fresh library/output paths and preserve
+earlier libraries, captures and receipts.
 
 
 ### Brush-model physics surfaces

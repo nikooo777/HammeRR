@@ -1751,10 +1751,12 @@ reported by `get_brush_components`: the numeric brush ID and complete incident
 side-ID set, with no raw position field. `ids` must identify exactly one world
 brush or brush-entity owner containing that corner. The mode translates the
 whole owner so the source vertex meets the nearest real corner of the first
-visible flat brush face or prepared terrain triangle hit by the ray. Terrain
+visible flat brush face, prepared terrain triangle or supported model mesh triangle
+hit by the ray. Terrain
 targets use only that triangle's three vertices, including displayed sewn
 mixed-power seam positions. Equal-distance ties use incident-side identity for
-brushes and row-major vertex index for terrain. No grid rounding, rotation or surface offset is applied; `align: true`
+brushes, row-major vertex index for terrain and global decoded vertex index
+for models. No grid rounding, rotation or surface offset is applied; `align: true`
 or nonzero `offset` rejects. Other methods do not accept `source_corner`.
 
 Read captured `source_corner` / `source_position` even while picking, then
@@ -1764,11 +1766,19 @@ add `kind: "brush_corner"`. Terrain targets have `kind: "terrain_vertex"`,
 `solid`, `side`, `triangle`, `index`, `grid_size`, zero-based `row`/`column`, and
 `provenance: "prepared_surface"`; the exact world point is
 `plan.corner.position`. No brush corner identity is fabricated for terrain.
-Authored terrain rows stay unchanged. `plan.contact_offset` is null for corner
+Authored terrain rows stay unchanged. Model targets have `kind: "model_vertex"`,
+`entity` (`entity:<id>`), cached canonical `model` path and `checksum`, `body`,
+`skin`, uniform `scale`, `origin`, XYZW quaternion `rotation`, global `part`,
+zero-based part `triangle`, global decoded `vertex`, and
+`provenance: "cached_decoded_model_mesh"`. The world point is
+`plan.corner.position`; it is one of the first hit triangle's three transformed
+vertices. Blank/unsupported body choices supply no model target. Model reload
+invalidates captured plans; changed disk bytes are not silently adopted by the
+cache. Brush/terrain fields are absent for model targets. `plan.contact_offset` is null for corner
 snapping. Source and flat target brushes require checked 4–64-side topology; every translated
 child, including hidden brushes, must remain within ±65,536 units. Hidden/tool/
 working-region exclusions apply. Model/point sources, displacement source
-brushes and model target vertices reject; an unsupported first hit is
+brushes reject; an unsupported first hit is
 not bypassed. Invalid requests retain a valid plan. Existing Apply/Cancel and
 Undo rules apply; an already coincident snap creates no history. Human controls:
 **Reshape brushes… → Vertices**, select one corner, then **Place on surface… →

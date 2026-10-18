@@ -29,6 +29,9 @@ impl State {
 #[cfg(test)]
 pub(crate) mod tests;
 
+#[cfg(test)]
+mod model_snap_tests;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Method {
     Floor,
@@ -100,6 +103,27 @@ struct CornerSnap {
 enum CornerTarget {
     Brush(Component),
     Terrain(query::TerrainVertex),
+    Model(ModelCornerTarget),
+}
+
+struct ModelCornerTarget {
+    entity: ObjectId,
+    path: String,
+    checksum: i32,
+    body: u32,
+    skin: usize,
+    scale: f32,
+    origin: DVec3,
+    rotation: DQuat,
+    part: usize,
+    triangle: usize,
+    vertex: u32,
+    position: DVec3,
+}
+
+struct PickedSurface {
+    surface: SurfaceHit,
+    model: Option<ModelCornerTarget>,
 }
 
 impl CornerTarget {
@@ -115,6 +139,13 @@ impl CornerTarget {
                 "triangle":vertex.triangle, "index":vertex.index, "grid_size":vertex.grid_size,
                 "row":vertex.index / vertex.grid_size, "column":vertex.index % vertex.grid_size,
                 "provenance":"prepared_surface"
+            }),
+            Self::Model(target) => json!({
+                "kind":"model_vertex", "entity":object_id(target.entity), "model":target.path,
+                "checksum":target.checksum, "body":target.body, "skin":target.skin,
+                "scale":target.scale, "origin":target.origin.to_array(), "rotation":target.rotation.to_array(),
+                "part":target.part, "triangle":target.triangle, "vertex":target.vertex,
+                "provenance":"cached_decoded_model_mesh"
             }),
         }
     }
@@ -421,6 +452,16 @@ impl Session {
         ray: Ray,
         reject_ambiguous: bool,
     ) -> Result<SurfaceHit, String> {
+        self.picked_placement_surface(ids, ray, reject_ambiguous)
+            .map(|picked| picked.surface)
+    }
+
+    fn picked_placement_surface(
+        &mut self,
+        ids: &[ObjectId],
+        ray: Ray,
+        reject_ambiguous: bool,
+    ) -> Result<PickedSurface, String> {
         let direction = ray
             .direction
             .try_normalize()
@@ -461,6 +502,10 @@ impl Session {
         }
         ordinary
             .into_iter()
+            .map(|surface| PickedSurface {
+                surface,
+                model: None,
+            })
             .chain(
                 self.working_evaluation(&self.document)
                     .models
@@ -470,9 +515,28 @@ impl Session {
                         !excluded.contains(&instance.id)
                             && self.working_object_visible(&self.document, instance.id)
                     })
-                    .filter_map(|instance| instance.pick_surface(&ray)),
+                    .filter_map(|instance| {
+                        let hit = instance.pick_mesh_surface(&ray)?;
+                        Some(PickedSurface {
+                            surface: hit.surface,
+                            model: Some(ModelCornerTarget {
+                                entity: instance.id,
+                                path: instance.asset.path.clone(),
+                                checksum: instance.asset.model.header.checksum,
+                                body: instance.body,
+                                skin: instance.skin,
+                                scale: instance.scale,
+                                origin: instance.origin,
+                                rotation: instance.rotation,
+                                part: hit.part,
+                                triangle: hit.triangle,
+                                vertex: hit.vertex,
+                                position: hit.position,
+                            }),
+                        })
+                    }),
             )
-            .min_by(|a, b| a.hit.distance.total_cmp(&b.hit.distance))
+            .min_by(|a, b| a.surface.hit.distance.total_cmp(&b.surface.hit.distance))
             .ok_or("The ray did not hit a visible brush, terrain sheet or supported model".into())
     }
 
@@ -495,12 +559,26 @@ impl Session {
         if method == Method::BrushCorner {
             let source = self.placement_source_corner(ids, options)?.unwrap();
             let ray = ray.ok_or("Supply a ray or pick a target corner in the viewport")?;
-            let surface = self.placement_surface(ids, ray, true)?;
-            let (target, position) = if let Some(vertex) = surface.terrain_vertex {
+            let PickedSurface { surface, model } = self.picked_placement_surface(ids, ray, true)?;
+            let (target, position) = if let Some(target) = model {
+                if self
+                    .document
+                    .vmf()
+                    .entities
+                    .iter()
+                    .filter(|entity| ObjectId::Entity(entity.id) == target.entity)
+                    .count()
+                    != 1
+                {
+                    return Err("The first visible model has an ambiguous entity identity".into());
+                }
+                let position = target.position;
+                (CornerTarget::Model(target), position)
+            } else if let Some(vertex) = surface.terrain_vertex {
                 (CornerTarget::Terrain(vertex), vertex.position)
             } else {
                 let (target, approximate) = query::face_corner(&self.document, &surface.hit)
-                    .ok_or("The first visible hit must be an unambiguous flat brush face or prepared terrain triangle")?;
+                    .ok_or("The first visible hit must have unambiguous brush, terrain or model mesh geometry")?;
                 let (_, solid) = subobject::solid(&self.document, target.solid)
                     .map_err(|error| error.to_string())?;
                 let position = precise_corner(solid, &target, approximate)

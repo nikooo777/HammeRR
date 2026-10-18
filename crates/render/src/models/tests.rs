@@ -8,6 +8,7 @@ use std::collections::HashSet;
 
 mod lighting_tests;
 mod scale_tests;
+mod snap_tests;
 
 fn asset() -> Arc<Asset> {
     Arc::new(Asset::new(

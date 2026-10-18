@@ -112,3 +112,43 @@ pub fn terrain_target() -> (Session, ObjectId, map_core::surface::FaceId, Ray) {
         },
     )
 }
+
+pub fn model_target() -> (tempfile::TempDir, Session, ObjectId, ObjectId, Ray) {
+    let (directory, game) = crate::test_assets::model_lighting::game();
+    let mut session = Session::new(Ok(game));
+    let model = session
+        .create_entity(
+            Actor::User,
+            "prop_dynamic",
+            Some(DVec3::new(100.0, 200.0, 40.0)),
+            BTreeMap::from([
+                ("model".into(), "models/test/receiver.mdl".into()),
+                ("angles".into(), "0 90 0".into()),
+                ("modelscale".into(), "2".into()),
+                ("skin".into(), "1".into()),
+            ]),
+        )
+        .unwrap();
+    let selected = session
+        .create_block(
+            Actor::User,
+            DVec3::new(-96.0, -96.0, 32.0),
+            DVec3::new(-80.0, -80.0, 48.0),
+            "test/checker",
+            false,
+        )
+        .unwrap();
+    session
+        .select(&[selected], crate::session::SelectMode::Replace)
+        .unwrap();
+    (
+        directory,
+        session,
+        selected,
+        model,
+        Ray {
+            origin: DVec3::new(144.0, 158.0, 200.0),
+            direction: DVec3::NEG_Z * 3.0,
+        },
+    )
+}

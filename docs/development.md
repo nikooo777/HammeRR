@@ -2845,3 +2845,18 @@ independence, retained projection/terrain metadata, transactional failure,
 zero-amplitude preview ownership, stale Apply, Cancel, Undo and save/reopen.
 The actual Surface controls write `uv-variation.png` when
 `HAMMERR_UI_SNAPSHOTS` names an existing directory. No desktop input is used.
+
+### Model vertex snapping
+
+```sh
+cargo test -p render snap_tests
+cargo test -p editor-core --features mcp,test-support model_corner_snap
+cargo test -p editor-core --features mcp,test-support model_snap_mcp
+cargo test -p editor model_corner_controls_review_the_shared_cached_mesh_vertex
+```
+
+These fixtures use actual decoded mesh parts, selected/blank bodygroups, Source
+rotation and uniform scale, exact first-hit vertex identity, cached reload guards,
+shared Preview/Cancel/Apply and Undo. The software placement case writes
+`model-vertex-snap.png` when `HAMMERR_UI_SNAPSHOTS` names an existing directory;
+it does not create a desktop window or use input.

@@ -280,17 +280,26 @@ impl Model {
     }
 
     pub fn parts_for_body(&self, body: u32) -> impl Iterator<Item = &Part> {
+        self.indexed_parts_for_body(body).map(|(_, part)| part)
+    }
+
+    pub fn indexed_parts_for_body(&self, body: u32) -> impl Iterator<Item = (usize, &Part)> {
         self.parts
             .iter()
+            .enumerate()
             .take(if self.body_groups.is_empty() {
                 self.parts.len()
             } else {
                 0
             })
             .chain(self.body_groups.iter().flat_map(move |group| {
-                self.parts[group.variants[group.selected(body)].parts.clone()].iter()
+                let range = group.variants[group.selected(body)].parts.clone();
+                self.parts[range.clone()]
+                    .iter()
+                    .enumerate()
+                    .map(move |(offset, part)| (range.start + offset, part))
             }))
-            .filter(|part| !part.indices.is_empty())
+            .filter(|(_, part)| !part.indices.is_empty())
     }
 
     pub fn bounds_for_body(&self, body: u32) -> Option<[[f32; 3]; 2]> {

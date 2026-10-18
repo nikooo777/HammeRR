@@ -330,6 +330,23 @@ pub struct Instance {
     helper_bounds: (DVec3, DVec3),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MeshSurfaceHit {
+    pub surface: map_core::query::SurfaceHit,
+    pub part: usize,
+    pub triangle: usize,
+    pub vertex: u32,
+    pub position: DVec3,
+}
+
+struct MeshTriangleHit {
+    distance: f64,
+    normal: DVec3,
+    part: usize,
+    triangle: usize,
+    indices: [u32; 3],
+}
+
 pub fn appearance(
     entity: &Entity,
 ) -> Result<source_formats::render_color::ModelAppearance, String> {
@@ -562,6 +579,10 @@ impl Instance {
     }
 
     pub fn pick_surface(&self, ray: &Ray) -> Option<map_core::query::SurfaceHit> {
+        self.pick_mesh_surface(ray).map(|hit| hit.surface)
+    }
+
+    pub fn pick_mesh_surface(&self, ray: &Ray) -> Option<MeshSurfaceHit> {
         let bounds = self.asset.model.bounds_for_body(self.body)?;
         if !ray.origin.is_finite() {
             return None;
@@ -586,9 +607,9 @@ impl Instance {
         ) {
             return None;
         }
-        let mut nearest: Option<(f64, DVec3)> = None;
-        for part in model.parts_for_body(self.body) {
-            for indices in part.indices.as_chunks::<3>().0 {
+        let mut nearest: Option<MeshTriangleHit> = None;
+        for (part_id, part) in model.indexed_parts_for_body(self.body) {
+            for (triangle, indices) in part.indices.as_chunks::<3>().0.iter().enumerate() {
                 let points = std::array::from_fn(|axis| {
                     DVec3::from_array(
                         model.vertices[indices[axis] as usize]
@@ -597,7 +618,7 @@ impl Instance {
                     )
                 });
                 if let Some(distance) = map_core::query::ray_triangle(&ray, points)
-                    && nearest.is_none_or(|(old, _)| distance < old)
+                    && nearest.as_ref().is_none_or(|old| distance < old.distance)
                 {
                     let mut normal = self.rotation
                         * (points[2] - points[0])
@@ -606,25 +627,54 @@ impl Instance {
                     if normal.dot(world_ray.direction) > 0.0 {
                         normal = -normal;
                     }
-                    nearest = Some((distance, normal));
+                    nearest = Some(MeshTriangleHit {
+                        distance,
+                        normal,
+                        part: part_id,
+                        triangle,
+                        indices: *indices,
+                    });
                 }
             }
         }
-        let (distance, normal) = nearest?;
+        let MeshTriangleHit {
+            distance,
+            normal,
+            part,
+            triangle,
+            indices,
+        } = nearest?;
         let distance = if self.scale == 1.0 {
             distance
         } else {
             distance * f64::from(self.scale)
         };
-        Some(map_core::query::SurfaceHit {
-            normal,
-            terrain_vertex: None,
-            hit: Hit {
-                object: self.id,
-                solid: None,
-                side: None,
-                distance,
-                point: world_ray.origin + world_ray.direction * distance,
+        let point = world_ray.origin + world_ray.direction * distance;
+        let vertex = indices.into_iter().min_by(|&a, &b| {
+            self.point(model.vertices[a as usize].position)
+                .distance_squared(point)
+                .total_cmp(
+                    &self
+                        .point(model.vertices[b as usize].position)
+                        .distance_squared(point),
+                )
+                .then_with(|| a.cmp(&b))
+        })?;
+        Some(MeshSurfaceHit {
+            part,
+            triangle,
+            vertex,
+            position: self.point(model.vertices[vertex as usize].position),
+            surface: map_core::query::SurfaceHit {
+                normal,
+                terrain_vertex: None,
+                hit: Hit {
+                    object: self.id,
+                    solid: None,
+                    side: None,
+                    distance,
+                    point,
+                },
             },
         })
     }

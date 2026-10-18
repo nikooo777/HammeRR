@@ -124,6 +124,10 @@ fn configured_view_keys_use_the_originating_admitted_callback_and_remember_camer
         ("perspective", "F11"),
         ("objects", "F8"),
         ("faces", "F9"),
+        ("show_grid", "F4"),
+        ("snap_to_grid", "F5"),
+        ("tool_textures", "F6"),
+        ("selection_outlines", "F7"),
     ] {
         controller.window.invoke_choose(command.into());
         assert_eq!(controller.window.get_selected(), command);
@@ -214,6 +218,37 @@ fn configured_view_keys_use_the_originating_admitted_callback_and_remember_camer
         assert!(!peer.face_mode());
     }
     assert!(lock(&shared).selected_ids().is_empty());
+    let toggles = |session: &Session| {
+        [
+            session.spatial().grid_visible,
+            session.spatial().snap,
+            session.view().tool_textures,
+            session.view().selection_outlines,
+        ]
+    };
+    let peer_toggles = toggles(&peer);
+    for (index, key) in [
+        slint::platform::Key::F4,
+        slint::platform::Key::F5,
+        slint::platform::Key::F6,
+        slint::platform::Key::F7,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        for enabled in [false, true] {
+            assert!(app.invoke_key(
+                crate::viewport::key_text(key).into(),
+                true,
+                false,
+                false,
+                false,
+                false
+            ));
+            assert_eq!(toggles(&lock(&shared))[index], enabled);
+            assert_eq!(toggles(&peer), peer_toggles);
+        }
+    }
     assert_eq!(lock(&shared).document().vmf(), &before);
     assert_eq!(lock(&shared).history_snapshot(), history);
     assert_eq!(peer.camera(), peer_camera);
@@ -226,18 +261,29 @@ fn configured_view_keys_use_the_originating_admitted_callback_and_remember_camer
     )
     .unwrap();
     let log = lock(&shared).log_serial();
-    assert!(app.invoke_key(
-        crate::viewport::key_text(slint::platform::Key::F9).into(),
-        true,
-        false,
-        false,
-        false,
-        false
-    ));
+    let closed_toggles = toggles(&lock(&shared));
+    for key in [
+        slint::platform::Key::F9,
+        slint::platform::Key::F4,
+        slint::platform::Key::F5,
+        slint::platform::Key::F6,
+        slint::platform::Key::F7,
+    ] {
+        assert!(app.invoke_key(
+            crate::viewport::key_text(key).into(),
+            true,
+            false,
+            false,
+            false,
+            false
+        ));
+    }
     assert_eq!(app.get_message(), "the document is closed");
     assert_eq!(lock(&shared).camera(), remembered);
     assert!(!lock(&shared).face_mode());
     assert_eq!(lock(&shared).log_serial(), log);
+    assert_eq!(toggles(&lock(&shared)), closed_toggles);
+    assert_eq!(toggles(&peer), peer_toggles);
     assert_eq!(peer.camera(), peer_camera);
     assert_eq!(
         std::fs::read(

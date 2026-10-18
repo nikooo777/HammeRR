@@ -25,10 +25,14 @@ pub enum Command {
     Side,
     Objects,
     Faces,
+    ShowGrid,
+    SnapToGrid,
+    ToolTextures,
+    SelectionOutlines,
 }
 
 impl Command {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 15] = [
         Self::Undo,
         Self::Redo,
         Self::FrameSelection,
@@ -40,6 +44,10 @@ impl Command {
         Self::Side,
         Self::Objects,
         Self::Faces,
+        Self::ShowGrid,
+        Self::SnapToGrid,
+        Self::ToolTextures,
+        Self::SelectionOutlines,
     ];
 
     pub fn label(self) -> &'static str {
@@ -55,6 +63,10 @@ impl Command {
             Self::Side => "Side",
             Self::Objects => "Objects",
             Self::Faces => "Faces",
+            Self::ShowGrid => "Show grid",
+            Self::SnapToGrid => "Snap to grid",
+            Self::ToolTextures => "Tool textures",
+            Self::SelectionOutlines => "Selection outlines",
         }
     }
 }
@@ -131,6 +143,14 @@ pub struct Bindings {
     pub objects: Slots,
     #[serde(default)]
     pub faces: Slots,
+    #[serde(default)]
+    pub show_grid: Slots,
+    #[serde(default)]
+    pub snap_to_grid: Slots,
+    #[serde(default)]
+    pub tool_textures: Slots,
+    #[serde(default)]
+    pub selection_outlines: Slots,
 }
 
 fn chord(key: &str, control: bool, shift: bool) -> Option<Chord> {
@@ -158,6 +178,10 @@ impl Default for Bindings {
             side: [None, None],
             objects: [None, None],
             faces: [None, None],
+            show_grid: [None, None],
+            snap_to_grid: [None, None],
+            tool_textures: [None, None],
+            selection_outlines: [None, None],
         }
     }
 }
@@ -176,6 +200,10 @@ impl Bindings {
             Command::Side => &self.side,
             Command::Objects => &self.objects,
             Command::Faces => &self.faces,
+            Command::ShowGrid => &self.show_grid,
+            Command::SnapToGrid => &self.snap_to_grid,
+            Command::ToolTextures => &self.tool_textures,
+            Command::SelectionOutlines => &self.selection_outlines,
         }
     }
 
@@ -192,6 +220,10 @@ impl Bindings {
             Command::Side => &mut self.side,
             Command::Objects => &mut self.objects,
             Command::Faces => &mut self.faces,
+            Command::ShowGrid => &mut self.show_grid,
+            Command::SnapToGrid => &mut self.snap_to_grid,
+            Command::ToolTextures => &mut self.tool_textures,
+            Command::SelectionOutlines => &mut self.selection_outlines,
         }
     }
 

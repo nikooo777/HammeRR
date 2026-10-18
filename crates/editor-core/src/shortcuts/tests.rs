@@ -12,6 +12,10 @@ fn factory_aliases_and_exact_modifiers_resolve_without_reserved_key_collisions()
         Command::Side,
         Command::Objects,
         Command::Faces,
+        Command::ShowGrid,
+        Command::SnapToGrid,
+        Command::ToolTextures,
+        Command::SelectionOutlines,
     ] {
         assert_eq!(bindings.slots(command), &[None, None]);
     }
@@ -98,13 +102,24 @@ fn older_version_one_bindings_preserve_bytes_and_default_only_missing_extensions
         Command::Side,
         Command::Objects,
         Command::Faces,
+        Command::ShowGrid,
+        Command::SnapToGrid,
+        Command::ToolTextures,
+        Command::SelectionOutlines,
     ] {
         assert_eq!(loaded.slots(command), &[None, None]);
     }
     loaded.top[0] = chord("F8", false, false);
     loaded.front[1] = chord("F9", true, true);
     let mut nine = serde_json::json!({"version":1,"bindings":loaded});
-    for name in ["objects", "faces"] {
+    for name in [
+        "objects",
+        "faces",
+        "show_grid",
+        "snap_to_grid",
+        "tool_textures",
+        "selection_outlines",
+    ] {
         nine["bindings"].as_object_mut().unwrap().remove(name);
     }
     let nine_bytes = serde_json::to_vec_pretty(&nine).unwrap();
@@ -118,11 +133,39 @@ fn older_version_one_bindings_preserve_bytes_and_default_only_missing_extensions
     assert_eq!(loaded.faces, [None, None]);
     loaded.objects[0] = chord("F10", false, false);
     loaded.faces[1] = chord("F11", true, false);
+    let mut eleven = serde_json::json!({"version":1,"bindings":loaded});
+    for name in [
+        "show_grid",
+        "snap_to_grid",
+        "tool_textures",
+        "selection_outlines",
+    ] {
+        eleven["bindings"].as_object_mut().unwrap().remove(name);
+    }
+    let eleven_bytes = serde_json::to_vec_pretty(&eleven).unwrap();
+    fs::write(store.path(), &eleven_bytes).unwrap();
+    let authority = Authority::configured(Ok(directory.path().into()));
+    let source = store.read_source().unwrap();
+    let mut loaded = store.parse(&source).unwrap().unwrap();
+    assert_eq!(authority.snapshot().current, loaded);
+    assert_eq!(fs::read(store.path()).unwrap(), eleven_bytes);
+    for command in [
+        Command::ShowGrid,
+        Command::SnapToGrid,
+        Command::ToolTextures,
+        Command::SelectionOutlines,
+    ] {
+        assert_eq!(loaded.slots(command), &[None, None]);
+    }
+    loaded.show_grid[0] = chord("F12", false, false);
+    loaded.snap_to_grid[0] = chord("G", true, false);
+    loaded.tool_textures[0] = chord("T", true, false);
+    loaded.selection_outlines[1] = chord("F12", false, true);
     let published = store.save_checked(loaded.clone(), &source).unwrap();
     let saved: serde_json::Value =
         serde_json::from_slice(&fs::read(store.path()).unwrap()).unwrap();
     assert_eq!(saved["version"], FORMAT_VERSION);
-    for (command, slots) in nine["bindings"].as_object().unwrap() {
+    for (command, slots) in eleven["bindings"].as_object().unwrap() {
         assert_eq!(&saved["bindings"][command], slots, "{command}");
     }
     assert_eq!(
@@ -137,10 +180,10 @@ fn older_version_one_bindings_preserve_bytes_and_default_only_missing_extensions
     );
     let preserved = fs::read(store.path()).unwrap();
     let mut conflicting = loaded.clone();
-    conflicting.faces[0] = loaded.undo[0].clone();
+    conflicting.tool_textures[0] = loaded.undo[0].clone();
     assert!(store.save(conflicting).is_err());
     let mut reserved = loaded;
-    reserved.objects[0] = chord("W", false, false);
+    reserved.snap_to_grid[0] = chord("W", false, false);
     assert!(store.save(reserved).is_err());
     assert_eq!(fs::read(store.path()).unwrap(), preserved);
 }

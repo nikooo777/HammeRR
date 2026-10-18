@@ -165,6 +165,40 @@ impl Session {
                 self.set_face_mode(enabled);
                 result["mode"] = json!(if self.face_mode() { "faces" } else { "objects" });
             }
+            Command::ShowGrid => {
+                self.set_spatial(
+                    actor,
+                    crate::spatial::Update {
+                        grid_visible: Some(!self.spatial().grid_visible),
+                        ..Default::default()
+                    },
+                )?;
+                result["grid_visible"] = json!(self.spatial().grid_visible);
+            }
+            Command::SnapToGrid => {
+                self.set_spatial(
+                    actor,
+                    crate::spatial::Update {
+                        snap: Some(!self.spatial().snap),
+                        ..Default::default()
+                    },
+                )?;
+                result["snap"] = json!(self.spatial().snap);
+            }
+            Command::ToolTextures => {
+                self.set_view(render::ViewOptions {
+                    tool_textures: !self.view().tool_textures,
+                    ..self.view()
+                });
+                result["tool_textures"] = json!(self.view().tool_textures);
+            }
+            Command::SelectionOutlines => {
+                self.set_view(render::ViewOptions {
+                    selection_outlines: !self.view().selection_outlines,
+                    ..self.view()
+                });
+                result["selection_outlines"] = json!(self.view().selection_outlines);
+            }
             Command::FrameSelection => {
                 self.frame_selection(actor, aspect)?;
                 result["camera_changed"] = json!(true);

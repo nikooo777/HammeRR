@@ -396,6 +396,9 @@ measurement review, and checks that graphics stay uninitialized.
 
 ```sh
 cargo test -p editor-core --features mcp --lib shortcuts
+cargo test -p editor-core --features mcp --lib viewport_toggle_commands
+cargo test -p editor-core --features mcp --lib view_commands_share_the_schema
+cargo test -p editor --bin editor configured_view_keys_use_the_originating_admitted_callback
 cargo test -p editor --bin editor shortcut_controls_save_atomically_report_conflicts_and_preserve_text_field_editing
 python3 -B scripts/validate_keyboard_shortcuts.py --binary target/debug/hammerr-headless --output /tmp/hammerr-keyboard-shortcuts-check
 ```
@@ -408,6 +411,11 @@ unchanged map/camera during configuration and shared Delete/Duplicate Undo.
 Software callbacks check conflicts, stale forms, recovery and native text-field
 Delete/typing/Undo without map deletion; `HAMMERR_UI_SNAPSHOTS` writes
 `keyboard-shortcuts.png`. All checks use private sessions without desktop input.
+The viewport-toggle fixtures check actual result booleans, repeated toggles,
+existing draft cleanup, source/history/default-file preservation, originating
+UI/MCP admission and peer isolation. Version-1 files with five, nine or eleven
+command fields keep their bytes and chords while missing extension slots load
+unbound, then round-trip through explicit Save.
 
 ### Direct UV vectors
 
@@ -2847,7 +2855,7 @@ directory. No desktop windows or input are used.
 ### Projection keyboard commands
 
 ```sh
-cargo test -p editor-core --features mcp,test-support projection_commands
+cargo test -p editor-core --features mcp,test-support view_commands_share_the_schema
 cargo test -p editor-core --features mcp,test-support version_one
 cargo test -p editor shortcut_controls_save_atomically_report_conflicts_and_preserve_text_field_editing
 ```

@@ -4,14 +4,16 @@
 
 Choose two bindings each for Undo, Redo, Frame selection, Delete selection and
 Duplicate selection, Perspective, Top, Front and Side projection commands, and
-Objects and Faces selection modes. Projection and selection-mode commands start
-**Unbound**, including when an older saved shortcuts
-file loads. Bindings work while the viewport has keyboard focus; text fields
+Objects and Faces selection modes, and Show grid, Snap to grid, Tool textures
+and Selection outlines toggles. Projection, selection-mode and toggle commands
+start **Unbound**, including when an older saved shortcuts file loads.
+Bindings work while the viewport has keyboard focus; text fields
 keep their normal editing keys.
 
 1. In **Viewport**, click **Keyboard shortcuts…**.
 2. Choose a command, including **Perspective**, **Top**, **Front**, **Side**,
-   **Objects** or **Faces**. Scroll the command list to reach later rows.
+   **Objects**, **Faces**, **Show grid**, **Snap to grid**, **Tool textures** or
+   **Selection outlines**. Scroll the command list to reach later rows.
    Compare **Current form** with **Factory bindings**.
 3. Set **Primary** and **Alternate** using the key dropdowns and **Ctrl** and
    **Shift** switches. Choose **Unbound** to remove a slot.
@@ -26,6 +28,9 @@ keep their normal editing keys.
    clears the selection and obsolete drafts or gestures. Entering Faces also
    stops clipping and brush drawing. Either command exits component editing,
    including when its selection mode is already active.
+   Toggle bindings invert the corresponding setting in the receiving viewport.
+   **Snap to grid** matches the **Snap** checkbox; toggling a live setting does
+   not save grid or preview defaults.
 6. **Reload saved** loads and activates the saved file. **Reset saved shortcuts**
    explicitly writes and activates factory values. **Cancel**, Escape or closing
    the window discards unsaved form changes; it does not undo a saved change.
@@ -58,3 +63,9 @@ Limits:
 - Objects/Faces commands change only the originating document's selection mode;
   camera, map data and Undo history stay unchanged. Repeating the active mode
   keeps ordinary selections and drafts, while still exiting component editing.
+- Toggle commands use the same cleanup as their checkboxes. Grid/Snap changes
+  retire spatial previews and area/volume/paint gestures. Tool textures changes
+  retire area/volume/paint gestures; view toggles keep the existing clip/component
+  drag cleanup. Map data and Undo history stay unchanged.
+- Loading an older version-1 file preserves its bytes and existing chords.
+  Missing command slots stay Unbound until you configure and save them.

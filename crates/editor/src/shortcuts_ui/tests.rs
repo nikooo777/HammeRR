@@ -243,7 +243,6 @@ fn shortcut_controls_save_atomically_report_conflicts_and_preserve_text_field_ed
     ] {
         crate::ui::tests::assert_dialog_button_visible(&controller.window, label);
     }
-    crate::ui::tests::save_ui_snapshot(controller.window.window(), "keyboard-shortcuts");
     controller.window.invoke_choose("faces".into());
     assert_eq!(controller.window.get_selected_label(), "Faces");
     assert_eq!(controller.window.get_primary_key(), 0);
@@ -252,6 +251,74 @@ fn shortcut_controls_save_atomically_report_conflicts_and_preserve_text_field_ed
     controller.window.invoke_edited();
     assert!(controller.window.get_can_save());
     crate::ui::tests::save_ui_snapshot(controller.window.window(), "selection-mode-shortcuts");
+    let visible_commands = [
+        "Show grid",
+        "Snap to grid",
+        "Tool textures",
+        "Selection outlines",
+    ];
+    let scroll_to_commands = || {
+        let list = i_slint_backend_testing::ElementHandle::find_by_element_id(
+            &controller.window,
+            "ShortcutsWindow::commands-list",
+        )
+        .next()
+        .unwrap();
+        controller.window.window().take_snapshot().unwrap();
+        for _ in 0..Command::ALL.len() {
+            list.scroll(0.0, -10_000.0);
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(250));
+            controller.window.window().take_snapshot().unwrap();
+            let top = list.absolute_position().y;
+            let bottom = top + list.size().height;
+            if visible_commands.iter().all(|label| {
+                i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+                    &controller.window,
+                    label,
+                )
+                .next()
+                .is_some_and(|row| {
+                    let y = row.absolute_position().y;
+                    y >= top - 1.0 && y + row.size().height <= bottom + 1.0
+                })
+            }) {
+                break;
+            }
+        }
+        let top = list.absolute_position().y;
+        let bottom = top + list.size().height;
+        for label in visible_commands {
+            let row = i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+                &controller.window,
+                label,
+            )
+            .next()
+            .unwrap();
+            let y = row.absolute_position().y;
+            let row_bottom = y + row.size().height;
+            assert!(
+                y >= top - 1.0,
+                "{label} is above the command list {top}..{bottom}: {y}..{row_bottom}"
+            );
+            assert!(
+                row_bottom <= bottom + 1.0,
+                "{label} is below the command list {top}..{bottom}: {y}..{row_bottom}"
+            );
+            crate::ui::tests::assert_dialog_button_visible(&controller.window, label);
+        }
+    };
+    scroll_to_commands();
+    i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+        &controller.window,
+        "Tool textures",
+    )
+    .next()
+    .unwrap()
+    .invoke_accessible_default_action();
+    scroll_to_commands();
+    assert_eq!(controller.window.get_selected_label(), "Tool textures");
+    assert_eq!(controller.window.get_primary_key(), 0);
+    crate::ui::tests::save_ui_snapshot(controller.window.window(), "keyboard-shortcuts");
     controller.window.invoke_choose("undo".into());
     controller.window.set_primary_key(key_index("F7"));
     controller.window.invoke_edited();

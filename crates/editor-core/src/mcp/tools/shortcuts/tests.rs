@@ -142,7 +142,11 @@ async fn view_commands_share_the_schema_and_reject_after_originating_document_dr
         let request = CallToolRequestParams::new("execute_editor_command")
             .with_arguments(json!({"command":name}).as_object().unwrap().clone());
         let context = RequestContext::new(NumberOrString::Number(2), service.peer().clone());
-        let result = match server.call_tool(request, context).await.unwrap() {
+        let result = match tokio::time::timeout(TIMEOUT, server.call_tool(request, context))
+            .await
+            .unwrap()
+            .unwrap()
+        {
             CallToolResponse::Complete(result) => value(Ok(result)),
             result => panic!("unexpected command response: {result:?}"),
         };
@@ -154,15 +158,60 @@ async fn view_commands_share_the_schema_and_reject_after_originating_document_dr
     assert_eq!(lock(&shared).camera(), camera);
     assert_eq!(lock(&shared).document().vmf(), &before);
     assert_eq!(lock(&shared).history_snapshot(), history);
+    let peer_spatial = peer.spatial();
+    let peer_view = peer.view();
+    for (name, field) in [
+        ("show_grid", "grid_visible"),
+        ("snap_to_grid", "snap"),
+        ("tool_textures", "tool_textures"),
+        ("selection_outlines", "selection_outlines"),
+    ] {
+        for enabled in [false, true] {
+            let request = CallToolRequestParams::new("execute_editor_command")
+                .with_arguments(json!({"command":name}).as_object().unwrap().clone());
+            let context = RequestContext::new(NumberOrString::Number(3), service.peer().clone());
+            let result = match tokio::time::timeout(TIMEOUT, server.call_tool(request, context))
+                .await
+                .unwrap()
+                .unwrap()
+            {
+                CallToolResponse::Complete(result) => value(Ok(result)),
+                result => panic!("unexpected command response: {result:?}"),
+            };
+            assert_eq!(result["command"], name);
+            assert_eq!(result[field], enabled);
+            let session = lock(&shared);
+            let actual = match field {
+                "grid_visible" => session.spatial().grid_visible,
+                "snap" => session.spatial().snap,
+                "tool_textures" => session.view().tool_textures,
+                "selection_outlines" => session.view().selection_outlines,
+                _ => unreachable!(),
+            };
+            assert_eq!(actual, enabled);
+            assert_eq!(session.document().vmf(), &before);
+            assert_eq!(session.history_snapshot(), history);
+            assert_eq!(session.camera(), camera);
+            assert_eq!(document.active_operations(), 0);
+        }
+    }
+    assert_eq!(peer.spatial(), peer_spatial);
+    assert_eq!(peer.view(), peer_view);
     assert!(!peer.face_mode());
     assert_eq!(peer.camera(), peer_camera);
     assert_eq!(peer.document().vmf(), &peer_source);
     assert_eq!(peer.keyboard_shortcuts_state(), bindings);
     document.shutdown().unwrap();
     let camera = lock(&shared).camera();
+    let spatial = lock(&shared).spatial();
+    let view = lock(&shared).view();
     let log = lock(&shared).log_serial();
-    let request = CallToolRequestParams::new("execute_editor_command")
-        .with_arguments(json!({"command":"faces"}).as_object().unwrap().clone());
+    let request = CallToolRequestParams::new("execute_editor_command").with_arguments(
+        json!({"command":"tool_textures"})
+            .as_object()
+            .unwrap()
+            .clone(),
+    );
     let context = RequestContext::new(NumberOrString::Number(2), service.peer().clone());
     let result = match tokio::time::timeout(TIMEOUT, server.call_tool(request, context))
         .await
@@ -178,6 +227,8 @@ async fn view_commands_share_the_schema_and_reject_after_originating_document_dr
         "the document is closed"
     );
     assert_eq!(lock(&shared).camera(), camera);
+    assert_eq!(lock(&shared).spatial(), spatial);
+    assert_eq!(lock(&shared).view(), view);
     assert!(!lock(&shared).face_mode());
     assert_eq!(lock(&shared).log_serial(), log);
     tokio::time::timeout(TIMEOUT, service.cancel())

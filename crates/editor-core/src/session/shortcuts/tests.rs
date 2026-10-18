@@ -261,6 +261,144 @@ fn object_shortcut_commands_reject_component_scope_without_discarding_its_state(
 }
 
 #[test]
+fn viewport_toggle_commands_return_actual_booleans_without_authoring_or_preference_writes() {
+    for actor in [Actor::User, Actor::Agent] {
+        let (directory, mut session) = fixture();
+        session
+            .create_block(Actor::User, DVec3::ZERO, DVec3::splat(64.0), "test", false)
+            .unwrap();
+        session
+            .set_spatial(
+                Actor::User,
+                crate::spatial::Update {
+                    grid_size: Some(8.0),
+                    elevation: Some(32.0),
+                    depth: Some(64.0),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let source = session.document().vmf().clone();
+        let history = session.history_snapshot();
+        let selected = session.selected_ids();
+        let camera = session.camera();
+        let spatial = session.spatial();
+        let view = session.view();
+        let bindings = session.shortcut_bindings();
+        for (command, field) in [
+            (Command::ShowGrid, "grid_visible"),
+            (Command::SnapToGrid, "snap"),
+            (Command::ToolTextures, "tool_textures"),
+            (Command::SelectionOutlines, "selection_outlines"),
+        ] {
+            for enabled in [false, true] {
+                let result = session
+                    .execute_editor_command(actor, command, f32::NAN)
+                    .unwrap();
+                assert_eq!(result["command"], serde_json::to_value(command).unwrap());
+                assert_eq!(result[field], enabled);
+                let actual = match command {
+                    Command::ShowGrid => session.spatial().grid_visible,
+                    Command::SnapToGrid => session.spatial().snap,
+                    Command::ToolTextures => session.view().tool_textures,
+                    Command::SelectionOutlines => session.view().selection_outlines,
+                    _ => unreachable!(),
+                };
+                assert_eq!(actual, enabled);
+                assert_eq!(session.document().vmf(), &source);
+                assert_eq!(session.history_snapshot(), history);
+                assert_eq!(session.selected_ids(), selected);
+                assert_eq!(session.camera(), camera);
+            }
+        }
+        assert_eq!(session.spatial(), spatial);
+        assert_eq!(session.view(), view);
+        assert_eq!(session.shortcut_bindings(), bindings);
+        assert!(!directory.path().join(crate::shortcuts::FILE_NAME).exists());
+        assert!(
+            !directory
+                .path()
+                .join(crate::grid_preferences::FILE_NAME)
+                .exists()
+        );
+    }
+}
+
+#[test]
+fn viewport_toggle_commands_keep_the_existing_setting_draft_cleanup() {
+    let (_directory, mut session) = fixture();
+    let ObjectId::Solid(solid) = session
+        .create_block(Actor::User, DVec3::ZERO, DVec3::splat(64.0), "test", false)
+        .unwrap()
+    else {
+        panic!()
+    };
+    session.set_camera(render::Camera::planar(
+        Projection::Top,
+        glam::Vec3::splat(32.0),
+        512.0,
+    ));
+    let source = session.document().vmf().clone();
+    let history = session.history_snapshot();
+    let start = super::super::Pointer {
+        position: glam::DVec2::new(200.0, 100.0),
+        size: (1200, 800),
+    };
+    session
+        .preview_area_selection(
+            Actor::User,
+            session.camera(),
+            start,
+            glam::DVec2::new(1000.0, 700.0),
+            map_core::region::Match::Intersecting,
+            SelectMode::Replace,
+        )
+        .unwrap();
+    let epoch = session.interaction_epoch();
+    session
+        .execute_editor_command(Actor::Agent, Command::SelectionOutlines, 1.0)
+        .unwrap();
+    assert!(session.area_preview().is_some());
+    assert_eq!(session.interaction_epoch(), epoch);
+    session
+        .execute_editor_command(Actor::User, Command::ToolTextures, 1.0)
+        .unwrap();
+    assert!(session.area_preview().is_none());
+    assert!(session.interaction_epoch() > epoch);
+    let face = map_core::surface::FaceId {
+        solid,
+        side: session.document().solid(solid).unwrap().sides[0].id,
+    };
+    session
+        .edit_faces(
+            Actor::User,
+            &[face],
+            map_core::surface::SurfaceEdit {
+                shift_u: Some(11.0),
+                ..Default::default()
+            },
+            false,
+            true,
+        )
+        .unwrap();
+    let face_token = session.face_preview_token();
+    assert!(face_token.is_some());
+    for command in [Command::ShowGrid, Command::SnapToGrid] {
+        session
+            .preview_block(DVec3::splat(128.0), DVec3::splat(160.0))
+            .unwrap();
+        assert!(session.block_preview().is_some());
+        session
+            .execute_editor_command(Actor::Agent, command, 1.0)
+            .unwrap();
+        assert!(session.block_preview().is_none());
+        assert_eq!(session.face_preview_token(), face_token);
+    }
+    assert_eq!(session.document().vmf(), &source);
+    assert_eq!(session.history_snapshot(), history);
+}
+
+#[test]
 fn selection_mode_commands_keep_same_mode_drafts_and_retire_changed_mode_gestures() {
     let (_directory, mut session) = fixture();
     let ObjectId::Solid(solid) = session

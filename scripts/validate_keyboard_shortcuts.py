@@ -26,7 +26,14 @@ def validate(binary, output):
         initial = state(client)
         path = Path(initial["path"])
         factory = initial["factory_defaults"]
-        check(initial["ready"] and not initial["stored"] and len(initial["commands"]) == 5, "five commands and factory aliases are discoverable without creating storage")
+        original_commands = {"undo", "redo", "frame_selection", "delete_selection", "duplicate_selection"}
+        unbound_commands = {
+            "perspective", "top", "front", "side", "objects", "faces",
+            "show_grid", "snap_to_grid", "tool_textures", "selection_outlines",
+        }
+        expected_commands = original_commands | unbound_commands
+        check(initial["ready"] and not initial["stored"] and {row["command"] for row in initial["commands"]} == expected_commands and set(factory) == expected_commands, "shared command identifiers and factory aliases are discoverable without creating storage")
+        check(all(factory[command] == [None, None] for command in unbound_commands), "projection, selection-mode and viewport-toggle factory bindings start unbound")
         check(path == output / "recovery/shortcuts.json" and not path.exists(), "shortcut storage stays in the private recovery directory")
         block = client.call("create_block", {"mins": [0, 0, 0], "maxs": [64, 64, 64]})["id"]
         before = client.call("get_objects", {"ids": [block]})
@@ -42,6 +49,15 @@ def validate(binary, output):
         check(saved["write_committed"] and saved["ready"] and saved["current"] == custom, "Save canonicalizes, persists and activates the complete configuration")
         check(client.call("get_objects", {"ids": [block]}) == before and client.call("get_history")["undo_count"] == history and client.call("get_camera") == camera and client.call("get_selection") == selection, "configuration changes no map, history, selection or camera")
         saved_bytes = path.read_bytes()
+        for command, field in [
+            ("show_grid", "grid_visible"), ("snap_to_grid", "snap"),
+            ("tool_textures", "tool_textures"), ("selection_outlines", "selection_outlines"),
+        ]:
+            for enabled in [False, True]:
+                toggled = client.call("execute_editor_command", {"command": command})
+                check(toggled["command"] == command and toggled[field] is enabled, f"typed {command} toggles the actual {field} boolean to {enabled}")
+        check(path.read_bytes() == saved_bytes and state(client)["current"] == custom, "viewport commands do not rewrite or rebind saved shortcuts")
+        check(client.call("get_objects", {"ids": [block]}) == before and client.call("get_history")["undo_count"] == history and client.call("get_camera") == camera and client.call("get_selection") == selection, "viewport toggles preserve authored state, history, camera and selection")
         stale = initial["snapshot"]
         client.call("set_keyboard_shortcuts", {"action": "save", "snapshot": stale, "bindings": factory}, error=True)
         check(path.read_bytes() == saved_bytes and state(client)["current"] == custom, "stale configuration snapshots cannot overwrite saved shortcuts")

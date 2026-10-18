@@ -41,12 +41,12 @@ export component ShortcutsWindow inherits Window {
                 Text {text:"Current form";horizontal-stretch:1;font-weight:600;}
                 Text {text:"Factory bindings";width:240px;font-weight:600;}
             }
-            ListView {
+            commands-list := ListView {
                 height: 380px;
                 for row in root.commands: Rectangle {
-                    height: 34px;
+                    height: max(34px, row-layout.min-height);
                     background: root.selected == row.command ? #2d4056 : #1a2430;
-                    HorizontalLayout {
+                    row-layout := HorizontalLayout {
                         spacing:8px;padding:4px;
                         Button {text:row.label;width:176px;clicked=>{root.choose(row.command);}}
                         Text {text:row.current;horizontal-stretch:1;vertical-alignment:center;}

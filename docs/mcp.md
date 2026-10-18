@@ -843,8 +843,10 @@ only with viewport focus; text fields retain native text editing.
 | `reset` | Explicitly write and activate factory bindings, including malformed-file recovery. |
 
 `bindings` must contain `undo`, `redo`, `frame_selection`, `delete_selection`
-and `duplicate_selection`. Optional `perspective`, `top`, `front`, `side`, `objects` and `faces`
-slots default to unbound when omitted, including existing version-1 files.
+and `duplicate_selection`. Optional `perspective`, `top`, `front`, `side`,
+`objects`, `faces`, `show_grid`, `snap_to_grid`, `tool_textures` and
+`selection_outlines` slots default to unbound when omitted, including existing
+version-1 files. Loading preserves the existing file bytes until an explicit Save.
 Each value is exactly two nullable slots; each
 nonnull chord is `{"key":"F","control":false,"shift":false}`. Keys are
 logical A–Z, F1–F12, Delete and Backspace, with case normalization and exact
@@ -861,7 +863,7 @@ nonblocking Linux lock. Changed directories require explicit Reload. Programs
 that ignore the lock remain outside this guarantee. Configuration
 changes preserve map/history/selection/camera and active drafts.
 
-`execute_editor_command` accepts `command` using those eleven identifiers.
+`execute_editor_command` accepts `command` using the shared command identifiers.
 Undo/Redo perform one step and return a nullable label; Frame accepts optional
 positive finite `aspect` (default 1). Delete uses the current object selection;
 Duplicate copies it by `[grid,grid,0]` and selects the copies. Object edits reject
@@ -879,6 +881,14 @@ ordinary selections and drafts. Object-type filters remain configured across
 mode changes. Camera, source and Undo remain unchanged. Existing
 explicit-ID/offset object tools remain
 available. See [Keyboard shortcuts](keyboard-shortcuts.md).
+
+`show_grid`, `snap_to_grid`, `tool_textures` and `selection_outlines` invert the
+originating Session's live setting and return its actual `grid_visible`, `snap`,
+`tool_textures` or `selection_outlines` boolean respectively. Their factory
+bindings are unbound. They use the same `set_spatial_settings`/`set_view`
+operations as the checkboxes, including existing spatial/drag cleanup; tool
+texture visibility also retires area/volume/paint gestures. They do not write
+map data, Undo history or saved grid/preview defaults. `aspect` is unused.
 
 ### Saved preview defaults
 

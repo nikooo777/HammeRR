@@ -113,12 +113,15 @@ impl CompileSemantics {
             semantics.surface |= surf::NOLIGHT;
         }
         let alpha = m.get("$alpha").and_then(|v| v.trim().parse::<f64>().ok());
+        let translucent = m.translucent() || alpha.is_some_and(|a| a < 1.0);
         if semantics.draws
             && !flag("%compilenonsolid")
             && !flag("%compileblocklos")
-            && (m.translucent() || alpha.is_some_and(|a| a < 1.0))
+            && (translucent || m.alpha_test())
         {
-            semantics.surface |= surf::TRANS;
+            if translucent {
+                semantics.surface |= surf::TRANS;
+            }
             if semantics.contents & contents::SOLID != 0 {
                 semantics.contents = (semantics.contents & !contents::SOLID) | contents::WINDOW;
             }

@@ -404,13 +404,13 @@ impl GameFs {
                     continue;
                 };
                 if metadata.is_dir() {
-                    self.add(ids.clone(), Mount::Directory(child));
+                    self.add(ids.clone(), Mount::Directory(child))?;
                 } else if name.ends_with("_dir.vpk") {
                     let vpk = Vpk::open(&child).map_err(|e| Error::Io {
                         path: child,
                         source: e,
                     })?;
-                    self.add(ids.clone(), Mount::Pak(vpk));
+                    self.add(ids.clone(), Mount::Pak(vpk))?;
                 }
             }
             return Ok(());
@@ -430,7 +430,7 @@ impl GameFs {
                 .is_some_and(|metadata| metadata.is_file())
             {
                 let vpk = Vpk::open(&path).map_err(|e| Error::Io { path, source: e })?;
-                self.add(ids, Mount::Pak(vpk));
+                self.add(ids, Mount::Pak(vpk))?;
             }
         } else if existing(&path, fs::metadata(&path))
             .map_err(|source| Error::Io {
@@ -439,28 +439,52 @@ impl GameFs {
             })?
             .is_some_and(|metadata| metadata.is_dir())
         {
-            self.add(ids, Mount::Directory(path));
+            self.add(ids, Mount::Directory(path))?;
         }
         Ok(())
     }
 
-    /// Adds a mount, merging IDs into an existing mount of the same location.
-    fn add(&mut self, ids: Vec<String>, mount: Mount) {
-        let key = fs::canonicalize(mount.location()).unwrap_or_else(|_| mount.location().into());
-        let existing = self.mounts.iter_mut().find(|m| {
-            fs::canonicalize(m.mount.location()).unwrap_or_else(|_| m.mount.location().into())
-                == key
-        });
-        match existing {
-            Some(existing) => {
-                for id in ids {
-                    if !existing.ids.contains(&id) {
-                        existing.ids.push(id);
-                    }
-                }
+    fn add(&mut self, ids: Vec<String>, mount: Mount) -> Result<(), Error> {
+        let canonical = |path: &Path| {
+            fs::canonicalize(path).map_err(|source| Error::Io {
+                path: path.into(),
+                source,
+            })
+        };
+        let key = canonical(mount.location())?;
+        let locations = self
+            .mounts
+            .iter()
+            .map(|mounted| canonical(mounted.mount.location()))
+            .collect::<Result<Vec<_>, _>>()?;
+        let existing = locations.iter().position(|location| *location == key);
+        let mut deferred = Vec::new();
+        for id in ids {
+            if deferred.contains(&id)
+                || locations
+                    .iter()
+                    .zip(&self.mounts)
+                    .any(|(location, mounted)| *location == key && mounted.ids.contains(&id))
+            {
+                continue;
             }
-            None => self.mounts.push(MountedPath { ids, mount }),
+            if let Some(index) = existing
+                && !self.mounts[index + 1..]
+                    .iter()
+                    .any(|mounted| mounted.ids.contains(&id))
+            {
+                self.mounts[index].ids.push(id);
+            } else {
+                deferred.push(id);
+            }
         }
+        if !deferred.is_empty() {
+            self.mounts.push(MountedPath {
+                ids: deferred,
+                mount,
+            });
+        }
+        Ok(())
     }
 
     /// Reads a file from the `game` search path, where the engine looks for
@@ -717,6 +741,96 @@ fn find_block<'a>(nodes: &'a [Node], path: &[&str]) -> Option<&'a [Node]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repeated_physical_mounts_preserve_each_search_id_precedence() {
+        let root = tempfile::tempdir().unwrap();
+        for name in ["first", "second"] {
+            fs::create_dir_all(root.path().join(name).join("materials")).unwrap();
+            fs::write(root.path().join(name).join("materials/test.vmt"), name).unwrap();
+        }
+        let gameinfo = root.path().join("gameinfo.txt");
+        for (declarations, expected) in [
+            (
+                "mod |gameinfo_path|first game |gameinfo_path|second game |gameinfo_path|first",
+                b"second".as_slice(),
+            ),
+            (
+                "game |gameinfo_path|first game |gameinfo_path|second mod |gameinfo_path|first",
+                b"first".as_slice(),
+            ),
+            (
+                "game |gameinfo_path|second game |gameinfo_path|first game |gameinfo_path|second",
+                b"second".as_slice(),
+            ),
+            (
+                "mod |gameinfo_path|first game |gameinfo_path|second game |gameinfo_path|first mod+game |gameinfo_path|first",
+                b"second".as_slice(),
+            ),
+        ] {
+            fs::write(
+                &gameinfo,
+                format!("GameInfo {{ FileSystem {{ SearchPaths {{ {declarations} }} }} }}"),
+            )
+            .unwrap();
+            let game = GameFs::from_gameinfo(&gameinfo).unwrap();
+            assert_eq!(
+                game.read("materials/test.vmt").unwrap().unwrap(),
+                expected,
+                "{declarations}"
+            );
+            let source = game
+                .asset_source_paths("materials/test.vmt")
+                .unwrap()
+                .unwrap();
+            assert!(
+                source
+                    .files
+                    .iter()
+                    .any(|path| path.ends_with(if expected == b"first" {
+                        "first/materials/test.vmt"
+                    } else {
+                        "second/materials/test.vmt"
+                    }))
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn canonical_alias_deduplication_preserves_order_and_reports_lost_mounts() {
+        use std::os::unix::fs::symlink;
+        let root = tempfile::tempdir().unwrap();
+        for name in ["first", "second"] {
+            fs::create_dir(root.path().join(name)).unwrap();
+            fs::write(root.path().join(name).join("asset.txt"), name).unwrap();
+        }
+        symlink("first", root.path().join("alias")).unwrap();
+        let gameinfo = root.path().join("gameinfo.txt");
+        fs::write(&gameinfo, "GameInfo { FileSystem { SearchPaths { mod |gameinfo_path|first game |gameinfo_path|second game |gameinfo_path|alias game |gameinfo_path|first } } }").unwrap();
+        let game = GameFs::from_gameinfo(&gameinfo).unwrap();
+        assert_eq!(game.read("asset.txt").unwrap().unwrap(), b"second");
+        assert_eq!(
+            game.read_from("asset.txt", Some("mod")).unwrap().unwrap(),
+            b"first"
+        );
+        assert_eq!(game.mounts.len(), 3);
+        let mut game = provenance_game(
+            root.path(),
+            vec![Mount::Directory(root.path().join("alias"))],
+        );
+        fs::remove_file(root.path().join("alias")).unwrap();
+        assert!(
+            game.add(
+                vec!["game".into()],
+                Mount::Directory(root.path().join("second"))
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("alias")
+        );
+        assert_eq!(game.mounts.len(), 1);
+    }
 
     fn provenance_game(root: &Path, mounts: Vec<Mount>) -> GameFs {
         GameFs {

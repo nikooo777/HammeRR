@@ -197,6 +197,42 @@ use source_formats::bsp::{
 };
 
 #[test]
+fn alpha_tested_world_brushes_do_not_seal_a_room() {
+    use source_formats::gamefs::{Mount, MountedPath};
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::create_dir(directory.path().join("materials")).unwrap();
+    let mut game = common::empty_game();
+    game.mounts.push(MountedPath {
+        ids: vec!["game".into()],
+        mount: Mount::Directory(directory.path().into()),
+    });
+    let mut vmf = common::room();
+    for side in &mut vmf.world.solids[0].sides {
+        side.material = "alpha_test".into();
+    }
+    for (material, seals) in [
+        ("LightmappedGeneric {}", true),
+        ("LightmappedGeneric { $alphatest 1 }", false),
+        ("LightmappedGeneric { $translucent 1 }", false),
+    ] {
+        std::fs::write(directory.path().join("materials/alpha_test.vmt"), material).unwrap();
+        let output = compiler::compile(&vmf, &game);
+        assert_eq!(
+            output.bsp.is_some(),
+            seals,
+            "{material}: {:?}",
+            output.report
+        );
+        assert_eq!(
+            output.leak.is_none(),
+            seals,
+            "{material}: {:?}",
+            output.report
+        );
+    }
+}
+
+#[test]
 fn safe_rename_preserves_entity_links_in_compiled_bsp() {
     let mut document = Document::new(common::room());
     let target = document

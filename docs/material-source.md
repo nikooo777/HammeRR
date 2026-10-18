@@ -31,6 +31,11 @@ source reports an error; the inspector does not substitute lower-priority source
 Patch includes use the same mounted content lookup. Changed VPK indexes require
 remounting the game content before provenance can be trusted.
 
+Search-path priority follows the declarations for each path ID, even when the
+same directory appears under several IDs. For scalar Patch parameters,
+`insert` adds or overwrites a value; `replace` changes only a value already
+present. Insert runs before replace regardless of section order in the file.
+
 Shader and texture names are declarations. Inspection does not establish that a
 shader is implemented, that its referenced textures exist, or that the material
 renders correctly. Twelve common texture parameters are recognized; arbitrary

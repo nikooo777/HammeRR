@@ -561,6 +561,10 @@ leak checks.
 
 Brush geometry and entity origins must stay within **±16,384 units**. Objects outside that range are reported before building, and the existing output is kept. The editor itself allows larger coordinates for editing, but the playable Source world doesn't extend further.
 
+Imported texture and lightmap projections must fit finite native floats and
+signed 32-bit lightmap bounds. Out-of-range values stop compilation with a
+diagnostic and preserve the previous BSP.
+
 ## Structural geometry budgets
 
 Very complex structural geometry can exceed the compiler's portal traversal,
@@ -572,6 +576,9 @@ splits. These are HammeRR resource limits, separate from engine format limits.
 ## Leaks and pointfiles
 
 A map needs sealed world geometry and at least one point entity in open space. When a build leaks, HammeRR writes a `.lin` pointfile, keeps any existing BSP and draws the leak path in red. Toggle it with **Leak path**. Editing hides the path until the next build.
+
+Cutout (`$alphatest`) and translucent materials do not seal the world; use
+opaque world brushes to close the map.
 
 To follow a leak, open **Pointfile…**:
 

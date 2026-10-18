@@ -59,7 +59,7 @@ impl Material {
             params: Vec::new(),
             blocks: Vec::new(),
         };
-        material.apply(children, true);
+        material.apply(children, false);
         material
     }
 
@@ -111,25 +111,27 @@ impl Material {
             .ok_or(Error::NoShader)?;
         let mut base = Self::load_depth(&normalize(include), depth + 1, read)?
             .ok_or_else(|| Error::MissingInclude(include.to_owned()))?;
-        for node in children {
-            match (&node.value, node.key.to_ascii_lowercase().as_str()) {
-                (Value::Block(c), "replace") => base.apply(c, true),
-                (Value::Block(c), "insert") => base.apply(c, false),
-                _ => {}
+        for (section, only_existing) in [("insert", false), ("replace", true)] {
+            if let Some(children) = children
+                .iter()
+                .find(|node| node.key.eq_ignore_ascii_case(section))
+                .and_then(Node::children)
+            {
+                base.apply(children, only_existing);
             }
         }
         Ok(Some(base))
     }
 
-    fn apply(&mut self, children: &[Node], overwrite: bool) {
+    fn apply(&mut self, children: &[Node], only_existing: bool) {
         for node in children {
             match &node.value {
                 Value::String(v) => {
                     let key = node.key.to_ascii_lowercase();
                     match self.params.iter_mut().find(|(k, _)| *k == key) {
-                        Some((_, existing)) if overwrite => *existing = v.clone(),
-                        Some(_) => {}
-                        None => self.params.push((key, v.clone())),
+                        Some((_, existing)) => *existing = v.clone(),
+                        None if !only_existing => self.params.push((key, v.clone())),
+                        None => {}
                     }
                 }
                 Value::Block(_) => self.blocks.push(node.clone()),
@@ -230,6 +232,86 @@ fn asset_path(name: &str, extension: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scalar_patch_presence_matches_runtime_insert_and_replace() {
+        for (section, existing, expected) in [
+            ("insert", true, Some("1")),
+            ("insert", false, Some("1")),
+            ("replace", true, Some("1")),
+            ("replace", false, None),
+        ] {
+            let base = format!(
+                "LightmappedGeneric {{ {} }}",
+                if existing { "%compilenodraw 0" } else { "" }
+            );
+            let patch =
+                format!("Patch {{ include materials/base.vmt {section} {{ %compilenodraw 1 }} }}");
+            let material = Material::load_with_reader("materials/patch.vmt", &mut |path| {
+                Ok(Some(if path == "materials/base.vmt" {
+                    base.as_bytes().to_vec()
+                } else {
+                    patch.as_bytes().to_vec()
+                }))
+            })
+            .unwrap()
+            .unwrap();
+            assert_eq!(material.get("%compilenodraw"), expected);
+            assert_eq!(material.compile_semantics().draws, expected != Some("1"));
+        }
+        for sections in [
+            "insert { $value inserted } replace { $value replaced }",
+            "replace { $value replaced } insert { $value inserted }",
+        ] {
+            let patch = format!("Patch {{ include materials/base.vmt {sections} }}");
+            let material = Material::load_with_reader("materials/patch.vmt", &mut |path| {
+                Ok(Some(if path == "materials/base.vmt" {
+                    b"LightmappedGeneric { $value original }".to_vec()
+                } else {
+                    patch.as_bytes().to_vec()
+                }))
+            })
+            .unwrap()
+            .unwrap();
+            assert_eq!(material.get("$value"), Some("replaced"));
+        }
+    }
+
+    #[test]
+    fn alpha_testing_changes_contents_without_translucent_sorting() {
+        use crate::bsp::{contents, surf};
+        for (parameters, contents, sorting) in [
+            ("", contents::SOLID, false),
+            (
+                "$alphatest 1",
+                contents::WINDOW | contents::TRANSLUCENT,
+                false,
+            ),
+            (
+                "$translucent 1",
+                contents::WINDOW | contents::TRANSLUCENT,
+                true,
+            ),
+            ("$alpha 0.5", contents::WINDOW | contents::TRANSLUCENT, true),
+            ("$alphatest 1 %compilenonsolid 1", contents::OPAQUE, false),
+            ("$alphatest 1 %compileblocklos 1", contents::BLOCKLOS, false),
+            (
+                "$alphatest 1 %compileplayerclip 1",
+                contents::PLAYERCLIP,
+                false,
+            ),
+        ] {
+            let material =
+                Material::parse(&format!("LightmappedGeneric {{ {parameters} }}")).unwrap();
+            let semantics = material.compile_semantics();
+            assert_eq!(semantics.contents, contents, "{parameters}");
+            assert_eq!(
+                semantics.surface & surf::TRANS != 0,
+                sorting,
+                "{parameters}"
+            );
+        }
+    }
 
     fn nested_material(depth: usize) -> String {
         "UnlitGeneric { ".to_owned()

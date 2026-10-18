@@ -311,7 +311,7 @@ returns their current schemas and descriptions.
 | Scale, rotate, weld, split, ridge | `preview_component_scale`, `preview_component_rotate`, `preview_component_weld`, `preview_component_split`, `preview_component_crease`, `commit_component_edit`, `cancel_component_edit` |
 | Flat partitions | `preview_component_partition`, `update_component_partition_cut`, `update_component_partition_material`, `update_component_partition_texture`, `place_component_partition_texture`, `raise_component_partition`, `preview_partition_extrusion`, `select_component_partitions`, `frame_component_partitions`, `pick_component_partitions`, `commit_component_edit`, `cancel_component_edit` |
 | Saved flat pieces | `get_saved_component_partitions`, `store_component_partition`, `resume_component_partitions`, `remove_saved_component_partitions` |
-| Face textures | `select_faces`, `get_face_selection`, `set_material`, `edit_faces`, `sample_face_texture`, `get_surface_sample`, `paint_face_texture`, `propagate_face_texture`, `project_face_group`, `commit_face_preview`, `cancel_face_preview` |
+| Face textures | `select_faces`, `get_face_selection`, `set_material`, `edit_faces`, `vary_face_uv`, `sample_face_texture`, `get_surface_sample`, `paint_face_texture`, `propagate_face_texture`, `project_face_group`, `commit_face_preview`, `cancel_face_preview` |
 | Atlas-region face texturing | `inspect_material_atlas`, `preview_atlas_fit`; finish through `commit_face_preview` / `cancel_face_preview` |
 | Texture paint strokes | `begin_texture_stroke`, `update_texture_stroke`, `get_texture_stroke`, `commit_texture_stroke`, `cancel_texture_stroke` |
 | Terrain vertices | `get_terrain_vertices`, `highlight_terrain_vertices`, `pick_terrain_vertex`, `frame_terrain_vertices`, `get_terrain_volume_vertices`, `select_terrain_vertices_in_volume`, `get_terrain_vertex_mask`, `preview_terrain_vertex_move` |
@@ -368,6 +368,18 @@ with bounded parsing and inheritance work. Valid canonical aliases are supported
 **Faces and textures**
 
 - `edit_faces` sets material, texture placement, fitting, `lightmap_scale` and smoothing groups. `smoothing_groups` replaces memberships (`[]` clears them); `smoothing_add` and `smoothing_remove` keep the others.
+- `vary_face_uv` takes a `seed` from 0 to 4294967295, finite nonnegative
+  `max_shift_u` and `max_shift_v` in texels, optional `faces`, and `preview`
+  (default false). A stable face-ID/seed digest adds independent signed shifts to
+  committed offsets. Face order and repeated IDs do not change the result;
+  reapplying after a commit adds another shift. Axes, skew, scales, materials,
+  lighting, geometry and terrain metadata are preserved. Use `preview:true`,
+  review `faces_changed`, then pass the returned `preview_token` to
+  `commit_face_preview` or `cancel_face_preview`. Both maxima at zero preserve
+  existing drafts and return `preview_created:false`, `preview_token:null`;
+  any preview in `state` then belongs to an earlier operation. Invalid batches
+  preserve the prior draft. UI: **Edit face textures… → Vary texture offsets →
+  Preview variation**. See [Texture variation](textures.md#vary-texture-offsets).
 - `edit_faces` also accepts `u_axis` and `v_axis` as three world-space numbers or null components, such as `"u_axis": [2, null, 0.125]`. An omitted axis or null component preserves each target face's committed value independently, including mixed selections. Vectors retain their authored magnitude and may skew; UV coordinates remain `dot(world_position, axis) / scale + offset`. Explicit scale/offset, Fit and justification work after the direct basis; rotation metadata, geometry, lighting and other face data remain unchanged unless separately requested.
 - Direct vectors cannot combine with `alignment` or `rotation`; zero, nonfinite, nearly singular or edge-on projections reject the whole batch without replacing a valid preview. `get_face_selection` and returned `state.preview_faces` expose numeric `u_axis` / `v_axis` alongside legacy `uaxis` / `vaxis` strings. Use `preview: true`, inspect or render the shared draft, then pass `state.preview_token` to `commit_face_preview` or `cancel_face_preview`. UI **Advanced U/V world vectors** shows current/mixed values per component and requires a preview of matching fields before **Apply textures**. See [Textures](textures.md#set-uv-vectors-and-skew).
 - `set_view` and `render_view` accept `surface`: `textured`, `flat`, `wireframe`, `lightmap_density` or `smoothing_groups` (with `smoothing_group` from 1 to 32). On `render_view`, these options don't change your view.

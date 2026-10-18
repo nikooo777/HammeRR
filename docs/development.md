@@ -2832,3 +2832,16 @@ retained per-view cameras, fixed-document admission and peer isolation. Version-
 files without the four new commands load them unbound. The software shortcut
 form writes `keyboard-shortcuts.png` when `HAMMERR_UI_SNAPSHOTS` names an existing
 directory; it does not use desktop input.
+
+### Seeded texture offsets
+
+```sh
+cargo test -p editor-core --features mcp,test-support uv_variation
+cargo test -p editor seeded_uv_variation_surface_controls_review_owned_drafts_and_render_readable_controls
+```
+
+The fixtures check source-relative deterministic shifts, selection-order
+independence, retained projection/terrain metadata, transactional failure,
+zero-amplitude preview ownership, stale Apply, Cancel, Undo and save/reopen.
+The actual Surface controls write `uv-variation.png` when
+`HAMMERR_UI_SNAPSHOTS` names an existing directory. No desktop input is used.

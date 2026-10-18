@@ -280,6 +280,17 @@ pub struct ProjectFaceGroupArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct VaryFaceUvArgs {
+    pub faces: Option<Vec<FaceRef>>,
+    pub seed: u32,
+    pub max_shift_u: f64,
+    pub max_shift_v: f64,
+    #[serde(default)]
+    pub preview: bool,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct EditFacesArgs {
     pub faces: Option<Vec<FaceRef>>,
     pub material: Option<String>,

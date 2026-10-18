@@ -274,6 +274,46 @@ pub(super) fn apply_surface_dialog(
     {
         return Err("Map or face selection changed. Cancel and reopen texture editing.".into());
     }
+    if window.get_operation_index() == 5 {
+        if !preview {
+            if window.get_reviewed_fields().as_str() != surface_fields(window)
+                || window.get_reviewed_token().is_empty()
+            {
+                window.set_ready(false);
+                return Err(
+                    "Variation fields changed. Preview variation again before applying.".into(),
+                );
+            }
+            let token = window
+                .get_reviewed_token()
+                .parse::<u64>()
+                .map_err(|_| "Preview variation again")?;
+            session.check_face_preview_token(Some(token))?;
+            return session.commit_face_preview(Actor::User);
+        }
+        let seed = window
+            .get_variation_seed()
+            .trim()
+            .parse::<u32>()
+            .map_err(|_| "Seed must be an integer from 0 to 4294967295")?;
+        let max_u = optional_number(window.get_variation_max_u())?
+            .ok_or("Enter a maximum U shift in texels")?;
+        let max_v = optional_number(window.get_variation_max_v())?
+            .ok_or("Enter a maximum V shift in texels")?;
+        let previous = session.face_preview_token();
+        let changed = session.vary_face_uv(Actor::User, &target.0, seed, max_u, max_v, true)?;
+        if session.face_preview_token() == previous {
+            window.set_ready(false);
+            window.set_reviewed_fields("".into());
+            window.set_reviewed_token("".into());
+        } else {
+            retain_surface_preview(window, session, true);
+            window.set_reviewed_fields(surface_fields(window).into());
+            window.set_reviewed_token(window.get_owned_token());
+            window.set_ready(true);
+        }
+        return Ok(changed);
+    }
     if window.get_operation_index() == 4 {
         let changed = session
             .propagate_face_texture(Actor::User, &target.0, preview)?
@@ -328,12 +368,8 @@ fn retain_surface_preview(window: &SurfaceWindow, session: &Session, preview: bo
 }
 
 fn cancel_surface_dialog(window: &SurfaceWindow, session: &mut Session) {
-    if window.get_direct_vectors() && window.get_operation_index() == 0 {
-        let owned = window.get_owned_token().parse::<u64>().ok();
-        if owned.is_some() && owned == session.face_preview_token() {
-            session.cancel_face_preview();
-        }
-    } else {
+    let owned = window.get_owned_token().parse::<u64>().ok();
+    if owned.is_some() && owned == session.face_preview_token() {
         session.cancel_face_preview();
     }
 }
@@ -358,6 +394,9 @@ fn surface_fields(window: &SurfaceWindow) -> String {
         window.get_justify_v_index(),
         window.get_direct_vectors(),
         window.get_operation_index(),
+        window.get_variation_seed().as_str(),
+        window.get_variation_max_u().as_str(),
+        window.get_variation_max_v().as_str(),
     ])
     .to_string()
 }
@@ -422,12 +461,20 @@ pub(super) fn refresh_surface_dialog(
         );
         return;
     }
-    if window.get_direct_vectors() && window.get_operation_index() == 0 {
+    if window.get_operation_index() == 5
+        || (window.get_direct_vectors() && window.get_operation_index() == 0)
+    {
         let reviewed = session.face_preview_token().map(|token| token.to_string());
         let ready = reviewed.as_deref() == Some(window.get_reviewed_token().as_str())
             && window.get_reviewed_fields().as_str() == surface_fields(window);
         window.set_ready(ready);
-        window.set_message(if ready {
+        window.set_message(if window.get_operation_index() == 5 {
+            if ready {
+                "Shared variation preview shown in the viewport. Apply textures keeps one Undo step.".into()
+            } else {
+                "Preview variation to review the current seed and shifts before applying.".into()
+            }
+        } else if ready {
             "Shared vector preview shown in the viewport. Apply textures keeps one Undo step."
                 .into()
         } else {
@@ -575,6 +622,10 @@ fn bind_surface_edits_with_access(
                 if let Some(target) = target() {
                     let result = apply_surface_dialog(window, &mut lock(shared), &target, true);
                     window.set_message(match result {
+                        Ok(_) if window.get_operation_index() == 5 && !window.get_ready() => {
+                            "No variation: both maximum shifts are zero. Existing preview kept."
+                                .into()
+                        }
                         Ok(_) => "Preview shown in the viewport. Apply to keep it.".into(),
                         Err(error) => error.into(),
                     });
@@ -794,6 +845,9 @@ pub(super) fn show_surface_window(app: &AppWindow, ui: &SharedUi) {
     window.set_reviewed_fields("".into());
     window.set_reviewed_token("".into());
     window.set_owned_token("".into());
+    window.set_variation_seed("0".into());
+    window.set_variation_max_u("16".into());
+    window.set_variation_max_v("16".into());
     window.set_fit(false);
     window.set_operation_index(0);
     window.set_alignment_index(0);
@@ -1437,6 +1491,10 @@ pub(crate) fn review_material_choice(window: &MaterialWindow, session: &mut Sess
 #[cfg(test)]
 #[path = "materials_vectors_tests.rs"]
 mod vectors_tests;
+
+#[cfg(test)]
+#[path = "materials_variation_tests.rs"]
+mod variation_tests;
 
 #[cfg(test)]
 #[path = "materials_sprite_tests.rs"]

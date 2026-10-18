@@ -123,6 +123,11 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 | ![Material reload controls and asset diagnostics](docs/images/material-reload.png) | ![U and V texture vector controls](docs/images/uv-vectors.png) |
 | Refresh changed textures and material choices without reopening the map. | Set texture directions and skew directly, with mixed-value inputs and reviewed previews. |
 
+| Texture variation |
+| --- |
+| ![Seeded U/V texel shifts with a reviewed texture preview](docs/images/uv-variation.png) |
+| Break up repeated textures with reproducible per-face offsets, then Apply or Cancel the preview. |
+
 | Texture wrapping | One texture across many faces |
 | --- | --- |
 | ![A texture continued around a faceted column](docs/images/connected-wrapping-viewport.png) | ![One texture fitted across adjoining faces](docs/images/grouped-textures-viewport.png) |

@@ -289,6 +289,35 @@ impl EditorServer {
     }
 
     #[tool(
+        description = "Add reproducible per-face U/V texel-offset variation. seed is an integer 0–4294967295; max_shift_u/v are finite nonnegative maximum absolute shifts in texels. Omitted faces use shared selection. A stable digest of seed and solid/side IDs gives independent shifts within each signed maximum, added to committed offsets; face order and repeated IDs do not affect results. Same source and seed reproduce the same preview; reapplying after commit accumulates. Preserves axes, skew, scale, rotation, material, lighting, terrain and unknown data. Zero maxima return faces_changed=0 without replacing an existing draft. Invalid batches preserve source/history and any previous preview. preview=true uses the shared owned face draft; finish with token-guarded commit_face_preview/cancel_face_preview. Otherwise applies atomically in one Undo step. UI: Edit face textures… → Vary texture offsets → Preview variation."
+    )]
+    pub(in crate::mcp) fn vary_face_uv(
+        &self,
+        Parameters(args): Parameters<VaryFaceUvArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let faces = args.faces.as_ref().map_or_else(
+                || session.selected_faces(),
+                |faces| faces.iter().map(face_id).collect(),
+            );
+            let previous = session.face_preview_token();
+            let changed = session.vary_face_uv(
+                Actor::Agent,
+                &faces,
+                args.seed,
+                args.max_shift_u,
+                args.max_shift_v,
+                args.preview,
+            )?;
+            let created = args.preview && session.face_preview_token() != previous;
+            Ok(json!({"faces_changed":changed,"preview_created":created,
+                "preview_token":created.then(|| session.face_preview_token().unwrap().to_string()),
+                "state":face_state(&session)}))
+        })
+    }
+
+    #[tool(
         description = "Edit materials and texture offsets (texels), scales (world units per texel) and absolute rotation (degrees about the face normal). Lightmap scale is 1–1024 world units per lighting pixel. Smoothing group lists replace/add/remove memberships (1–24 smooth, 25–32 hard-edge); empty replacement clears. Direct u_axis/v_axis world vectors allow skew without normalization; null components preserve each face's component. Vectors cannot combine with alignment or rotation, and must produce a finite nonsingular projection on every target face. Scales and texel offsets remain independent. Omitted values preserve each face's original value. Omitted faces use shared face selection. Fit maps one material tile onto each face's projected bounds using actual texture dimensions. Preview renders a draft without changing the map or undo history; commit or cancel it with the preview tools. Atomic, undoable when applied."
     )]
     pub(in crate::mcp) fn edit_faces(
@@ -699,6 +728,9 @@ mod material_preview_tests;
 #[cfg(test)]
 #[path = "terrain_snap_tests.rs"]
 mod terrain_snap_tests;
+
+#[cfg(test)]
+mod uv_variation_tests;
 
 #[cfg(test)]
 #[path = "material_favorite_tests.rs"]

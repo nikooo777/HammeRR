@@ -938,6 +938,9 @@ export component SurfaceWindow inherits Window {
     in-out property <string> reviewed-fields;
     in-out property <string> reviewed-token;
     in-out property <string> owned-token;
+    in-out property <string> variation-seed: "0";
+    in-out property <string> variation-max-u: "16";
+    in-out property <string> variation-max-v: "16";
     callback browse();
     callback fit-atlas();
     callback preview-edit();
@@ -955,11 +958,11 @@ export component SurfaceWindow inherits Window {
             spacing: 12px;
             Text { text: root.selection-label; font-size: 18px; }
             ComboBox {
-                model: ["Edit texture settings", "Paint sampled material", "Copy sampled projection", "Wrap across a shared edge", "Wrap connected faces"];
+                model: ["Edit texture settings", "Paint sampled material", "Copy sampled projection", "Wrap across a shared edge", "Wrap connected faces", "Vary texture offsets"];
                 current-index <=> root.operation-index;
                 selected => { root.ready = false; }
             }
-            if root.operation-index != 0: VerticalLayout {
+            if root.operation-index > 0 && root.operation-index < 5: VerticalLayout {
                 spacing: 16px;
                 HorizontalLayout {
                     spacing: 16px;
@@ -975,6 +978,27 @@ export component SurfaceWindow inherits Window {
                     wrap: word-wrap;
                 }
                 Text { text: "The sample keeps its captured values even if the source is edited. Sample again to refresh it."; color: #969ca8; wrap: word-wrap; }
+                Rectangle { vertical-stretch: 1; }
+            }
+            if root.operation-index == 5: VerticalLayout {
+                spacing: 12px;
+                Text { text: "Give each face a repeatable U/V offset within the maximum shifts. Texture axes, scale, rotation and materials stay unchanged."; wrap: word-wrap; }
+                HorizontalLayout {
+                    spacing: 10px;
+                    Text { text: "Seed"; vertical-alignment: center; }
+                    LineEdit { text <=> root.variation-seed; input-type: number; accessible-label: "Variation seed"; edited => { root.ready = false; } }
+                }
+                Text { text: "Maximum shift · texels"; }
+                HorizontalLayout {
+                    spacing: 10px;
+                    Text { text: "U · horizontal"; vertical-alignment: center; }
+                    LineEdit { text <=> root.variation-max-u; input-type: decimal; accessible-label: "Maximum U shift in texels"; edited => { root.ready = false; } }
+                    Text { text: "V · vertical"; vertical-alignment: center; }
+                    LineEdit { text <=> root.variation-max-v; input-type: decimal; accessible-label: "Maximum V shift in texels"; edited => { root.ready = false; } }
+                }
+                Text { text: "Use seed 0–4294967295 and nonnegative shifts. Each shift can be positive or negative. Set an axis to 0 to keep its offset."; wrap: word-wrap; color: #b6bac3; }
+                Text { text: "The same seed, faces and starting offsets reproduce the same preview. Applying again adds another shift to the saved offsets."; wrap: word-wrap; color: #b6bac3; }
+                Text { text: "Preview variation before Apply textures. Both shifts at 0 leave any existing preview untouched."; wrap: word-wrap; color: #b6bac3; }
                 Rectangle { vertical-stretch: 1; }
             }
             if root.operation-index == 0: ScrollView {
@@ -1072,8 +1096,8 @@ export component SurfaceWindow inherits Window {
             HorizontalLayout {
                 spacing: 10px;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
-                Button { text: "Preview textures"; enabled: !root.stale && (root.operation-index == 0 || root.sample-present); clicked => { root.preview-edit(); } }
-                Button { text: "Apply textures"; enabled: !root.stale && (root.operation-index == 0 || root.sample-present) && (root.operation-index != 0 || !root.direct-vectors || root.ready); clicked => { root.apply(); } }
+                Button { text: root.operation-index == 5 ? "Preview variation" : "Preview textures"; enabled: !root.stale && (root.operation-index == 0 || root.operation-index == 5 || root.sample-present); clicked => { root.preview-edit(); } }
+                Button { text: "Apply textures"; enabled: !root.stale && (root.operation-index == 0 || root.operation-index == 5 || root.sample-present) && (root.operation-index == 5 ? root.ready : (root.operation-index != 0 || !root.direct-vectors || root.ready)); clicked => { root.apply(); } }
             }
         }
     }

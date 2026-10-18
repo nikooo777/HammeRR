@@ -107,7 +107,21 @@ Set the texture projection directly without changing the face geometry.
 
 ![Direct U/V world-vector controls with mixed values and preview review](images/uv-vectors.png)
 
-Limits: both vectors must be finite and produce a nonzero, nonsingular projection on every selected face. Zero vectors, nearly parallel projections, edge-on mappings and non-finite texel coordinates are rejected for the whole selection. World and brush-entity faces can share an edit. Vectors are never normalized or replaced with another projection. Direct mode keeps the stored rotation value; **Projection** alignment and **Rotation · degrees** are available when the advanced mode is off. Fitting and placement can still change scale and offsets when explicitly chosen. Terrain keeps its sculpt, blend and other metadata; this edits the base projection. Repeatable random UV variation remains separate.
+Limits: both vectors must be finite and produce a nonzero, nonsingular projection on every selected face. Zero vectors, nearly parallel projections, edge-on mappings and non-finite texel coordinates are rejected for the whole selection. World and brush-entity faces can share an edit. Vectors are never normalized or replaced with another projection. Direct mode keeps the stored rotation value; **Projection** alignment and **Rotation · degrees** are available when the advanced mode is off. Fitting and placement can still change scale and offsets when explicitly chosen. Terrain keeps its sculpt, blend and other metadata; this edits the base projection.
+
+## Vary texture offsets
+
+Give each face a reproducible texture offset to reduce repeated patterns.
+
+1. Select faces and open **Edit face textures…**.
+2. Choose **Vary texture offsets**.
+3. Enter an integer **Seed** from 0 to 4294967295.
+4. Under **Maximum shift · texels**, enter **U · horizontal** and **V · vertical**. Each face receives an independent positive or negative shift within those maxima. Set one axis to `0` to keep its offset.
+5. Click **Preview variation** and review the viewport. Click **Apply textures** to keep exactly that preview in one Undo step. Changing the seed or maximum shifts requires another preview. **Cancel**, Escape or closing the window discards the owned draft.
+
+![Seed and maximum U/V texel shifts with reviewed preview controls](images/uv-variation.png)
+
+Limits: shifts must be finite and nonnegative. The same seed, face IDs and starting offsets reproduce the same result regardless of selection order. Every preview starts from committed offsets; applying the operation again adds another shift. Both maxima at `0` make no change and leave any existing preview untouched. Invalid batches retain the prior draft and source. Geometry, U/V vectors and skew, scales, rotation, materials, lighting and terrain metadata stay intact. World and brush-entity faces can share a batch; terrain changes only its base texture offsets. This tool varies offsets only.
 
 ## Sample and reuse a texture
 

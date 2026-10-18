@@ -11,6 +11,38 @@ The **Selection** dropdown in the inspector switches between:
 
 Click to select, Ctrl+click to toggle. Loaded models use their visible triangles for point picking. Model entities belong to **Objects** mode; their mesh triangles are not editable brush faces.
 
+## Pick object types
+
+Keep objects visible while limiting which types can start an object selection.
+
+1. Choose **Objects** in **Selection**.
+2. Under **Pick object types**, enable **World brushes**, **Brush entities** or
+   **Point entities & models**. All three start enabled. Point entities include
+   model meshes, entity helpers, ropes and the root owners of instance contents.
+3. Click, Alt+click, draw an area or volume, or paint an object selection. A
+   disabled foreground type lets an enabled type behind it be picked.
+4. Enable the types again to restore unrestricted object selection. Turning all
+   three off is allowed; an empty Replace operation can still clear selection.
+
+![Inline object-type selection controls](images/selection-filters.png)
+
+Changing these controls preserves the current selection. It cancels unfinished
+object-selection gestures and object area, volume and paint previews. Face
+selection, material/projection strokes, component editing and geometric tools
+keep their existing behavior. Objects remain visible, and map data, Undo
+history and compiler output stay unchanged.
+
+An enabled hit selects its whole visible group, including members whose types
+are disabled here. **Fully inside** still checks every visible group member.
+Enable **Bypass groups** to select individual objects. Explicit IDs, report
+results, and explicit group/layer selections bypass these filters.
+
+The settings stay in this Session across **New** and **Open**; they are not
+saved preferences. MCP uses `get_selection_filters` and `set_selection_filters`
+with all three booleans: `world_brushes`, `brush_entities`, `point_entities`.
+Object-hit candidates/cycling and object area/volume/paint share the settings.
+Geometric `raycast` and `pick_at_pixel` continue to report visible geometry.
+
 ## Cycle overlapping objects
 
 Select an object behind another object without hiding either one.

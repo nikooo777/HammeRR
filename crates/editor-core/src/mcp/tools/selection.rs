@@ -3,6 +3,24 @@ use super::super::*;
 #[tool_router(router = selection_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
+        description = "Inspect session-local object-selection seed filters. All types start enabled and remain visible. Filters affect ordinary object clicks, overlap candidates/cycling, object marquee/volume and object paint. Enabled hits seed complete visible groups; fully-contained groups still need all visible members geometrically inside. Faces, components, geometric raycast/pick_at_pixel and explicit IDs/report/group/layer selection bypass. Current selection is retained. No map/history/compiler or preference writes.",
+        annotations(read_only_hint = true)
+    )]
+    pub(in crate::mcp) fn get_selection_filters(&self) -> ToolResult {
+        ok(self.session().selection_filter_state())
+    }
+
+    #[tool(
+        description = "Set all three object-selection seed filters through the same Session operation as Selection → Pick object types. world_brushes, brush_entities and point_entities are required booleans; point_entities includes models, helpers, ropes and root instances. All false is allowed. Cancels only object-selection drafts and stale object gestures; preserves existing selection, face/texture/geometry work, visibility, map/history and compiler output. Values remain in this Session across New/Open but are not saved preferences. No-op changes leave revisions and drafts unchanged. Inspect get_selection_filters for group and bypass rules."
+    )]
+    pub(in crate::mcp) fn set_selection_filters(
+        &self,
+        Parameters(filters): Parameters<crate::session::selection_filters::SelectionFilters>,
+    ) -> ToolResult {
+        run(|| self.session().set_selection_filters(Actor::Agent, filters))
+    }
+
+    #[tool(
         description = "Change the shared highlighted object selection. Native groups expand to their outermost group unless set_group_selection_bypass enables individual selection. Hidden peers stay hidden; explicitly requested hidden objects remain selectable. Use select_object_group for an inner group."
     )]
     pub(in crate::mcp) fn select(&self, Parameters(args): Parameters<SelectArgs>) -> ToolResult {
@@ -657,3 +675,7 @@ impl EditorServer {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "selection_filter_tests.rs"]
+mod selection_filter_tests;

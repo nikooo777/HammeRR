@@ -28,6 +28,7 @@ struct ClipPointClick {
 }
 
 struct AreaDrag {
+    filters: Option<u64>,
     start: Pointer,
     camera: Camera,
     mode: SelectMode,
@@ -142,6 +143,7 @@ impl Interaction {
         }
         session.cancel_area_selection();
         self.area = Some(AreaDrag {
+            filters: (!session.face_mode()).then(|| session.selection_filter_revision()),
             start: pointer,
             camera: session.camera(),
             mode: if control {
@@ -369,7 +371,9 @@ impl Interaction {
     }
 
     fn area_current(session: &Session, drag: &AreaDrag, pointer: Pointer) -> bool {
-        drag.epoch == session.interaction_epoch()
+        drag.filters
+            .is_none_or(|revision| revision == session.selection_filter_revision())
+            && drag.epoch == session.interaction_epoch()
             && drag.generation == session.document_generation()
             && drag.revision == session.document().revision()
             && drag.camera == session.camera()
@@ -444,6 +448,68 @@ mod tests {
             )
             .unwrap();
         session
+    }
+
+    #[test]
+    fn object_filter_revisions_consume_old_clicks_and_marquees_but_preserve_face_clicks() {
+        let mut session = fixture(Projection::Top, None);
+        let pointer = Pointer {
+            position: DVec2::new(320.0, 240.0),
+            size: (640, 480),
+        };
+        let before = session.selected_ids();
+        let mut interaction = Interaction::default();
+        assert!(!interaction.down(&mut session, pointer, false).unwrap());
+        let serials = (
+            session.scene_serial(),
+            session.view_serial(),
+            session.interaction_epoch(),
+        );
+        let flags = session.selection_filters();
+        session
+            .set_selection_filters(
+                Actor::Agent,
+                crate::session::selection_filters::SelectionFilters {
+                    world_brushes: false,
+                    ..flags
+                },
+            )
+            .unwrap();
+        session.set_selection_filters(Actor::User, flags).unwrap();
+        assert_eq!(
+            (
+                session.scene_serial(),
+                session.view_serial(),
+                session.interaction_epoch()
+            ),
+            serials
+        );
+        assert!(
+            !interaction
+                .moved(
+                    &mut session,
+                    Pointer {
+                        position: pointer.position + DVec2::splat(20.0),
+                        ..pointer
+                    }
+                )
+                .unwrap()
+        );
+        assert!(interaction.up(&mut session, pointer).unwrap());
+        assert_eq!(session.selected_ids(), before);
+        assert!(session.area_preview().is_none());
+        session.set_face_mode(true);
+        assert!(!interaction.down(&mut session, pointer, false).unwrap());
+        session
+            .set_selection_filters(
+                Actor::Agent,
+                crate::session::selection_filters::SelectionFilters {
+                    point_entities: false,
+                    ..flags
+                },
+            )
+            .unwrap();
+        assert!(!interaction.up(&mut session, pointer).unwrap());
     }
 
     #[test]

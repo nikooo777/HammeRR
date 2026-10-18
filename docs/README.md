@@ -16,7 +16,7 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | [Recent maps](recent-maps.md) | Reopening retained paths with compatible build settings, removing and clearing entries |
 | [Transaction history](history.md) | Inspecting human/agent edits and navigating retained undo/redo states |
 | [Measurement guides](measurements.md) | Persistent rulers, exact surface picks and entity-origin/local attachments |
-| [Selecting](selection.md) | Click, area, volume and paint selection |
+| [Selecting](selection.md) | Object-type filters, overlap cycling, area/volume/paint selection |
 | [Cut, copy and paste](clipboard.md) | Detached object transfer, placement previews, native VMF text and safe references |
 | [Prefab library](prefabs.md) | Save, search, inspect Flat/Textured thumbnails and place reusable assemblies |
 | [Layers](layers.md) | Nested colored layers, membership, scoped selection and map visibility |

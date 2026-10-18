@@ -354,6 +354,26 @@ fn context_and_working_region_preflight_track_contents_instead_of_marker_origin(
         direction: DVec3::NEG_Z,
     };
     assert_eq!(session.instance_contents_hits(&ray, None).len(), 1);
+    let raw = session.pick(&ray);
+    assert_eq!(session.pick_for_selection(&ray), raw);
+    session
+        .set_selection_filters(
+            Actor::Agent,
+            crate::session::selection_filters::SelectionFilters {
+                point_entities: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_ne!(
+        session.pick_for_selection(&ray).map(|hit| hit.object),
+        Some(ObjectId::Entity(id))
+    );
+    assert_eq!(session.pick(&ray), raw);
+    assert_eq!(session.instance_contents_hits(&ray, None).len(), 1);
+    session
+        .set_selection_filters(Actor::User, Default::default())
+        .unwrap();
     session.set_face_mode(true);
     session.preflight_instance_contents();
     assert!(session.instance_contents_preview(true).mesh.is_none());

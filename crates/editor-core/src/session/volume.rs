@@ -17,6 +17,7 @@ pub struct Preview {
     pub token: u64,
     pub spec: Spec,
     pub matches: Selection,
+    filters: Option<u64>,
     generation: u64,
     revision: u64,
 }
@@ -46,6 +47,9 @@ impl Session {
             .ok_or("Volume preview was closed or replaced")?;
         if preview.generation != self.document_generation
             || preview.revision != self.document.revision()
+            || preview
+                .filters
+                .is_some_and(|revision| revision != self.selection_filter_revision())
         {
             return Err("Map changed; preview the volume again".into());
         }
@@ -91,6 +95,7 @@ impl Session {
             token,
             spec,
             matches,
+            filters: (!spec.faces).then(|| self.selection_filter_revision()),
             generation: self.document_generation,
             revision: self.document.revision(),
         });
@@ -161,7 +166,7 @@ impl Session {
                 "objects":preview.matches.objects.iter().skip(offset).take(limit.clamp(1,500)).map(|id| match id {ObjectId::Solid(id)=>format!("solid:{id}"),ObjectId::Entity(id)=>format!("entity:{id}")}).collect::<Vec<_>>(),
                 "faces":preview.matches.faces.iter().skip(offset).take(limit.clamp(1,500)).map(|face|json!({"solid":face.solid,"side":face.side})).collect::<Vec<_>>()})
         });
-        json!({"preview":preview,"suggested_bounds":self.volume_selection_bounds().map(|point|point.to_array()),
+        json!({"preview":preview,"selection_filters":self.selection_filter_state(),"suggested_bounds":self.volume_selection_bounds().map(|point|point.to_array()),
             "hidden_policy":"Hidden objects, child brushes and hidden tool brushes are excluded; terrain uses actual displaced sheets, excluding ordinary parent faces and volumes. Loaded models use their transformed asset bounds; unsupported models retain helper bounds."})
     }
 

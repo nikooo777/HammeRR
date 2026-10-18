@@ -250,6 +250,7 @@ pub struct TransformDrag {
 }
 
 pub struct AreaPreview {
+    filters: Option<u64>,
     pub camera: Camera,
     pub start: Pointer,
     pub end: DVec2,
@@ -886,6 +887,7 @@ impl Session {
         self.spatial.draw_block = false;
         let matches = self.select_region(&region, rule, self.face_mode);
         self.area_preview = Some(AreaPreview {
+            filters: (!self.face_mode).then(|| self.selection_filter_revision()),
             camera,
             start,
             end,
@@ -920,6 +922,9 @@ impl Session {
         self.view_serial += 1;
         if preview.generation != self.document_generation
             || preview.revision != self.document.revision()
+            || preview
+                .filters
+                .is_some_and(|revision| revision != self.selection_filter_revision())
             || preview.faces != self.face_mode
         {
             return Err("Map or selection mode changed; draw the area again".into());

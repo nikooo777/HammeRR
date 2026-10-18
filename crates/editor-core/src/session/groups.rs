@@ -142,8 +142,11 @@ impl Session {
         self.group_selection_units(ids)
             .into_iter()
             .filter(|unit| {
-                rule != map_core::region::Match::Contained
-                    || unit.iter().all(|id| matched.contains(id))
+                (rule != map_core::region::Match::Contained
+                    || unit.iter().all(|id| matched.contains(id)))
+                    && unit.iter().any(|id| {
+                        matched.contains(id) && self.selection_filters().allows(&self.document, *id)
+                    })
             })
             .flatten()
             .collect::<BTreeSet<_>>()

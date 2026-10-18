@@ -74,6 +74,7 @@ pub struct Stroke {
     pub faces: BTreeSet<FaceId>,
     samples: HashSet<(u32, u32)>,
     picker: Picker,
+    filters: Option<u64>,
     generation: u64,
     revision: u64,
     shared_camera: Camera,
@@ -279,6 +280,9 @@ impl Session {
         if stroke.generation != self.document_generation
             || stroke.revision != self.document.revision()
             || stroke.shared_camera != self.camera
+            || stroke
+                .filters
+                .is_some_and(|revision| revision != self.selection_filter_revision())
         {
             return Err("Map or camera changed; start a new paint stroke".into());
         }
@@ -334,11 +338,23 @@ impl Session {
         let hidden = self.hidden_brushes_for(false);
         let evaluation = self.working_evaluation(&self.document);
         let bounds = self.display_bounds_in(&self.document);
+        let object_selection = !spec.faces && operation == Operation::Selection;
+        let filters = self.selection_filters();
+        let solids = object_selection
+            .then(|| filters.allowed_solids(&self.document))
+            .flatten();
         let picker = Picker::with_entity_bounds(
             &self.document,
-            |solid| !hidden.contains(&solid.id),
+            |solid| {
+                !hidden.contains(&solid.id)
+                    && solids.as_ref().is_none_or(|ids| ids.contains(&solid.id))
+            },
             !spec.faces,
-            |entity| evaluation.objects.contains(&ObjectId::Entity(entity.id)),
+            |entity| {
+                evaluation.objects.contains(&ObjectId::Entity(entity.id))
+                    && (!object_selection
+                        || filters.allows(&self.document, ObjectId::Entity(entity.id)))
+            },
             |entity| {
                 bounds
                     .get(&ObjectId::Entity(entity.id))
@@ -370,6 +386,7 @@ impl Session {
             faces: BTreeSet::new(),
             samples: HashSet::new(),
             picker,
+            filters: object_selection.then(|| self.selection_filter_revision()),
             generation: self.document_generation,
             revision: self.document.revision(),
             shared_camera: self.camera,
@@ -505,7 +522,7 @@ impl Session {
             "objects":stroke.objects.iter().skip(offset).take(limit.clamp(1,500)).map(|id|match id {ObjectId::Solid(id)=>format!("solid:{id}"),ObjectId::Entity(id)=>format!("entity:{id}")}).collect::<Vec<_>>(),
             "faces":stroke.faces.iter().skip(offset).take(limit.clamp(1,500)).map(|face|json!({"solid":face.solid,"side":face.side})).collect::<Vec<_>>()
         }));
-        json!({"enabled":self.geometry.paint.enabled,"sample_material":self.surface_sample.as_ref().map(|sample|&sample.material),"operation":self.geometry.paint.operation.name(),"radius":self.geometry.paint.radius,"preview":preview,
+        json!({"selection_filters":self.selection_filter_state(),"enabled":self.geometry.paint.enabled,"sample_material":self.surface_sample.as_ref().map(|sample|&sample.material),"operation":self.geometry.paint.operation.name(),"radius":self.geometry.paint.radius,"preview":preview,
             "limits":{"min_radius":MIN_RADIUS,"max_radius":MAX_RADIUS,"max_viewport_side":MAX_VIEWPORT,"points_per_update":MAX_POINTS,"new_samples_per_update":MAX_UPDATE_SAMPLES,"pixel_visits_per_update":MAX_UPDATE_VISITS,"samples_per_stroke":MAX_STROKE_SAMPLES,"matches":MAX_MATCHES},
             "sample_spacing":SAMPLE_SPACING,"visibility":"Nearest visible hit per sample; hidden objects/brushes and hidden tool brushes are skipped. Faces ignore point helpers; terrain uses actual displaced sheets, excluding ordinary parent faces/volumes."})
     }
@@ -764,6 +781,72 @@ mod tests {
             .unwrap();
         session.sample_face_texture(face).unwrap();
         face
+    }
+
+    #[test]
+    fn object_filter_changes_preserve_active_material_and_projection_strokes() {
+        for operation in [Operation::Material, Operation::Projection] {
+            let (mut session, _, points, _) = fixture(Projection::Top);
+            texture_source(&mut session);
+            let token = session
+                .begin_texture_stroke(
+                    spec(&session, points[0], true, SelectMode::Replace),
+                    operation,
+                )
+                .unwrap();
+            let serials = (
+                session.scene_serial(),
+                session.view_serial(),
+                session.interaction_epoch(),
+            );
+            let preview = session.render_document().vmf().clone();
+            session
+                .set_selection_filters(
+                    Actor::Agent,
+                    crate::session::selection_filters::SelectionFilters {
+                        world_brushes: false,
+                        brush_entities: false,
+                        point_entities: false,
+                    },
+                )
+                .unwrap();
+            assert_eq!(
+                (
+                    session.scene_serial(),
+                    session.view_serial(),
+                    session.interaction_epoch()
+                ),
+                serials
+            );
+            assert_eq!(session.paint_stroke().unwrap().token, token);
+            assert_eq!(session.render_document().vmf(), &preview);
+            session
+                .preview_area_selection(
+                    Actor::User,
+                    session.camera(),
+                    Pointer {
+                        position: DVec2::new(100.0, 100.0),
+                        size: (800, 600),
+                    },
+                    DVec2::new(700.0, 500.0),
+                    map_core::region::Match::Intersecting,
+                    SelectMode::Replace,
+                )
+                .unwrap();
+            assert!(session.area_preview().is_some_and(|preview| !preview.faces));
+            let serials = (session.scene_serial(), session.view_serial());
+            session
+                .set_selection_filters(
+                    Actor::Agent,
+                    crate::session::selection_filters::SelectionFilters::default(),
+                )
+                .unwrap();
+            assert!(session.area_preview().is_none());
+            assert!(session.scene_serial() > serials.0 && session.view_serial() > serials.1);
+            assert_eq!(session.paint_stroke().unwrap().token, token);
+            session.update_texture_stroke(token, &[points[1]]).unwrap();
+            assert!(session.commit_texture_stroke(Actor::User, token).unwrap() > 0);
+        }
     }
 
     #[test]

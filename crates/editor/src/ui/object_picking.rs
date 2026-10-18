@@ -13,6 +13,7 @@ struct Press {
     revision: u64,
     scene: u64,
     view: u64,
+    filters: u64,
     dragged: bool,
 }
 
@@ -59,6 +60,7 @@ impl Gesture {
             revision: session.document().revision(),
             scene: session.scene_serial(),
             view: session.view_serial(),
+            filters: session.selection_filter_revision(),
             dragged: false,
         });
         Ok(true)
@@ -104,6 +106,7 @@ impl Gesture {
             || session.document().revision() != press.revision
             || session.scene_serial() != press.scene
             || session.view_serial() != press.view
+            || session.selection_filter_revision() != press.filters
         {
             return Ok(None);
         }
@@ -142,6 +145,52 @@ mod tests {
         rc::Rc,
         sync::{Arc, Mutex},
     };
+
+    #[test]
+    fn filter_revision_cancels_an_alt_press_even_when_flags_return_without_view_changes() {
+        let mut session = Session::new(Err("no assets".into()));
+        session
+            .create_block(
+                Actor::User,
+                DVec3::splat(-16.0),
+                DVec3::splat(16.0),
+                "test",
+                false,
+            )
+            .unwrap();
+        let camera = Camera::planar(Projection::Top, Vec3::ZERO, 256.0);
+        session.set_camera(camera);
+        let pointer = Pointer {
+            position: DVec2::splat(256.0),
+            size: (512, 512),
+        };
+        let mut gesture = Gesture::default();
+        assert!(
+            gesture
+                .begin(&session, camera, pointer, false, true)
+                .unwrap()
+        );
+        let flags = session.selection_filters();
+        let serials = (session.scene_serial(), session.view_serial());
+        session
+            .set_selection_filters(
+                Actor::Agent,
+                crate::session::selection_filters::SelectionFilters {
+                    world_brushes: false,
+                    ..flags
+                },
+            )
+            .unwrap();
+        session.set_selection_filters(Actor::User, flags).unwrap();
+        assert_eq!((session.scene_serial(), session.view_serial()), serials);
+        assert!(
+            gesture
+                .release(&mut session, camera, pointer)
+                .unwrap()
+                .is_none()
+        );
+        assert!(!gesture.active());
+    }
 
     #[test]
     fn alt_click_cycles_on_release_and_consumes_cancelled_or_stale_gestures() {

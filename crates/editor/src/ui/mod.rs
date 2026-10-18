@@ -42,6 +42,7 @@ mod instance_contents;
 mod instance_extraction;
 mod instance_reference;
 mod object_picking;
+mod selection_filters;
 mod transform_pivot;
 use transform_pivot::*;
 
@@ -53,6 +54,7 @@ struct Ui {
     seen_scene: render::SceneKey,
     seen_camera: u64,
     seen_view: u64,
+    seen_selection_filters: u64,
     seen_favorites: u64,
     seen_navigation: (u64, u64),
     brush_drag: Option<BrushDrag>,
@@ -179,6 +181,7 @@ impl Ui {
             seen_scene: render::ViewOptions::default().scene_key(0),
             seen_camera: 0,
             seen_view: 0,
+            seen_selection_filters: u64::MAX,
             seen_favorites: 0,
             seen_navigation: (u64::MAX, u64::MAX),
             brush_drag: None,
@@ -869,6 +872,7 @@ fn create_document_window(
     bind_clip_controls_with_access(&app, &file_access(&ui));
     bind_manipulation_controls_with_access(&app, &file_access(&ui));
     bind_pivot_pick_controls_with_access(&app, &file_access(&ui));
+    selection_filters::bind(&app, &file_access(&ui));
     root_callback!(app, ui, on_place_entity, |app| show_entity_window(
         &app.unwrap(),
         &ui,
@@ -2400,7 +2404,7 @@ fn create_document_window(
                     .camera
                     .ray(click.ndc.0, click.ndc.1, click.aspect);
             let mut session = lock(&ui.session);
-            let hit = session.pick(&Ray {
+            let hit = session.pick_for_selection(&Ray {
                 origin: origin.as_dvec3(),
                 direction: direction.as_dvec3(),
             });
@@ -2879,6 +2883,10 @@ fn create_document_window(
                         &mut session,
                         ui.seen_favorites,
                     );
+                    if session.selection_filter_revision() != ui.seen_selection_filters {
+                        ui.seen_selection_filters = session.selection_filter_revision();
+                        selection_filters::refresh(&app, &session);
+                    }
                     if session.view_serial() != ui.seen_view {
                         ui.seen_view = session.view_serial();
                         refresh_view_controls(&app, &session);

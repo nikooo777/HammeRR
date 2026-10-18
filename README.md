@@ -166,6 +166,11 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 | ![Rear brush selected among three overlapping objects](docs/images/object-hit-cycling.png) |
 | Alt+click to cycle through objects and groups in depth order. |
 
+| Selection filters |
+| --- |
+| ![Inline filters for world brushes, brush entities and point entities](docs/images/selection-filters.png) |
+| Limit object picking by type while keeping objects visible and selected groups whole. |
+
 | Viewport modes | Saved camera views |
 | --- | --- |
 | ![Wireframe view with a light helper](docs/images/wireframe-view.png) | ![Named camera views](docs/images/saved-views.png) |

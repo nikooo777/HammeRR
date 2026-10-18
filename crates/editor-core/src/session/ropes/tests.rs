@@ -74,6 +74,21 @@ fn rope_preview_settings_and_picking_share_geometry_without_map_or_history_chang
     assert_eq!(session.pick(&ray).unwrap().object, source);
     assert!(session.pick_with_rope_preview(&ray, Some(false)).is_none());
     assert_eq!(session.object_hit_candidates(&ray).unwrap()["total"], 1);
+    session
+        .set_selection_filters(
+            Actor::Agent,
+            crate::session::selection_filters::SelectionFilters {
+                point_entities: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert!(session.pick_for_selection(&ray).is_none());
+    assert_eq!(session.object_hit_candidates(&ray).unwrap()["total"], 0);
+    assert_eq!(session.pick(&ray).unwrap().object, source);
+    session
+        .set_selection_filters(Actor::User, Default::default())
+        .unwrap();
     session.select(&[source], SelectMode::Replace).unwrap();
     let mesh = session.build_scene();
     assert!(

@@ -281,6 +281,7 @@ returns their current schemas and descriptions.
 | Authored lighting preview | `get_lighting_preview`; shared `set_view` and temporary `render_view` settings |
 | Selection and history | `select`, `get_selection`, `set_selection_mode`, `undo`, `redo`, `get_history`, `navigate_history` |
 | Measurement guides | `get_measurements`, `set_measurement` |
+| Object-selection filters | `get_selection_filters`, `set_selection_filters` |
 | Overlapping objects | `get_object_hit_candidates`, `cycle_object_hit` |
 | Instance reference authoring | `get_instance_reference`, `set_instance_reference` |
 | Extract brush assemblies | `get_instance_extraction`, `set_instance_extraction` |
@@ -351,6 +352,29 @@ Session lock. One load is admitted at a time. Closing cancels it and waits for
 result cleanup; superseded results cannot replace newer definitions. Root and
 included sources must be regular files (16 MiB each, 64 MiB total, 256 sources),
 with bounded parsing and inheritance work. Valid canonical aliases are supported.
+
+**Object-selection filters**
+
+`get_selection_filters` returns `filters`, `revision`, `scope` and `groups`.
+`set_selection_filters` requires the complete three-boolean object:
+`{"world_brushes":true,"brush_entities":true,"point_entities":true}`.
+Missing/extra fields reject. Point entities include models, helpers, ropes and
+root instance owners; terrain follows its authored brush owner. All-disabled
+is valid. Existing selection and object visibility stay unchanged.
+
+Object clicks, overlap candidates/cycling, marquee, volume and selection paint
+use enabled hit types as seeds. An enabled hit selects its whole visible group,
+including disabled-type peers; Fully inside still requires every visible peer
+inside. Group bypass retains individual selection. Explicit IDs, report results,
+explicit group/layer selection, faces/components and geometric tools bypass.
+`raycast` and `pick_at_pixel` remain raw geometric queries.
+
+A change cancels unfinished object-selection gestures and object area/volume/
+paint previews, while preserving face, texture and geometry workflows. No-op
+changes leave drafts and revisions unchanged. Values survive New/Open in the
+same Session; they are not saved preferences or map data. Object-hit and area/
+volume/paint inspection report the active `selection_filters`. Human controls:
+**Selection → Objects → Pick object types**. See [Selecting](selection.md).
 
 **Overlapping objects**
 

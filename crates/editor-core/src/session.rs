@@ -83,6 +83,7 @@ pub mod prefabs;
 pub mod preview_preferences;
 pub mod primitives;
 mod recent;
+pub mod selection_filters;
 pub mod shortcuts;
 mod view;
 mod viewport_pick;
@@ -213,6 +214,7 @@ pub struct Session {
     history_save_serial: u64,
     path: Option<PathBuf>,
     selection: BTreeSet<ObjectId>,
+    selection_filters: selection_filters::State,
     face_selection: BTreeSet<FaceId>,
     face_mode: bool,
     face_preview_serial: u64,
@@ -439,6 +441,7 @@ impl Session {
             history_save_serial: 0,
             path: None,
             selection: BTreeSet::new(),
+            selection_filters: selection_filters::State::default(),
             face_selection: BTreeSet::new(),
             face_mode: false,
             face_preview_serial: 0,
@@ -2257,10 +2260,28 @@ impl Session {
         rope_preview: Option<bool>,
         instance_contents: Option<bool>,
     ) -> Option<Hit> {
+        self.pick_filtered_with_previews(ray, rope_preview, instance_contents, false)
+    }
+
+    pub fn pick_for_selection(&mut self, ray: &Ray) -> Option<Hit> {
+        self.pick_filtered_with_previews(ray, None, None, true)
+    }
+
+    fn pick_filtered_with_previews(
+        &mut self,
+        ray: &Ray,
+        rope_preview: Option<bool>,
+        instance_contents: Option<bool>,
+        selection_only: bool,
+    ) -> Option<Hit> {
         self.preflight_instance_contents();
         let references = self.instance_contents_hits(ray, instance_contents);
         let hidden = self.hidden_tool_brushes();
         let document = self.render_document();
+        let filters = self.selection_filters();
+        let solids = selection_only
+            .then(|| filters.allowed_solids(document))
+            .flatten();
         if self.face_mode {
             query::pick_face(document, ray, |s| !hidden.contains(&s.id))
         } else {
@@ -2275,9 +2296,13 @@ impl Session {
             let ordinary = query::pick_with_entity_filter(
                 document,
                 ray,
-                |solid| !hidden.contains(&solid.id),
+                |solid| {
+                    !hidden.contains(&solid.id)
+                        && solids.as_ref().is_none_or(|ids| ids.contains(&solid.id))
+                },
                 |entity| {
-                    !ids.contains(&ObjectId::Entity(entity.id))
+                    (!selection_only || filters.allows(document, ObjectId::Entity(entity.id)))
+                        && !ids.contains(&ObjectId::Entity(entity.id))
                         && !evaluation
                             .helpers
                             .get(&ObjectId::Entity(entity.id))
@@ -2309,6 +2334,7 @@ impl Session {
                         }),
                 )
                 .chain(references)
+                .filter(|hit| !selection_only || filters.allows(document, hit.object))
                 .min_by(|a, b| {
                     a.distance
                         .total_cmp(&b.distance)

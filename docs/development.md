@@ -2878,3 +2878,18 @@ Apply, version-2 metadata and exact Undo, raw orphan-ID reservation and unchange
 compiled BSP bytes. The software control case writes
 `measurement-local-attachment.png` when `HAMMERR_UI_SNAPSHOTS` names an existing
 directory. These checks require no game or desktop input.
+
+### Object-selection filters
+
+```sh
+cargo test -p editor-core --features mcp,test-support selection_filters
+cargo test -p editor-core --features mcp,test-support selection_filter_tests
+cargo test -p editor bound_selection_filter_controls_share_the_session_without_pruning_and_reject_closed_calls
+```
+
+Focused shared-consumer fixtures cover eligible depth hits, complete mixed
+groups and containment, marquee/volume/cached paint, stale gestures, raw-query
+and explicit-ID bypass, real model/helper/rope/instance owners and preservation
+of face, geometry and material/projection work. The real inline controls write
+`selection-filters.png` when `HAMMERR_UI_SNAPSHOTS` names an existing directory;
+they require no desktop input.

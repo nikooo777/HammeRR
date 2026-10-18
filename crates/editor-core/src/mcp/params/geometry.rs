@@ -248,7 +248,7 @@ pub(in crate::mcp) fn area_matches(matches: &map_core::region::Selection) -> Val
 }
 
 pub(in crate::mcp) fn area_state(session: &Session) -> Value {
-    json!({"rule": area_rule_name(session.area_rule()), "mode": select_mode_name(session.area_mode()), "preview": session.area_preview().map(|preview| json!({"start": preview.start.position.to_array(), "end": preview.end.to_array(), "width": preview.start.size.0, "height": preview.start.size.1, "camera": camera_json(&preview.camera), "rule": area_rule_name(preview.rule), "mode": select_mode_name(preview.mode), "selection_mode": if preview.faces {"faces"} else {"objects"}, "matches": area_matches(&preview.matches)}))})
+    json!({"selection_filters":session.selection_filter_state(),"rule": area_rule_name(session.area_rule()), "mode": select_mode_name(session.area_mode()), "preview": session.area_preview().map(|preview| json!({"start": preview.start.position.to_array(), "end": preview.end.to_array(), "width": preview.start.size.0, "height": preview.start.size.1, "camera": camera_json(&preview.camera), "rule": area_rule_name(preview.rule), "mode": select_mode_name(preview.mode), "selection_mode": if preview.faces {"faces"} else {"objects"}, "matches": area_matches(&preview.matches)}))})
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

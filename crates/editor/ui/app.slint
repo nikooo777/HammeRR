@@ -2066,6 +2066,10 @@ export component AppWindow inherits Window {
     callback replace-materials();
     callback map-face-group();
     callback select-volume();
+    in-out property <bool> pick-world-brushes: true;
+    in-out property <bool> pick-brush-entities: true;
+    in-out property <bool> pick-point-entities: true;
+    callback selection-filters-changed();
     callback surface-view-changed();
     callback sample-face-texture();
     callback browse-material(key: string);
@@ -2764,6 +2768,11 @@ export component AppWindow inherits Window {
                         selected => { root.selection-mode-changed(self.current-index); }
                     }
                     if !root.face-mode: Text { text: "Alt+click: cycle overlapping objects"; color: #aeb9c8; wrap: word-wrap; }
+                    Text { text: "Pick object types"; color: #c8ccd4; }
+                    CheckBox { text: "World brushes"; enabled: !root.face-mode; checked <=> root.pick-world-brushes; toggled => { root.selection-filters-changed(); } }
+                    CheckBox { text: "Brush entities"; enabled: !root.face-mode; checked <=> root.pick-brush-entities; toggled => { root.selection-filters-changed(); } }
+                    CheckBox { text: "Point entities & models"; enabled: !root.face-mode; checked <=> root.pick-point-entities; toggled => { root.selection-filters-changed(); } }
+                    Text { text: "Object selection only. Objects stay visible; groups stay together."; color: #aeb9c8; wrap: word-wrap; font-size: 12px; }
 
                         if root.has-faces: VerticalLayout {
                             spacing: 6px;

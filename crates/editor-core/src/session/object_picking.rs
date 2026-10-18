@@ -74,7 +74,11 @@ impl Session {
             .map(|instance| instance.id)
             .collect::<HashSet<_>>();
         let mut owners = BTreeMap::<ObjectId, Hit>::new();
+        let filters = self.selection_filters();
         let mut retain = |hit: Hit| {
+            if !filters.allows(document, hit.object) {
+                return;
+            }
             let old = owners.entry(hit.object).or_insert(hit);
             if compare_hits(&hit, old).is_lt() {
                 *old = hit;
@@ -192,6 +196,7 @@ impl Session {
         json!({
             "candidates":candidates,"total":total,"truncated":total>MAX_CANDIDATES,
             "limit":MAX_CANDIDATES,"chosen":chosen,"message":message,
+            "selection_filters":self.selection_filter_state(),
             "selection":self.selected_ids().into_iter().map(crate::identity::id_string).collect::<Vec<_>>(),
         })
     }

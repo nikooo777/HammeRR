@@ -122,6 +122,40 @@ impl EditorServer {
     }
 
     #[tool(
+        description = "Convert a color without editing the map. space is rgb255 (whole channels 0..255), rgb1 (normalized 0..1), hsv or hsl. HSV/HSL use hue 0..360 degrees and saturation/value/lightness 0..100 percent. Returns exact normalized RGB, nearest-byte RGB, HSV and HSL. Hue 360 equals 0; achromatic output hue is 0. No gamma or brightness conversion; all channels must be finite and within range.",
+        annotations(read_only_hint = true)
+    )]
+    pub(in crate::mcp) fn convert_color(
+        &self,
+        Parameters(args): Parameters<crate::color::Input>,
+    ) -> ToolResult {
+        run(|| {
+            serde_json::to_value(Session::convert_color(args)?).map_err(|error| error.to_string())
+        })
+    }
+
+    #[tool(
+        description = "Apply an RGB, HSV or HSL color through the same Session operation as Apply color. color={space,channels}: rgb255 takes whole 0..255 channels; rgb1 takes 0..1 channels; hsv/hsl take hue 0..360 degrees and saturation/value/lightness 0..100 percent. color1 stores normalized precision; color255 rounds to nearest bytes. Optional intensity preserves existing brightness when omitted. rendercolor preserves an authored fourth component and rejects intensity. Validates before one undoable edit; malformed/nonfinite/out-of-range input never clamps or mutates the map."
+    )]
+    pub(in crate::mcp) fn set_entity_color_space(
+        &self,
+        Parameters(args): Parameters<EntityColorSpaceArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let id = single_entity(&session, args.id.as_deref())?;
+            session.set_entity_color_space(
+                Actor::Agent,
+                id,
+                &args.key,
+                args.color,
+                args.intensity,
+            )?;
+            detail(session.document(), ObjectId::Entity(id))
+        })
+    }
+
+    #[tool(
         description = "Create and select a point entity, including lights and player spawns. Applies inherited FGD defaults and validates declared property types. Custom classes and keys are supported. Light brightness uses RGB plus intensity, e.g. _light='255 220 180 400'; Direct LDR compiles static and styled lights with optional diffuse bounces."
     )]
     pub(in crate::mcp) fn create_entity(

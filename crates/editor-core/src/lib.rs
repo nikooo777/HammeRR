@@ -3,6 +3,7 @@
 mod bounded_file;
 pub mod build_recipes;
 pub mod build_settings;
+pub mod color;
 pub mod game;
 pub mod grid_preferences;
 pub mod identity;

@@ -263,6 +263,14 @@ pub struct EntityColorArgs {
     pub intensity: Option<f64>,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct EntityColorSpaceArgs {
+    pub id: Option<String>,
+    pub key: String,
+    pub color: crate::color::Input,
+    pub intensity: Option<f64>,
+}
+
 #[derive(Deserialize, schemars::JsonSchema)]
 pub struct CameraViewRenameArgs {
     pub id: u32,

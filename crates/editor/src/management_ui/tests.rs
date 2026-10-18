@@ -74,6 +74,74 @@ fn fixture() -> Fixture {
     }
 }
 
+#[test]
+fn hsv_hsl_property_picker_keeps_local_edits_until_apply_and_commits_one_undo() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: false,
+        },
+    )))
+    .unwrap();
+    let f = fixture();
+    f.parent.invoke_pick_color("tint".into());
+    let before = state(&f.shared);
+    for model in [1, 2, 0, 1] {
+        f.color.invoke_select_model(model);
+        assert_eq!(
+            crate::color_ui::read(&f.color).unwrap().rgb1,
+            [0.5, 0.25, 0.75]
+        );
+        assert_eq!(state(&f.shared), before);
+    }
+    f.color.set_hue("240".into());
+    f.color.set_saturation("100".into());
+    f.color.set_level("100".into());
+    f.color.invoke_components_changed();
+    assert_eq!(crate::color_ui::read(&f.color).unwrap().rgb255, [0, 0, 255]);
+    f.color.invoke_cancel();
+    assert_eq!(state(&f.shared), before);
+    f.parent.invoke_pick_color("tint".into());
+    f.color.invoke_select_model(2);
+    f.color.set_hue("NaN".into());
+    f.color.invoke_apply();
+    assert!(f.color.get_message().contains("finite"));
+    assert_eq!(state(&f.shared), before);
+    f.color.set_hue("120".into());
+    f.color.set_saturation("100".into());
+    f.color.set_level("50".into());
+    f.color.invoke_components_changed();
+    assert_eq!(crate::color_ui::read(&f.color).unwrap().rgb255, [0, 255, 0]);
+    crate::ui::tests::assert_dialog_button_visible(&f.color, "Apply color");
+    crate::ui::tests::assert_dialog_button_visible(&f.color, "Hue in degrees");
+    crate::ui::tests::assert_dialog_button_visible(&f.color, "Saturation in percent");
+    crate::ui::tests::assert_dialog_button_visible(&f.color, "Lightness in percent");
+    crate::ui::tests::save_ui_snapshot(f.color.window(), "property-color-hsl");
+    let source = lock(&f.shared).document().vmf().clone();
+    let history = lock(&f.shared).document().undo_labels().count();
+    f.color.invoke_apply();
+    assert_eq!(lock(&f.shared).document().vmf(), &source);
+    let preview = lock(&f.shared).preview_property_edit().unwrap();
+    assert_eq!(
+        preview
+            .properties
+            .iter()
+            .find(|property| property.field.key == "tint")
+            .unwrap()
+            .field
+            .value,
+        "0 1 0"
+    );
+    f.parent.invoke_apply();
+    assert_eq!(
+        lock(&f.shared).document().undo_labels().count(),
+        history + 1
+    );
+    lock(&f.shared).undo(Actor::User).unwrap();
+    assert_eq!(lock(&f.shared).document().vmf(), &source);
+}
+
 fn state(shared: &SharedSession) -> Value {
     let session = lock(shared);
     let favorites = session.material_favorites_snapshot();

@@ -391,7 +391,7 @@ The shared desktop and private stdio server expose workspace and document tools.
 | Material browsing | `search_materials`, `browse_materials`, `preview_material`, `set_material_favorite`, `reload_material_favorites`, `reload_material_assets` |
 | Entities | `create_entity`, `set_entity_properties`, `tie_to_entity`, `move_to_world` |
 | Linked paths | `get_linked_path`, `set_linked_path` |
-| Entity definitions and inspector | `search_entity_classes`, `get_entity_class`, `load_entity_definitions`, `get_entity_inspector`, `set_entity_color`, `set_entity_component` |
+| Entity definitions and inspector | `search_entity_classes`, `get_entity_class`, `load_entity_definitions`, `get_entity_inspector`, `set_entity_color`, `convert_color`, `set_entity_color_space`, `set_entity_component` |
 | Particle definitions and choices | `browse_particles`, `inspect_particle`, `begin_particle_choice`, `choose_particle`, `get_particle_choice`, `apply_particle_choice`, `cancel_particle_choice`, `reload_particle_assets` |
 | Connections | `get_entity_connections`, `get_connection_choices`, `begin_connection_edit`, `update_connection_draft`, `commit_connection_edit`, `cancel_connection_edit`, `delete_entity_connection` |
 | Safe renaming | `get_entity_references`, `begin_entity_rename`, `update_entity_rename`, `commit_entity_rename`, `cancel_entity_rename` |
@@ -1848,6 +1848,37 @@ Budgets are 128 files, 16 MiB per PCF,
 255 bytes and must be representable in VMF. Definition metadata is available;
 particle simulation, animation and viewport rendering are not. See
 [Particle effects](particles.md).
+
+### RGB, HSV and HSL colors
+
+`convert_color` shares the picker's read-only Session conversion:
+
+```json
+{"space":"hsl","channels":[210,50,50]}
+```
+
+It returns `rgb1`, nearest-byte `rgb255`, `hsv` and `hsl`. Spaces are `rgb255`
+(whole RGB channels 0–255), `rgb1` (normalized channels 0–1), `hsv` and `hsl`.
+HSV/HSL use hue in degrees 0–360 and saturation/value/lightness in percent 0–100.
+Hue 360 equals 0; achromatic conversions return hue 0. Every input must be finite
+and within range. Conversion never edits the document, initializes graphics,
+changes brightness or applies gamma correction.
+
+`set_entity_color_space` applies the same validated color as **Apply color**:
+
+```json
+{"id":"entity:12","key":"_light","color":{"space":"hsv","channels":[240,100,100]}}
+```
+
+The optional `id` defaults to the single selected entity. `color1` retains
+normalized precision; `color255` rounds to nearest bytes. Omit `intensity` to
+preserve light brightness, or provide a finite nonnegative value. Model tint
+preserves its authored fourth component and rejects `intensity`. Invalid input
+leaves the map/history unchanged; success is one Undo step. The existing
+`set_entity_color` byte interface is unchanged. To stage a batch color, convert
+first, then use the existing `update_property_edit` component changes with
+`rgb1` for normalized fields or `rgb255` for byte fields before committing the
+property draft. See [Color picking](entities.md#choose-rgb-hsv-or-hsl).
 
 ### Model tint
 

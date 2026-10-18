@@ -4,6 +4,7 @@ mod atlas_ui;
 mod carve_ui;
 mod checks_ui;
 mod clipboard_ui;
+mod color_ui;
 mod compile_region_ui;
 mod compile_ui;
 mod components_ui;

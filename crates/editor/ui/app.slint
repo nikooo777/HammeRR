@@ -526,8 +526,8 @@ export struct KeyValue {
 
 export component ColorWindow inherits Window {
     title: "Choose Color - HammeRR";
-    width: 500px;
-    height: 490px;
+    width: 600px;
+    height: 660px;
     in property <string> field-label;
     in-out property <int> red;
     in-out property <int> green;
@@ -536,6 +536,21 @@ export component ColorWindow inherits Window {
     in-out property <string> intensity;
     in-out property <float> brightness;
     in property <string> message;
+    in-out property <int> model-index;
+    in-out property <int> component-model;
+    in-out property <string> color-source;
+    in-out property <string> component-source;
+    in property <bool> normalized;
+    in-out property <string> hue;
+    in-out property <string> saturation;
+    in-out property <string> level;
+    in-out property <float> hue-value;
+    in-out property <float> saturation-value;
+    in-out property <float> level-value;
+    callback select-model(int);
+    callback rgb-changed();
+    callback preset(int, int, int);
+    callback components-changed();
     callback apply();
     callback cancel();
     forward-focus: dialog-focus;
@@ -557,26 +572,57 @@ export component ColorWindow inherits Window {
                     height: 30px;
                     background: preset;
                     border-radius: 4px;
-                    TouchArea { clicked => { root.red = preset.red; root.green = preset.green; root.blue = preset.blue; } }
+                    TouchArea { clicked => { root.preset(preset.red, preset.green, preset.blue); } }
                 }
             }
             HorizontalLayout {
                 spacing: 10px;
-                Text { width: 45px; text: "Red"; vertical-alignment: center; }
-                Slider { minimum: 0; maximum: 255; value: root.red; changed(value) => { root.red = round(value); } }
-                SpinBox { width: 90px; minimum: 0; maximum: 255; value <=> root.red; }
+                Text { text: "Color model"; vertical-alignment: center; }
+                ComboBox { accessible-label: "Color model"; model: ["RGB", "HSV", "HSL"]; current-index <=> root.model-index; selected => { root.select-model(root.model-index); } }
             }
-            HorizontalLayout {
-                spacing: 10px;
-                Text { width: 45px; text: "Green"; vertical-alignment: center; }
-                Slider { minimum: 0; maximum: 255; value: root.green; changed(value) => { root.green = round(value); } }
-                SpinBox { width: 90px; minimum: 0; maximum: 255; value <=> root.green; }
+            if root.normalized: Text { text: "Stored as normalized RGB (0–1). RGB controls use 0–255."; wrap: word-wrap; }
+            if root.model-index == 0: VerticalLayout {
+                spacing: 12px;
+                HorizontalLayout {
+                    spacing: 10px;
+                    Text { width: 45px; text: "Red"; vertical-alignment: center; }
+                    Slider { minimum: 0; maximum: 255; value: root.red; changed(value) => { root.red = round(value); root.rgb-changed(); } }
+                    SpinBox { width: 90px; minimum: 0; maximum: 255; value <=> root.red; edited => { root.rgb-changed(); } }
+                }
+                HorizontalLayout {
+                    spacing: 10px;
+                    Text { width: 45px; text: "Green"; vertical-alignment: center; }
+                    Slider { minimum: 0; maximum: 255; value: root.green; changed(value) => { root.green = round(value); root.rgb-changed(); } }
+                    SpinBox { width: 90px; minimum: 0; maximum: 255; value <=> root.green; edited => { root.rgb-changed(); } }
+                }
+                HorizontalLayout {
+                    spacing: 10px;
+                    Text { width: 45px; text: "Blue"; vertical-alignment: center; }
+                    Slider { minimum: 0; maximum: 255; value: root.blue; changed(value) => { root.blue = round(value); root.rgb-changed(); } }
+                    SpinBox { width: 90px; minimum: 0; maximum: 255; value <=> root.blue; edited => { root.rgb-changed(); } }
+                }
             }
-            HorizontalLayout {
-                spacing: 10px;
-                Text { width: 45px; text: "Blue"; vertical-alignment: center; }
-                Slider { minimum: 0; maximum: 255; value: root.blue; changed(value) => { root.blue = round(value); } }
-                SpinBox { width: 90px; minimum: 0; maximum: 255; value <=> root.blue; }
+            if root.model-index > 0: VerticalLayout {
+                spacing: 12px;
+                HorizontalLayout {
+                    spacing: 10px;
+                    Text { width: 110px; text: "Hue (degrees)"; vertical-alignment: center; }
+                    Slider { minimum: 0; maximum: 360; value: root.hue-value; changed(value) => { root.hue = "\{value}"; root.components-changed(); } }
+                    LineEdit { width: 110px; text <=> root.hue; input-type: decimal; accessible-label: "Hue in degrees"; edited => { root.components-changed(); } }
+                }
+                HorizontalLayout {
+                    spacing: 10px;
+                    Text { width: 110px; text: "Saturation (%)"; vertical-alignment: center; }
+                    Slider { minimum: 0; maximum: 100; value: root.saturation-value; changed(value) => { root.saturation = "\{value}"; root.components-changed(); } }
+                    LineEdit { width: 110px; text <=> root.saturation; input-type: decimal; accessible-label: "Saturation in percent"; edited => { root.components-changed(); } }
+                }
+                HorizontalLayout {
+                    spacing: 10px;
+                    Text { width: 110px; text: root.model-index == 1 ? "Value (%)" : "Lightness (%)"; vertical-alignment: center; }
+                    Slider { minimum: 0; maximum: 100; value: root.level-value; changed(value) => { root.level = "\{value}"; root.components-changed(); } }
+                    LineEdit { width: 110px; text <=> root.level; input-type: decimal; accessible-label: root.model-index == 1 ? "Value in percent" : "Lightness in percent"; edited => { root.components-changed(); } }
+                }
+                Text { text: "Hue 360° equals 0°. Achromatic conversions use hue 0°."; wrap: word-wrap; }
             }
             if root.has-intensity: VerticalLayout {
                 spacing: 6px;

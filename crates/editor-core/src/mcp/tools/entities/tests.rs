@@ -6,6 +6,73 @@ fn value(result: ToolResult) -> Value {
     serde_json::from_str(&result.content[0].as_text().unwrap().text).unwrap()
 }
 
+#[test]
+fn color_space_tools_convert_read_only_and_apply_validated_colors_atomically() {
+    use crate::color::{Input, Space};
+
+    let mut session = Session::new(Err("no assets".into()));
+    session.set_definitions(
+        Actor::User,
+        Catalog::parse(r#"@PointClass = fixture [ tint(color1) : "Tint" : "0.5 0.25 0.75" ]"#)
+            .unwrap(),
+    );
+    let ObjectId::Entity(id) = session
+        .create_entity(Actor::User, "fixture", None, BTreeMap::new())
+        .unwrap()
+    else {
+        panic!()
+    };
+    let source = session.document().vmf().clone();
+    let history = session.history_snapshot();
+    let shared = Arc::new(Mutex::new(session));
+    let server = EditorServer::new(shared.clone(), None);
+    let converted = value(server.convert_color(Parameters(Input {
+        space: Space::Hsv,
+        channels: [240.0, 100.0, 100.0],
+    })));
+    assert_eq!(converted["rgb255"], json!([0, 0, 255]));
+    assert_eq!(converted["hsl"], json!([240.0, 100.0, 50.0]));
+    assert_eq!(lock(&shared).document().vmf(), &source);
+    assert_eq!(lock(&shared).history_snapshot(), history);
+    let invalid = server
+        .set_entity_color_space(Parameters(EntityColorSpaceArgs {
+            id: Some(format!("entity:{id}")),
+            key: "tint".into(),
+            color: Input {
+                space: Space::Hsl,
+                channels: [361.0, 100.0, 50.0],
+            },
+            intensity: None,
+        }))
+        .unwrap();
+    assert!(invalid.is_error.unwrap());
+    assert_eq!(lock(&shared).document().vmf(), &source);
+    assert_eq!(lock(&shared).history_snapshot(), history);
+    value(
+        server.set_entity_color_space(Parameters(EntityColorSpaceArgs {
+            id: Some(format!("entity:{id}")),
+            key: "tint".into(),
+            color: Input {
+                space: Space::Hsl,
+                channels: [120.0, 100.0, 50.0],
+            },
+            intensity: None,
+        })),
+    );
+    assert_eq!(
+        lock(&shared)
+            .document()
+            .entity(id)
+            .unwrap()
+            .properties
+            .get("tint"),
+        Some("0 1 0")
+    );
+    lock(&shared).undo(Actor::Agent).unwrap();
+    assert_eq!(lock(&shared).document().vmf(), &source);
+    assert!(server.offscreen.lock().unwrap().renderer.is_none());
+}
+
 #[tokio::test]
 async fn map_size_report_is_shared_read_only_and_does_not_limit_authored_positions() {
     let directory = tempfile::tempdir().unwrap();

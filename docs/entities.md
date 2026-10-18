@@ -83,6 +83,17 @@ Every entity dialog has a Cancel button and closes with Escape.
 
 Model entities can display mounted static meshes directly. See [Models](models.md) for **World Model**, **Skin** and **Model details…**.
 
+### Choose RGB, HSV or HSL
+
+1. Open a color property's picker from the inspector or **Edit selected entity properties…**.
+2. Choose **RGB**, **HSV** or **HSL** under **Color model**. RGB uses whole channels from 0 to 255. HSV/HSL use **Hue (degrees)** from 0 to 360, **Saturation (%)** from 0 to 100, and **Value (%)** or **Lightness (%)** from 0 to 100. Each channel has a slider and numeric input.
+3. Adjust the channels or choose one of the existing preset swatches. The swatch and RGB values stay synchronized. **Brightness** remains independent of the color model.
+4. Click **Apply color**. In the inspector this makes one undoable edit. In the properties dialog it stages the color; click **Apply properties** to commit the complete draft in one Undo step. **Cancel** discards the picker's local edits.
+
+![HSL picker with independent light brightness](images/entity-color-hsl.png)
+
+Switching color models preserves the current color exactly, including normalized `color1` precision. Editing one RGB channel keeps untouched normalized channels; selecting a preset replaces the complete color. `color255` output rounds to the nearest byte, while `color1` retains normalized values. Invalid or nonfinite inputs are refused. Hue 360° equals 0°; conversions of gray, white and black report hue 0°. A hue chosen while saturation is zero stays available for the next saturation edit in that model. These are RGB coordinate conversions, without gamma correction or brightness changes. Persistent custom palettes remain unavailable.
+
 ## Lights and helpers
 
 Point lights are drawn as a light bulb. Spotlights and sunlight show direction helpers, and a selected spotlight shows its cone. These helpers are editor-only: they appear in the viewport and in agent renders, but add nothing to the compiled map.

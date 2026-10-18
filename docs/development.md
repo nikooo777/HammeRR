@@ -1809,6 +1809,26 @@ rendering mode, grid or tool state is stored. `HAMMERR_UI_SNAPSHOTS` captures
 `preview-defaults.png` and `preview-defaults-error.png`. The validator renders
 only through the private offscreen server and launches no game or visible editor.
 
+### RGB, HSV and HSL color picking
+
+```sh
+cargo test -p editor-core --features mcp color::tests
+cargo test -p editor-core --features mcp session::colors::tests
+cargo test -p editor-core --features mcp color_space_tools
+cargo test -p editor --bin editor hsv_hsl -- --test-threads=1
+cargo test -p editor --bin editor achromatic_hue_can_be_chosen -- --test-threads=1
+```
+
+Literal primary/secondary and nontrivial colors verify both conversions, with
+achromatic hue, 360-degree red, near-white finite output, invalid ranges and
+nonfinite rejection. Session/MCP checks cover normalized precision, byte rounding,
+independent brightness and fourth-component preservation, atomic failures, Undo
+and lazy graphics. Software callbacks exercise numeric HSV/HSL input through
+both inspector and property-draft bindings, exact model switching, Cancel,
+invalid Apply, untouched normalized channels and preset synchronization.
+`HAMMERR_UI_SNAPSHOTS` saves `entity-color-hsl.png` and `property-color-hsl.png`
+to an existing directory. These checks use no desktop input or game process.
+
 ### FGD size and color helpers
 
 ```sh

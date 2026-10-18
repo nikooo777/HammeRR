@@ -35,6 +35,102 @@ fn software() {
     .unwrap();
 }
 
+#[test]
+fn hsv_hsl_inspector_picker_preserves_precision_brightness_cancel_and_undo() {
+    software();
+    let f = fixture();
+    let id = f.color_target.borrow().as_ref().unwrap().0;
+    crate::color_ui::load(&f.color, "color1", "0.5 0.25 0.75").unwrap();
+    let before = state(&f.shared);
+    for model in [1, 2, 0, 2, 1, 0] {
+        f.color.invoke_select_model(model);
+        assert_eq!(
+            crate::color_ui::read(&f.color).unwrap().rgb1,
+            [0.5, 0.25, 0.75]
+        );
+        assert_eq!(state(&f.shared), before);
+    }
+    f.color.invoke_select_model(1);
+    f.color.set_hue("240".into());
+    f.color.set_saturation("100".into());
+    f.color.set_level("100".into());
+    f.color.invoke_components_changed();
+    assert_eq!(crate::color_ui::read(&f.color).unwrap().rgb255, [0, 0, 255]);
+    assert_eq!(state(&f.shared), before);
+    f.color.show().unwrap();
+    crate::ui::tests::assert_dialog_button_visible(&f.color, "Apply color");
+    f.color.invoke_cancel();
+    assert!(!f.color.window().is_visible());
+    assert_eq!(state(&f.shared), before);
+    f.color.show().unwrap();
+    f.color.set_hue("361".into());
+    f.color.invoke_apply();
+    assert!(f.color.get_message().contains("Hue"));
+    assert_eq!(state(&f.shared), before);
+    f.color.set_hue("240".into());
+    f.color.invoke_apply();
+    assert_eq!(
+        lock(&f.shared)
+            .document()
+            .entity(id)
+            .unwrap()
+            .properties
+            .get("tint"),
+        Some("0 0 1")
+    );
+    lock(&f.shared).undo(Actor::User).unwrap();
+    assert_eq!(
+        lock(&f.shared).document().vmf().write(&Default::default()),
+        before["map"].as_str().unwrap()
+    );
+
+    lock(&f.shared).set_definitions(
+        Actor::User,
+        Catalog::parse(
+            r#"@PointClass = fixture [ _light(color255) : "Light" : "20 40 80 450.5" ]"#,
+        )
+        .unwrap(),
+    );
+    *f.color_target.borrow_mut() =
+        Some((id, "_light".into(), lock(&f.shared).document_generation()));
+    crate::color_ui::load(&f.color, "color255", "20 40 80 450.5").unwrap();
+    f.color.set_field_label("Light color".into());
+    f.color.set_has_intensity(true);
+    f.color.set_intensity("712.125".into());
+    f.color.set_brightness(712.125);
+    f.color.invoke_select_model(1);
+    f.color.set_hue("240".into());
+    f.color.set_saturation("100".into());
+    f.color.set_level("100".into());
+    f.color.invoke_components_changed();
+    f.color.invoke_select_model(2);
+    assert_eq!(f.color.get_intensity(), "712.125");
+    f.color.show().unwrap();
+    crate::ui::tests::assert_dialog_button_visible(&f.color, "Apply color");
+    crate::ui::tests::assert_dialog_button_visible(&f.color, "Hue in degrees");
+    crate::ui::tests::assert_dialog_button_visible(&f.color, "Saturation in percent");
+    crate::ui::tests::assert_dialog_button_visible(&f.color, "Lightness in percent");
+    crate::ui::tests::save_ui_snapshot(f.color.window(), "entity-color-hsl");
+    let source = lock(&f.shared).document().vmf().clone();
+    let history = lock(&f.shared).document().undo_labels().count();
+    f.color.invoke_apply();
+    assert_eq!(
+        lock(&f.shared)
+            .document()
+            .entity(id)
+            .unwrap()
+            .properties
+            .get("_light"),
+        Some("0 0 255 712.125")
+    );
+    assert_eq!(
+        lock(&f.shared).document().undo_labels().count(),
+        history + 1
+    );
+    lock(&f.shared).undo(Actor::User).unwrap();
+    assert_eq!(lock(&f.shared).document().vmf(), &source);
+}
+
 fn fixture() -> Fixture {
     let directory = Rc::new(tempfile::tempdir().unwrap());
     let (mut session, solid) = crate::test_assets::placement();

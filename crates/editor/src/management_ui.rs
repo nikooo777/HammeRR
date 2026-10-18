@@ -338,6 +338,7 @@ fn bind_color(
     access: &DocumentAccess,
 ) -> Result<ColorWindow, slint::PlatformError> {
     let window = ColorWindow::new()?;
+    crate::color_ui::bind(&window);
     let target = Rc::new(RefCell::new(None::<(u64, String, bool)>));
     parent.on_pick_color({
         let (parent, window, access, target) = (
@@ -357,12 +358,10 @@ fn bind_color(
                         .find(|property| property.field.key == key.as_str())
                         .ok_or("Property is no longer available")?;
                     let field = property.field;
-                    let color = field.color.ok_or("Property is not a color")?;
+                    field.color.ok_or("Property is not a color")?;
+                    crate::color_ui::load(&window, &field.kind, &field.value)?;
                     *target.borrow_mut() = Some((token, key.into(), field.kind == "color1"));
                     window.set_field_label(field.label.into());
-                    window.set_red(color[0].into());
-                    window.set_green(color[1].into());
-                    window.set_blue(color[2].into());
                     window.set_has_intensity(false);
                     window.set_message(
                         "Color applies to every target. Brightness stays unchanged.".into(),
@@ -391,15 +390,18 @@ fn bind_color(
                     return;
                 };
                 let result = session.check_property_draft(token).and_then(|()| {
+                    let color = crate::color_ui::read(window)?;
+                    let channels = if normalized {
+                        color.rgb1
+                    } else {
+                        color.rgb255.map(f64::from)
+                    };
                     let mut changes = session.property_draft().unwrap().changes.clone();
-                    for (index, value) in [window.get_red(), window.get_green(), window.get_blue()]
-                        .into_iter()
-                        .enumerate()
-                    {
+                    for (index, value) in channels.into_iter().enumerate() {
                         changes.push(PropertyChange::Component {
                             key: key.clone(),
                             index,
-                            value: f64::from(value) / if normalized { 255.0 } else { 1.0 },
+                            value,
                         });
                     }
                     session.update_property_edit(token, changes)

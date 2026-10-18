@@ -37,6 +37,7 @@ pub mod clip_drag;
 pub mod clip_points;
 pub mod clipboard;
 mod clipping;
+mod colors;
 pub mod compilation;
 pub mod compile_region;
 pub mod component_drag;
@@ -588,49 +589,6 @@ impl Session {
         let mut inspector = inspector::inspect(entity, class);
         inspector.helpers = Some(self.entity_helper_report(id)?);
         Ok(inspector)
-    }
-
-    pub fn set_entity_color(
-        &mut self,
-        actor: Actor,
-        id: u32,
-        key: &str,
-        color: [u8; 3],
-        intensity: Option<f64>,
-    ) -> Result<(), String> {
-        let inspector = self.entity_inspector(id)?;
-        let field = inspector
-            .properties
-            .iter()
-            .find(|field| field.key.eq_ignore_ascii_case(key))
-            .ok_or_else(|| format!("unknown color property {key}"))?;
-        if !matches!(field.kind.as_str(), "color255" | "color1") {
-            return Err(format!("{key} is not a color property"));
-        }
-        if intensity.is_some_and(|value| !value.is_finite() || value < 0.0) {
-            return Err("brightness must be a finite, nonnegative number".into());
-        }
-        if field.kind == "color1" && intensity.is_some() {
-            return Err("normalized colors have no brightness component".into());
-        }
-        let render_color = key.eq_ignore_ascii_case("rendercolor") && field.kind == "color255";
-        if render_color && intensity.is_some() {
-            return Err("Model tint has no light brightness component".into());
-        }
-        let scale = if field.kind == "color1" { 255.0 } else { 1.0 };
-        let mut values: Vec<String> = color
-            .iter()
-            .map(|value| (f64::from(*value) / scale).to_string())
-            .collect();
-        if render_color {
-            let components = field.value.split_whitespace().collect::<Vec<_>>();
-            if components.len() == 4 {
-                values.push(components[3].to_owned());
-            }
-        } else if let Some(intensity) = intensity.or(field.intensity) {
-            values.push(intensity.to_string());
-        }
-        self.set_entity_properties(actor, id, &[(key.into(), Some(values.join(" ")))])
     }
 
     pub fn apply_material(

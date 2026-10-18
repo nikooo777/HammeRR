@@ -782,6 +782,7 @@ fn bind_color_actions(
     access: &DocumentAccess,
     target: impl Fn() -> Option<(u32, String, u64)> + 'static,
 ) {
+    crate::color_ui::bind(window);
     window.on_cancel({
         let window = window.as_weak();
         move || {
@@ -808,16 +809,22 @@ fn bind_color_actions(
                 } else {
                     None
                 };
-                let color = [
-                    window.get_red() as u8,
-                    window.get_green() as u8,
-                    window.get_blue() as u8,
-                ];
                 if session.document_generation() != generation {
                     window.set_message("Map changed. Open this picker again.".into());
                     return;
                 }
-                let result = session.set_entity_color(Actor::User, id, &key, color, intensity);
+                let result = crate::color_ui::read(window).and_then(|color| {
+                    session.set_entity_color_space(
+                        Actor::User,
+                        id,
+                        &key,
+                        editor_core::color::Input {
+                            space: editor_core::color::Space::Rgb1,
+                            channels: color.rgb1,
+                        },
+                        intensity,
+                    )
+                });
                 match result {
                     Ok(()) => {
                         let _ = window.hide();
@@ -859,17 +866,18 @@ pub(super) fn show_color_window(app: &AppWindow, ui: &SharedUi, key: &str) {
     else {
         return;
     };
-    let Some(color) = field.color else {
+    if field.color.is_none() {
         return;
-    };
+    }
     let generation = session.document_generation();
     drop(session);
     ui.borrow_mut().color_target = Some((id, key.into(), generation));
     let window = ui.borrow().color_window.as_ref().unwrap().clone_strong();
+    if let Err(error) = crate::color_ui::load(&window, &field.kind, &field.value) {
+        app.set_message(error.into());
+        return;
+    }
     window.set_field_label(field.label.into());
-    window.set_red(i32::from(color[0]));
-    window.set_green(i32::from(color[1]));
-    window.set_blue(i32::from(color[2]));
     window.set_has_intensity(field.intensity.is_some());
     window.set_intensity(field.intensity.unwrap_or_default().to_string().into());
     window.set_brightness(widget_number(field.intensity.unwrap_or_default()));

@@ -88,12 +88,16 @@ Run formatting and strict lint checks for the workspace and the minimal core:
 
 ```sh
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --features editor-core/mcp,editor-core/test-support -- -D warnings
+cargo clippy -p editor-ui --lib -- -D warnings
+cargo clippy --workspace --all-targets --exclude editor-ui --features editor-core/mcp,editor-core/test-support -- -D warnings
 cargo clippy -p editor-core --no-default-features --all-targets -- -D warnings
 ```
 
 The workspace check includes the optional MCP and desktop test adapters; the
-minimal-core check also compiles unit tests without those features.
+minimal-core check also compiles unit tests without those features. Check the
+generated `editor-ui` library separately: `--all-targets` also compiles a second
+large generated test target despite its disabled test harness, without adding
+application coverage. Desktop behavior stays covered by the editor tests.
 
 When running several validation scripts, build the required binaries together
 and reuse them. GPU tests can run directly from the test executables reported by
@@ -115,19 +119,31 @@ retain full UI optimization.
 
 The optional `test-support` feature exposes shared fixtures for desktop tests. It is not needed to run either program. `editor --headless` remains compatible with the standalone target.
 
-On the development desktop, serialize Cargo work with eight jobs and a 24 GiB memory limit:
+On the development desktop, use eight Cargo jobs and one pipeline. Keep total
+HammeRR-related RAM within 16 GiB, including tools and RAM-backed artifacts.
+`/tmp` is tmpfs here; retain completed evidence under `target/validation-archive`
+on disk. Original `/tmp` paths can remain symlinks to verified archived copies.
+
+Measure the non-build footprint before choosing a build cap. With about 9 GiB
+already used by project tools and temporary files, this example leaves the
+remaining budget for one build:
 
 ```sh
 mkdir -p target
-systemd-run --user --scope --quiet -p MemoryMax=24G -p MemoryHigh=16G -p MemorySwapMax=0 \
-  env CARGO_BUILD_JOBS=8 flock target/hammerr-cargo.lock \
-  cargo test -p editor-core --no-default-features --lib
+systemd-run --user --scope --quiet -p MemoryMax=6656M -p MemoryHigh=6G -p MemorySwapMax=2G \
+  env CARGO_BUILD_JOBS=8 RUSTC_WRAPPER="$PWD/scripts/cargo_memory_guard.sh" \
+  flock target/hammerr-cargo.lock \
+  cargo test -p editor-core -p editor --all-targets --features editor-core/mcp,editor-core/test-support
 ```
 
-For broad checks on this desktop, test packages sequentially in that same
-scope and lock. Eight Cargo jobs still apply within each package; compiling
-all workspace test binaries together can exceed the memory available beside
-other applications.
+`cargo_memory_guard.sh` serializes compiler invocations for the workspace's
+large crates through a separate `flock`; other dependency work retains eight
+Cargo jobs. It forwards the compiler's arguments, output and exit status.
+It uses Cargo's standard [RUSTC_WRAPPER interface](https://doc.rust-lang.org/cargo/reference/environment-variables.html),
+including nesting with Clippy. Keep the outer pipeline lock as well. A separate
+core-only warm-up can have a different unified dependency graph and still
+recompile beside desktop code; the wrapper handles that overlap directly.
+
 Select `editor-core` and `editor` together when validating desktop changes:
 
 ```sh

@@ -6,6 +6,19 @@ use std::time::{Duration, Instant};
 mod ownership;
 pub(crate) use ownership::Origin as CompileOrigin;
 use ownership::Ticket;
+
+impl State {
+    pub(super) fn close_work(&self) -> serde_json::Value {
+        serde_json::json!({
+            "sequence": self.serial,
+            "job": self.job.as_ref().map(|job| serde_json::json!({
+                "token": job.token, "status": job.status(),
+                "active": job.origin.busy(), "cancelled": job.control.cancelled(),
+            }))
+        })
+    }
+}
+
 #[cfg(test)]
 mod ownership_tests;
 
@@ -1119,7 +1132,9 @@ impl Session {
                 Err(error) => json!({"success":false,"error":error}),
             });
         }
-        if let Ok(result) = result {
+        if !self.closing
+            && let Ok(result) = result
+        {
             let snapshot = Snapshot {
                 generation: result.generation,
                 revision: result.revision,

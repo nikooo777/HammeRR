@@ -528,6 +528,19 @@ impl Session {
     }
 }
 
+impl State {
+    pub(super) fn close_draft(&self) -> Option<serde_json::Value> {
+        self.preview.as_ref().map(|preview| {
+            serde_json::json!([
+                self.serial,
+                preview.token,
+                preview.owner.label(),
+                preview.picking.is_some()
+            ])
+        })
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests;
 

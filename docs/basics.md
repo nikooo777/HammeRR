@@ -30,6 +30,25 @@ editing keys, and the Frame hint follows the active binding.
 
 ## Closing the editor
 
+1. Use the main window's close control.
+2. If **Unsaved changes and drafts** appears, choose **Yes** to discard the
+   reviewed unsaved map changes and pending drafts, or **No**/**Cancel** to keep
+   editing. Save committed changes or Apply/Cancel drafts separately before
+   trying again if you want to retain them.
+3. If the map, draft or activity changes during confirmation, review Close again.
+   A busy message means a request or worker still holds the document: wait for
+   it to finish, or use its normal Cancel/Stop control, then retry Close.
+
+Accepted Close stops this document's game and sound playback, cancels/drains
+owned work and performs final recovery. It does not require stopping game/audio
+first. The busy-request refusal is stricter than immediate process shutdown;
+EOF and runtime-error exits still perform unconditional terminal cleanup.
+Close review can conservatively expire after selection, view or gesture changes.
+It covers shared Session drafts; text typed only into a local form is not a
+saved map change. There is still one public document. MCP can inspect the same
+close state through `get_map_info.document_close`; a completed MCP Close command
+is not exposed.
+
 Tool windows stay with the document that opened them. Once closing begins,
 new searches, selections, picking, framing, previews, reviews, edits and Apply
 commands are rejected. This includes entity, geometry, terrain, placement,

@@ -14,7 +14,9 @@ use map_core::surface::FaceId;
 use serde_json::{Value, json};
 use source_formats::fgd::Catalog;
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
+
+const HOST_ACK_TIMEOUT: Duration = Duration::from_secs(5);
 
 struct Fixture {
     owner: DocumentWindow,
@@ -73,6 +75,17 @@ fn software() {
             renderer_name: Some("software".into()),
             mock_time: true,
             threading: false,
+        },
+    )))
+    .unwrap();
+}
+
+fn software_event_loop() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: true,
         },
     )))
     .unwrap();
@@ -269,6 +282,375 @@ fn state(shared: &SharedSession) -> Value {
         "view": session.view_serial(),
         "scene": session.scene_serial(),
     })
+}
+
+#[test]
+#[ignore = "requires a GPU adapter for the real DocumentWindow viewport"]
+fn actual_native_close_reports_busy_and_fatal_quit_cleanup_hides_owned_children() {
+    software();
+    let ctx = GpuContext::new().unwrap();
+    let target = fixture(ctx.clone());
+    let mut peer = fixture(ctx);
+    let source = target.directory.path().join("reviewed-close.vmf");
+    lock(&target.shared)
+        .save(Actor::User, Some(&source))
+        .unwrap();
+    let host = DocumentHost::new(target.owner, target.document.clone());
+    let app = host.borrow().window.app().clone_strong();
+    app.show().unwrap();
+    app.invoke_map_checks();
+    let ui = host.borrow().window.weak_ui().upgrade().unwrap();
+    let checks = ui.borrow().checks_window.as_ref().unwrap().clone_strong();
+    assert!(checks.window().is_visible());
+    let operation = target.document.admit().unwrap();
+    app.window()
+        .dispatch_event(slint::platform::WindowEvent::CloseRequested);
+    assert_eq!(target.document.lifecycle(), DocumentLifecycle::Live);
+    assert!(app.get_message().contains("busy"));
+    assert!(app.window().is_visible());
+    assert!(checks.window().is_visible());
+    assert!(host.borrow().window.frame_timer.as_ref().unwrap().running());
+    drop(operation);
+    let review = file_access(&ui).document_close_review().unwrap();
+    app.invoke_world_settings();
+    let token = lock(&target.shared).property_draft().unwrap().token;
+    let before = state(&target.shared);
+    assert!(
+        complete_terminal_close(
+            &app.as_weak(),
+            &Rc::downgrade(&ui),
+            &file_access(&ui).downgrade(),
+            &review,
+            true
+        )
+        .is_err()
+    );
+    assert_eq!(target.document.lifecycle(), DocumentLifecycle::Live);
+    assert_eq!(state(&target.shared), before);
+    lock(&target.shared).cancel_property_edit(token).unwrap();
+    let properties = ui
+        .borrow()
+        .properties_window
+        .as_ref()
+        .unwrap()
+        .clone_strong();
+    assert!(properties.window().is_visible());
+    let weak_ui = Rc::downgrade(&ui);
+    drop(ui);
+    app.window()
+        .dispatch_event(slint::platform::WindowEvent::CloseRequested);
+    assert_eq!(target.document.lifecycle(), DocumentLifecycle::Finished);
+    assert!(!app.window().is_visible());
+    assert!(!checks.window().is_visible());
+    assert!(!properties.window().is_visible());
+    assert!(host.borrow().window.frame_timer.is_none());
+    assert!(weak_ui.upgrade().is_none());
+    assert_eq!(host.borrow().window.retired, Some(Ok(UiRetired)));
+    let error = host.borrow_mut().finish(Ok(())).unwrap_err().to_string();
+    assert!(error.contains("Could not quit"));
+    assert!(error.contains("Could not schedule UI retirement"));
+    let retirement = host.borrow().retirement();
+    let first = retirement
+        .request(target.document.id())
+        .unwrap()
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap()
+        .unwrap_err();
+    assert!(first.contains("Could not schedule UI retirement"));
+    assert_eq!(
+        retirement
+            .request(target.document.id())
+            .unwrap()
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap(),
+        Err(first)
+    );
+    assert!(peer.document.admit().is_ok());
+    let peer_app = peer.owner.app().clone_strong();
+    peer_app.invoke_map_checks();
+    let peer_checks = peer
+        .owner
+        .ui
+        .as_ref()
+        .unwrap()
+        .borrow()
+        .checks_window
+        .as_ref()
+        .unwrap()
+        .clone_strong();
+    peer_checks.invoke_run_checks();
+    assert!(lock(&peer.shared).map_check_report().is_some());
+    peer.owner.retire().unwrap();
+    peer.document.shutdown().unwrap();
+}
+
+#[test]
+#[ignore = "requires a GPU adapter for the real DocumentWindow viewport"]
+fn native_close_completion_requires_consent_for_clean_map_draft_and_is_unleased() {
+    software();
+    let mut target = fixture(GpuContext::new().unwrap());
+    let source = target.directory.path().join("draft-close.vmf");
+    lock(&target.shared)
+        .save(Actor::User, Some(&source))
+        .unwrap();
+    let app = target.owner.app().clone_strong();
+    app.show().unwrap();
+    app.invoke_world_settings();
+    let ui = target.owner.ui.as_ref().unwrap().clone();
+    let access = file_access(&ui);
+    let review = access.document_close_review().unwrap();
+    let continuation = access.downgrade();
+    assert!(review.requires_discard());
+    assert!(
+        complete_terminal_close(
+            &app.as_weak(),
+            &Rc::downgrade(&ui),
+            &continuation,
+            &review,
+            false
+        )
+        .is_err()
+    );
+    assert_eq!(target.document.lifecycle(), DocumentLifecycle::Live);
+    assert_eq!(
+        complete_terminal_close(
+            &app.as_weak(),
+            &Rc::downgrade(&ui),
+            &continuation,
+            &review,
+            true
+        ),
+        Ok(true)
+    );
+    assert_eq!(target.document.lifecycle(), DocumentLifecycle::Draining);
+    assert!(lock(&target.shared).property_draft().is_some());
+    target.owner.retire().unwrap();
+    target.document.shutdown().unwrap();
+}
+
+#[test]
+#[ignore = "requires a GPU adapter and the real Slint event loop"]
+fn queued_host_retirement_acknowledges_released_owners_and_keeps_the_hidden_host_running() {
+    software_event_loop();
+    let ctx = GpuContext::new().unwrap();
+    let target = fixture(ctx.clone());
+    let mut peer = fixture(ctx.clone());
+    let windows = open_windows(&target);
+    let weak_ui = target.owner.weak_ui();
+    let contents = Rc::downgrade(target.owner.contents.as_ref().unwrap());
+    let reference = Rc::downgrade(target.owner.reference.as_ref().unwrap());
+    let extraction = Rc::downgrade(target.owner.extraction.as_ref().unwrap());
+    let server = EditorServer::for_document(target.document.clone(), Some(ctx));
+    let weak_session = Arc::downgrade(&target.shared);
+    let host = DocumentHost::new(target.owner, target.document.clone());
+    let retirement = host.borrow().retirement();
+    assert!(retirement.request(peer.document.id()).is_err());
+    assert!(windows.windows().into_iter().all(slint::Window::is_visible));
+    assert!(host.borrow().window.retired.is_none());
+    let review = target.document.document_close_review().unwrap();
+    target
+        .document
+        .try_commit_reviewed_close(&review, true)
+        .unwrap();
+    assert!(target.document.admit().is_err());
+    let before = state(&target.shared);
+    let (inspected, inspection) = mpsc::sync_channel(1);
+    windows.app.on_map_checks(move || {
+        let _ = inspected.send([
+            weak_ui.upgrade().is_none(),
+            contents.upgrade().is_none(),
+            reference.upgrade().is_none(),
+            extraction.upgrade().is_none(),
+        ]);
+    });
+    let document = target.document.id();
+    let app = windows.app.as_weak();
+    let (queued, accepted) = mpsc::sync_channel(1);
+    let worker = std::thread::spawn(move || {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            drop(retirement.request(document).unwrap());
+            queued.send(()).unwrap();
+            let first = retirement
+                .request(document)
+                .unwrap()
+                .recv_timeout(HOST_ACK_TIMEOUT)
+                .unwrap();
+            assert_eq!(first, Ok(UiRetired));
+            let repeat = retirement
+                .request(document)
+                .unwrap()
+                .recv_timeout(HOST_ACK_TIMEOUT)
+                .unwrap();
+            assert_eq!(repeat, first);
+            app.upgrade_in_event_loop(|app| {
+                assert!(!app.window().is_visible());
+                assert_eq!(app.get_frame().size().width, 0);
+                app.invoke_map_checks();
+            })
+            .unwrap();
+            let released = inspection.recv_timeout(HOST_ACK_TIMEOUT).unwrap();
+            assert!(released.into_iter().all(|released| released));
+        }));
+        let _ = slint::quit_event_loop();
+        result.unwrap();
+    });
+    accepted.recv_timeout(HOST_ACK_TIMEOUT).unwrap();
+    assert!(host.borrow().window.retired.is_none());
+    slint::run_event_loop_until_quit().unwrap();
+    worker.join().unwrap();
+    assert!(
+        windows
+            .windows()
+            .into_iter()
+            .all(|window| !window.is_visible())
+    );
+    assert_eq!(state(&target.shared), before);
+    assert_eq!(target.document.lifecycle(), DocumentLifecycle::Draining);
+    host.borrow_mut().finish(Ok(())).unwrap();
+    target.document.shutdown().unwrap();
+    drop(host);
+    drop(target.document);
+    drop(target.shared);
+    assert!(weak_session.upgrade().is_some());
+    drop(server);
+    assert!(weak_session.upgrade().is_none());
+    assert_eq!(peer.document.lifecycle(), DocumentLifecycle::Live);
+    peer.owner.retire().unwrap();
+    peer.document.shutdown().unwrap();
+}
+
+#[test]
+#[ignore = "requires a GPU adapter and the real Slint event loop"]
+fn queued_host_retirement_memoizes_real_hide_failures_and_preserves_primary_errors() {
+    software_event_loop();
+    let target = fixture(GpuContext::new().unwrap());
+    let windows = open_windows(&target);
+    let weak_ui = target.owner.weak_ui();
+    let host = DocumentHost::new(target.owner, target.document.clone());
+    let retirement = host.borrow().retirement();
+    FAIL_HIDES.with(|labels| {
+        labels
+            .borrow_mut()
+            .extend(["checks_window".into(), "Editor".into()]);
+    });
+    let document = target.document.id();
+    let worker = std::thread::spawn(move || {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            let first = retirement
+                .request(document)
+                .unwrap()
+                .recv_timeout(HOST_ACK_TIMEOUT)
+                .unwrap()
+                .unwrap_err();
+            assert!(first.contains("checks_window: injected hide failure"));
+            assert!(first.contains("Editor: injected hide failure"));
+            let repeat = retirement
+                .request(document)
+                .unwrap()
+                .recv_timeout(HOST_ACK_TIMEOUT)
+                .unwrap();
+            assert_eq!(repeat, Err(first.clone()));
+            first
+        }));
+        let _ = slint::quit_event_loop();
+        result.unwrap()
+    });
+    slint::run_event_loop_until_quit().unwrap();
+    let retirement_error = worker.join().unwrap();
+    assert!(weak_ui.upgrade().is_none());
+    assert!(host.borrow().window.frame_timer.is_none());
+    let error = host
+        .borrow_mut()
+        .finish(Err("event loop failed".into()))
+        .unwrap_err()
+        .to_string();
+    assert!(error.starts_with("event loop failed; UI retirement failed: "));
+    assert!(error.ends_with(&retirement_error));
+    for window in windows.windows().into_iter().skip(1) {
+        if !std::ptr::eq(window, windows.checks.window()) {
+            assert!(!window.is_visible());
+        }
+    }
+    windows.app.hide().unwrap();
+    windows.checks.hide().unwrap();
+    target.document.shutdown().unwrap();
+}
+
+#[test]
+#[ignore = "requires a GPU adapter and the real Slint event loop"]
+fn native_terminal_close_uses_queued_owned_retirement_before_explicit_quit() {
+    software_event_loop();
+    let target = fixture(GpuContext::new().unwrap());
+    let source = target.directory.path().join("host-close.vmf");
+    lock(&target.shared)
+        .save(Actor::User, Some(&source))
+        .unwrap();
+    let weak_ui = target.owner.weak_ui();
+    let contents = Rc::downgrade(target.owner.contents.as_ref().unwrap());
+    let server = EditorServer::for_document(target.document.clone(), None);
+    let host = DocumentHost::new(target.owner, target.document.clone());
+    let app = host.borrow().window.app().clone_strong();
+    app.show().unwrap();
+    app.invoke_map_checks();
+    app.window()
+        .dispatch_event(slint::platform::WindowEvent::CloseRequested);
+    assert_eq!(target.document.lifecycle(), DocumentLifecycle::Draining);
+    assert!(target.document.admit().is_err());
+    assert!(host.borrow().window.retired.is_none());
+    assert!(app.window().is_visible());
+    let receipt = host
+        .borrow()
+        .retirement()
+        .request(target.document.id())
+        .unwrap();
+    drop(receipt);
+    slint::run_event_loop_until_quit().unwrap();
+    assert_eq!(host.borrow().window.retired, Some(Ok(UiRetired)));
+    assert!(weak_ui.upgrade().is_none());
+    assert!(contents.upgrade().is_none());
+    assert!(!app.window().is_visible());
+    host.borrow_mut().finish(Ok(())).unwrap();
+    target.document.shutdown().unwrap();
+    assert_eq!(target.document.lifecycle(), DocumentLifecycle::Finished);
+    assert!(target.document.admit().is_err());
+    assert!(Arc::strong_count(&target.shared) > 1);
+    drop(server);
+}
+
+#[test]
+#[ignore = "requires a GPU adapter for the real DocumentWindow viewport"]
+fn failed_host_schedule_repeats_its_error_until_actual_owner_finish() {
+    software();
+    let target = fixture(GpuContext::new().unwrap());
+    let app = target.owner.app().clone_strong();
+    app.show().unwrap();
+    let weak_ui = target.owner.weak_ui();
+    let host = DocumentHost::new(target.owner, target.document.clone());
+    let retirement = host.borrow().retirement();
+    let error = retirement.request(target.document.id()).err().unwrap();
+    assert!(error.starts_with("Could not schedule UI retirement: "));
+    assert_eq!(
+        retirement.request(target.document.id()).err().unwrap(),
+        error
+    );
+    assert!(host.borrow().window.retired.is_none());
+    assert!(weak_ui.upgrade().is_some());
+    assert!(app.window().is_visible());
+    assert_eq!(
+        host.borrow_mut().finish(Ok(())).unwrap_err().to_string(),
+        error
+    );
+    assert!(weak_ui.upgrade().is_none());
+    assert!(!app.window().is_visible());
+    assert_eq!(
+        retirement
+            .request(target.document.id())
+            .unwrap()
+            .recv_timeout(HOST_ACK_TIMEOUT)
+            .unwrap(),
+        Err(error)
+    );
+    target.document.shutdown().unwrap();
 }
 
 #[test]

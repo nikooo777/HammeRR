@@ -173,6 +173,14 @@ impl Session {
     }
 }
 
+impl State {
+    pub(super) fn close_draft(&self) -> Option<serde_json::Value> {
+        self.preview
+            .as_ref()
+            .map(|preview| serde_json::json!([self.serial, preview.token]))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

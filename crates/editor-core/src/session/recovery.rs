@@ -760,6 +760,18 @@ impl Session {
     }
 }
 
+impl State {
+    pub(super) fn close_work(&self) -> serde_json::Value {
+        serde_json::json!({
+            "sequence": self.serial,
+            "document_key": self.document_key,
+            "pending": self.pending.as_ref().map(|pending| pending.live()),
+            "shutdown_error": self.drain_error,
+            "settings_revision": self.settings.authority().snapshot().revision,
+        })
+    }
+}
+
 #[cfg(test)]
 mod error_domain_tests;
 

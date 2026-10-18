@@ -1007,6 +1007,19 @@ impl Session {
     }
 }
 
+impl State {
+    pub(super) fn close_draft(&self) -> Option<serde_json::Value> {
+        (self.preview.is_some() || self.picking.is_some() || self.drag.is_some()).then(|| {
+            serde_json::json!([
+                self.serial,
+                self.preview.as_ref().map(|preview| preview.token),
+                self.picking.is_some(),
+                self.drag.is_some()
+            ])
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -607,6 +607,19 @@ fn update_stroke(
     Ok(matches_changed)
 }
 
+impl State {
+    pub(super) fn close_draft(&self) -> Option<serde_json::Value> {
+        self.stroke.as_ref().map(|stroke| {
+            serde_json::json!([
+                self.serial,
+                stroke.token,
+                stroke.cursor.to_array(),
+                stroke.samples.len()
+            ])
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

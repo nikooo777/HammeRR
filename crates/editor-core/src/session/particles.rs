@@ -5,6 +5,23 @@ use std::collections::{BTreeMap, BTreeSet};
 mod catalog;
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) mod fixtures;
+
+impl State {
+    pub(super) fn close_draft(&self) -> Option<serde_json::Value> {
+        self.draft.as_ref().map(|draft| {
+            serde_json::json!([
+                self.serial,
+                self.assets,
+                draft.token,
+                draft
+                    .choice
+                    .as_ref()
+                    .and_then(|choice| choice["name"].as_str())
+            ])
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests;
 

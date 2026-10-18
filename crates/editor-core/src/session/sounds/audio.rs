@@ -72,6 +72,10 @@ pub(super) struct Playback {
 }
 
 impl Playback {
+    pub(super) fn close_identity(&self) -> Value {
+        json!({"token": self.token, "finished": self.finished})
+    }
+
     pub fn start(token: u64, report: Value, bytes: &[u8]) -> Result<Self, String> {
         let mut file = NamedTempFile::new().map_err(|error| error.to_string())?;
         file.write_all(bytes).map_err(|error| error.to_string())?;
@@ -108,3 +112,6 @@ impl Drop for Playback {
         let _ = self.child.wait();
     }
 }
+
+#[cfg(test)]
+mod close_tests;

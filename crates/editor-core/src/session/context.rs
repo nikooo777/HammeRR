@@ -689,6 +689,14 @@ impl Session {
     }
 }
 
+impl State {
+    pub(super) fn close_draft(&self) -> Option<serde_json::Value> {
+        self.draft
+            .as_ref()
+            .map(|draft| serde_json::json!([self.serial, draft.token, draft.fields]))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -26,6 +26,8 @@ mod admission;
 mod document_window;
 use document_window::DocumentWindow;
 pub(crate) use document_window::hide_window;
+mod document_host;
+use document_host::{DocumentHost, WeakHost};
 mod root_callbacks;
 use root_callbacks::root_callback;
 mod input;
@@ -589,9 +591,13 @@ pub(super) fn run(
         })
         .select()?;
 
-    let mut window = create_document_window(document, ctx, mcp_status, open_message)?;
-    let primary = window.app().run().map_err(Into::into);
-    window.finish(primary)
+    let window = create_document_window(document.clone(), ctx, mcp_status, open_message)?;
+    let host = DocumentHost::new(window, document);
+    let shown = host.borrow().window.app().show();
+    let primary = shown
+        .and_then(|()| slint::run_event_loop_until_quit())
+        .map_err(Into::into);
+    host.borrow_mut().finish(primary)
 }
 
 fn create_document_window(
@@ -600,6 +606,7 @@ fn create_document_window(
     mcp_status: String,
     open_message: Option<Result<String, String>>,
 ) -> Result<DocumentWindow, Box<dyn std::error::Error>> {
+    let document_id = document.id();
     let app = AppWindow::new()?;
     app.set_mcp_status(mcp_status.into());
     app.set_stats(ctx.adapter.get_info().name.into());
@@ -614,33 +621,6 @@ fn create_document_window(
     }
 
     let ui = Rc::new(RefCell::new(Ui::for_document(document, ctx)));
-
-    app.window().on_close_requested({
-        let (owner, app) = (Rc::downgrade(&ui), app.as_weak());
-        move || {
-            let (Some(ui), Some(window)) = (owner.upgrade(), app.upgrade()) else {
-                return slint::CloseRequestResponse::HideWindow;
-            };
-            let app = app.clone();
-            let owner = owner.clone();
-            confirm_discard(&window, &ui, move |continuation, review| {
-                let (Some(app), Some(_ui)) = (app.upgrade(), owner.upgrade()) else {
-                    return;
-                };
-                let result = continuation.upgrade().and_then(|access| {
-                    access.with_session(|session| session.ensure_buffer_replacement_review(&review))
-                });
-                if let Err(error) = result {
-                    app.set_message(error.into());
-                    return;
-                }
-                if let Err(error) = slint::quit_event_loop() {
-                    eprintln!("could not close editor: {error}");
-                }
-            });
-            slint::CloseRequestResponse::KeepWindowShown
-        }
-    });
 
     root_callback!(app, ui, on_open_map, |app| open_dialog(&app.unwrap(), &ui));
     root_callback!(app, ui, on_recent_maps, |app| {
@@ -3339,6 +3319,7 @@ fn create_document_window(
     });
 
     Ok(DocumentWindow::new(
+        document_id,
         app,
         ui,
         frame_timer,

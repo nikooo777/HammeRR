@@ -13,8 +13,8 @@ pub(crate) use compile_queue::{CompileQueue, QueueStatus};
 
 mod document;
 pub use document::{
-    DocumentAccess, DocumentContinuation, DocumentHandle, DocumentId, DocumentLifecycle,
-    DocumentOperation,
+    DocumentAccess, DocumentCloseReview, DocumentContinuation, DocumentHandle, DocumentId,
+    DocumentLifecycle, DocumentOperation,
 };
 mod recovery;
 #[cfg(feature = "mcp")]

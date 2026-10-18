@@ -952,6 +952,12 @@ impl Session {
     }
 }
 
+impl TransformDrag {
+    pub(super) fn close_draft(&self) -> serde_json::Value {
+        serde_json::json!([self.amount.to_array(), self.last_angle])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -659,5 +659,30 @@ impl Session {
     }
 }
 
+impl State {
+    pub(super) fn close_work(&self) -> serde_json::Value {
+        let cleanup = self
+            .cleanup
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        serde_json::json!({"sequence": self.serial, "worker_active": self.worker.busy(), "cleanup_error": cleanup})
+    }
+
+    pub(super) fn close_draft(&self) -> Option<serde_json::Value> {
+        self.form.as_ref().map(|form| {
+            serde_json::json!([
+                self.serial,
+                form.token,
+                form.owner.label(),
+                form.status,
+                form.control.cancelled(),
+                form.error,
+                form.ready.is_some()
+            ])
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests;

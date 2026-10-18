@@ -279,5 +279,13 @@ impl Session {
     }
 }
 
+impl State {
+    pub(super) fn close_draft(&self) -> Option<serde_json::Value> {
+        self.picking
+            .as_ref()
+            .map(|picking| serde_json::json!([self.serial, picking.token, picking.owner.label()]))
+    }
+}
+
 #[cfg(test)]
 mod tests;

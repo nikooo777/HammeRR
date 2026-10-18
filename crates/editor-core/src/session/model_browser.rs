@@ -7,6 +7,14 @@ use source_formats::vmf::Entity;
 
 use super::{Actor, Session};
 
+impl State {
+    pub(super) fn close_draft(&self) -> Option<serde_json::Value> {
+        self.draft
+            .as_ref()
+            .map(|draft| serde_json::json!([self.serial, draft.token, draft.choice]))
+    }
+}
+
 #[cfg(test)]
 mod tests;
 

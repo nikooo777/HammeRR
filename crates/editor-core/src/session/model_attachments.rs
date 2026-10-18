@@ -211,6 +211,14 @@ fn position(report: &Value) -> DVec3 {
     }))
 }
 
+impl State {
+    pub(super) fn close_draft(&self) -> Option<serde_json::Value> {
+        self.guide
+            .as_ref()
+            .map(|guide| serde_json::json!([self.serial, guide.token]))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -21,7 +21,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Summary of the open map: file, unsaved state, object counts, bounds, selection, undo history, camera, the last material_reload report and recent activity by the user and agents. Includes generation and an opaque Session-scoped replacement_review for guarded New/Open/Recent/Recovery calls.",
+        description = "Summary of the open map: file, unsaved state, object counts, bounds, selection, undo history, camera, the last material_reload report and recent activity by the user and agents. Includes generation, an opaque Session-scoped replacement_review for guarded New/Open/Recent/Recovery calls, and document_close inspection of the same reviewed terminal Close state used by the native window. Inspection does not close the document.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_map_info(&self) -> ToolResult {
@@ -30,6 +30,10 @@ impl EditorServer {
         session.poll_game();
         let skybox = skybox_state(&mut session);
         let working_region = session.working_region_summary();
+        let document_close = self._document.as_ref().map_or_else(
+            || session.document_close_review().inspection(),
+            |document| document.close_review_for(&session).inspection(),
+        );
         let doc = session.document();
         let vmf = doc.vmf();
         let point_entities = vmf.entities.iter().filter(|e| e.solids.is_empty()).count();
@@ -83,6 +87,7 @@ impl EditorServer {
             "visibility": session.visibility_state(),
         });
         result.as_object_mut().unwrap().extend([
+            ("document_close".into(), document_close),
             ("recovery".into(), session.recovery_status()),
             ("face_selection".into(), face_state(&session)),
             ("world_brushes".into(), json!(vmf.world.solids.len())),

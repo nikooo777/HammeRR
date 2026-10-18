@@ -44,6 +44,29 @@ fn complete(result: Result<CallToolResponse, ErrorData>) -> CallToolResult {
 }
 
 #[tokio::test]
+async fn map_info_exposes_the_same_fixed_document_close_observation_without_a_close_tool() {
+    let (_directory, document, server) = fixture();
+    let (running, _client) = service(server.clone());
+    let result = complete(
+        server
+            .call_tool(
+                CallToolRequestParams::new("get_map_info"),
+                context(&running),
+            )
+            .await,
+    );
+    let value: Value = serde_json::from_str(&result.content[0].as_text().unwrap().text).unwrap();
+    assert_eq!(
+        value["document_close"],
+        document.document_close_review().unwrap().inspection()
+    );
+    assert_eq!(value["document_close"]["discard_required"], false);
+    assert!(server.tool_router.get("close_document").is_none());
+    running.cancel().await.unwrap();
+    document.shutdown().unwrap();
+}
+
+#[tokio::test]
 async fn common_dispatch_rejects_retained_edit_read_and_storage_calls_after_terminal_drain() {
     let (_directory, document, server) = fixture();
     let (service, _client) = service(server.clone());

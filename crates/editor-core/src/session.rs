@@ -26,9 +26,11 @@ use crate::spatial;
 pub mod atlas_texturing;
 pub mod baked_lightmaps;
 mod buffer_replacement;
+mod document_close;
 #[cfg(test)]
 mod launch_origin_tests;
 pub use buffer_replacement::BufferReplacementReview;
+pub use document_close::DocumentCloseReview;
 pub mod carving;
 pub mod checks;
 pub mod clip_drag;
@@ -280,6 +282,7 @@ pub struct Session {
     native_cleanup_error: Option<String>,
     content_epoch: u64,
     pending_launch: Option<LaunchOrigin>,
+    launch_serial: u64,
     compiled: Option<CompiledMap>,
     leak: Option<(Snapshot, compiler::Leak)>,
     game_run: Option<game::Run>,
@@ -514,6 +517,7 @@ impl Session {
             native_cleanup_error: None,
             content_epoch: 0,
             pending_launch: None,
+            launch_serial: 0,
             compiled: None,
             leak: None,
             game_run: None,
@@ -2098,6 +2102,10 @@ impl Session {
                 .as_ref()
                 .and_then(|compiled| compiled.instance_dependencies.clone()),
         };
+        self.launch_serial = self
+            .launch_serial
+            .checked_add(1)
+            .expect("Launch serial exhausted");
         self.pending_launch = Some(request.origin());
         self.log(actor, "launching CS:S");
         Ok(request)

@@ -1132,5 +1132,18 @@ impl Session {
     }
 }
 
+impl State {
+    pub(super) fn close_work(&self) -> serde_json::Value {
+        serde_json::json!({
+            "sequence": self.serial,
+            "status": self.status,
+            "worker_active": self.worker.busy(),
+            "request": self.pending
+                .as_ref()
+                .map(|pending| serde_json::json!({"token": pending.token, "cancelled": pending.control.cancelled()}))
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests;

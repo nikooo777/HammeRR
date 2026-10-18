@@ -316,6 +316,10 @@ pub fn stage_map_bytes(bytes: &[u8], map: &str) -> Result<Vec<u8>, String> {
 }
 
 impl Run {
+    pub(crate) fn close_identity(&self) -> serde_json::Value {
+        serde_json::json!({"pid": self.pid, "map": self.map, "status": self.status().label()})
+    }
+
     pub fn launch(install: &Install, bsp: &Path) -> Result<Self, String> {
         Self::launch_controlled(install, bsp, || Ok(()))
     }

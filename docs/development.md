@@ -2758,18 +2758,25 @@ checked cleanup, retained logs/results and shared UI/MCP status. They require
 no game or desktop input. Native engine capture and appearance parity remain
 separate checks.
 
-### Owned document-window retirement
+### Reviewed Close and owned document retirement
 
 ```sh
-cargo test -p editor ui::document_window::tests:: -- --ignored
+cargo test -p editor-core --features mcp,test-support runtime::document::close_tests
+cargo test -p editor-core --features mcp,test-support session::document_close::tests
+cargo test -p editor ui::document_window::tests::queued_host_retirement_acknowledges_released_owners_and_keeps_the_hidden_host_running -- --ignored --exact
 ```
 
-The four fixtures construct actual document-window owners using the software
-window backend and an offscreen GPU. They exercise visible direct/nested
-windows, all four timer owners, frame/input cleanup, a live peer, deliberately
-retained MCP ownership and memoized hide/borrow failures. No desktop windows
-or input are used. The acknowledgement covers owned UI references; retained
-MCP servers and Session/render caches have their own lifetimes.
+The core cases cover changed reviews, explicit discard, admitted-request races,
+owned playback and late compile completion. The optional UI cases construct the
+production document-window owner with software windows and a real offscreen GPU.
+Run each `ui::document_window::tests` case in its own process with
+`--ignored --exact`. Host cases run the Slint event loop, request retirement from a worker,
+drop a pending waiter and inspect released UI/controller owners while every
+window is hidden. Other cases cover native Close, nested windows, timers/input,
+retained peers and memoized hide, borrow, scheduling and quit failures. No desktop
+windows or input are used. UI acknowledgement does not establish a final MCP
+response write or physical GPU reclamation; external Session/render owners keep
+their own lifetimes.
 
 ### Owned HTTP transport
 

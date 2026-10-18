@@ -9,6 +9,14 @@ use serde_json::{Value, json};
 use super::manipulation::{axis_parameter, plane_parameter};
 use super::{Actor, Pointer, Session, Snapshot};
 
+impl State {
+    pub(super) fn close_draft(&self) -> Option<serde_json::Value> {
+        self.active
+            .as_ref()
+            .map(|active| serde_json::json!([self.serial, active.token]))
+    }
+}
+
 #[cfg(test)]
 mod tests;
 

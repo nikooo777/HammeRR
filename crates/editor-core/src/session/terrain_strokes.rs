@@ -284,6 +284,14 @@ impl Session {
     }
 }
 
+impl State {
+    pub(super) fn close_draft(&self) -> Option<serde_json::Value> {
+        self.stroke
+            .as_ref()
+            .map(|stroke| serde_json::json!([self.serial, stroke.token]))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

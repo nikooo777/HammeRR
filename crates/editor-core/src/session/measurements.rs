@@ -669,5 +669,18 @@ fn append_line(mesh: &mut render::SceneMesh, start: DVec3, end: DVec3, color: [u
     }
 }
 
+impl State {
+    pub(super) fn close_draft(&self) -> Option<serde_json::Value> {
+        self.draft.as_ref().map(|draft| {
+            serde_json::json!([
+                self.serial,
+                draft.token,
+                draft.owner.label(),
+                draft.picking.is_some()
+            ])
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests;

@@ -5,6 +5,76 @@ pub(super) fn file_access(ui: &SharedUi) -> DocumentAccess {
     ui.borrow().document_access()
 }
 
+pub(super) fn complete_terminal_close(
+    app: &slint::Weak<AppWindow>,
+    owner: &WeakUi,
+    continuation: &DocumentContinuation,
+    review: &runtime::DocumentCloseReview,
+    discard_changes: bool,
+) -> Result<bool, String> {
+    let (Some(_ui), Some(app)) = (owner.upgrade(), app.upgrade()) else {
+        return Ok(false);
+    };
+    let result = continuation
+        .upgrade()
+        .and_then(|access| access.try_commit_reviewed_close(review, discard_changes));
+    match result {
+        Ok(()) => Ok(true),
+        Err(error) => {
+            app.set_message(error.clone().into());
+            Err(error)
+        }
+    }
+}
+
+fn finish_terminal_close(
+    app: &slint::Weak<AppWindow>,
+    owner: &WeakUi,
+    continuation: &DocumentContinuation,
+    review: &runtime::DocumentCloseReview,
+    discard_changes: bool,
+    host: &WeakHost,
+) {
+    let Some(_host) = host.upgrade() else {
+        return;
+    };
+    if complete_terminal_close(app, owner, continuation, review, discard_changes) != Ok(true) {
+        return;
+    }
+    DocumentHost::accept_terminal_close(host);
+}
+
+pub(super) fn request_terminal_close(app: &AppWindow, owner: &WeakUi, host: &WeakHost) {
+    let Some(ui) = owner.upgrade() else {
+        return;
+    };
+    let access = file_access(&ui);
+    drop(ui);
+    let review = match access.document_close_review() {
+        Ok(review) => review,
+        Err(error) => {
+            app.set_message(error.into());
+            return;
+        }
+    };
+    let continuation = access.downgrade();
+    let (app, owner, host) = (app.as_weak(), owner.clone(), host.clone());
+    if !review.requires_discard() {
+        finish_terminal_close(&app, &owner, &continuation, &review, false, &host);
+        return;
+    }
+    let dialog = rfd::AsyncMessageDialog::new()
+        .set_title("Unsaved changes and drafts")
+        .set_description("Discard the reviewed unsaved map changes and pending drafts, and close the editor? Owned game and sound playback will stop; owned work will be cancelled and drained.")
+        .set_buttons(rfd::MessageButtons::YesNoCancel);
+    slint::spawn_local(async move {
+        if dialog.show().await == rfd::MessageDialogResult::Yes {
+            finish_terminal_close(&app, &owner, &continuation, &review, true, &host);
+        }
+    })
+    .expect("event loop is running");
+}
+
 fn complete_file_action(
     app: &slint::Weak<AppWindow>,
     continuation: &DocumentContinuation,

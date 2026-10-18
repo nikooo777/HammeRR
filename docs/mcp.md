@@ -34,6 +34,13 @@ shutdown has a two-second grace period; a timeout remains a reported exit error.
 Owned blocking work finishes before the service is released. Multiple documents
 and an MCP document Close command remain unavailable.
 
+`get_map_info.document_close` inspects the same state used by the editor's close
+confirmation. It reports an opaque `review_token`, `document_id`,
+`unsaved_changes`, pending `drafts`, `discard_required`, owned `work` and
+`closing`. The review itself does not discard drafts, stop playback or cancel
+jobs. It belongs to that document and expires when its reviewed state changes; it is
+separate from `replacement_review` and cannot close the document.
+
 ### Without a window
 
 `hammerr-headless` serves MCP over stdin/stdout in a private session. It uses the same tools and editing operations as the desktop editor. Rendering still works; graphics start on the first render.

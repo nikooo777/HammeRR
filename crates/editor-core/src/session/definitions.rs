@@ -189,5 +189,17 @@ impl Session {
     }
 }
 
+impl LoadState {
+    pub(super) fn close_work(&self) -> serde_json::Value {
+        serde_json::json!({
+            "sequence": self.serial,
+            "worker_active": self.worker.busy(),
+            "cancelled": self.cancelled
+                .as_ref()
+                .map(|cancelled| cancelled.load(Ordering::Acquire))
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests;

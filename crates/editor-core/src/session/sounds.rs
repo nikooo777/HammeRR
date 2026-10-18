@@ -10,6 +10,31 @@ mod catalog;
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) mod fixtures;
 
+impl State {
+    pub(super) fn close_draft(&self) -> Option<serde_json::Value> {
+        self.draft.as_ref().map(|draft| {
+            serde_json::json!([
+                self.serial,
+                draft.token,
+                draft
+                    .choice
+                    .as_ref()
+                    .map(|choice| (&choice.value, choice.variant))
+            ])
+        })
+    }
+}
+
+impl State {
+    pub(super) fn close_playback(&self) -> serde_json::Value {
+        serde_json::json!({
+            "sequence": self.playback_serial,
+            "playback": self.playback.as_ref().map(audio::Playback::close_identity),
+            "volume": self.volume,
+        })
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests;
 

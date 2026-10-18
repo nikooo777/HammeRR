@@ -320,5 +320,13 @@ fn draft_id(session: &Session) -> Option<u32> {
         .and_then(|draft| draft.edit.id)
 }
 
+impl State {
+    pub(super) fn close_draft(&self) -> Option<serde_json::Value> {
+        self.draft
+            .as_ref()
+            .map(|draft| serde_json::json!([self.serial, draft.token, draft.version]))
+    }
+}
+
 #[cfg(test)]
 mod tests;

@@ -188,6 +188,29 @@ impl Drop for DocumentRuntime {
 #[derive(Clone)]
 pub struct DocumentHandle(Arc<DocumentRuntime>);
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DocumentCloseReview {
+    document: DocumentId,
+    session: crate::session::DocumentCloseReview,
+}
+
+impl DocumentCloseReview {
+    pub fn requires_discard(&self) -> bool {
+        self.session.requires_discard()
+    }
+
+    pub fn inspection(&self) -> Value {
+        let mut result = self.session.inspection();
+        result["document_id"] = serde_json::json!(self.document.value());
+        result["review_token"] = serde_json::json!(format!(
+            "document-close-v1:{}:{}",
+            self.document.value(),
+            self.session.token()
+        ));
+        result
+    }
+}
+
 impl DocumentHandle {
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn start(session: SharedSession) -> Result<Self, String> {
@@ -262,6 +285,66 @@ impl DocumentHandle {
         self.0.admission.admit()
     }
 
+    pub fn document_close_review(&self) -> Result<DocumentCloseReview, String> {
+        let _operation = self.admit()?;
+        Ok(self.close_review_for(&lock(self.session())))
+    }
+
+    pub(crate) fn close_review_for(
+        &self,
+        session: &crate::session::Session,
+    ) -> DocumentCloseReview {
+        DocumentCloseReview {
+            document: self.id(),
+            session: session.document_close_review(),
+        }
+    }
+
+    pub fn try_commit_reviewed_close(
+        &self,
+        review: &DocumentCloseReview,
+        discard_changes: bool,
+    ) -> Result<(), String> {
+        if review.document != self.id() {
+            return Err(
+                "Close was reviewed for another document; review this document and try again"
+                    .into(),
+            );
+        }
+        let _shutdown = self
+            .0
+            .shutdown
+            .lock()
+            .expect("Document shutdown lock poisoned");
+        let state = self.lifecycle();
+        match state {
+            DocumentLifecycle::Live => {}
+            DocumentLifecycle::Draining => return Err("the editor is closing".into()),
+            DocumentLifecycle::Finished => return Err("the document is closed".into()),
+            DocumentLifecycle::Failed(error) => {
+                return Err(format!("document shutdown failed: {error}"));
+            }
+        }
+        let mut session = lock(self.session());
+        session.ensure_document_close_review(&review.session, discard_changes)?;
+        let mut lifecycle = self
+            .0
+            .admission
+            .lifecycle
+            .lock()
+            .expect("Document admission lock poisoned");
+        if *lifecycle != DocumentLifecycle::Live {
+            return Err("The document is already closing or closed".into());
+        }
+        if self.0.admission.operations.load(Ordering::Acquire) != 0 {
+            return Err("Close is busy with an admitted request or worker. Wait for it to finish, or cancel it using its normal control, then review Close again".into());
+        }
+        *lifecycle = DocumentLifecycle::Draining;
+        drop(lifecycle);
+        session.commit_terminal_closing();
+        Ok(())
+    }
+
     #[cfg(test)]
     pub(crate) fn active_operations(&self) -> usize {
         self.0.admission.operations.load(Ordering::Acquire)
@@ -298,6 +381,35 @@ pub struct DocumentContinuation {
 }
 
 impl DocumentAccess {
+    pub fn finish_reviewed_close(&self) -> Result<(), String> {
+        let document = self
+            .document
+            .as_ref()
+            .ok_or_else(|| "An owning document is required for reviewed Close".to_owned())?;
+        if document.lifecycle() == DocumentLifecycle::Live {
+            return Err("Close has not been accepted".into());
+        }
+        document.shutdown()
+    }
+
+    pub fn document_close_review(&self) -> Result<DocumentCloseReview, String> {
+        self.document
+            .as_ref()
+            .ok_or_else(|| "An owning document is required for reviewed Close".to_owned())?
+            .document_close_review()
+    }
+
+    pub fn try_commit_reviewed_close(
+        &self,
+        review: &DocumentCloseReview,
+        discard_changes: bool,
+    ) -> Result<(), String> {
+        self.document
+            .as_ref()
+            .ok_or_else(|| "An owning document is required for reviewed Close".to_owned())?
+            .try_commit_reviewed_close(review, discard_changes)
+    }
+
     pub fn for_document(document: DocumentHandle) -> Self {
         Self {
             session: document.session().clone(),
@@ -442,3 +554,6 @@ mod tests;
 
 #[cfg(test)]
 mod admission_tests;
+
+#[cfg(test)]
+mod close_tests;

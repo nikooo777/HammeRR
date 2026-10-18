@@ -382,6 +382,24 @@ impl Client {
         json!({"available":state.record.is_none(),"message":state.record.as_ref().map_or_else(||"Native activity available.".to_owned(), Record::message),"owner":state.record.as_ref().map(|record|json!({"activity_id":record.id,"document_id":record.document.value(),"phase":record.phase,"targets":record.targets,"cleanup_error":record.failure}))})
     }
 
+    pub(crate) fn close_work(&self) -> Value {
+        let state = self
+            .core
+            .state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        state
+            .record
+            .as_ref()
+            .filter(|record| record.document == self.document)
+            .map_or(Value::Null, |record| {
+                json!({
+                    "activity_id": record.id, "phase": record.phase,
+                    "cleanup_error": record.failure,
+                })
+            })
+    }
+
     pub(crate) fn cleanup_result(&self) -> Result<(), String> {
         let state = self
             .core

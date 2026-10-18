@@ -4,13 +4,14 @@ use super::*;
 pub(super) struct UiRetired;
 
 pub(super) struct DocumentWindow {
-    app: Option<AppWindow>,
+    pub(super) document: runtime::DocumentId,
+    pub(super) app: Option<AppWindow>,
     ui: Option<SharedUi>,
-    frame_timer: Option<slint::Timer>,
+    frame_timer: Option<Rc<slint::Timer>>,
     contents: Option<Rc<instance_contents::Controller>>,
     reference: Option<Rc<instance_reference::Controller>>,
     extraction: Option<Rc<instance_extraction::Controller>>,
-    retired: Option<Result<UiRetired, String>>,
+    pub(super) retired: Option<Result<UiRetired, String>>,
 }
 
 pub(crate) fn hide_window(label: &str, window: &slint::Window, errors: &mut Vec<String>) {
@@ -24,48 +25,17 @@ pub(crate) fn hide_window(label: &str, window: &slint::Window, errors: &mut Vec<
     }
 }
 
-impl DocumentWindow {
-    pub(super) fn new(
-        app: AppWindow,
-        ui: SharedUi,
-        frame_timer: slint::Timer,
-        contents: Option<Rc<instance_contents::Controller>>,
-        reference: Option<Rc<instance_reference::Controller>>,
-        extraction: Option<Rc<instance_extraction::Controller>>,
-    ) -> Self {
-        Self {
-            app: Some(app),
-            ui: Some(ui),
-            frame_timer: Some(frame_timer),
-            contents,
-            reference,
-            extraction,
-            retired: None,
-        }
-    }
+struct RetirementView<'a> {
+    app: Option<&'a AppWindow>,
+    ui: Option<&'a SharedUi>,
+    frame_timer: Option<&'a slint::Timer>,
+    contents: Option<&'a instance_contents::Controller>,
+    reference: Option<&'a instance_reference::Controller>,
+    extraction: Option<&'a instance_extraction::Controller>,
+}
 
-    pub(super) fn app(&self) -> &AppWindow {
-        self.app.as_ref().expect("DocumentWindow is retired")
-    }
-
-    pub(super) fn finish(
-        &mut self,
-        primary: Result<(), Box<dyn std::error::Error>>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        match (primary, self.retire()) {
-            (Ok(()), Ok(_)) => Ok(()),
-            (Err(error), Ok(_)) => Err(error),
-            (Ok(()), Err(error)) => Err(format!("UI retirement failed: {error}").into()),
-            (Err(primary), Err(error)) => {
-                Err(format!("{primary}; UI retirement failed: {error}").into())
-            }
-        }
-    }
-
-    pub(super) fn retire(&mut self) -> Result<UiRetired, String> {
-        if let Some(result) = &self.retired {
-            return result.clone();
-        }
+impl RetirementView<'_> {
+    fn stop_and_hide(&self) -> Vec<String> {
         if let Some(timer) = &self.frame_timer {
             timer.stop();
         }
@@ -111,6 +81,68 @@ impl DocumentWindow {
             app.set_flying(false);
             app.set_frame(slint::Image::default());
         }
+        errors
+    }
+}
+
+impl DocumentWindow {
+    pub(super) fn new(
+        document: runtime::DocumentId,
+        app: AppWindow,
+        ui: SharedUi,
+        frame_timer: slint::Timer,
+        contents: Option<Rc<instance_contents::Controller>>,
+        reference: Option<Rc<instance_reference::Controller>>,
+        extraction: Option<Rc<instance_extraction::Controller>>,
+    ) -> Self {
+        let frame_timer = Rc::new(frame_timer);
+        Self {
+            document,
+            app: Some(app),
+            ui: Some(ui),
+            frame_timer: Some(frame_timer),
+            contents,
+            reference,
+            extraction,
+            retired: None,
+        }
+    }
+
+    pub(super) fn app(&self) -> &AppWindow {
+        self.app.as_ref().expect("DocumentWindow is retired")
+    }
+
+    pub(super) fn weak_ui(&self) -> WeakUi {
+        Rc::downgrade(self.ui.as_ref().expect("DocumentWindow is retired"))
+    }
+
+    pub(super) fn finish(
+        &mut self,
+        primary: Result<(), Box<dyn std::error::Error>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        match (primary, self.retire()) {
+            (Ok(()), Ok(_)) => Ok(()),
+            (Err(error), Ok(_)) => Err(error),
+            (Ok(()), Err(error)) => Err(format!("UI retirement failed: {error}").into()),
+            (Err(primary), Err(error)) => {
+                Err(format!("{primary}; UI retirement failed: {error}").into())
+            }
+        }
+    }
+
+    pub(super) fn retire(&mut self) -> Result<UiRetired, String> {
+        if let Some(result) = &self.retired {
+            return result.clone();
+        }
+        let mut errors = RetirementView {
+            app: self.app.as_ref(),
+            ui: self.ui.as_ref(),
+            frame_timer: self.frame_timer.as_deref(),
+            contents: self.contents.as_deref(),
+            reference: self.reference.as_deref(),
+            extraction: self.extraction.as_deref(),
+        }
+        .stop_and_hide();
         self.frame_timer.take();
         self.contents.take();
         self.reference.take();

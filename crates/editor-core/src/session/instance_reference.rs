@@ -200,6 +200,7 @@ impl Session {
             .as_mut()
             .unwrap()
             .candidate_error = error;
+        self.instance_reference.serial += 1;
         Ok(self.get_instance_reference())
     }
 
@@ -296,6 +297,7 @@ impl Session {
             .reference(&form.values[0])
             .map_err(|error| error.to_string())?;
         self.instance_reference.form.as_mut().unwrap().checked = Some(reference);
+        self.instance_reference.serial += 1;
         Ok(self.get_instance_reference())
     }
 
@@ -326,6 +328,7 @@ impl Session {
             .as_mut()
             .unwrap()
             .candidate_error = error;
+        self.instance_reference.serial += 1;
         Ok(self.get_instance_reference())
     }
 
@@ -405,6 +408,21 @@ impl Session {
         Ok(
             json!({"id":crate::identity::id_string(id),"applied":true,"presence_checked":true,"contents_validation":"not_checked"}),
         )
+    }
+}
+
+impl State {
+    pub(super) fn close_draft(&self) -> Option<serde_json::Value> {
+        self.form.as_ref().map(|form| {
+            serde_json::json!([
+                self.serial,
+                form.token,
+                form.owner.label(),
+                form.values,
+                form.checked.is_some(),
+                form.candidate_error
+            ])
+        })
     }
 }
 

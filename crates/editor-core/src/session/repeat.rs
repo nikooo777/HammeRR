@@ -194,6 +194,14 @@ impl Session {
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) mod fixtures;
 
+impl State {
+    pub(super) fn close_draft(&self) -> Option<serde_json::Value> {
+        self.preview
+            .as_ref()
+            .map(|preview| serde_json::json!([self.serial, preview.token]))
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;

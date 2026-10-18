@@ -2886,6 +2886,28 @@ shared Preview/Cancel/Apply and Undo. The software placement case writes
 `model-vertex-snap.png` when `HAMMERR_UI_SNAPSHOTS` names an existing directory;
 it does not create a desktop window or use input.
 
+### Multiple-owner corner snapping
+
+```sh
+cargo test -p editor-core --features mcp,test-support multi_owner_corner_snap
+cargo test -p editor-core --features mcp,test-support terrain_corner_snap_uses_the_prepared
+cargo test -p editor-core --features mcp,test-support model_corner_snap_uses_cached
+cargo test -p editor-core --features mcp,test-support terrain_snap_tools
+cargo test -p editor multi_owner_corner_controls
+cargo test -p editor placement_ui::admission_tests
+```
+
+These cases translate whole world/brush-entity roots, hidden children and point
+companions by one corner-derived offset; the model case also excludes a moving
+model in front of its fixed model target. Invalid batches retain the last plan
+or pending pick, and Apply, exact no-op and Undo share the ordinary transform
+path. The bound source chooser requires an explicit corner, resumes shared
+review, retains a valid plan after a rejected choice and writes
+`multi-owner-corner-snap.png` when `HAMMERR_UI_SNAPSHOTS` names an existing
+directory. The actual MCP source query matches the shared chooser's exact
+fractional positions, canonical root IDs, committed-preview independence,
+limits and strict arguments. No desktop input is used.
+
 ### Entity-local ruler attachments
 
 ```sh

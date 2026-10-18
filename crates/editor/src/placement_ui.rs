@@ -14,7 +14,7 @@ use crate::{
     runtime::{DocumentAccess, DocumentContinuation},
     session::{
         Actor, Session,
-        placement::{Method, Options},
+        placement::{Method, Options, SourceCorner},
     },
 };
 
@@ -22,7 +22,9 @@ use crate::{
 struct Context {
     ids: Vec<ObjectId>,
     generation: u64,
+    revision: u64,
     source_corner: Option<Component>,
+    corners: Vec<Component>,
 }
 
 pub struct Controller {
@@ -40,7 +42,9 @@ fn validate(
 ) -> Result<Vec<ObjectId>, String> {
     let context = context.borrow();
     let context = context.as_ref().ok_or("Reopen surface placement")?;
-    if context.generation != session.document_generation() || context.ids != session.selected_ids()
+    if context.generation != session.document_generation()
+        || context.revision != session.document().revision()
+        || context.ids != session.selected_ids()
     {
         return Err("Map or selection changed; reopen surface placement".into());
     }
@@ -57,9 +61,7 @@ fn options(window: &PlacementWindow, source: Option<Component>) -> Result<Option
         .map_err(|_| "Enter a finite surface offset")?;
     Ok(Options {
         source_corner: if window.get_method() == 3 {
-            Some(source.ok_or(
-                "Select one real corner in Reshape brushes… → Vertices before opening placement",
-            )?)
+            Some(source.ok_or("Choose a Source corner before picking the target")?)
         } else {
             None
         },
@@ -67,6 +69,29 @@ fn options(window: &PlacementWindow, source: Option<Component>) -> Result<Option
         offset,
         texture_lock: window.get_texture_lock(),
     })
+}
+
+fn source_label(session: &Session, source: &SourceCorner) -> slint::SharedString {
+    let label = match source.owner {
+        ObjectId::Entity(id) => session.rename_entity_label(id),
+        ObjectId::Solid(id) => session
+            .document()
+            .solid(id)
+            .and_then(|brush| brush.sides.first())
+            .map_or_else(
+                || "World brush".into(),
+                |side| format!("{} brush", side.material),
+            ),
+    };
+    format!(
+        "{label} · {:.3}, {:.3}, {:.3} · brush {} · faces {:?}",
+        source.position.x,
+        source.position.y,
+        source.position.z,
+        source.component.solid,
+        source.component.sides
+    )
+    .into()
 }
 
 fn present(window: &PlacementWindow, report: &serde_json::Value) {
@@ -148,8 +173,8 @@ impl Controller {
         let window = PlacementWindow::new()?;
         window
             .window()
-            .set_size(slint::LogicalSize::new(560.0, 640.0));
-        let context = Rc::new(RefCell::new(None));
+            .set_size(slint::LogicalSize::new(640.0, 720.0));
+        let context = Rc::new(RefCell::new(None::<Context>));
         let token = Rc::new(Cell::new(None));
         let picking = Rc::new(Cell::new(false));
         let dirty = Rc::new(Cell::new(false));
@@ -160,6 +185,27 @@ impl Controller {
                     dirty.set(true);
                     window.set_ready(false);
                     window.set_message("Preview changed settings before applying them.".into());
+                });
+            }
+        });
+        window.on_choose_source({
+            let (window, access, context, dirty) = (
+                window.as_weak(),
+                access.clone(),
+                context.clone(),
+                dirty.clone(),
+            );
+            move |index| {
+                with_session(&window, &access, |window, _session| {
+                    if let Some(context) = context.borrow_mut().as_mut() {
+                        context.source_corner = usize::try_from(index - 1)
+                            .ok()
+                            .and_then(|index| context.corners.get(index).cloned());
+                    }
+                    dirty.set(true);
+                    window.set_ready(false);
+                    window
+                        .set_message("Pick the target again to preview this source corner.".into());
                 });
             }
         });
@@ -345,41 +391,61 @@ impl Controller {
         } else {
             None
         };
-        self.window
-            .set_source_corner(source_corner.as_ref().map_or_else(
-                || "Choose one corner in Reshape brushes… → Vertices.".into(),
-                |corner| {
-                    let position = if resume {
-                        serde_json::from_value::<[f64; 3]>(report["source_position"].clone())
-                            .ok()
-                            .map(glam::DVec3::from_array)
-                    } else {
-                        session
-                            .component_topology(&[corner.solid])
-                            .ok()
-                            .and_then(|shapes| {
-                                let shape = shapes.first()?;
-                                let indices = shape.resolve(&corner.sides).ok()?;
-                                (indices.len() == 1 && corner.sides.len() >= 3)
-                                    .then(|| shape.vertices[indices[0]].position)
-                            })
-                    };
-                    format!(
-                        "Brush {} · incident faces {:?}{}",
-                        corner.solid,
-                        corner.sides,
-                        position.map_or_else(String::new, |point| format!(
-                            " · {:.3}, {:.3}, {:.3}",
-                            point.x, point.y, point.z
-                        ))
-                    )
-                    .into()
+        let choices = session.surface_placement_source_corners(&ids);
+        let source_error = choices.as_ref().err().cloned();
+        let mut choices = choices.unwrap_or_default();
+        if let Some(component) = &source_corner
+            && !choices.iter().any(|choice| &choice.component == component)
+            && let Ok(shapes) = session.component_topology(&[component.solid])
+            && let Some(shape) = shapes.first()
+            && let Ok(indices) = shape.resolve(&component.sides)
+            && indices.len() == 1
+            && component.sides.len() >= 3
+            && let Some(owner) = session.document().owner_of_solid(component.solid)
+            && ids.contains(&owner)
+        {
+            choices.push(SourceCorner {
+                component: component.clone(),
+                owner,
+                position: if resume {
+                    serde_json::from_value::<[f64; 3]>(report["source_position"].clone())
+                        .map(glam::DVec3::from_array)
+                        .unwrap_or(shape.vertices[indices[0]].position)
+                } else {
+                    shape.vertices[indices[0]].position
                 },
-            ));
+            });
+        }
+        let source_index = source_corner.as_ref().and_then(|corner| {
+            choices
+                .iter()
+                .position(|choice| &choice.component == corner)
+        });
+        let source_corner = source_index.map(|index| choices[index].component.clone());
+        self.window
+            .set_source_choices(slint::ModelRc::new(slint::VecModel::from(
+                std::iter::once("Choose a source corner…".into())
+                    .chain(choices.iter().map(|choice| source_label(session, choice)))
+                    .collect::<Vec<slint::SharedString>>(),
+            )));
+        self.window
+            .set_source_index(source_index.map_or(0, |index| index as i32 + 1));
+        self.window.set_source_error(source_error.map_or_else(
+            || {
+                if choices.is_empty() {
+                    "Select a visible flat brush to supply the source corner.".into()
+                } else {
+                    "".into()
+                }
+            },
+            Into::into,
+        ));
         *self.context.borrow_mut() = Some(Context {
             ids: ids.clone(),
             generation: session.document_generation(),
+            revision: session.document().revision(),
             source_corner,
+            corners: choices.into_iter().map(|choice| choice.component).collect(),
         });
         self.token.set(if resume {
             report["token"].as_u64()
@@ -473,7 +539,113 @@ impl Controller {
 mod tests {
     use super::*;
     use glam::DVec3;
+    use slint::Model;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn multi_owner_corner_controls_choose_a_source_and_share_review_cancel_apply() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let (mut session, selected) = crate::test_assets::placement();
+        let ids = crate::test_assets::placement_moving_roots(&mut session, selected);
+        let original = session.document().vmf().clone();
+        let history = session.document().undo_labels().count();
+        let shared = Arc::new(Mutex::new(session));
+        let controller = Controller::new(&shared).unwrap();
+        controller.initialize(&mut lock(&shared)).unwrap();
+        controller.window.set_method(3);
+        assert_eq!(controller.window.get_source_index(), 0);
+        controller.window.invoke_preview();
+        assert!(!controller.is_picking());
+        assert!(
+            controller
+                .window
+                .get_message()
+                .contains("Choose a Source corner")
+        );
+        assert!(lock(&shared).surface_placement()["token"].is_null());
+        let choice = controller
+            .context
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .corners
+            .iter()
+            .position(|corner| {
+                matches!(
+                    lock(&shared).document().owner_of_solid(corner.solid),
+                    Some(ObjectId::Entity(_))
+                )
+            })
+            .unwrap() as i32
+            + 1;
+        controller.window.set_source_index(choice);
+        controller.window.invoke_choose_source(choice);
+        let ray = Ray {
+            origin: DVec3::new(-200.0, -200.0, 100.0),
+            direction: DVec3::NEG_Z,
+        };
+        controller.window.invoke_preview();
+        assert!(controller.is_picking());
+        controller.pick_at_ray(&mut lock(&shared), ray).unwrap();
+        assert!(controller.window.get_ready());
+        let report = lock(&shared).surface_placement();
+        assert_eq!(
+            report["ids"],
+            serde_json::json!(
+                ids.iter()
+                    .copied()
+                    .map(crate::identity::id_string)
+                    .collect::<Vec<_>>()
+            )
+        );
+        let label = controller
+            .window
+            .get_source_choices()
+            .row_data(choice as usize)
+            .unwrap();
+        let position = &report["source_position"];
+        assert!(label.starts_with(&format!(
+            "Moving assembly · {:.3}, {:.3}, {:.3} · brush ",
+            position[0].as_f64().unwrap(),
+            position[1].as_f64().unwrap(),
+            position[2].as_f64().unwrap()
+        )));
+        assert!(label.contains(&format!(
+            "brush {} · faces ",
+            report["source_corner"]["solid"]
+        )));
+        assert!(controller.window.get_summary().contains("Move"));
+        controller.initialize(&mut lock(&shared)).unwrap();
+        assert_eq!(controller.window.get_source_index(), choice);
+        assert!(controller.window.get_ready());
+        controller.window.set_source_index(0);
+        controller.window.invoke_choose_source(0);
+        controller.window.invoke_preview();
+        assert!(!controller.window.get_ready());
+        assert_eq!(lock(&shared).surface_placement(), report);
+        controller.window.invoke_cancel();
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        assert_eq!(lock(&shared).document().undo_labels().count(), history);
+        controller.initialize(&mut lock(&shared)).unwrap();
+        controller.window.set_method(3);
+        controller.window.set_source_index(choice);
+        controller.window.invoke_choose_source(choice);
+        controller.window.invoke_preview();
+        controller.pick_at_ray(&mut lock(&shared), ray).unwrap();
+        controller.window.show().unwrap();
+        crate::ui::tests::save_ui_snapshot(controller.window.window(), "multi-owner-corner-snap");
+        controller.window.invoke_apply();
+        assert_eq!(lock(&shared).document().undo_labels().count(), history + 1);
+        lock(&shared).undo(Actor::User).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &original);
+    }
 
     #[test]
     fn model_corner_controls_review_the_shared_cached_mesh_vertex() {

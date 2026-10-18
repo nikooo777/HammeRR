@@ -3,6 +3,33 @@ use super::super::*;
 #[tool_router(router = materials_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
+        description = "Inspect the same bounded committed visible source-corner choices as Place on surface… → Snap selected corner → Source corner. Optional whole-root ids default to the selection; inspection never changes selection, map, history or active drafts. Returns canonical ids, sources with owner ID, numeric solid, complete incident sides and exact unrounded world position, committed_geometry provenance and limits of 256 visible flat brushes / 4096 checked corners. Source eligibility shares the human chooser's topology, whole-root, identity, visibility and bounds checks. Point/model companions can move but supply no source corner. Invalid roots or exceeded limits return an error without a partial list or draft mutation. Pass one returned solid/sides pair as source_corner to the existing shared placement preview or pick operation.",
+        annotations(read_only_hint = true)
+    )]
+    pub(in crate::mcp) fn get_surface_placement_sources(
+        &self,
+        Parameters(args): Parameters<SurfacePlacementSourcesArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let mut ids = ids_or_selection(&session, args.ids.as_deref())?;
+            ids.sort_unstable();
+            ids.dedup();
+            let sources = session.surface_placement_source_corners(&ids)?;
+            Ok(json!({
+                "ids":ids.iter().copied().map(id_string).collect::<Vec<_>>(),
+                "sources":sources.into_iter().map(|source|json!({
+                    "owner":id_string(source.owner), "solid":source.component.solid,
+                    "sides":source.component.sides, "position":source.position.to_array(),
+                })).collect::<Vec<_>>(),
+                "provenance":"committed_geometry",
+                "limits":{"source_brushes":crate::session::placement::MAX_SOURCE_BRUSHES,
+                    "source_corners":crate::session::placement::MAX_SOURCE_CORNERS},
+            }))
+        })
+    }
+
+    #[tool(
         description = "Read the selected material's mounted VMT source and winning directory/file or VPK index/storage paths. Shares Browse materials → Source… in the editor. Returns up to 64 KiB of raw UTF-8 source with explicit truncation, up to nine source/include lookups, resolved Patch shader declaration and twelve recognized texture parameter values. Names are declarations, not proof that shaders or texture assets exist or render successfully. Missing, malformed, unreadable, invalid-UTF-8 and oversized files produce explicit report.error; no lower-priority read fallback or preview/cache mutation. Each VMT is limited to 1 MiB, aggregate reads to 4 MiB, paths to 512 bytes, nesting to 64 and nodes to 4096. VPK provenance requires the mounted index to remain current. Does not edit the map, selection, history, camera or active drafts.",
         annotations(read_only_hint = true)
     )]
@@ -24,7 +51,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Preview rigid surface placement of selected or explicit object ids together. method=floor (default) or ceiling casts vertically and preserves XY; method=ray uses ray_origin/ray_direction and centers the selection tangentially at the hit. Optional align rotates the first object's local up to the geometric normal; offset is normal distance, texture_lock defaults to current settings. Supports actual brush/terrain/model geometry and helper bounds for unsupported point assets. Returns owned token and contact/transform details; no source/history edit. method=brush_corner requires exactly one moving brush owner and explicit source_corner {solid,sides} from a real topology vertex; uses the ray to choose the nearest real corner of the first visible flat brush face or nearest of the first prepared terrain/model triangle's three vertices. Terrain reports kind=terrain_vertex, solid/side, triangle, row-major index, grid_size and prepared_surface provenance; brush targets retain solid/sides with kind=brush_corner. Model targets report kind=model_vertex with entity, cached model/checksum, body/skin/scale/pose, global part/vertex indices, part-local triangle and cached_decoded_model_mesh provenance. Translates only, preserving texture policy; align=true/nonzero offset and ambiguous targets reject without replacing a valid plan. Inspect source_position and plan.corner identities/positions before Apply. Finish other geometry previews first. UI: Place on surface… → Snap selected corner."
+        description = "Preview rigid surface placement of selected or explicit object ids together. method=floor (default) or ceiling casts vertically and preserves XY; method=ray uses ray_origin/ray_direction and centers the selection tangentially at the hit. Optional align rotates the first object's local up to the geometric normal; offset is normal distance, texture_lock defaults to current settings. Supports actual brush/terrain/model geometry and helper bounds for unsupported point assets. Returns owned token and contact/transform details; no source/history edit. method=brush_corner requires selected whole world brushes/entities and one explicit source_corner {solid,sides} from a visible flat brush owned by that selection; every root shares the same translation and all moving owners are excluded as targets; uses the ray to choose the nearest real corner of the first visible flat brush face or nearest of the first prepared terrain/model triangle's three vertices. Terrain reports kind=terrain_vertex, solid/side, triangle, row-major index, grid_size and prepared_surface provenance; brush targets retain solid/sides with kind=brush_corner. Model targets report kind=model_vertex with entity, cached model/checksum, body/skin/scale/pose, global part/vertex indices, part-local triangle and cached_decoded_model_mesh provenance. Translates only, preserving texture policy; align=true/nonzero offset and ambiguous targets reject without replacing a valid plan. Inspect source_position and plan.corner identities/positions before Apply. Finish other geometry previews first. UI: Place on surface… → Snap selected corner."
     )]
     pub(in crate::mcp) fn preview_surface_placement(
         &self,
@@ -62,7 +89,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Arm shared viewport surface picking for selected/explicit ids, optional align, normal offset and texture_lock. Returns owned token without editing source/history. The next pick_surface_placement supplies the ray; missed/invalid hits keep picking active. method=brush_corner plus explicit source_corner {solid,sides} arms exact corner snapping; ray is the default method. Corner snapping targets visible flat brush corners, prepared terrain-triangle vertices or supported model mesh vertices and needs one brush owner, zero offset and no alignment. UI: Place on surface… → Pick surface or Snap selected corner → Pick target corner."
+        description = "Arm shared viewport surface picking for selected/explicit ids, optional align, normal offset and texture_lock. Returns owned token without editing source/history. The next pick_surface_placement supplies the ray; missed/invalid hits keep picking active. method=brush_corner plus explicit source_corner {solid,sides} arms exact corner snapping; ray is the default method. Corner snapping targets visible flat brush corners, prepared terrain-triangle vertices or supported model mesh vertices and needs one chosen source corner in the moving whole-owner selection, zero offset and no alignment. UI: Place on surface… → Pick surface or Snap selected corner → Pick target corner."
     )]
     pub(in crate::mcp) fn begin_surface_placement_pick(
         &self,

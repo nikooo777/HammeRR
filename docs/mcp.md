@@ -293,7 +293,7 @@ for source, geometry and memory limits.
 
 ## Tools by task
 
-The shared desktop and private stdio server register 417 tools. `tools/list`
+The shared desktop and private stdio server register 418 tools. `tools/list`
 returns their current schemas and descriptions.
 
 | Task | Tools |
@@ -327,7 +327,7 @@ returns their current schemas and descriptions.
 | Surface-picked transform pivot | `transform_pivot_pick` |
 | Absolute grid placement | `preview_snap_to_grid`; inspect and apply/cancel through the transform tools |
 | Overlay authoring | `get_overlay_state`, `browse_overlay_targets`, `preview_overlay`, `preview_overlay_refit`, `preview_overlay_rebind`, `preview_overlay_corners`, `overlay_corner_handles`, `review_overlay`, `apply_overlay`, `cancel_overlay` |
-| Surface placement | `preview_surface_placement`, `begin_surface_placement_pick`, `pick_surface_placement`, `get_surface_placement`, `apply_surface_placement`, `cancel_surface_placement` |
+| Surface placement | `get_surface_placement_sources`, `preview_surface_placement`, `begin_surface_placement_pick`, `pick_surface_placement`, `get_surface_placement`, `apply_surface_placement`, `cancel_surface_placement` |
 | New entities on surfaces | `get_entity_placement`, `begin_entity_placement`, `pick_entity_placement`, `review_entity_placement`, `apply_entity_placement`, `cancel_entity_placement` |
 | Rope preview | `get_rope_preview`, `set_view`; `render_view` and `pick_at_pixel` accept `rope_preview` overrides |
 | Area selection | `set_area_selection_options`, `select_area`, `get_area_selection`, `commit_area_selection`, `cancel_area_selection` |
@@ -1849,11 +1849,20 @@ scale inputs are not established by the editor preview. See [Models](models.md#s
 
 Source, scene or selection changes invalidate the draft. Other geometry previews must be finished first. Opening the human window resumes a valid shared placement; replaced tokens require reopening for review. The whole selection moves rigidly, with actual brush/terrain/model vertices and helper-bound fallbacks. This operation does not simulate physics or resolve other contacts. See [Surface placement](placement.md) for target, alignment and resource limits.
 
-For `method: "brush_corner"`, pass `source_corner: {solid, sides}` from a vertex
-reported by `get_brush_components`: the numeric brush ID and complete incident
-side-ID set, with no raw position field. `ids` must identify exactly one world
-brush or brush-entity owner containing that corner. The mode translates the
-whole owner so the source vertex meets the nearest real corner of the first
+For `method: "brush_corner"`, call `get_surface_placement_sources` with optional
+whole-root `ids` (selection by default) for the human chooser's exact same
+committed visible choices. It returns canonical `ids`, `sources` with owner ID,
+numeric `solid`, complete incident `sides` and unrounded world `position`,
+`provenance: "committed_geometry"` and `limits.source_brushes: 256` /
+`limits.source_corners: 4096`. Invalid roots or exceeded limits return an error
+without a partial list or changes to selection, map, history or drafts. The
+report stays committed while a preview is displayed. Pass one returned
+`source_corner: {solid, sides}`; `get_brush_components` can also inspect a vertex's
+side-ID set, with no raw position field. `ids` identifies all moving whole world
+brushes/entities; one selected brush owner must contain that source corner.
+Ordinary point/model entities can accompany the brush owners. Every moving root
+receives one identical offset, and all of them and their child brushes/models
+are excluded as targets. The source vertex meets the nearest real corner of the first
 visible flat brush face, prepared terrain triangle or supported model mesh triangle
 hit by the ray. Terrain
 targets use only that triangle's three vertices, including displayed sewn
@@ -1880,12 +1889,18 @@ invalidates captured plans; changed disk bytes are not silently adopted by the
 cache. Brush/terrain fields are absent for model targets. `plan.contact_offset` is null for corner
 snapping. Source and flat target brushes require checked 4–64-side topology; every translated
 child, including hidden brushes, must remain within ±65,536 units. Hidden/tool/
-working-region exclusions apply. Model/point sources, displacement source
-brushes reject; an unsupported first hit is
+working-region exclusions apply. Individual owned child brushes and parent/child
+mixtures reject; select the whole brush entity. Point/model entities and
+displacement brushes cannot supply source corners. Companion point/model bounds
+and finite authored origins must fit the same world limit. An unsupported first hit is
 not bypassed. Invalid requests retain a valid plan. Existing Apply/Cancel and
 Undo rules apply; an already coincident snap creates no history. Human controls:
-**Reshape brushes… → Vertices**, select one corner, then **Place on surface… →
-Snap selected corner → Pick target corner → Apply placement**.
+**Place on surface… → Snap selected corner → Source corner → Pick target corner
+→ Apply placement**. The source list shows object labels and coordinates, with
+IDs as detail, and requires an explicit choice unless one was already selected
+or captured by the current draft. Lists are bounded to 256 source brushes and
+4096 corners; an explicit MCP corner also supports larger moving selections
+and can be resumed in the dialog.
 
 ### Polygon brushes
 

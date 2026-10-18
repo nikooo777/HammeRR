@@ -122,7 +122,7 @@ Malformed, unsupported or unwritable preferences show **Grid defaults… · need
 
 To align an existing selection, enable **Transform selection** and click **Preview snap to grid**. The helper **Anchor: selection bounds minimum** identifies the corner being aligned. Review the anchor and offset, then **Apply transform** or **Cancel**. The selection moves rigidly by one offset; see [Snap selection to grid](brushes.md#snap-selection-to-grid).
 
-**Place on surface… → Snap selected corner** instead aligns one brush owner's selected real corner to a visible brush corner or prepared terrain-triangle vertex, without grid rounding. Review the target coordinates before applying; see [Snap a real corner](placement.md#snap-a-real-corner).
+**Place on surface… → Snap selected corner** instead aligns the selection from one chosen real brush corner to a visible brush corner or prepared terrain/model-triangle vertex, without grid rounding. Review the target coordinates before applying; see [Snap a real corner](placement.md#snap-a-real-corner).
 
 ## Viewport modes
 

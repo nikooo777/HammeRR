@@ -1,5 +1,46 @@
 use super::*;
 
+pub fn moving_roots(session: &mut Session, selected: ObjectId) -> Vec<ObjectId> {
+    let owner = session
+        .edit(Actor::User, "moving assembly", |tx| {
+            let visible = map_core::edit::block_solid(
+                tx,
+                DVec3::new(-208.0, -208.0, 64.0),
+                DVec3::new(-192.0, -192.0, 80.0),
+                "brick/test",
+            )?;
+            let mut hidden = map_core::edit::block_solid(
+                tx,
+                DVec3::new(32.0, 32.0, 48.0),
+                DVec3::new(40.0, 40.0, 56.0),
+                "brick/test",
+            )?;
+            hidden.hidden = true;
+            map_core::edit::create_entity(
+                tx,
+                "func_detail",
+                None,
+                &[("targetname".into(), "moving_assembly".into())],
+                vec![visible, hidden],
+            )
+        })
+        .unwrap();
+    let point = session
+        .create_entity(
+            Actor::User,
+            "info_target",
+            Some(DVec3::new(24.0, 32.0, 64.0)),
+            BTreeMap::from([("angles".into(), "10 25 5".into())]),
+        )
+        .unwrap();
+    let mut ids = vec![selected, owner, point];
+    ids.sort();
+    session
+        .select(&ids, crate::session::SelectMode::Replace)
+        .unwrap();
+    ids
+}
+
 pub fn fixture() -> (Session, ObjectId) {
     let mut session = Session::new(Err("No assets needed for brush placement".into()));
     for (low, high) in [

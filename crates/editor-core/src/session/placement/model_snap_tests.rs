@@ -20,17 +20,26 @@ fn options(session: &Session, selected: ObjectId) -> Options {
 fn model_corner_snap_uses_cached_scaled_mesh_and_keeps_source_and_history_atomic() {
     for actor in [Actor::User, Actor::Agent] {
         let (_directory, mut session, selected, model, ray) = fixtures::model_target();
+        let mut ids = fixtures::moving_roots(&mut session, selected);
+        let moving_model = session
+            .create_entity(
+                actor,
+                "prop_dynamic",
+                Some(DVec3::new(100.0, 200.0, 80.0)),
+                BTreeMap::from([
+                    ("model".into(), "models/test/receiver.mdl".into()),
+                    ("angles".into(), "0 90 0".into()),
+                    ("modelscale".into(), "2".into()),
+                ]),
+            )
+            .unwrap();
+        ids.push(moving_model);
+        ids.sort();
         let options = options(&session, selected);
         let original = session.document().vmf().clone();
         let history = session.document().undo_labels().count();
         let report = session
-            .preview_surface_placement(
-                actor,
-                &[selected],
-                Method::BrushCorner,
-                Some(ray),
-                options.clone(),
-            )
+            .preview_surface_placement(actor, &ids, Method::BrushCorner, Some(ray), options.clone())
             .unwrap();
         let token = report["token"].as_u64().unwrap();
         let target = &report["plan"]["corner"]["target"];
@@ -66,13 +75,30 @@ fn model_corner_snap_uses_cached_scaled_mesh_and_keeps_source_and_history_atomic
                 .position
                 .abs_diff_eq(position, 1e-8)
         );
+        let ObjectId::Entity(moving_entity) = moving_model else {
+            unreachable!()
+        };
+        let delta = position
+            - DVec3::from_array(
+                serde_json::from_value::<[f64; 3]>(report["plan"]["corner"]["source"].clone())
+                    .unwrap(),
+            );
+        assert!(
+            session
+                .render_document()
+                .entity(moving_entity)
+                .unwrap()
+                .origin()
+                .unwrap()
+                .abs_diff_eq(DVec3::new(100.0, 200.0, 80.0) + delta, 1e-8)
+        );
         assert_eq!(session.document().vmf(), &original);
         assert_eq!(session.document().undo_labels().count(), history);
         assert!(
             session
                 .preview_surface_placement(
                     actor,
-                    &[selected],
+                    &ids,
                     Method::BrushCorner,
                     Some(Ray {
                         origin: ray.origin,
@@ -86,13 +112,7 @@ fn model_corner_snap_uses_cached_scaled_mesh_and_keeps_source_and_history_atomic
         session.cancel_surface_placement(token).unwrap();
         assert_eq!(session.document().vmf(), &original);
         let report = session
-            .preview_surface_placement(
-                actor,
-                &[selected],
-                Method::BrushCorner,
-                Some(ray),
-                options.clone(),
-            )
+            .preview_surface_placement(actor, &ids, Method::BrushCorner, Some(ray), options.clone())
             .unwrap();
         session
             .apply_surface_placement(actor, report["token"].as_u64().unwrap())
@@ -106,7 +126,7 @@ fn model_corner_snap_uses_cached_scaled_mesh_and_keeps_source_and_history_atomic
             original.entities.iter().find(|source| source.id == entity)
         );
         let again = session
-            .preview_surface_placement(actor, &[selected], Method::BrushCorner, Some(ray), options)
+            .preview_surface_placement(actor, &ids, Method::BrushCorner, Some(ray), options)
             .unwrap();
         assert_eq!(again["plan"]["translation"], json!([0.0, 0.0, 0.0]));
         session

@@ -8,16 +8,92 @@ fn value(result: ToolResult) -> Value {
 
 #[test]
 fn terrain_snap_tools_share_exact_target_review_cancel_and_undo() {
-    let (session, selected, face, ray) = crate::test_assets::terrain_snap();
+    let (mut session, selected, face, ray) = crate::test_assets::terrain_snap();
     let ObjectId::Solid(solid) = selected else {
         unreachable!()
     };
+    session
+        .transform_objects(
+            Actor::Agent,
+            &[selected],
+            map_core::edit::Transform {
+                translation: DVec3::new(0.125, 0.0625, 0.03125),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+    let ids = crate::test_assets::placement_moving_roots(&mut session, selected);
     let source = session.document().vmf().clone();
     let history = session.document().undo_labels().count();
     let shape = map_core::subobject::topology(session.document().solid(solid).unwrap()).unwrap();
-    let args = json!({"method":"brush_corner", "source_corner":{"solid":solid,"sides":shape.vertices[0].sides}, "ray_origin":ray.origin.to_array(), "ray_direction":ray.direction.to_array()});
+    let args = json!({"ids":ids.iter().copied().map(crate::identity::id_string).collect::<Vec<_>>(),"method":"brush_corner", "source_corner":{"solid":solid,"sides":shape.vertices[0].sides}, "ray_origin":ray.origin.to_array(), "ray_direction":ray.direction.to_array()});
     let shared = Arc::new(Mutex::new(session));
     let server = EditorServer::new(shared.clone(), None);
+    let sources = value(
+        server.get_surface_placement_sources(Parameters(SurfacePlacementSourcesArgs { ids: None })),
+    );
+    let expected = lock(&shared)
+        .surface_placement_source_corners(&ids)
+        .unwrap();
+    assert_eq!(
+        sources["sources"],
+        json!(expected.iter().map(|source|json!({
+        "owner":crate::identity::id_string(source.owner), "solid":source.component.solid,
+        "sides":source.component.sides, "position":source.position.to_array(),
+    })).collect::<Vec<_>>())
+    );
+    assert_eq!(
+        sources["ids"],
+        json!(
+            ids.iter()
+                .copied()
+                .map(crate::identity::id_string)
+                .collect::<Vec<_>>()
+        )
+    );
+    assert_eq!(sources["provenance"], "committed_geometry");
+    assert_eq!(
+        sources["limits"],
+        json!({"source_brushes":256,"source_corners":4096})
+    );
+    assert!(sources["sources"].as_array().unwrap().iter().any(|source| {
+        source["solid"] == solid
+            && source["position"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|value| value.as_f64().unwrap().fract() != 0.0)
+    }));
+    let mut explicit = ids
+        .iter()
+        .copied()
+        .map(crate::identity::id_string)
+        .rev()
+        .collect::<Vec<_>>();
+    explicit.push(explicit[0].clone());
+    assert_eq!(
+        value(
+            server.get_surface_placement_sources(Parameters(SurfacePlacementSourcesArgs {
+                ids: Some(explicit)
+            }))
+        ),
+        sources
+    );
+    for invalid in [
+        json!({"ids":[],"unknown":true}),
+        json!({"ids":"solid:1"}),
+        json!({"ids":[7]}),
+    ] {
+        assert!(serde_json::from_value::<SurfacePlacementSourcesArgs>(invalid).is_err());
+    }
+    let schema = server
+        .get_tool("get_surface_placement_sources")
+        .unwrap()
+        .input_schema;
+    assert_eq!(schema.get("additionalProperties"), Some(&json!(false)));
+    assert_eq!(lock(&shared).document().vmf(), &source);
+    assert_eq!(lock(&shared).document().undo_labels().count(), history);
     let report = value(
         server.preview_surface_placement(Parameters(serde_json::from_value(args.clone()).unwrap())),
     );
@@ -32,6 +108,14 @@ fn terrain_snap_tools_share_exact_target_review_cancel_and_undo() {
         json!([128.0, 16.0, 17.0])
     );
     let token = report["token"].as_u64().unwrap();
+    assert_eq!(
+        value(
+            server.get_surface_placement_sources(Parameters(SurfacePlacementSourcesArgs {
+                ids: None
+            }))
+        ),
+        sources
+    );
     assert_eq!(
         value(
             server.get_surface_placement(Parameters(ModelChoiceQueryArgs { token: Some(token) }))

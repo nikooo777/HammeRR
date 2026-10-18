@@ -78,7 +78,8 @@ fn form_snapshot(controller: &Controller) -> Value {
         "ready": window.get_ready(),
         "window_picking": window.get_picking(),
         "summary": window.get_summary().to_string(),
-        "source_corner": window.get_source_corner().to_string(),
+        "source_index": window.get_source_index(),
+        "source_error": window.get_source_error().to_string(),
         "selection": window.get_selection().to_string(),
     })
 }
@@ -93,6 +94,7 @@ fn rejected_actions(controller: &Controller, error: &str) {
     let window = &controller.window;
     let before = form_snapshot(controller);
     let actions: &[fn(&PlacementWindow)] = &[
+        |window| window.invoke_choose_source(1),
         PlacementWindow::invoke_invalidate,
         PlacementWindow::invoke_preview,
         PlacementWindow::invoke_apply,

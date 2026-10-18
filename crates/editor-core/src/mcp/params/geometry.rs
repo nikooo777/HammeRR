@@ -527,6 +527,12 @@ pub struct SurfaceCornerRef {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct SurfacePlacementSourcesArgs {
+    pub ids: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SurfacePlacementArgs {
     pub ids: Option<Vec<String>>,
     pub method: Option<String>,

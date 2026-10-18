@@ -14,6 +14,8 @@ use super::{Actor, Session};
 
 const MAX_POINTS: usize = 1_000_000;
 const CORNER_SNAP_ROUNDOFF_ULPS: f64 = 4.0;
+pub const MAX_SOURCE_BRUSHES: usize = super::components::MAX_SOURCE_PAGE_SIZE;
+pub const MAX_SOURCE_CORNERS: usize = 4096;
 
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) mod fixtures;
@@ -31,6 +33,9 @@ pub(crate) mod tests;
 
 #[cfg(test)]
 mod model_snap_tests;
+
+#[cfg(test)]
+mod multi_owner_tests;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Method {
@@ -66,6 +71,12 @@ pub struct Options {
     pub offset: f64,
     pub texture_lock: bool,
     pub source_corner: Option<Component>,
+}
+
+pub struct SourceCorner {
+    pub component: Component,
+    pub owner: ObjectId,
+    pub position: DVec3,
 }
 
 #[derive(Default)]
@@ -261,22 +272,22 @@ impl Session {
         if !(3..=subobject::MAX_SIDES).contains(&component.sides.len()) {
             return Err("A source corner needs 3–64 unique incident face IDs".into());
         }
-        if ids.len() != 1 || options.align || options.offset != 0.0 {
-            return Err(
-                "Corner snapping needs one selected owner, zero offset and no alignment".into(),
-            );
+        if options.align || options.offset != 0.0 {
+            return Err("Corner snapping needs zero offset and no alignment".into());
         }
+        self.corner_placement_roots(ids)?;
         let hidden = self.hidden_brushes_for(false);
         let (owner, solid) =
             subobject::solid(&self.document, component.solid).map_err(|error| error.to_string())?;
-        if ids[0] != owner
+        if !ids.contains(&owner)
             || hidden.contains(&solid.id)
             || solid.hidden
             || matches!(owner, ObjectId::Entity(id) if self.document.entity(id).is_none_or(|entity| entity.hidden))
             || solid.sides.iter().any(|side| side.displacement.is_some())
         {
             return Err(
-                "Choose a visible flat source brush corner belonging to the selected owner".into(),
+                "Choose a visible flat source brush corner belonging to a selected whole owner"
+                    .into(),
             );
         }
         let topology = subobject::topology(solid).map_err(|error| error.to_string())?;
@@ -291,56 +302,162 @@ impl Session {
             .ok_or("Source corner planes have no finite intersection".into())
     }
 
-    fn corner_translation_bounds(&self, owner: ObjectId, delta: DVec3) -> Result<(), String> {
+    fn corner_placement_roots(&self, ids: &[ObjectId]) -> Result<(), String> {
+        if ids.is_empty() {
+            return Err("Select whole objects to snap together".into());
+        }
+        for &id in ids {
+            match id {
+                ObjectId::Solid(solid) => {
+                    let (owner, brush) = subobject::solid(&self.document, solid)
+                        .map_err(|error| error.to_string())?;
+                    if owner != id {
+                        return Err("Select whole brush entities rather than their child brushes for corner snapping".into());
+                    }
+                    if brush.hidden {
+                        return Err("Show selected brushes before placing them".into());
+                    }
+                }
+                ObjectId::Entity(entity) => {
+                    let mut matches = self
+                        .document
+                        .vmf()
+                        .entities
+                        .iter()
+                        .filter(|item| item.id == entity);
+                    let entity = matches.next().ok_or("Selected owner is missing")?;
+                    if matches.next().is_some() {
+                        return Err("Selected owner has an ambiguous duplicate entity ID".into());
+                    }
+                    if entity.hidden {
+                        return Err("Show selected entities before placing them".into());
+                    }
+                    for brush in &entity.solids {
+                        subobject::solid(&self.document, brush.id)
+                            .map_err(|error| error.to_string())?;
+                    }
+                }
+            }
+        }
+        self.corner_translation_bounds(ids, DVec3::ZERO)
+    }
+
+    pub fn surface_placement_source_corners(
+        &mut self,
+        ids: &[ObjectId],
+    ) -> Result<Vec<SourceCorner>, String> {
+        self.corner_placement_roots(ids)?;
+        let hidden = self.hidden_brushes_for(false);
+        let mut corners = Vec::new();
+        let mut brushes = 0;
+        for brush in self.document.vmf().solids() {
+            let owner = self
+                .document
+                .owner_of_solid(brush.id)
+                .ok_or("Source owner is missing")?;
+            if !ids.contains(&owner)
+                || hidden.contains(&brush.id)
+                || brush.hidden
+                || brush.sides.iter().any(|side| side.displacement.is_some())
+            {
+                continue;
+            }
+            brushes += 1;
+            if brushes > MAX_SOURCE_BRUSHES {
+                return Err("Source list exceeds 256 brushes; use fewer source brushes or reopen a shared corner preview".into());
+            }
+            let Ok(topology) = subobject::topology(brush) else {
+                continue;
+            };
+            for vertex in topology.vertices {
+                let component = Component {
+                    solid: brush.id,
+                    sides: vertex.sides,
+                };
+                let Some(position) = precise_corner(brush, &component, vertex.position) else {
+                    continue;
+                };
+                if corners.len() >= MAX_SOURCE_CORNERS {
+                    return Err("Source list exceeds 4096 corners; use fewer source brushes or reopen a shared corner preview".into());
+                }
+                corners.push(SourceCorner {
+                    component,
+                    owner,
+                    position,
+                });
+            }
+        }
+        Ok(corners)
+    }
+
+    fn corner_translation_bounds(&self, ids: &[ObjectId], delta: DVec3) -> Result<(), String> {
         let check = |point: DVec3| {
             let point = point + delta;
             if !point.is_finite() || point.abs().max_element() > crate::spatial::MAX_EXTENT {
                 return Err(
-                    "Corner snapping would move part of the selected owner outside ±65536 units"
+                    "Corner snapping would move part of the selection outside ±65536 units"
                         .to_string(),
                 );
             }
             Ok(())
         };
-        let brushes = match owner {
-            ObjectId::Solid(id) => {
-                std::slice::from_ref(self.document.solid(id).ok_or("Source brush is missing")?)
-            }
-            ObjectId::Entity(id) => self
-                .document
-                .entity(id)
-                .ok_or("Source owner is missing")?
-                .solids
-                .as_slice(),
-        };
-        for brush in brushes {
-            let geometry = BrushGeometry::from_solid(brush).map_err(|error| error.to_string())?;
-            for point in [geometry.mins, geometry.maxs] {
-                check(point)?;
-            }
-            for (index, side) in brush.sides.iter().enumerate() {
-                let Some(info) = &side.displacement else {
-                    continue;
-                };
-                let face = geometry
-                    .faces
-                    .iter()
-                    .find(|face| face.side == index)
-                    .ok_or_else(|| {
+        let mut points = Vec::new();
+        for &owner in ids {
+            let brushes = match owner {
+                ObjectId::Solid(id) => {
+                    std::slice::from_ref(self.document.solid(id).ok_or("Source brush is missing")?)
+                }
+                ObjectId::Entity(id) => {
+                    let entity = self.document.entity(id).ok_or("Source owner is missing")?;
+                    if entity.properties.get("origin").is_some() || entity.solids.is_empty() {
+                        check(
+                            entity
+                                .origin()
+                                .filter(|point| point.is_finite())
+                                .ok_or("Selected entity needs a finite origin")?,
+                        )?;
+                    }
+                    if entity.solids.is_empty() {
+                        points.push(owner);
+                    }
+                    entity.solids.as_slice()
+                }
+            };
+            for brush in brushes {
+                let geometry =
+                    BrushGeometry::from_solid(brush).map_err(|error| error.to_string())?;
+                for point in [geometry.mins, geometry.maxs] {
+                    check(point)?;
+                }
+                for (index, side) in brush.sides.iter().enumerate() {
+                    let Some(info) = &side.displacement else {
+                        continue;
+                    };
+                    let face = geometry
+                        .faces
+                        .iter()
+                        .find(|face| face.side == index)
+                        .ok_or_else(|| {
+                            format!(
+                                "Source brush {} terrain face {} has no effective geometry",
+                                brush.id, side.id
+                            )
+                        })?;
+                    let mesh = DisplacementMesh::build(face, info).map_err(|error| {
                         format!(
-                            "Source brush {} terrain face {} has no effective geometry",
+                            "Source brush {} terrain face {}: {error}",
                             brush.id, side.id
                         )
                     })?;
-                let mesh = DisplacementMesh::build(face, info).map_err(|error| {
-                    format!(
-                        "Source brush {} terrain face {}: {error}",
-                        brush.id, side.id
-                    )
-                })?;
-                for point in mesh.positions {
-                    check(point)?;
+                    for point in mesh.positions {
+                        check(point)?;
+                    }
                 }
+            }
+        }
+        if !points.is_empty() {
+            for point in self.placement_points_in(&self.document, &points)? {
+                check(point.point + point.helper_offset)?;
             }
         }
         Ok(())
@@ -598,7 +715,7 @@ impl Session {
                     delta[axis] = 0.0;
                 }
             }
-            self.corner_translation_bounds(ids[0], delta)?;
+            self.corner_translation_bounds(ids, delta)?;
             return Ok(Plan {
                 method,
                 surface,
@@ -704,9 +821,15 @@ impl Session {
         options: Options,
     ) -> Result<Value, String> {
         self.placement_context()?;
-        let source_position = self.placement_source_corner(ids, &options)?;
+        let ids = ids
+            .iter()
+            .copied()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let source_position = self.placement_source_corner(&ids, &options)?;
         if source_position.is_none() {
-            self.placement_points_in(&self.document, ids)?;
+            self.placement_points_in(&self.document, &ids)?;
         }
         if !options.offset.is_finite() || options.offset.abs() > 65536.0 {
             return Err("Surface offset must be finite and within ±65536 units".into());
@@ -716,12 +839,6 @@ impl Session {
         {
             self.cancel_transform_preview();
         }
-        let ids = ids
-            .iter()
-            .copied()
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect::<Vec<_>>();
         self.select(&ids, super::SelectMode::Replace)?;
         self.placement.serial += 1;
         let token = self.placement.serial;

@@ -609,6 +609,7 @@ fn terrain_corner_snap_uses_the_prepared_mixed_power_vertex_and_atomic_history()
         let ObjectId::Solid(solid) = selected else {
             unreachable!()
         };
+        let ids = super::fixtures::moving_roots(&mut session, selected);
         let options = corner_options(&session, solid);
         let source = session.document().vmf().clone();
         let history = session.document().undo_labels().count();
@@ -632,13 +633,7 @@ fn terrain_corner_snap_uses_the_prepared_mixed_power_vertex_and_atomic_history()
                 .contains(&index)
         );
         let report = session
-            .preview_surface_placement(
-                actor,
-                &[selected],
-                Method::BrushCorner,
-                Some(ray),
-                options.clone(),
-            )
+            .preview_surface_placement(actor, &ids, Method::BrushCorner, Some(ray), options.clone())
             .unwrap();
         let token = report["token"].as_u64().unwrap();
         assert_eq!(
@@ -670,7 +665,7 @@ fn terrain_corner_snap_uses_the_prepared_mixed_power_vertex_and_atomic_history()
             session
                 .preview_surface_placement(
                     actor,
-                    &[selected],
+                    &ids,
                     Method::BrushCorner,
                     Some(Ray {
                         origin: DVec3::splat(1000.0),
@@ -684,13 +679,7 @@ fn terrain_corner_snap_uses_the_prepared_mixed_power_vertex_and_atomic_history()
         session.cancel_surface_placement(token).unwrap();
         assert_eq!(session.document().vmf(), &source);
         let report = session
-            .preview_surface_placement(
-                actor,
-                &[selected],
-                Method::BrushCorner,
-                Some(ray),
-                options.clone(),
-            )
+            .preview_surface_placement(actor, &ids, Method::BrushCorner, Some(ray), options.clone())
             .unwrap();
         session
             .apply_surface_placement(actor, report["token"].as_u64().unwrap())
@@ -700,7 +689,7 @@ fn terrain_corner_snap_uses_the_prepared_mixed_power_vertex_and_atomic_history()
             assert_eq!(session.document().solid(terrain.id), Some(terrain));
         }
         let again = session
-            .preview_surface_placement(actor, &[selected], Method::BrushCorner, Some(ray), options)
+            .preview_surface_placement(actor, &ids, Method::BrushCorner, Some(ray), options)
             .unwrap();
         assert_eq!(again["plan"]["translation"], json!([0.0, 0.0, 0.0]));
         session

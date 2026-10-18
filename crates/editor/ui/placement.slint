@@ -1,9 +1,11 @@
 import {Button,CheckBox,ComboBox,LineEdit} from "std-widgets.slint";
 
 export component PlacementWindow inherits Window {
-    title:"Place on surface";preferred-width:560px;preferred-height:640px;
+    title:"Place on surface";preferred-width:640px;preferred-height:720px;
     in property <string> selection;
-    in property <string> source-corner;
+    in property <[string]> source-choices;
+    in-out property <int> source-index;
+    in property <string> source-error;
     in-out property <int> method;
     in-out property <bool> align:false;
     in-out property <bool> texture-lock:true;
@@ -13,7 +15,7 @@ export component PlacementWindow inherits Window {
     in property <bool> picking;
     in property <string> summary;
     in property <string> message;
-    callback preview();callback apply();callback cancel();callback invalidate();callback frame();
+    callback preview();callback apply();callback cancel();callback invalidate();callback frame();callback choose-source(int);
     forward-focus:dialog-focus;
     dialog-focus:=FocusScope {
         key-pressed(event)=>{if event.text==Key.Escape{root.cancel();accept}else{reject}}
@@ -26,7 +28,13 @@ export component PlacementWindow inherits Window {
                 Text {text:"Target";vertical-alignment:center;width:70px;}
                 ComboBox {horizontal-stretch:1;model:["Floor","Ceiling","Pick surface","Snap selected corner"];current-index<=>root.method;selected=>{if root.method==3{root.align=false;root.offset="0";}root.invalidate();}}
             }
-            if root.method==3:Text {text:"Source corner · "+root.source-corner+"\nTranslates only; no normal offset or grid rounding.";wrap:word-wrap;color:#aeb8c6;}
+            if root.method==3:VerticalLayout {
+                spacing:6px;
+                Text {text:"Source corner";color:#d6deea;}
+                ComboBox {model:root.source-choices;current-index<=>root.source-index;selected=>{root.choose-source(root.source-index);}}
+                if root.source-index>0:Text {text:root.source-choices[root.source-index];wrap:word-wrap;color:#aeb8c6;}
+                Text {text:root.source-error=="" ? "All selected objects translate together; no rotation, normal offset or grid rounding." : root.source-error;wrap:word-wrap;color:#aeb8c6;}
+            }
             HorizontalLayout {
                 spacing:10px;
                 Text {text:"Offset";vertical-alignment:center;width:70px;}

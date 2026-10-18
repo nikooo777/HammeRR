@@ -110,6 +110,7 @@ pub(super) fn bake(
             .materials
             .get(ctx.map.texdata[info.texdata as usize]);
         if material
+            .texture_metrics()?
             .reflectivity
             .iter()
             .any(|value| !value.is_finite() || !(0.0..=1.0).contains(value))

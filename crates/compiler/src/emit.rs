@@ -454,16 +454,17 @@ pub fn build(
         .enumerate()
         .map(|(index, &material)| {
             let info = map.materials.get(material);
-            bsp::TexData {
-                reflectivity: info.reflectivity,
+            let metrics = info.texture_metrics()?;
+            Ok(bsp::TexData {
+                reflectivity: metrics.reflectivity,
                 name_index: index as i32,
-                width: info.width,
-                height: info.height,
-                view_width: info.width,
-                view_height: info.height,
-            }
+                width: metrics.width,
+                height: metrics.height,
+                view_width: metrics.width,
+                view_height: metrics.height,
+            })
         })
-        .collect();
+        .collect::<Result<_, String>>()?;
     let names: Vec<&str> = map
         .texdata
         .iter()

@@ -19,7 +19,7 @@
 
 The editor UI and the MCP server call the same session operations, so every feature behaves identically for people and agents. New features need both a UI control and an MCP tool.
 
-Shared session locking and compile/game workers live in `editor-core/src/runtime.rs`; object-ID parsing and formatting live in `identity.rs`. Both executables use `startup::Application` for content mounting, recovery and shutdown. Its retained `runtime::DocumentHandle` owns the fixed Session, recovery worker and terminal shutdown result; production UI and both MCP entry points retain the same handle. `DocumentAccess` admits operations on that fixed document; idle callbacks retain weak continuations and renew admission when invoked. Shutdown closes admission and waits outside Session guards. Raw Session access remains possible, and public multiple-document admission and routing remain unavailable.
+Shared session locking and compile/game workers live in `editor-core/src/runtime.rs`; object-ID parsing and formatting live in `identity.rs`. Both executables use `startup::Application` for content mounting, recovery and shutdown. Its retained `runtime::DocumentHandle` owns the fixed Session, recovery worker and terminal shutdown result; production UI and both MCP entry points retain the same handle. `DocumentAccess` admits operations on that fixed document; idle callbacks retain weak continuations and renew admission when invoked. Shutdown closes admission and waits outside Session guards. Raw Session access remains possible. The bounded Workspace factory admits up to two fixed documents; workspace MCP routing uses opaque selectors and each desktop document retains its own host.
 Application owns concrete Favorites and Recent maps authorities; deliberately
 attached Sessions share their lists, storage observations, errors and revisions. Independently
 constructed Sessions keep their own authority. Recovery reconfiguration cannot
@@ -40,7 +40,7 @@ the originating Session. Recovery shares effective saved settings, their
 revision and settings errors; each document retains its snapshot Store, clocks,
 captured state, diagnostic domains and worker. Optional MCP settings updates
 merge with the latest shared values while holding the settings authority lock.
-These authorities do not implement multiple-document admission or routing.
+Workspace owns multiple-document admission and routing; saved authorities remain Application-owned and shared.
 
 `Session` owns geometry-preview state through `session/previews.rs`. Rendering, picking and tool-texture filtering share its displayed-document selector. Feature modules validate replacement drafts before clearing competitors through the coordinator; their own payloads and ownership tokens remain local.
 
@@ -105,6 +105,14 @@ For broad checks on this desktop, test packages sequentially in that same
 scope and lock. Eight Cargo jobs still apply within each package; compiling
 all workspace test binaries together can exceed the memory available beside
 other applications.
+Select `editor-core` and `editor` together when validating desktop changes:
+
+```sh
+cargo test -p editor-core -p editor --all-targets --features editor-core/mcp,editor-core/test-support
+```
+
+This retains the same dependency feature unification across core and desktop
+tests and avoids rebuilding the core under another feature combination.
 The generated `editor-ui` crate has no tests; the `editor` tests compile its
 bindings. Skip a standalone `editor-ui --all-targets` test pass.
 
@@ -157,6 +165,37 @@ cargo test -p source-formats --test malformed_assets --test static_props --test 
 ```
 
 Checks truncated VPK trees, UTF-8 names, terminated model names with opaque padding, physics key terminators and retained opaque key bytes. Rejected static-prop writes preserve existing game lumps.
+
+### Portal construction budgets
+
+```sh
+cargo test -p compiler --lib portals::budget_tests
+```
+
+Checks exact resource boundaries, coplanar fanout, split scratch allocation
+including nonconvex winding growth, cumulative accounting, cancellation and
+sealed-room apertures/flooding. `portals::build_limited` accepts narrower limits;
+ordinary compiler callers use the same implementation with defaults of
+1,048,576 output portals, 16,000,000 cumulative point-allocation slots, 65,536
+pending fragments and 100,000,000 work units. Point slots conservatively include
+split scratch and possible vector growth; they are not a measurement of live
+vertices or process RSS. Exhaustion returns an error instead of partial portals.
+
+### World geometry preparation
+
+```sh
+cargo test -p compiler --lib world_preparation_tests
+cargo test -p compiler --lib geometry_semantics_defers_metrics_without_relaxing_compile_dependencies
+```
+
+Checks flat world/`func_detail` conversion through the existing brush loader,
+original source-to-root ownership, unchanged ordinary compile order and explicit
+deferred texture metrics. Geometry preparation reads required VMT semantics;
+missing semantics fail. It does not measure base VTFs. Ordinary compilation keeps
+its existing measurement errors, missing-resource diagnostics and default policy;
+emission and lighting require resolved metrics. This is a compiler seam, not a
+3D skybox preview. The region resolver must still classify omitted source
+geometry and unknown displacement bounds from the original VMF before admission.
 
 ### Compiler face provenance
 

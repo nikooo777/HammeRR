@@ -232,7 +232,8 @@ fn build_with_styles(
             DVec3::ONE
         } else {
             let material = map.materials.get(map.texdata[info.texdata as usize]);
-            let reflectivity = DVec3::from_array(material.reflectivity.map(f64::from));
+            let reflectivity =
+                DVec3::from_array(material.texture_metrics()?.reflectivity.map(f64::from));
             if !reflectivity.is_finite() || reflectivity.min_element() < 0.0 {
                 return Err(format!(
                     "Material {} has invalid surface reflectivity",

@@ -9,7 +9,7 @@ use source_formats::bsp::{self, contents};
 use source_formats::gamefs::GameFs;
 use source_formats::vmf::{Entity, Side, Solid, Vmf};
 
-use crate::materials::Materials;
+use crate::materials::{Materials, Requirements};
 use crate::planes::PlaneSet;
 use crate::winding::Winding;
 use crate::{Control, Diagnostic, Report};
@@ -187,21 +187,33 @@ pub struct Map<'a> {
     brush_side_count: usize,
 }
 
-impl<'a> Map<'a> {
-    pub fn load(vmf: &Vmf, fs: &'a GameFs, report: &mut Report) -> Result<Self, String> {
-        Self::load_controlled(vmf, fs, report, &Control::default())
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RootSide {
+    pub owner: map_core::ObjectId,
+    pub solid: u32,
+    pub side: u32,
+}
 
-    pub fn load_controlled(
-        vmf: &Vmf,
-        fs: &'a GameFs,
-        report: &mut Report,
-        control: &Control,
-    ) -> Result<Self, String> {
-        control.checkpoint()?;
-        let mut map = Self {
+#[derive(Debug)]
+pub struct UnsupportedBrush {
+    pub owner: map_core::ObjectId,
+    pub solid: u32,
+    pub bounds: Option<(DVec3, DVec3)>,
+}
+
+/// Flat world/detail conversion, not a complete region or unsupported-content inventory.
+/// A resolver must classify omitted geometry from the original VMF before admitting this topology.
+pub struct PreparedWorld<'a> {
+    pub map: Map<'a>,
+    pub source_sides: std::collections::BTreeMap<u32, RootSide>,
+    pub displacements: Vec<UnsupportedBrush>,
+}
+
+impl<'a> Map<'a> {
+    fn empty(fs: &'a GameFs, requirements: Requirements) -> Self {
+        Self {
             planes: PlaneSet::default(),
-            materials: Materials::new(fs),
+            materials: Materials::with_requirements(fs, requirements),
             texinfos: TexInfos::default(),
             texdata: Vec::new(),
             water_bottom_texinfos: HashMap::new(),
@@ -218,30 +230,119 @@ impl<'a> Map<'a> {
             viscluster_attempts: 0,
             viscluster_work: 0,
             brush_side_count: 0,
-        };
+        }
+    }
+
+    fn add_world(&mut self, vmf: &Vmf) {
+        let mut properties: Vec<(String, String)> = vmf
+            .world
+            .properties
+            .iter()
+            .filter(|(key, _)| !key.eq_ignore_ascii_case(crate::GENERATED_DETAIL_LIGHTING_TINT_KEY))
+            .map(|(key, value)| (key.to_owned(), value.to_owned()))
+            .collect();
+        if !properties.iter().any(|(key, _)| key == "classname") {
+            properties.insert(0, ("classname".into(), "worldspawn".into()));
+        }
+        self.entities.push(MapEntity {
+            id: vmf.world.id,
+            classname: "worldspawn".into(),
+            properties,
+            brushes: Vec::new(),
+            origin: None,
+        });
+    }
+
+    /// Converts flat world/func_detail brushes; other entity geometry requires separate admission.
+    pub fn prepare_world_geometry_controlled(
+        vmf: &Vmf,
+        fs: &'a GameFs,
+        report: &mut Report,
+        control: &Control,
+    ) -> Result<PreparedWorld<'a>, String> {
+        control.checkpoint()?;
+        vmf.validate_ids().map_err(|error| error.to_string())?;
+        let mut map = Self::empty(fs, Requirements::GeometrySemantics);
+        map.add_world(vmf);
+        let mut source_sides = std::collections::BTreeMap::new();
+        let mut displacements = Vec::new();
+        let sources = vmf
+            .world
+            .solids
+            .iter()
+            .map(|solid| (map_core::ObjectId::Solid(solid.id), solid, 0))
+            .chain(
+                vmf.entities
+                    .iter()
+                    .filter(|entity| !entity.hidden && entity.classname() == Some("func_detail"))
+                    .flat_map(|entity| {
+                        entity.solids.iter().map(move |solid| {
+                            (
+                                map_core::ObjectId::Entity(entity.id),
+                                solid,
+                                contents::DETAIL,
+                            )
+                        })
+                    }),
+            );
+        for (owner, solid, extra_contents) in sources.filter(|(_, solid, _)| !solid.hidden) {
+            control.checkpoint()?;
+            if solid.sides.iter().any(|side| side.displacement.is_some()) {
+                if origins::checked_geometry(solid, report).is_some() {
+                    displacements.push(UnsupportedBrush {
+                        owner,
+                        solid: solid.id,
+                        bounds: None,
+                    });
+                }
+                continue;
+            }
+            map.add_brush(solid, 0, extra_contents, report, control)?;
+            if report.has_errors() {
+                return Err(
+                    "World geometry preparation reported invalid structural geometry".into(),
+                );
+            }
+            for side in &solid.sides {
+                source_sides.insert(
+                    side.id,
+                    RootSide {
+                        owner,
+                        solid: solid.id,
+                        side: side.id,
+                    },
+                );
+            }
+        }
+        if report.has_errors() {
+            return Err("World geometry preparation reported invalid structural geometry".into());
+        }
+        Ok(PreparedWorld {
+            map,
+            source_sides,
+            displacements,
+        })
+    }
+
+    pub fn load(vmf: &Vmf, fs: &'a GameFs, report: &mut Report) -> Result<Self, String> {
+        Self::load_controlled(vmf, fs, report, &Control::default())
+    }
+
+    pub fn load_controlled(
+        vmf: &Vmf,
+        fs: &'a GameFs,
+        report: &mut Report,
+        control: &Control,
+    ) -> Result<Self, String> {
+        control.checkpoint()?;
+        let mut map = Self::empty(fs, Requirements::Compile);
         if let Err(error) = vmf.validate_ids() {
             report
                 .diagnostics
                 .push(Diagnostic::error(error.to_string(), None, None));
             return Ok(map);
         }
-        let mut world_properties: Vec<(String, String)> = vmf
-            .world
-            .properties
-            .iter()
-            .filter(|(key, _)| !key.eq_ignore_ascii_case(crate::GENERATED_DETAIL_LIGHTING_TINT_KEY))
-            .map(|(k, v)| (k.to_owned(), v.to_owned()))
-            .collect();
-        if !world_properties.iter().any(|(k, _)| k == "classname") {
-            world_properties.insert(0, ("classname".into(), "worldspawn".into()));
-        }
-        map.entities.push(MapEntity {
-            id: vmf.world.id,
-            classname: "worldspawn".into(),
-            properties: world_properties,
-            brushes: Vec::new(),
-            origin: None,
-        });
+        map.add_world(vmf);
 
         let mut hidden = 0;
         for solid in &vmf.world.solids {
@@ -694,5 +795,120 @@ impl<'a> Map<'a> {
             }
         }
         bounds
+    }
+}
+
+#[cfg(test)]
+mod world_preparation_tests {
+    use super::*;
+    use map_core::{Document, ObjectId, edit};
+    use source_formats::gamefs::{Mount, MountedPath};
+
+    #[test]
+    fn flat_preparation_preserves_source_owners_and_normal_compile_order() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(directory.path().join("materials/dev")).unwrap();
+        std::fs::write(
+            directory
+                .path()
+                .join("materials/dev/dev_measuregeneric01.vmt"),
+            "LightmappedGeneric {}",
+        )
+        .unwrap();
+        let mut game = crate::test_common::empty_game();
+        game.mounts.push(MountedPath {
+            ids: vec!["game".into()],
+            mount: Mount::Directory(directory.path().to_owned()),
+        });
+        let mut document = Document::new(crate::test_common::room());
+        let mut roots = Vec::new();
+        for classname in ["func_brush", "func_detail"] {
+            let pair = document
+                .edit("brush owner", |tx| {
+                    let ObjectId::Solid(solid) = edit::create_block(
+                        tx,
+                        DVec3::splat(32.0),
+                        DVec3::splat(48.0),
+                        "dev/dev_measuregeneric01",
+                    )?
+                    else {
+                        unreachable!()
+                    };
+                    let ObjectId::Entity(entity) =
+                        edit::tie_to_entity(tx, &[solid], classname, &[])?
+                    else {
+                        unreachable!()
+                    };
+                    Ok((solid, entity))
+                })
+                .unwrap();
+            roots.push(pair);
+        }
+        let vmf = document.vmf();
+        let mut report = Report::default();
+        let compile = Map::load(vmf, &game, &mut report).unwrap();
+        assert!(!report.has_errors(), "{report:?}");
+        let expected = vmf
+            .world
+            .solids
+            .iter()
+            .map(|solid| solid.id)
+            .chain(roots.iter().map(|(solid, _)| *solid))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            compile
+                .brushes
+                .iter()
+                .map(|brush| brush.id)
+                .collect::<Vec<_>>(),
+            expected
+        );
+        let prepared = Map::prepare_world_geometry_controlled(
+            vmf,
+            &game,
+            &mut Report::default(),
+            &Control::default(),
+        )
+        .unwrap();
+        assert_eq!(prepared.map.entities.len(), 1);
+        assert!(prepared.displacements.is_empty());
+        let detail = prepared
+            .map
+            .brushes
+            .iter()
+            .find(|brush| brush.id == roots[1].0)
+            .unwrap();
+        assert_ne!(detail.contents & contents::DETAIL, 0);
+        assert!(!detail.structural());
+        assert!(
+            !prepared
+                .map
+                .brushes
+                .iter()
+                .any(|brush| brush.id == roots[0].0)
+        );
+        for side in &detail.sides {
+            if let Some(id) = side.source_id {
+                assert_eq!(
+                    prepared.source_sides[&id].owner,
+                    ObjectId::Entity(roots[1].1)
+                );
+            }
+        }
+        for solid in &vmf.world.solids {
+            for side in &solid.sides {
+                assert_eq!(
+                    prepared.source_sides[&side.id].owner,
+                    ObjectId::Solid(solid.id)
+                );
+            }
+        }
+        assert!(
+            prepared
+                .map
+                .materials
+                .iter()
+                .all(|info| info.metrics == crate::materials::MetricState::Deferred)
+        );
     }
 }

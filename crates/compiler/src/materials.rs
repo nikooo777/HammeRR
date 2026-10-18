@@ -8,6 +8,32 @@ use source_formats::gamefs::GameFs;
 use source_formats::vmt::{self, Material};
 use source_formats::vtf::Vtf;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Requirements {
+    Compile,
+    GeometrySemantics,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TextureMetrics {
+    pub source: MetricSource,
+    pub width: i32,
+    pub height: i32,
+    pub reflectivity: [f32; 3],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MetricSource {
+    CompileDefault,
+    TextureHeader,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MetricState {
+    Deferred,
+    Resolved(TextureMetrics),
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct MaterialInfo {
     /// Uppercase, as stored in the BSP.
@@ -21,10 +47,7 @@ pub struct MaterialInfo {
     pub draws: bool,
     pub hint: bool,
     pub skip: bool,
-    pub width: i32,
-    pub height: i32,
-    /// Average linear albedo of the base texture, from its VTF header.
-    pub reflectivity: [f32; 3],
+    pub metrics: MetricState,
     pub found: bool,
     pub unsupported_flags: Vec<String>,
     pub warnings: Vec<String>,
@@ -33,6 +56,16 @@ pub struct MaterialInfo {
 }
 
 impl MaterialInfo {
+    pub fn texture_metrics(&self) -> Result<TextureMetrics, String> {
+        match self.metrics {
+            MetricState::Resolved(metrics) => Ok(metrics),
+            MetricState::Deferred => Err(format!(
+                "Material {} has deferred texture metrics",
+                self.name
+            )),
+        }
+    }
+
     pub fn lit(&self) -> bool {
         self.draws && self.surface & (surf::NOLIGHT | surf::SKY | surf::SKY2D) == 0
     }
@@ -47,9 +80,12 @@ impl MaterialInfo {
             draws: true,
             hint: false,
             skip: false,
-            width: 64,
-            height: 64,
-            reflectivity: [0.5; 3],
+            metrics: MetricState::Resolved(TextureMetrics {
+                source: MetricSource::CompileDefault,
+                width: 64,
+                height: 64,
+                reflectivity: [0.5; 3],
+            }),
             found: material.is_some(),
             unsupported_flags: Vec::new(),
             warnings: Vec::new(),
@@ -88,14 +124,20 @@ impl MaterialInfo {
 
 pub struct Materials<'a> {
     fs: &'a GameFs,
+    requirements: Requirements,
     infos: Vec<MaterialInfo>,
     by_name: HashMap<String, usize>,
 }
 
 impl<'a> Materials<'a> {
     pub fn new(fs: &'a GameFs) -> Self {
+        Self::with_requirements(fs, Requirements::Compile)
+    }
+
+    pub(crate) fn with_requirements(fs: &'a GameFs, requirements: Requirements) -> Self {
         Self {
             fs,
+            requirements,
             infos: Vec::new(),
             by_name: HashMap::new(),
         }
@@ -132,8 +174,21 @@ impl<'a> Materials<'a> {
         let material = Material::load(self.fs, &key)
             .map_err(|error| format!("Material {}: {error}", vmt::material_path(&key)))?;
         let mut info = MaterialInfo::from_material(name.trim(), material.as_ref());
-        if let Some(material) = &material {
-            self.measure(material, &mut info)?;
+        match self.requirements {
+            Requirements::Compile => {
+                if let Some(material) = &material {
+                    self.measure(material, &mut info)?;
+                }
+            }
+            Requirements::GeometrySemantics => {
+                if material.is_none() {
+                    return Err(format!(
+                        "Material {} is unavailable; geometry semantics cannot be determined",
+                        vmt::material_path(&key)
+                    ));
+                }
+                info.metrics = MetricState::Deferred;
+            }
         }
         let index = self.infos.len();
         self.infos.push(info);
@@ -158,9 +213,12 @@ impl<'a> Materials<'a> {
         if vtf.reflectivity.iter().any(|value| !value.is_finite()) {
             return Err(format!("{path}: texture reflectivity must be finite"));
         }
-        info.width = vtf.width as i32;
-        info.height = vtf.height as i32;
-        info.reflectivity = vtf.reflectivity;
+        info.metrics = MetricState::Resolved(TextureMetrics {
+            source: MetricSource::TextureHeader,
+            width: vtf.width as i32,
+            height: vtf.height as i32,
+            reflectivity: vtf.reflectivity,
+        });
         Ok(())
     }
 }
@@ -168,6 +226,54 @@ impl<'a> Materials<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn geometry_semantics_defers_metrics_without_relaxing_compile_dependencies() {
+        use source_formats::gamefs::{Mount, MountedPath};
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::create_dir(directory.path().join("materials")).unwrap();
+        std::fs::write(
+            directory.path().join("materials/test.vmt"),
+            "UnlitGeneric { %compile2dsky 1 $basetexture broken }",
+        )
+        .unwrap();
+        std::fs::write(
+            directory.path().join("materials/broken.vtf"),
+            b"malformed texture",
+        )
+        .unwrap();
+        let mut game = crate::test_common::empty_game();
+        game.mounts.push(MountedPath {
+            ids: vec!["game".into()],
+            mount: Mount::Directory(directory.path().to_owned()),
+        });
+        let mut geometry = Materials::with_requirements(&game, Requirements::GeometrySemantics);
+        let index = geometry.load("test").unwrap();
+        let info = geometry.get(index);
+        assert_eq!(info.metrics, MetricState::Deferred);
+        assert!(info.texture_metrics().is_err());
+        assert_ne!(info.surface & surf::SKY2D, 0);
+        let surface = info.surface;
+        assert!(Materials::new(&game).load("test").is_err());
+        assert!(geometry.load("missing").is_err());
+        let mut compile = Materials::new(&game);
+        let missing = compile.load("missing").unwrap();
+        let metrics = compile.get(missing).texture_metrics().unwrap();
+        assert_eq!(metrics.source, MetricSource::CompileDefault);
+        assert_eq!(
+            (metrics.width, metrics.height, metrics.reflectivity),
+            (64, 64, [0.5; 3])
+        );
+        std::fs::remove_file(directory.path().join("materials/broken.vtf")).unwrap();
+        let mut compile = Materials::new(&game);
+        let index = compile.load("test").unwrap();
+        assert_eq!(compile.get(index).surface, surface);
+        assert_eq!(
+            compile.get(index).texture_metrics().unwrap().source,
+            MetricSource::CompileDefault
+        );
+        assert!(!compile.get(index).warnings.is_empty());
+    }
 
     #[test]
     fn secondary_surface_properties_preserve_missing_and_explicit_empty_values() {

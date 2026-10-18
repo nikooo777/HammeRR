@@ -9,6 +9,13 @@ use crate::tree::Tree;
 use crate::winding::{Side, Winding};
 use crate::{Control, Diagnostic, Report};
 
+mod budget;
+use budget::Budget;
+pub use budget::Limits;
+
+#[cfg(test)]
+mod budget_tests;
+
 #[derive(Debug)]
 pub struct Portal {
     pub leaves: [usize; 2],
@@ -27,11 +34,13 @@ fn connect(
     leaves: [usize; 2],
     winding: Winding,
     portals: &mut Vec<Portal>,
-    control: &Control,
+    budget: &mut Budget<'_>,
 ) -> Result<(), String> {
-    let mut pending = vec![(leaves, winding)];
+    let mut pending = Vec::new();
+    budget.pending(&mut pending, 1)?;
+    pending.push((leaves, winding));
     while let Some((leaves, winding)) = pending.pop() {
-        control.checkpoint()?;
+        budget.visit(winding.0.len())?;
         if winding.is_tiny() {
             continue;
         }
@@ -40,13 +49,29 @@ fn connect(
             .enumerate()
             .find_map(|(side, &index)| Some((side, tree.nodes.get(index)?.split?)));
         let Some((side, (plane, children))) = split else {
+            budget.output(portals)?;
             portals.push(Portal { leaves, winding });
             continue;
         };
         let plane = planes.get(plane);
+        budget.visit(winding.0.len())?;
         let halves = match winding.classify(plane.normal, plane.dist) {
-            Side::On => [Some(winding.clone()), Some(winding)],
-            _ => {
+            Side::On => {
+                budget.pending(&mut pending, 2)?;
+                budget.allocate(winding.0.len())?;
+                [Some(winding.clone()), Some(winding)]
+            }
+            Side::Front => {
+                budget.pending(&mut pending, 1)?;
+                [Some(winding), None]
+            }
+            Side::Back => {
+                budget.pending(&mut pending, 1)?;
+                [None, Some(winding)]
+            }
+            Side::Cross => {
+                budget.pending(&mut pending, 2)?;
+                budget.split(winding.0.len())?;
                 let (front, back) = winding.split(plane.normal, plane.dist);
                 [front, back]
             }
@@ -71,35 +96,76 @@ pub fn build_controlled(
     planes: &PlaneSet,
     control: &Control,
 ) -> Result<Vec<Portal>, String> {
+    build_limited(tree, planes, control, Limits::default())
+}
+
+pub fn build_limited(
+    tree: &Tree,
+    planes: &PlaneSet,
+    control: &Control,
+    limits: Limits,
+) -> Result<Vec<Portal>, String> {
+    let mut budget = Budget::new(limits, control);
+    budget.visit(0)?;
+    let root = tree
+        .nodes
+        .first()
+        .ok_or("Cannot build portals for an empty BSP tree")?;
+    if limits.pending == 0 {
+        return Err("Portal construction exceeded its pending fragment budget".into());
+    }
     let mut portals = Vec::new();
     for (index, node) in tree.nodes.iter().enumerate() {
-        control.checkpoint()?;
+        budget.visit(0)?;
         let Some((split, children)) = node.split else {
             continue;
         };
         let plane = planes.get(split);
+        budget.allocate(4)?;
         let mut winding = Some(Winding::base(plane.normal, plane.dist));
         for side in &node.volume.sides {
+            budget.visit(0)?;
             let clip = planes.get(side.plane);
-            winding = winding.and_then(|w| w.clip_back(clip.normal, clip.dist));
+            winding = match winding {
+                Some(winding) => clip_back(winding, clip.normal, clip.dist, &mut budget)?,
+                None => break,
+            };
         }
         if let Some(winding) = winding {
-            connect(tree, planes, children, winding, &mut portals, control)?;
+            connect(tree, planes, children, winding, &mut portals, &mut budget)?;
         }
         debug_assert!(index < children[0] && index < children[1]);
     }
     let outside = tree.nodes.len();
-    for side in &tree.nodes[0].volume.sides {
+    for side in &root.volume.sides {
+        budget.allocate(side.winding.0.len())?;
         connect(
             tree,
             planes,
             [0, outside],
             side.winding.clone(),
             &mut portals,
-            control,
+            &mut budget,
         )?;
     }
     Ok(portals)
+}
+
+fn clip_back(
+    winding: Winding,
+    normal: DVec3,
+    dist: f64,
+    budget: &mut Budget<'_>,
+) -> Result<Option<Winding>, String> {
+    budget.visit(winding.0.len())?;
+    match winding.classify(normal, dist) {
+        Side::Back | Side::On => Ok(Some(winding)),
+        Side::Front => Ok(None),
+        Side::Cross => {
+            budget.split(winding.0.len())?;
+            Ok(winding.split(normal, dist).1)
+        }
+    }
 }
 
 pub fn flood(

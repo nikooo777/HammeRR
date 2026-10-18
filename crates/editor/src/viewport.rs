@@ -59,12 +59,19 @@ impl Viewport {
     }
 
     pub fn set_scene(&mut self, ctx: &GpuContext, mesh: &SceneMesh, library: &MaterialLibrary) {
-        self.scene = Some(self.renderer.upload(ctx, mesh, library));
+        self.scene = Some(
+            self.renderer
+                .upload_replacing(ctx, self.scene.take(), mesh, library),
+        );
         self.dirty = true;
     }
 
     pub fn redraw(&mut self) {
         self.dirty = true;
+    }
+
+    pub fn sky3d_error(&self) -> Option<&str> {
+        self.renderer.last_sky3d_error()
     }
 
     pub fn looking(&self) -> bool {

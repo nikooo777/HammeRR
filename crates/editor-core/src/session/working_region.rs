@@ -498,6 +498,7 @@ impl Session {
             self.working_region.enabled = next.0;
             self.working_region.bounds = next.1;
             self.working_region.serial += 1;
+            self.preflight_sky3d_preview();
             self.scene_serial += 1;
             self.view_serial += 1;
             self.log(

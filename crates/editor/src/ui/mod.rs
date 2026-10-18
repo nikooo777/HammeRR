@@ -106,6 +106,7 @@ struct Ui {
     layers: Option<layers_ui::Controller>,
     compile_region: Option<compile_region_ui::Controller>,
     fog: Option<fog_ui::Controller>,
+    sky3d: Option<sky3d_ui::Controller>,
     working_region: Option<working_region_ui::Controller>,
     overlay: Option<overlay_ui::Controller>,
     cubemap: Option<cubemap_ui::Controller>,
@@ -233,6 +234,7 @@ impl Ui {
             layers: None,
             compile_region: None,
             fog: None,
+            sky3d: None,
             working_region: None,
             overlay: None,
             cubemap: None,
@@ -336,6 +338,12 @@ fn refresh_view_controls(app: &AppWindow, session: &Session) {
 }
 
 fn refresh_sky_preview_status(app: &AppWindow, session: &mut Session) {
+    app.set_sky3d_preview_status(
+        session.sky3d_preview_state()["summary"]
+            .as_str()
+            .unwrap_or("3D sky has not been prepared")
+            .into(),
+    );
     let view = session.view();
     app.set_sky_preview_status(
         session
@@ -766,6 +774,21 @@ fn create_document_window(
             }
         }
         if let Err(error) = ui.shortcuts.as_ref().unwrap().show(&lock(&ui.session)) {
+            app.unwrap().set_message(error.to_string().into());
+        }
+    });
+    root_callback!(app, ui, on_sky3d_preview, |app| {
+        let mut ui = ui.borrow_mut();
+        if ui.sky3d.is_none() {
+            match sky3d_ui::Controller::new_with_access(&ui.document_access()) {
+                Ok(controller) => ui.sky3d = Some(controller),
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
+                }
+            }
+        }
+        if let Err(error) = ui.sky3d.as_ref().unwrap().show(&mut lock(&ui.session)) {
             app.unwrap().set_message(error.to_string().into());
         }
     });
@@ -2880,6 +2903,17 @@ fn create_document_window(
                         selection_filters::refresh(&app, &session);
                     }
                     if session.view_serial() != ui.seen_view {
+                        app.set_sky3d_preview_status(
+                            session.sky3d_preview_state()["summary"]
+                                .as_str()
+                                .unwrap_or("3D sky has not been prepared")
+                                .into(),
+                        );
+                        if let Some(controller) = &ui.sky3d
+                            && controller.window.window().is_visible()
+                        {
+                            controller.refresh(&mut session);
+                        }
                         ui.seen_view = session.view_serial();
                         refresh_view_controls(&app, &session);
                         app.set_fog_preview_status(
@@ -3291,6 +3325,7 @@ fn create_document_window(
                 if let Some(frame) = ui.viewport.render(&ui.ctx, size, scale) {
                     app.set_frame(frame);
                 }
+                app.set_sky3d_render_error(ui.viewport.sky3d_error().unwrap_or_default().into());
                 let c = &ui.viewport.camera;
                 let status = if c.projection == Projection::Perspective {
                     format!(

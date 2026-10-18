@@ -205,6 +205,11 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 | ![Mounted HDR sky through a brick arch](docs/images/hdr-sky-preview.png) | ![Six-face LDR and HDR asset status with selected-face details](docs/images/sky-assets.png) |
 | Preview mounted skies and adjust HDR sky exposure without changing map lighting. | Inspect six-face LDR/HDR assets, mounted sources and actionable issues. |
 
+| 3D sky preview |
+| --- |
+| ![Miniature skyline beyond a foreground courtyard](docs/images/sky3d-preview.png) |
+| Prepare an explicit sky-camera region and preview scaled brush scenery beyond the playable map. |
+
 | Measurement guides | Rope preview |
 | --- | --- |
 | ![Ruler points attached in a rigid entity-local frame](docs/images/measurement-local-attachment.png) | ![Authored rope spans with a static sag preview](docs/images/rope-preview.png) |

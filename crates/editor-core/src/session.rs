@@ -95,6 +95,7 @@ pub mod repeat;
 pub mod ropes;
 mod saved_defaults;
 pub mod saved_views;
+pub mod sky3d_preview;
 mod sky_preview;
 pub mod sounds;
 pub mod statistics;
@@ -285,6 +286,7 @@ pub struct Session {
     camera: Camera,
     view: ViewOptions,
     fog_preview: fog::Selection,
+    sky3d_preview: sky3d_preview::State,
     spatial: spatial::Settings,
     grid_preferences: grid_preferences::State,
     preview_preferences: preview_preferences::State,
@@ -516,6 +518,7 @@ impl Session {
             ),
             view: ViewOptions::default(),
             fog_preview: fog::Selection::default(),
+            sky3d_preview: sky3d_preview::State::default(),
             spatial: spatial::Settings::default(),
             grid_preferences: grid_preferences::State::default(),
             preview_preferences: preview_preferences::State::default(),
@@ -1324,6 +1327,7 @@ impl Session {
     }
 
     fn changed(&mut self) {
+        self.preflight_sky3d_preview();
         self.overlay.context_changed();
         self.cubemap_bindings.context_changed();
         self.refresh_scene();
@@ -1368,6 +1372,7 @@ impl Session {
 
     fn replace_document(&mut self, document: Document, path: Option<PathBuf>) {
         self.reset_instance_contents();
+        self.reset_sky3d_preview();
         self.native_capture.invalidate();
         self.groups.draft = None;
         self.layers.clear_document_draft();
@@ -2277,6 +2282,7 @@ impl Session {
         }
         self.shutdown_definitions_load();
         self.reset_instance_contents();
+        self.shutdown_sky3d_preview();
         self.shutdown_instance_extraction();
         self.shutdown_sound_preview();
         self.cancel_compile_on_shutdown();
@@ -2296,7 +2302,9 @@ impl Session {
     }
 
     pub(crate) fn instance_workers_busy(&self) -> bool {
-        self.instance_contents.worker.busy() || self.instance_extraction.worker.busy()
+        self.instance_contents.worker.busy()
+            || self.instance_extraction.worker.busy()
+            || self.sky3d_preview.worker.busy()
     }
 
     /// The nearest visible object along a ray. Brushes made only of tool
@@ -2448,6 +2456,7 @@ impl Session {
     }
 
     pub fn build_scene_for_view(&mut self, view: ViewOptions) -> SceneMesh {
+        let sky3d = self.sky3d_preview_scene();
         let skybox = self.skybox_preview_for(view);
         let selected: HashSet<ObjectId> = self.geometry.clip_preview.as_ref().map_or_else(
             || self.selection.iter().copied().collect(),
@@ -2603,6 +2612,7 @@ impl Session {
             |id| evaluation.objects.contains(&id),
         );
         mesh.normal_maps.requested = view.normal_maps;
+        mesh.sky3d = sky3d;
         lighting.report.admitted_receivers = mesh.lighting.report.admitted_receivers;
         lighting.report.excluded_receivers = mesh.lighting.report.excluded_receivers;
         lighting.report.terrain = mesh.lighting.report.terrain;

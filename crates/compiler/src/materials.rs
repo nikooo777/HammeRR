@@ -8,6 +8,11 @@ use source_formats::gamefs::GameFs;
 use source_formats::vmt::{self, Material};
 use source_formats::vtf::Vtf;
 
+pub const MAX_GEOMETRY_MATERIAL_BYTES: usize = 256 * 1024;
+pub const MAX_GEOMETRY_MATERIAL_TOTAL_BYTES: usize = 2 * 1024 * 1024;
+pub const MAX_GEOMETRY_MATERIAL_READS: usize = 128;
+pub const MAX_GEOMETRY_MATERIAL_ALLOCATION_BYTES: usize = MAX_GEOMETRY_MATERIAL_TOTAL_BYTES * 128;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Requirements {
     Compile,
@@ -125,8 +130,38 @@ impl MaterialInfo {
 pub struct Materials<'a> {
     fs: &'a GameFs,
     requirements: Requirements,
+    geometry_reads: GeometryReads,
     infos: Vec<MaterialInfo>,
     by_name: HashMap<String, usize>,
+}
+
+#[derive(Default)]
+struct GeometryReads {
+    operations: usize,
+    bytes: usize,
+}
+
+impl GeometryReads {
+    fn read(&mut self, fs: &GameFs, path: &str) -> std::io::Result<Option<Vec<u8>>> {
+        if self.operations >= MAX_GEOMETRY_MATERIAL_READS {
+            return Err(std::io::Error::other(format!(
+                "Geometry material semantics exceed {MAX_GEOMETRY_MATERIAL_READS} source reads"
+            )));
+        }
+        self.operations += 1;
+        let remaining = MAX_GEOMETRY_MATERIAL_TOTAL_BYTES
+            .checked_sub(self.bytes)
+            .ok_or_else(|| std::io::Error::other("Geometry material byte accounting overflow"))?;
+        let limit = MAX_GEOMETRY_MATERIAL_BYTES.min(remaining);
+        let bytes = fs.read_limited(path, limit).map_err(|error| {
+            std::io::Error::new(
+                error.kind(),
+                format!("Geometry material {path} (read limit {limit} bytes): {error}"),
+            )
+        })?;
+        self.bytes += bytes.as_ref().map_or(0, Vec::len);
+        Ok(bytes)
+    }
 }
 
 impl<'a> Materials<'a> {
@@ -138,6 +173,7 @@ impl<'a> Materials<'a> {
         Self {
             fs,
             requirements,
+            geometry_reads: GeometryReads::default(),
             infos: Vec::new(),
             by_name: HashMap::new(),
         }
@@ -171,8 +207,15 @@ impl<'a> Materials<'a> {
         if let Some(&index) = self.by_name.get(&key) {
             return Ok(index);
         }
-        let material = Material::load(self.fs, &key)
-            .map_err(|error| format!("Material {}: {error}", vmt::material_path(&key)))?;
+        let material = match self.requirements {
+            Requirements::Compile => Material::load(self.fs, &key),
+            Requirements::GeometrySemantics => {
+                Material::load_with_reader(&vmt::material_path(&key), &mut |path| {
+                    self.geometry_reads.read(self.fs, path)
+                })
+            }
+        }
+        .map_err(|error| format!("Material {}: {error}", vmt::material_path(&key)))?;
         let mut info = MaterialInfo::from_material(name.trim(), material.as_ref());
         match self.requirements {
             Requirements::Compile => {
@@ -226,6 +269,63 @@ impl<'a> Materials<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn geometry_semantics_bounds_patch_reads_and_bytes_without_changing_compilation() {
+        use source_formats::gamefs::{Mount, MountedPath};
+
+        let directory = tempfile::tempdir().unwrap();
+        let materials = directory.path().join("materials");
+        std::fs::create_dir(&materials).unwrap();
+        let material = "LightmappedGeneric { %compile2dsky 1 }";
+        std::fs::write(materials.join("base.vmt"), material).unwrap();
+        std::fs::write(
+            materials.join("patch.vmt"),
+            "Patch { include materials/base.vmt }",
+        )
+        .unwrap();
+        let mut large = " ".repeat(MAX_GEOMETRY_MATERIAL_BYTES);
+        large.push_str(material);
+        std::fs::write(materials.join("large.vmt"), large).unwrap();
+        let mut game = crate::test_common::empty_game();
+        game.mounts.push(MountedPath {
+            ids: vec!["game".into()],
+            mount: Mount::Directory(directory.path().to_owned()),
+        });
+
+        let mut geometry = Materials::with_requirements(&game, Requirements::GeometrySemantics);
+        geometry.geometry_reads.operations = MAX_GEOMETRY_MATERIAL_READS - 1;
+        let error = geometry.load("patch").unwrap_err();
+        assert!(error.contains("128 source reads"), "{error}");
+        assert_eq!(geometry.iter().count(), 0);
+
+        let mut geometry = Materials::with_requirements(&game, Requirements::GeometrySemantics);
+        geometry.geometry_reads.bytes = MAX_GEOMETRY_MATERIAL_TOTAL_BYTES - material.len() + 1;
+        let error = geometry.load("base").unwrap_err();
+        assert!(error.contains("byte read limit"), "{error}");
+        assert_eq!(geometry.iter().count(), 0);
+
+        let mut geometry = Materials::with_requirements(&game, Requirements::GeometrySemantics);
+        let error = geometry.load("large").unwrap_err();
+        assert!(error.contains("byte read limit"), "{error}");
+
+        let mut geometry = Materials::with_requirements(&game, Requirements::GeometrySemantics);
+        geometry.geometry_reads.operations = MAX_GEOMETRY_MATERIAL_READS - 1;
+        let index = geometry.load("base").unwrap();
+        assert_eq!(geometry.load("BASE").unwrap(), index);
+        assert!(
+            geometry
+                .load("patch")
+                .unwrap_err()
+                .contains("128 source reads")
+        );
+
+        let mut compile = Materials::new(&game);
+        for name in ["base", "patch", "large"] {
+            let index = compile.load(name).unwrap();
+            assert_ne!(compile.get(index).surface & surf::SKY2D, 0);
+        }
+    }
 
     #[test]
     fn geometry_semantics_defers_metrics_without_relaxing_compile_dependencies() {

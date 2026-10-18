@@ -1,6 +1,6 @@
 [← Manual](README.md)
 
-# Previewing the 2D sky
+# Sky previews and assets
 
 Preview the world's selected sky on sky surfaces while editing, using materials and textures from the mounted game content.
 
@@ -14,6 +14,85 @@ Preview the world's selected sky on sky surfaces while editing, using materials 
 ![The selected CS:S sky rendered through sky surfaces](images/sky-preview.png)
 
 The setting is shared with MCP through `set_view` using `sky_preview`. `render_view` accepts the same optional setting for a single render. `get_map_info` and rendered-image metadata report the selected sky, six material names, texture dimensions and individual load errors. These controls do not change the map or create undo steps; changing `skyname` uses ordinary undoable world settings.
+
+## Preview a 3D sky region
+
+Display a miniature scene through 3D sky surfaces while editing. The preview
+uses one explicitly chosen root `sky_camera` and a sealed connected region of
+committed flat world and `func_detail` brushes.
+
+1. Author a point **sky_camera** with **Entity…**, placing its origin inside the
+   sealed miniature room. Author an integer `scale` from 1 through 128 in its properties;
+   `16` is the usual authored value. The camera origin corresponds to map origin,
+   and miniature positions project as `(point - sky_camera origin) × scale`.
+   Camera angles do not rotate the miniature geometry.
+2. In **VIEWPORT**, click **3D sky preview…**. Choose the camera explicitly in
+   **Sky camera**. The list shows entity IDs, names and unavailable camera
+   settings; no nearest or first camera is selected automatically. To choose a
+   camera beyond the first 64 listed entries, enter its exact `entity:<id>` in
+   **Camera entity ID** and click **Use camera**. The selected camera remains
+   visible in the chooser even when it lies beyond that list.
+3. Click **Prepare 3D sky**. Preparation runs in the background and leaves the
+   preview disabled until you enable it. Read the status and diagnostics;
+   **Cancel preparation** requests cancellation, and **Refresh status** reads
+   the current result. Failed, cancelled and stale preparations are unavailable.
+4. When preparation is ready, check **Enable 3D sky preview**. Choose
+   **Perspective** and **Textured**, and enable **Tool textures**. Only
+   `tools/toolsskybox` surfaces display the projected miniature; ordinary
+   foreground geometry keeps its depth and `tools/toolsskybox2d` keeps the
+   independent 2D sky path.
+5. Use **2D sky preview**, **Sky channel** and **HDR sky exposure (EV)** separately
+   for the six-face backdrop. Unfilled miniature pixels can show that backdrop
+   when its independent preview is enabled and ready.
+6. After changing source geometry, the chosen camera, mounted material assets or
+   editor visibility, prepare again. A removed or invalid camera is never
+   replaced automatically. **New** and **Open** clear the document's choice and
+   disable the preview. Uncheck **Enable 3D sky preview** to hide it, and click
+   **Close** to dismiss the controls.
+
+![Scaled brush skyline beyond the ordinary foreground courtyard](images/sky3d-preview.png)
+
+![3D sky controls with an explicit camera and unavailable-content diagnosis](images/sky3d-preview-unavailable.png)
+
+The preview controls preserve source bytes, Undo, selection and the viewport
+camera. Miniature scenery adds visual context; picking and editing still use
+ordinary source geometry. MCP provides the same camera choices, controls,
+preparation and diagnostics through `get_3d_sky_preview` and
+`set_3d_sky_preview`. `render_view.sky3d_preview` temporarily displays or hides a
+current prepared result without changing shared settings or choosing a camera.
+
+Only structural world brushes establish the enclosure; flat `func_detail`
+scenery can contribute displayed surfaces. A solid, outside, ambiguous or leaking
+camera seed rejects. Unsupported content that intersects the chosen component,
+including unknown bounds, rejects instead of disappearing. Unrelated unsupported
+content that is proven outside the region does not reject it. Temporary editor
+hiding filters displayed fragments after membership is resolved and cannot open
+or repair the structural enclosure. Committed VMF hidden geometry follows the
+ordinary compiler omission policy.
+
+The first preview supports static opaque textured brush scenery. The 1–128
+scale range is an editor preview limit. Sky fog,
+translucency, terrain, models, instances, water, portal boundaries, generated
+detail scenery, animation and runtime effects are unavailable. Nonempty material
+`%detailtype` declarations reject because generated models or sprites can extend
+beyond their source brush. It does not reproduce native area/PVS or
+mixed-sky fidelity. An eligible prepared result permits rendering; it does not
+prove a sky surface contributed pixels to the current view. This is an editor
+preview, separate from compiling or checking the map in the game.
+
+The camera list displays the first 64 entries plus the current choice; **Camera
+entity ID** can select any valid root camera explicitly. Preparation, geometry and target
+budgets are reported in the dialog and MCP `limits`; budget failures remain
+explicit diagnostics. One preparation worker and one cached result are retained
+per document. Preparation never writes a BSP or changes Compile Region.
+
+GPU admission budgets cover 32 MiB of retained miniature assets, 64 MiB of
+aggregate upload staging and a 32 MiB color/depth target. These are explicit
+payload budgets; driver overhead is additional. Replacement drains retired
+uploads before admitting new assets. GPU admission or rendering failures appear
+beside the viewport controls and fail an MCP render. The editor near plane is
+four main-map units, scaled into miniature coordinates; native game near-plane
+and area behavior can differ.
 
 ## Preview linear HDR sky images
 
@@ -113,6 +192,6 @@ The default editor channel previews the family's LDR `$basetexture`. Choosing th
 
 The LDR preview supports six mounted `UnlitGeneric` or `Sky` materials with static LDR `$basetexture` textures. Axis-aligned texture scale and translation are supported, including the vertical scale used by stock skies. Face dimensions may differ. All six faces must resolve; otherwise the ordinary tool surface remains and the status explains why. Textures are limited to 4096 pixels per axis and 64 MiB per file.
 
-Flat shading, wireframe, diagnostic and planar views retain their existing behavior. **Tool textures** hides sky surfaces along with other tools. Only authored sky surfaces display the sky; the editor background remains unchanged. The preview does not reproduce compiled BSP visibility, 3D `sky_camera` regions, general HDR scene lighting, native exposure adaptation, fog, material tint, animation, rotated texture transforms or nested material effects. After changing mounted sky materials or textures, open **Browse materials…**
+Flat shading, wireframe, diagnostic and planar views retain their existing behavior. **Tool textures** hides sky surfaces along with other tools. Only authored sky surfaces display the sky; the editor background remains unchanged. The 2D preview does not reproduce compiled BSP visibility, general HDR scene lighting, native exposure adaptation, fog, material tint, animation, rotated texture transforms or nested material effects. The separate 3D preview uses the explicit preparation workflow above. After changing mounted sky materials or textures, open **Browse materials…**
 and click **Reload material assets**. See [Reload changed materials](textures.md#reload-changed-materials)
 for diagnostics and limits.

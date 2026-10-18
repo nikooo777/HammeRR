@@ -51,6 +51,7 @@ impl Session {
         self.sounds
             .materials_reloaded(previous_scene, self.scene_serial);
         self.view_serial += 1;
+        self.preflight_sky3d_preview();
         let summary = format!(
             "Reloaded {} cached materials · {} model material sets refreshed · {} unavailable previews",
             result.reloaded, models.refreshed, result.failed

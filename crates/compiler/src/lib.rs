@@ -21,6 +21,7 @@ pub mod planes;
 pub mod portals;
 mod publication;
 pub mod sky_assets;
+pub mod sky_region;
 mod static_props;
 pub mod tree;
 mod visclusters;

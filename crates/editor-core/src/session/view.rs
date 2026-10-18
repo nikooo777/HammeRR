@@ -13,6 +13,7 @@ pub struct ViewUpdate<'a> {
     pub tool_textures: Option<bool>,
     pub leak_path: Option<bool>,
     pub sky_preview: Option<bool>,
+    pub sky3d_preview: Option<bool>,
     pub rope_preview: Option<bool>,
     pub selection_outlines: Option<bool>,
     pub entity_images: Option<bool>,
@@ -53,6 +54,9 @@ impl Session {
         }
         if let Some(value) = update.sky_preview {
             view.sky_preview = value;
+        }
+        if let Some(value) = update.sky3d_preview {
+            view.sky3d_preview = value;
         }
         if let Some(value) = update.rope_preview {
             view.rope_preview = value;

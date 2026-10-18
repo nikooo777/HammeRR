@@ -15,6 +15,7 @@ pub mod references;
 pub mod ropes;
 pub mod scene;
 pub mod sky;
+pub mod sky3d;
 
 pub use camera::{Camera, Projection};
 pub use gpu::{

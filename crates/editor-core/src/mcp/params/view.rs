@@ -176,7 +176,7 @@ pub struct FacePreviewArgs {
 }
 
 pub(in crate::mcp) fn view_state(view: ViewOptions) -> Value {
-    json!({"instance_contents": view.instance_contents,"lighting_preview":view.lighting_preview,"lighting_quality":view.lighting_quality.name(),"lighting_exposure_ev":view.lighting_exposure_ev,"normal_maps":view.normal_maps,"tool_textures":view.tool_textures,"sky_preview":view.sky_preview,"sky_channel":view.sky_channel.name(),"sky_exposure_ev":view.sky_exposure_ev,"rope_preview":view.rope_preview,"selection_outlines":view.selection_outlines,"entity_images":view.entity_images,"additive_sprite_guides":view.additive_sprite_guides,"entity_model_guides":view.entity_model_guides,"fog":fog_parameters(view),"leak_path":view.leak_path,"surface":view.surface.name(),"smoothing_group":view.smoothing_group})
+    json!({"instance_contents": view.instance_contents,"lighting_preview":view.lighting_preview,"lighting_quality":view.lighting_quality.name(),"lighting_exposure_ev":view.lighting_exposure_ev,"normal_maps":view.normal_maps,"tool_textures":view.tool_textures,"sky_preview":view.sky_preview,"sky3d_preview":view.sky3d_preview,"sky_channel":view.sky_channel.name(),"sky_exposure_ev":view.sky_exposure_ev,"rope_preview":view.rope_preview,"selection_outlines":view.selection_outlines,"entity_images":view.entity_images,"additive_sprite_guides":view.additive_sprite_guides,"entity_model_guides":view.entity_model_guides,"fog":fog_parameters(view),"leak_path":view.leak_path,"surface":view.surface.name(),"smoothing_group":view.smoothing_group})
 }
 
 pub(in crate::mcp) fn fog_parameters(view: ViewOptions) -> Value {
@@ -301,6 +301,7 @@ pub struct SetViewArgs {
     pub tool_textures: Option<bool>,
     /// Preview the selected world sky on sky surfaces in perspective textured views. Requires all six supported faces of the explicit editor sky channel.
     pub sky_preview: Option<bool>,
+    pub sky3d_preview: Option<bool>,
     /// Explicit editor sky channel: ldr (default) or hdr; never selects a game/build channel.
     pub sky_channel: Option<String>,
     /// HDR sky-only exposure in EV, finite -8 through 8; LDR pixels remain unchanged.
@@ -344,6 +345,7 @@ pub struct RenderArgs {
     pub tool_textures: Option<bool>,
     /// Preview the selected world sky on sky surfaces in perspective textured views. Requires all six supported faces of the explicit editor sky channel.
     pub sky_preview: Option<bool>,
+    pub sky3d_preview: Option<bool>,
     /// Explicit editor sky channel: ldr (default) or hdr; never selects a game/build channel.
     pub sky_channel: Option<String>,
     /// HDR sky-only exposure in EV, finite -8 through 8; LDR pixels remain unchanged.
@@ -439,6 +441,7 @@ macro_rules! view_update {
                     tool_textures: self.tool_textures,
                     leak_path: self.leak_path,
                     sky_preview: self.sky_preview,
+                    sky3d_preview: self.sky3d_preview,
                     rope_preview: self.rope_preview,
                     selection_outlines: self.selection_outlines,
                     entity_images: self.entity_images,

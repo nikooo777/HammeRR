@@ -183,6 +183,7 @@ impl Session {
                 "game": self.game_run.as_ref().map(game::Run::close_identity),
                 "audio": self.sounds.close_playback(),
                 "contents": self.instance_contents.close_work(),
+                "sky3d": self.sky3d_preview.close_work(),
                 "extraction": self.instance_extraction.close_work(),
                 "definitions": self.definitions_load.close_work(),
                 "recovery": self.recovery.close_work(),

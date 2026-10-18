@@ -9,6 +9,7 @@ pub(in crate::mcp) struct Offscreen {
     pub(in crate::mcp) lighting: render::lighting::Report,
     pub(in crate::mcp) sprite_guides: Value,
     pub(in crate::mcp) instance_contents: Value,
+    pub(in crate::mcp) sky3d_preview: Value,
 }
 
 impl Offscreen {
@@ -22,6 +23,7 @@ impl Offscreen {
             lighting: Default::default(),
             sprite_guides: Value::Null,
             instance_contents: Value::Null,
+            sky3d_preview: Value::Null,
         }
     }
 }
@@ -34,6 +36,7 @@ pub(in crate::mcp) struct OffscreenState {
 
 pub(in crate::mcp) struct RenderedView {
     pub(in crate::mcp) instance_contents: Value,
+    pub(in crate::mcp) sky3d_preview: Value,
     pub(in crate::mcp) normal_maps: render::normal_maps::Report,
     pub(in crate::mcp) lighting: render::lighting::Report,
     pub(in crate::mcp) sprite_guides: Value,
@@ -115,6 +118,7 @@ impl EditorServer {
             lighting,
             sprite_guides,
             instance_contents,
+            sky3d_preview,
         } = offscreen
             .renderer
             .as_mut()
@@ -122,6 +126,7 @@ impl EditorServer {
         {
             let mut session = self.session();
             session.preflight_instance_contents();
+            *sky3d_preview = session.sky3d_preview_state_for(view, *camera);
             let key = session.render_scene_key(view);
             if scene.as_ref().is_none_or(|(previous, _)| *previous != key) {
                 let mesh = session.build_scene_for_view(view);
@@ -130,11 +135,16 @@ impl EditorServer {
                 *lighting = mesh.lighting.report.clone();
                 *sprite_guides = session.sprite_guide_preview_state(view);
                 *instance_contents = session.instance_contents_rendered_report();
-                *scene = Some((key, renderer.upload(ctx, &mesh, session.materials())));
+                let previous = scene.take().map(|(_, scene)| scene);
+                *scene = Some((
+                    key,
+                    renderer.upload_replacing(ctx, previous, &mesh, session.materials()),
+                ));
             }
         }
         let gpu_scene = &scene.as_ref().expect("scene was just built").1;
-        let pixels = renderer.render_to_rgba(ctx, gpu_scene, camera, &view, size.0, size.1);
+        let pixels =
+            renderer.render_to_rgba_checked(ctx, gpu_scene, camera, &view, size.0, size.1)?;
         let mut png = Vec::new();
         let mut encoder = png::Encoder::new(Cursor::new(&mut png), size.0, size.1);
         encoder.set_color(png::ColorType::Rgba);
@@ -145,6 +155,7 @@ impl EditorServer {
             .map_err(|error| format!("Could not encode render: {error}"))?;
         Ok(RenderedView {
             instance_contents: instance_contents.clone(),
+            sky3d_preview: sky3d_preview.clone(),
             normal_maps: normal_maps.clone(),
             lighting: lighting.clone(),
             sprite_guides: sprite_guides.clone(),

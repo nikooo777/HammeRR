@@ -188,11 +188,49 @@ fn scene_retains_sky_geometry_and_resolves_custom_compile_sky_materials() {
     assert!(mesh.skybox.as_ref().unwrap().ready());
     assert_eq!(mesh.indices.len(), 36);
     assert!(library.get(mesh.batches[0].material).sky);
+    assert!(!library.get(mesh.batches[0].material).sky3d_eligible);
     assert!(library.get(mesh.batches[0].material).tool);
     assert_eq!(&before, document.vmf());
     for name in ["tools/toolsskybox", "tools/toolsskybox2d"] {
         let missing_tool = crate::materials::MaterialInfo::load(&fixture.fs, name);
         assert!(missing_tool.sky && missing_tool.tool);
+        assert!(!missing_tool.sky3d_eligible);
+    }
+}
+
+#[test]
+fn miniature_compositing_requires_resolved_sky_flags_independent_of_material_name() {
+    let fixture = Fixture::new();
+    for (name, material, eligible) in [
+        ("custom/sky", "LightmappedGeneric { %compilesky 1 }", true),
+        (
+            "custom/sky2d",
+            "LightmappedGeneric { %compile2dsky 1 }",
+            false,
+        ),
+        ("tools/toolsskybox", "UnlitGeneric {}", false),
+        ("tools/toolsskybox2d", "UnlitGeneric {}", false),
+        (
+            "tools/toolsskybox2d",
+            "LightmappedGeneric { %compilesky 1 }",
+            true,
+        ),
+        (
+            "tools/toolsskybox",
+            "LightmappedGeneric { %compile2dsky 1 }",
+            false,
+        ),
+    ] {
+        fixture.write(&format!("materials/{name}.vmt"), material);
+        let resolved = crate::materials::MaterialInfo::load(&fixture.fs, name);
+        assert!(resolved.sky, "{name}: {material}");
+        assert_eq!(resolved.sky3d_eligible, eligible, "{name}: {material}");
+    }
+    let missing = Fixture::new();
+    for name in ["tools/toolsskybox", "tools/toolsskybox2d"] {
+        let unresolved = crate::materials::MaterialInfo::load(&missing.fs, name);
+        assert!(unresolved.sky && unresolved.tool);
+        assert!(!unresolved.sky3d_eligible);
     }
 }
 

@@ -238,6 +238,7 @@ impl Ui {
             layers,
             compile_region,
             fog,
+            sky3d,
             working_region,
             overlay,
             cubemap,

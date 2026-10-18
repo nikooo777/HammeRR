@@ -11,6 +11,7 @@ export { ShortcutsWindow, ShortcutRow } from "shortcuts.slint";
 export { WorkingRegionWindow } from "working-region.slint";
 export { CompileRegionWindow } from "compile-region.slint";
 export { FogWindow } from "fog.slint";
+export { Sky3dWindow } from "sky3d.slint";
 export { OverlayWindow, OverlayTargetRow } from "overlay.slint";
 export { CubemapFacesWindow, CubemapFaceRow } from "cubemap-faces.slint";
 export { LinkedPathWindow, LinkedPathPoint } from "linked-path.slint";
@@ -1967,6 +1968,9 @@ export component AppWindow inherits Window {
     in property <string> rope-preview-status: "Rope preview is off";
     in property <string> fog-preview-status: "Fog preview is off";
     callback fog-preview();
+    callback sky3d-preview();
+    in property <string> sky3d-preview-status: "3D sky preview is off";
+    in property <string> sky3d-render-error;
     in-out property <string> sky-preview-status: "Set world skyname to select a 2D sky";
     in-out property <bool> show-leak: true;
     in-out property <int> surface-view;
@@ -2747,6 +2751,9 @@ export component AppWindow inherits Window {
                         color: #aeb9c8;
                         wrap: word-wrap;
                     }
+                    Button { text: "3D sky preview…"; clicked => { root.sky3d-preview(); } }
+                    Text { text: root.sky3d-preview-status; color: #aeb9c8; wrap: word-wrap; font-size: 12px; }
+                    if root.sky3d-render-error != "": Text { text: root.sky3d-render-error; color: #efb56b; wrap: word-wrap; }
                     Button { text: "Fog preview…"; clicked => { root.fog-preview(); } }
                     Text { text: root.fog-preview-status; color: #aeb9c8; wrap: word-wrap; font-size: 12px; }
                     CheckBox {

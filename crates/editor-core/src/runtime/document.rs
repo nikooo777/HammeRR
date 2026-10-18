@@ -505,6 +505,40 @@ impl DocumentAccess {
         self.with_shared(|session| operation(&mut lock(session)))
     }
 
+    pub fn start_sky3d_preview(&self, actor: Actor) -> Result<Value, String> {
+        let operation = self
+            .document
+            .as_ref()
+            .map(DocumentHandle::admit)
+            .transpose()?;
+        let request = lock(&self.session).begin_sky3d_preview(actor)?;
+        let token = request.token();
+        let worker = (request, self.session.clone(), operation);
+        let spawned = std::thread::Builder::new()
+            .name("sky3d-preview".into())
+            .spawn(move || {
+                let (request, session, _operation) = worker;
+                let result =
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| request.run()));
+                match result {
+                    Ok(completed) => {
+                        let _ = lock(&session).finish_sky3d_preview(actor, completed);
+                    }
+                    Err(_) => {
+                        let _ = lock(&session)
+                            .fail_sky3d_preview(token, "3D sky preparation worker panicked".into());
+                    }
+                }
+            });
+        if let Err(error) = spawned {
+            return lock(&self.session).fail_sky3d_preview(
+                token,
+                format!("Could not start 3D sky preparation: {error}"),
+            );
+        }
+        Ok(lock(&self.session).sky3d_preview_state())
+    }
+
     pub fn start_compile(
         &self,
         actor: Actor,

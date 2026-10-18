@@ -1,6 +1,6 @@
 use crate::Control;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize)]
 pub struct Limits {
     pub portals: usize,
     /// Cumulative allocation slots, including conservative split scratch space.

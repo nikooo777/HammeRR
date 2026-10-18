@@ -37,7 +37,7 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | [Authored lighting preview](lighting-preview.md) | Unshadowed point/spot diffuse light, quality, exposure and supported receivers |
 | [Working region](working-region.md) | Temporary whole-object display bounds and visibility reasons |
 | [Fog preview](fog.md) | Choosing an authored static fog controller for perspective Textured views |
-| [Sky preview and assets](sky.md) | Previewing LDR sky surfaces and inspecting the applied family's LDR/HDR material and texture structure |
+| [Sky previews and assets](sky.md) | Previewing LDR/HDR skies and explicit 3D sky regions, and inspecting mounted sky assets |
 | [Rope preview](ropes.md) | Static linked rope curves, diagnostics and source-entity picking |
 | [Terrain](terrain.md) | Creating, sculpting, blending, sewing, shading and selecting terrain triangles |
 | [Overlays](overlays.md) | Fit, rebind and edit projection corners; compile imported overlays and fades |

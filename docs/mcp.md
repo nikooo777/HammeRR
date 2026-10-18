@@ -330,8 +330,8 @@ for source, geometry and memory limits.
 
 ## Tools by task
 
-The shared desktop and private stdio server register 422 tools. `tools/list`
-returns their current schemas and descriptions.
+The shared desktop and private stdio server expose workspace and document tools.
+`tools/list` returns their current schemas and descriptions.
 
 | Task | Tools |
 | --- | --- |
@@ -345,6 +345,7 @@ returns their current schemas and descriptions.
 | Entity definitions | `get_entity_definitions`, `load_entity_definitions`, `search_entity_classes`, `get_entity_class` |
 | Material source | `get_material_source` |
 | Sky asset inspection | `inspect_sky_assets` |
+| 3D sky preview | `get_3d_sky_preview`, `set_3d_sky_preview` |
 | Baked lightmap inspection | `inspect_baked_lightmaps` |
 | Authored lighting preview | `get_lighting_preview`; shared `set_view` and temporary `render_view` settings |
 | Selection and history | `select`, `get_selection`, `set_selection_mode`, `undo`, `redo`, `get_history`, `navigate_history` |
@@ -2049,6 +2050,68 @@ Readiness describes supported mounted declarations and complete VTF layout, with
 
 `limits` exposes `asset_lookups:128`, `total_bytes:67108864`, `material_bytes:1048576`, `texture_axis:4096`, `path_bytes:512`, `issue_characters:1024`, `issues_per_scope:16`, `shader_characters:128` and `hdr_base_formats`. Counts cover distinct successfully read assets and their bytes; repeated references share the inspection's read budget. Family names must be relative, at most 256 bytes and without surrounding whitespace or control characters. Inspection reads current mounted files on each call; it does not remount content, pack custom sky assets or add compiler admission checks. See [Inspect mounted sky assets](sky.md#inspect-mounted-sky-assets).
 
+### 3D sky preview
+
+`get_3d_sky_preview {}` inspects the document-local default-off preview without
+initializing graphics. It reports `enabled`, explicit `camera_entity`, available
+`cameras` with IDs, names, parsed origin/scale and issues, preparation `status`,
+`ready`, `loading`, `worker_active`, `cancellable`, `token`, `snapshot`,
+`summary`, `issue`, `diagnostics`, `stats` and `limits`. Camera syntax readiness
+permits preparation; it does not establish sealed membership or asset readiness.
+The list contains at most 64 cameras and marks `cameras_truncated`;
+`selected_camera` retains the chosen camera row even beyond that list. The
+human **Camera entity ID → Use camera** controls accept the same exact identity.
+
+`set_3d_sky_preview` shares **3D sky preview…** operations:
+
+| Arguments | Operation |
+| --- | --- |
+| `{"action":"settings","enabled":false,"camera":"entity:123"}` | Choose the explicit root `sky_camera` while keeping display off. |
+| `{"action":"prepare"}` | Resolve that camera's sealed region outside the Session lock and wait for the result. |
+| `{"action":"prepare","background":true}` | Start an owned background preparation and return its current state. Poll the getter for completion. |
+| `{"action":"settings","enabled":true,"camera":"entity:123"}` | Enable display using that explicit camera; this starts no preparation. |
+| `{"action":"cancel"}` | Request cancellation and invalidate the current result. |
+| `{"action":"settings","enabled":false}` | Disable display and clear the camera choice. |
+
+Settings require `enabled`; enabling requires a valid explicit camera. Supply
+the same camera when disabling if the choice should be retained. Invalid
+settings leave the previous values unchanged. Prepare accepts only `action` and
+optional boolean `background`; Cancel accepts only `action`. Unknown arguments,
+wrong types and irrelevant fields reject. There is no automatic nearest-camera,
+whole-map or other-camera substitution. Preparation works while display is off.
+Status `loading`, `failed`, `cancelled` and `stale` never reports `ready:true`.
+
+`set_view.sky3d_preview` changes only the shared display flag;
+`render_view.sky3d_preview` temporarily overrides it without selecting a camera
+or preparing geometry. Render metadata's `sky3d_preview` reads the current
+preparation report and adds `requested` for the actual temporary flag and
+`eligible` for current readiness plus perspective Textured/Tool textures
+conditions. Eligibility does not claim contributed sky pixels. Active rendering
+without a current prepared result, or with a GPU upload/camera admission error,
+returns an explicit error. Planar, other surface modes and hidden Tool textures
+remain inactive. `get_map_info.sky3d_preview` reports shared preparation state.
+
+The private region resolves committed flat world and `func_detail` geometry from
+one valid camera seed. Structural world brushes establish enclosure; displayed
+fragments honor editor visibility after resolution. Leaks, solid/outside or
+ambiguous seeds, scale outside the explicit integer range 1–128, unsupported intersecting/unknown content and
+budget overflow reject. The renderer transforms the camera without rotating the
+miniature, uses a secondary color/depth target and composites only through 3D
+sky surfaces while preserving main foreground depth. SKY2D retains the 2D path;
+empty miniature pixels can use the independently enabled and ready 2D backdrop.
+Source, material or visibility changes require explicit preparation again;
+New/Open clears choice and display. Shared settings, Prepare and Cancel preserve
+source, Undo, selection and viewport camera and write no compile output.
+
+`limits` reports the source, tree, portal, face, geometry, memory and target
+budgets; there is one active worker and one cached result per document. Static
+opaque textured flat brush scenery is supported. Models, terrain, instances,
+water, portal boundaries, generated detail scenery, sky fog, translucency,
+animation and runtime effects are unavailable. Nonempty `%detailtype` has unknown
+generated bounds and rejects even when its parent brush lies outside the
+miniature. Native area/PVS and mixed-sky fidelity are not claimed. See
+[Preview a 3D sky region](sky.md#preview-a-3d-sky-region).
+
 ### 2D sky preview
 
 `set_view` accepts `sky_preview:true`, optional `sky_channel:"ldr"|"hdr"` and
@@ -2120,9 +2183,8 @@ embeds supported original dependencies independently of editor preview settings.
 See [Compiled HDR skies](sky.md#compiled-hdr-skies).
 
 Sky surfaces retain depth, picking and visibility filtering. Planar, flat,
-wireframe and diagnostic views retain their usual behavior. 3D sky-camera
-transforms, sky fog, animation and native HDR rendering parity remain outside
-this preview; see [2D sky preview](sky.md).
+wireframe and diagnostic views retain their usual behavior. Sky fog, animation and native HDR rendering parity remain outside
+this 2D preview; explicit 3D regions use the independent workflow above; see [2D sky preview](sky.md).
 
 ### Fog preview
 

@@ -11,6 +11,10 @@ use crate::winding::{ON_EPSILON, Side, Winding};
 const BOUNDS_PADDING: f64 = 8.0;
 const MAX_TREE_NODES: usize = 65_535;
 
+mod budget;
+use budget::Budget;
+pub use budget::Limits;
+
 #[derive(Debug, Clone)]
 pub struct Surface {
     pub plane: usize,
@@ -104,6 +108,18 @@ impl Polyhedron {
     }
 
     pub fn split(&self, index: usize, planes: &PlaneSet) -> [Option<Self>; 2] {
+        self.split_budgeted(index, planes, &mut Budget::unlimited())
+            .expect("unlimited polyhedron split")
+    }
+
+    fn split_budgeted(
+        &self,
+        index: usize,
+        planes: &PlaneSet,
+        budget: &mut Budget<'_>,
+    ) -> Result<[Option<Self>; 2], String> {
+        let points = self.sides.iter().map(|side| side.winding.0.len() + 2).sum();
+        budget.charge(points, points)?;
         let mut shape = self.clone();
         for side in &mut shape.sides {
             if side.plane & !1 == index & !1 {
@@ -111,25 +127,31 @@ impl Polyhedron {
             }
         }
         match shape.classify(index, planes) {
-            Side::Front => return [Some(shape), None],
-            Side::Back => return [None, Some(shape)],
-            Side::On => return [None, None],
+            Side::Front => return Ok([Some(shape), None]),
+            Side::Back => return Ok([None, Some(shape)]),
+            Side::On => return Ok([None, None]),
             Side::Cross => {}
         }
         let plane = planes.get(index);
+        budget.charge(4, 4)?;
         let mut cap = Some(Winding::base(plane.normal, plane.dist));
         for side in &shape.sides {
             let clip = planes.get(side.plane);
+            if let Some(winding) = &cap {
+                budget.split(winding)?;
+            }
             cap = cap.and_then(|w| w.clip_back(clip.normal, clip.dist));
         }
         let Some(cap) = cap else {
-            return [None, None];
+            return Ok([None, None]);
         };
         let mut halves = [Vec::new(), Vec::new()];
         for side in &shape.sides {
+            budget.split(&side.winding)?;
             let (front, back) = side.winding.split(plane.normal, plane.dist);
             for (half, winding) in halves.iter_mut().zip([front, back]) {
                 if let Some(winding) = winding {
+                    budget.charge(side.winding.0.len() + 4, side.winding.0.len() + 4)?;
                     half.push(Surface {
                         winding,
                         ..side.clone()
@@ -137,6 +159,7 @@ impl Polyhedron {
                 }
             }
         }
+        budget.charge(cap.0.len() + 8, cap.0.len() + 8)?;
         halves[0].push(Surface {
             plane: index ^ 1,
             winding: cap.reversed(),
@@ -147,7 +170,7 @@ impl Polyhedron {
             winding: cap,
             tested: true,
         });
-        halves.map(|sides| (sides.len() >= 4).then_some(Self { sides }))
+        Ok(halves.map(|sides| (sides.len() >= 4).then_some(Self { sides })))
     }
 }
 
@@ -184,7 +207,10 @@ fn choose_plane(
     hints: &[crate::hints::Fragment],
     volume: &Polyhedron,
     priority: &mut crate::hints::Priority,
+    budget: &mut Budget<'_>,
 ) -> Result<Option<(usize, bool)>, String> {
+    let sides = fragments.iter().map(|f| f.shape.sides.len()).sum();
+    budget.charge(sides, sides * 2)?;
     let mut candidates: BTreeSet<usize> = fragments
         .iter()
         .flat_map(|f| &f.shape.sides)
@@ -208,6 +234,15 @@ fn choose_plane(
         control.checkpoint()?;
         let (mut front, mut back, mut splits, mut coplanar) = (0i64, 0i64, 0i64, 0i64);
         for fragment in fragments {
+            budget.charge(
+                fragment
+                    .shape
+                    .sides
+                    .iter()
+                    .map(|side| side.winding.0.len() + 1)
+                    .sum(),
+                0,
+            )?;
             if added_planes.contains(&candidate) {
                 priority.consume(
                     fragment
@@ -281,6 +316,16 @@ impl Tree {
         Self::build_with_hints(brushes, indices, planes, &[], control).map(|(tree, _)| tree)
     }
 
+    pub fn build_limited(
+        brushes: &[MapBrush],
+        indices: &[usize],
+        planes: &mut PlaneSet,
+        control: &Control,
+        limits: Limits,
+    ) -> Result<Self, String> {
+        Self::build_impl(brushes, indices, planes, &[], control, Some(limits)).map(|(tree, _)| tree)
+    }
+
     pub(crate) fn build_with_hints(
         brushes: &[MapBrush],
         indices: &[usize],
@@ -288,7 +333,21 @@ impl Tree {
         hints: &[crate::hints::Hint],
         control: &Control,
     ) -> Result<(Self, crate::hints::Priority), String> {
+        Self::build_impl(brushes, indices, planes, hints, control, None)
+    }
+
+    fn build_impl(
+        brushes: &[MapBrush],
+        indices: &[usize],
+        planes: &mut PlaneSet,
+        hints: &[crate::hints::Hint],
+        control: &Control,
+        limits: Option<Limits>,
+    ) -> Result<(Self, crate::hints::Priority), String> {
         control.checkpoint()?;
+        let mut budget = Budget::new(limits, control);
+        budget.nodes(1)?;
+        budget.pending(1)?;
         if indices.is_empty() {
             return Err("no brushes to build a BSP tree".into());
         }
@@ -297,11 +356,24 @@ impl Tree {
             .fold((DVec3::MAX, DVec3::MIN), |(lo, hi), &index| {
                 (lo.min(brushes[index].mins), hi.max(brushes[index].maxs))
             });
+        budget.charge(6 * 6 * 64, 6 * 6 * 64)?;
         let volume = Polyhedron::bounding_box(
             mins - DVec3::splat(BOUNDS_PADDING),
             maxs + DVec3::splat(BOUNDS_PADDING),
             planes,
         )?;
+        let points = indices
+            .iter()
+            .map(|&index| {
+                brushes[index]
+                    .sides
+                    .iter()
+                    .map(|side| side.winding.as_ref().map_or(0, |w| w.0.len()) + 4)
+                    .sum::<usize>()
+                    + 4
+            })
+            .sum();
+        budget.charge(points, points)?;
         let fragments: Vec<Fragment> = indices
             .iter()
             .map(|&brush| Fragment {
@@ -330,6 +402,7 @@ impl Tree {
                 &hints,
                 &tree.nodes[index].volume,
                 &mut priority,
+                &mut budget,
             )?
             else {
                 let node = &mut tree.nodes[index];
@@ -342,18 +415,27 @@ impl Tree {
             if tree.nodes.len() + 2 > MAX_TREE_NODES {
                 return Err("BSP tree exceeds the node limit".into());
             }
+            budget.nodes(tree.nodes.len() + 2)?;
+            budget.pending(pending.len() + 2)?;
             if added {
                 priority.record(index, plane, &hints)?;
             }
             let [front_hints, back_hints] = priority.split(hints, plane, planes, control)?;
-            let volumes = tree.nodes[index].volume.split(plane, planes);
+            let volumes = tree.nodes[index]
+                .volume
+                .split_budgeted(plane, planes, &mut budget)?;
             let [Some(front_volume), Some(back_volume)] = volumes else {
                 return Err("BSP split produced a degenerate volume".into());
             };
             let mut halves = [Vec::new(), Vec::new()];
             for fragment in fragments {
-                for (half, shape) in halves.iter_mut().zip(fragment.shape.split(plane, planes)) {
+                for (half, shape) in halves.iter_mut().zip(fragment.shape.split_budgeted(
+                    plane,
+                    planes,
+                    &mut budget,
+                )?) {
                     if let Some(shape) = shape {
+                        budget.charge(1, 4)?;
                         half.push(Fragment {
                             brush: fragment.brush,
                             contents: fragment.contents,

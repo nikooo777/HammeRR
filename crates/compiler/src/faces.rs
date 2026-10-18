@@ -14,7 +14,9 @@ const MAX_LIGHTMAP_EXTENT: i32 = 32;
 const MAX_PROVENANCE_WORK: usize = 4_000_000;
 pub(crate) const MAX_SMOOTH_SOURCE_POINTS: usize = 4_000_000;
 
+mod region_budget;
 mod water_budget;
+pub use region_budget::Limits;
 #[cfg(test)]
 mod water_budget_tests;
 
@@ -204,7 +206,72 @@ pub(crate) fn build_with_water_regions(
     retained_points: &mut usize,
     water_regions: &[i16],
 ) -> Result<Vec<Face>, String> {
+    build_impl(
+        map,
+        tree,
+        entity,
+        control,
+        BuildOptions {
+            retention,
+            retained_points,
+            water_regions,
+            include: None,
+            limits: None,
+            unmerged: false,
+        },
+    )
+}
+
+/// Retains clipped source-owned fragments without merging or lightmap subdivision.
+pub(crate) fn build_region_limited(
+    map: &Map,
+    tree: &Tree,
+    include: &dyn Fn(u32) -> bool,
+    control: &Control,
+    limits: Limits,
+) -> Result<Vec<Face>, String> {
+    build_impl(
+        map,
+        tree,
+        0,
+        control,
+        BuildOptions {
+            retention: SourceRetention::None,
+            retained_points: &mut 0,
+            water_regions: &[],
+            include: Some(include),
+            limits: Some(limits),
+            unmerged: true,
+        },
+    )
+}
+
+struct BuildOptions<'a> {
+    retention: SourceRetention,
+    retained_points: &'a mut usize,
+    water_regions: &'a [i16],
+    include: Option<&'a dyn Fn(u32) -> bool>,
+    limits: Option<Limits>,
+    unmerged: bool,
+}
+
+fn build_impl(
+    map: &Map,
+    tree: &Tree,
+    entity: usize,
+    control: &Control,
+    options: BuildOptions<'_>,
+) -> Result<Vec<Face>, String> {
     control.checkpoint()?;
+    let BuildOptions {
+        retention,
+        retained_points,
+        water_regions,
+        include,
+        limits,
+        unmerged,
+    } = options;
+    let mut budget = region_budget::Budget::new(limits, control);
     type Group = (
         Option<usize>,
         usize,
@@ -222,9 +289,14 @@ pub(crate) fn build_with_water_regions(
         let brush = &map.brushes[brush_index];
         let vertical = water::has_horizontal_surface(map, brush);
         for side in brush.sides.iter().filter(|s| s.visible && !s.bevel) {
+            if include.is_some_and(|include| !side.source_id.is_some_and(include)) {
+                continue;
+            }
             let Some(winding) = &side.winding else {
                 continue;
             };
+            budget.charge(winding.0.len() + 1, winding.0.len() + 1)?;
+            budget.pending(1)?;
             let source_sides: Arc<[u32]> = side.source_id.into_iter().collect::<Vec<_>>().into();
             let bottom = if entity == 0
                 && brush.structural()
@@ -250,6 +322,7 @@ pub(crate) fn build_with_water_regions(
                 pending.pop()
             {
                 control.checkpoint()?;
+                budget.charge(winding.0.len() + 1, 0)?;
                 if below_water {
                     water_budget.visit(winding.0.len(), control)?;
                 }
@@ -262,6 +335,7 @@ pub(crate) fn build_with_water_regions(
                         } else {
                             on_node
                         };
+                        budget.pending(pending.len() + 1)?;
                         pending.push((
                             children[usize::from(!front)],
                             winding,
@@ -277,6 +351,8 @@ pub(crate) fn build_with_water_regions(
                         if below_water {
                             water_budget.split(winding.0.len(), control)?;
                         }
+                        budget.split(winding.0.len())?;
+                        budget.pending(pending.len() + 2)?;
                         let (front, back) = winding.split(plane.normal, plane.dist);
                         for (child, half) in children.into_iter().zip([front, back]) {
                             if let Some(half) = half {
@@ -316,6 +392,8 @@ pub(crate) fn build_with_water_regions(
                             None
                         };
                         if let Some((dry_leaf, dry_node)) = paired {
+                            budget.face()?;
+                            budget.charge(winding.0.len(), winding.0.len())?;
                             water_budget.polygon(winding.0.len(), control)?;
                             let mut outward = winding.clone();
                             outward.0.reverse();
@@ -347,6 +425,8 @@ pub(crate) fn build_with_water_regions(
                             && node.contents & (contents::WATER | contents::SLIME) == 0
                             && let Some(bottom) = bottom
                         {
+                            budget.charge(winding.0.len(), winding.0.len())?;
+                            budget.pending(pending.len() + 1)?;
                             water_budget.polygon(winding.0.len(), control)?;
                             let mut reversed = winding.clone();
                             reversed.0.reverse();
@@ -363,6 +443,7 @@ pub(crate) fn build_with_water_regions(
                                 continue;
                             }
                         }
+                        budget.face()?;
                         groups
                             .entry((
                                 on_node,
@@ -402,6 +483,10 @@ pub(crate) fn build_with_water_regions(
     }
     let mut output = Vec::new();
     for (group, mut faces) in groups {
+        if unmerged {
+            output.extend(faces);
+            continue;
+        }
         let generated_water = group.5.is_some() || group.6.is_some();
         let mut i = 0;
         while i < faces.len() {

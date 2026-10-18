@@ -1075,6 +1075,26 @@ python3 -B scripts/validate_sky_preview.py --binary target/debug/hammerr-headles
 
 CPU tests check six-face loading, VMT patches, dimensions, LDR selection, supported transforms and reported failures. The explicitly ignored GPU tests check cardinal/quadrant orientation, camera translation, depth/occlusion, fallback and unchanged view modes/filters. The MCP script always performs offscreen image checks, temporary and shared view settings, picking, world-setting Undo and save/reopen. Repeat with `--sky sky_day01_09` to cover stock vertical scaling. `--url` uses the preserved-map workflow described above; private headless sessions are the default.
 
+### Prepared 3D sky preview
+
+```sh
+cargo test -p compiler --lib sky_region
+cargo test -p editor-core --features mcp --lib sky3d
+cargo test -p render --lib sky3d::tests -- --ignored
+python3 -B scripts/validate_sky3d_preview.py --binary target/debug/hammerr-headless --output /tmp/hammerr-sky3d-check
+```
+
+Use a fresh output directory and repeat the script with `target/debug/editor`
+to exercise its headless entry point. The private material/FGD fixtures exercise
+selected-camera flood, clipped ownership, unsupported membership, budgets,
+worker cancellation and stale New/Open results. Independent pinhole rays against
+known boxes check scale, view direction, foreground depth and SKY2D masking.
+Large decoded assets exercise GPU replacement and explicit budget rejection.
+The script requires a successful drained EOF before writing its passed receipt.
+`HAMMERR_UI_SNAPSHOTS` captures `sky3d-preview-unavailable.png` from
+`sky3d_ui::tests`. All rendering is offscreen and launches no game or visible
+editor.
+
 ### Explicit HDR sky preview
 
 ```sh

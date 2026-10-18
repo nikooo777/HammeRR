@@ -28,6 +28,7 @@ mod preview_preferences;
 mod recovery;
 mod selection;
 mod shortcuts;
+mod sky3d_preview;
 mod terrain;
 mod transform_pivot;
 mod view;

@@ -9,6 +9,8 @@ use crate::camera::Camera;
 use crate::materials::{MaterialId, MaterialInfo, MaterialLibrary};
 use crate::scene::{Batch, LineVertex, SceneMesh, Vertex};
 
+mod miniature;
+
 /// The view format the pipelines render into; see [`RenderTarget`].
 pub const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -219,6 +221,7 @@ pub struct ViewOptions {
     pub smoothing_group: u32,
     pub tool_textures: bool,
     pub sky_preview: bool,
+    pub sky3d_preview: bool,
     pub sky_channel: crate::sky::Channel,
     pub sky_exposure_ev: f32,
     pub rope_preview: bool,
@@ -251,6 +254,7 @@ impl Default for ViewOptions {
             smoothing_group: 1,
             tool_textures: true,
             sky_preview: false,
+            sky3d_preview: false,
             sky_channel: crate::sky::Channel::Ldr,
             sky_exposure_ev: 0.0,
             rope_preview: false,
@@ -290,6 +294,13 @@ pub struct SceneKey {
 }
 
 impl ViewOptions {
+    pub fn sky3d_active(&self, camera: &Camera) -> bool {
+        self.sky3d_preview
+            && self.tool_textures
+            && self.surface == SurfaceView::Textured
+            && camera.projection == crate::Projection::Perspective
+    }
+
     pub fn scene_key(self, serial: u64) -> SceneKey {
         SceneKey {
             serial,
@@ -318,6 +329,7 @@ struct DrawBatch {
     tool: bool,
     helper: bool,
     sky: bool,
+    sky3d_eligible: bool,
 }
 
 fn translucent_order<'a>(
@@ -349,6 +361,8 @@ struct IconDraw {
 
 /// Geometry uploaded by a [`Renderer`]; draw it with the same renderer.
 pub struct GpuScene {
+    sky3d: Option<std::sync::Arc<miniature::Miniature>>,
+    sky3d_error: Option<String>,
     reference_lines: Option<(wgpu::Buffer, u32)>,
     reference_selection_ranges: Vec<std::ops::Range<u32>>,
     lighting: crate::lighting::Preview,
@@ -369,6 +383,11 @@ pub struct GpuScene {
 }
 
 pub struct Renderer {
+    last_sky3d_error: Option<String>,
+    sky3d: miniature::State,
+    sky3d_pipeline: wgpu::RenderPipeline,
+    sky3d_surface_pipeline: wgpu::RenderPipeline,
+    sky3d_error_pipeline: wgpu::RenderPipeline,
     globals: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
     material_layout: wgpu::BindGroupLayout,
@@ -395,6 +414,10 @@ pub struct Renderer {
 }
 
 impl Renderer {
+    pub fn last_sky3d_error(&self) -> Option<&str> {
+        self.last_sky3d_error.as_deref()
+    }
+
     /// Material IDs are local to a library; clear bindings when replacing it.
     pub fn clear_materials(&mut self) {
         self.material_generation = None;
@@ -506,6 +529,22 @@ impl Renderer {
             immediate_size: 0,
         });
         let sky_shader = device.create_shader_module(wgpu::include_wgsl!("sky.wgsl"));
+        let sky3d = miniature::State::new(device, &globals_layout);
+        let sky3d_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("3D sky composite"),
+            bind_group_layouts: &[Some(&globals_layout), Some(&sky3d.layout)],
+            immediate_size: 0,
+        });
+        let sky3d_shader = device.create_shader_module(wgpu::include_wgsl!("sky3d.wgsl"));
+        let sky3d_surface_shader =
+            device.create_shader_module(wgpu::include_wgsl!("sky3d_surface.wgsl"));
+        let sky3d_error_shader =
+            device.create_shader_module(wgpu::include_wgsl!("sky3d_error.wgsl"));
+        let sky3d_error_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("3D sky unavailable"),
+            bind_group_layouts: &[Some(&globals_layout)],
+            immediate_size: 0,
+        });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("map"),
             bind_group_layouts: &[Some(&globals_layout), Some(&material_layout)],
@@ -570,7 +609,28 @@ impl Renderer {
             })
         };
         let opaque_pipeline = pipeline("opaque", None, true, &layout, &shader);
+        let sky3d_surface_pipeline = pipeline(
+            "3D sky surfaces",
+            None,
+            true,
+            &layout,
+            &sky3d_surface_shader,
+        );
         let sky_pipeline = pipeline("2D sky", None, true, &sky_pipeline_layout, &sky_shader);
+        let sky3d_pipeline = pipeline(
+            "3D sky composite",
+            Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+            true,
+            &sky3d_layout,
+            &sky3d_shader,
+        );
+        let sky3d_error_pipeline = pipeline(
+            "3D sky unavailable",
+            None,
+            true,
+            &sky3d_error_layout,
+            &sky3d_error_shader,
+        );
         let translucent_pipeline = pipeline(
             "translucent",
             Some(wgpu::BlendState::ALPHA_BLENDING),
@@ -680,6 +740,11 @@ impl Renderer {
         });
 
         Self {
+            last_sky3d_error: None,
+            sky3d,
+            sky3d_pipeline,
+            sky3d_surface_pipeline,
+            sky3d_error_pipeline,
             globals,
             globals_bind_group,
             material_layout,
@@ -707,6 +772,25 @@ impl Renderer {
                 mapped_at_creation: false,
             }),
         }
+    }
+
+    pub fn upload_replacing(
+        &mut self,
+        ctx: &GpuContext,
+        previous: Option<GpuScene>,
+        mesh: &SceneMesh,
+        library: &MaterialLibrary,
+    ) -> GpuScene {
+        let reuse = previous
+            .as_ref()
+            .and_then(|scene| scene.sky3d.as_ref())
+            .zip(mesh.sky3d.as_ref())
+            .is_some_and(|(gpu, scene)| gpu.matches_scene(scene));
+        if !reuse {
+            drop(previous);
+            return self.upload(ctx, mesh, library);
+        }
+        self.upload(ctx, mesh, library)
     }
 
     pub fn upload(
@@ -796,6 +880,7 @@ impl Renderer {
                 center: (mins + maxs) * 0.5,
                 tool: info.tool,
                 sky: info.sky,
+                sky3d_eligible: info.sky3d_eligible,
                 helper: batch.material == MaterialLibrary::EDITOR || info.helper.is_some(),
             };
             if info.translucent || batch.model_translucent {
@@ -866,7 +951,16 @@ impl Renderer {
                     usage: wgpu::BufferUsages::VERTEX,
                 })
         });
+        let (sky3d, sky3d_error) = match mesh.sky3d.as_ref() {
+            Some(scene) => match self.upload_sky3d(ctx, scene) {
+                Ok(scene) => (Some(scene), None),
+                Err(error) => (None, Some(error)),
+            },
+            None => (None, None),
+        };
         GpuScene {
+            sky3d,
+            sky3d_error,
             reference_lines,
             reference_selection_ranges: mesh.reference_selection_ranges.clone(),
             lighting: mesh.lighting.clone(),
@@ -981,6 +1075,19 @@ impl Renderer {
             (_, None) if untextured => white.clone(),
             (_, None) => missing.clone(),
         };
+        self.material_bind_group_with_base(ctx, info, editor, sampler, base)
+    }
+
+    fn material_bind_group_with_base(
+        &self,
+        ctx: &GpuContext,
+        info: &MaterialInfo,
+        editor: bool,
+        sampler: &wgpu::Sampler,
+        base: wgpu::Texture,
+    ) -> wgpu::BindGroup {
+        let white = &self.white;
+        let untextured = info.base.is_none() && info.helper.is_none() && !info.missing;
         let blend = info
             .blend
             .as_ref()
@@ -1171,6 +1278,18 @@ impl Renderer {
         let mut encoder = ctx
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("map") });
+        let mut sky3d_error = scene.sky3d_render_error(camera, options);
+        let sky3d_target = if options.sky3d_active(camera) && sky3d_error.is_none() {
+            match self.render_sky3d(ctx, scene, camera, &globals, size, &mut encoder) {
+                Ok(binding) => Some(binding),
+                Err(error) => {
+                    sky3d_error = Some(error);
+                    None
+                }
+            }
+        } else {
+            None
+        };
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("map"),
@@ -1224,6 +1343,17 @@ impl Renderer {
                     let Some(Some(material)) = self.materials.get(draw.batch.material) else {
                         continue;
                     };
+                    let sky3d_draw = draw.sky3d_eligible && options.sky3d_active(camera);
+                    if sky3d_draw && sky3d_error.is_some() {
+                        pass.set_pipeline(&self.sky3d_error_pipeline);
+                        let batch = draw.batch;
+                        pass.draw_indexed(
+                            batch.first_index..batch.first_index + batch.index_count,
+                            0,
+                            0..1,
+                        );
+                        continue;
+                    }
                     if draw.sky
                         && options.sky_preview
                         && scene.sky_channel == options.sky_channel
@@ -1239,14 +1369,28 @@ impl Renderer {
                             0,
                             0..1,
                         );
+                    } else {
+                        pass.set_pipeline(
+                            if options.surface == SurfaceView::Textured || draw.helper {
+                                pipeline
+                            } else {
+                                &self.opaque_pipeline
+                            },
+                        );
+                        pass.set_bind_group(1, material, &[]);
+                        let batch = draw.batch;
+                        pass.draw_indexed(
+                            batch.first_index..batch.first_index + batch.index_count,
+                            0,
+                            0..1,
+                        );
+                    }
+                    if sky3d_draw && let Some(binding) = &sky3d_target {
+                        pass.set_pipeline(&self.sky3d_pipeline);
+                        pass.set_bind_group(1, binding, &[]);
+                    } else {
                         continue;
                     }
-                    pass.set_pipeline(if options.surface == SurfaceView::Textured || draw.helper {
-                        pipeline
-                    } else {
-                        &self.opaque_pipeline
-                    });
-                    pass.set_bind_group(1, material, &[]);
                     let batch = draw.batch;
                     pass.draw_indexed(
                         batch.first_index..batch.first_index + batch.index_count,
@@ -1332,6 +1476,44 @@ impl Renderer {
             }
         }
         ctx.queue.submit([encoder.finish()]);
+        self.last_sky3d_error = sky3d_error;
+    }
+
+    pub fn render_to_rgba_checked(
+        &mut self,
+        ctx: &GpuContext,
+        scene: &GpuScene,
+        camera: &Camera,
+        options: &ViewOptions,
+        width: u32,
+        height: u32,
+    ) -> Result<Vec<u8>, String> {
+        self.last_sky3d_error = None;
+        if let Some(error) = scene.sky3d_render_error(camera, options) {
+            self.last_sky3d_error = Some(error.clone());
+            return Err(error);
+        }
+        if options.sky3d_active(camera) {
+            let preparation =
+                crate::sky3d::target_size((width, height), self.sky3d.allocated_bytes())
+                    .and_then(|_| {
+                        scene.sky3d.as_ref().map_or(Ok(()), |scene| {
+                            scene
+                                .camera_projection(camera, width as f32 / height.max(1) as f32)
+                                .map(|_| ())
+                        })
+                    })
+                    .and_then(|_| self.sky3d.prepare_render(ctx));
+            if let Err(error) = preparation {
+                self.last_sky3d_error = Some(error.clone());
+                return Err(error);
+            }
+        }
+        let pixels = self.render_to_rgba(ctx, scene, camera, options, width, height);
+        match &self.last_sky3d_error {
+            Some(error) => Err(error.clone()),
+            None => Ok(pixels),
+        }
     }
 
     /// Renders offscreen and reads the image back as tightly packed RGBA8.
@@ -1631,6 +1813,7 @@ mod tests {
             tool: false,
             helper: false,
             sky: false,
+            sky3d_eligible: false,
         };
         let above = Camera::looking_at(glam::Vec3::new(0.0, 0.0, 64.0), glam::Vec3::ZERO);
         let below = Camera::looking_at(glam::Vec3::new(0.0, 0.0, -64.0), glam::Vec3::ZERO);
@@ -1652,6 +1835,9 @@ mod tests {
         for source in [
             include_str!("shader.wgsl"),
             include_str!("sky.wgsl"),
+            include_str!("sky3d.wgsl"),
+            include_str!("sky3d_surface.wgsl"),
+            include_str!("sky3d_error.wgsl"),
             include_str!("icons.wgsl"),
         ] {
             let module = wgsl::parse_str(source)

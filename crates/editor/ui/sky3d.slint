@@ -1,0 +1,79 @@
+import { Button, CheckBox, ComboBox, LineEdit, ScrollView } from "std-widgets.slint";
+
+export component Sky3dWindow inherits Window {
+    title: "3D sky preview - HammeRR";
+    preferred-width: 760px;
+    preferred-height: 650px;
+    in-out property <bool> preview-enabled;
+    in-out property <int> camera-index;
+    in-out property <string> camera-entity;
+    in property <[string]> cameras;
+    in property <string> summary;
+    in property <string> detail;
+    in property <string> diagnostics;
+    in property <string> limits;
+    in property <string> message;
+    in property <bool> can-prepare;
+    in property <bool> cancellable;
+    in property <bool> loading;
+    callback settings-changed();
+    callback use-camera();
+    callback prepare();
+    callback cancel-preparation();
+    callback refresh();
+    callback close-dialog();
+    forward-focus: dialog-focus;
+    dialog-focus := FocusScope {
+        width: parent.width; height: parent.height;
+        key-pressed(event) => { if event.text == Key.Escape { root.close-dialog(); accept } else { reject } }
+        VerticalLayout {
+            padding: 24px; spacing: 12px;
+            Text { text: "3D sky preview"; font-size: 24px; font-weight: 600; }
+            Text { text: root.summary; wrap: word-wrap; color: #aeb9c8; }
+            Text { text: "Sky camera"; font-weight: 600; }
+            ComboBox {
+                accessible-label: "3D sky camera";
+                model: root.cameras;
+                current-index <=> root.camera-index;
+                selected => { root.settings-changed(); }
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                Text { text: "Camera entity ID"; vertical-alignment: center; }
+                LineEdit {
+                    accessible-label: "Camera entity ID";
+                    text <=> root.camera-entity;
+                    placeholder-text: "entity:123";
+                    accepted => { root.use-camera(); }
+                }
+                Button { text: "Use camera"; clicked => { root.use-camera(); } }
+            }
+            CheckBox {
+                text: "Enable 3D sky preview";
+                checked <=> root.preview-enabled;
+                toggled => { root.settings-changed(); }
+            }
+            ScrollView {
+                VerticalLayout {
+                    spacing: 12px;
+                    Text { text: root.detail; wrap: word-wrap; }
+                    if root.diagnostics != "": Text { text: root.diagnostics; wrap: word-wrap; color: #f5b477; }
+                    Text {
+                        text: "Perspective · Textured · Tool textures. Choose an authored sky_camera explicitly, then prepare its sealed world/func_detail region. Preparation runs in the background. Source, material or visibility changes require another preparation.\n\nOnly 3D sky surfaces display the miniature; SKY2D keeps its 2D path. Projected scenery does not change picking or editing. Sky fog, transparency, models, terrain, instances, water, portal boundaries and runtime effects are unavailable. This is an editor preview; native area/PVS and mixed-sky fidelity are not reproduced.";
+                        wrap: word-wrap; color: #aeb9c8; font-size: 12px;
+                    }
+                    Text { text: root.limits; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                }
+            }
+            if root.message != "": Text { text: root.message; color: #f5b477; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: 10px;
+                Button { text: "Refresh status"; clicked => { root.refresh(); } }
+                Button { text: "Prepare 3D sky"; enabled: root.can-prepare; clicked => { root.prepare(); } }
+                Button { text: "Cancel preparation"; enabled: root.cancellable; clicked => { root.cancel-preparation(); } }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Close"; clicked => { root.close-dialog(); } }
+            }
+        }
+    }
+}

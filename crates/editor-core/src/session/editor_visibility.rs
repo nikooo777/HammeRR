@@ -95,6 +95,7 @@ impl Session {
         self.invalidate_display_visibility_gestures();
         self.working_region.editor_hidden = Arc::new(next);
         self.working_region.serial = serial;
+        self.preflight_sky3d_preview();
         self.scene_serial += 1;
         self.view_serial += 1;
         self.log(

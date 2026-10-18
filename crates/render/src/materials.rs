@@ -39,6 +39,7 @@ pub struct MaterialInfo {
     pub translucent: bool,
     pub tool: bool,
     pub sky: bool,
+    pub sky3d_eligible: bool,
     /// No usable display texture is available.
     pub missing: bool,
     pub error: Option<String>,
@@ -106,7 +107,7 @@ impl MaterialInfo {
         ))
     }
 
-    fn from_resolved(
+    pub(crate) fn from_resolved(
         name: &str,
         material: Option<&Material>,
         base: Option<Vtf>,
@@ -119,6 +120,11 @@ impl MaterialInfo {
         let sky = material.is_some_and(|material| {
             material.compile_semantics().surface & source_formats::bsp::surf::SKY != 0
         }) || matches!(name, "tools/toolsskybox" | "tools/toolsskybox2d");
+        let sky3d_eligible = material.is_some_and(|material| {
+            let flags = material.compile_semantics().surface;
+            flags & source_formats::bsp::surf::SKY != 0
+                && flags & source_formats::bsp::surf::SKY2D == 0
+        });
 
         Self {
             reference: false,
@@ -144,6 +150,7 @@ impl MaterialInfo {
             translucent: material.is_some_and(Material::translucent),
             tool: sky || material.is_some_and(Material::is_tool),
             sky,
+            sky3d_eligible,
             name: name.to_owned(),
             base,
             blend,
@@ -172,6 +179,7 @@ impl MaterialInfo {
             translucent: false,
             tool: false,
             sky: false,
+            sky3d_eligible: false,
             missing: false,
             error: None,
         }

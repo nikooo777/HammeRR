@@ -53,6 +53,7 @@ impl EditorServer {
         let mut session = self.session();
         session.poll_game();
         let skybox = skybox_state(&mut session);
+        let sky3d_preview = session.sky3d_preview_state();
         let working_region = session.working_region_summary();
         let document_close = self._document.as_ref().map_or_else(
             || session.document_close_review().inspection(),
@@ -94,6 +95,7 @@ impl EditorServer {
             "leak": session.leak().map(|leak| json!({"entity": format!("entity:{}", leak.entity), "points": leak.points.iter().copied().map(point).collect::<Vec<_>>()})),
             "view": view_state(session.view()),
             "skybox": skybox,
+            "sky3d_preview": sky3d_preview,
             "fog_preview": session.fog_preview_state(),
             "rope_preview": session.rope_preview_state(),
             "spatial": session.spatial(),

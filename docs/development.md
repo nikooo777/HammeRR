@@ -2793,3 +2793,15 @@ cancellation/runtime drop. Ordinary client disconnects remain local errors.
 The server runtime retires before its last idle document anchor. These checks open no desktop windows and
 require no game. Stop/join acknowledges local service teardown; it does not
 acknowledge delivery of a future MCP Close result.
+
+### Typed stdio output completion
+
+```sh
+cargo test -p editor-core --features mcp,test-support mcp::stdio::tests
+```
+
+The real async transport fixtures hold writer flush after complete response
+bytes, then complete or fail it. Other cases exercise typed request IDs,
+unpolled/aborted sends, cancellation, dropped waiters and transport close/drop.
+The single-use receipt covers local send/flush, with the first outcome retained;
+it does not prove peer consumption or provide a public MCP Close command.

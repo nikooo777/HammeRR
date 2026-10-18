@@ -13,10 +13,12 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 mod http;
 mod params;
 mod rendering;
+mod stdio;
 mod tools;
 pub use http::{ConnectionReceipt, HttpServer, spawn_http};
 use params::*;
 use rendering::{Offscreen, OffscreenState};
+pub use stdio::{StdioAttempt, StdioFenceError, StdioOutput, StdioReceipt, StdioResponseFlushed};
 
 use base64::Engine;
 
@@ -367,6 +369,7 @@ pub struct EditorServer {
     session: SharedSession,
     operation: Option<DocumentOperation>,
     _document: Option<DocumentHandle>,
+    stdio_output: Option<StdioOutput>,
     offscreen: Arc<Mutex<OffscreenState>>,
     model_renderer: Arc<Mutex<crate::model_preview::PreviewRenderer>>,
     tool_router: ToolRouter<Self>,
@@ -378,6 +381,7 @@ impl EditorServer {
             session,
             _document: None,
             operation: None,
+            stdio_output: None,
             model_renderer: Arc::default(),
             offscreen: Arc::new(Mutex::new(OffscreenState {
                 renderer: ctx.map(Offscreen::new),
@@ -391,6 +395,10 @@ impl EditorServer {
         let mut server = Self::new(document.session().clone(), ctx);
         server._document = Some(document);
         server
+    }
+
+    pub fn stdio_output(&self) -> Option<StdioOutput> {
+        self.stdio_output.clone()
     }
 
     fn document_access(&self) -> crate::runtime::DocumentAccess {
@@ -550,16 +558,16 @@ impl ServerHandler for EditorServer {
 }
 
 /// Serves MCP over stdin/stdout until the client disconnects.
-pub fn serve_stdio(server: EditorServer) -> Result<(), String> {
+pub fn serve_stdio(mut server: EditorServer) -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .map_err(|e| e.to_string())?;
     runtime.block_on(async {
-        let running = server
-            .serve(rmcp::transport::stdio())
-            .await
-            .map_err(|e| e.to_string())?;
+        let (read, write) = rmcp::transport::stdio();
+        let (transport, output) = stdio::transport(read, write);
+        server.stdio_output = Some(output);
+        let running = server.serve(transport).await.map_err(|e| e.to_string())?;
         running.waiting().await.map(drop).map_err(|e| e.to_string())
     })
 }

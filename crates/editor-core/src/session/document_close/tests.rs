@@ -170,7 +170,9 @@ fn accepted_reviewed_close_stops_the_owned_run_with_retained_session_owners() {
 #[test]
 fn physical_compile_completion_after_early_closing_finishes_without_adoption() {
     let (directory, game, _) = crate::test_assets::game_process(false);
+    let claims = crate::path_claims::Authority::default();
     let mut session = Session::new(Ok(game));
+    session.use_application_path_claims(claims.clone());
     session.configure_recovery(Ok(directory.path().join("recovery")));
     session.replace_document(
         Document::new(crate::test_assets::room()),
@@ -189,6 +191,14 @@ fn physical_compile_completion_after_early_closing_finishes_without_adoption() {
         assert!(session.leak.is_none());
         assert!(!session.compiling);
     }
-    drop(completed);
     document.shutdown().unwrap();
+    document.finalize_closed_claims().unwrap();
+    let mut peer = Session::new(Err("No content needed".into()));
+    peer.use_application_path_claims(claims);
+    for name in ["room.vmf", "room.bsp", "room.lin"] {
+        peer.save(Actor::Agent, Some(&directory.path().join(name)))
+            .unwrap();
+    }
+    assert!(completed.as_ref().unwrap().published());
+    drop(completed);
 }

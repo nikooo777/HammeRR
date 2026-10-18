@@ -3506,6 +3506,10 @@ pub(crate) fn hollow_controls_preview_validate_look_inside_apply_and_cancel() {
 pub(crate) fn save_ui_snapshot(window: &slint::Window, name: &str) {
     window.take_snapshot().unwrap();
     i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(250));
+    save_ui_snapshot_at_current_time(window, name);
+}
+
+pub(crate) fn save_ui_snapshot_at_current_time(window: &slint::Window, name: &str) {
     let image = window.take_snapshot().unwrap();
     assert!(image.width() > 0 && image.height() > 0);
     if let Some(directory) = std::env::var_os("HAMMERR_UI_SNAPSHOTS") {

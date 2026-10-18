@@ -166,6 +166,32 @@ pub enum Actor {
     System,
 }
 
+#[derive(Clone)]
+pub(crate) struct SessionContent {
+    pub game: Arc<GameFs>,
+    pub error: Option<String>,
+}
+
+impl SessionContent {
+    pub fn new(game: Result<GameFs, String>) -> Self {
+        let (game, error) = match game {
+            Ok(game) => (game, None),
+            Err(error) => (
+                GameFs {
+                    game_dir: PathBuf::new(),
+                    base_dir: PathBuf::new(),
+                    mounts: Vec::new(),
+                },
+                Some(error),
+            ),
+        };
+        Self {
+            game: Arc::new(game),
+            error,
+        }
+    }
+}
+
 impl Actor {
     pub fn label(self) -> &'static str {
         match self {
@@ -414,17 +440,10 @@ impl Session {
     }
 
     pub fn new(game: Result<GameFs, String>) -> Self {
-        let (game, game_error) = match game {
-            Ok(game) => (game, None),
-            Err(error) => (
-                GameFs {
-                    game_dir: PathBuf::new(),
-                    base_dir: PathBuf::new(),
-                    mounts: Vec::new(),
-                },
-                Some(error),
-            ),
-        };
+        Self::with_shared_content(SessionContent::new(game))
+    }
+
+    pub(crate) fn with_shared_content(content: SessionContent) -> Self {
         Self {
             file_claims: crate::path_claims::Binding::default(),
             instance_contents: instance_contents::State::default(),
@@ -435,8 +454,8 @@ impl Session {
             groups: groups::State::default(),
             layers: layers::State::default(),
             prefabs: prefabs::State::default(),
-            game: Arc::new(game),
-            game_error,
+            game: content.game,
+            game_error: content.error,
             document: Document::empty(),
             history_actors: BTreeMap::new(),
             history_save_serial: 0,
@@ -1389,6 +1408,24 @@ impl Session {
         path: &Path,
         discard_changes: bool,
     ) -> Result<String, String> {
+        self.open_inner(actor, path, discard_changes, true)
+    }
+
+    pub(crate) fn open_workspace_candidate(
+        &mut self,
+        actor: Actor,
+        path: &Path,
+    ) -> Result<String, String> {
+        self.open_inner(actor, path, true, false)
+    }
+
+    fn open_inner(
+        &mut self,
+        actor: Actor,
+        path: &Path,
+        discard_changes: bool,
+        remember: bool,
+    ) -> Result<String, String> {
         self.ensure_discardable(discard_changes)?;
         let start = Instant::now();
         let destination = source_formats::file_publication::BoundDestination::capture(
@@ -1421,8 +1458,10 @@ impl Session {
         );
         self.replace_document(document, Some(path.to_owned()));
         self.file_claims.source = Some(claim);
-        self.restore_recent_map_context(path);
-        self.remember_recent_map(path);
+        self.restore_recent_map_context(path, remember);
+        if remember {
+            self.remember_recent_map(path);
+        }
         self.log(actor, &message);
         Ok(message)
     }
@@ -2240,6 +2279,14 @@ impl Session {
         {
             self.native_cleanup_error = Some(error);
         }
+    }
+
+    pub(crate) fn release_closed_claims(&mut self) {
+        self.file_claims.source = None;
+        if let Some(compiled) = &mut self.compiled {
+            compiled.claim = None;
+        }
+        self.compilation.retained_pointfile = None;
     }
 
     pub(crate) fn instance_workers_busy(&self) -> bool {

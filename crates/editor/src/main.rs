@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 mod atlas_ui;
 mod carve_ui;
 mod checks_ui;
@@ -60,6 +62,7 @@ use editor_core::{
     game, identity, inspector, interaction, material_favorites, mcp, model_preview, recent_maps,
     recovery, runtime, session, spatial, steam,
 };
+#[cfg(test)]
 use mcp::EditorServer;
 use render::GpuContext;
 use runtime::{DocumentHandle, SharedSession, lock};
@@ -71,35 +74,45 @@ const ACTIVITY_SHOWN: usize = 30;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse()?;
     let mut http = None;
-    let mut terminal = None;
+    let mut workspace_owner = None;
     let application = Application::open(&args)?;
     let document = application.document();
+    let factory = application.workspace();
     let result = (|| {
         if args.headless {
             if let Some(Err(message)) = &application.open_message {
                 eprintln!("{message}");
             }
-            return Ok(mcp::serve_stdio(EditorServer::for_document(
-                document.clone(),
-                None,
-            ))?);
+            factory.set_visibility(
+                document.id(),
+                editor_core::startup::DocumentVisibility::Headless,
+            )?;
+            let owner = mcp::WorkspaceOwner::start(factory.clone(), None, None)?;
+            let result = mcp::serve_workspace_stdio(owner.server()).map_err(Into::into);
+            return owner.finish(result);
         }
 
         let ctx = GpuContext::new()?;
         let server_ctx = ctx.clone();
         ui::run(
+            factory.clone(),
             document.clone(),
             ctx,
             application.open_message.clone(),
-            |terminal_ui| {
-                let owner = mcp::TerminalOwner::start(document.clone(), Some(terminal_ui))?;
-                let handle = owner.handle();
-                let server = EditorServer::for_document(document.clone(), Some(server_ctx))
-                    .with_terminal_close(handle.clone())?;
+            |workspace_ui| {
+                let owner = mcp::WorkspaceOwner::start(
+                    factory.clone(),
+                    Some(server_ctx),
+                    Some(workspace_ui),
+                )?;
+                let workspace = owner.workspace();
+                let server = owner.server();
                 let mcp_status = match args.mcp_port {
                     Some(port) => {
-                        match mcp::spawn_http(server, SocketAddr::from((Ipv4Addr::LOCALHOST, port)))
-                        {
+                        match mcp::spawn_workspace_http(
+                            server,
+                            SocketAddr::from((Ipv4Addr::LOCALHOST, port)),
+                        ) {
                             Ok(server) => {
                                 let status = format!("MCP http://{}/mcp", server.local_addr());
                                 http = Some(server);
@@ -110,12 +123,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     None => "MCP off".into(),
                 };
-                terminal = Some(owner);
-                Ok((handle, mcp_status))
+                workspace_owner = Some(owner);
+                Ok((workspace, mcp_status))
             },
         )
     })();
-    let result = match terminal {
+    let result = match workspace_owner {
         Some(owner) => owner.finish(result),
         None => result,
     };

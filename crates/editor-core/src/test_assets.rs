@@ -9,6 +9,13 @@ pub fn document(session: crate::runtime::SharedSession) -> crate::runtime::Docum
     crate::runtime::DocumentHandle::start(session).unwrap()
 }
 
+pub fn application(
+    game: Result<source_formats::gamefs::GameFs, String>,
+    directory: std::path::PathBuf,
+) -> crate::startup::Application {
+    crate::startup::Application::isolated(game, directory).unwrap()
+}
+
 pub struct NativeActivityFixture {
     _authority: crate::runtime::native_activity::Authority,
     permit: Option<crate::runtime::native_activity::Permit>,

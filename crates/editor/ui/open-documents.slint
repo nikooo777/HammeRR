@@ -1,0 +1,53 @@
+import { Button, ListView } from "std-widgets.slint";
+
+export struct OpenDocumentRow {
+    selector: string,
+    title: string,
+    detail: string,
+    live: bool,
+}
+
+export component OpenDocumentsWindow inherits Window {
+    title: "Open documents";
+    preferred-width: 820px;
+    preferred-height: 540px;
+    background: #171b23;
+    in property <[OpenDocumentRow]> rows;
+    in property <string> summary;
+    in property <bool> can-create;
+    in-out property <bool> busy;
+    in-out property <string> message;
+    callback new-document();
+    callback open-document();
+    callback show-document(string);
+    callback close-document(string);
+    callback refresh();
+    callback close-list();
+    VerticalLayout {
+        padding: 20px; spacing: 12px;
+        Text { text: "Open documents"; color: #eef1f7; font-size: 23px; font-weight: 600; }
+        Text { text: root.summary; color: #c8d1df; wrap: word-wrap; }
+        Text { text: "Two independent maps in this editor. New / Open… in a map window still replace that window's map."; color: #aab8cc; wrap: word-wrap; }
+        HorizontalLayout {
+            spacing: 10px;
+            Button { text: "New document"; enabled: root.can-create && !root.busy; clicked => { root.new-document(); } }
+            Button { text: "Open document…"; enabled: root.can-create && !root.busy; clicked => { root.open-document(); } }
+            Button { text: "Refresh"; enabled: !root.busy; clicked => { root.refresh(); } }
+        }
+        ListView {
+            for row in root.rows: VerticalLayout {
+                padding: 10px; spacing: 7px;
+                Text { text: row.title; color: #eef1f7; font-weight: 600; wrap: word-wrap; }
+                Text { text: row.detail; color: #b9c5d6; wrap: word-wrap; }
+                HorizontalLayout {
+                    spacing: 10px;
+                    Button { text: "Show document"; enabled: row.live && !root.busy; clicked => { root.show-document(row.selector); } }
+                    Button { text: "Close document"; enabled: row.live && !root.busy; clicked => { root.close-document(row.selector); } }
+                }
+            }
+        }
+        Text { text: root.message; color: #e8bd82; wrap: word-wrap; }
+        Text { text: "MCP-created documents start hidden. Show a hidden peer before closing the last visible map window. Closing the last document exits the editor."; color: #aab8cc; wrap: word-wrap; font-size: 12px; }
+        Button { text: "Close list"; clicked => { root.close-list(); } }
+    }
+}

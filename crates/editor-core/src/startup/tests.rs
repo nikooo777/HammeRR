@@ -4,27 +4,9 @@ use std::time::Duration;
 fn fixture() -> (tempfile::TempDir, Application, PathBuf) {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("recovery");
-    let material_favorites = material_favorites::Authority::configured(Ok(path.clone()));
-    let recent_maps = recent_maps::Authority::configured(recent_maps::directory(Ok(path.clone())));
-    let shortcuts = shortcuts::Authority::configured(Ok(path.clone()));
-    let saved_defaults = crate::saved_defaults::SavedDefaults::configured(Ok(path.clone()));
-    let mut state = Session::with_material_favorites(
-        Err("No content required".into()),
-        material_favorites.clone(),
-    );
-    let path_claims = crate::path_claims::Authority::default();
-    state.use_application_path_claims(path_claims.clone());
-    state.use_application_recent_maps(recent_maps.clone());
-    state.use_application_shortcuts(shortcuts.clone());
-    state.use_application_saved_defaults(saved_defaults.clone());
-    let build_recipes = build_recipes::Authority::configured(Ok(path.clone()));
-    state.use_application_build_recipes(build_recipes.clone());
-    let recovery_settings = recovery::Authority::configured(Ok(path.clone()));
-    state.use_application_recovery_settings(recovery_settings.clone());
-    let prefabs = prefabs::Authority::from_directory(Ok(path.join("prefabs")));
-    state.use_application_prefabs(prefabs.clone());
-    state.configure_recovery(Ok(path.clone()));
-    state
+    let application =
+        Application::isolated(Err("No content required".into()), path.clone()).unwrap();
+    lock(application.document().session())
         .create_block(
             Actor::User,
             glam::DVec3::ZERO,
@@ -33,21 +15,6 @@ fn fixture() -> (tempfile::TempDir, Application, PathBuf) {
             false,
         )
         .unwrap();
-    let session = Arc::new(Mutex::new(state));
-    let document = DocumentHandle::start(session).unwrap();
-    let application = Application {
-        compile_queue: None,
-        _path_claims: path_claims,
-        material_favorites,
-        recent_maps,
-        shortcuts,
-        saved_defaults,
-        build_recipes,
-        recovery_settings,
-        prefabs,
-        document,
-        open_message: None,
-    };
     (directory, application, path)
 }
 

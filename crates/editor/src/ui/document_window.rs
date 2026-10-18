@@ -266,4 +266,4 @@ impl Ui {
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

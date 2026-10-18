@@ -12,7 +12,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::{oneshot, watch};
 use tokio::task::JoinSet;
 
-use super::EditorServer;
+use super::{EditorServer, WorkspaceServer};
 
 mod connection;
 mod terminal;
@@ -98,6 +98,27 @@ fn spawn(
     if server.operation.is_some() {
         return Err("MCP HTTP requires an idle server without document admission".into());
     }
+    spawn_anchor(HttpAnchor::Document(server), addr, network_grace)
+}
+
+pub fn spawn_workspace_http(
+    server: WorkspaceServer,
+    addr: SocketAddr,
+) -> Result<HttpServer, String> {
+    spawn_anchor(HttpAnchor::Workspace(server), addr, NETWORK_SHUTDOWN_GRACE)
+}
+
+#[derive(Clone)]
+enum HttpAnchor {
+    Document(EditorServer),
+    Workspace(WorkspaceServer),
+}
+
+fn spawn_anchor(
+    anchor: HttpAnchor,
+    addr: SocketAddr,
+    network_grace: Duration,
+) -> Result<HttpServer, String> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(HTTP_WORKERS)
         .enable_all()
@@ -110,7 +131,7 @@ fn spawn(
     let (stop, stopped) = oneshot::channel();
     let worker = HttpThread {
         runtime: Some(runtime),
-        anchor: server,
+        anchor,
         listener: Some(listener),
         stopped: Some(stopped),
         network_grace,
@@ -130,7 +151,7 @@ fn spawn(
 struct HttpThread {
     // Runtime teardown must release every worker before the last idle document owner.
     runtime: Option<Runtime>,
-    anchor: EditorServer,
+    anchor: HttpAnchor,
     listener: Option<tokio::net::TcpListener>,
     stopped: Option<oneshot::Receiver<()>>,
     network_grace: Duration,
@@ -154,7 +175,7 @@ impl HttpThread {
 }
 
 async fn serve(
-    server: EditorServer,
+    server: HttpAnchor,
     listener: tokio::net::TcpListener,
     mut stopped: oneshot::Receiver<()>,
     network_grace: Duration,
@@ -162,11 +183,19 @@ async fn serve(
     let config = StreamableHttpServerConfig::default();
     let cancellation = config.cancellation_token.clone();
     let sessions = Arc::new(LocalSessionManager::default());
-    let service: StreamableHttpService<EditorServer, LocalSessionManager> =
-        StreamableHttpService::new(move || Ok(server.clone()), sessions.clone(), config);
-    let router = axum::Router::new()
-        .nest_service("/mcp", service)
-        .layer(axum::middleware::from_fn(terminal::observe));
+    let router = match server {
+        HttpAnchor::Document(server) => {
+            let service: StreamableHttpService<EditorServer, LocalSessionManager> =
+                StreamableHttpService::new(move || Ok(server.clone()), sessions.clone(), config);
+            axum::Router::new().nest_service("/mcp", service)
+        }
+        HttpAnchor::Workspace(server) => {
+            let service: StreamableHttpService<WorkspaceServer, LocalSessionManager> =
+                StreamableHttpService::new(move || Ok(server.clone()), sessions.clone(), config);
+            axum::Router::new().nest_service("/mcp", service)
+        }
+    }
+    .layer(axum::middleware::from_fn(terminal::observe));
     let (shutdown, shutdown_requested) = watch::channel(());
     let mut connections = JoinSet::new();
     let mut errors = Vec::new();

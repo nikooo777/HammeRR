@@ -1234,6 +1234,7 @@ dependencies = [
  "slint",
  "source-formats",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]

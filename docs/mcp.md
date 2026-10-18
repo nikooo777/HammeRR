@@ -32,29 +32,60 @@ Use `--mcp-port <port>` to change the port, or `--no-mcp` to turn the server off
 Editor exit stops new HTTP connections and closes active sessions. Network
 shutdown has a two-second grace period; a timeout remains a reported exit error.
 Owned blocking work finishes before the service is released. `close_document`
-closes the current document and quits its owning editor process. Multiple
-documents remain unavailable.
+closes its fixed target while keeping a live peer available. Closing the final
+document quits its owning process after verifying the exact response output.
 
 `get_map_info.document_close` inspects the same state used by the editor's close
-confirmation. It reports an opaque `review_token`, `document_id`,
+confirmation. It reports an opaque `review_token`, numeric `document_id`,
 `unsaved_changes`, pending `drafts`, `discard_required`, owned `work` and
 `closing`. The review itself does not discard drafts, stop playback or cancel
 jobs. It belongs to that document and expires when its reviewed state changes; it is
 separate from `replacement_review`.
 
-### Close the document and editor
+### Work with two documents
+
+1. Call `list_documents` and retain each opaque string `document_id`. The numeric
+   `runtime_document_id` is inspection data, not a routing selector.
+2. Call `new_document {}` or `open_document {"path":"/absolute/map.vmf"}` to add
+   an independent map. The cap is two documents using one mounted content
+   environment. Existing `new_map`, `open_map`, Recent and recovery tools still
+   replace their fixed document's buffer.
+3. Pass `document_id` as an optional top-level string on every document tool.
+   Omission works only with exactly one live document; unknown, foreign, closed
+   and ambiguous targets reject. Focus never chooses an MCP target.
+4. Desktop-created MCP documents have actual hidden windows. Call
+   `show_document {"document_id":"…"}` to present one explicitly. Headless
+   documents stay headless. Show a hidden peer before closing the last visible
+   desktop window; otherwise Close refuses and leaves it open.
+5. Inspect and close one document using the review below. Its peer keeps its
+   selection, camera, drafts, history, settings and jobs. Successful Close
+   releases source/output claims so the same file can be opened again. Failed
+   cleanup retains its error, capacity and claims.
+
+Document results carry `_meta["io.hammerr/document"]` with their opaque
+`document_id` and numeric `runtime_document_id`; existing content and structured
+payloads keep their shapes. Routed protocol errors retain their code and message
+and carry this context in `data`. Non-object or colliding original error data is
+preserved under `original_data`. Each admitted call stays fixed to its resolved
+document. Shared saved settings and catalogs remain application-wide.
+
+See [Open documents](open-documents.md) for the human controls and limits.
+
+### Close a document
 
 1. Call `get_map_info` and inspect `document_close`, including unsaved changes,
    drafts and owned work.
-2. Pass its exact `review_token` to `close_document`. Leave `discard_changes`
+2. Pass its exact `review_token` and target `document_id` to `close_document`. Leave `discard_changes`
    false unless you intend to discard those reviewed unsaved changes and drafts.
 3. If the review is stale, consent is missing or a request is busy, the document
    stays open. Inspect the current state before retrying.
-4. Accepted Close is terminal. It stops owned game/audio, drains document work
-   and recovery, and retires the desktop UI. It continues if the caller cancels
-   or disconnects; do not send further editing calls.
+4. Accepted Close stops owned game/audio, drains document work and recovery,
+   and retires its desktop UI. It continues if the caller cancels or disconnects.
+   Do not send further editing calls to that document. A peer Close returns
+   `terminal: false` and leaves the shared transport available; final Close
+   returns `terminal: true` and exits the process.
 
-The completed result reports `document_id`, a decimal-string `attempt`,
+The final document's completed result reports numeric `document_id`, a decimal-string `attempt`,
 `terminal: true`, `closed`, `ui` (`headless`, `retired` or `failed`) and a nullable
 bounded `error`. `closed` describes document/UI cleanup. A failed cleanup leaves
 admission closed and reports an error; it does not reopen the document.
@@ -126,7 +157,7 @@ Other uncommitted draft types are outside this replacement review.
 
 New/Open/Recent/Restore and both Save forms reject once document shutdown has
 begun, even with an earlier matching review or generation. These file guards do
-not provide multiple-document routing or general lifecycle leases.
+not replace the explicit workspace selector or provide general lifecycle leases.
 
 For a delayed Save or Compile request, retain `get_map_info.generation` and pass
 it as `expected_generation` to `save_map`, `start_compile`, `compile_map` or
@@ -293,11 +324,12 @@ for source, geometry and memory limits.
 
 ## Tools by task
 
-The shared desktop and private stdio server register 418 tools. `tools/list`
+The shared desktop and private stdio server register 422 tools. `tools/list`
 returns their current schemas and descriptions.
 
 | Task | Tools |
 | --- | --- |
+| Workspace | `list_documents`, `new_document`, `open_document`, `show_document` |
 | Files and inspection | `close_document`, `new_map`, `open_map`, `save_map`, `get_map_info`, `get_map_statistics`, `find_objects`, `get_objects` |
 | Recent maps | `get_recent_maps`, `open_recent_map`, `remove_recent_map`, `clear_recent_maps`, `reload_recent_maps` |
 | Grid defaults | `get_grid_defaults`, `set_grid_defaults` |
@@ -2516,8 +2548,8 @@ Attached Sessions share validated settings, `settings_revision` and settings
 errors. Optional fields in `set_recovery_settings` merge with the latest shared
 values under one lock. Document snapshot stores, scheduling, pending changes,
 capture errors and workers remain independent. An admitted request retains its
-captured settings policy after a peer update. These operations do not provide
-multiple-document routing.
+captured settings policy after a peer update. Use the workspace `document_id`
+selector to choose the originating document.
 
 `reload_recovery_settings {expected_revision?: u64}` reads the saved complete
 settings through the same Session operation as **Recovery… → Reload settings**.
@@ -2553,7 +2585,7 @@ in their instance reports; they do not become recovery failures.
 The owning desktop and stdio servers reject new document tool calls once
 shutdown begins. Already admitted calls and their queued workers retain their
 original document until cleanup completes. Tool discovery remains available;
-there is no new document-target parameter or multiple-document API.
+document calls retain their explicit workspace target throughout shutdown.
 
 ### Source and build destinations
 

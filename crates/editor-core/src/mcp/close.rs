@@ -10,6 +10,7 @@ use tokio::sync::oneshot;
 
 use super::{EditorServer, HttpTerminalResponse, TerminalAttempt};
 use crate::runtime::{DocumentCloseReview, DocumentHandle, DocumentId};
+use crate::startup::{CloseDisposition, CloseReservation};
 
 pub(crate) const TOOL_NAME: &str = "close_document";
 const OUTPUT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -17,11 +18,11 @@ const MAX_ERROR_BYTES: usize = 2048;
 
 type ResultBinder = Box<dyn FnOnce(CallToolResult) -> Result<CallToolResult, String> + Send>;
 type OutputWait = Pin<Box<dyn Future<Output = Result<(), String>> + Send>>;
-type UiAction = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
+type UiAction = Arc<dyn Fn() -> OutputWait + Send + Sync>;
 type StopAction = Arc<dyn Fn() + Send + Sync>;
 
 pub struct TerminalUi {
-    retire: Arc<dyn Fn(DocumentId) -> Result<(), String> + Send + Sync>,
+    retire: Arc<dyn Fn(DocumentId) -> OutputWait + Send + Sync>,
     quit: UiAction,
 }
 
@@ -29,6 +30,24 @@ impl TerminalUi {
     pub fn new(
         retire: impl Fn(DocumentId) -> Result<(), String> + Send + Sync + 'static,
         quit: impl Fn() -> Result<(), String> + Send + Sync + 'static,
+    ) -> Self {
+        let retire = Arc::new(retire);
+        let quit = Arc::new(quit);
+        Self {
+            retire: Arc::new(move |id| {
+                let retire = retire.clone();
+                Box::pin(async move { retire(id) })
+            }),
+            quit: Arc::new(move || {
+                let quit = quit.clone();
+                Box::pin(async move { quit() })
+            }),
+        }
+    }
+
+    pub(super) fn asynchronous(
+        retire: impl Fn(DocumentId) -> OutputWait + Send + Sync + 'static,
+        quit: impl Fn() -> OutputWait + Send + Sync + 'static,
     ) -> Self {
         Self {
             retire: Arc::new(retire),
@@ -78,6 +97,22 @@ struct Work {
     attempt: TerminalAttempt,
     output: Option<Output>,
     response: Option<oneshot::Sender<CallToolResult>>,
+    workspace: Option<WorkspaceClose>,
+}
+
+pub(super) type CloseCompletion = Box<
+    dyn FnOnce(
+            CloseReservation,
+            Result<(), String>,
+            Option<oneshot::Sender<CallToolResult>>,
+            &'static str,
+        ) + Send,
+>;
+
+pub(super) struct WorkspaceClose {
+    pub(super) reservation: CloseReservation,
+    pub(super) metadata: serde_json::Value,
+    pub(super) complete: CloseCompletion,
 }
 
 #[derive(Default)]
@@ -231,6 +266,7 @@ impl TerminalClose {
             attempt,
             output: None,
             response: None,
+            workspace: None,
         });
         self.0.changed.notify_one();
         Ok(())
@@ -271,9 +307,102 @@ impl TerminalClose {
             attempt,
             output: Some(output),
             response: Some(response),
+            workspace: None,
         });
         self.0.changed.notify_one();
         Ok(receiver)
+    }
+
+    pub(super) fn commit_workspace_mcp(
+        &self,
+        server: &EditorServer,
+        token: &str,
+        discard_changes: bool,
+        context: &RequestContext<rmcp::RoleServer>,
+        workspace: WorkspaceClose,
+    ) -> Result<oneshot::Receiver<CallToolResult>, String> {
+        let WorkspaceClose {
+            mut reservation,
+            metadata,
+            complete,
+        } = workspace;
+        if server._document.as_ref().map(DocumentHandle::id) != Some(self.document_id())
+            || reservation.document().id() != self.document_id()
+        {
+            return Err("The Close owner belongs to another document".into());
+        }
+        let mut state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
+        ensure_available(&state)?;
+        let attempt = TerminalAttempt::new()?;
+        let (response, receiver) = oneshot::channel();
+        let output = self
+            .0
+            .document
+            .commit_close_token(token, discard_changes, || {
+                if context.ct.is_cancelled() {
+                    return Err("The Close request was cancelled before acceptance".into());
+                }
+                reservation.validate()?;
+                let output = if reservation.disposition() == CloseDisposition::Terminal {
+                    Some(Output::reserve(server, context, attempt.clone())?)
+                } else {
+                    None
+                };
+                reservation.commit();
+                Ok(output)
+            })?;
+        state.accepted = true;
+        state.work = Some(Work {
+            attempt,
+            output,
+            response: Some(response),
+            workspace: Some(WorkspaceClose {
+                reservation,
+                metadata,
+                complete,
+            }),
+        });
+        self.0.changed.notify_one();
+        Ok(receiver)
+    }
+
+    pub(super) fn commit_workspace_native(
+        &self,
+        review: &DocumentCloseReview,
+        discard_changes: bool,
+        workspace: WorkspaceClose,
+    ) -> Result<(), String> {
+        let WorkspaceClose {
+            mut reservation,
+            metadata,
+            complete,
+        } = workspace;
+        if reservation.document().id() != self.document_id() {
+            return Err("The Close owner belongs to another document".into());
+        }
+        let mut state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
+        ensure_available(&state)?;
+        let attempt = TerminalAttempt::new()?;
+        self.0
+            .document
+            .commit_reviewed_close_with(review, discard_changes, || {
+                reservation.validate()?;
+                reservation.commit();
+                Ok(())
+            })?;
+        state.accepted = true;
+        state.work = Some(Work {
+            attempt,
+            output: None,
+            response: None,
+            workspace: Some(WorkspaceClose {
+                reservation,
+                metadata,
+                complete,
+            }),
+        });
+        self.0.changed.notify_one();
+        Ok(())
     }
 }
 
@@ -306,12 +435,25 @@ fn bounded_error(error: &str) -> &str {
     }
 }
 
-fn finish_work(core: &Core, work: Work, runtime: &tokio::runtime::Runtime) -> Result<(), String> {
+fn ui_wait(runtime: &tokio::runtime::Runtime, future: OutputWait) -> Result<(), String> {
+    runtime.block_on(async {
+        tokio::time::timeout(std::time::Duration::from_secs(10), future)
+            .await
+            .map_err(|_| "The document UI acknowledgement deadline expired".to_owned())?
+    })
+}
+
+fn finish_work(
+    core: &Core,
+    work: Work,
+    runtime: &tokio::runtime::Runtime,
+    metadata: Option<&serde_json::Value>,
+    actual_ui_state: &mut &'static str,
+) -> Result<(), String> {
     let drained = core.document.shutdown();
-    let retired = core
-        .ui
-        .as_ref()
-        .map_or(Ok(()), |ui| (ui.retire)(core.document.id()));
+    let retired = core.ui.as_ref().map_or(Ok(()), |ui| {
+        ui_wait(runtime, (ui.retire)(core.document.id()))
+    });
     let ui_state = if core.ui.is_none() {
         "headless"
     } else if retired.is_ok() {
@@ -319,6 +461,7 @@ fn finish_work(core: &Core, work: Work, runtime: &tokio::runtime::Runtime) -> Re
     } else {
         "failed"
     };
+    *actual_ui_state = ui_state;
     let cleaned = combine(drained, retired);
     let Some(output) = work.output else {
         return cleaned;
@@ -333,13 +476,20 @@ fn finish_work(core: &Core, work: Work, runtime: &tokio::runtime::Runtime) -> Re
     });
     let mut result = CallToolResult::structured(value);
     result.is_error = Some(cleaned.is_err());
+    if let Some(metadata) = metadata {
+        super::workspace::stamp_result(&mut result, metadata);
+    }
     let result = match (output.bind)(result) {
         Ok(result) => result,
         Err(error) => {
             if let Some(response) = work.response {
-                let _ = response.send(CallToolResult::error(vec![
-                    rmcp::model::ContentBlock::text(bounded_error(&error).to_owned()),
-                ]));
+                let mut result = CallToolResult::error(vec![rmcp::model::ContentBlock::text(
+                    bounded_error(&error).to_owned(),
+                )]);
+                if let Some(metadata) = metadata {
+                    super::workspace::stamp_result(&mut result, metadata);
+                }
+                let _ = response.send(result);
             }
             return combine(
                 cleaned,
@@ -374,20 +524,38 @@ fn run_worker(core: Arc<Core>, runtime: tokio::runtime::Runtime) {
         }
         state.work.take()
     };
-    let Some(work) = work else {
+    let Some(mut work) = work else {
         return;
     };
+    let workspace = work.workspace.take();
+    let terminal = workspace
+        .as_ref()
+        .is_none_or(|workspace| workspace.reservation.disposition() == CloseDisposition::Terminal);
+    let response = if terminal { None } else { work.response.take() };
+    let mut ui_state = if core.ui.is_none() {
+        "headless"
+    } else {
+        "failed"
+    };
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        finish_work(&core, work, &runtime)
+        finish_work(
+            &core,
+            work,
+            &runtime,
+            workspace.as_ref().map(|workspace| &workspace.metadata),
+            &mut ui_state,
+        )
     }));
     let mut result = match result {
         Ok(result) => result,
         Err(_) => {
             let cleanup = core.document.shutdown();
-            let retired = core
-                .ui
-                .as_ref()
-                .map_or(Ok(()), |ui| (ui.retire)(core.document.id()));
+            let retired = core.ui.as_ref().map_or(Ok(()), |ui| {
+                ui_wait(&runtime, (ui.retire)(core.document.id()))
+            });
+            if core.ui.is_some() {
+                ui_state = if retired.is_ok() { "retired" } else { "failed" };
+            }
             combine(
                 Err("The terminal Close worker panicked".into()),
                 combine(cleanup, retired),
@@ -396,19 +564,29 @@ fn run_worker(core: Arc<Core>, runtime: tokio::runtime::Runtime) {
     };
     let stop = {
         let mut state = core.state.lock().unwrap_or_else(PoisonError::into_inner);
-        state.finishing = true;
-        state.stop.clone()
+        state.finishing = terminal && workspace.is_none();
+        if state.finishing {
+            state.stop.clone()
+        } else {
+            None
+        }
     };
     if let Some(stop) = stop {
         stop();
     }
-    if let Some(ui) = &core.ui {
-        result = combine(result, (ui.quit)());
+    if terminal
+        && workspace.is_none()
+        && let Some(ui) = &core.ui
+    {
+        result = combine(result, ui_wait(&runtime, (ui.quit)()));
     }
     core.state
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
-        .result = Some(result);
+        .result = Some(result.clone());
+    if let Some(workspace) = workspace {
+        (workspace.complete)(workspace.reservation, result, response, ui_state);
+    }
 }
 
 #[cfg(test)]

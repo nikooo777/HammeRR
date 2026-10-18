@@ -46,16 +46,18 @@ first. The busy-request refusal is stricter than immediate process shutdown;
 EOF and runtime-error exits still perform unconditional terminal cleanup.
 Close review can conservatively expire after selection, view or gesture changes.
 It covers shared Session drafts; text typed only into a local form is not a
-saved map change. There is still one public document. MCP can inspect the same
+saved map change. Use **Open documents…** to keep two independent maps open;
+see [Open documents](open-documents.md). MCP can inspect the same
 close state through `get_map_info.document_close`. Pass its exact `review_token`
 to `close_document`; set `discard_changes: true` only to discard the reviewed
 unsaved changes and drafts. A stale or busy request leaves the document open.
-Accepted MCP Close continues if the caller disconnects. It reports the completed
-document cleanup and owned UI retirement, then verifies local response output
-before quitting. A private stdio editor exits even if its input remains open.
+Accepted MCP Close continues if the caller disconnects. Closing one of two maps
+leaves the peer and shared transport available. Closing the final document
+verifies local response output before quitting; a private stdio editor exits
+even if its input remains open. Show a hidden peer before closing the final
+visible map window. Failed cleanup retains its error and source/output claims.
 Later output, transport or process-exit errors remain host failures; the response
-does not prove the remote client consumed it. Multiple open documents remain
-unavailable.
+does not prove the remote client consumed it.
 
 Process stdio accepts Unix pipes and redirected regular files. Launch through an
 MCP client with piped standard streams; terminal, socket and device descriptors

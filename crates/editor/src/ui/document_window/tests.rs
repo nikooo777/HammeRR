@@ -5,6 +5,12 @@ thread_local! {
     static FAIL_HIDES: RefCell<BTreeSet<String>> = const { RefCell::new(BTreeSet::new()) };
 }
 
+pub(in crate::ui) fn inject_hide_failure(label: &str) {
+    FAIL_HIDES.with(|labels| {
+        labels.borrow_mut().insert(label.into());
+    });
+}
+
 pub(super) fn fail_hide(label: &str) -> bool {
     FAIL_HIDES.with(|labels| labels.borrow_mut().remove(label))
 }

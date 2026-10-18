@@ -169,6 +169,149 @@ fn production_http_close_uses_fresh_review_and_finishes_before_client_sender_dro
 }
 
 #[test]
+fn production_workspace_http_closes_peer_then_last_document_on_same_connection() {
+    let directory = tempfile::tempdir().unwrap();
+    let application = crate::test_assets::application(
+        Err("No assets required".into()),
+        directory.path().join("recovery"),
+    );
+    let mut owner = crate::mcp::WorkspaceOwner::start(application.workspace(), None, None).unwrap();
+    let workspace = owner.workspace();
+    let first = application.workspace().documents()[0].clone();
+    let document = first.document();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let created = runtime
+        .block_on(close_bounded(
+            workspace.new_document(crate::session::Actor::Agent, false),
+        ))
+        .unwrap();
+    let second = created["document_id"].as_str().unwrap().to_owned();
+    let mut http = super::super::spawn_workspace_http(owner.server(), address()).unwrap();
+    runtime.block_on(async {
+    let address = http.local_addr();
+    let stream = close_bounded(tokio::net::TcpStream::connect(address))
+        .await
+        .unwrap();
+    let (mut client, connection) = close_bounded(hyper::client::conn::http1::handshake(
+        hyper_util::rt::TokioIo::new(stream),
+    ))
+    .await
+    .unwrap();
+    let driver = tokio::spawn(connection);
+    close_bounded(client.ready()).await.unwrap();
+    let response = close_bounded(client.send_request(close_request(address,
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"production-http-close","version":"1"}}}),
+        None, false,
+    ))).await.unwrap();
+    let session = response.headers()["mcp-session-id"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(
+        close_response(response).await["result"]["serverInfo"]["name"],
+        "hammerr"
+    );
+    close_bounded(client.ready()).await.unwrap();
+    let initialized = close_bounded(client.send_request(close_request(
+        address,
+        json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+        Some(&session),
+        false,
+    )))
+    .await
+    .unwrap();
+    assert_eq!(initialized.status(), axum::http::StatusCode::ACCEPTED);
+    assert!(
+        close_bounded(axum::body::to_bytes(
+            axum::body::Body::new(initialized.into_body()),
+            COMPOSED_CLOSE_MAX_BYTES
+        ))
+        .await
+        .unwrap()
+        .is_empty()
+    );
+    close_bounded(client.ready()).await.unwrap();
+    let info = close_bounded(client.send_request(close_request(address,
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_map_info","arguments":{"document_id":first.selector()}}}),
+        Some(&session), false,
+    ))).await.unwrap();
+    let info = close_response(info).await;
+    let info: Value =
+        serde_json::from_str(info["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        info["document_close"],
+        document.document_close_review().unwrap().inspection()
+    );
+    let token = info["document_close"]["review_token"].as_str().unwrap();
+    close_bounded(client.ready()).await.unwrap();
+    let response = close_bounded(client.send_request(close_request(address,
+        json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"close_document","arguments":{"document_id":first.selector(),"review_token":token}}}),
+        Some(&session), false,
+    ))).await.unwrap();
+    let closed = close_response(response).await;
+    assert_eq!(closed["id"], 3);
+    assert_eq!(closed["result"]["isError"], false);
+    assert_eq!(closed["result"]["structuredContent"]["closed"], true);
+    assert_eq!(closed["result"]["structuredContent"]["ui"], "headless");
+    assert_eq!(
+        closed["result"]["structuredContent"]["document_id"],
+        info["document_close"]["document_id"]
+    );
+    assert_eq!(closed["result"]["structuredContent"]["terminal"], false);
+    assert!(
+        closed["result"]["_meta"]
+            .get("io.hammerr/terminal-attempt")
+            .is_none()
+    );
+    assert_eq!(
+        closed["result"]["_meta"]["io.hammerr/document"]["document_id"],
+        first.selector()
+    );
+    assert_eq!(application.workspace().documents().len(), 1);
+    close_bounded(client.ready()).await.unwrap();
+    let remaining = close_bounded(client.send_request(close_request(address,
+        json!({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"get_map_info","arguments":{}}}), Some(&session), false,
+    ))).await.unwrap();
+    let remaining = close_response(remaining).await;
+    assert_eq!(
+        remaining["result"]["_meta"]["io.hammerr/document"]["document_id"],
+        second
+    );
+    let remaining: Value =
+        serde_json::from_str(remaining["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    let token = remaining["document_close"]["review_token"]
+        .as_str()
+        .unwrap();
+    close_bounded(client.ready()).await.unwrap();
+    let response = close_bounded(client.send_request(close_request(address,
+        json!({"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"close_document","arguments":{"document_id":second,"review_token":token}}}), Some(&session), true,
+    ))).await.unwrap();
+    let closed = close_response(response).await;
+    assert_eq!(closed["result"]["structuredContent"]["terminal"], true);
+    assert_eq!(
+        closed["result"]["_meta"]["io.hammerr/document"]["document_id"],
+        second
+    );
+    assert!(closed["result"]["_meta"]["io.hammerr/terminal-attempt"].is_string());
+    owner.shutdown().unwrap();
+    assert!(application.workspace().documents().is_empty());
+    assert_eq!(
+        document.lifecycle(),
+        crate::runtime::DocumentLifecycle::Finished
+    );
+    assert!(document.admit().is_err());
+    close_bounded(driver).await.unwrap().unwrap();
+    http.shutdown().unwrap();
+    assert!(client.is_closed());
+    drop(client);
+    application.finish(Ok(())).unwrap();
+    });
+}
+
+#[test]
 fn per_connection_receipt_reaches_mcp_parts_and_observes_graceful_completion() {
     let (_directory, _document, mut server) = fixture();
     let (receipts, receive) = mpsc::channel();

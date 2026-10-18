@@ -113,7 +113,7 @@ impl Session {
         self.log(Actor::System, error);
     }
 
-    pub(super) fn remember_recent_map(&mut self, path: &Path) {
+    pub(crate) fn remember_recent_map(&mut self, path: &Path) {
         self.remember_map(path, true, true);
     }
 
@@ -152,7 +152,7 @@ impl Session {
         }
     }
 
-    pub(super) fn restore_recent_map_context(&mut self, path: &Path) {
+    pub(super) fn restore_recent_map_context(&mut self, path: &Path, remember: bool) {
         if self.compiling() || self.closing {
             return;
         }
@@ -169,11 +169,15 @@ impl Session {
             );
             return;
         }
-        if let Err(error) = self.update_build_settings(Actor::System, entry.build_settings.update())
+        if let Err(error) =
+            self.update_build_settings_inner(Actor::System, entry.build_settings.update(), remember)
         {
-            self.recent_map_error(format!(
-                "Recent map build settings could not restore: {error}"
-            ));
+            let error = format!("Recent map build settings could not restore: {error}");
+            if remember {
+                self.recent_map_error(error);
+            } else {
+                self.log(Actor::System, error);
+            }
         }
     }
 

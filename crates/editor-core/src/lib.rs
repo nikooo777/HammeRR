@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 mod bounded_file;
 pub mod build_recipes;
 pub mod build_settings;

@@ -5,6 +5,13 @@ use source_formats::{fgd::Catalog, gamefs::GameFs};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+mod workspace;
+use workspace::Services;
+pub use workspace::{
+    CloseDisposition, CloseReservation, DOCUMENT_LIMIT, DocumentVisibility, PreparedDocument,
+    Workspace, WorkspaceDocument, WorkspaceDocumentState,
+};
+
 const USAGE: &str = "\
 usage: editor | hammerr-headless [map.vmf] [--game <gameinfo.txt>] [--fgd <file.fgd>] [--mcp-port <port> | --no-mcp] [--headless]
 
@@ -83,6 +90,9 @@ pub struct Application {
     pub build_recipes: build_recipes::Authority,
     pub recovery_settings: recovery::Authority,
     pub prefabs: prefabs::Authority,
+    _services: Arc<Services>,
+    workspace: Workspace,
+    shutdown: Option<Result<(), String>>,
     document: DocumentHandle,
     pub open_message: Option<Result<String, String>>,
 }
@@ -91,52 +101,87 @@ impl Application {
     pub fn open(args: &Args) -> Result<Self, String> {
         let compile_queue = crate::runtime::CompileQueue::process()?;
         let directory = recovery::default_directory();
-        let saved_defaults = crate::saved_defaults::SavedDefaults::configured(directory.clone());
-        let session = Arc::new(Mutex::new(Session::with_saved_defaults(
-            mount_game(args.gameinfo.clone()),
-            saved_defaults.clone(),
-        )));
-        let path_claims = crate::path_claims::Authority::default();
-        lock(&session).use_application_path_claims(path_claims.clone());
-        if args.engine_root.is_some() || args.steam_root.is_some() {
-            lock(&session).configure_native_capture_runtime(
-                Actor::System,
-                args.engine_root.as_deref(),
-                args.steam_root.as_deref(),
-            )?;
-        }
-        let material_favorites = material_favorites::Authority::configured(directory.clone());
-        lock(&session).use_application_material_favorites(material_favorites.clone());
-        let recent_maps =
-            recent_maps::Authority::configured(recent_maps::directory(directory.clone()));
-        lock(&session).use_application_recent_maps(recent_maps.clone());
-        let shortcuts = shortcuts::Authority::configured(directory.clone());
-        lock(&session).use_application_shortcuts(shortcuts.clone());
-        let build_recipes = build_recipes::Authority::configured(directory.clone());
-        lock(&session).use_application_build_recipes(build_recipes.clone());
-        let recovery_settings = recovery::Authority::configured(directory.clone());
-        lock(&session).use_application_recovery_settings(recovery_settings.clone());
-        let prefabs = prefabs::Authority::configured(directory.clone());
-        lock(&session).use_application_prefabs(prefabs.clone());
-        lock(&session).configure_recovery(directory);
-        let document = DocumentHandle::start_managed(session.clone(), &compile_queue)?;
+        let content = crate::session::SessionContent::new(mount_game(args.gameinfo.clone()));
         let fgd = args
             .fgd
             .clone()
-            .or_else(|| steam::find_css_fgd(lock(&session).game()));
-        if let Some(path) = fgd {
-            match Catalog::load(&path) {
-                Ok(catalog) => lock(&session).set_definitions(Actor::User, catalog),
-                Err(error) => lock(&session).report_definitions_error(error),
-            }
+            .or_else(|| steam::find_css_fgd(&content.game));
+        let definitions = fgd.map_or_else(
+            || Err("CS:S SDK FGD not found; use --fgd or Load FGD".into()),
+            |path| Catalog::load(&path),
+        );
+        Self::assemble(args, compile_queue, directory, content, definitions)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn isolated(
+        game: Result<GameFs, String>,
+        directory: PathBuf,
+    ) -> Result<Self, String> {
+        let args = Args {
+            map: None,
+            gameinfo: None,
+            fgd: None,
+            engine_root: None,
+            steam_root: None,
+            mcp_port: None,
+            headless: true,
+        };
+        Self::assemble(
+            &args,
+            crate::runtime::CompileQueue::isolated()?,
+            Ok(directory),
+            crate::session::SessionContent::new(game),
+            Ok(Catalog::default()),
+        )
+    }
+
+    fn assemble(
+        args: &Args,
+        compile_queue: crate::runtime::CompileQueue,
+        directory: Result<PathBuf, String>,
+        content: crate::session::SessionContent,
+        definitions: Result<Catalog, String>,
+    ) -> Result<Self, String> {
+        let saved_defaults = crate::saved_defaults::SavedDefaults::configured(directory.clone());
+        let path_claims = crate::path_claims::Authority::default();
+        let material_favorites = material_favorites::Authority::configured(directory.clone());
+        let recent_maps =
+            recent_maps::Authority::configured(recent_maps::directory(directory.clone()));
+        let shortcuts = shortcuts::Authority::configured(directory.clone());
+        let build_recipes = build_recipes::Authority::configured(directory.clone());
+        let recovery_settings = recovery::Authority::configured(directory.clone());
+        let prefabs = prefabs::Authority::configured(directory.clone());
+        let services = Arc::new(Services {
+            content,
+            definitions,
+            directory,
+            engine_root: args.engine_root.clone(),
+            steam_root: args.steam_root.clone(),
+            queue: Some(compile_queue.client()),
+            native: Some(compile_queue.native().clone()),
+            path_claims: path_claims.clone(),
+            material_favorites: material_favorites.clone(),
+            recent_maps: recent_maps.clone(),
+            shortcuts: shortcuts.clone(),
+            saved_defaults: saved_defaults.clone(),
+            build_recipes: build_recipes.clone(),
+            recovery_settings: recovery_settings.clone(),
+            prefabs: prefabs.clone(),
+        });
+        let workspace = Workspace::new(&services);
+        let mut prepared = workspace.prepare_new(Actor::User)?;
+        let open_message = args.map.as_ref().map(|map| {
+            prepared
+                .open(Actor::User, map)
+                .map(|()| prepared.open_message().unwrap().to_owned())
+        });
+        let visibility = if args.headless {
+            DocumentVisibility::Headless
         } else {
-            lock(&session)
-                .report_definitions_error("CS:S SDK FGD not found; use --fgd or Load FGD".into());
-        }
-        let open_message = args
-            .map
-            .as_ref()
-            .map(|map| lock(&session).open(Actor::User, map, true));
+            DocumentVisibility::Hidden
+        };
+        let document = prepared.publish(visibility)?.document();
         Ok(Self {
             compile_queue: Some(compile_queue),
             _path_claims: path_claims,
@@ -147,6 +192,9 @@ impl Application {
             build_recipes,
             recovery_settings,
             prefabs,
+            _services: services,
+            workspace,
+            shutdown: None,
             document,
             open_message,
         })
@@ -158,11 +206,19 @@ impl Application {
         self.document.clone()
     }
 
+    pub fn workspace(&self) -> Workspace {
+        self.workspace.clone()
+    }
+
     pub fn shutdown(&mut self) -> Result<(), String> {
+        if let Some(result) = &self.shutdown {
+            return result.clone();
+        }
+        self.workspace.close_admission();
         if let Some(queue) = &self.compile_queue {
             queue.close_admission();
         }
-        let document = self.document.shutdown();
+        let document = self.workspace.shutdown();
         let queue = self
             .compile_queue
             .as_mut()
@@ -177,12 +233,14 @@ impl Application {
                 "{document}; compiler queue shutdown failed: {queue}"
             )),
         };
-        match (drained, native) {
+        let result = match (drained, native) {
             (Ok(()), result) | (result, Ok(())) => result,
             (Err(drained), Err(native)) => Err(format!(
                 "{drained}; native activity shutdown failed: {native}"
             )),
-        }
+        };
+        self.shutdown = Some(result.clone());
+        result
     }
 
     pub fn finish(
@@ -202,7 +260,11 @@ impl Application {
 
 impl Drop for Application {
     fn drop(&mut self) {
-        self.document.shutdown_on_drop();
+        if self.shutdown.is_none()
+            && let Err(error) = self.shutdown()
+        {
+            eprintln!("Application document shutdown failed: {error}");
+        }
     }
 }
 

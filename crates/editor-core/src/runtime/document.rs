@@ -2,8 +2,10 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
+#[cfg(test)]
+use super::CompileQueue;
 use super::compile_queue::{CompileInput, QueueClient};
-use super::{CompileHandle, CompileQueue, SharedSession, lock};
+use super::{CompileHandle, SharedSession, lock};
 use crate::recovery;
 use crate::session::Actor;
 use serde_json::Value;
@@ -13,7 +15,7 @@ const SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const MAX_CLOSE_TOKEN_BYTES: usize = 128;
 static NEXT_DOCUMENT_ID: AtomicU64 = AtomicU64::new(1);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct DocumentId(u64);
 
 impl DocumentId {
@@ -223,6 +225,7 @@ impl DocumentHandle {
         Self::start_with_queue(session, None)
     }
 
+    #[cfg(test)]
     pub(crate) fn start_managed(
         session: SharedSession,
         queue: &CompileQueue,
@@ -238,7 +241,7 @@ impl DocumentHandle {
         Self::start_with_services(session, queue, None)
     }
 
-    fn start_with_services(
+    pub(crate) fn start_with_services(
         session: SharedSession,
         queue: Option<QueueClient>,
         native: Option<&super::native_activity::Authority>,
@@ -386,6 +389,16 @@ impl DocumentHandle {
         Ok(reserved)
     }
 
+    #[cfg(feature = "mcp")]
+    pub(crate) fn commit_reviewed_close_with<R>(
+        &self,
+        review: &DocumentCloseReview,
+        discard_changes: bool,
+        reserve: impl FnOnce() -> Result<R, String>,
+    ) -> Result<R, String> {
+        self.commit_close(Some(review), None, discard_changes, reserve)
+    }
+
     #[cfg(test)]
     pub(crate) fn active_operations(&self) -> usize {
         self.0.admission.operations.load(Ordering::Acquire)
@@ -400,12 +413,20 @@ impl DocumentHandle {
             .drain()
     }
 
-    pub(crate) fn shutdown_on_drop(&self) {
-        self.0
+    pub fn finalize_closed_claims(&self) -> Result<(), String> {
+        let shutdown = self
+            .0
             .shutdown
             .lock()
-            .expect("Document shutdown lock poisoned")
-            .drain_on_drop("Application shutdown failed");
+            .expect("Document shutdown lock poisoned");
+        match &shutdown.finished {
+            Some(Ok(())) => {
+                lock(self.session()).release_closed_claims();
+                Ok(())
+            }
+            Some(Err(error)) => Err(error.clone()),
+            None => Err("The document has not completed physical shutdown".into()),
+        }
     }
 }
 

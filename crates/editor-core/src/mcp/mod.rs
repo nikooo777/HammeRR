@@ -16,17 +16,22 @@ mod params;
 mod rendering;
 mod stdio;
 mod tools;
+mod workspace;
 #[cfg(feature = "test-support")]
 pub use close::validate_terminal_close_output;
 pub use close::{TerminalClose, TerminalOwner, TerminalUi};
 pub use http::{
     ConnectionReceipt, HttpServer, HttpTerminalResponse, TerminalAttempt, TerminalResponseReceipt,
-    spawn_http,
+    spawn_http, spawn_workspace_http,
 };
 use params::*;
 use rendering::{Offscreen, OffscreenState};
 pub use stdio::{
     StdioAttempt, StdioFenceError, StdioOutput, StdioReceipt, StdioResponseFlushed, StdioTicket,
+};
+pub use workspace::{
+    Workspace, WorkspaceOwner, WorkspaceServer, WorkspaceUi, WorkspaceUiFuture,
+    serve_workspace_stdio,
 };
 
 use base64::Engine;

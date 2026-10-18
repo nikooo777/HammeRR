@@ -1,3 +1,4 @@
+export { OpenDocumentsWindow, OpenDocumentRow } from "open-documents.slint";
 export { InstanceContentsWindow } from "instance-contents.slint";
 export { MaterialSourceWindow } from "material-source.slint";
 export { AtlasWindow } from "atlas.slint";
@@ -2124,6 +2125,7 @@ export component AppWindow inherits Window {
     callback wheel(delta: length, x: length, y: length);
     callback viewport-focus-lost();
     callback retire-document();
+    callback open-documents();
 
     VerticalLayout {
         Rectangle {
@@ -2149,6 +2151,11 @@ export component AppWindow inherits Window {
                     clicked => {
                         root.open-map();
                     }
+                }
+
+                Button {
+                    text: "Open documents…";
+                    clicked => { root.open-documents(); }
                 }
 
                 Button {

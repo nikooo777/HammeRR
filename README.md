@@ -289,6 +289,11 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Textured prefab gallery with placement controls](docs/images/prefab-gallery.png) | ![Resolved brush instance geometry](docs/images/instance-reference-contents.png) |
 | Browse flat or textured assembly galleries, then place rotated or brush-scaled copies. | Extract, place, preview and compile reusable world/detail VMFs with guarded dependencies. |
 
+| Open documents |
+| --- |
+| ![Two independent maps in the Open documents list](docs/images/open-documents.png) |
+| Keep two maps open with separate windows, Undo histories and explicit MCP targets. |
+
 | Transaction history |
 | --- |
 | ![Inspecting transaction authors, changes and retained states](docs/images/history.png) |

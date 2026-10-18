@@ -9,7 +9,7 @@ use crate::session::{Actor, LaunchOrigin, LaunchRequest, Session};
 mod compile_queue;
 pub(crate) mod native_activity;
 pub use compile_queue::CompileHandle;
-pub(crate) use compile_queue::{CompileQueue, QueueStatus};
+pub(crate) use compile_queue::{CompileQueue, QueueClient, QueueStatus};
 
 mod document;
 pub use document::{

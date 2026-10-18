@@ -214,7 +214,7 @@ impl CompileQueue {
         })
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn isolated() -> Result<Self, String> {
         Self::start(false)
     }

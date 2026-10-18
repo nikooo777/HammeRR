@@ -2998,3 +2998,33 @@ connection, including an independently held flush barrier and sticky failures.
 The two explicit UI cases use software Slint windows and real offscreen GPU
 resources to prove actual host retirement, hidden-loop progress and response
 ordering. Run each UI case in its own process without desktop input.
+
+
+`validate_stdio_close_exit.py` checks fresh production process initialization,
+reviewed terminal Close, the exact attempt marker and successful exit with stdin
+still open. The OS-pipe fixtures prove real codec bytes entered an unread output
+pipe before cancellation, physical runtime exit with both parent ends retained,
+sticky receipt failure, EOF and inherited-flag restoration. Redirected regular
+files use Tokio file ownership; terminal, socket and device descriptors reject.
+
+
+### Two-document ownership and routing
+
+```sh
+cargo test -p editor-core --features mcp,test-support startup::workspace::tests
+cargo test -p editor-core --features mcp,test-support mcp::workspace::tests
+cargo test -p editor-core --features mcp,test-support production_workspace_http_closes_peer_then_last_document_on_same_connection
+cargo test -p editor cancelled_presentation_cannot_acknowledge_work_and_cleanup_quit_survives_waiter_loss
+cargo test -p editor --features editor-core/test-support -- --ignored --exact ui::workspace::tests::two_actual_hosts_keep_peer_edits_and_release_closed_claims_before_reopen_and_last_close
+cargo test -p editor --features editor-core/test-support -- --ignored --exact ui::workspace::tests::actual_failed_retirement_remains_visible_and_final_peer_close_reports_the_error
+```
+
+Factory and transport fixtures exercise capacity, fixed selectors, independent
+state, source/output claims, failed-host admission, retained cleanup, worker
+panic and peer/final Close on real stdio and HTTP. The two explicit UI cases
+use actual software Slint hosts and offscreen GPU resources. Run each in its own
+process without desktop input. `HAMMERR_UI_SNAPSHOTS` writes
+`open-documents.png`; create the target directory first. The control fixture
+also checks a hidden MCP host, explicit Show, last-visible-window refusal,
+reopening a closed source while a client retains its handle and final Quit.
+These checks do not establish desktop focus behavior or a process memory budget.

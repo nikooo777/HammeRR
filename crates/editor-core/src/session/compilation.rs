@@ -713,6 +713,15 @@ impl Session {
         actor: Actor,
         update: BuildSettingsUpdate<'_>,
     ) -> Result<Value, String> {
+        self.update_build_settings_inner(actor, update, true)
+    }
+
+    pub(super) fn update_build_settings_inner(
+        &mut self,
+        actor: Actor,
+        update: BuildSettingsUpdate<'_>,
+        remember: bool,
+    ) -> Result<Value, String> {
         let BuildSettingsUpdate {
             lighting,
             physics,
@@ -760,7 +769,9 @@ impl Session {
             self.compilation.options = options;
             self.compilation.recipes.set_active(None);
             self.compilation.recipes.changed_local();
-            self.remember_current_map_context();
+            if remember {
+                self.remember_current_map_context();
+            }
             self.log(
                 actor,
                 format!(
@@ -1250,6 +1261,9 @@ impl Session {
             publication.lease = None;
             publication.pointfile_lease = None;
             publication.sources = None;
+            if self.closing {
+                publication.artifact = None;
+            }
             if let Some(ticket) = publication.ticket.take() {
                 ticket.accept();
             }

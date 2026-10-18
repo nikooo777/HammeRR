@@ -38,6 +38,18 @@ fn finish_terminal_close(
     let Some(retained_host) = host.upgrade() else {
         return;
     };
+    let workspace = retained_host.borrow().workspace_close.clone();
+    if let Some((workspace, selector)) = workspace {
+        if owner.upgrade().is_none() || app.upgrade().is_none() {
+            return;
+        }
+        if let Err(error) = workspace.close_native(&selector, review, discard_changes)
+            && let Some(app) = app.upgrade()
+        {
+            app.set_message(error.into());
+        }
+        return;
+    }
     let terminal = retained_host.borrow().terminal_close.clone();
     if let Some(terminal) = terminal {
         if owner.upgrade().is_none() || app.upgrade().is_none() {
@@ -77,7 +89,7 @@ pub(super) fn request_terminal_close(app: &AppWindow, owner: &WeakUi, host: &Wea
     }
     let dialog = rfd::AsyncMessageDialog::new()
         .set_title("Unsaved changes and drafts")
-        .set_description("Discard the reviewed unsaved map changes and pending drafts, and close the editor? Owned game and sound playback will stop; owned work will be cancelled and drained.")
+        .set_description("Discard the reviewed unsaved map changes and pending drafts, and close this document? Other open documents remain available. Owned game and sound playback will stop; owned work will be cancelled and drained.")
         .set_buttons(rfd::MessageButtons::YesNoCancel);
     slint::spawn_local(async move {
         if dialog.show().await == rfd::MessageDialogResult::Yes {

@@ -31,19 +31,24 @@ impl Fixture {
     }
 
     fn texture(&self, name: &str, color: [u8; 4]) {
+        self.image(name, [2, 2], &[color; 4]);
+    }
+
+    fn image(&self, name: &str, [width, height]: [u16; 2], pixels: &[[u8; 4]]) {
+        assert_eq!(pixels.len(), usize::from(width) * usize::from(height));
         let mut bytes = vec![0u8; 80];
         bytes[..4].copy_from_slice(b"VTF\0");
         bytes[4..8].copy_from_slice(&7u32.to_le_bytes());
         bytes[8..12].copy_from_slice(&2u32.to_le_bytes());
         bytes[12..16].copy_from_slice(&80u32.to_le_bytes());
-        bytes[16..18].copy_from_slice(&2u16.to_le_bytes());
-        bytes[18..20].copy_from_slice(&2u16.to_le_bytes());
+        bytes[16..18].copy_from_slice(&width.to_le_bytes());
+        bytes[18..20].copy_from_slice(&height.to_le_bytes());
         bytes[24..26].copy_from_slice(&1u16.to_le_bytes());
         bytes[56] = 1;
         bytes[57..61].copy_from_slice(&(-1i32).to_le_bytes());
         bytes[63..65].copy_from_slice(&1u16.to_le_bytes());
-        for _ in 0..4 {
-            bytes.extend_from_slice(&color);
+        for color in pixels {
+            bytes.extend_from_slice(color);
         }
         self.write(&texture_path(name), bytes);
     }
@@ -227,6 +232,92 @@ fn mesh_has_only_clipped_surfaces_actual_dimensions_and_clockwise_triangles() {
     assert!(scene.stats.cpu_bytes <= MAX_CPU_BYTES);
     assert!(scene.stats.gpu_bytes <= MAX_GPU_ASSET_BYTES);
     assert!(scene.stats.upload_bytes <= MAX_GPU_UPLOAD_BYTES);
+}
+
+#[test]
+fn base_texture_transform_composes_with_literal_texel_axes_and_nonsquare_dimensions() {
+    let fixture = Fixture::new();
+    fixture.image("test/mapped", [4, 2], &[[30, 220, 70, 255]; 8]);
+    let surface = Surface {
+        points: vec![
+            DVec3::new(2.0, 6.0, 0.0),
+            DVec3::new(6.0, 6.0, 0.0),
+            DVec3::new(6.0, 10.0, 0.0),
+            DVec3::new(2.0, 10.0, 0.0),
+        ],
+        normal: DVec3::Z,
+        material: "test/mapped".into(),
+        texture_u: [0.5, 0.25, 0.0, 1.0],
+        texture_v: [-0.25, 0.5, 0.0, -2.0],
+    };
+    let identity = [[0.875, 0.25], [1.375, -0.25], [1.625, 0.75], [1.125, 1.25]];
+    let mapped = [[1.625, 1.5], [2.625, 2.0], [3.125, 1.0], [2.125, 0.5]];
+    for (transform, expected) in [
+        (None, identity),
+        (Some(""), identity),
+        (
+            Some("center 0.5 0.5 scale 1 1 rotate 0 translate 0 0"),
+            identity,
+        ),
+        (
+            Some("center 0.25 0.75 scale 2 -1 translate 0.125 0.25"),
+            mapped,
+        ),
+        (
+            Some("scale 8 8 center 0.25 0.75 scale 2 -1 translate 0.125 0.25"),
+            mapped,
+        ),
+    ] {
+        let declaration = transform
+            .map(|value| format!(" $basetexturetransform \"{value}\""))
+            .unwrap_or_default();
+        fixture.write(
+            "materials/test/mapped.vmt",
+            format!("UnlitGeneric {{ $basetexture test/mapped{declaration} }}"),
+        );
+        let scene = Scene::build(camera(), std::slice::from_ref(&surface), &fixture.fs).unwrap();
+        let actual = scene
+            .vertices
+            .iter()
+            .map(|vertex| vertex.uv)
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected, "{transform:?}");
+    }
+}
+
+#[test]
+fn invalid_base_texture_transforms_fail_without_substitution() {
+    let fixture = Fixture::new();
+    fixture.texture("test/mapped", [30, 220, 70, 255]);
+    for transform in [
+        "rotate 90",
+        "scale NaN 1",
+        "translate inf 0",
+        "scale 1025 1",
+        "center 0.5",
+        "unknown 1",
+        "scale [1 1]",
+    ] {
+        fixture.write(
+            "materials/test/mapped.vmt",
+            format!(
+                "UnlitGeneric {{ $basetexture test/mapped $basetexturetransform \"{transform}\" }}"
+            ),
+        );
+        let error = Scene::build(camera(), &[surface("test/mapped")], &fixture.fs).unwrap_err();
+        assert!(error.contains("texture transform"), "{transform}: {error}");
+    }
+    fixture.write(
+        "materials/test/mapped.vmt",
+        "UnlitGeneric { $basetexture test/mapped $basetexturetransform \"scale 1024 1\" }",
+    );
+    let mut overflowing = surface("test/mapped");
+    overflowing.texture_u = [0.0, 0.0, 0.0, f64::from(f32::MAX)];
+    let error = Scene::build(camera(), &[overflowing], &fixture.fs).unwrap_err();
+    assert!(
+        error.contains("texture coordinates exceed finite range"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -467,6 +558,55 @@ fn miniature_composites_only_sky_retains_depth_and_excludes_sky2d() {
     near_color(pixel(&baseline, 8, 32), [30, 220, 70, 255]);
     near_color(pixel(&baseline, 48, 32), [20, 50, 200, 255]);
     near_color(pixel(&baseline, 0, 0), [20, 50, 200, 255]);
+    {
+        let checker = (0..8)
+            .flat_map(|row| {
+                (0..8).map(move |column| {
+                    if (row / 4 + column / 4) % 2 == 0 {
+                        [30, 220, 70, 255]
+                    } else {
+                        [230, 20, 20, 255]
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        fixture.image("test/checker", [8, 8], &checker);
+        fixture.write(
+            "materials/test/checker.vmt",
+            "UnlitGeneric { $basetexture test/checker }",
+        );
+        let mut polygon = surface("test/checker");
+        polygon.texture_u = [0.0, 1.0, 0.0, 604.0];
+        polygon.texture_v = [0.0, 0.0, -1.0, 304.0];
+        let plain =
+            Arc::new(Scene::build(camera(), std::slice::from_ref(&polygon), &fixture.fs).unwrap());
+        fixture.write(
+            "materials/test/checker.vmt",
+            "UnlitGeneric { $basetexture test/checker $basetexturetransform \"translate 0.5 0\" }",
+        );
+        let shifted = Arc::new(Scene::build(camera(), &[polygon], &fixture.fs).unwrap());
+        let mut patterned = SceneMesh::build(
+            document.vmf(),
+            &fixture.fs,
+            &mut library,
+            &Default::default(),
+        );
+        patterned.sky3d = Some(plain);
+        let plain_gpu = renderer.upload(&ctx, &patterned, &library);
+        let plain_pixels = renderer
+            .render_to_rgba_checked(&ctx, &plain_gpu, &main, &options, 65, 65)
+            .unwrap();
+        patterned.sky3d = Some(shifted);
+        let shifted_gpu = renderer.upload_replacing(&ctx, Some(plain_gpu), &patterned, &library);
+        let shifted_pixels = renderer
+            .render_to_rgba_checked(&ctx, &shifted_gpu, &main, &options, 65, 65)
+            .unwrap();
+        near_color(pixel(&plain_pixels, 18, 18), [230, 20, 20, 255]);
+        near_color(pixel(&plain_pixels, 18, 46), [30, 220, 70, 255]);
+        near_color(pixel(&shifted_pixels, 18, 18), [30, 220, 70, 255]);
+        near_color(pixel(&shifted_pixels, 18, 46), [230, 20, 20, 255]);
+        near_color(pixel(&shifted_pixels, 48, 18), [20, 50, 200, 255]);
+    }
     let moved = crate::Camera {
         position: Vec3::new(0.0, 16.0, 0.0),
         ..main

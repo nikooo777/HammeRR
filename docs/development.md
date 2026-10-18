@@ -1103,6 +1103,7 @@ CPU tests check six-face loading, VMT patches, dimensions, LDR selection, suppor
 ```sh
 cargo test -p compiler --lib sky_region
 cargo test -p editor-core --features mcp --lib sky3d
+cargo test -p render --lib sky3d::tests
 cargo test -p render --lib sky3d::tests -- --ignored
 python3 -B scripts/validate_sky3d_preview.py --binary target/debug/hammerr-headless --output /tmp/hammerr-sky3d-check
 ```
@@ -1113,6 +1114,10 @@ selected-camera flood, clipped ownership, unsupported membership, budgets,
 worker cancellation and stale New/Open results. Independent pinhole rays against
 known boxes check scale, view direction, foreground depth and SKY2D masking.
 Large decoded assets exercise GPU replacement and explicit budget rejection.
+Literal UV expectations cover non-square textures, skewed authored axes,
+center/scale/translation, identity defaults, repeated operations and rejected
+malformed, rotated, nonfinite or overflowing mapping. The mixed-sky GPU fixture
+also checks a half-texture translation against fixed checker-pattern colors.
 The script requires a successful drained EOF before writing its passed receipt.
 `HAMMERR_UI_SNAPSHOTS` captures `sky3d-preview-unavailable.png` from
 `sky3d_ui::tests`. All rendering is offscreen and launches no game or visible

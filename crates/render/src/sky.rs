@@ -231,7 +231,7 @@ fn load_texture(fs: &GameFs, name: &str) -> Result<(Vtf, [f32; 4]), String> {
     Ok((texture, transform))
 }
 
-fn texture_transform(value: Option<&str>) -> Result<[f32; 4], String> {
+pub(crate) fn texture_transform(value: Option<&str>) -> Result<[f32; 4], String> {
     source_formats::vmt::texture_transform(
         value,
         source_formats::vmt::DuplicateOperations::LastWins,

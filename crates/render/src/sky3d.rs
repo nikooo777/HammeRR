@@ -33,7 +33,7 @@ const VMT_ALLOCATION_FACTOR: usize = 8;
 const TARGET_PIXEL_BYTES: usize = 8;
 static NEXT_SCENE: AtomicU64 = AtomicU64::new(1);
 
-pub const POLICY: &str = "Editor 3D sky preview: explicitly selected sealed flat-world/func_detail miniature; perspective Textured views with Tool textures enabled only. Camera origin + main eye / integer scale 1..128; unchanged direction/FOV, no entity-angle rotation. Editor near plane 4/scale miniature units preserves main-equivalent clipping; native Source uses a different near policy. Static opaque single-base LightmappedGeneric/UnlitGeneric LDR materials only; no alpha test, translucency, proxies, normal/detail/blend layers, fog, authored lighting or runtime effects. Missing/unsupported requested assets fail eligibility. SKY receives the miniature; SKY2D retains only the existing 2D sky path. Empty miniature pixels retain the chosen 2D sky when its independent preview is enabled and ready, otherwise the regular authored sky tool surface. Mixed SKY/SKY2D is an editor policy, not native mixed-sky parity. No helpers, selection, guides, projected picking or editing. Limits: 65536 vertices,196608 indices,16384 surfaces,64 materials,64 MiB conservative CPU builder allocation,32 MiB retained GPU geometry/material payload shared across scenes,64 MiB separately charged transient uploads and one 32 MiB color/depth target. The 128 MiB explicit payload/upload/target budget excludes driver allocation overhead and is not a total VRAM ceiling. Retired identities flush pending uploads and wait at most one second for GPU completion before replacement admission. Uploads conservatively charge RGBA rows padded to256 bytes for every mip plus geometry/uniform bytes; live matching identities reuse bindings. Targets/textures are at most2048 pixels per axis. Targets downsample larger viewports preserving aspect; texture assets never downsample or substitute.";
+pub const POLICY: &str = "Editor 3D sky preview: explicitly selected sealed flat-world/func_detail miniature; perspective Textured views with Tool textures enabled only. Camera origin + main eye / integer scale 1..128; unchanged direction/FOV, no entity-angle rotation. Editor near plane 4/scale miniature units preserves main-equivalent clipping; native Source uses a different near policy. Static opaque single-base LightmappedGeneric/UnlitGeneric LDR materials with checked axis-aligned static base-texture transforms; finite center/scale/translation values within ±1024, last duplicate operation wins, nonzero rotation rejected; no alpha test, translucency, proxies, normal/detail/blend layers, fog, authored lighting or runtime effects. Missing/unsupported requested assets fail eligibility. SKY receives the miniature; SKY2D retains only the existing 2D sky path. Empty miniature pixels retain the chosen 2D sky when its independent preview is enabled and ready, otherwise the regular authored sky tool surface. Mixed SKY/SKY2D is an editor policy, not native mixed-sky parity. No helpers, selection, guides, projected picking or editing. Limits: 65536 vertices,196608 indices,16384 surfaces,64 materials,64 MiB conservative CPU builder allocation,32 MiB retained GPU geometry/material payload shared across scenes,64 MiB separately charged transient uploads and one 32 MiB color/depth target. The 128 MiB explicit payload/upload/target budget excludes driver allocation overhead and is not a total VRAM ceiling. Retired identities flush pending uploads and wait at most one second for GPU completion before replacement admission. Uploads conservatively charge RGBA rows padded to256 bytes for every mip plus geometry/uniform bytes; live matching identities reuse bindings. Targets/textures are at most2048 pixels per axis. Targets downsample larger viewports preserving aspect; texture assets never downsample or substitute.";
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Camera {
@@ -132,6 +132,7 @@ pub struct Scene {
 pub(crate) struct MaterialBinding {
     pub info: MaterialInfo,
     pub unlit: bool,
+    pub uv_transform: [f32; 4],
 }
 
 #[derive(Default)]
@@ -301,6 +302,7 @@ fn load_material(
         if !matches!(
             key.as_str(),
             "$basetexture"
+                | "$basetexturetransform"
                 | "$surfaceprop"
                 | "$surfaceprop2"
                 | "$nodecal"
@@ -313,6 +315,8 @@ fn load_material(
             ));
         }
     }
+    let uv_transform = crate::sky::texture_transform(material.get("$basetexturetransform"))
+        .map_err(|error| format!("3D sky material {name}: {error}"))?;
     let texture = material
         .get("$basetexture")
         .filter(|path| !path.trim().is_empty())
@@ -372,6 +376,7 @@ fn load_material(
     Ok(Some(MaterialBinding {
         info: MaterialInfo::from_resolved(name, Some(&material), Some(texture), None, Some(path)),
         unlit: material.shader == "unlitgeneric",
+        uv_transform,
     }))
 }
 
@@ -421,6 +426,7 @@ impl Scene {
                 continue;
             };
             let info = &materials[material].info;
+            let transform = materials[material].uv_transform;
             let normal = surface.normal.normalize().as_vec3().to_array();
             let first = vertices.len() as u32;
             for point in &surface.points {
@@ -431,6 +437,10 @@ impl Scene {
                 let uv = [
                     project(surface.texture_u, info.width),
                     project(surface.texture_v, info.height),
+                ];
+                let uv = [
+                    uv[0] * transform[0] + transform[2],
+                    uv[1] * transform[1] + transform[3],
                 ];
                 if uv.iter().any(|value| !value.is_finite()) {
                     return Err("3D sky surface texture coordinates exceed finite range".into());

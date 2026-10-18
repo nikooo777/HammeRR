@@ -70,7 +70,17 @@ hiding filters displayed fragments after membership is resolved and cannot open
 or repair the structural enclosure. Committed VMF hidden geometry follows the
 ordinary compiler omission policy.
 
-The first preview supports static opaque textured brush scenery. The 1–128
+The preview supports static opaque single-base `LightmappedGeneric` and
+`UnlitGeneric` brush materials, including axis-aligned static
+`$basetexturetransform` scale and translation around an authored center. The
+transform follows the face's texture mapping and actual texture dimensions.
+Absent or empty declarations use identity mapping; repeated operations use the
+last value, matching the 2D sky preview. Transform values must be finite and
+within ±1024. Nonzero rotation, malformed declarations and overflowing texture
+coordinates reject preparation. After editing mounted materials, use
+**Browse materials… → Reload material assets**, then **Prepare 3D sky**.
+
+The 1–128
 scale range is an editor preview limit. Sky fog,
 translucency, terrain, models, instances, water, portal boundaries, generated
 detail scenery, animation and runtime effects are unavailable. Nonempty material

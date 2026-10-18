@@ -2192,7 +2192,14 @@ source, Undo, selection and viewport camera and write no compile output.
 
 `limits` reports the source, tree, portal, face, geometry, memory and target
 budgets; there is one active worker and one cached result per document. Static
-opaque textured flat brush scenery is supported. Models, terrain, instances,
+opaque textured flat brush scenery is supported. Its single-base
+`LightmappedGeneric` and `UnlitGeneric` materials may declare static
+`$basetexturetransform` center, axis-aligned scale and translation. Mapping uses
+the authored face axes and actual base texture dimensions; absent/empty
+declarations are identity and repeated operations use the last value. Each
+transform value must be finite and within ±1024; malformed transforms, nonzero
+rotation and overflowing final UVs reject preparation. Reload material assets
+and prepare again after editing mounted VMTs. Models, terrain, instances,
 water, portal boundaries, generated detail scenery, sky fog, translucency,
 animation and runtime effects are unavailable. Nonempty `%detailtype` has unknown
 generated bounds and rejects even when its parent brush lies outside the

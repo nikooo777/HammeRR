@@ -84,6 +84,8 @@ This explicit action uses the current grid spacing even when **Snap** is off. Al
 
 Agents use `preview_snap_to_grid`, then the same transform inspection, commit and cancellation tools.
 
+To align a chosen real brush corner with a visible brush corner or terrain vertex, use **Place on surface… → Snap selected corner → Pick target corner**. Terrain targets use the nearest of the first hit displayed triangle's three vertices, including prepared mixed-power seams. Review its exact coordinates and row-major identity before **Apply placement**. See [Snap a real corner](placement.md#snap-a-real-corner).
+
 ### Textures during transforms
 
 Two independent options control what happens to textures:

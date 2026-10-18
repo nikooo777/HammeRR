@@ -2,7 +2,7 @@
 
 # Surface placement
 
-Place selected objects against a floor, ceiling, brush face, terrain triangle or supported model mesh, or snap one brush owner's chosen corner to another brush corner. Review the shared preview before changing the map.
+Place selected objects against a floor, ceiling, brush face, terrain triangle or supported model mesh, or snap one brush owner's chosen corner to a brush corner or terrain vertex. Review the shared preview before changing the map.
 
 1. Select one or more objects, then click **Place on surface…** in the selection controls.
 2. Choose **Target**: **Floor** casts down from the selection; **Ceiling** casts up; **Pick surface** lets you choose a visible surface in the viewport.
@@ -20,11 +20,13 @@ Place selected objects against a floor, ceiling, brush face, terrain triangle or
 
 1. Select one brush or brush entity. Open **Reshape brushes…**, choose **Vertices** and select exactly one corner through the existing list or viewport picker.
 2. Open **Place on surface…** and choose **Snap selected corner** under **Target**. Check **Source corner**: its brush ID, incident face IDs and coordinates identify a real brush vertex. The whole selected owner moves together, including its other child brushes. This mode resets **Offset** to `0` and **Align local up to surface** to off, and disables both controls.
-3. Click **Pick target corner**, then click a visible flat brush face. Its corner nearest to the hit point becomes the target; equal distances use incident face IDs for a stable choice. A miss or unsupported hit leaves picking active.
-4. Review **Source corner**, **Target corner**, their guide marks and the **Move** delta. Use **Frame preview** to inspect the result. This operation translates without rotation, normal offset or grid rounding. **Keep textures attached** uses the same brush texture policy as ordinary placement.
+3. Click **Pick target corner**, then click a visible flat brush face or terrain triangle. The nearest corner of that face or triangle becomes the target. Equal distances use incident face IDs for brushes and row-major vertex indices for terrain. A miss or unsupported hit leaves picking active.
+4. Review **Source corner**, **Target corner**, their guide marks and the **Move** delta. **Target terrain vertex** identifies the brush, face, triangle, grid size and vertex index, with zero-based row and column. Its coordinates use the prepared displayed surface, including sewn borders between different terrain powers; the authored terrain rows stay unchanged. Use **Frame preview** to inspect the result. This operation translates without rotation, normal offset or grid rounding. **Keep textures attached** uses the same brush texture policy as ordinary placement.
 5. Click **Apply placement** for one Undo step, or **Cancel** to discard it. Repeating a coincident snap adds no history. Source and target must be visible under the current owner, tool and working-region filters.
 
 ![Corner placement controls with source and target coordinates and movement delta](images/vertex-snap-controls.png)
+
+![Prepared terrain vertex identity, coordinates and reviewed movement](images/terrain-vertex-snap.png)
 
 ![A rotated brush corner snapped to a pedestal with shared placement guides](images/vertex-snap.png)
 
@@ -41,5 +43,6 @@ identity. See [MCP surface placement](mcp.md#surface-placement).
 - Targets are visible brushes, actual terrain triangles and supported model meshes. Selected objects and their owned brushes are excluded. Hidden objects and point helper boxes are not targets.
 - Alignment uses the first selected object's local up direction for the entire group. Terrain and model normals are the hit triangle's geometric normal, rather than an interpolated lighting normal.
 - Finish another geometry preview before starting. Changing the source, selection or scene invalidates an existing placement; preview it again. An old window's Cancel preserves replacement previews.
+- Reloading model assets also invalidates a corner preview because the first visible surface may change. Cancel remains available for stale cleanup.
 - Placement supports at most one million finite support points and offsets within ±65536 units. Ordinary transform validation still applies.
-- Corner snapping supports one moving world brush or brush entity and checked 4–64-side source/target brushes. Every translated child, including hidden brushes, must remain within ±65536 units. The source is an explicit real corner, rather than the selection's bounds minimum. Model/point sources, displacement source brushes, hit terrain/model vertices, multiple moving owners and arbitrary pixel-radius magnetic snapping are outside this mode. A first unsupported or ambiguous hit rejects instead of finding a corner behind it. Nonzero **Offset** and **Align local up to surface** requests reject; the controls reset to zero/off when selecting this mode.
+- Corner snapping supports one moving world brush or brush entity with checked 4–64-side source topology. Flat brush targets need the same checked topology. Terrain targets are limited to the three actual vertices of the first hit prepared triangle, without searching other triangles or using the flat parent brush. Every translated child, including hidden brushes, must remain within ±65536 units. The source is an explicit real corner, rather than the selection's bounds minimum. Model/point sources, displacement source brushes, model target vertices, multiple moving owners and arbitrary pixel-radius magnetic snapping are outside this mode. A first unsupported or ambiguous hit rejects instead of finding a corner behind it. Nonzero **Offset** and **Align local up to surface** requests reject; the controls reset to zero/off when selecting this mode.

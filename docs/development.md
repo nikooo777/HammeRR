@@ -2805,3 +2805,16 @@ bytes, then complete or fail it. Other cases exercise typed request IDs,
 unpolled/aborted sends, cancellation, dropped waiters and transport close/drop.
 The single-use receipt covers local send/flush, with the first outcome retained;
 it does not prove peer consumption or provide a public MCP Close command.
+
+### Terrain vertex snapping
+
+```sh
+cargo test -p map-core terrain_surface_vertex
+cargo test -p editor-core --features mcp,test-support terrain_corner_snap
+cargo test -p editor terrain_corner_controls_review_the_shared_prepared_vertex
+```
+
+These cases use the selected triangle's prepared vertices, including sewn
+mixed-power borders, without changing authored terrain. The software dialog
+case writes `terrain-vertex-snap.png` when `HAMMERR_UI_SNAPSHOTS` names an existing
+directory. No desktop windows or input are used.

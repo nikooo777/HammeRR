@@ -225,6 +225,7 @@ pub use crate::session::prefabs::fixtures::fixture as prefabs;
 pub use crate::session::prefabs::fixtures::textured_fixture as textured_prefabs;
 
 pub use crate::session::placement::fixtures::fixture as placement;
+pub use crate::session::placement::fixtures::terrain_target as terrain_snap;
 
 pub use crate::session::sounds::fixtures::fixture as sounds;
 

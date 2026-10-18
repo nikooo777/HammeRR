@@ -618,6 +618,7 @@ impl Instance {
         };
         Some(map_core::query::SurfaceHit {
             normal,
+            terrain_vertex: None,
             hit: Hit {
                 object: self.id,
                 solid: None,

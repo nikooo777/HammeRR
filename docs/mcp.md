@@ -1733,17 +1733,24 @@ reported by `get_brush_components`: the numeric brush ID and complete incident
 side-ID set, with no raw position field. `ids` must identify exactly one world
 brush or brush-entity owner containing that corner. The mode translates the
 whole owner so the source vertex meets the nearest real corner of the first
-visible flat brush face hit by the ray. Equal-distance ties use incident-side
-identity. No grid rounding, rotation or surface offset is applied; `align: true`
+visible flat brush face or prepared terrain triangle hit by the ray. Terrain
+targets use only that triangle's three vertices, including displayed sewn
+mixed-power seam positions. Equal-distance ties use incident-side identity for
+brushes and row-major vertex index for terrain. No grid rounding, rotation or surface offset is applied; `align: true`
 or nonzero `offset` rejects. Other methods do not accept `source_corner`.
 
 Read captured `source_corner` / `source_position` even while picking, then
-`plan.corner.source`, `plan.corner.target` (solid/sides), `plan.corner.position`
-and `plan.translation` before Apply. `plan.contact_offset` is null for corner
-snapping. Both brushes require checked 4–64-side topology; every translated
+`plan.corner.source`, `plan.corner.target`, `plan.corner.position`
+and `plan.translation` before Apply. Brush targets retain `solid`/`sides` and
+add `kind: "brush_corner"`. Terrain targets have `kind: "terrain_vertex"`,
+`solid`, `side`, `triangle`, `index`, `grid_size`, zero-based `row`/`column`, and
+`provenance: "prepared_surface"`; the exact world point is
+`plan.corner.position`. No brush corner identity is fabricated for terrain.
+Authored terrain rows stay unchanged. `plan.contact_offset` is null for corner
+snapping. Source and flat target brushes require checked 4–64-side topology; every translated
 child, including hidden brushes, must remain within ±65,536 units. Hidden/tool/
 working-region exclusions apply. Model/point sources, displacement source
-brushes and terrain/model target vertices reject; an unsupported first hit is
+brushes and model target vertices reject; an unsupported first hit is
 not bypassed. Invalid requests retain a valid plan. Existing Apply/Cancel and
 Undo rules apply; an already coincident snap creates no history. Human controls:
 **Reshape brushes… → Vertices**, select one corner, then **Place on surface… →

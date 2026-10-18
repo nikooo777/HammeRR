@@ -83,10 +83,18 @@ fn present(window: &PlacementWindow, report: &serde_json::Value) {
         let source = &plan["corner"]["source"];
         let target = &plan["corner"]["position"];
         let delta = &plan["translation"];
-        format!("Source corner · {:.3}, {:.3}, {:.3}\nTarget corner · {:.3}, {:.3}, {:.3}\nTarget brush {} · faces {}\nMove · {:.3}, {:.3}, {:.3}",
+        let identity = &plan["corner"]["target"];
+        let target_label = if identity["kind"] == "terrain_vertex" {
+            format!("Target terrain vertex · brush {} · face {} · triangle {}\nGrid {} × {} · vertex {} (row {}, column {}) · prepared surface",
+                identity["solid"], identity["side"], identity["triangle"],
+                identity["grid_size"], identity["grid_size"], identity["index"], identity["row"], identity["column"])
+        } else {
+            format!("Target brush corner · brush {} · faces {}", identity["solid"], identity["sides"])
+        };
+        format!("Source corner · {:.3}, {:.3}, {:.3}\nTarget corner · {:.3}, {:.3}, {:.3}\n{}\nMove · {:.3}, {:.3}, {:.3}",
             source[0].as_f64().unwrap(),source[1].as_f64().unwrap(),source[2].as_f64().unwrap(),
             target[0].as_f64().unwrap(),target[1].as_f64().unwrap(),target[2].as_f64().unwrap(),
-            plan["corner"]["target"]["solid"],plan["corner"]["target"]["sides"],
+            target_label,
             delta[0].as_f64().unwrap(),delta[1].as_f64().unwrap(),delta[2].as_f64().unwrap()).into()
     } else {
         let move_by = &plan["translation"];
@@ -100,7 +108,7 @@ fn present(window: &PlacementWindow, report: &serde_json::Value) {
         .into()
     });
     window.set_message(if report["picking"] == true {
-        if report["method"] == "brush_corner" { "Click a visible flat brush face; its nearest corner is the target. Escape cancels picking.".into() }
+        if report["method"] == "brush_corner" { "Click a visible brush face or terrain triangle; its nearest corner is the target. Escape cancels picking.".into() }
         else { "Click a visible surface in the viewport. Escape cancels picking.".into() }
     } else {
         "Review the placement. Apply placement changes the map in one Undo step.".into()
@@ -462,6 +470,59 @@ mod tests {
     use super::*;
     use glam::DVec3;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn terrain_corner_controls_review_the_shared_prepared_vertex() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let (mut session, selected, face, ray) = crate::test_assets::terrain_snap();
+        let ObjectId::Solid(solid) = selected else {
+            unreachable!()
+        };
+        let source = session.document().vmf().clone();
+        let history = session.document().undo_labels().count();
+        let shape = session.component_topology(&[solid]).unwrap().remove(0);
+        let stamp = session.component_stamp();
+        session
+            .select_components(
+                &[Component {
+                    solid,
+                    sides: shape.vertices[0].sides.clone(),
+                }],
+                crate::session::SelectMode::Replace,
+                &stamp,
+            )
+            .unwrap();
+        let shared = Arc::new(Mutex::new(session));
+        let controller = Controller::new(&shared).unwrap();
+        controller.initialize(&mut lock(&shared)).unwrap();
+        controller.window.set_method(3);
+        controller.window.invoke_preview();
+        assert!(controller.is_picking());
+        controller.pick_at_ray(&mut lock(&shared), ray).unwrap();
+        assert!(controller.window.get_ready());
+        let summary = controller.window.get_summary();
+        assert!(summary.contains("Target terrain vertex"));
+        assert!(summary.contains("prepared surface"));
+        assert!(summary.contains("128.000, 16.000, 17.000"));
+        assert_eq!(
+            lock(&shared).surface_placement()["plan"]["corner"]["target"]["side"],
+            face.side
+        );
+        assert_eq!(lock(&shared).document().vmf(), &source);
+        controller.window.show().unwrap();
+        crate::ui::tests::save_ui_snapshot(controller.window.window(), "terrain-vertex-snap");
+        controller.window.invoke_apply();
+        assert_eq!(lock(&shared).document().undo_labels().count(), history + 1);
+        lock(&shared).undo(Actor::User).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &source);
+    }
 
     #[test]
     fn surface_placement_controls_share_pick_review_apply_and_foreign_cancel() {

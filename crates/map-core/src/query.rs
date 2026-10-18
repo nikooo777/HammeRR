@@ -39,6 +39,16 @@ pub fn ray_triangle(ray: &Ray, positions: [DVec3; 3]) -> Option<f64> {
 pub struct SurfaceHit {
     pub hit: Hit,
     pub normal: DVec3,
+    pub terrain_vertex: Option<TerrainVertex>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TerrainVertex {
+    pub face: crate::surface::FaceId,
+    pub triangle: usize,
+    pub index: usize,
+    pub grid_size: usize,
+    pub position: DVec3,
 }
 
 pub fn face_corner(doc: &Document, hit: &Hit) -> Option<(crate::subobject::Component, DVec3)> {
@@ -92,6 +102,7 @@ pub fn pick_surface(
         .iter()
         .find(|face| solid.sides[face.side].id == side)?;
     let mut normal = face.plane.normal;
+    let mut terrain_vertex = None;
     if solid.sides[face.side].displacement.is_some() {
         let surfaces = crate::displacement::surface::prepare(doc.vmf());
         let mesh = surfaces.get(&crate::surface::FaceId {
@@ -108,11 +119,31 @@ pub fn pick_surface(
         normal = (mesh.positions[c] - mesh.positions[a])
             .cross(mesh.positions[b] - mesh.positions[a])
             .try_normalize()?;
+        let index = [a, b, c].into_iter().min_by(|&a, &b| {
+            mesh.positions[a]
+                .distance_squared(hit.point)
+                .total_cmp(&mesh.positions[b].distance_squared(hit.point))
+                .then_with(|| a.cmp(&b))
+        })?;
+        terrain_vertex = Some(TerrainVertex {
+            face: crate::surface::FaceId {
+                solid: solid.id,
+                side,
+            },
+            triangle,
+            index,
+            grid_size: mesh.size,
+            position: mesh.positions[index],
+        });
     }
     if normal.dot(ray.direction) > 0.0 {
         normal = -normal;
     }
-    Some(SurfaceHit { hit, normal })
+    Some(SurfaceHit {
+        hit,
+        normal,
+        terrain_vertex,
+    })
 }
 
 pub fn pick_displacement_triangle(
@@ -572,6 +603,72 @@ mod tests {
         )
         .unwrap();
         assert!(face_corner(&document, &hit).is_none());
+    }
+
+    #[test]
+    fn terrain_surface_vertex_uses_the_hit_triangle_and_row_major_ties() {
+        let (mut document, face) = raised_terrain();
+        document
+            .edit("flatten samples", |tx| {
+                let info = tx
+                    .solid_mut(face.solid)?
+                    .sides
+                    .iter_mut()
+                    .find(|side| side.id == face.side)
+                    .unwrap()
+                    .displacement
+                    .as_mut()
+                    .unwrap();
+                for distance in info.distances.as_mut().unwrap().iter_mut().flatten() {
+                    *distance = 0.0;
+                }
+                for offset in info.offsets.as_mut().unwrap().iter_mut().flatten() {
+                    *offset = DVec3::ZERO;
+                }
+                Ok(())
+            })
+            .unwrap();
+        let prepared = crate::displacement::surface::prepare(document.vmf());
+        let mesh = prepared.get(&face).unwrap();
+        let indices = crate::displacement::triangles::indices(2).unwrap();
+        let triangle = indices[0];
+        let (a, b) = triangle
+            .into_iter()
+            .flat_map(|a| triangle.into_iter().map(move |b| (a, b)))
+            .max_by(|&(a, b), &(c, d)| {
+                mesh.positions[a]
+                    .distance_squared(mesh.positions[b])
+                    .total_cmp(&mesh.positions[c].distance_squared(mesh.positions[d]))
+            })
+            .unwrap();
+        let point = (mesh.positions[a] + mesh.positions[b]) * 0.5;
+        let ray = Ray {
+            origin: point + DVec3::Z * 128.0,
+            direction: DVec3::NEG_Z * 3.0,
+        };
+        let surface = pick_surface(&document, &ray, |_| true).unwrap();
+        let vertex = surface.terrain_vertex.unwrap();
+        assert_eq!(vertex.face, face);
+        assert_eq!(vertex.triangle, 0);
+        assert_eq!(vertex.index, *triangle.iter().min().unwrap());
+        assert_eq!(vertex.grid_size, 5);
+        assert_eq!(vertex.position, mesh.positions[vertex.index]);
+        assert!(surface.hit.point.abs_diff_eq(point, 1e-9));
+        assert!(pick_surface(&document, &ray, |_| false).is_none());
+        let (ordinary, _, _, _) = surface_targets(false);
+        assert!(
+            pick_surface(
+                &ordinary,
+                &Ray {
+                    origin: DVec3::ZERO,
+                    direction: DVec3::X
+                },
+                |_| true
+            )
+            .unwrap()
+            .terrain_vertex
+            .is_none()
+        );
     }
 
     #[test]

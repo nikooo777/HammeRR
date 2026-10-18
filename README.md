@@ -82,8 +82,8 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 
 | Surface placement | Corner snapping |
 | --- | --- |
-| ![A model aligned against a wall with a normal offset](docs/images/surface-placement.png) | ![Reviewed source and target brush corners](docs/images/vertex-snap.png) |
-| Drop selections to floors or ceilings, or align them against picked brush, terrain and model surfaces. | Move a brush owner so its chosen corner meets a corner on a picked face. |
+| ![A model aligned against a wall with a normal offset](docs/images/surface-placement.png) | ![Reviewed source corner and displayed terrain vertex](docs/images/terrain-vertex-snap.png) |
+| Drop selections to floors or ceilings, or align them against picked brush, terrain and model surfaces. | Move a brush owner so its chosen corner meets a brush or displayed terrain vertex. |
 
 | Repeated placement |
 | --- |

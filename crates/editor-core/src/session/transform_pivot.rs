@@ -224,7 +224,7 @@ impl Session {
         ray: Ray,
     ) -> Result<Report, String> {
         self.checked_transform_pivot_pick(actor, token)?;
-        let SurfaceHit { hit, normal } = self.placement_surface(&[], ray, true)?;
+        let SurfaceHit { hit, normal, .. } = self.placement_surface(&[], ray, true)?;
         self.set_transform_tool(
             actor,
             TransformTool {

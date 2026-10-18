@@ -541,7 +541,7 @@ fn corner_snap_rejects_the_first_supported_model_mesh_without_reaching_the_floor
 }
 
 #[test]
-fn corner_snap_target_queries_share_visibility_and_reject_terrain_or_ambiguous_hits() {
+fn corner_snap_target_queries_share_visibility_and_reject_ambiguous_hits() {
     let (directory, game) = crate::test_assets::game();
     std::fs::create_dir_all(directory.path().join("materials/tools")).unwrap();
     std::fs::write(
@@ -650,17 +650,183 @@ fn corner_snap_target_queries_share_visibility_and_reject_terrain_or_ambiguous_h
             }),
             options,
         );
-        if matches!(mode, "terrain" | "ambiguous") {
+        if mode == "ambiguous" {
             assert!(result.is_err(), "{mode}");
             assert_eq!(session.surface_placement(), good);
         } else {
             let report = result.unwrap();
-            if mode == "owned" {
+            if matches!(mode, "owned" | "terrain") {
                 assert_eq!(report["plan"]["target"], object_id(owner));
+                assert_eq!(
+                    report["plan"]["corner"]["target"]["kind"],
+                    if mode == "terrain" {
+                        "terrain_vertex"
+                    } else {
+                        "brush_corner"
+                    }
+                );
             } else {
                 assert_ne!(report["plan"]["target"], object_id(owner), "{mode}");
             }
         }
+    }
+}
+
+#[test]
+fn terrain_corner_snap_uses_the_prepared_mixed_power_vertex_and_atomic_history() {
+    for actor in [Actor::User, Actor::Agent] {
+        let (mut session, selected, face, ray) = super::fixtures::terrain_target();
+        let ObjectId::Solid(solid) = selected else {
+            unreachable!()
+        };
+        let options = corner_options(&session, solid);
+        let source = session.document().vmf().clone();
+        let history = session.document().undo_labels().count();
+        let prepared = map_core::displacement::surface::prepare(&source);
+        let mesh = prepared.get(&face).unwrap();
+        let index = mesh
+            .positions
+            .iter()
+            .position(|point| *point == DVec3::new(128.0, 16.0, 17.0))
+            .unwrap();
+        let raw = session.terrain_grids(&[face], false).unwrap().remove(0);
+        assert_eq!(raw.mesh.positions[index], DVec3::new(128.0, 16.0, 16.5));
+        let hit = query::pick_surface(session.document(), &ray, |_| true).unwrap();
+        let vertex = hit.terrain_vertex.unwrap();
+        assert_eq!(
+            (vertex.face, vertex.index, vertex.position),
+            (face, index, mesh.positions[index])
+        );
+        assert!(
+            map_core::displacement::triangles::indices(3).unwrap()[vertex.triangle]
+                .contains(&index)
+        );
+        let report = session
+            .preview_surface_placement(
+                actor,
+                &[selected],
+                Method::BrushCorner,
+                Some(ray),
+                options.clone(),
+            )
+            .unwrap();
+        let token = report["token"].as_u64().unwrap();
+        assert_eq!(
+            report["plan"]["target"],
+            object_id(ObjectId::Solid(face.solid))
+        );
+        assert_eq!(
+            report["plan"]["corner"]["position"],
+            json!([128.0, 16.0, 17.0])
+        );
+        assert_eq!(
+            report["plan"]["corner"]["target"],
+            json!({"kind":"terrain_vertex", "solid":face.solid, "side":face.side, "triangle":vertex.triangle, "index":index, "grid_size":9, "row":index / 9, "column":index % 9, "provenance":"prepared_surface"})
+        );
+        let moved = subobject::topology(session.render_document().solid(solid).unwrap()).unwrap();
+        let component = options.source_corner.as_ref().unwrap();
+        assert!(
+            moved.vertices[moved.resolve(&component.sides).unwrap()[0]]
+                .position
+                .abs_diff_eq(vertex.position, 1e-8)
+        );
+        assert_eq!(
+            session.render_document().solid(face.solid),
+            session.document().solid(face.solid)
+        );
+        assert_eq!(session.document().vmf(), &source);
+        assert_eq!(session.document().undo_labels().count(), history);
+        assert!(
+            session
+                .preview_surface_placement(
+                    actor,
+                    &[selected],
+                    Method::BrushCorner,
+                    Some(Ray {
+                        origin: DVec3::splat(1000.0),
+                        direction: DVec3::Z
+                    }),
+                    options.clone()
+                )
+                .is_err()
+        );
+        assert_eq!(session.surface_placement(), report);
+        session.cancel_surface_placement(token).unwrap();
+        assert_eq!(session.document().vmf(), &source);
+        let report = session
+            .preview_surface_placement(
+                actor,
+                &[selected],
+                Method::BrushCorner,
+                Some(ray),
+                options.clone(),
+            )
+            .unwrap();
+        session
+            .apply_surface_placement(actor, report["token"].as_u64().unwrap())
+            .unwrap();
+        assert_eq!(session.document().undo_labels().count(), history + 1);
+        for terrain in source.world.solids.iter().filter(|brush| brush.id != solid) {
+            assert_eq!(session.document().solid(terrain.id), Some(terrain));
+        }
+        let again = session
+            .preview_surface_placement(actor, &[selected], Method::BrushCorner, Some(ray), options)
+            .unwrap();
+        assert_eq!(again["plan"]["translation"], json!([0.0, 0.0, 0.0]));
+        session
+            .apply_surface_placement(actor, again["token"].as_u64().unwrap())
+            .unwrap();
+        assert_eq!(session.document().undo_labels().count(), history + 1);
+        session.undo(actor).unwrap();
+        assert_eq!(session.document().vmf(), &source);
+    }
+}
+
+#[test]
+fn terrain_corner_snap_stale_source_and_asset_reload_reject_apply_but_allow_cancel() {
+    let (mut session, selected, face, ray) = super::fixtures::terrain_target();
+    let ObjectId::Solid(solid) = selected else {
+        unreachable!()
+    };
+    for change_source in [true, false] {
+        let options = corner_options(&session, solid);
+        let report = session
+            .preview_surface_placement(
+                Actor::User,
+                &[selected],
+                Method::BrushCorner,
+                Some(ray),
+                options,
+            )
+            .unwrap();
+        let token = report["token"].as_u64().unwrap();
+        if change_source {
+            session
+                .edit(Actor::Agent, "change terrain target", |tx| {
+                    tx.solid_mut(face.solid)?
+                        .sides
+                        .iter_mut()
+                        .find(|side| side.id == face.side)
+                        .unwrap()
+                        .displacement
+                        .as_mut()
+                        .unwrap()
+                        .distances
+                        .as_mut()
+                        .unwrap()[0][0] += 1.0;
+                    Ok(())
+                })
+                .unwrap();
+        } else {
+            session.refresh_model_assets(Actor::Agent);
+        }
+        let source = session.document().vmf().clone();
+        let history = session.document().undo_labels().count();
+        assert!(session.apply_surface_placement(Actor::User, token).is_err());
+        assert_eq!(session.surface_placement()["valid"], false);
+        session.cancel_surface_placement(token).unwrap();
+        assert_eq!(session.document().vmf(), &source);
+        assert_eq!(session.document().undo_labels().count(), history);
     }
 }
 

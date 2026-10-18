@@ -93,8 +93,31 @@ pub(super) struct Plan {
 
 struct CornerSnap {
     source: DVec3,
-    target: Component,
+    target: CornerTarget,
     position: DVec3,
+}
+
+enum CornerTarget {
+    Brush(Component),
+    Terrain(query::TerrainVertex),
+}
+
+impl CornerTarget {
+    fn report(&self) -> Value {
+        match self {
+            Self::Brush(component) => {
+                let mut report = super::components::component_json(component);
+                report["kind"] = json!("brush_corner");
+                report
+            }
+            Self::Terrain(vertex) => json!({
+                "kind":"terrain_vertex", "solid":vertex.face.solid, "side":vertex.face.side,
+                "triangle":vertex.triangle, "index":vertex.index, "grid_size":vertex.grid_size,
+                "row":vertex.index / vertex.grid_size, "column":vertex.index % vertex.grid_size,
+                "provenance":"prepared_surface"
+            }),
+        }
+    }
 }
 
 pub(super) struct SupportPoint {
@@ -473,12 +496,20 @@ impl Session {
             let source = self.placement_source_corner(ids, options)?.unwrap();
             let ray = ray.ok_or("Supply a ray or pick a target corner in the viewport")?;
             let surface = self.placement_surface(ids, ray, true)?;
-            let (target, approximate) = query::face_corner(&self.document, &surface.hit)
-                .ok_or("The first visible hit must be an unambiguous flat brush face")?;
-            let (_, solid) = subobject::solid(&self.document, target.solid)
-                .map_err(|error| error.to_string())?;
-            let position = precise_corner(solid, &target, approximate)
-                .ok_or("Target corner planes have no finite intersection")?;
+            let (target, position) = if let Some(vertex) = surface.terrain_vertex {
+                (CornerTarget::Terrain(vertex), vertex.position)
+            } else {
+                let (target, approximate) = query::face_corner(&self.document, &surface.hit)
+                    .ok_or("The first visible hit must be an unambiguous flat brush face or prepared terrain triangle")?;
+                let (_, solid) = subobject::solid(&self.document, target.solid)
+                    .map_err(|error| error.to_string())?;
+                let position = precise_corner(solid, &target, approximate)
+                    .ok_or("Target corner planes have no finite intersection")?;
+                (CornerTarget::Brush(target), position)
+            };
+            if !position.is_finite() || position.abs().max_element() > crate::spatial::MAX_EXTENT {
+                return Err("Target vertex must be finite and within ±65536 units".into());
+            }
             let mut delta = position - source;
             for axis in 0..3 {
                 let scale = source[axis]
@@ -677,7 +708,7 @@ impl Session {
             return json!({"token":null,"valid":false,"picking":false});
         };
         let error = self.checked_placement(draft.token).err();
-        let plan=draft.plan.as_ref().map(|plan|json!({"method":plan.method.name(),"target":object_id(plan.surface.hit.object),"solid":plan.surface.hit.solid,"side":plan.surface.hit.side,"point":plan.surface.hit.point.to_array(),"normal":plan.surface.normal.to_array(),"pivot":plan.transform.pivot.to_array(),"translation":plan.transform.translation.to_array(),"rotation":plan.transform.rotation.to_array(),"contact_offset":plan.corner.is_none().then_some(plan.contact),"corner":plan.corner.as_ref().map(|corner|json!({"source":corner.source.to_array(),"target":super::components::component_json(&corner.target),"position":corner.position.to_array()})),"support_points":plan.support_points}));
+        let plan=draft.plan.as_ref().map(|plan|json!({"method":plan.method.name(),"target":object_id(plan.surface.hit.object),"solid":plan.surface.hit.solid,"side":plan.surface.hit.side,"point":plan.surface.hit.point.to_array(),"normal":plan.surface.normal.to_array(),"pivot":plan.transform.pivot.to_array(),"translation":plan.transform.translation.to_array(),"rotation":plan.transform.rotation.to_array(),"contact_offset":plan.corner.is_none().then_some(plan.contact),"corner":plan.corner.as_ref().map(|corner|json!({"source":corner.source.to_array(),"target":corner.target.report(),"position":corner.position.to_array()})),"support_points":plan.support_points}));
         json!({"token":draft.token,"valid":error.is_none(),"picking":draft.plan.is_none() && error.is_none(),"method":if draft.options.source_corner.is_some(){"brush_corner"}else{draft.plan.as_ref().map_or("ray",|plan|plan.method.name())},"source_corner":draft.options.source_corner.as_ref().map(super::components::component_json),"source_position":draft.source_position.map(|point|point.to_array()),"ids":draft.ids.iter().copied().map(object_id).collect::<Vec<_>>(),"offset":draft.options.offset,"align":draft.options.align,"texture_lock":draft.options.texture_lock,"plan":plan,"error":error})
     }
 

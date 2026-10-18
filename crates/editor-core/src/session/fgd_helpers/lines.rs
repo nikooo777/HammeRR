@@ -105,6 +105,8 @@ impl Session {
                 Some("model_helper")
             } else if facts.hidden {
                 Some("authored_hidden")
+            } else if facts.editor_hidden {
+                Some("editor_hidden")
             } else if facts.outside {
                 Some("outside_working_region")
             } else if !facts.selected {
@@ -129,6 +131,12 @@ impl Session {
                             }
                             if entity.hidden {
                                 return Some("endpoint_hidden");
+                            }
+                            if evaluation
+                                .editor_hidden
+                                .contains(&ObjectId::Entity(entity.id))
+                            {
+                                return Some("endpoint_editor_hidden");
                             }
                             if !evaluation.objects.contains(&ObjectId::Entity(entity.id)) {
                                 return Some("endpoint_outside_working_region");

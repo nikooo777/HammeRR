@@ -281,6 +281,7 @@ returns their current schemas and descriptions.
 | Authored lighting preview | `get_lighting_preview`; shared `set_view` and temporary `render_view` settings |
 | Selection and history | `select`, `get_selection`, `set_selection_mode`, `undo`, `redo`, `get_history`, `navigate_history` |
 | Measurement guides | `get_measurements`, `set_measurement` |
+| Temporary editor visibility | `get_editor_visibility`, `set_editor_visibility` |
 | Object-selection filters | `get_selection_filters`, `set_selection_filters` |
 | Overlapping objects | `get_object_hit_candidates`, `cycle_object_hit` |
 | Instance reference authoring | `get_instance_reference`, `set_instance_reference` |
@@ -352,6 +353,31 @@ Session lock. One load is admitted at a time. Closing cancels it and waits for
 result cleanup; superseded results cannot replace newer definitions. Root and
 included sources must be regular files (16 MiB each, 64 MiB total, 256 sources),
 with bounded parsing and inheritance work. Valid canonical aliases are supported.
+
+**Temporary editor visibility**
+
+`get_editor_visibility` accepts `offset` and `limit` (1–200, default50), returning
+`snapshot`, `hidden_total`, sorted root `hidden` IDs, `selected_hidden`, paging,
+`can_hide_selection` and policy. `set_editor_visibility` uses tagged actions:
+`{"action":"hide","snapshot":"…","ids":["solid:3"]}` or
+`{"action":"show_all","snapshot":"…"}`. Omit `ids` to hide the selection;
+Show all accepts no IDs. Missing/child IDs reject the entire Hide batch. Duplicate
+roots coalesce; no extra group expansion occurs.
+
+These Session-local exclusions remove complete owners from editor display and
+spatial hits while retaining selection and explicit-ID reports/edits. Builds,
+VMF hidden flags, source and Undo stay unchanged. Apply/cancel displayed geometry
+or material previews before Hide; Show all remains available during previews.
+Actual changes cancel active spatial gestures; no-op requests preserve them.
+New/Open clears the set. Committed edits/Undo/Redo prune departed roots, so Undo
+can restore an object without restoring its old temporary exclusion.
+
+Show all clears only this set, preserving authored hiding, tool-texture filters
+and the working region. Object-type filters remain independent selection seeds.
+Working-region and helper/model/instance inspection distinguish `editor_hidden`,
+`owner_editor_hidden` and line `endpoint_editor_hidden` from region exclusion.
+Human controls: **Selection → Hide selected in editor / Show all editor-hidden**.
+See [Selecting](selection.md#temporary-editor-visibility).
 
 **Object-selection filters**
 

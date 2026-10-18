@@ -283,3 +283,48 @@ fn scene_icon_limit_and_inspection_share_deterministic_entity_order() {
     );
     assert_eq!(session.document().vmf(), &source);
 }
+
+#[test]
+fn temporary_visibility_suppresses_icon_admission_and_keeps_explicit_diagnostics_available() {
+    let (_directory, mut session, id) = fixture(Actor::User);
+    assert!(
+        session
+            .entity_helper_report(id)
+            .unwrap()
+            .icon_sprite
+            .unwrap()
+            .displayed
+    );
+    let source = session.document().vmf().clone();
+    session
+        .set_editor_visibility(
+            Actor::Agent,
+            crate::session::editor_visibility::Action::Hide(vec![ObjectId::Entity(id)]),
+            &session.working_region_stamp(),
+        )
+        .unwrap();
+    let report = session
+        .entity_helper_report(id)
+        .unwrap()
+        .icon_sprite
+        .unwrap();
+    assert!(!report.displayed);
+    assert_eq!(report.suppression_reason, Some("editor_hidden"));
+    assert!(session.build_scene().icons.is_empty());
+    session
+        .set_editor_visibility(
+            Actor::User,
+            crate::session::editor_visibility::Action::ShowAll,
+            &session.working_region_stamp(),
+        )
+        .unwrap();
+    assert!(
+        session
+            .entity_helper_report(id)
+            .unwrap()
+            .icon_sprite
+            .unwrap()
+            .displayed
+    );
+    assert_eq!(session.document().vmf(), &source);
+}

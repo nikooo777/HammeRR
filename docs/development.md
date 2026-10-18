@@ -2908,3 +2908,16 @@ exit and changed-mode gesture retirement. Old five-/nine-command files retain
 bytes and existing chords until explicit Save. The existing software shortcut
 form also writes `selection-mode-shortcuts.png` with
 `HAMMERR_UI_SNAPSHOTS`; it needs no desktop window or keyboard input.
+
+### Temporary editor visibility
+
+```sh
+cargo test -p editor-core --features mcp,test-support editor_visibility
+cargo test -p editor admitted_editor_visibility_controls_hide_and_recover_in_faces_without_source_edits
+```
+
+The shared-consumer fixtures cover region-off/on rendering and spatial queries,
+whole-owner/group/type-filter rules, actual model/rope/instance/FGD helper paths,
+strict no-op/failure guards, preview protection, committed-ID lifecycle and
+unchanged source/build scope. The inline control fixture writes
+`editor-visibility.png` through `HAMMERR_UI_SNAPSHOTS` without desktop input.

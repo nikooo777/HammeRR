@@ -165,6 +165,8 @@ impl Session {
                 Some("model_helper")
             } else if facts.hidden {
                 Some("authored_hidden")
+            } else if facts.editor_hidden {
+                Some("editor_hidden")
             } else if facts.outside {
                 Some("outside_working_region")
             } else if !facts.selected {

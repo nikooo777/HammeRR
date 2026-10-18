@@ -414,3 +414,42 @@ fn authored_nodeid_guides_share_preview_visibility_and_read_only_spatial_identit
         assert_eq!(session.document().undo_labels().count(), history);
     }
 }
+
+#[test]
+fn temporary_source_and_endpoint_exclusions_report_editor_hidden_without_region_mislabeling() {
+    let (mut session, source, target, _) = fixture(Actor::Agent);
+    let before = session.document().vmf().clone();
+    assert!(session.entity_helper_report(source).unwrap().lines[0].displayed);
+    session
+        .set_editor_visibility(
+            Actor::Agent,
+            crate::session::editor_visibility::Action::Hide(vec![ObjectId::Entity(target)]),
+            &session.working_region_stamp(),
+        )
+        .unwrap();
+    assert_eq!(
+        session.entity_helper_report(source).unwrap().lines[0].suppression_reason,
+        Some("endpoint_editor_hidden")
+    );
+    session
+        .set_editor_visibility(
+            Actor::Agent,
+            crate::session::editor_visibility::Action::Hide(vec![ObjectId::Entity(source)]),
+            &session.working_region_stamp(),
+        )
+        .unwrap();
+    assert_eq!(
+        session.entity_helper_report(source).unwrap().lines[0].suppression_reason,
+        Some("editor_hidden")
+    );
+    assert!(vertices(&session.build_scene()).is_empty());
+    session
+        .set_editor_visibility(
+            Actor::User,
+            crate::session::editor_visibility::Action::ShowAll,
+            &session.working_region_stamp(),
+        )
+        .unwrap();
+    assert!(session.entity_helper_report(source).unwrap().lines[0].displayed);
+    assert_eq!(session.document().vmf(), &before);
+}

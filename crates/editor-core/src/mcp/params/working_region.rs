@@ -34,3 +34,16 @@ mod tests {
         assert!(serde_json::from_value::<WorkingRegionSetArgs>(unknown).is_err());
     }
 }
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(extend("type" = "object"))]
+pub enum EditorVisibilitySetArgs {
+    Hide {
+        snapshot: String,
+        ids: Option<Vec<String>>,
+    },
+    ShowAll {
+        snapshot: String,
+    },
+}

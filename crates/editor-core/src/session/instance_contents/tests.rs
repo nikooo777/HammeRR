@@ -863,3 +863,48 @@ fn frozen_root_alias_retarget_rejects_refresh_before_loading_new_dependencies() 
     assert_eq!(report["state"], "failed");
     assert!(session.instance_contents_preview(true).mesh.is_none());
 }
+
+#[test]
+fn temporary_visibility_excludes_cached_contents_without_reloading_or_losing_explicit_inspection() {
+    let (_directory, mut session, _source, _child, owner) = opened(Actor::Agent);
+    refresh(&mut session, Actor::Agent);
+    let ObjectId::Entity(id) = owner else {
+        unreachable!()
+    };
+    let cached = session.instance_contents.ready.clone().unwrap();
+    assert!(session.instance_contents_preview(true).owners.contains(&id));
+    session
+        .set_editor_visibility(
+            Actor::User,
+            crate::session::editor_visibility::Action::Hide(vec![owner]),
+            &session.working_region_stamp(),
+        )
+        .unwrap();
+    session.preflight_instance_contents();
+    assert!(!session.instance_contents_preview(true).owners.contains(&id));
+    let report = session.inspect_instance_contents(0, 64).unwrap();
+    assert!(
+        report["summary"]
+            .as_str()
+            .unwrap()
+            .contains("editor visibility")
+    );
+    assert!(Arc::ptr_eq(
+        &cached,
+        session.instance_contents.ready.as_ref().unwrap()
+    ));
+    assert!(session.document().contains(owner));
+    session
+        .set_editor_visibility(
+            Actor::User,
+            crate::session::editor_visibility::Action::ShowAll,
+            &session.working_region_stamp(),
+        )
+        .unwrap();
+    session.preflight_instance_contents();
+    assert!(session.instance_contents_preview(true).owners.contains(&id));
+    assert!(Arc::ptr_eq(
+        &cached,
+        session.instance_contents.ready.as_ref().unwrap()
+    ));
+}

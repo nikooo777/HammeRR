@@ -263,3 +263,39 @@ fn rope_preview_reports_remain_compact_for_oversized_imported_identifiers_even_w
         Some(oversized.as_str())
     );
 }
+
+#[test]
+fn temporary_editor_visibility_removes_rope_spans_and_keeps_authored_nodes_available() {
+    let (mut session, source, target) = fixture();
+    session.set_view(render::ViewOptions {
+        rope_preview: true,
+        ..session.view()
+    });
+    let geometry = session.rope_preview_geometry();
+    let point = geometry.links[0].points[geometry.links[0].points.len() / 2];
+    let ray = Ray {
+        origin: point - DVec3::Y * 100.0,
+        direction: DVec3::Y,
+    };
+    assert_eq!(session.pick(&ray).unwrap().object, source);
+    let before = session.document().vmf().clone();
+    session
+        .set_editor_visibility(
+            Actor::Agent,
+            crate::session::editor_visibility::Action::Hide(vec![target]),
+            &session.working_region_stamp(),
+        )
+        .unwrap();
+    assert!(session.rope_preview_geometry().links.is_empty());
+    assert!(session.pick(&ray).is_none());
+    assert!(!session.build_scene().batches.iter().any(|batch| batch.rope));
+    session
+        .set_editor_visibility(
+            Actor::User,
+            crate::session::editor_visibility::Action::ShowAll,
+            &session.working_region_stamp(),
+        )
+        .unwrap();
+    assert_eq!(session.pick(&ray).unwrap().object, source);
+    assert_eq!(session.document().vmf(), &before);
+}

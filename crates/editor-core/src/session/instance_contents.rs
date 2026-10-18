@@ -822,6 +822,9 @@ impl Session {
         {
             return false;
         }
+        if self.editor_object_hidden(map_core::ObjectId::Entity(owner.id)) {
+            return false;
+        }
         if !self.working_region.enabled {
             return true;
         }
@@ -872,7 +875,13 @@ impl Session {
                     .iter()
                     .skip(offset)
                     .take(limit)
-                    .map(Owner::json)
+                    .map(|owner| {
+                        let mut row = owner.json();
+                        row["editor_hidden"] =
+                            json!(self.editor_object_hidden(ObjectId::Entity(owner.id)));
+                        row["display_eligible"] = json!(self.instance_owner_visible(owner));
+                        row
+                    })
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
@@ -898,7 +907,7 @@ impl Session {
                 } else if suppression.is_some() {
                     "temporarily hidden"
                 } else {
-                    "outside the visible working region"
+                    "excluded by editor visibility filters"
                 };
                 format!(
                     "{} instance{} from {} file{} · {} world brush{} and {} detail brush{} · {display}",

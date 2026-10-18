@@ -89,6 +89,7 @@ mod view;
 mod viewport_pick;
 mod worker;
 pub use view::ViewUpdate;
+pub mod editor_visibility;
 mod recovery;
 pub mod repeat;
 pub mod ropes;
@@ -1550,6 +1551,7 @@ impl Session {
     }
 
     fn prune_selection(&mut self) {
+        self.prune_editor_visibility();
         let doc = &self.document;
         self.selection.retain(|&id| doc.contains(id));
         self.face_selection
@@ -2366,7 +2368,7 @@ impl Session {
                 }
             }
         }
-        if self.working_region.enabled {
+        if self.display_visibility_filtered() {
             let document = if render {
                 self.geometry.document(&self.document)
             } else {

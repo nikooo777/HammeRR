@@ -171,7 +171,7 @@ impl Session {
                 }
             }
         }
-        if self.working_region_enabled() {
+        if self.display_visibility_filtered() {
             let document = self.render_document();
             hidden.extend(
                 document

@@ -382,6 +382,8 @@ fn resolve(
         Some("invalid_fgd_size")
     } else if facts.hidden {
         Some("authored_hidden")
+    } else if facts.editor_hidden {
+        Some("editor_hidden")
     } else if facts.outside {
         Some("outside_working_region")
     } else if !facts.valid_origin {

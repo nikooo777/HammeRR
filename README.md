@@ -166,10 +166,10 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 | ![Rear brush selected among three overlapping objects](docs/images/object-hit-cycling.png) |
 | Alt+click to cycle through objects and groups in depth order. |
 
-| Selection filters |
-| --- |
-| ![Inline filters for world brushes, brush entities and point entities](docs/images/selection-filters.png) |
-| Limit object picking by type while keeping objects visible and selected groups whole. |
+| Selection filters | Temporary editor visibility |
+| --- | --- |
+| ![Inline filters for world brushes, brush entities and point entities](docs/images/selection-filters.png) | ![Temporary hiding and the visible recovery action](docs/images/editor-visibility.png) |
+| Limit object picking by type while keeping objects visible and selected groups whole. | Hide distractions from the editor while keeping saved visibility and builds unchanged. |
 
 | Viewport modes | Saved camera views |
 | --- | --- |

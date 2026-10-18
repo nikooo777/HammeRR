@@ -29,6 +29,7 @@ pub(super) struct Facts {
     pub(super) invalid_size: bool,
     pub(super) hidden: bool,
     pub(super) outside: bool,
+    pub(super) editor_hidden: bool,
     pub(super) selected: bool,
     pub(super) valid_origin: bool,
 }
@@ -122,6 +123,7 @@ impl<'a> Context<'a> {
                 .is_some_and(|appearance| appearance.invalid_size),
             hidden: entity.hidden,
             outside: !self.evaluation.objects.contains(&object),
+            editor_hidden: self.evaluation.editor_hidden.contains(&object),
             selected: self.selected.contains(&object),
             valid_origin: entity.origin().is_some_and(|origin| {
                 origin.is_finite() && origin.abs().max_element() <= MAX_HELPER_EXTENT

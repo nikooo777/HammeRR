@@ -59,8 +59,9 @@ layers separate, even when names or source numbers match.
   layer links on physical group records prevent authoring; assign member
   objects instead.
 - Layer colors identify records in this window. They do not recolor geometry.
-  Separate editor-only visibility filters, visibility explanations and automatic
-  categories are unavailable. Hide/show uses saved map visibility.
+  Layer Hide/show uses saved map visibility. [Temporary editor visibility](selection.md#temporary-editor-visibility) independently hides whole objects
+  from display and spatial hits. Automatic layer categories and layer-specific
+  temporary rules remain unavailable.
 - Layers contain whole brushes or entities, rather than individual faces or
   components. Named partition intents and private Hammer clipboard formats
   remain outside clipboard transfer.

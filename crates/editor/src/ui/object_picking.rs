@@ -193,6 +193,54 @@ mod tests {
     }
 
     #[test]
+    fn temporary_hide_and_show_consume_an_old_alt_press_without_cycling() {
+        let mut session = Session::new(Err("no assets".into()));
+        let id = session
+            .create_block(
+                Actor::User,
+                DVec3::splat(-16.0),
+                DVec3::splat(16.0),
+                "test",
+                false,
+            )
+            .unwrap();
+        let camera = Camera::planar(Projection::Top, Vec3::ZERO, 256.0);
+        session.set_camera(camera);
+        let pointer = Pointer {
+            position: DVec2::splat(256.0),
+            size: (512, 512),
+        };
+        let mut gesture = Gesture::default();
+        assert!(
+            gesture
+                .begin(&session, camera, pointer, false, true)
+                .unwrap()
+        );
+        session
+            .set_editor_visibility(
+                Actor::Agent,
+                crate::session::editor_visibility::Action::Hide(vec![id]),
+                &session.working_region_stamp(),
+            )
+            .unwrap();
+        session
+            .set_editor_visibility(
+                Actor::Agent,
+                crate::session::editor_visibility::Action::ShowAll,
+                &session.working_region_stamp(),
+            )
+            .unwrap();
+        assert!(
+            gesture
+                .release(&mut session, camera, pointer)
+                .unwrap()
+                .is_none()
+        );
+        assert!(!gesture.active());
+        assert_eq!(session.selected_ids(), [id]);
+    }
+
+    #[test]
     fn alt_click_cycles_on_release_and_consumes_cancelled_or_stale_gestures() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions {

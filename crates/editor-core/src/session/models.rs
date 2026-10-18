@@ -228,10 +228,11 @@ impl Session {
             .get(&id)
             .map(String::as_str)
             .or_else(|| asset["material_error"].as_str());
+        let visible = self.working_object_visible(document, ObjectId::Entity(id));
         scale["applied"] = json!(instance.is_some_and(Instance::has_geometry));
         scale["instance_error"] = json!(error);
         Ok(
-            json!({"entity":format!("entity:{id}"),"asset":asset,"displayed":instance.is_some_and(Instance::has_geometry),"helper":!entity.hidden && instance.is_none_or(|instance|!instance.has_geometry()),"error":error,"hidden":entity.hidden,"tint":instance.map(|instance|instance.tint),"opacity_preview":instance.is_some_and(|instance|instance.appearance.mode==source_formats::render_color::TEXTURE),"appearance":appearance,"model_scale":scale,"attachments":instance.map(|instance|instance.asset.model.attachments.iter().enumerate().map(|(index,attachment)|super::model_attachments::report(attachment,index+1,instance.attachment(index+1).unwrap())).collect::<Vec<_>>()).unwrap_or_default(),"world_bounds":instance.map(|instance|{let(a,b)=instance.bounds();[a.to_array(),b.to_array()]})}),
+            json!({"entity":format!("entity:{id}"),"asset":asset,"displayed":visible && instance.is_some_and(Instance::has_geometry),"helper":visible && !entity.hidden && instance.is_none_or(|instance|!instance.has_geometry()),"editor_hidden":self.editor_object_hidden(ObjectId::Entity(id)),"error":error,"hidden":entity.hidden,"tint":instance.map(|instance|instance.tint),"opacity_preview":instance.is_some_and(|instance|instance.appearance.mode==source_formats::render_color::TEXTURE),"appearance":appearance,"model_scale":scale,"attachments":instance.map(|instance|instance.asset.model.attachments.iter().enumerate().map(|(index,attachment)|super::model_attachments::report(attachment,index+1,instance.attachment(index+1).unwrap())).collect::<Vec<_>>()).unwrap_or_default(),"world_bounds":instance.map(|instance|{let(a,b)=instance.bounds();[a.to_array(),b.to_array()]})}),
         )
     }
 

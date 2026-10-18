@@ -43,6 +43,44 @@ with all three booleans: `world_brushes`, `brush_entities`, `point_entities`.
 Object-hit candidates/cycling and object area/volume/paint share the settings.
 Geometric `raycast` and `pick_at_pixel` continue to report visible geometry.
 
+## Temporary editor visibility
+
+Hide distractions in the editor without changing saved visibility or compiler input.
+
+1. Select objects, then click **Hide selected in editor** under **Selection**.
+   The selection stays available for reports and explicit-ID edits.
+2. Pick or select through the hidden objects. Rendering, area/volume/paint
+   selection and spatial tools share the temporary exclusions.
+3. Click **Show all editor-hidden** to clear these exclusions. This button stays
+   available in **Faces** mode, with no selection, with every pick type disabled,
+   and when the working region excludes everything.
+
+![Temporary editor visibility and its recovery action](images/editor-visibility.png)
+
+Apply or cancel displayed geometry previews before hiding more objects. **Show
+all editor-hidden** remains available during previews and preserves inactive
+owned reviews. Exclusions follow retained root IDs; freshly generated preview
+results have their own IDs. A real visibility change cancels active spatial
+gestures.
+
+The action uses exactly the selected root objects, without another group
+expansion. Brush entities hide with all their child brushes. Editor-hidden
+members cannot join a selection through a visible group peer. The object-type
+controls above only restrict selection seeds; these buttons also remove objects
+from viewport display and spatial hits.
+
+**Show all editor-hidden** clears only temporary exclusions. Saved **Hide**,
+tool-texture visibility and **Working region…** remain independent. Map data,
+saved files, Undo history and builds stay unchanged. New/Open resets the
+exclusions; deleted IDs are pruned after edits, Undo and Redo, so Undo does not
+restore their temporary hidden state. The settings belong to this Session.
+
+MCP uses `get_editor_visibility` and `set_editor_visibility`. Inspect a current
+`snapshot`, then send `action: "hide"` with optional root `ids` (defaults to
+selection), or `action: "show_all"` without IDs. The entire request validates
+before any gesture cleanup. Explicit-ID reports, edits and selections remain
+available even while objects are editor-hidden.
+
 ## Cycle overlapping objects
 
 Select an object behind another object without hiding either one.

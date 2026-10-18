@@ -11,7 +11,7 @@ scope. Desktop and MCP renders and spatial selection use the same filter.
    **Minimum** and **Maximum** X/Y/Z corners. Selection bounds load the fields;
    they do not apply the filter yet.
 3. Check **Enabled** and click **Apply**. The dialog reports excluded entries and
-   selected objects/faces excluded by the region or authored hiding. Existing
+   selected objects/faces excluded by the region, temporary editor hiding or authored hiding. Existing
    selections are retained. MCP inspection also identifies tool-texture filters.
 4. Click **Cancel** to close the dialog and discard unapplied field changes.
    Applied settings stay active; the **Working region active · editor view only**
@@ -42,7 +42,7 @@ or overlay drafts remain intact; changing the region ends spatial gestures.
 - During document shutdown, **Apply**, **Use selection bounds** and **Clear
   working region** reject without changing the current filter. **Cancel** still
   closes the dialog.
-- Saved hide/show and tool-texture filters remain independent. **Compile region…**
+- [Temporary editor hiding](selection.md#temporary-editor-visibility), saved hide/show and tool-texture filters remain independent. Clearing the region does not clear temporary exclusions. **Compile region…**
   controls builds separately; working-region filtering never changes BSP output.
 - Unknown bounds remain visible with an `unresolved_bounds` inspection reason.
   Loaded models and helper fallbacks can have different bounds.

@@ -513,6 +513,58 @@ mod tests {
     }
 
     #[test]
+    fn temporary_visibility_consumes_old_clicks_and_area_releases_after_hide_and_show() {
+        let mut session = fixture(Projection::Top, None);
+        let id = session.selected_ids()[0];
+        let pointer = Pointer {
+            position: DVec2::new(320.0, 240.0),
+            size: (640, 480),
+        };
+        let mut interaction = Interaction::default();
+        assert!(!interaction.down(&mut session, pointer, false).unwrap());
+        session
+            .set_editor_visibility(
+                Actor::Agent,
+                crate::session::editor_visibility::Action::Hide(vec![id]),
+                &session.working_region_stamp(),
+            )
+            .unwrap();
+        session
+            .set_editor_visibility(
+                Actor::User,
+                crate::session::editor_visibility::Action::ShowAll,
+                &session.working_region_stamp(),
+            )
+            .unwrap();
+        assert!(interaction.up(&mut session, pointer).unwrap());
+        assert_eq!(session.selected_ids(), [id]);
+        let empty = Pointer {
+            position: DVec2::new(20.0, 20.0),
+            ..pointer
+        };
+        assert!(!interaction.down(&mut session, empty, false).unwrap());
+        interaction
+            .moved(
+                &mut session,
+                Pointer {
+                    position: empty.position + DVec2::splat(40.0),
+                    ..empty
+                },
+            )
+            .unwrap();
+        session
+            .set_editor_visibility(
+                Actor::Agent,
+                crate::session::editor_visibility::Action::Hide(vec![id]),
+                &session.working_region_stamp(),
+            )
+            .unwrap();
+        assert!(session.area_preview().is_none());
+        assert!(interaction.up(&mut session, pointer).unwrap());
+        assert_eq!(session.selected_ids(), [id]);
+    }
+
+    #[test]
     fn partition_clicks_share_highlights_and_reject_stale_releases_without_edits() {
         use crate::session::components::CreaseEdges;
         use map_core::subobject;

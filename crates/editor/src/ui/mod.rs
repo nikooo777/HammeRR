@@ -38,6 +38,7 @@ mod materials;
 use materials::*;
 mod navigation;
 use navigation::*;
+mod editor_visibility;
 mod instance_contents;
 mod instance_extraction;
 mod instance_reference;
@@ -293,6 +294,7 @@ fn session_of(ui: &SharedUi) -> SharedSession {
 }
 
 fn refresh_view_controls(app: &AppWindow, session: &Session) {
+    editor_visibility::refresh(app, session);
     app.set_normal_maps(session.view().normal_maps);
     app.set_lighting_preview(session.view().lighting_preview);
     app.set_lighting_quality(
@@ -873,6 +875,7 @@ fn create_document_window(
     bind_manipulation_controls_with_access(&app, &file_access(&ui));
     bind_pivot_pick_controls_with_access(&app, &file_access(&ui));
     selection_filters::bind(&app, &file_access(&ui));
+    editor_visibility::bind(&app, &file_access(&ui));
     root_callback!(app, ui, on_place_entity, |app| show_entity_window(
         &app.unwrap(),
         &ui,

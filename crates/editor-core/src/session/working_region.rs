@@ -26,7 +26,8 @@ struct Key {
 pub(super) struct State {
     pub enabled: bool,
     pub bounds: Option<[DVec3; 2]>,
-    serial: u64,
+    pub(super) serial: u64,
+    pub(super) editor_hidden: Arc<HashSet<ObjectId>>,
     cache: RefCell<Option<(Key, Arc<Evaluation>)>>,
 }
 
@@ -59,6 +60,7 @@ pub(super) struct Evaluation {
     pub ropes: Arc<render::ropes::Preview>,
     pub objects: HashSet<ObjectId>,
     pub solids: HashSet<u32>,
+    pub editor_hidden: Arc<HashSet<ObjectId>>,
     records: Vec<Record>,
     excluded: usize,
 }
@@ -258,7 +260,39 @@ fn records(
     records
 }
 
+fn apply_editor_hidden(records: &mut [Record], hidden: &HashSet<ObjectId>) {
+    for record in records {
+        if hidden.contains(&record.owner.unwrap_or(record.id)) {
+            record.included = false;
+            record.reasons.push(if record.owner.is_some() {
+                "owner_editor_hidden"
+            } else {
+                "editor_hidden"
+            });
+        }
+    }
+}
+
 impl Session {
+    pub(super) fn display_visibility_filtered(&self) -> bool {
+        self.working_region.enabled || !self.working_region.editor_hidden.is_empty()
+    }
+
+    pub(super) fn editor_object_hidden(&self, id: ObjectId) -> bool {
+        self.working_region.editor_hidden.contains(&id)
+    }
+
+    pub(super) fn invalidate_display_visibility_gestures(&mut self) {
+        self.interaction_camera_changed();
+        self.clear_paint_stroke();
+        self.working_region_cancel_terrain_drag();
+        self.working_region_end_terrain_stroke();
+        self.clear_volume_selection();
+        self.cancel_block_preview();
+        self.clip_epoch += 1;
+        self.interaction_epoch += 1;
+    }
+
     pub fn working_region_stamp(&self) -> String {
         format!(
             "{}:{}:{}:{}:{}:{}",
@@ -297,7 +331,8 @@ impl Session {
         let mut objects = HashSet::new();
         let mut solids = HashSet::new();
         let records = if self.working_region.enabled {
-            let records = records(document, &models, &helpers, self.working_region.bounds);
+            let mut records = records(document, &models, &helpers, self.working_region.bounds);
+            apply_editor_hidden(&mut records, &self.working_region.editor_hidden);
             for record in &records {
                 if record.included {
                     if record.owner.is_none() {
@@ -310,22 +345,15 @@ impl Session {
             }
             records
         } else {
-            for solid in document
-                .vmf()
-                .world
-                .solids
-                .iter()
-                .filter(|solid| !solid.hidden)
-            {
+            for solid in document.vmf().world.solids.iter().filter(|solid| {
+                !solid.hidden && !self.editor_object_hidden(ObjectId::Solid(solid.id))
+            }) {
                 objects.insert(ObjectId::Solid(solid.id));
                 solids.insert(solid.id);
             }
-            for entity in document
-                .vmf()
-                .entities
-                .iter()
-                .filter(|entity| !entity.hidden)
-            {
+            for entity in document.vmf().entities.iter().filter(|entity| {
+                !entity.hidden && !self.editor_object_hidden(ObjectId::Entity(entity.id))
+            }) {
                 objects.insert(ObjectId::Entity(entity.id));
                 solids.extend(
                     entity
@@ -337,7 +365,30 @@ impl Session {
             }
             Vec::new()
         };
-        let excluded = records.iter().filter(|record| !record.included).count();
+        let excluded = if self.working_region.enabled {
+            records.iter().filter(|record| !record.included).count()
+        } else {
+            document
+                .vmf()
+                .world
+                .solids
+                .iter()
+                .filter(|solid| !objects.contains(&ObjectId::Solid(solid.id)))
+                .count()
+                + document
+                    .vmf()
+                    .entities
+                    .iter()
+                    .map(|entity| {
+                        usize::from(!objects.contains(&ObjectId::Entity(entity.id)))
+                            + entity
+                                .solids
+                                .iter()
+                                .filter(|solid| !solids.contains(&solid.id))
+                                .count()
+                    })
+                    .sum::<usize>()
+        };
         let ropes = Arc::new(render::ropes::prepare(document.vmf(), |id| {
             objects.contains(&id)
         }));
@@ -349,21 +400,24 @@ impl Session {
             solids,
             records,
             excluded,
+            editor_hidden: self.working_region.editor_hidden.clone(),
         });
         *self.working_region.cache.borrow_mut() = Some((key, evaluation.clone()));
         evaluation
     }
 
     pub(super) fn working_object_visible(&self, document: &Document, id: ObjectId) -> bool {
-        !self.working_region.enabled || self.working_evaluation(document).objects.contains(&id)
+        !self.display_visibility_filtered()
+            || self.working_evaluation(document).objects.contains(&id)
     }
 
     pub(super) fn working_solid_visible(&self, document: &Document, id: u32) -> bool {
-        !self.working_region.enabled || self.working_evaluation(document).solids.contains(&id)
+        !self.display_visibility_filtered()
+            || self.working_evaluation(document).solids.contains(&id)
     }
 
     pub(super) fn working_selection_visible(&self) -> bool {
-        if !self.working_region.enabled {
+        if !self.display_visibility_filtered() {
             return true;
         }
         let evaluation = self.working_evaluation(self.render_document());
@@ -401,7 +455,7 @@ impl Session {
     }
 
     pub fn working_region_summary(&self) -> Value {
-        let counts = self.working_region.enabled.then(|| {
+        let counts = self.display_visibility_filtered().then(|| {
             let evaluation = self.working_evaluation(self.render_document());
             let selected = self
                 .selection
@@ -415,7 +469,7 @@ impl Session {
                     .count();
             (evaluation.excluded, selected)
         });
-        json!({"snapshot":self.working_region_stamp(),"enabled":self.working_region.enabled,"mins":self.working_region.bounds.map(|bounds|bounds[0].to_array()),"maxs":self.working_region.bounds.map(|bounds|bounds[1].to_array()),"excluded":counts.map(|counts|counts.0),"selected_excluded":counts.map(|counts|counts.1),"counts_scope":"working_region_and_authored_visibility","policy":"Session-only whole-owner bounds intersection; source, selection, history and compilation are unchanged."})
+        json!({"snapshot":self.working_region_stamp(),"enabled":self.working_region.enabled,"mins":self.working_region.bounds.map(|bounds|bounds[0].to_array()),"maxs":self.working_region.bounds.map(|bounds|bounds[1].to_array()),"excluded":counts.map(|counts|counts.0),"selected_excluded":counts.map(|counts|counts.1),"counts_scope":"working_region_authored_and_editor_visibility","policy":"Session-only whole-owner bounds intersection; source, selection, history and compilation are unchanged."})
     }
 
     pub fn set_working_region(
@@ -441,14 +495,7 @@ impl Session {
             validate(bounds)?;
         }
         if (self.working_region.enabled, self.working_region.bounds) != next {
-            self.interaction_camera_changed();
-            self.clear_paint_stroke();
-            self.working_region_cancel_terrain_drag();
-            self.working_region_end_terrain_stroke();
-            self.clear_volume_selection();
-            self.cancel_block_preview();
-            self.clip_epoch += 1;
-            self.interaction_epoch += 1;
+            self.invalidate_display_visibility_gestures();
             self.working_region.enabled = next.0;
             self.working_region.bounds = next.1;
             self.working_region.serial += 1;
@@ -478,6 +525,9 @@ impl Session {
         } else {
             records(document, &evaluation.models, &evaluation.helpers, None)
         };
+        if !self.working_region.enabled {
+            apply_editor_hidden(&mut records, &self.working_region.editor_hidden);
+        }
         if !self.view.tool_textures {
             let tools = document
                 .vmf()

@@ -143,7 +143,7 @@ fn attached_sessions_share_effective_bindings_errors_and_recovery_without_rebind
 }
 
 #[test]
-fn all_five_commands_mutate_only_the_originating_document() {
+fn all_commands_mutate_only_the_originating_document() {
     for command in Command::ALL {
         let authority = Authority::default();
         let mut first =

@@ -2,6 +2,7 @@ use super::*;
 use crate::runtime::{DocumentHandle, DocumentLifecycle, SharedSession, lock};
 use crate::session::{Actor, Session};
 use glam::DVec3;
+use slint::Model;
 use std::cell::Cell;
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
@@ -90,6 +91,142 @@ fn registered_key_input_acts_live_then_consumes_terminal_calls_without_touching_
     assert_eq!(lock(&owner.session).history_snapshot(), history);
     assert_eq!(lock(&owner.session).document().vmf(), &source);
     assert_eq!(peer.history_snapshot(), peer_before);
+}
+
+#[test]
+fn configured_projection_keys_use_the_originating_admitted_callback_and_remember_cameras() {
+    i_slint_backend_testing::init_no_event_loop();
+    let directory = tempfile::tempdir().unwrap();
+    let authority =
+        editor_core::shortcuts::Authority::configured(Ok(directory.path().join("shortcuts")));
+    let mut session = Session::with_keyboard_shortcuts(Err("no assets".into()), authority.clone());
+    session.configure_recovery(Ok(directory.path().join("recovery")));
+    edit(&mut session, 0.0);
+    let shared = Arc::new(Mutex::new(session));
+    let document = crate::test_assets::document(shared.clone());
+    let access = DocumentAccess::for_document(document.clone());
+    let peer = Session::with_keyboard_shortcuts(Err("peer assets".into()), authority);
+    let peer_camera = peer.camera();
+    let owner = Rc::new(Owner {
+        session: shared.clone(),
+        calls: Cell::new(0),
+        held: Cell::new(false),
+        releases: Cell::new(0),
+    });
+    let controller = crate::shortcuts_ui::Controller::new_with_access(&access).unwrap();
+    controller.show(&lock(&shared)).unwrap();
+    assert_eq!(
+        controller.window.get_commands().row_count(),
+        editor_core::shortcuts::Command::ALL.len()
+    );
+    for (command, key) in [("top", "F10"), ("perspective", "F11")] {
+        controller.window.invoke_choose(command.into());
+        assert_eq!(controller.window.get_selected(), command);
+        assert_eq!(controller.window.get_primary_key(), 0);
+        let key_index = controller
+            .window
+            .get_keys()
+            .iter()
+            .position(|value| value == key)
+            .unwrap();
+        controller.window.set_primary_key(key_index as i32);
+        controller.window.set_primary_control(false);
+        controller.window.set_primary_shift(false);
+        controller.window.invoke_edited();
+    }
+    controller.window.invoke_save();
+    assert_eq!(peer.shortcut_bindings(), lock(&shared).shortcut_bindings());
+    let app = AppWindow::new().unwrap();
+    app.on_key({
+        let scope = Callback::new(&app, &owner, &access);
+        move |text, down, control, shift, alt, meta| {
+            scope.input(true, |app, owner| {
+                crate::shortcuts_ui::route_viewport_key(
+                    &app,
+                    &owner.session,
+                    crate::shortcuts_ui::ViewportKey {
+                        text: &text,
+                        down,
+                        control,
+                        shift,
+                        alt,
+                        meta,
+                    },
+                    |_, _, _| false,
+                    |_, _| false,
+                )
+            })
+        }
+    });
+    let before = lock(&shared).document().vmf().clone();
+    let history = lock(&shared).history_snapshot();
+    let perspective = lock(&shared).camera();
+    let top = lock(&shared).camera_for_projection(render::Projection::Top);
+    assert!(app.invoke_key(
+        crate::viewport::key_text(slint::platform::Key::F10).into(),
+        true,
+        false,
+        false,
+        false,
+        false
+    ));
+    assert_eq!(lock(&shared).camera(), top);
+    let mut remembered = top;
+    remembered.ortho_height += 128.0;
+    lock(&shared).set_camera(remembered);
+    assert!(app.invoke_key(
+        crate::viewport::key_text(slint::platform::Key::F11).into(),
+        true,
+        false,
+        false,
+        false,
+        false
+    ));
+    assert_eq!(lock(&shared).camera(), perspective);
+    assert!(app.invoke_key(
+        crate::viewport::key_text(slint::platform::Key::F10).into(),
+        true,
+        false,
+        false,
+        false,
+        false
+    ));
+    assert_eq!(lock(&shared).camera(), remembered);
+    assert_eq!(lock(&shared).document().vmf(), &before);
+    assert_eq!(lock(&shared).history_snapshot(), history);
+    assert_eq!(peer.camera(), peer_camera);
+    document.shutdown().unwrap();
+    let bytes = std::fs::read(
+        directory
+            .path()
+            .join("shortcuts")
+            .join(editor_core::shortcuts::FILE_NAME),
+    )
+    .unwrap();
+    let log = lock(&shared).log_serial();
+    assert!(app.invoke_key(
+        crate::viewport::key_text(slint::platform::Key::F11).into(),
+        true,
+        false,
+        false,
+        false,
+        false
+    ));
+    assert_eq!(app.get_message(), "the document is closed");
+    assert_eq!(lock(&shared).camera(), remembered);
+    assert_eq!(lock(&shared).log_serial(), log);
+    assert_eq!(peer.camera(), peer_camera);
+    assert_eq!(
+        std::fs::read(
+            directory
+                .path()
+                .join("shortcuts")
+                .join(editor_core::shortcuts::FILE_NAME)
+        )
+        .unwrap(),
+        bytes
+    );
+    controller.window.invoke_cancel();
 }
 
 #[test]

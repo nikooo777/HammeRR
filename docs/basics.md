@@ -24,7 +24,8 @@ If an input would produce invalid geometry, the last valid preview stays on scre
 Undo and redo are **Ctrl+Z** and **Ctrl+Y**.
 
 These are factory bindings. Use **Viewport → Keyboard shortcuts…** to change
-Undo, Redo, Frame selection, Delete selection or Duplicate selection; see
+Undo, Redo, Frame selection, Delete selection, Duplicate selection or projection
+commands; see
 [Keyboard shortcuts](keyboard-shortcuts.md). Text fields keep their normal
 editing keys, and the Frame hint follows the active binding.
 

@@ -63,6 +63,109 @@ fn shortcut_tools_share_persistence_and_the_typed_command_dispatcher() {
     }
 }
 
+#[tokio::test]
+async fn projection_commands_share_the_schema_and_reject_after_originating_document_drain() {
+    use rmcp::model::{CallToolRequestParams, CallToolResponse, NumberOrString};
+    use rmcp::service::{RequestContext, serve_directly};
+    use std::time::Duration;
+
+    const TIMEOUT: Duration = Duration::from_secs(5);
+
+    let directory = tempfile::tempdir().unwrap();
+    let authority = crate::shortcuts::Authority::configured(Ok(directory.path().join("shortcuts")));
+    let mut session = Session::with_keyboard_shortcuts(Err("no assets".into()), authority.clone());
+    session.configure_recovery(Ok(directory.path().join("recovery")));
+    session
+        .create_block(Actor::User, DVec3::ZERO, DVec3::splat(64.0), "test", false)
+        .unwrap();
+    let peer = Session::with_keyboard_shortcuts(Err("peer assets".into()), authority);
+    let peer_camera = peer.camera();
+    let peer_source = peer.document().vmf().clone();
+    let shared = Arc::new(Mutex::new(session));
+    let document = DocumentHandle::start(shared.clone()).unwrap();
+    let server = EditorServer::for_document(document.clone(), None);
+    let schema = server
+        .get_tool("execute_editor_command")
+        .unwrap()
+        .input_schema;
+    let schema = Value::Object((*schema).clone());
+    let commands = schema
+        .pointer("/properties/command/enum")
+        .or_else(|| schema.pointer("/$defs/Command/enum"))
+        .unwrap();
+    assert_eq!(commands, &json!(Command::ALL));
+    let (transport, _client) = tokio::io::duplex(4096);
+    let service = serve_directly::<rmcp::RoleServer, _, _, _, _>(server.clone(), transport, None);
+    let before = lock(&shared).document().vmf().clone();
+    let history = lock(&shared).history_snapshot();
+    let selection = lock(&shared).selected_ids();
+    let bindings = peer.keyboard_shortcuts_state();
+    for (name, projection) in [
+        ("top", Projection::Top),
+        ("front", Projection::Front),
+        ("side", Projection::Side),
+        ("perspective", Projection::Perspective),
+        ("top", Projection::Top),
+    ] {
+        let expected = lock(&shared).camera_for_projection(projection);
+        let request = CallToolRequestParams::new("execute_editor_command")
+            .with_arguments(json!({"command":name}).as_object().unwrap().clone());
+        let context = RequestContext::new(NumberOrString::Number(1), service.peer().clone());
+        let result = match tokio::time::timeout(TIMEOUT, server.call_tool(request, context))
+            .await
+            .unwrap()
+            .unwrap()
+        {
+            CallToolResponse::Complete(result) => value(Ok(result)),
+            result => panic!("unexpected command response: {result:?}"),
+        };
+        assert_eq!(result["command"], name);
+        assert_eq!(result["projection"], name);
+        assert_eq!(lock(&shared).camera(), expected);
+        assert_eq!(document.active_operations(), 0);
+        if projection == Projection::Top {
+            let mut camera = expected;
+            camera.ortho_height += 128.0;
+            lock(&shared).set_camera(camera);
+        }
+    }
+    assert_eq!(lock(&shared).document().vmf(), &before);
+    assert_eq!(lock(&shared).history_snapshot(), history);
+    assert_eq!(lock(&shared).selected_ids(), selection);
+    assert_eq!(peer.camera(), peer_camera);
+    assert_eq!(peer.document().vmf(), &peer_source);
+    assert_eq!(peer.keyboard_shortcuts_state(), bindings);
+    document.shutdown().unwrap();
+    let camera = lock(&shared).camera();
+    let log = lock(&shared).log_serial();
+    let request = CallToolRequestParams::new("execute_editor_command").with_arguments(
+        json!({"command":"perspective"})
+            .as_object()
+            .unwrap()
+            .clone(),
+    );
+    let context = RequestContext::new(NumberOrString::Number(2), service.peer().clone());
+    let result = match tokio::time::timeout(TIMEOUT, server.call_tool(request, context))
+        .await
+        .unwrap()
+        .unwrap()
+    {
+        CallToolResponse::Complete(result) => result,
+        result => panic!("unexpected command response: {result:?}"),
+    };
+    assert_eq!(result.is_error, Some(true));
+    assert_eq!(
+        result.content[0].as_text().unwrap().text,
+        "the document is closed"
+    );
+    assert_eq!(lock(&shared).camera(), camera);
+    assert_eq!(lock(&shared).log_serial(), log);
+    tokio::time::timeout(TIMEOUT, service.cancel())
+        .await
+        .unwrap()
+        .unwrap();
+}
+
 #[test]
 fn attached_shortcut_tools_share_activation_and_errors_but_execute_in_the_originating_session() {
     let directory = tempfile::tempdir().unwrap();

@@ -207,10 +207,7 @@ impl State {
                     ("save", Some(bindings)) => bindings.validated()?,
                     ("reset", None) => Bindings::default(),
                     _ => {
-                        return Err(
-                            "Save requires all five bindings; Reset does not accept bindings"
-                                .into(),
-                        );
+                        return Err("Save requires bindings; Reset does not accept bindings".into());
                     }
                 };
                 if action == "save" && !self.loaded {

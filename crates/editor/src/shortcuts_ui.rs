@@ -97,7 +97,7 @@ fn refresh_with_snapshot(window: &ShortcutsWindow, snapshot: &Snapshot, form: &R
     } else if let Err(error) = validation {
         error
     } else if current.dirty {
-        "Form changes are ready. Save shortcuts writes and activates all five command bindings together.".into()
+        "Form changes are ready. Save shortcuts writes and activates all command bindings together.".into()
     } else {
         "Current shortcuts are active. Changing this form leaves them unchanged until Save shortcuts.".into()
     }.into());

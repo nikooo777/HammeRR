@@ -174,7 +174,7 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 | Keyboard shortcuts | Navigation defaults |
 | --- | --- |
 | ![Command bindings with modifier controls and saved preferences](docs/images/keyboard-shortcuts.png) | ![Shared fly speed and explicit startup defaults](docs/images/navigation-defaults.png) |
-| Configure two bindings each for Undo, Redo, framing, deletion and duplication. | Set camera fly speed from the editor or MCP and explicitly save startup defaults. |
+| Bind editing actions and Perspective, Top, Front and Side views to your preferred keys. | Set camera fly speed from the editor or MCP and explicitly save startup defaults. |
 
 [Keyboard shortcuts →](docs/keyboard-shortcuts.md) · [Navigation defaults →](docs/navigation-defaults.md)
 

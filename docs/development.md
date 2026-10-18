@@ -2818,3 +2818,17 @@ These cases use the selected triangle's prepared vertices, including sewn
 mixed-power borders, without changing authored terrain. The software dialog
 case writes `terrain-vertex-snap.png` when `HAMMERR_UI_SNAPSHOTS` names an existing
 directory. No desktop windows or input are used.
+
+### Projection keyboard commands
+
+```sh
+cargo test -p editor-core --features mcp,test-support projection_commands
+cargo test -p editor-core --features mcp,test-support version_one
+cargo test -p editor shortcut_controls_save_atomically_report_conflicts_and_preserve_text_field_editing
+```
+
+Projection cases compare the shared dispatcher with direct projection changes,
+retained per-view cameras, fixed-document admission and peer isolation. Version-1
+files without the four new commands load them unbound. The software shortcut
+form writes `keyboard-shortcuts.png` when `HAMMERR_UI_SNAPSHOTS` names an existing
+directory; it does not use desktop input.

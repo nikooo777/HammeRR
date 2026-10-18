@@ -19,15 +19,23 @@ pub enum Command {
     FrameSelection,
     DeleteSelection,
     DuplicateSelection,
+    Perspective,
+    Top,
+    Front,
+    Side,
 }
 
 impl Command {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 9] = [
         Self::Undo,
         Self::Redo,
         Self::FrameSelection,
         Self::DeleteSelection,
         Self::DuplicateSelection,
+        Self::Perspective,
+        Self::Top,
+        Self::Front,
+        Self::Side,
     ];
 
     pub fn label(self) -> &'static str {
@@ -37,6 +45,10 @@ impl Command {
             Self::FrameSelection => "Frame selection",
             Self::DeleteSelection => "Delete selection",
             Self::DuplicateSelection => "Duplicate selection",
+            Self::Perspective => "Perspective",
+            Self::Top => "Top",
+            Self::Front => "Front",
+            Self::Side => "Side",
         }
     }
 }
@@ -101,6 +113,14 @@ pub struct Bindings {
     pub frame_selection: Slots,
     pub delete_selection: Slots,
     pub duplicate_selection: Slots,
+    #[serde(default)]
+    pub perspective: Slots,
+    #[serde(default)]
+    pub top: Slots,
+    #[serde(default)]
+    pub front: Slots,
+    #[serde(default)]
+    pub side: Slots,
 }
 
 fn chord(key: &str, control: bool, shift: bool) -> Option<Chord> {
@@ -122,6 +142,10 @@ impl Default for Bindings {
                 chord("Backspace", false, false),
             ],
             duplicate_selection: [chord("D", true, false), None],
+            perspective: [None, None],
+            top: [None, None],
+            front: [None, None],
+            side: [None, None],
         }
     }
 }
@@ -134,6 +158,10 @@ impl Bindings {
             Command::FrameSelection => &self.frame_selection,
             Command::DeleteSelection => &self.delete_selection,
             Command::DuplicateSelection => &self.duplicate_selection,
+            Command::Perspective => &self.perspective,
+            Command::Top => &self.top,
+            Command::Front => &self.front,
+            Command::Side => &self.side,
         }
     }
 
@@ -144,6 +172,10 @@ impl Bindings {
             Command::FrameSelection => &mut self.frame_selection,
             Command::DeleteSelection => &mut self.delete_selection,
             Command::DuplicateSelection => &mut self.duplicate_selection,
+            Command::Perspective => &mut self.perspective,
+            Command::Top => &mut self.top,
+            Command::Front => &mut self.front,
+            Command::Side => &mut self.side,
         }
     }
 

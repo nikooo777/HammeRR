@@ -5,6 +5,7 @@ use crate::{
 };
 use glam::DVec3;
 use map_core::{ObjectId, edit};
+use render::Projection;
 use serde_json::{Value, json};
 use std::path::PathBuf;
 
@@ -154,6 +155,10 @@ impl Session {
         match command {
             Command::Undo => result["label"] = json!(self.undo(actor)),
             Command::Redo => result["label"] = json!(self.redo(actor)),
+            Command::Perspective => self.set_projection(actor, Projection::Perspective),
+            Command::Top => self.set_projection(actor, Projection::Top),
+            Command::Front => self.set_projection(actor, Projection::Front),
+            Command::Side => self.set_projection(actor, Projection::Side),
             Command::FrameSelection => {
                 self.frame_selection(actor, aspect)?;
                 result["camera_changed"] = json!(true);
@@ -173,6 +178,13 @@ impl Session {
                     result["copies"] = json!(copies.into_iter().map(id_string).collect::<Vec<_>>());
                 }
             }
+        }
+        if matches!(
+            command,
+            Command::Perspective | Command::Top | Command::Front | Command::Side
+        ) {
+            result["projection"] = json!(self.camera().projection.name());
+            result["camera_changed"] = json!(true);
         }
         Ok(result)
     }

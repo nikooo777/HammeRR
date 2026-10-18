@@ -42,7 +42,7 @@ export component ShortcutsWindow inherits Window {
                 Text {text:"Factory bindings";width:240px;font-weight:600;}
             }
             ListView {
-                height: 180px;
+                height: 320px;
                 for row in root.commands: Rectangle {
                     height: 34px;
                     background: root.selected == row.command ? #2d4056 : #1a2430;
@@ -70,7 +70,7 @@ export component ShortcutsWindow inherits Window {
                 CheckBox {text:"Shift";checked <=> root.alternate-shift;toggled=>{root.edited();}}
             }
             Text {text:"Choose Unbound to remove a slot. Chords use logical keys with exact Ctrl and Shift; Alt and Meta bindings are unavailable. Duplicate chords must be changed together before Save.";wrap:word-wrap;color:#b6c1cf;}
-            Text {text:"Reserved: Escape, arrows, PageUp/PageDown, camera W/A/S/D/Q/E with or without Shift, and Ctrl+N/O/S/C/X/V. Camera, nudging, file and clipboard controls keep their existing bindings.";wrap:word-wrap;color:#b6c1cf;}
+            Text {text:"Reserved: Escape, arrows, PageUp/PageDown, camera W/A/S/D/Q/E with or without Shift, and Ctrl+N/O/S/C/X/V. Camera movement, nudging, file and clipboard controls keep their existing bindings.";wrap:word-wrap;color:#b6c1cf;}
             Text {text:root.storage;wrap:word-wrap;color:#b6c1cf;}
             Text {text:root.status;wrap:word-wrap;color:#e3c597;}
             Rectangle {vertical-stretch:1;}

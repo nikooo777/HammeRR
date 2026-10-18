@@ -208,7 +208,10 @@ fn shortcut_controls_save_atomically_report_conflicts_and_preserve_text_field_ed
         .window
         .window()
         .set_size(slint::PhysicalSize::new(900, 900));
-    assert_eq!(controller.window.get_commands().row_count(), 5);
+    assert_eq!(
+        controller.window.get_commands().row_count(),
+        Command::ALL.len()
+    );
     controller.window.set_primary_key(key_index("Y"));
     controller.window.set_primary_control(true);
     controller.window.invoke_edited();

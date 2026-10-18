@@ -735,7 +735,9 @@ only with viewport focus; text fields retain native text editing.
 | `reset` | Explicitly write and activate factory bindings, including malformed-file recovery. |
 
 `bindings` must contain `undo`, `redo`, `frame_selection`, `delete_selection`
-and `duplicate_selection`. Each value is exactly two nullable slots; each
+and `duplicate_selection`. Optional `perspective`, `top`, `front` and `side`
+slots default to unbound when omitted, including existing version-1 files.
+Each value is exactly two nullable slots; each
 nonnull chord is `{"key":"F","control":false,"shift":false}`. Keys are
 logical A–Z, F1–F12, Delete and Backspace, with case normalization and exact
 Ctrl/Shift modifiers. Duplicate/reserved chords and unknown fields reject.
@@ -751,12 +753,16 @@ nonblocking Linux lock. Changed directories require explicit Reload. Programs
 that ignore the lock remain outside this guarantee. Configuration
 changes preserve map/history/selection/camera and active drafts.
 
-`execute_editor_command` accepts `command` using the same five identifiers.
+`execute_editor_command` accepts `command` using these nine identifiers.
 Undo/Redo perform one step and return a nullable label; Frame accepts optional
 positive finite `aspect` (default 1). Delete uses the current object selection;
 Duplicate copies it by `[grid,grid,0]` and selects the copies. Object edits reject
 empty selection and component-editing scope. This shared dispatcher does not
-synthesize keyboard input. Existing explicit-ID/offset object tools remain
+synthesize keyboard input. `perspective`, `top`, `front` and `side` use the same
+per-projection camera memory as the viewport controls and return the resulting
+projection with `camera_changed:true`. They affect only the originating Session,
+leaving the map, selection and history unchanged. The four factory bindings are
+unbound. Existing explicit-ID/offset object tools remain
 available. See [Keyboard shortcuts](keyboard-shortcuts.md).
 
 ### Saved preview defaults

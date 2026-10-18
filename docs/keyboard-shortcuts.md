@@ -3,11 +3,14 @@
 # Keyboard shortcuts
 
 Choose two bindings each for Undo, Redo, Frame selection, Delete selection and
-Duplicate selection. Bindings work while the viewport has keyboard focus;
-text fields keep their normal editing keys.
+Duplicate selection, plus Perspective, Top, Front and Side projection commands.
+Projection commands start **Unbound**, including when an older saved shortcuts
+file loads. Bindings work while the viewport has keyboard focus; text fields
+keep their normal editing keys.
 
 1. In **Viewport**, click **Keyboard shortcuts…**.
-2. Choose a command. Compare **Current form** with **Factory bindings**.
+2. Choose a command, including **Perspective**, **Top**, **Front** or **Side**.
+   Compare **Current form** with **Factory bindings**.
 3. Set **Primary** and **Alternate** using the key dropdowns and **Ctrl** and
    **Shift** switches. Choose **Unbound** to remove a slot.
 4. Resolve any duplicate or reserved binding shown below the controls. To swap
@@ -15,6 +18,8 @@ text fields keep their normal editing keys.
 5. Click **Save shortcuts** to activate the complete form now and at startup.
    Click the viewport before using a binding. Its **Frame** hint reflects the
    current binding.
+   Projection bindings use the same per-view cameras as the viewport's projection
+   controls and affect the document whose viewport received the key.
 6. **Reload saved** loads and activates the saved file. **Reset saved shortcuts**
    explicitly writes and activates factory values. **Cancel**, Escape or closing
    the window discards unsaved form changes; it does not undo a saved change.
@@ -26,8 +31,9 @@ Limits:
 - Keys are logical A–Z, F1–F12, Delete and Backspace, with exact Ctrl/Shift
   modifiers. Alt/Meta bindings, physical scan codes and key sequences are absent.
 - Escape, arrows, PageUp/PageDown, camera W/A/S/D/Q/E with or without Shift, and
-  Ctrl+N/O/S/C/X/V remain reserved. File, clipboard, camera and tool bindings
-  cannot be changed here. Command availability still follows editing context.
+  Ctrl+N/O/S/C/X/V remain reserved. File, clipboard, camera movement and tool
+  bindings cannot be changed here. Command availability still follows editing
+  context.
 - An unavailable saved file shows an error and preserves active bindings.
   Save remains disabled until Reload succeeds or you explicitly Reset.
   Outside changes require another inspection. Symlinked/nonregular targets and

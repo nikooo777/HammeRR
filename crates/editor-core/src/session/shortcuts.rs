@@ -197,6 +197,24 @@ impl Session {
                 )?;
                 result["grid_visible"] = json!(self.spatial().grid_visible);
             }
+            Command::DrawBrush | Command::ClipMode => {
+                let camera = self.camera();
+                if command == Command::DrawBrush {
+                    self.set_spatial(
+                        actor,
+                        crate::spatial::Update {
+                            draw_block: Some(true),
+                            ..Default::default()
+                        },
+                    )?;
+                    result["draw_block"] = json!(self.spatial().draw_block);
+                } else {
+                    self.set_clip_tool(actor, true)?;
+                    result["clip_tool"] = json!(self.clip_tool());
+                }
+                result["projection"] = json!(self.camera().projection.name());
+                result["camera_changed"] = json!(self.camera() != camera);
+            }
             Command::SnapToGrid => {
                 self.set_spatial(
                     actor,

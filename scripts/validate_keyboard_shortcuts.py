@@ -31,10 +31,11 @@ def validate(binary, output):
             "perspective", "top", "front", "side", "objects", "faces",
             "show_grid", "snap_to_grid", "tool_textures", "selection_outlines",
             "select_tool", "move_tool", "rotate_tool", "scale_tool",
+            "draw_brush", "clip_mode",
         }
         expected_commands = original_commands | unbound_commands
         check(initial["ready"] and not initial["stored"] and {row["command"] for row in initial["commands"]} == expected_commands and set(factory) == expected_commands, "shared command identifiers and factory aliases are discoverable without creating storage")
-        check(len(expected_commands) == 19 and all(factory[command] == [None, None] for command in unbound_commands), "all 19 commands are discoverable and extension factory bindings start unbound")
+        check(len(expected_commands) == 21 and all(factory[command] == [None, None] for command in unbound_commands), "all 21 commands are discoverable and extension factory bindings start unbound")
         check(path == output / "recovery/shortcuts.json" and not path.exists(), "shortcut storage stays in the private recovery directory")
         block = client.call("create_block", {"mins": [0, 0, 0], "maxs": [64, 64, 64]})["id"]
         before = client.call("get_objects", {"ids": [block]})
@@ -45,6 +46,8 @@ def validate(binary, output):
         custom["undo"] = [{"key": "f6", "control": True, "shift": False}, None]
         custom["duplicate_selection"] = [None, None]
         custom["frame_selection"] = [{"key": "F8", "control": False, "shift": True}, None]
+        custom["draw_brush"] = [{"key": "F10", "control": False, "shift": True}, None]
+        custom["clip_mode"] = [{"key": "F11", "control": False, "shift": True}, None]
         saved = change(client, "save", bindings=custom)
         custom["undo"][0]["key"] = "F6"
         check(saved["write_committed"] and saved["ready"] and saved["current"] == custom, "Save canonicalizes, persists and activates the complete configuration")
@@ -109,6 +112,42 @@ def validate(binary, output):
         client.close()
         client = Client(None, binary, output)
         check(state(client)["ready"] and state(client)["current"] == custom, "saved custom bindings survive a separate process startup")
+        saved_bytes = path.read_bytes()
+        spatial = client.call("set_spatial_settings", {"grid_size": 8, "elevation": 12.5, "depth": 24})
+        initial_history = client.call("get_history")["undo_count"]
+        drawing = client.call("execute_editor_command", {"command": "draw_brush"})
+        check(drawing["draw_block"] and drawing["projection"] == "top" and drawing["camera_changed"], "Draw brush enters Top from Perspective without the toolbar Add brush transaction")
+        check(client.call("get_map_info")["world_brushes"] == 0 and client.call("get_history")["undo_count"] == initial_history, "entering drawing mode creates no brush or history step")
+        footprint = {"start": [0, 0], "end": [64, 32], "material": "tools/toolsnodraw"}
+        client.call("draw_block", {**footprint, "preview": True})
+        pending = client.call("get_map_info")["block_preview"]
+        repeated = client.call("execute_editor_command", {"command": "draw_brush"})
+        check(repeated["draw_block"] and not repeated["camera_changed"] and client.call("get_map_info")["block_preview"] == pending, "repeated Draw brush activation retains the pending footprint")
+        client.call("execute_editor_command", {"command": "clip_mode"}, error=True)
+        rejected = client.call("get_map_info")
+        check(rejected["block_preview"] == pending and rejected["spatial"]["draw_block"] and not rejected["clipping"]["enabled"], "Clip mode without a brush selection preserves the pending drawing review")
+        drawn = client.call("draw_block", footprint)["id"]
+        authored = client.call("get_objects", {"ids": [drawn]})
+        check(client.call("get_map_info")["world_brushes"] == 1 and client.call("get_history")["undo_count"] == initial_history + 1, "the subsequent planar footprint creates exactly one brush and one Undo step")
+        perspective = client.call("set_camera", {"projection": "perspective"})
+        repeated = client.call("execute_editor_command", {"command": "draw_brush"})
+        check(repeated["draw_block"] and repeated["projection"] == "perspective" and not repeated["camera_changed"] and client.call("get_camera") == perspective, "reactivating an already active drawing mode preserves an explicitly chosen Perspective camera")
+        client.call("set_spatial_settings", {"draw_block": False})
+        check(client.call("get_map_info")["spatial"] == spatial, "the existing drawing setter leaves the mode with grid, depth and elevation preserved")
+        cut = {"plane": {"normal": [1, 0, 0], "distance": 32}, "keep": "both", "preview": True}
+        clipping = client.call("execute_editor_command", {"command": "clip_mode"})
+        check(clipping["clip_tool"] and clipping["projection"] == "top" and clipping["camera_changed"], "Clip mode enters Top from Perspective for the selected drawn brush")
+        client.call("clip_brushes", cut)
+        pending = client.call("get_clip_preview")["preview"]
+        clipping = client.call("execute_editor_command", {"command": "clip_mode"})
+        check(clipping["clip_tool"] and not clipping["camera_changed"] and client.call("get_clip_preview")["preview"] == pending and client.call("get_objects", {"ids": [drawn]}) == authored and client.call("get_history")["undo_count"] == initial_history + 1, "repeated Clip mode activation preserves the cut review without committing geometry")
+        client.call("commit_clip_preview")
+        check(client.call("get_map_info")["world_brushes"] == 2 and client.call("get_history")["undo_count"] == initial_history + 2, "explicit Apply cut splits the drawn brush in one Undo step")
+        client.call("undo")
+        check(client.call("get_objects", {"ids": [drawn]}) == authored, "Undo restores the uncut drawn brush")
+        client.call("undo")
+        check(client.call("get_map_info")["world_brushes"] == 0 and client.call("get_history")["undo_count"] == initial_history, "the next Undo removes only the footprint creation")
+        check(path.read_bytes() == saved_bytes and state(client)["current"] == custom, "authoring mode commands leave the saved bindings unchanged")
     finally:
         client.close()
     return checks

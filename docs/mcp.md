@@ -924,7 +924,8 @@ only with viewport focus; text fields retain native text editing.
 `bindings` must contain `undo`, `redo`, `frame_selection`, `delete_selection`
 and `duplicate_selection`. Optional `perspective`, `top`, `front`, `side`,
 `objects`, `faces`, `show_grid`, `snap_to_grid`, `tool_textures`,
-`selection_outlines`, `select_tool`, `move_tool`, `rotate_tool` and `scale_tool`
+`selection_outlines`, `select_tool`, `move_tool`, `rotate_tool`, `scale_tool`,
+`draw_brush` and `clip_mode`
 slots default to unbound when omitted, including existing
 version-1 files. Loading preserves the existing file bytes until an explicit Save.
 Each value is exactly two nullable slots; each
@@ -980,6 +981,21 @@ bindings are unbound. They use the same `set_spatial_settings`/`set_view`
 operations as the checkboxes, including existing spatial/drag cleanup; tool
 texture visibility also retires area/volume/paint gestures. They do not write
 map data, Undo history or saved grid/preview defaults. `aspect` is unused.
+
+`draw_brush` activates planar drawing through `set_spatial_settings` and returns
+`draw_block`. Entering from Perspective selects Top without creating a brush;
+the next footprint uses the configured grid, elevation, depth and material.
+`clip_mode` activates `set_clip_tool` and returns `clip_tool`. Entering requires
+selected brushes or brush entities and selects Top from Perspective.
+Committing geometry still requires **Apply cut** or `commit_clip_preview`.
+Repeated activation preserves the current drawing/cut preview, plane drag and
+camera, including Perspective when the mode is already active.
+Use `set_spatial_settings {"draw_block":false}` or
+`set_clip_tool {"enabled":false}` to leave a mode. Rejected entry preserves the
+current draft. Both commands
+also return the actual `projection` and `camera_changed` boolean, use the normal
+setter cleanup and leave map/history and saved preferences unchanged. Their
+factory bindings are unbound and `aspect` is unused.
 
 ### Saved preview defaults
 

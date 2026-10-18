@@ -252,14 +252,14 @@ fn shortcut_controls_save_atomically_report_conflicts_and_preserve_text_field_ed
     assert!(controller.window.get_can_save());
     crate::ui::tests::save_ui_snapshot(controller.window.window(), "selection-mode-shortcuts");
     let visible_commands = [
-        "Show grid",
-        "Snap to grid",
         "Tool textures",
         "Selection outlines",
         "Select tool",
         "Move handles",
         "Rotate handles",
         "Scale handles",
+        "Draw brush",
+        "Clip mode",
     ];
     let list = i_slint_backend_testing::ElementHandle::find_by_element_id(
         &controller.window,
@@ -317,7 +317,7 @@ fn shortcut_controls_save_atomically_report_conflicts_and_preserve_text_field_ed
     scroll_to_commands();
     i_slint_backend_testing::ElementHandle::find_by_accessible_label(
         &controller.window,
-        "Move handles",
+        "Clip mode",
     )
     .next()
     .unwrap()
@@ -325,7 +325,7 @@ fn shortcut_controls_save_atomically_report_conflicts_and_preserve_text_field_ed
     i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(250));
     controller.window.window().take_snapshot().unwrap();
     assert_commands_visible();
-    assert_eq!(controller.window.get_selected_label(), "Move handles");
+    assert_eq!(controller.window.get_selected_label(), "Clip mode");
     assert_eq!(controller.window.get_primary_key(), 0);
     crate::ui::tests::save_ui_snapshot(controller.window.window(), "keyboard-shortcuts");
     controller.window.invoke_choose("undo".into());

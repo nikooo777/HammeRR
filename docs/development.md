@@ -480,8 +480,15 @@ existing draft cleanup, source/history/default-file preservation, originating
 UI/MCP admission and peer isolation. Transform-tool fixtures use actual held
 selection/texture paint and handle gestures, rejected/no-op settings, late
 release, preserved tool options, configured form keys, a handle edit and Undo,
-and routed A/B draft/history isolation with shared bindings. Version-1 files
-with five, nine, eleven or fifteen
+and routed A/B draft/history isolation with shared bindings. Authoring-mode
+checks configure Draw brush and Clip mode through the actual form, dispatch
+their viewport keys, retain the planar camera and spatial dimensions, reject
+clipping without a selection while retaining the pending brush review, preserve
+an active cut-plane drag across repeated activation, and
+reject both keys after document drain. The production validator completes a
+draw/clip/Apply/Undo workflow and proves mode activation alone adds no history.
+Routed stdio checks retain the peer's modes, camera, preview, selection and
+history. Version-1 files with five, nine, eleven, fifteen or nineteen
 command fields keep their bytes and chords while missing extension slots load
 unbound, then round-trip through explicit Save.
 

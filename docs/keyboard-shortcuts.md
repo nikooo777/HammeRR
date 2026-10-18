@@ -12,11 +12,12 @@ normal editing keys.
 | Selection | Objects, Faces |
 | Visibility and grid | Show grid, Snap to grid, Tool textures, Selection outlines |
 | Transform tools | Select tool, Move handles, Rotate handles, Scale handles |
+| Authoring modes | Draw brush, Clip mode |
 
-Projection, selection-mode, toggle and transform-tool commands start **Unbound**,
+Projection, selection-mode, toggle, transform-tool and authoring-mode commands start **Unbound**,
 including when an older saved shortcuts file loads.
 
-1. In **Viewport**, click **Keyboard shortcuts…**.
+1. In **VIEWPORT**, click **Keyboard shortcuts…**.
 2. Choose a command in the list. Scroll to reach later rows.
    Compare **Current form** with **Factory bindings**.
 3. Set **Primary** and **Alternate** using the key dropdowns and **Ctrl** and
@@ -40,7 +41,18 @@ including when an older saved shortcuts file loads.
    settings, angle snap and Objects/Faces mode. Changing tools cancels
    pending transforms and held paint strokes; releasing the old gesture cannot apply it. Repeating
    the active tool keeps its current transform preview.
-6. **Reload saved** loads and activates the saved file. **Reset saved shortcuts**
+6. **Draw brush** activates planar brush drawing. From Perspective, entering it
+   selects Top without creating a brush. Draw a footprint to create the brush;
+   **Select objects** leaves drawing mode. Depth, elevation, grid and material
+   choices stay configured. Repeated presses keep the current drawing preview
+   and camera, including a Perspective view selected while drawing is active.
+   **Clip mode** activates clipping for selected brushes or brush entities. From
+   Perspective, entering it selects Top. Choose a plane and click **Apply cut**
+   to change geometry or **Cancel cut** to leave clipping. Repeated presses keep
+   the cut preview and any current plane drag. Without an eligible selection,
+   the command reports an error and keeps the current draft. Both modes use the
+   ordinary tool cleanup.
+7. **Reload saved** loads and activates the saved file. **Reset saved shortcuts**
    explicitly writes and activates factory values. **Cancel**, Escape or closing
    the window discards unsaved form changes; it does not undo a saved change.
 
@@ -51,8 +63,8 @@ Limits:
 - Keys are logical A–Z, F1–F12, Delete and Backspace, with exact Ctrl/Shift
   modifiers. Alt/Meta bindings, physical scan codes and key sequences are absent.
 - Escape, arrows, PageUp/PageDown, camera W/A/S/D/Q/E with or without Shift, and
-  Ctrl+N/O/S/C/X/V remain reserved. File, clipboard, camera movement, brush
-  drawing and clipping bindings cannot be changed here. Command availability
+  Ctrl+N/O/S/C/X/V remain reserved. File, clipboard and camera movement
+  bindings cannot be changed here. Command availability
   still follows editing context; transform handles require eligible object
   selection and the existing tool context.
 - An unavailable saved file shows an error and preserves active bindings.

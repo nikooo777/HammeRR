@@ -147,6 +147,20 @@ fn configured_view_keys_use_the_originating_admitted_callback_and_remember_camer
         controller.window.set_primary_shift(false);
         controller.window.invoke_edited();
     }
+    for (command, key) in [("draw_brush", "F10"), ("clip_mode", "F11")] {
+        controller.window.invoke_choose(command.into());
+        assert_eq!(controller.window.get_primary_key(), 0);
+        let key_index = controller
+            .window
+            .get_keys()
+            .iter()
+            .position(|value| value == key)
+            .unwrap();
+        controller.window.set_primary_key(key_index as i32);
+        controller.window.set_primary_control(false);
+        controller.window.set_primary_shift(true);
+        controller.window.invoke_edited();
+    }
     controller.window.invoke_save();
     assert_eq!(peer.shortcut_bindings(), lock(&shared).shortcut_bindings());
     let app = AppWindow::new().unwrap();
@@ -309,6 +323,143 @@ fn configured_view_keys_use_the_originating_admitted_callback_and_remember_camer
         session.undo(Actor::User).unwrap();
         assert_eq!(session.document().vmf(), &before);
     }
+    let history = lock(&shared).history_snapshot();
+    assert!(app.invoke_key(
+        crate::viewport::key_text(slint::platform::Key::F11).into(),
+        true,
+        false,
+        false,
+        false,
+        false,
+    ));
+    let spatial = lock(&shared).spatial();
+    assert_eq!(
+        lock(&shared).camera().projection,
+        render::Projection::Perspective
+    );
+    assert!(app.invoke_key(
+        crate::viewport::key_text(slint::platform::Key::F10).into(),
+        true,
+        false,
+        true,
+        false,
+        false,
+    ));
+    assert_eq!(
+        lock(&shared).spatial(),
+        editor_core::spatial::Settings {
+            draw_block: true,
+            ..spatial
+        }
+    );
+    assert_eq!(lock(&shared).camera(), remembered);
+    assert_eq!(lock(&shared).document().vmf(), &before);
+    assert_eq!(lock(&shared).history_snapshot(), history);
+    lock(&shared)
+        .select(&[], crate::session::SelectMode::Replace)
+        .unwrap();
+    lock(&shared)
+        .preview_block(DVec3::splat(256.0), DVec3::splat(320.0))
+        .unwrap();
+    let pending = lock(&shared).block_preview();
+    let view = lock(&shared).view_serial();
+    assert!(app.invoke_key(
+        crate::viewport::key_text(slint::platform::Key::F10).into(),
+        true,
+        false,
+        true,
+        false,
+        false,
+    ));
+    assert_eq!(lock(&shared).block_preview(), pending);
+    assert_eq!(lock(&shared).view_serial(), view);
+    assert!(app.invoke_key(
+        crate::viewport::key_text(slint::platform::Key::F11).into(),
+        true,
+        false,
+        true,
+        false,
+        false,
+    ));
+    assert!(app.get_message().contains("Select brushes"));
+    assert_eq!(lock(&shared).block_preview(), pending);
+    assert_eq!(lock(&shared).view_serial(), view);
+    assert!(!lock(&shared).clip_tool());
+    lock(&shared).cancel_block_preview();
+    lock(&shared)
+        .select(
+            &[map_core::ObjectId::Solid(before.world.solids[0].id)],
+            crate::session::SelectMode::Replace,
+        )
+        .unwrap();
+    assert!(app.invoke_key(
+        crate::viewport::key_text(slint::platform::Key::F11).into(),
+        true,
+        false,
+        true,
+        false,
+        false,
+    ));
+    assert!(lock(&shared).clip_tool());
+    assert!(!lock(&shared).spatial().draw_block);
+    let token = {
+        let mut session = lock(&shared);
+        session
+            .clip_brushes(
+                Actor::User,
+                &[map_core::ObjectId::Solid(before.world.solids[0].id)],
+                map_core::Plane {
+                    normal: DVec3::X,
+                    dist: 8.0,
+                },
+                map_core::clip::Keep::Both,
+                None,
+                true,
+            )
+            .unwrap();
+        let snapshot = session.clip_point_stamp();
+        session
+            .set_clip_handle_options(
+                crate::session::clip_drag::Options {
+                    snap: false,
+                    ..Default::default()
+                },
+                &snapshot,
+            )
+            .unwrap();
+        let snapshot = session.clip_point_stamp();
+        let token = session
+            .begin_clip_drag(render::handles::Handle::X, None, &snapshot)
+            .unwrap();
+        session
+            .update_clip_drag(token, None, Some(glam::DVec2::new(4.0, 0.0)))
+            .unwrap();
+        token
+    };
+    let preview = lock(&shared).render_document().vmf().clone();
+    let serials = {
+        let session = lock(&shared);
+        (session.scene_serial(), session.view_serial())
+    };
+    assert!(app.invoke_key(
+        crate::viewport::key_text(slint::platform::Key::F11).into(),
+        true,
+        false,
+        true,
+        false,
+        false,
+    ));
+    assert_eq!(lock(&shared).render_document().vmf(), &preview);
+    {
+        let session = lock(&shared);
+        assert_eq!((session.scene_serial(), session.view_serial()), serials);
+    }
+    lock(&shared).finish_clip_drag(token).unwrap();
+    lock(&shared).set_clip_tool(Actor::User, false).unwrap();
+    assert_eq!(lock(&shared).document().vmf(), &before);
+    assert_eq!(lock(&shared).history_snapshot(), history);
+    assert!(!peer.spatial().draw_block);
+    assert!(!peer.clip_tool());
     document.shutdown().unwrap();
     let bytes = std::fs::read(
         directory
@@ -339,6 +490,18 @@ fn configured_view_keys_use_the_originating_admitted_callback_and_remember_camer
             false
         ));
     }
+    for key in [slint::platform::Key::F10, slint::platform::Key::F11] {
+        assert!(app.invoke_key(
+            crate::viewport::key_text(key).into(),
+            true,
+            false,
+            true,
+            false,
+            false
+        ));
+    }
+    assert!(!lock(&shared).spatial().draw_block);
+    assert!(!lock(&shared).clip_tool());
     assert_eq!(app.get_message(), "the document is closed");
     assert_eq!(lock(&shared).camera(), remembered);
     assert!(!lock(&shared).face_mode());

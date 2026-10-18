@@ -33,10 +33,12 @@ pub enum Command {
     MoveTool,
     RotateTool,
     ScaleTool,
+    DrawBrush,
+    ClipMode,
 }
 
 impl Command {
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 21] = [
         Self::Undo,
         Self::Redo,
         Self::FrameSelection,
@@ -56,6 +58,8 @@ impl Command {
         Self::MoveTool,
         Self::RotateTool,
         Self::ScaleTool,
+        Self::DrawBrush,
+        Self::ClipMode,
     ];
 
     pub fn label(self) -> &'static str {
@@ -79,6 +83,8 @@ impl Command {
             Self::MoveTool => "Move handles",
             Self::RotateTool => "Rotate handles",
             Self::ScaleTool => "Scale handles",
+            Self::DrawBrush => "Draw brush",
+            Self::ClipMode => "Clip mode",
         }
     }
 }
@@ -171,6 +177,10 @@ pub struct Bindings {
     pub rotate_tool: Slots,
     #[serde(default)]
     pub scale_tool: Slots,
+    #[serde(default)]
+    pub draw_brush: Slots,
+    #[serde(default)]
+    pub clip_mode: Slots,
 }
 
 fn chord(key: &str, control: bool, shift: bool) -> Option<Chord> {
@@ -206,6 +216,8 @@ impl Default for Bindings {
             move_tool: [None, None],
             rotate_tool: [None, None],
             scale_tool: [None, None],
+            draw_brush: [None, None],
+            clip_mode: [None, None],
         }
     }
 }
@@ -232,6 +244,8 @@ impl Bindings {
             Command::MoveTool => &self.move_tool,
             Command::RotateTool => &self.rotate_tool,
             Command::ScaleTool => &self.scale_tool,
+            Command::DrawBrush => &self.draw_brush,
+            Command::ClipMode => &self.clip_mode,
         }
     }
 
@@ -256,6 +270,8 @@ impl Bindings {
             Command::MoveTool => &mut self.move_tool,
             Command::RotateTool => &mut self.rotate_tool,
             Command::ScaleTool => &mut self.scale_tool,
+            Command::DrawBrush => &mut self.draw_brush,
+            Command::ClipMode => &mut self.clip_mode,
         }
     }
 

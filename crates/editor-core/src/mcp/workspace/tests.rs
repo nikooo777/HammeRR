@@ -145,6 +145,16 @@ async fn production_stdio_pins_two_documents_and_only_last_close_stops_open_inpu
         control: false,
         shift: false,
     });
+    configured.draw_brush[0] = Some(crate::shortcuts::Chord {
+        key: "F9".into(),
+        control: false,
+        shift: false,
+    });
+    configured.clip_mode[0] = Some(crate::shortcuts::Chord {
+        key: "F10".into(),
+        control: false,
+        shift: false,
+    });
     let saved = rpc(
         &mut client_write,
         &mut lines,
@@ -173,6 +183,48 @@ async fn production_stdio_pins_two_documents_and_only_last_close_stops_open_inpu
         )
         .await;
         assert_eq!(value(&result["result"])["tool"], tool);
+        assert_eq!(lock(peer.session()).transform_tool(), peer_tool);
+        assert_eq!(lock(peer.session()).block_preview(), peer_preview);
+        assert_eq!(lock(peer.session()).selected_ids(), peer_selection);
+        assert_eq!(lock(peer.session()).history_snapshot(), peer_history);
+        assert_eq!(lock(peer.session()).document().vmf(), &before);
+    }
+    let created = rpc(
+        &mut client_write,
+        &mut lines,
+        110,
+        "create_block",
+        json!({"document_id":first.selector(),"mins":[0,0,0],"maxs":[32,32,32]}),
+    )
+    .await;
+    value(&created["result"]);
+    let source = lock(original.session()).document().vmf().clone();
+    let history = lock(original.session()).history_snapshot();
+    let peer_camera = lock(peer.session()).camera();
+    let peer_spatial = lock(peer.session()).spatial();
+    for (index, (command, field, enabled)) in [
+        ("draw_brush", "draw_block", true),
+        ("draw_brush", "draw_block", true),
+        ("clip_mode", "clip_tool", true),
+        ("clip_mode", "clip_tool", true),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let result = rpc(
+            &mut client_write,
+            &mut lines,
+            111 + index as u64,
+            "execute_editor_command",
+            json!({"document_id":first.selector(),"command":command}),
+        )
+        .await;
+        assert_eq!(value(&result["result"])[field], enabled);
+        assert_eq!(lock(original.session()).document().vmf(), &source);
+        assert_eq!(lock(original.session()).history_snapshot(), history);
+        assert_eq!(lock(peer.session()).camera(), peer_camera);
+        assert_eq!(lock(peer.session()).spatial(), peer_spatial);
+        assert!(!lock(peer.session()).clip_tool());
         assert_eq!(lock(peer.session()).transform_tool(), peer_tool);
         assert_eq!(lock(peer.session()).block_preview(), peer_preview);
         assert_eq!(lock(peer.session()).selected_ids(), peer_selection);
@@ -215,6 +267,17 @@ async fn production_stdio_pins_two_documents_and_only_last_close_stops_open_inpu
     )
     .await;
     assert_eq!(unknown["result"]["isError"], true);
+    let rejected = rpc(
+        &mut client_write,
+        &mut lines,
+        115,
+        "execute_editor_command",
+        json!({"document_id":first.selector(),"command":"draw_brush"}),
+    )
+    .await;
+    assert_eq!(rejected["result"]["isError"], true);
+    assert_eq!(lock(peer.session()).spatial(), peer_spatial);
+    assert_eq!(lock(peer.session()).document().vmf(), &before);
     let remaining = rpc(&mut client_write, &mut lines, 10, "get_map_info", json!({})).await;
     assert_eq!(
         remaining["result"]["_meta"][DOCUMENT_META]["document_id"],

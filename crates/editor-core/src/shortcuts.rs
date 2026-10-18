@@ -23,10 +23,12 @@ pub enum Command {
     Top,
     Front,
     Side,
+    Objects,
+    Faces,
 }
 
 impl Command {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 11] = [
         Self::Undo,
         Self::Redo,
         Self::FrameSelection,
@@ -36,6 +38,8 @@ impl Command {
         Self::Top,
         Self::Front,
         Self::Side,
+        Self::Objects,
+        Self::Faces,
     ];
 
     pub fn label(self) -> &'static str {
@@ -49,6 +53,8 @@ impl Command {
             Self::Top => "Top",
             Self::Front => "Front",
             Self::Side => "Side",
+            Self::Objects => "Objects",
+            Self::Faces => "Faces",
         }
     }
 }
@@ -121,6 +127,10 @@ pub struct Bindings {
     pub front: Slots,
     #[serde(default)]
     pub side: Slots,
+    #[serde(default)]
+    pub objects: Slots,
+    #[serde(default)]
+    pub faces: Slots,
 }
 
 fn chord(key: &str, control: bool, shift: bool) -> Option<Chord> {
@@ -146,6 +156,8 @@ impl Default for Bindings {
             top: [None, None],
             front: [None, None],
             side: [None, None],
+            objects: [None, None],
+            faces: [None, None],
         }
     }
 }
@@ -162,6 +174,8 @@ impl Bindings {
             Command::Top => &self.top,
             Command::Front => &self.front,
             Command::Side => &self.side,
+            Command::Objects => &self.objects,
+            Command::Faces => &self.faces,
         }
     }
 
@@ -176,6 +190,8 @@ impl Bindings {
             Command::Top => &mut self.top,
             Command::Front => &mut self.front,
             Command::Side => &mut self.side,
+            Command::Objects => &mut self.objects,
+            Command::Faces => &mut self.faces,
         }
     }
 

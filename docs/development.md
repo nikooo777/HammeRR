@@ -2893,3 +2893,18 @@ and explicit-ID bypass, real model/helper/rope/instance owners and preservation
 of face, geometry and material/projection work. The real inline controls write
 `selection-filters.png` when `HAMMERR_UI_SNAPSHOTS` names an existing directory;
 they require no desktop input.
+
+### Selection-mode keyboard commands
+
+```sh
+cargo test -p editor-core --features mcp,test-support selection_mode_commands
+cargo test -p editor-core --features mcp,test-support older_version_one_bindings
+cargo test -p editor-core --features mcp,test-support view_commands_share_the_schema
+cargo test -p editor configured_view_keys_use_the_originating_admitted_callback_and_remember_cameras
+```
+
+Objects/Faces use the ordinary mode operation, including same-mode component
+exit and changed-mode gesture retirement. Old five-/nine-command files retain
+bytes and existing chords until explicit Save. The existing software shortcut
+form also writes `selection-mode-shortcuts.png` with
+`HAMMERR_UI_SNAPSHOTS`; it needs no desktop window or keyboard input.

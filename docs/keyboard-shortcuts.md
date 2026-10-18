@@ -3,13 +3,15 @@
 # Keyboard shortcuts
 
 Choose two bindings each for Undo, Redo, Frame selection, Delete selection and
-Duplicate selection, plus Perspective, Top, Front and Side projection commands.
-Projection commands start **Unbound**, including when an older saved shortcuts
+Duplicate selection, Perspective, Top, Front and Side projection commands, and
+Objects and Faces selection modes. Projection and selection-mode commands start
+**Unbound**, including when an older saved shortcuts
 file loads. Bindings work while the viewport has keyboard focus; text fields
 keep their normal editing keys.
 
 1. In **Viewport**, click **Keyboard shortcuts…**.
-2. Choose a command, including **Perspective**, **Top**, **Front** or **Side**.
+2. Choose a command, including **Perspective**, **Top**, **Front**, **Side**,
+   **Objects** or **Faces**. Scroll the command list to reach later rows.
    Compare **Current form** with **Factory bindings**.
 3. Set **Primary** and **Alternate** using the key dropdowns and **Ctrl** and
    **Shift** switches. Choose **Unbound** to remove a slot.
@@ -20,6 +22,10 @@ keep their normal editing keys.
    current binding.
    Projection bindings use the same per-view cameras as the viewport's projection
    controls and affect the document whose viewport received the key.
+   **Objects** and **Faces** match the **Selection** dropdown: changing modes
+   clears the selection and obsolete drafts or gestures. Entering Faces also
+   stops clipping and brush drawing. Either command exits component editing,
+   including when its selection mode is already active.
 6. **Reload saved** loads and activates the saved file. **Reset saved shortcuts**
    explicitly writes and activates factory values. **Cancel**, Escape or closing
    the window discards unsaved form changes; it does not undo a saved change.
@@ -49,3 +55,6 @@ Limits:
 - Bindings are local preferences. Saving them does not edit the map or Undo
   history. The factory shortcuts in [Editor basics](basics.md) remain useful
   when no saved configuration exists.
+- Objects/Faces commands change only the originating document's selection mode;
+  camera, map data and Undo history stay unchanged. Repeating the active mode
+  keeps ordinary selections and drafts, while still exiting component editing.

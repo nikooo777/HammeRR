@@ -787,7 +787,7 @@ only with viewport focus; text fields retain native text editing.
 | `reset` | Explicitly write and activate factory bindings, including malformed-file recovery. |
 
 `bindings` must contain `undo`, `redo`, `frame_selection`, `delete_selection`
-and `duplicate_selection`. Optional `perspective`, `top`, `front` and `side`
+and `duplicate_selection`. Optional `perspective`, `top`, `front`, `side`, `objects` and `faces`
 slots default to unbound when omitted, including existing version-1 files.
 Each value is exactly two nullable slots; each
 nonnull chord is `{"key":"F","control":false,"shift":false}`. Keys are
@@ -805,7 +805,7 @@ nonblocking Linux lock. Changed directories require explicit Reload. Programs
 that ignore the lock remain outside this guarantee. Configuration
 changes preserve map/history/selection/camera and active drafts.
 
-`execute_editor_command` accepts `command` using these nine identifiers.
+`execute_editor_command` accepts `command` using those eleven identifiers.
 Undo/Redo perform one step and return a nullable label; Frame accepts optional
 positive finite `aspect` (default 1). Delete uses the current object selection;
 Duplicate copies it by `[grid,grid,0]` and selects the copies. Object edits reject
@@ -813,8 +813,15 @@ empty selection and component-editing scope. This shared dispatcher does not
 synthesize keyboard input. `perspective`, `top`, `front` and `side` use the same
 per-projection camera memory as the viewport controls and return the resulting
 projection with `camera_changed:true`. They affect only the originating Session,
-leaving the map, selection and history unchanged. The four factory bindings are
-unbound. Existing explicit-ID/offset object tools remain
+leaving the map, selection and history unchanged. The four projection factory bindings are
+unbound. `objects` and `faces` call the same selection-mode operation as
+`set_selection_mode` and return `mode` plus `mode_changed` for the actual boolean
+transition. Both default unbound. Either command exits component editing;
+a changed mode clears selection and obsolete drafts/gestures, and entering Faces
+stops clipping/brush drawing. Repeating the current mode otherwise preserves
+ordinary selections and drafts. Object-type filters remain configured across
+mode changes. Camera, source and Undo remain unchanged. Existing
+explicit-ID/offset object tools remain
 available. See [Keyboard shortcuts](keyboard-shortcuts.md).
 
 ### Saved preview defaults

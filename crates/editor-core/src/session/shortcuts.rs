@@ -159,6 +159,12 @@ impl Session {
             Command::Top => self.set_projection(actor, Projection::Top),
             Command::Front => self.set_projection(actor, Projection::Front),
             Command::Side => self.set_projection(actor, Projection::Side),
+            Command::Objects | Command::Faces => {
+                let enabled = command == Command::Faces;
+                result["mode_changed"] = json!(self.face_mode() != enabled);
+                self.set_face_mode(enabled);
+                result["mode"] = json!(if self.face_mode() { "faces" } else { "objects" });
+            }
             Command::FrameSelection => {
                 self.frame_selection(actor, aspect)?;
                 result["camera_changed"] = json!(true);

@@ -94,7 +94,7 @@ fn registered_key_input_acts_live_then_consumes_terminal_calls_without_touching_
 }
 
 #[test]
-fn configured_projection_keys_use_the_originating_admitted_callback_and_remember_cameras() {
+fn configured_view_keys_use_the_originating_admitted_callback_and_remember_cameras() {
     i_slint_backend_testing::init_no_event_loop();
     let directory = tempfile::tempdir().unwrap();
     let authority =
@@ -119,7 +119,12 @@ fn configured_projection_keys_use_the_originating_admitted_callback_and_remember
         controller.window.get_commands().row_count(),
         editor_core::shortcuts::Command::ALL.len()
     );
-    for (command, key) in [("top", "F10"), ("perspective", "F11")] {
+    for (command, key) in [
+        ("top", "F10"),
+        ("perspective", "F11"),
+        ("objects", "F8"),
+        ("faces", "F9"),
+    ] {
         controller.window.invoke_choose(command.into());
         assert_eq!(controller.window.get_selected(), command);
         assert_eq!(controller.window.get_primary_key(), 0);
@@ -192,6 +197,23 @@ fn configured_projection_keys_use_the_originating_admitted_callback_and_remember
         false
     ));
     assert_eq!(lock(&shared).camera(), remembered);
+    for (key, enabled) in [
+        (slint::platform::Key::F9, true),
+        (slint::platform::Key::F8, false),
+    ] {
+        assert!(app.invoke_key(
+            crate::viewport::key_text(key).into(),
+            true,
+            false,
+            false,
+            false,
+            false,
+        ));
+        assert_eq!(lock(&shared).face_mode(), enabled);
+        assert_eq!(lock(&shared).camera(), remembered);
+        assert!(!peer.face_mode());
+    }
+    assert!(lock(&shared).selected_ids().is_empty());
     assert_eq!(lock(&shared).document().vmf(), &before);
     assert_eq!(lock(&shared).history_snapshot(), history);
     assert_eq!(peer.camera(), peer_camera);
@@ -205,7 +227,7 @@ fn configured_projection_keys_use_the_originating_admitted_callback_and_remember
     .unwrap();
     let log = lock(&shared).log_serial();
     assert!(app.invoke_key(
-        crate::viewport::key_text(slint::platform::Key::F11).into(),
+        crate::viewport::key_text(slint::platform::Key::F9).into(),
         true,
         false,
         false,
@@ -214,6 +236,7 @@ fn configured_projection_keys_use_the_originating_admitted_callback_and_remember
     ));
     assert_eq!(app.get_message(), "the document is closed");
     assert_eq!(lock(&shared).camera(), remembered);
+    assert!(!lock(&shared).face_mode());
     assert_eq!(lock(&shared).log_serial(), log);
     assert_eq!(peer.camera(), peer_camera);
     assert_eq!(

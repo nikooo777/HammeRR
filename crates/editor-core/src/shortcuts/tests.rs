@@ -10,6 +10,8 @@ fn factory_aliases_and_exact_modifiers_resolve_without_reserved_key_collisions()
         Command::Top,
         Command::Front,
         Command::Side,
+        Command::Objects,
+        Command::Faces,
     ] {
         assert_eq!(bindings.slots(command), &[None, None]);
     }
@@ -59,7 +61,7 @@ fn factory_aliases_and_exact_modifiers_resolve_without_reserved_key_collisions()
 }
 
 #[test]
-fn original_version_one_bindings_load_unbound_projection_slots_and_round_trip() {
+fn older_version_one_bindings_preserve_bytes_and_default_only_missing_extensions() {
     let directory = tempfile::tempdir().unwrap();
     let store = Store {
         directory: directory.path().into(),
@@ -76,7 +78,15 @@ fn original_version_one_bindings_load_unbound_projection_slots_and_round_trip() 
     });
     fs::write(store.path(), serde_json::to_vec(&original).unwrap()).unwrap();
     let source = store.read_source().unwrap();
+    let original_bytes = fs::read(store.path()).unwrap();
     let mut loaded = store.parse(&source).unwrap().unwrap();
+    assert_eq!(
+        Authority::configured(Ok(directory.path().into()))
+            .snapshot()
+            .current,
+        loaded
+    );
+    assert_eq!(fs::read(store.path()).unwrap(), original_bytes);
     let loaded_json = serde_json::to_value(&loaded).unwrap();
     for (command, slots) in original["bindings"].as_object().unwrap() {
         assert_eq!(&loaded_json[command], slots, "{command}");
@@ -86,15 +96,33 @@ fn original_version_one_bindings_load_unbound_projection_slots_and_round_trip() 
         Command::Top,
         Command::Front,
         Command::Side,
+        Command::Objects,
+        Command::Faces,
     ] {
         assert_eq!(loaded.slots(command), &[None, None]);
     }
     loaded.top[0] = chord("F8", false, false);
+    loaded.front[1] = chord("F9", true, true);
+    let mut nine = serde_json::json!({"version":1,"bindings":loaded});
+    for name in ["objects", "faces"] {
+        nine["bindings"].as_object_mut().unwrap().remove(name);
+    }
+    let nine_bytes = serde_json::to_vec_pretty(&nine).unwrap();
+    fs::write(store.path(), &nine_bytes).unwrap();
+    let authority = Authority::configured(Ok(directory.path().into()));
+    let source = store.read_source().unwrap();
+    let mut loaded = store.parse(&source).unwrap().unwrap();
+    assert_eq!(authority.snapshot().current, loaded);
+    assert_eq!(fs::read(store.path()).unwrap(), nine_bytes);
+    assert_eq!(loaded.objects, [None, None]);
+    assert_eq!(loaded.faces, [None, None]);
+    loaded.objects[0] = chord("F10", false, false);
+    loaded.faces[1] = chord("F11", true, false);
     let published = store.save_checked(loaded.clone(), &source).unwrap();
     let saved: serde_json::Value =
         serde_json::from_slice(&fs::read(store.path()).unwrap()).unwrap();
     assert_eq!(saved["version"], FORMAT_VERSION);
-    for (command, slots) in original["bindings"].as_object().unwrap() {
+    for (command, slots) in nine["bindings"].as_object().unwrap() {
         assert_eq!(&saved["bindings"][command], slots, "{command}");
     }
     assert_eq!(
@@ -109,10 +137,10 @@ fn original_version_one_bindings_load_unbound_projection_slots_and_round_trip() 
     );
     let preserved = fs::read(store.path()).unwrap();
     let mut conflicting = loaded.clone();
-    conflicting.perspective[0] = loaded.undo[0].clone();
+    conflicting.faces[0] = loaded.undo[0].clone();
     assert!(store.save(conflicting).is_err());
     let mut reserved = loaded;
-    reserved.side[0] = chord("W", false, false);
+    reserved.objects[0] = chord("W", false, false);
     assert!(store.save(reserved).is_err());
     assert_eq!(fs::read(store.path()).unwrap(), preserved);
 }

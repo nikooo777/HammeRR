@@ -259,3 +259,122 @@ fn object_shortcut_commands_reject_component_scope_without_discarding_its_state(
         }
     }
 }
+
+#[test]
+fn selection_mode_commands_keep_same_mode_drafts_and_retire_changed_mode_gestures() {
+    let (_directory, mut session) = fixture();
+    let ObjectId::Solid(solid) = session
+        .create_block(Actor::User, DVec3::ZERO, DVec3::splat(64.0), "test", false)
+        .unwrap()
+    else {
+        panic!()
+    };
+    session.set_camera(render::Camera::planar(
+        Projection::Top,
+        glam::Vec3::splat(32.0),
+        512.0,
+    ));
+    let face = map_core::surface::FaceId {
+        solid,
+        side: session.document().solid(solid).unwrap().sides[0].id,
+    };
+    let source = session.document().vmf().clone();
+    let history = session.history_snapshot();
+    let camera = session.camera();
+    session
+        .edit_faces(
+            Actor::User,
+            &[face],
+            map_core::surface::SurfaceEdit {
+                shift_u: Some(13.0),
+                ..Default::default()
+            },
+            false,
+            true,
+        )
+        .unwrap();
+    let token = session.face_preview_token();
+    let result = session
+        .execute_editor_command(Actor::Agent, Command::Objects, f32::NAN)
+        .unwrap();
+    assert_eq!(result["mode"], "objects");
+    assert_eq!(result["mode_changed"], false);
+    assert_eq!(session.face_preview_token(), token);
+    assert_eq!(session.selected_ids(), vec![ObjectId::Solid(solid)]);
+    session.cancel_face_preview();
+    session
+        .set_component_picking(
+            Some(super::super::component_picking::Kind::Vertex),
+            &[solid],
+            &session.component_stamp(),
+        )
+        .unwrap();
+    session
+        .execute_editor_command(Actor::User, Command::Objects, 1.0)
+        .unwrap();
+    assert!(session.component_picking().is_none());
+    session.set_clip_tool(Actor::User, true).unwrap();
+    let result = session
+        .execute_editor_command(Actor::User, Command::Faces, 1.0)
+        .unwrap();
+    assert_eq!(result["mode"], "faces");
+    assert_eq!(result["mode_changed"], true);
+    assert!(!session.clip_tool());
+    assert!(session.selected_ids().is_empty());
+    session.select_faces(&[face], SelectMode::Replace).unwrap();
+    session
+        .edit_faces(
+            Actor::User,
+            &[face],
+            map_core::surface::SurfaceEdit {
+                shift_v: Some(7.0),
+                ..Default::default()
+            },
+            false,
+            true,
+        )
+        .unwrap();
+    let token = session.face_preview_token();
+    let result = session
+        .execute_editor_command(Actor::Agent, Command::Faces, 1.0)
+        .unwrap();
+    assert_eq!(result["mode_changed"], false);
+    assert_eq!(session.selected_faces(), vec![face]);
+    assert_eq!(session.face_preview_token(), token);
+    let pointer = super::super::Pointer {
+        position: glam::DVec2::new(400.0, 250.0),
+        size: (1200, 800),
+    };
+    let end = super::super::Pointer {
+        position: glam::DVec2::new(800.0, 550.0),
+        ..pointer
+    };
+    let mut interaction = crate::interaction::Interaction::default();
+    interaction.down(&mut session, pointer, false).unwrap();
+    interaction.moved(&mut session, end).unwrap();
+    assert!(session.area_preview().is_some());
+    session
+        .execute_editor_command(Actor::User, Command::Objects, 1.0)
+        .unwrap();
+    assert!(session.face_preview_token().is_none());
+    assert!(session.area_preview().is_none());
+    assert!(interaction.up(&mut session, end).unwrap());
+    assert!(session.selected_faces().is_empty());
+    assert!(session.selected_ids().is_empty());
+    session
+        .set_spatial(
+            Actor::User,
+            crate::spatial::Update {
+                draw_block: Some(true),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    session
+        .execute_editor_command(Actor::User, Command::Faces, 1.0)
+        .unwrap();
+    assert!(!session.spatial().draw_block);
+    assert_eq!(session.document().vmf(), &source);
+    assert_eq!(session.history_snapshot(), history);
+    assert_eq!(session.camera(), camera);
+}

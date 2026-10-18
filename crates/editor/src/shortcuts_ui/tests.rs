@@ -244,6 +244,15 @@ fn shortcut_controls_save_atomically_report_conflicts_and_preserve_text_field_ed
         crate::ui::tests::assert_dialog_button_visible(&controller.window, label);
     }
     crate::ui::tests::save_ui_snapshot(controller.window.window(), "keyboard-shortcuts");
+    controller.window.invoke_choose("faces".into());
+    assert_eq!(controller.window.get_selected_label(), "Faces");
+    assert_eq!(controller.window.get_primary_key(), 0);
+    controller.window.set_primary_key(key_index("F9"));
+    controller.window.set_primary_shift(false);
+    controller.window.invoke_edited();
+    assert!(controller.window.get_can_save());
+    crate::ui::tests::save_ui_snapshot(controller.window.window(), "selection-mode-shortcuts");
+    controller.window.invoke_choose("undo".into());
     controller.window.set_primary_key(key_index("F7"));
     controller.window.invoke_edited();
     {

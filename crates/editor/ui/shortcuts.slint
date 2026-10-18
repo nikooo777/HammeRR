@@ -42,7 +42,7 @@ export component ShortcutsWindow inherits Window {
                 Text {text:"Factory bindings";width:240px;font-weight:600;}
             }
             ListView {
-                height: 320px;
+                height: 380px;
                 for row in root.commands: Rectangle {
                     height: 34px;
                     background: root.selected == row.command ? #2d4056 : #1a2430;

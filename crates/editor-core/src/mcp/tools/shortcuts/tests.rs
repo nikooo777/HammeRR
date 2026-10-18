@@ -64,7 +64,7 @@ fn shortcut_tools_share_persistence_and_the_typed_command_dispatcher() {
 }
 
 #[tokio::test]
-async fn projection_commands_share_the_schema_and_reject_after_originating_document_drain() {
+async fn view_commands_share_the_schema_and_reject_after_originating_document_drain() {
     use rmcp::model::{CallToolRequestParams, CallToolResponse, NumberOrString};
     use rmcp::service::{RequestContext, serve_directly};
     use std::time::Duration;
@@ -132,18 +132,37 @@ async fn projection_commands_share_the_schema_and_reject_after_originating_docum
     assert_eq!(lock(&shared).document().vmf(), &before);
     assert_eq!(lock(&shared).history_snapshot(), history);
     assert_eq!(lock(&shared).selected_ids(), selection);
+    let camera = lock(&shared).camera();
+    for (name, enabled, changed) in [
+        ("objects", false, false),
+        ("faces", true, true),
+        ("faces", true, false),
+        ("objects", false, true),
+    ] {
+        let request = CallToolRequestParams::new("execute_editor_command")
+            .with_arguments(json!({"command":name}).as_object().unwrap().clone());
+        let context = RequestContext::new(NumberOrString::Number(2), service.peer().clone());
+        let result = match server.call_tool(request, context).await.unwrap() {
+            CallToolResponse::Complete(result) => value(Ok(result)),
+            result => panic!("unexpected command response: {result:?}"),
+        };
+        assert_eq!(result["mode"], name);
+        assert_eq!(result["mode_changed"], changed);
+        assert_eq!(lock(&shared).face_mode(), enabled);
+    }
+    assert!(lock(&shared).selected_ids().is_empty());
+    assert_eq!(lock(&shared).camera(), camera);
+    assert_eq!(lock(&shared).document().vmf(), &before);
+    assert_eq!(lock(&shared).history_snapshot(), history);
+    assert!(!peer.face_mode());
     assert_eq!(peer.camera(), peer_camera);
     assert_eq!(peer.document().vmf(), &peer_source);
     assert_eq!(peer.keyboard_shortcuts_state(), bindings);
     document.shutdown().unwrap();
     let camera = lock(&shared).camera();
     let log = lock(&shared).log_serial();
-    let request = CallToolRequestParams::new("execute_editor_command").with_arguments(
-        json!({"command":"perspective"})
-            .as_object()
-            .unwrap()
-            .clone(),
-    );
+    let request = CallToolRequestParams::new("execute_editor_command")
+        .with_arguments(json!({"command":"faces"}).as_object().unwrap().clone());
     let context = RequestContext::new(NumberOrString::Number(2), service.peer().clone());
     let result = match tokio::time::timeout(TIMEOUT, server.call_tool(request, context))
         .await
@@ -159,6 +178,7 @@ async fn projection_commands_share_the_schema_and_reject_after_originating_docum
         "the document is closed"
     );
     assert_eq!(lock(&shared).camera(), camera);
+    assert!(!lock(&shared).face_mode());
     assert_eq!(lock(&shared).log_serial(), log);
     tokio::time::timeout(TIMEOUT, service.cancel())
         .await

@@ -9,6 +9,7 @@ use crate::preference_file::{CoordinatedFile, ObservedSource, Publication, SaveE
 
 pub const FILE_NAME: &str = "shortcuts.json";
 pub const MAX_FILE_BYTES: u64 = 16 * 1024;
+pub const MAX_QUERY_BYTES: usize = 128;
 const FORMAT_VERSION: u32 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -141,6 +142,24 @@ impl Chord {
 
 pub type Slots = [Option<Chord>; 2];
 
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct CommandRow {
+    pub command: Command,
+    pub label: &'static str,
+    pub bindings: Slots,
+    pub display: String,
+    pub factory_display: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CommandSearch {
+    pub query: String,
+    pub snapshot: String,
+    pub total: usize,
+    pub matched: usize,
+    pub commands: Vec<CommandRow>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Bindings {
@@ -223,6 +242,65 @@ impl Default for Bindings {
 }
 
 impl Bindings {
+    pub fn command_rows(&self) -> Vec<CommandRow> {
+        let factory = Self::default();
+        Command::ALL
+            .into_iter()
+            .map(|command| CommandRow {
+                command,
+                label: command.label(),
+                bindings: self.slots(command).clone(),
+                display: self.label(command),
+                factory_display: factory.label(command),
+            })
+            .collect()
+    }
+
+    pub fn find_commands(&self, query: &str) -> Result<Vec<CommandRow>, String> {
+        if query.len() > MAX_QUERY_BYTES {
+            return Err(format!(
+                "Command search is limited to {MAX_QUERY_BYTES} UTF-8 bytes"
+            ));
+        }
+        let mut bindings = Self::default();
+        for command in Command::ALL {
+            for (slot, source) in bindings
+                .slots_mut(command)
+                .iter_mut()
+                .zip(self.slots(command))
+            {
+                *slot = match source {
+                    Some(chord) => Some(Chord {
+                        key: canonical_key(&chord.key)
+                            .ok_or("Command search requires supported logical binding keys")?,
+                        control: chord.control,
+                        shift: chord.shift,
+                    }),
+                    None => None,
+                };
+            }
+        }
+        let query = query.to_lowercase();
+        let terms = query.split_whitespace().collect::<Vec<_>>();
+        Ok(bindings
+            .command_rows()
+            .into_iter()
+            .filter(|row| {
+                let id = serde_json::to_value(row.command).unwrap();
+                let fields = [
+                    row.label,
+                    id.as_str().unwrap(),
+                    &row.display,
+                    &row.factory_display,
+                ]
+                .map(str::to_lowercase);
+                terms
+                    .iter()
+                    .all(|term| fields.iter().any(|field| field.contains(*term)))
+            })
+            .collect())
+    }
+
     pub fn slots(&self, command: Command) -> &Slots {
         match command {
             Command::Undo => &self.undo,

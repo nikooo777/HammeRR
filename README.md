@@ -183,8 +183,8 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 
 | Keyboard shortcuts | Navigation defaults |
 | --- | --- |
-| ![Command bindings with modifier controls and saved preferences](docs/images/keyboard-shortcuts.png) | ![Shared fly speed and explicit startup defaults](docs/images/navigation-defaults.png) |
-| Bind editing actions, projection views and Objects/Faces selection modes to your preferred keys. | Set camera fly speed from the editor or MCP and explicitly save startup defaults. |
+| ![Filtered command bindings with retained shortcut drafts](docs/images/keyboard-shortcuts-search.png) | ![Shared fly speed and explicit startup defaults](docs/images/navigation-defaults.png) |
+| Search commands and bind editing actions, projection views and selection modes to your preferred keys. | Set camera fly speed from the editor or MCP and explicitly save startup defaults. |
 
 [Keyboard shortcuts →](docs/keyboard-shortcuts.md) · [Navigation defaults →](docs/navigation-defaults.md)
 

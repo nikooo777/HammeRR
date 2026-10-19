@@ -23,7 +23,7 @@ impl Snapshot {
 
     pub fn report(&self) -> Value {
         let factory = Bindings::default();
-        let rows = Command::ALL.map(|command| json!({"command":command,"label":command.label(),"bindings":self.current.slots(command),"display":self.current.label(command),"factory_display":factory.label(command)}));
+        let rows = self.current.command_rows();
         json!({"snapshot":self.stamp(),"current":self.current,"factory_defaults":factory,
             "ready":self.ready,"stored":self.stored,"error":self.error,"path":self.path,"commands":rows,
             "limits":{"slots_per_command":2,"file_bytes":MAX_FILE_BYTES},

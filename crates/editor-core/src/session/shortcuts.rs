@@ -1,7 +1,7 @@
 use super::{Actor, SelectMode, Session};
 use crate::{
     identity::id_string,
-    shortcuts::{Authority, Bindings, Chord, Command, Snapshot},
+    shortcuts::{Authority, Bindings, Chord, Command, CommandSearch, Snapshot},
 };
 use glam::DVec3;
 use map_core::{ObjectId, edit};
@@ -93,6 +93,22 @@ impl Session {
 
     pub fn keyboard_shortcuts_state(&self) -> Value {
         self.keyboard_shortcuts_snapshot().report()
+    }
+
+    pub fn find_editor_commands(
+        &self,
+        query: &str,
+        bindings: Option<&Bindings>,
+    ) -> Result<CommandSearch, String> {
+        let snapshot = self.keyboard_shortcuts_snapshot();
+        let commands = bindings.unwrap_or(&snapshot.current).find_commands(query)?;
+        Ok(CommandSearch {
+            query: query.trim().into(),
+            snapshot: snapshot.stamp(),
+            total: Command::ALL.len(),
+            matched: commands.len(),
+            commands,
+        })
     }
 
     pub fn change_keyboard_shortcuts(

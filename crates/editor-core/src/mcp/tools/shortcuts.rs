@@ -24,8 +24,31 @@ pub struct EditorCommandArgs {
     aspect: Option<f32>,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FindEditorCommandsArgs {
+    #[serde(default)]
+    query: String,
+    bindings: Option<Box<Bindings>>,
+}
+
 #[tool_router(router = shortcut_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
+    #[tool(
+        description = "Search the same 21-command catalog as Keyboard shortcuts… → Search commands. query is at most 128 UTF-8 bytes; case-insensitive whitespace-separated literal terms must all match a command label, typed ID, current/form binding display or factory binding display. Empty query returns every command in catalog order. Optional complete typed bindings searches an unsaved form without activating it; duplicate/reserved draft chords remain searchable, unsupported key names and unknown fields reject. Returns query, shared preference snapshot, total, matched and command rows. Reads current in-memory settings only; no command execution, storage read/write, map/history/camera or preference changes.",
+        annotations(read_only_hint = true)
+    )]
+    pub(in crate::mcp) fn find_editor_commands(
+        &self,
+        Parameters(args): Parameters<FindEditorCommandsArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session()
+                .find_editor_commands(&args.query, args.bindings.as_deref())
+                .map(|report| json!(report))
+        })
+    }
+
     #[tool(
         description = "Inspect the shared viewport shortcut configuration: undo, redo, frame_selection, delete_selection, duplicate_selection, perspective, top, front, side, objects, faces, show_grid, snap_to_grid, tool_textures, selection_outlines, select_tool, move_tool, rotate_tool, scale_tool, draw_brush and clip_mode, with exact primary/alternate nullable chord slots, factory defaults, command labels, scope/reserved keys, preference snapshot, storage path and load errors. Projection, selection-mode, viewport-toggle, transform-tool and authoring-mode commands are unbound by default, including older saved configurations. Text fields retain native editing. Saved shortcuts load at startup; malformed storage stays untouched and current valid bindings remain usable. No map/history/camera mutation.",
         annotations(read_only_hint = true)

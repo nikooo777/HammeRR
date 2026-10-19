@@ -1,4 +1,4 @@
-import {Button, CheckBox, ComboBox, ListView} from "std-widgets.slint";
+import {Button, CheckBox, ComboBox, LineEdit, ListView} from "std-widgets.slint";
 
 export struct ShortcutRow { command: string, label: string, current: string, factory: string }
 
@@ -22,6 +22,11 @@ export component ShortcutsWindow inherits Window {
     in property <string> storage;
     in property <string> message;
     in property <bool> can-save;
+    in-out property <string> search;
+    in property <string> result-count;
+    in property <string> search-error;
+    in property <bool> has-matches: true;
+    callback filter-commands();
     callback choose(string);
     callback edited();
     callback save();
@@ -37,12 +42,19 @@ export component ShortcutsWindow inherits Window {
             Text {text:"Keyboard shortcuts";font-size:24px;font-weight:600;}
             Text {text:"These commands run while the viewport has keyboard focus. Text fields keep their normal editing shortcuts. Save shortcuts applies your changes now and at startup.";wrap:word-wrap;color:#b6c1cf;}
             HorizontalLayout {
+                spacing: 8px;
+                LineEdit { text <=> root.search; placeholder-text: "Label, command ID or binding"; accessible-label: "Search commands"; horizontal-stretch: 1; edited => { root.filter-commands(); } }
+                Button { text: "Clear search"; enabled: root.search != ""; clicked => { root.search = ""; root.filter-commands(); } }
+                Text { text: root.result-count; vertical-alignment: center; }
+            }
+            if root.search-error != "": Text { text: root.search-error; color: #e3c597; wrap: word-wrap; }
+            HorizontalLayout {
                 Text {text:"Command";width:180px;font-weight:600;}
                 Text {text:"Current form";horizontal-stretch:1;font-weight:600;}
                 Text {text:"Factory bindings";width:240px;font-weight:600;}
             }
             commands-list := ListView {
-                height: 380px;
+                height: root.search-error == "" ? 330px : 300px;
                 for row in root.commands: Rectangle {
                     height: max(34px, row-layout.min-height);
                     background: root.selected == row.command ? #2d4056 : #1a2430;
@@ -54,20 +66,20 @@ export component ShortcutsWindow inherits Window {
                     }
                 }
             }
-            Text {text:root.selected-label;font-weight:600;}
+            Text {text:root.has-matches ? root.selected-label : "No commands match; existing edits are retained";font-weight:600;}
             HorizontalLayout {
                 spacing:12px;
                 Text {text:"Primary";width:86px;vertical-alignment:center;}
-                ComboBox {model:root.keys;current-index <=> root.primary-key;accessible-label:"Primary shortcut key";selected=>{root.edited();}}
-                CheckBox {text:"Ctrl";checked <=> root.primary-control;toggled=>{root.edited();}}
-                CheckBox {text:"Shift";checked <=> root.primary-shift;toggled=>{root.edited();}}
+                ComboBox {enabled:root.has-matches;model:root.keys;current-index <=> root.primary-key;accessible-label:"Primary shortcut key";selected=>{root.edited();}}
+                CheckBox {enabled:root.has-matches;text:"Ctrl";checked <=> root.primary-control;toggled=>{root.edited();}}
+                CheckBox {enabled:root.has-matches;text:"Shift";checked <=> root.primary-shift;toggled=>{root.edited();}}
             }
             HorizontalLayout {
                 spacing:12px;
                 Text {text:"Alternate";width:86px;vertical-alignment:center;}
-                ComboBox {model:root.keys;current-index <=> root.alternate-key;accessible-label:"Alternate shortcut key";selected=>{root.edited();}}
-                CheckBox {text:"Ctrl";checked <=> root.alternate-control;toggled=>{root.edited();}}
-                CheckBox {text:"Shift";checked <=> root.alternate-shift;toggled=>{root.edited();}}
+                ComboBox {enabled:root.has-matches;model:root.keys;current-index <=> root.alternate-key;accessible-label:"Alternate shortcut key";selected=>{root.edited();}}
+                CheckBox {enabled:root.has-matches;text:"Ctrl";checked <=> root.alternate-control;toggled=>{root.edited();}}
+                CheckBox {enabled:root.has-matches;text:"Shift";checked <=> root.alternate-shift;toggled=>{root.edited();}}
             }
             Text {text:"Choose Unbound to remove a slot. Chords use logical keys with exact Ctrl and Shift; Alt and Meta bindings are unavailable. Duplicate chords must be changed together before Save.";wrap:word-wrap;color:#b6c1cf;}
             Text {text:"Reserved: Escape, arrows, PageUp/PageDown, camera W/A/S/D/Q/E with or without Shift, and Ctrl+N/O/S/C/X/V. Camera movement, nudging, file and clipboard controls keep their existing bindings.";wrap:word-wrap;color:#b6c1cf;}

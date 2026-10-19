@@ -18,13 +18,20 @@ Projection, selection-mode, toggle, transform-tool and authoring-mode commands s
 including when an older saved shortcuts file loads.
 
 1. In **VIEWPORT**, click **Keyboard shortcuts…**.
-2. Choose a command in the list. Scroll to reach later rows.
+2. Use **Search commands** to find a label, command ID or displayed binding.
+   Searches ignore case; every space-separated term must match the command's
+   label, ID, **Current form** binding or **Factory bindings**. For example,
+   `clip_mode` finds Clip mode and `frame F8` finds a Frame binding using F8.
+   Choose a result in the list. **Clear search** restores all 21 commands.
    Compare **Current form** with **Factory bindings**.
 3. Set **Primary** and **Alternate** using the key dropdowns and **Ctrl** and
    **Shift** switches. Choose **Unbound** to remove a slot.
 4. Resolve any duplicate or reserved binding shown below the controls. To swap
    bindings, edit both commands before saving.
 5. Click **Save shortcuts** to activate the complete form now and at startup.
+   Hidden rows retain their unsaved edits. Save validates and writes every
+   command, including when the search has no results. Reload replaces the full
+   form while keeping the current search; Cancel discards unsaved edits.
    Click the viewport before using a binding. Its **Frame** hint reflects the
    current binding.
    Projection bindings use the same per-view cameras as the viewport's projection
@@ -58,8 +65,14 @@ including when an older saved shortcuts file loads.
 
 ![Command bindings, modifier controls and storage status](images/keyboard-shortcuts.png)
 
+![Filtered command results with the complete shortcut draft retained](images/keyboard-shortcuts-search.png)
+
 Limits:
 
+- Search accepts at most 128 UTF-8 bytes and uses literal text, without regular
+  expressions or fuzzy matching. No results disables the binding editors;
+  clearing the search keeps all existing edits. A search error keeps the prior
+  results and the storage status. Opening the window starts with all commands.
 - Keys are logical A–Z, F1–F12, Delete and Backspace, with exact Ctrl/Shift
   modifiers. Alt/Meta bindings, physical scan codes and key sequences are absent.
 - Escape, arrows, PageUp/PageDown, camera W/A/S/D/Q/E with or without Shift, and

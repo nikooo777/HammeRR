@@ -477,12 +477,14 @@ measurement review, and checks that graphics stay uninitialized.
 
 ```sh
 cargo test -p editor-core --features mcp --lib shortcuts
+cargo test -p editor-core --features mcp --lib command_search_matches_literals_ids_current_and_factory_without_activating_drafts
 cargo test -p editor-core --features mcp --lib viewport_toggle_commands
 cargo test -p editor-core --features mcp --lib view_commands_share_the_schema
 cargo test -p editor-core --features mcp --lib tool_commands
 cargo test -p editor-core --features mcp --lib production_stdio_pins_two_documents
 cargo test -p editor --bin editor configured_view_keys_use_the_originating_admitted_callback
 cargo test -p editor --bin editor shortcut_controls_save_atomically_report_conflicts_and_preserve_text_field_editing
+cargo test -p editor --bin editor command_search_retains_hidden_edits_through_save_clear_reload_and_cancel
 python3 -B scripts/validate_keyboard_shortcuts.py --binary target/debug/hammerr-headless --output /tmp/hammerr-keyboard-shortcuts-check
 ```
 
@@ -510,6 +512,16 @@ Routed stdio checks retain the peer's modes, camera, preview, selection and
 history. Version-1 files with five, nine, eleven, fifteen or nineteen
 command fields keep their bytes and chords while missing extension slots load
 unbound, then round-trip through explicit Save.
+
+Command-search checks cover literal multi-term matching across labels, typed
+IDs and current/factory bindings, bounded UTF-8 queries and searchable conflicting
+drafts without activation or storage/history changes. The software form types
+into **Search commands**, edits separately filtered rows, saves their complete
+form from zero results, clears the filter and checks full Reload and Cancel.
+Search errors preserve prior rows; the existing closed-document form also
+rejects filtering after drain. `HAMMERR_UI_SNAPSHOTS` additionally writes
+`keyboard-shortcuts-search.png`. The private production validator exercises the
+same query tool, including provided draft bindings and snapshot preservation.
 
 ### Direct UV vectors
 

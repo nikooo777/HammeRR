@@ -22,6 +22,157 @@ fn software_backend() {
 }
 
 #[test]
+fn command_search_retains_hidden_edits_through_save_clear_reload_and_cancel() {
+    software_backend();
+    let directory = tempfile::tempdir().unwrap();
+    let mut session = Session::new(Err("no assets".into()));
+    session.configure_recovery(Ok(directory.path().to_owned()));
+    session
+        .create_block(Actor::User, DVec3::ZERO, DVec3::splat(32.0), "test", false)
+        .unwrap();
+    session
+        .begin_property_edit(crate::session::PropertyTarget::World)
+        .unwrap();
+    let source = session.document().vmf().clone();
+    let history = session.history_snapshot();
+    let camera = session.camera();
+    let selection = session.selected_ids();
+    let property = session.property_draft().unwrap().token;
+    let shared = Arc::new(Mutex::new(session));
+    let controller = Controller::new(&shared).unwrap();
+    controller.show(&lock(&shared)).unwrap();
+    controller
+        .window
+        .window()
+        .set_size(slint::PhysicalSize::new(900, 960));
+    controller.window.window().take_snapshot().unwrap();
+    let search = i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+        &controller.window,
+        "Search commands",
+    )
+    .next()
+    .unwrap();
+    search.mock_single_click(PointerEventButton::Left);
+    for letter in ["d", "r", "a", "w"] {
+        controller
+            .window
+            .window()
+            .dispatch_event(WindowEvent::KeyPressed {
+                text: letter.into(),
+            });
+        controller
+            .window
+            .window()
+            .dispatch_event(WindowEvent::KeyReleased {
+                text: letter.into(),
+            });
+    }
+    assert_eq!(controller.window.get_search(), "draw");
+    assert_eq!(controller.window.get_commands().row_count(), 1);
+    assert_eq!(controller.window.get_selected(), "draw_brush");
+    controller.window.set_primary_key(key_index("F9"));
+    controller.window.invoke_edited();
+    assert!(controller.window.get_can_save());
+    assert_eq!(lock(&shared).shortcut_bindings().draw_brush, [None, None]);
+    controller.window.set_search("clip_mode".into());
+    controller.window.invoke_filter_commands();
+    assert_eq!(controller.window.get_selected(), "clip_mode");
+    controller.window.set_primary_key(key_index("F9"));
+    controller.window.invoke_edited();
+    assert!(!controller.window.get_can_save());
+    assert!(
+        controller
+            .window
+            .get_status()
+            .contains("assigned more than once")
+    );
+    controller.window.set_primary_key(key_index("F10"));
+    controller.window.invoke_edited();
+    controller.window.set_search("F9 draw".into());
+    controller.window.invoke_filter_commands();
+    assert_eq!(controller.window.get_commands().row_count(), 1);
+    assert_eq!(controller.window.get_selected(), "draw_brush");
+    let prior_rows = controller.window.get_commands().iter().collect::<Vec<_>>();
+    controller.window.set_search(
+        "x".repeat(editor_core::shortcuts::MAX_QUERY_BYTES + 1)
+            .into(),
+    );
+    controller.window.invoke_filter_commands();
+    assert!(controller.window.get_search_error().contains("128"));
+    assert_eq!(
+        controller.window.get_commands().iter().collect::<Vec<_>>(),
+        prior_rows
+    );
+    assert!(controller.window.get_can_save());
+    controller.window.set_search("F.*".into());
+    controller.window.invoke_filter_commands();
+    assert!(!controller.window.get_has_matches());
+    assert_eq!(controller.window.get_commands().row_count(), 0);
+    assert!(controller.window.get_can_save());
+    controller.window.set_primary_key(key_index("F11"));
+    controller.window.invoke_edited();
+    crate::ui::tests::assert_dialog_button_visible(&controller.window, "Save shortcuts");
+    i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+        &controller.window,
+        "Save shortcuts",
+    )
+    .next()
+    .unwrap()
+    .invoke_accessible_default_action();
+    let saved = lock(&shared).shortcut_bindings();
+    assert_eq!(saved.draw_brush[0].as_ref().unwrap().key, "F9");
+    assert_eq!(saved.clip_mode[0].as_ref().unwrap().key, "F10");
+    assert_eq!(controller.window.get_commands().row_count(), 0);
+    assert!(!controller.window.get_can_save());
+    let path = directory.path().join(editor_core::shortcuts::FILE_NAME);
+    let bytes = std::fs::read(&path).unwrap();
+    i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+        &controller.window,
+        "Clear search",
+    )
+    .next()
+    .unwrap()
+    .invoke_accessible_default_action();
+    assert_eq!(controller.window.get_search(), "");
+    assert_eq!(
+        controller.window.get_commands().row_count(),
+        Command::ALL.len()
+    );
+    assert!(controller.window.get_search_error().is_empty());
+    controller.window.set_search("undo".into());
+    controller.window.invoke_filter_commands();
+    controller.window.set_primary_key(key_index("F7"));
+    controller.window.invoke_edited();
+    controller.window.invoke_reload();
+    assert_eq!(controller.window.get_search(), "undo");
+    assert_eq!(controller.window.get_primary_key(), key_index("Z"));
+    assert!(!controller.window.get_can_save());
+    controller.window.set_primary_key(key_index("F8"));
+    controller.window.invoke_edited();
+    controller.window.set_search("clip".into());
+    controller.window.invoke_filter_commands();
+    assert!(controller.window.get_can_save());
+    crate::ui::tests::save_ui_snapshot(controller.window.window(), "keyboard-shortcuts-search");
+    controller.window.invoke_cancel();
+    assert!(!controller.window.window().is_visible());
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    assert_eq!(lock(&shared).shortcut_bindings(), saved);
+    controller.show(&lock(&shared)).unwrap();
+    assert_eq!(controller.window.get_search(), "");
+    assert_eq!(
+        controller.window.get_commands().row_count(),
+        Command::ALL.len()
+    );
+    assert_eq!(controller.form.borrow().bindings, saved);
+    let session = lock(&shared);
+    assert_eq!(session.document().vmf(), &source);
+    assert_eq!(session.history_snapshot(), history);
+    assert_eq!(session.camera(), camera);
+    assert_eq!(session.selected_ids(), selection);
+    assert_eq!(session.property_draft().unwrap().token, property);
+}
+
+#[test]
 fn attached_shortcut_forms_and_viewport_hints_observe_shared_activation_errors_and_reset() {
     software_backend();
     let directory = tempfile::tempdir().unwrap();
@@ -94,6 +245,18 @@ fn attached_shortcut_forms_and_viewport_hints_observe_shared_activation_errors_a
             .get_status()
             .contains("Saved shortcuts unavailable")
     );
+    let status = first_form.window.get_status();
+    let storage = first_form.window.get_storage();
+    let rows = first_form.window.get_commands().iter().collect::<Vec<_>>();
+    first_form.window.set_search("x".repeat(129).into());
+    first_form.window.invoke_filter_commands();
+    assert!(!first_form.window.get_search_error().is_empty());
+    assert_eq!(first_form.window.get_status(), status);
+    assert_eq!(first_form.window.get_storage(), storage);
+    assert_eq!(
+        first_form.window.get_commands().iter().collect::<Vec<_>>(),
+        rows
+    );
     first_form.window.invoke_reset();
     second_form.refresh(&lock(&second));
     refresh_hint(&app, &lock(&second));
@@ -146,6 +309,8 @@ fn retained_shortcut_form_rejects_after_drain_without_reading_or_writing_shared_
     controller.window.invoke_reload();
     controller.window.invoke_reset();
     controller.window.invoke_save();
+    controller.window.set_search("undo".into());
+    controller.window.invoke_filter_commands();
     controller.window.invoke_choose("undo".into());
     controller.window.invoke_edited();
     assert_eq!(controller.window.get_message(), "the document is closed");

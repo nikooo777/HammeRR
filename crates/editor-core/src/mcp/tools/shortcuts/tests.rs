@@ -7,6 +7,139 @@ fn value(result: ToolResult) -> Value {
 }
 
 #[test]
+fn command_search_matches_literals_ids_current_and_factory_without_activating_drafts() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut session = Session::new(Err("no assets".into()));
+    session.configure_recovery(Ok(directory.path().to_owned()));
+    session
+        .create_block(Actor::User, DVec3::ZERO, DVec3::splat(32.0), "test", false)
+        .unwrap();
+    session
+        .begin_property_edit(crate::session::PropertyTarget::World)
+        .unwrap();
+    let mut bindings = Bindings::default();
+    bindings.undo[0].as_mut().unwrap().key = "F6".into();
+    bindings.frame_selection[0].as_mut().unwrap().key = "F8".into();
+    session
+        .change_keyboard_shortcuts(
+            Actor::User,
+            &session.shortcuts_stamp(),
+            "save",
+            Some(bindings.clone()),
+        )
+        .unwrap();
+    let source = session.document().vmf().clone();
+    let history = session.history_snapshot();
+    let camera = session.camera();
+    let selection = session.selected_ids();
+    let property = session.property_draft().unwrap().token;
+    let state = session.keyboard_shortcuts_state();
+    let log = session.log_serial();
+    let path = directory.path().join(crate::shortcuts::FILE_NAME);
+    let bytes = std::fs::read(&path).unwrap();
+    let shared = Arc::new(Mutex::new(session));
+    let server = EditorServer::new(shared.clone(), None);
+    for (query, expected) in [
+        ("  DRAW brush  ", Some(Command::DrawBrush)),
+        ("clip_mode", Some(Command::ClipMode)),
+        ("frame_selection F8", Some(Command::FrameSelection)),
+        ("undo CTRL+F6", Some(Command::Undo)),
+        ("undo ctrl+z", Some(Command::Undo)),
+        ("undo frame_selection", None),
+        ("F.*", None),
+    ] {
+        let result = value(
+            server.find_editor_commands(Parameters(FindEditorCommandsArgs {
+                query: query.into(),
+                bindings: None,
+            })),
+        );
+        assert_eq!(result["query"], query.trim());
+        assert_eq!(result["snapshot"], state["snapshot"]);
+        assert_eq!(result["matched"], usize::from(expected.is_some()));
+        assert_eq!(result["total"], Command::ALL.len());
+        if let Some(command) = expected {
+            assert_eq!(result["commands"][0]["command"], json!(command));
+        }
+    }
+    let args: FindEditorCommandsArgs = serde_json::from_value(json!({})).unwrap();
+    let all = value(server.find_editor_commands(Parameters(args)));
+    assert_eq!(
+        all["commands"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["command"].clone())
+            .collect::<Vec<_>>(),
+        Command::ALL
+            .into_iter()
+            .map(|command| json!(command))
+            .collect::<Vec<_>>()
+    );
+    let mut draft = bindings.clone();
+    draft.draw_brush[0] = bindings.frame_selection[0].clone();
+    assert!(draft.clone().validated().is_err());
+    let result = value(
+        server.find_editor_commands(Parameters(FindEditorCommandsArgs {
+            query: "F8 draw".into(),
+            bindings: Some(Box::new(draft.clone())),
+        })),
+    );
+    assert_eq!(result["matched"], 1);
+    assert_eq!(result["commands"][0]["command"], "draw_brush");
+    assert_eq!(result["commands"][0]["bindings"], json!(draft.draw_brush));
+    draft.draw_brush[0].as_mut().unwrap().key = "f08".into();
+    let alias = value(
+        server.find_editor_commands(Parameters(FindEditorCommandsArgs {
+            query: "F8 draw".into(),
+            bindings: Some(Box::new(draft.clone())),
+        })),
+    );
+    assert_eq!(alias["matched"], 1);
+    assert_eq!(alias["commands"][0]["bindings"][0]["key"], "F8");
+    for query in [
+        "x".repeat(crate::shortcuts::MAX_QUERY_BYTES + 1),
+        "é".repeat(65),
+    ] {
+        let result = server
+            .find_editor_commands(Parameters(FindEditorCommandsArgs {
+                query,
+                bindings: None,
+            }))
+            .unwrap();
+        assert_eq!(result.is_error, Some(true));
+    }
+    draft.draw_brush[0].as_mut().unwrap().key = "Escape".into();
+    assert_eq!(
+        server
+            .find_editor_commands(Parameters(FindEditorCommandsArgs {
+                query: "draw".into(),
+                bindings: Some(Box::new(draft))
+            }))
+            .unwrap()
+            .is_error,
+        Some(true)
+    );
+    for invalid in [
+        json!({"query":"x","unknown":true}),
+        json!({"query":1}),
+        json!({"bindings":{"undo":[]}}),
+    ] {
+        assert!(serde_json::from_value::<FindEditorCommandsArgs>(invalid).is_err());
+    }
+    let session = lock(&shared);
+    assert_eq!(session.keyboard_shortcuts_state(), state);
+    assert_eq!(session.document().vmf(), &source);
+    assert_eq!(session.history_snapshot(), history);
+    assert_eq!(session.camera(), camera);
+    assert_eq!(session.selected_ids(), selection);
+    assert_eq!(session.property_draft().unwrap().token, property);
+    assert_eq!(session.log_serial(), log);
+    assert_eq!(std::fs::read(path).unwrap(), bytes);
+    assert!(server.offscreen.lock().unwrap().renderer.is_none());
+}
+
+#[test]
 fn shortcut_tools_share_persistence_and_the_typed_command_dispatcher() {
     let directory = tempfile::tempdir().unwrap();
     let mut session = Session::new(Err("no assets needed".into()));

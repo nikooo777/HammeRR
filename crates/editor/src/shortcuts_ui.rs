@@ -1,6 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
-use editor_core::shortcuts::{Bindings, Chord, Command, Snapshot};
+use editor_core::shortcuts::{Bindings, Chord, Command, CommandRow, Snapshot};
 use slint::{ComponentHandle, Model, VecModel, platform::Key};
 
 use crate::{
@@ -63,32 +63,64 @@ fn load_selected(window: &ShortcutsWindow, form: &Form) {
 }
 
 fn refresh(window: &ShortcutsWindow, session: &Session, form: &RefCell<Form>) {
-    refresh_with_snapshot(window, &session.keyboard_shortcuts_snapshot(), form);
+    refresh_with_snapshot(
+        window,
+        session,
+        &session.keyboard_shortcuts_snapshot(),
+        form,
+    );
 }
 
-fn command_rows(bindings: &Bindings) -> Vec<ShortcutRow> {
-    let factory = Bindings::default();
-    Command::ALL
-        .into_iter()
-        .map(|command| ShortcutRow {
-            command: serde_json::to_value(command)
+fn command_rows(rows: Vec<CommandRow>) -> Vec<ShortcutRow> {
+    rows.into_iter()
+        .map(|row| ShortcutRow {
+            command: serde_json::to_value(row.command)
                 .unwrap()
                 .as_str()
                 .unwrap()
                 .into(),
-            label: command.label().into(),
-            current: bindings.label(command).into(),
-            factory: factory.label(command).into(),
+            label: row.label.into(),
+            current: row.display.into(),
+            factory: row.factory_display.into(),
         })
         .collect()
 }
 
-fn refresh_with_snapshot(window: &ShortcutsWindow, snapshot: &Snapshot, form: &RefCell<Form>) {
-    let current = form.borrow();
-    for (index, row) in command_rows(&current.bindings).into_iter().enumerate() {
-        if current.rows.row_data(index).as_ref() != Some(&row) {
-            current.rows.set_row_data(index, row);
+fn refresh_with_snapshot(
+    window: &ShortcutsWindow,
+    session: &Session,
+    snapshot: &Snapshot,
+    form: &RefCell<Form>,
+) {
+    let mut current = form.borrow_mut();
+    match session.find_editor_commands(&window.get_search(), Some(&current.bindings)) {
+        Ok(result) => {
+            window.set_search_error("".into());
+            window.set_result_count(
+                format!("{} of {} commands", result.matched, result.total).into(),
+            );
+            window.set_has_matches(!result.commands.is_empty());
+            if !result
+                .commands
+                .iter()
+                .any(|row| row.command == current.selected)
+                && let Some(first) = result.commands.first()
+            {
+                current.selected = first.command;
+            }
+            load_selected(window, &current);
+            let rows = command_rows(result.commands);
+            if rows.len() != current.rows.row_count() {
+                current.rows.set_vec(rows);
+            } else {
+                for (index, row) in rows.into_iter().enumerate() {
+                    if current.rows.row_data(index).as_ref() != Some(&row) {
+                        current.rows.set_row_data(index, row);
+                    }
+                }
+            }
         }
+        Err(error) => window.set_search_error(error.into()),
     }
     let state = snapshot.report();
     let stale = current.snapshot != snapshot.stamp();
@@ -122,7 +154,7 @@ fn adopt(window: &ShortcutsWindow, session: &Session, form: &RefCell<Form>) {
     current.dirty = false;
     load_selected(window, &current);
     drop(current);
-    refresh_with_snapshot(window, &snapshot, form);
+    refresh_with_snapshot(window, session, &snapshot, form);
 }
 
 fn read_slot(window: &ShortcutsWindow, alternate: bool) -> Option<Chord> {
@@ -155,7 +187,7 @@ impl Controller {
     pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let window = ShortcutsWindow::new()?;
         let bindings = Bindings::default();
-        let rows = Rc::new(VecModel::from(command_rows(&bindings)));
+        let rows = Rc::new(VecModel::from(command_rows(bindings.command_rows())));
         window.set_commands(rows.clone().into());
         let form = Rc::new(RefCell::new(Form {
             bindings,
@@ -173,6 +205,23 @@ impl Controller {
             ))
             .into(),
         );
+        window.on_filter_commands({
+            let (window, target, form) = (window.as_weak(), access.downgrade(), form.clone());
+            move || {
+                let Some(window) = window.upgrade() else {
+                    return;
+                };
+                let result = target.upgrade().and_then(|access| {
+                    access.with_session(|session| {
+                        refresh(&window, session, &form);
+                        Ok(())
+                    })
+                });
+                if let Err(error) = result {
+                    window.set_message(error.into());
+                }
+            }
+        });
         window.on_choose({
             let (window, target, form) = (window.as_weak(), access.downgrade(), form.clone());
             move |command| {
@@ -202,6 +251,9 @@ impl Controller {
                 let Some(window) = window.upgrade() else {
                     return;
                 };
+                if !window.get_has_matches() {
+                    return;
+                }
                 let result = target.upgrade().and_then(|access| {
                     access.with_session(|session| {
                         let mut current = form.borrow_mut();
@@ -268,6 +320,7 @@ impl Controller {
 
     pub fn show(&self, session: &Session) -> Result<(), slint::PlatformError> {
         self.window.set_message("".into());
+        self.window.set_search("".into());
         adopt(&self.window, session, &self.form);
         self.window.show()
     }

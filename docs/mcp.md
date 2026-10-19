@@ -381,7 +381,7 @@ The shared desktop and private stdio server expose workspace and document tools.
 | Grid defaults | `get_grid_defaults`, `set_grid_defaults` |
 | Fly speed and navigation defaults | `get_navigation_settings`, `set_navigation_settings`, `set_navigation_defaults` |
 | Preview defaults | `get_preview_defaults`, `set_preview_defaults` |
-| Keyboard shortcuts and viewport commands | `get_keyboard_shortcuts`, `set_keyboard_shortcuts`, `execute_editor_command` |
+| Keyboard shortcuts and viewport commands | `get_keyboard_shortcuts`, `find_editor_commands`, `set_keyboard_shortcuts`, `execute_editor_command` |
 | Entity definitions | `get_entity_definitions`, `load_entity_definitions`, `search_entity_classes`, `get_entity_class` |
 | Material source | `get_material_source` |
 | Sky asset inspection | `inspect_sky_assets` |
@@ -912,6 +912,24 @@ See [Fly speed and navigation defaults](navigation-defaults.md).
 command rows/labels, `ready`, `stored`, storage `path`, `error`, `limits` and
 reserved scope. It shares **Viewport → Keyboard shortcuts…**. Bindings apply
 only with viewport focus; text fields retain native text editing.
+
+`find_editor_commands` shares **Search commands** in that form. Optional `query`
+defaults to empty, returning all 21 commands in catalog order. It accepts at most
+128 UTF-8 bytes. Case-insensitive whitespace-separated literal terms must all
+match fields on the same command: label, typed ID, current/form binding display
+or factory binding display. For example, `{"query":"frame_selection F8"}`
+finds Frame selection when either binding column contains F8; `F.*` is literal
+text rather than a regular expression.
+
+The result contains the trimmed `query`, current preference `snapshot`, `total`,
+`matched` and `commands` with the same `command`, `label`, `bindings`, `display`
+and `factory_display` fields as the full catalog. Optional typed `bindings`
+searches an unsaved form instead of active bindings. Duplicate/reserved draft
+chords stay searchable so conflicts can be located before Save; unsupported key
+names, unknown fields and malformed binding shapes reject. This query never
+activates or validates a form for Save, reads/writes preference files, executes
+commands or changes map/history/camera. UI filtering retains the complete
+unsaved form; Save always validates and writes that full form.
 
 `set_keyboard_shortcuts` requires the latest `snapshot` and tagged `action`:
 

@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from validate_face_lighting import DEFAULT_BINARY, Client
+from validate_recovery_exit import require_clean_eof
 
 
 def validate(binary, output):
@@ -53,6 +54,18 @@ def validate(binary, output):
         check(saved["write_committed"] and saved["ready"] and saved["current"] == custom, "Save canonicalizes, persists and activates the complete configuration")
         check(client.call("get_objects", {"ids": [block]}) == before and client.call("get_history")["undo_count"] == history and client.call("get_camera") == camera and client.call("get_selection") == selection, "configuration changes no map, history, selection or camera")
         saved_bytes = path.read_bytes()
+        commands = client.call("find_editor_commands")
+        check(commands["total"] == 21 and commands["matched"] == 21 and {row["command"] for row in commands["commands"]} == expected_commands, "shared command search discovers the complete typed catalog")
+        current = client.call("find_editor_commands", {"query": "undo CTRL+F6"})
+        factory_match = client.call("find_editor_commands", {"query": "undo Ctrl+Z"})
+        check(current["matched"] == factory_match["matched"] == 1 and current["commands"][0]["command"] == factory_match["commands"][0]["command"] == "undo", "literal command terms search current and factory binding displays")
+        draft = copy.deepcopy(custom)
+        draft["draw_brush"] = copy.deepcopy(custom["frame_selection"])
+        provided = client.call("find_editor_commands", {"query": "draw Shift+F8", "bindings": draft})
+        check(provided["matched"] == 1 and provided["commands"][0]["command"] == "draw_brush", "an unsaved conflicting form stays searchable without activating its bindings")
+        check(client.call("find_editor_commands", {"query": "F.*"})["matched"] == 0 and client.call("find_editor_commands", {"query": "undo frame_selection"})["matched"] == 0, "command search uses literal AND terms rather than regular expressions or any-term matches")
+        client.call("find_editor_commands", {"query": "é" * 65}, error=True)
+        check(path.read_bytes() == saved_bytes and state(client)["current"] == custom and state(client)["snapshot"] == saved["snapshot"], "searches and rejected oversized queries preserve saved bindings and their snapshot")
         for command, field in [
             ("show_grid", "grid_visible"), ("snap_to_grid", "snap"),
             ("tool_textures", "tool_textures"), ("selection_outlines", "selection_outlines"),
@@ -102,14 +115,14 @@ def validate(binary, output):
         check(not broken["ready"] and broken["error"] and broken["current"] == custom, "invalid Reload retains current valid bindings and exposes unavailable storage")
         change(client, "save", error=True, bindings=factory)
         check(path.read_bytes() == b"malformed storage", "Save stays blocked and malformed storage remains untouched")
-        client.close()
+        require_clean_eof(client)
         client = Client(None, binary, output)
         broken = state(client)
         check(not broken["ready"] and broken["current"] == factory and path.read_bytes() == b"malformed storage", "startup retains usable factory bindings without labeling malformed storage loaded")
         change(client, "reset")
         check(state(client)["ready"] and state(client)["current"] == factory, "explicit Reset repairs saved storage and activates factory shortcuts")
         change(client, "save", bindings=custom)
-        client.close()
+        require_clean_eof(client)
         client = Client(None, binary, output)
         check(state(client)["ready"] and state(client)["current"] == custom, "saved custom bindings survive a separate process startup")
         saved_bytes = path.read_bytes()
@@ -149,7 +162,8 @@ def validate(binary, output):
         check(client.call("get_map_info")["world_brushes"] == 0 and client.call("get_history")["undo_count"] == initial_history, "the next Undo removes only the footprint creation")
         check(path.read_bytes() == saved_bytes and state(client)["current"] == custom, "authoring mode commands leave the saved bindings unchanged")
     finally:
-        client.close()
+        if client.process is not None:
+            require_clean_eof(client)
     return checks
 
 

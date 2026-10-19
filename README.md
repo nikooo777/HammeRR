@@ -195,8 +195,8 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 
 | Authored lighting preview |
 | --- |
-| ![Warm point light and cool spotlight in an editor room](docs/images/authored-lighting-preview.png) |
-| Preview unshadowed point and spot lights on brushes, terrain and models, with quality and exposure. |
+| ![Sun and sky ambient alongside warm point and cool spot lighting](docs/images/authored-lighting-sky-ambient.png) |
+| Preview unshadowed point, spot and sun lighting, with optional sky ambient, on brushes, terrain and models. |
 
 [Authored lighting preview →](docs/lighting-preview.md)
 

@@ -1723,6 +1723,7 @@ impl Session {
         without_resource_changes.entity_model_guides = previous.entity_model_guides;
         without_resource_changes.normal_maps = previous.normal_maps;
         without_resource_changes.lighting_preview = previous.lighting_preview;
+        without_resource_changes.lighting_sky_ambient = previous.lighting_sky_ambient;
         without_resource_changes.lighting_quality = previous.lighting_quality;
         without_resource_changes.lighting_exposure_ev = previous.lighting_exposure_ev;
         if without_resource_changes == previous {

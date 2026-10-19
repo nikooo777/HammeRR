@@ -1,4 +1,62 @@
+use super::sky::SkyLight;
 use super::{MIN_LIGHT_DISTANCE, PointLight};
+
+#[derive(Clone, Copy, Debug)]
+pub struct Sun {
+    light: SkyLight,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct SunParameters {
+    pub direction: [f32; 3],
+    pub intensity: [f32; 3],
+    pub ambient: [f32; 3],
+    pub contribution_bound: f64,
+}
+
+impl Sun {
+    pub fn from_entity(
+        entity: &crate::map::MapEntity,
+        targets: &map_core::light::Targets<'_>,
+    ) -> Result<Self, String> {
+        Ok(Self {
+            light: SkyLight::direct_from_entity(entity, targets)?,
+        })
+    }
+
+    pub fn contribution(self, normal: glam::DVec3) -> Result<glam::DVec3, String> {
+        Ok(self.light.contribution(normal)? + self.light.ambient)
+    }
+
+    pub fn from_entity_with_sky_ambient(
+        entity: &crate::map::MapEntity,
+        targets: &map_core::light::Targets<'_>,
+    ) -> Result<Self, String> {
+        Ok(Self {
+            light: SkyLight::from_entity(entity, targets)
+                .map_err(|error| format!("Sun with LDR sky ambient: {error}"))?,
+        })
+    }
+
+    pub fn preview_parameters(self) -> Result<SunParameters, String> {
+        let intensity = vector(self.light.intensity.to_array())?;
+        let ambient = vector(self.light.ambient.to_array())?;
+        let contribution_bound = intensity
+            .into_iter()
+            .zip(ambient)
+            .map(|(direct, ambient)| f64::from(direct + ambient))
+            .fold(0.0, f64::max);
+        if contribution_bound > MAX_CONTRIBUTION {
+            return Err("Sun exceeds the editor preview's linear-radiance headroom".into());
+        }
+        Ok(SunParameters {
+            direction: vector((-self.light.direction).to_array())?,
+            intensity,
+            ambient,
+            contribution_bound,
+        })
+    }
+}
 
 pub const MAX_CONTRIBUTION: f64 = 1.0e12;
 
@@ -134,6 +192,186 @@ mod tests {
     use super::*;
     use glam::DVec3;
     use source_formats::bsp::{Bsp, LightingKind};
+
+    #[test]
+    fn optional_ldr_sky_ambient_reuses_literals_defaults_and_per_channel_headroom() {
+        let mut entity = crate::map::MapEntity {
+            id: 10,
+            classname: "light_environment".into(),
+            origin: None,
+            brushes: Vec::new(),
+            properties: vec![
+                ("_light".into(), "255 0 0 200".into()),
+                ("pitch".into(), "-90".into()),
+                ("_ambient".into(), "0 0 255 80".into()),
+                ("_ambientHDR".into(), "ignored malformed HDR".into()),
+            ],
+        };
+        let targets = Default::default();
+        let light = Sun::from_entity_with_sky_ambient(&entity, &targets).unwrap();
+        let parameters = light.preview_parameters().unwrap();
+        assert_eq!(parameters.ambient, [0.0, 0.0, 80.0]);
+        assert_eq!(parameters.contribution_bound, 200.0);
+        for (normal, expected) in [
+            (DVec3::Z, DVec3::new(200.0, 0.0, 80.0)),
+            (DVec3::NEG_Z, DVec3::new(0.0, 0.0, 80.0)),
+            (DVec3::Y, DVec3::new(0.0, 0.0, 80.0)),
+        ] {
+            assert_eq!(light.contribution(normal).unwrap(), expected);
+        }
+        let native = SkyLight::from_entity(&entity, &targets).unwrap();
+        let directions = super::super::sky::ambient_directions(crate::SkyQuality::Fast);
+        for normal in [DVec3::Z, DVec3::NEG_Z, DVec3::Y] {
+            let ambient = native
+                .ambient_contribution(normal, &directions, &mut |_| Ok(true))
+                .unwrap();
+            assert_eq!(ambient, DVec3::new(0.0, 0.0, 80.0));
+        }
+        entity.properties.retain(|(key, _)| key != "_ambient");
+        let defaults = Sun::from_entity_with_sky_ambient(&entity, &targets)
+            .unwrap()
+            .preview_parameters()
+            .unwrap();
+        assert_eq!(defaults.ambient, [100.0, 0.0, 0.0]);
+        assert_eq!(defaults.contribution_bound, 300.0);
+        entity
+            .properties
+            .push(("_ambient".into(), "malformed".into()));
+        assert!(Sun::from_entity(&entity, &targets).is_ok());
+        assert!(Sun::from_entity_with_sky_ambient(&entity, &targets).is_err());
+        entity.properties.pop();
+        entity.properties[0].1 = "255 0 0 800000000000".into();
+        assert!(
+            Sun::from_entity(&entity, &targets)
+                .unwrap()
+                .preview_parameters()
+                .is_ok()
+        );
+        assert!(
+            Sun::from_entity_with_sky_ambient(&entity, &targets)
+                .unwrap()
+                .preview_parameters()
+                .unwrap_err()
+                .contains("headroom")
+        );
+    }
+
+    #[test]
+    fn sun_preview_reuses_compiler_direction_radiance_without_ambient_or_hdr() {
+        let mut entity = crate::map::MapEntity {
+            id: 10,
+            classname: "light_environment".into(),
+            origin: None,
+            brushes: Vec::new(),
+            properties: vec![
+                ("_light".into(), "255 128 32 200".into()),
+                ("pitch".into(), "-90".into()),
+                ("_ambient".into(), "0 0 255 99".into()),
+                ("_lightHDR".into(), "0 255 0 300".into()),
+                ("SunSpreadAngle".into(), "45".into()),
+            ],
+        };
+        let targets = Default::default();
+        let native = SkyLight::from_entity(&entity, &targets).unwrap();
+        assert_eq!(native.world_light().origin, [0.0; 3]);
+        let hdr = SkyLight::from_entity_kind(&entity, &targets, LightingKind::Hdr).unwrap();
+        assert_eq!(hdr.world_light().intensity, [0.0, 300.0 / 255.0, 0.0]);
+        for light in [native, hdr] {
+            assert_eq!(
+                light.ambient_world_light().unwrap().intensity,
+                [0.0, 0.0, 99.0 / 255.0]
+            );
+        }
+        let sun = Sun::from_entity(&entity, &targets).unwrap();
+        let parameters = sun.preview_parameters().unwrap();
+        assert!(glam::Vec3::from_array(parameters.direction).distance(glam::Vec3::Z) < 1e-6);
+        assert_eq!(parameters.contribution_bound, 200.0);
+        let expected = DVec3::new(
+            200.0,
+            200.0 * (128.0_f64 / 255.0).powf(2.2),
+            200.0 * (32.0_f64 / 255.0).powf(2.2),
+        );
+        assert!(sun.contribution(DVec3::Z).unwrap().distance(expected) < 1e-10);
+        for normal in [DVec3::Z, DVec3::NEG_Z, DVec3::X, DVec3::new(1.0, 2.0, 3.0)] {
+            assert_eq!(
+                sun.contribution(normal).unwrap(),
+                native.contribution(normal).unwrap()
+            );
+        }
+        assert_eq!(sun.contribution(DVec3::NEG_Z).unwrap(), DVec3::ZERO);
+        entity.origin = Some(DVec3::new(100.0, -200.0, 300.0));
+        let translated = Sun::from_entity(&entity, &targets)
+            .unwrap()
+            .preview_parameters()
+            .unwrap();
+        assert_eq!(translated.direction, parameters.direction);
+        assert_eq!(translated.intensity, parameters.intensity);
+        let mut resolved = entity.clone();
+        resolved.properties.push(("origin".into(), "1 2 3".into()));
+        assert_eq!(
+            SkyLight::from_entity(&resolved, &targets)
+                .unwrap()
+                .world_light()
+                .origin,
+            [100.0, -200.0, 300.0]
+        );
+        resolved
+            .properties
+            .push(("target".into(), "sun_origin_target".into()));
+        let resolved_targets = map_core::light::Targets::from([(
+            "sun_origin_target",
+            vec![DVec3::new(101.0, -200.0, 300.0)],
+        )]);
+        assert_eq!(
+            Sun::from_entity(&resolved, &resolved_targets)
+                .unwrap()
+                .preview_parameters()
+                .unwrap()
+                .direction,
+            [-1.0, 0.0, 0.0]
+        );
+        for raw in ["", "0 0", "invalid 0 0", "NaN 0 0", "inf 0 0", "20000 0 0"] {
+            for origin in [None, entity.origin] {
+                let mut invalid = entity.clone();
+                invalid.origin = origin;
+                invalid.properties.push(("origin".into(), raw.into()));
+                assert!(
+                    Sun::from_entity(&invalid, &targets)
+                        .unwrap_err()
+                        .contains("Sun origin"),
+                    "{raw:?} with resolved {origin:?}"
+                );
+                for kind in [LightingKind::Ldr, LightingKind::Hdr] {
+                    assert!(
+                        SkyLight::from_entity_kind(&invalid, &targets, kind)
+                            .unwrap_err()
+                            .contains("Sun origin")
+                    );
+                }
+            }
+        }
+        entity.properties.push((
+            "_ambientHDR".into(),
+            "malformed ignored preview ambient".into(),
+        ));
+        assert!(
+            Sun::from_entity(&entity, &targets)
+                .unwrap()
+                .preview_parameters()
+                .is_ok()
+        );
+        assert!(SkyLight::from_entity_kind(&entity, &targets, LightingKind::Hdr).is_err());
+        entity.properties[0].1 = "255 255 255 2000000000000".into();
+        assert!(
+            Sun::from_entity(&entity, &targets)
+                .unwrap()
+                .preview_parameters()
+                .unwrap_err()
+                .contains("headroom")
+        );
+        entity.properties.push(("_distance".into(), "10".into()));
+        assert!(Sun::from_entity(&entity, &targets).is_err());
+    }
 
     fn emitter(fields: &[(&str, &str)]) -> PointLight {
         let entity = crate::map::MapEntity {

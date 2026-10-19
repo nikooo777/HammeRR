@@ -1990,6 +1990,7 @@ export component AppWindow inherits Window {
     in-out property <bool> show-tools: true;
     in-out property <bool> sky-preview: false;
     in-out property <bool> lighting-preview: false;
+    in-out property <bool> lighting-sky-ambient: false;
     in-out property <int> lighting-quality: 1;
     in-out property <string> lighting-exposure-ev: "0";
     in property <string> lighting-status: "Authored lighting preview is off";
@@ -2734,6 +2735,11 @@ export component AppWindow inherits Window {
                     }
                     if root.lighting-preview: VerticalLayout {
                         spacing: 8px;
+                        CheckBox {
+                            text: "Include LDR sky ambient";
+                            checked <=> root.lighting-sky-ambient;
+                            toggled => { root.options-changed(); }
+                        }
                         ComboBox {
                             model: ["Fast · vertex lighting", "Detail · per-fragment lighting"];
                             current-index <=> root.lighting-quality;
@@ -2748,7 +2754,7 @@ export component AppWindow inherits Window {
                                 accepted => { root.options-changed(); }
                             }
                         }
-                        Text { text: root.lighting-status + "\nNo shadows, sun, ambient or bounce · editor display"; color: #aeb9c8; wrap: word-wrap; font-size: 12px; }
+                        Text { text: root.lighting-status + "\nLDR sun · optional sky ambient · no shadows or bounce · editor display"; color: #aeb9c8; wrap: word-wrap; font-size: 12px; }
                     }
                     if root.lighting-error != "": Text { text: root.lighting-error; color: #f0b377; wrap: word-wrap; font-size: 12px; }
                     CheckBox {

@@ -176,7 +176,7 @@ pub struct FacePreviewArgs {
 }
 
 pub(in crate::mcp) fn view_state(view: ViewOptions) -> Value {
-    json!({"instance_contents": view.instance_contents,"lighting_preview":view.lighting_preview,"lighting_quality":view.lighting_quality.name(),"lighting_exposure_ev":view.lighting_exposure_ev,"normal_maps":view.normal_maps,"tool_textures":view.tool_textures,"sky_preview":view.sky_preview,"sky3d_preview":view.sky3d_preview,"sky_channel":view.sky_channel.name(),"sky_exposure_ev":view.sky_exposure_ev,"rope_preview":view.rope_preview,"selection_outlines":view.selection_outlines,"entity_images":view.entity_images,"additive_sprite_guides":view.additive_sprite_guides,"entity_model_guides":view.entity_model_guides,"fog":fog_parameters(view),"leak_path":view.leak_path,"surface":view.surface.name(),"smoothing_group":view.smoothing_group})
+    json!({"instance_contents": view.instance_contents,"lighting_preview":view.lighting_preview,"lighting_sky_ambient":view.lighting_sky_ambient,"lighting_quality":view.lighting_quality.name(),"lighting_exposure_ev":view.lighting_exposure_ev,"normal_maps":view.normal_maps,"tool_textures":view.tool_textures,"sky_preview":view.sky_preview,"sky3d_preview":view.sky3d_preview,"sky_channel":view.sky_channel.name(),"sky_exposure_ev":view.sky_exposure_ev,"rope_preview":view.rope_preview,"selection_outlines":view.selection_outlines,"entity_images":view.entity_images,"additive_sprite_guides":view.additive_sprite_guides,"entity_model_guides":view.entity_model_guides,"fog":fog_parameters(view),"leak_path":view.leak_path,"surface":view.surface.name(),"smoothing_group":view.smoothing_group})
 }
 
 pub(in crate::mcp) fn fog_parameters(view: ViewOptions) -> Value {
@@ -280,8 +280,10 @@ pub struct BeginSurfacePlacementPickArgs {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SetViewArgs {
     pub instance_contents: Option<bool>,
-    /// Unshadowed authored constant point/spot diffuse preview; defaults off. No sun/ambient/bounce/shadows.
+    /// Unshadowed authored constant point/spot/direct LDR sun preview; defaults off. One visible sun; optional LDR sky ambient, no HDR overrides/bounce/shadows/sky visibility.
     pub lighting_preview: Option<bool>,
+    /// Include the admitted sun's unshadowed LDR sky ambient; defaults off. No sky visibility or occlusion.
+    pub lighting_sky_ambient: Option<bool>,
     /// fast interpolates vertex lighting; detail evaluates fragments (default) and supports normal maps.
     pub lighting_quality: Option<String>,
     /// Editor exposure -8..8 EV (default 0), followed by per-channel Reinhard; no native tone-map claim.
@@ -319,8 +321,10 @@ pub struct SetViewArgs {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct RenderArgs {
     pub instance_contents: Option<bool>,
-    /// Unshadowed authored constant point/spot diffuse preview; defaults off. No sun/ambient/bounce/shadows.
+    /// Unshadowed authored constant point/spot/direct LDR sun preview; defaults off. One visible sun; optional LDR sky ambient, no HDR overrides/bounce/shadows/sky visibility.
     pub lighting_preview: Option<bool>,
+    /// Include the admitted sun's unshadowed LDR sky ambient; defaults off. No sky visibility or occlusion.
+    pub lighting_sky_ambient: Option<bool>,
     /// fast interpolates vertex lighting; detail evaluates fragments (default) and supports normal maps.
     pub lighting_quality: Option<String>,
     /// Editor exposure -8..8 EV (default 0), followed by per-channel Reinhard; no native tone-map claim.
@@ -432,6 +436,7 @@ macro_rules! view_update {
                 crate::session::ViewUpdate {
                     instance_contents: self.instance_contents,
                     lighting_preview: self.lighting_preview,
+                    lighting_sky_ambient: self.lighting_sky_ambient,
                     lighting_quality: self.lighting_quality.as_deref(),
                     lighting_exposure_ev: self.lighting_exposure_ev,
                     additive_sprite_guides: self.additive_sprite_guides,

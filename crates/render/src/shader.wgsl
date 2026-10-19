@@ -6,6 +6,8 @@ struct AuthoredLight {
     outer_exponent_fade: vec4<f32>,
 }
 
+const SUN_KIND: f32 = 2.0;
+
 struct Globals {
     view_proj: mat4x4<f32>,
     light_dir: vec4<f32>,
@@ -69,6 +71,10 @@ fn authored_irradiance(position: vec3<f32>, normal: vec3<f32>) -> vec3<f32> {
     var total = vec3<f32>(0.0);
     for (var index = 0u; index < min(u32(globals.lighting_settings.x), 32u); index += 1u) {
         let light = globals.lighting_lights[index];
+        if light.coefficients_spot.w == SUN_KIND {
+            total += light.intensity_cap.xyz * clamp(dot(normal, normalize(light.direction_inner.xyz)), 0.0, 1.0) + light.origin_radius.xyz;
+            continue;
+        }
         let offset = light.origin_radius.xyz - position;
         let scale = max(max(abs(offset.x), abs(offset.y)), abs(offset.z));
         if scale == 0.0 { continue; }

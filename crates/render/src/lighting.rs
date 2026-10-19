@@ -1,10 +1,15 @@
 use serde::Serialize;
 
 pub const MAX_LIGHTS: usize = 32;
+pub const MAX_SUNS: usize = 1;
+pub const POINT_KIND: f32 = 0.0;
+pub const SPOT_KIND: f32 = 1.0;
+pub const SUN_KIND: f32 = 2.0;
 pub const MAX_DIAGNOSTICS: usize = 128;
 #[derive(Serialize)]
 pub struct Limits {
     pub lights: usize,
+    pub suns: usize,
     pub diagnostics: usize,
     pub exposure_ev: [i32; 2],
     pub receiver_counts: &'static str,
@@ -14,6 +19,7 @@ pub struct Limits {
 pub fn limits() -> Limits {
     Limits {
         lights: MAX_LIGHTS,
+        suns: MAX_SUNS,
         diagnostics: MAX_DIAGNOSTICS,
         exposure_ev: [-8, 8],
         receiver_counts: RECEIVER_COUNTS,
@@ -23,7 +29,7 @@ pub fn limits() -> Limits {
 
 pub const RECEIVER_COUNTS: &str = "flat brush polygons counted separately from admitted/excluded terrain surfaces and drawn triangles; outline-only terrain has zero drawn triangles; separate authored model instance/part/drawn-triangle counts; resource guides and helpers excluded by category";
 
-pub const POLICY: &str = "Unshadowed authored LDR point/spot diffuse preview. At most 32 constant unnamed style-0 lights; this is an editor budget, not an engine limit. No sun, ambient, bounce, shadows, animation, native brightness or tone mapping. Opaque flat LightmappedGeneric brush polygons and single-base world/func_detail terrain with checked sewn LOD normals; terrain excludes bump/normal, blend and detail declarations. Authored selected MDL meshes require whole-instance opaque single-base VertexLitGeneric admission, Normal render mode and checked transformed normals; bump/normal, proxies and unsupported material declarations are excluded; excluded surfaces retain their ordinary display. Fast interpolates vertex lighting and can miss small pools on large faces; Detail evaluates each fragment and composes with supported normal maps. Linear base × tint × compiler contribution / 255, exposure 2^EV, per-channel Reinhard, then one sRGB target conversion. Zero admitted lights make supported receivers black. Reload material assets refreshes cached base display and receiver policy together.";
+pub const POLICY: &str = "Unshadowed authored LDR point/spot and direct-sun diffuse preview. At most 32 constant unnamed style-0 lights including one light_environment; this is an editor budget, not an engine limit. Optional unshadowed LDR sky ambient defaults off and uses the admitted sun's compiler _ambient or half-sun default as a constant contribution. Direct and ambient share the same slot and per-channel radiance budget. No HDR light overrides, bounce, sky visibility, occlusion, shadows, penumbrae, animation or native brightness/tone-map parity. Sun uses direction without point attenuation; spread does not add illumination. Malformed requested ambient excludes the entire sun; disabled ambient ignores its fields. Every conflicting visible sun is excluded. Sun sources follow the same current-render-document and visible-working-region filtering as point/spot lights, unlike compiler cordons; sky-camera miniatures retain separate fixed shading. Opaque flat LightmappedGeneric brush polygons and single-base world/func_detail terrain with checked sewn LOD normals; terrain excludes bump/normal, blend and detail declarations. Authored selected MDL meshes require whole-instance opaque single-base VertexLitGeneric admission, Normal render mode and checked transformed normals; bump/normal, proxies and unsupported material declarations are excluded; excluded surfaces retain their ordinary display. Fast interpolates vertex lighting and can miss small pools on large faces; Detail evaluates each fragment and composes with supported normal maps. Linear base × tint × compiler contribution / 255, exposure 2^EV, per-channel Reinhard, then one sRGB target conversion. Zero admitted lights make supported receivers black. Reload material assets refreshes cached base display and receiver policy together.";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -71,8 +77,11 @@ pub struct Report {
     pub source: Option<Source>,
     pub requested: bool,
     pub active: bool,
+    pub sky_ambient: bool,
     pub admitted_lights: usize,
     pub excluded_lights: usize,
+    pub admitted_suns: usize,
+    pub excluded_suns: usize,
     pub admitted_entities: Vec<u32>,
     pub admitted_receivers: usize,
     pub excluded_receivers: usize,
@@ -196,11 +205,14 @@ impl Report {
         if !self.requested {
             return "Authored lighting preview is off".into();
         }
+        let sky_ambient = if self.sky_ambient { "enabled" } else { "off" };
         if let Some(reason) = &self.unavailable {
             return format!(
-                "Unshadowed lighting unavailable: {reason}\n{} admitted / {} excluded lights · {} admitted / {} excluded brush receiver polygons · {} · {}; ordinary display retained",
+                "Unshadowed lighting unavailable: {reason}\n{} admitted / {} excluded lights ({} admitted / {} excluded direct LDR suns; sky ambient {sky_ambient}) · {} admitted / {} excluded brush receiver polygons · {} · {}; ordinary display retained",
                 self.admitted_lights,
                 self.excluded_lights,
+                self.admitted_suns,
+                self.excluded_suns,
                 self.admitted_receivers,
                 self.excluded_receivers,
                 self.terrain_summary(),
@@ -211,9 +223,11 @@ impl Report {
             return "Unshadowed lighting requires Textured view; no light admission".into();
         }
         let mut text = format!(
-            "Unshadowed lighting · {} admitted / {} excluded lights · {} admitted / {} excluded brush receiver polygons · {} · {}",
+            "Unshadowed lighting · {} admitted / {} excluded lights ({} admitted / {} excluded direct LDR suns; sky ambient {sky_ambient}) · {} admitted / {} excluded brush receiver polygons · {} · {}",
             self.admitted_lights,
             self.excluded_lights,
+            self.admitted_suns,
+            self.excluded_suns,
             self.admitted_receivers,
             self.excluded_receivers,
             self.terrain_summary(),

@@ -23,11 +23,74 @@ pub(super) fn ambient_directions(quality: crate::SkyQuality) -> Vec<DVec3> {
         .collect()
 }
 
+fn sun_source(
+    entity: &MapEntity,
+    kind: LightingKind,
+) -> Result<(MapEntity, PointLight, f64), String> {
+    if number(entity, "style")? != 0.0
+        || property(entity, "targetname").is_some_and(|name| !name.is_empty())
+        || property(entity, "pattern").is_some_and(|pattern| !pattern.is_empty())
+    {
+        return Err("Sun and sky lighting require unnamed static Appearance Normal".into());
+    }
+    let spread = number(entity, "SunSpreadAngle")?;
+    if spread > MAX_SUN_SPREAD_ANGLE {
+        return Err("SunSpreadAngle must be between 0 and 90 degrees".into());
+    }
+    for key in [
+        "_fifty_percent_distance",
+        "_zero_percent_distance",
+        "_hardfalloff",
+        "_distance",
+    ] {
+        if number(entity, key)? != 0.0 {
+            return Err("Directional sky lights cannot use point-light distance falloff".into());
+        }
+    }
+    let authored_origin = property(entity, "origin")
+        .map(|raw| {
+            source_formats::vmf::parse_vec3(raw)
+                .filter(|origin| {
+                    origin.is_finite()
+                        && origin.abs().max_element() <= crate::map::MAX_COMPILE_COORD
+                })
+                .ok_or(
+                    "Sun origin must contain three finite coordinates inside Source compile bounds",
+                )
+        })
+        .transpose()?;
+    let origin = entity.origin.or(authored_origin).unwrap_or(DVec3::ZERO);
+    let mut source = entity.clone();
+    source.origin = Some(origin);
+    source.properties.retain(|(key, _)| {
+        !["_constant_attn", "_linear_attn", "_quadratic_attn"]
+            .into_iter()
+            .any(|field| key.eq_ignore_ascii_case(field))
+    });
+    let point = PointLight::from_entity_kind(&source, -1, kind)?;
+    Ok((source, point, spread))
+}
+
+fn sun_direction(
+    entity: &MapEntity,
+    targets: &map_core::light::Targets<'_>,
+    origin: DVec3,
+) -> Result<DVec3, String> {
+    let target = map_core::light::target(property(entity, "target"), targets)?;
+    map_core::light::direction(
+        property(entity, "angles"),
+        property(entity, "angle"),
+        property(entity, "pitch"),
+        origin,
+        target,
+    )
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(super) struct SkyLight {
     pub direction: DVec3,
-    intensity: DVec3,
-    ambient: DVec3,
+    pub(super) intensity: DVec3,
+    pub(super) ambient: DVec3,
     origin: DVec3,
     spread: f64,
 }
@@ -45,37 +108,8 @@ impl SkyLight {
         targets: &map_core::light::Targets<'_>,
         kind: LightingKind,
     ) -> Result<Self, String> {
-        if number(entity, "style")? != 0.0
-            || property(entity, "targetname").is_some_and(|name| !name.is_empty())
-            || property(entity, "pattern").is_some_and(|pattern| !pattern.is_empty())
-        {
-            return Err("Sun and sky lighting require unnamed static Appearance Normal".into());
-        }
-        let spread = number(entity, "SunSpreadAngle")?;
-        if spread > MAX_SUN_SPREAD_ANGLE {
-            return Err("SunSpreadAngle must be between 0 and 90 degrees".into());
-        }
-        for key in [
-            "_fifty_percent_distance",
-            "_zero_percent_distance",
-            "_hardfalloff",
-            "_distance",
-        ] {
-            if number(entity, key)? != 0.0 {
-                return Err(
-                    "Directional sky lights cannot use point-light distance falloff".into(),
-                );
-            }
-        }
-        let origin = entity.origin.unwrap_or(DVec3::ZERO);
-        let mut source = entity.clone();
-        source.origin = Some(origin);
-        source.properties.retain(|(key, _)| {
-            !["_constant_attn", "_linear_attn", "_quadratic_attn"]
-                .into_iter()
-                .any(|field| key.eq_ignore_ascii_case(field))
-        });
-        let point = PointLight::from_entity_kind(&source, -1, kind)?;
+        let (source, point, spread) = sun_source(entity, kind)?;
+        let origin = point.origin;
         let ambient = match kind {
             LightingKind::Ldr => {
                 if let Some(ambient) =
@@ -101,18 +135,26 @@ impl SkyLight {
                     .map_err(|error| format!("HDR sky ambient: {error}"))?
             }
         };
-        let target = map_core::light::target(property(entity, "target"), targets)?;
-        let direction = map_core::light::direction(
-            property(entity, "angles"),
-            property(entity, "angle"),
-            property(entity, "pitch"),
-            origin,
-            target,
-        )?;
+        let direction = sun_direction(entity, targets, origin)?;
         Ok(Self {
             direction,
             intensity: point.intensity,
             ambient,
+            origin,
+            spread: spread.to_radians().sin(),
+        })
+    }
+
+    pub(super) fn direct_from_entity(
+        entity: &MapEntity,
+        targets: &map_core::light::Targets<'_>,
+    ) -> Result<Self, String> {
+        let (_, point, spread) = sun_source(entity, LightingKind::Ldr)?;
+        let origin = point.origin;
+        Ok(Self {
+            direction: sun_direction(entity, targets, origin)?,
+            intensity: point.intensity,
+            ambient: DVec3::ZERO,
             origin,
             spread: spread.to_radians().sin(),
         })

@@ -97,6 +97,7 @@ fn authored_lighting_tracks_owned_transform_cancel_apply_and_undo_without_view_e
         let view = session
             .resolve_view_update(ViewUpdate {
                 lighting_quality: Some(quality),
+                lighting_sky_ambient: Some(quality == "fast"),
                 lighting_exposure_ev: Some(2.0),
                 ..Default::default()
             })
@@ -256,6 +257,257 @@ fn authored_lighting_targets_visibility_and_summed_headroom_are_checked() {
 }
 
 #[test]
+fn optional_sky_ambient_uses_one_sun_slot_and_excludes_malformed_or_over_budget_sources() {
+    let (_directory, mut session, _) = fixture();
+    assert!(!session.view().lighting_sky_ambient);
+    enable(&mut session);
+    let ObjectId::Entity(sun) = add(
+        &mut session,
+        "light_environment",
+        None,
+        &[
+            ("_light", "255 0 0 200"),
+            ("pitch", "-90"),
+            ("_ambient", "0 0 255 80"),
+        ],
+    ) else {
+        panic!()
+    };
+    let direct = session.build_scene();
+    assert_eq!(direct.lighting.lights[0].origin_radius, [0.0; 4]);
+    let view = session
+        .resolve_view_update(ViewUpdate {
+            lighting_sky_ambient: Some(true),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_ne!(
+        session.render_scene_key(view),
+        session.render_scene_key(session.view())
+    );
+    session.set_view(view);
+    let ambient = session.build_scene();
+    assert!(ambient.lighting.report.sky_ambient);
+    assert_eq!(ambient.lighting.report.admitted_lights, 1);
+    assert_eq!(
+        ambient.lighting.lights[0].origin_radius,
+        [0.0, 0.0, 80.0, 0.0]
+    );
+    add(
+        &mut session,
+        "light",
+        Some(DVec3::Z * 32.0),
+        &[("_light", "255 255 255 10")],
+    );
+    session
+        .edit(Actor::User, "malformed ambient", |tx| {
+            edit::set_properties(tx, sun, &[("_ambient".into(), Some("malformed".into()))])
+        })
+        .unwrap();
+    let malformed = session.build_scene();
+    assert!(malformed.lighting.report.active);
+    assert_eq!(malformed.lighting.report.admitted_lights, 1);
+    assert_eq!(malformed.lighting.report.admitted_suns, 0);
+    assert_eq!(malformed.lighting.report.excluded_suns, 1);
+    assert!(
+        malformed
+            .lighting
+            .report
+            .diagnostics
+            .iter()
+            .any(|row| row.reason.contains("LDR sky ambient"))
+    );
+    let mut direct_view = session.view();
+    direct_view.lighting_sky_ambient = false;
+    assert_eq!(
+        session
+            .build_scene_for_view(direct_view)
+            .lighting
+            .report
+            .admitted_suns,
+        1
+    );
+    session
+        .edit(Actor::User, "separate channels", |tx| {
+            edit::set_properties(
+                tx,
+                sun,
+                &[
+                    ("_light".into(), Some("255 0 0 600000000000".into())),
+                    ("_ambient".into(), Some("0 0 255 600000000000".into())),
+                ],
+            )
+        })
+        .unwrap();
+    assert_eq!(session.build_scene().lighting.report.admitted_suns, 1);
+    add(
+        &mut session,
+        "light",
+        Some(DVec3::Z * 32.0),
+        &[("_light", "255 255 255 500000000000")],
+    );
+    let overflow = session.build_scene();
+    assert!(!overflow.lighting.report.active);
+    assert!(
+        overflow
+            .lighting
+            .report
+            .unavailable
+            .unwrap()
+            .contains("Summed")
+    );
+    assert!(overflow.lighting.lights.is_empty());
+    assert_eq!(overflow.lighting.report.admitted_suns, 0);
+}
+
+#[test]
+fn direct_sun_duplicates_visibility_and_shared_budgets_never_choose_a_prefix() {
+    let (_directory, mut session, _) = fixture();
+    enable(&mut session);
+    let sun = add(
+        &mut session,
+        "light_environment",
+        Some(DVec3::Z * 32.0),
+        &[
+            ("_light", "255 0 0 600000000000"),
+            ("pitch", "-90"),
+            ("_ambient", "malformed ignored ambient"),
+            ("_lightHDR", "malformed ignored HDR"),
+        ],
+    );
+    let scene = session.build_scene();
+    assert_eq!(scene.lighting.report.admitted_suns, 1);
+    assert_eq!(
+        scene.lighting.lights[0].coefficients_spot[3],
+        render::lighting::SUN_KIND
+    );
+    assert!(
+        glam::Vec3::from_slice(&scene.lighting.lights[0].direction_inner[..3])
+            .distance(glam::Vec3::Z)
+            < 1e-6
+    );
+    let ObjectId::Entity(sun_id) = sun else {
+        panic!()
+    };
+    for raw in ["", "0 0", "invalid 0 0", "NaN 0 0", "inf 0 0", "20000 0 0"] {
+        session
+            .edit(Actor::User, "invalid sun origin", |tx| {
+                edit::set_properties(tx, sun_id, &[("origin".into(), Some(raw.into()))])
+            })
+            .unwrap();
+        let report = session.build_scene().lighting.report;
+        assert_eq!(report.admitted_suns, 0, "{raw:?}");
+        assert_eq!(report.excluded_suns, 1, "{raw:?}");
+        assert!(report.diagnostics.iter().any(|diagnostic| {
+            diagnostic.entity == Some(sun_id) && diagnostic.reason.contains("Sun origin")
+        }));
+        session.undo(Actor::User).unwrap();
+        assert_eq!(session.build_scene().lighting.report.admitted_suns, 1);
+    }
+    let other = add(
+        &mut session,
+        "light_environment",
+        Some(DVec3::ZERO),
+        &[("_light", "255 0 0 10")],
+    );
+    add(
+        &mut session,
+        "light",
+        Some(DVec3::Z * 32.0),
+        &[("_light", "255 255 255 10")],
+    );
+    let duplicate = session.build_scene();
+    assert_eq!(duplicate.lighting.report.admitted_lights, 1);
+    assert_eq!(duplicate.lighting.report.excluded_suns, 2);
+    for id in [sun, other] {
+        let ObjectId::Entity(id) = id else { panic!() };
+        assert!(
+            duplicate
+                .lighting
+                .report
+                .diagnostics
+                .iter()
+                .any(|row| row.entity == Some(id) && row.reason.contains("Conflicting"))
+        );
+    }
+    let stamp = session.working_region_stamp();
+    session
+        .set_editor_visibility(
+            Actor::User,
+            super::super::editor_visibility::Action::Hide(vec![other]),
+            &stamp,
+        )
+        .unwrap();
+    assert_eq!(session.build_scene().lighting.report.admitted_suns, 1);
+    let stamp = session.working_region_stamp();
+    session
+        .set_working_region(
+            Actor::User,
+            super::super::working_region::Action::Set {
+                bounds: [DVec3::splat(-8.0), DVec3::splat(8.0)],
+                enabled: true,
+            },
+            &stamp,
+        )
+        .unwrap();
+    assert_eq!(session.build_scene().lighting.report.admitted_suns, 0);
+
+    let (_directory, mut session, _) = fixture();
+    enable(&mut session);
+    add(
+        &mut session,
+        "light_environment",
+        None,
+        &[("_light", "255 255 255 600000000000"), ("pitch", "-90")],
+    );
+    add(
+        &mut session,
+        "light",
+        Some(DVec3::Z * 32.0),
+        &[("_light", "255 255 255 600000000000")],
+    );
+    let overflow = session.build_scene();
+    assert!(
+        overflow
+            .lighting
+            .report
+            .unavailable
+            .as_ref()
+            .unwrap()
+            .contains("Summed")
+    );
+    assert_eq!(overflow.lighting.report.admitted_suns, 0);
+    assert_eq!(overflow.lighting.report.excluded_suns, 1);
+    assert!(overflow.lighting.lights.is_empty());
+    session.undo(Actor::User).unwrap();
+    for _ in 0..MAX_LIGHTS - 1 {
+        add(
+            &mut session,
+            "light",
+            Some(DVec3::Z * 32.0),
+            &[("_light", "255 255 255 1")],
+        );
+    }
+    assert_eq!(
+        session.build_scene().lighting.report.admitted_lights,
+        MAX_LIGHTS
+    );
+    assert_eq!(session.build_scene().lighting.report.admitted_suns, 1);
+    add(
+        &mut session,
+        "light",
+        Some(DVec3::Z * 32.0),
+        &[("_light", "255 255 255 1")],
+    );
+    let overflow = session.build_scene();
+    assert!(!overflow.lighting.report.active);
+    assert!(overflow.lighting.lights.is_empty());
+    assert!(overflow.lighting.report.admitted_entities.is_empty());
+    assert_eq!(overflow.lighting.report.excluded_lights, MAX_LIGHTS + 1);
+    assert_eq!(overflow.lighting.report.excluded_suns, 1);
+}
+
+#[test]
 fn authored_lighting_receiver_policy_uses_the_same_cached_vmt_as_base_until_reload() {
     let (directory, mut session, _) = fixture();
     enable(&mut session);
@@ -346,6 +598,23 @@ fn oracle(origin: DVec3, fields: &[(&str, &str)], spot: bool) -> PointLight {
     } else {
         light
     }
+}
+
+fn sun_source(origin: Option<DVec3>, fields: &[(&str, &str)]) -> compiler::map::MapEntity {
+    compiler::map::MapEntity {
+        id: 10,
+        classname: "light_environment".into(),
+        origin,
+        brushes: Vec::new(),
+        properties: fields
+            .iter()
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect(),
+    }
+}
+
+fn sun_oracle(origin: Option<DVec3>, fields: &[(&str, &str)]) -> Sun {
+    Sun::from_entity(&sun_source(origin, fields), &Default::default()).unwrap()
 }
 
 fn floor(
@@ -532,6 +801,171 @@ fn authored_lighting_gpu_matches_compiler_oracle_and_preserves_off_and_diagnosti
             );
         }
     }
+    for pitch in ["-90", "-30", "90"] {
+        let mut previous = None;
+        for origin in [
+            None,
+            Some(DVec3::ZERO),
+            Some(DVec3::new(100.0, -200.0, 300.0)),
+        ] {
+            let sun = sun_oracle(
+                origin,
+                &[
+                    ("_light", "255 0 0 200"),
+                    ("pitch", pitch),
+                    ("_ambient", "0 0 255 1000"),
+                ],
+            );
+            let mut mesh = floor(&document, &game, &mut materials, false, true);
+            mesh.lighting
+                .lights
+                .push(pack_sun(sun.preview_parameters().unwrap()));
+            for quality in [
+                render::lighting::Quality::Fast,
+                render::lighting::Quality::Detail,
+            ] {
+                for exposure in [-8.0, 0.0, 8.0] {
+                    let pixels = rendered(
+                        &context,
+                        &mut renderer,
+                        &mesh,
+                        &materials,
+                        ViewOptions {
+                            lighting_quality: quality,
+                            lighting_exposure_ev: exposure as f32,
+                            ..on
+                        },
+                    );
+                    let expected_radiance = DVec3::X
+                        * match pitch {
+                            "-90" => 200.0,
+                            "-30" => 100.0,
+                            "90" => 0.0,
+                            _ => unreachable!(),
+                        };
+                    assert!(
+                        sun.contribution(DVec3::Z)
+                            .unwrap()
+                            .distance(expected_radiance)
+                            < 1e-10
+                    );
+                    let expected = displayed(expected_radiance, exposure);
+                    for probe in [(32 * 65 + 32) * 4, (24 * 65 + 32) * 4, (32 * 65 + 24) * 4] {
+                        for channel in 0..3 {
+                            assert!(
+                                pixels[probe + channel].abs_diff(expected[channel]) <= 2,
+                                "sun {pitch} {quality:?} EV{exposure}"
+                            );
+                        }
+                    }
+                    if quality == render::lighting::Quality::Detail && exposure == 0.0 {
+                        if let Some(previous) = &previous {
+                            assert_eq!(&pixels, previous);
+                        }
+                        previous = Some(pixels);
+                    }
+                }
+            }
+            assert_eq!(
+                old_pixels,
+                rendered(&context, &mut renderer, &mesh, &materials, off)
+            );
+        }
+    }
+    for (pitch, ambient, expected_sun) in [
+        ("-90", Some("0 0 255 80"), DVec3::new(200.0, 0.0, 80.0)),
+        ("90", Some("0 0 255 80"), DVec3::new(0.0, 0.0, 80.0)),
+        ("-90", None, DVec3::new(300.0, 0.0, 0.0)),
+    ] {
+        let mut fields = vec![("_light", "255 0 0 200"), ("pitch", pitch)];
+        if let Some(ambient) = ambient {
+            fields.push(("_ambient", ambient));
+        }
+        let sun =
+            Sun::from_entity_with_sky_ambient(&sun_source(None, &fields), &Default::default())
+                .unwrap();
+        assert!(sun.contribution(DVec3::Z).unwrap().distance(expected_sun) < 1e-10);
+        let point = oracle(DVec3::Z * 64.0, &[("_light", "0 255 0 100")], false);
+        let mut mesh = floor(&document, &game, &mut materials, false, true);
+        mesh.lighting.lights.extend([
+            pack_sun(sun.preview_parameters().unwrap()),
+            pack(point.preview_parameters().unwrap()),
+        ]);
+        for quality in [
+            render::lighting::Quality::Fast,
+            render::lighting::Quality::Detail,
+        ] {
+            let position = if quality == render::lighting::Quality::Fast {
+                DVec3::new(32.0, 32.0, 0.0)
+            } else {
+                DVec3::ZERO
+            };
+            let expected = displayed(
+                expected_sun + point.contribution(position, DVec3::Z).unwrap(),
+                0.0,
+            );
+            let pixels = rendered(
+                &context,
+                &mut renderer,
+                &mesh,
+                &materials,
+                ViewOptions {
+                    lighting_sky_ambient: true,
+                    lighting_quality: quality,
+                    ..on
+                },
+            );
+            for (channel, expected_channel) in expected.iter().enumerate() {
+                assert!(
+                    pixels[center + channel].abs_diff(*expected_channel) <= 2,
+                    "sun ambient {pitch} {ambient:?} {quality:?}: {:?} vs {expected:?}",
+                    &pixels[center..center + 3]
+                );
+            }
+        }
+    }
+    let point = oracle(DVec3::Z * 64.0, &[("_light", "255 128 32 100")], false);
+    let sun = sun_oracle(None, &[("_light", "0 255 0 80"), ("pitch", "-30")]);
+    let point_parameters = point.preview_parameters().unwrap();
+    let sun_parameters = sun.preview_parameters().unwrap();
+    for lights in [
+        [pack(point_parameters), pack_sun(sun_parameters)],
+        [pack_sun(sun_parameters), pack(point_parameters)],
+    ] {
+        let mut mesh = floor(&document, &game, &mut materials, false, true);
+        mesh.lighting.lights.extend(lights);
+        for quality in [
+            render::lighting::Quality::Fast,
+            render::lighting::Quality::Detail,
+        ] {
+            let position = if quality == render::lighting::Quality::Fast {
+                DVec3::new(32.0, 32.0, 0.0)
+            } else {
+                DVec3::ZERO
+            };
+            let expected = displayed(
+                point.contribution(position, DVec3::Z).unwrap() + DVec3::Y * 40.0,
+                0.0,
+            );
+            let pixels = rendered(
+                &context,
+                &mut renderer,
+                &mesh,
+                &materials,
+                ViewOptions {
+                    lighting_quality: quality,
+                    ..on
+                },
+            );
+            for (channel, expected_channel) in expected.iter().enumerate() {
+                assert!(
+                    pixels[center + channel].abs_diff(*expected_channel) <= 2,
+                    "mixed sun/point {quality:?}: {:?} vs {expected:?}",
+                    &pixels[center..center + 3]
+                );
+            }
+        }
+    }
     let mut mesh = floor(&document, &game, &mut materials, false, true);
     assert_eq!(
         &rendered(&context, &mut renderer, &mesh, &materials, on)[center..center + 4],
@@ -602,6 +1036,71 @@ fn authored_lighting_gpu_matches_compiler_oracle_and_preserves_off_and_diagnosti
         0.0,
     );
     assert!(pixels[center].abs_diff(expected[0]) <= 2);
+    mesh.lighting.lights.clear();
+    let sun = sun_oracle(
+        None,
+        &[
+            ("_light", "255 255 255 100"),
+            ("pitch", "-30"),
+            ("angle", "180"),
+        ],
+    );
+    mesh.lighting
+        .lights
+        .push(pack_sun(sun.preview_parameters().unwrap()));
+    let pixels = rendered(
+        &context,
+        &mut renderer,
+        &mesh,
+        &materials,
+        ViewOptions {
+            normal_maps: true,
+            ..on
+        },
+    );
+    let normal = DVec3::new(1.0, 1.0 / 255.0, 1.0 / 255.0).normalize();
+    let expected_radiance =
+        DVec3::splat(100.0 * normal.dot(DVec3::new(3.0_f64.sqrt() / 2.0, 0.0, 0.5)));
+    assert!(
+        sun.contribution(normal)
+            .unwrap()
+            .distance(expected_radiance)
+            < 1e-10
+    );
+    let expected = displayed(expected_radiance, 0.0);
+    assert!(pixels[center].abs_diff(expected[0]) <= 2);
+    let ambient = Sun::from_entity_with_sky_ambient(
+        &sun_source(
+            None,
+            &[
+                ("_light", "255 255 255 100"),
+                ("pitch", "-30"),
+                ("angle", "180"),
+                ("_ambient", "0 0 255 30"),
+            ],
+        ),
+        &Default::default(),
+    )
+    .unwrap();
+    mesh.lighting.lights.clear();
+    mesh.lighting
+        .lights
+        .push(pack_sun(ambient.preview_parameters().unwrap()));
+    let pixels = rendered(
+        &context,
+        &mut renderer,
+        &mesh,
+        &materials,
+        ViewOptions {
+            lighting_sky_ambient: true,
+            normal_maps: true,
+            ..on
+        },
+    );
+    let expected = displayed(expected_radiance + DVec3::Z * 30.0, 0.0);
+    for (channel, expected_channel) in expected.iter().enumerate() {
+        assert!(pixels[center + channel].abs_diff(*expected_channel) <= 2);
+    }
 }
 
 #[test]

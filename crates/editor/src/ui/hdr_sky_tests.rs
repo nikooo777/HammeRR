@@ -194,11 +194,14 @@ fn authored_lighting_controls_validate_combined_view_and_keep_owned_drafts() {
     bind_view_controls(&app, shared.clone());
     refresh_view_controls(&app, &lock(&shared));
     assert!(!app.get_lighting_preview());
+    assert!(!app.get_lighting_sky_ambient());
     assert_eq!(app.get_lighting_quality(), 1);
     app.set_lighting_preview(true);
+    app.set_lighting_sky_ambient(true);
     app.set_lighting_exposure_ev("2".into());
     app.invoke_options_changed();
     assert!(lock(&shared).view().lighting_preview);
+    assert!(lock(&shared).view().lighting_sky_ambient);
     assert_eq!(lock(&shared).view().lighting_exposure_ev, 2.0);
     app.set_normal_maps(true);
     app.invoke_options_changed();
@@ -215,6 +218,17 @@ fn authored_lighting_controls_validate_combined_view_and_keep_owned_drafts() {
     app.show().unwrap();
     app.window().set_size(slint::PhysicalSize::new(1600, 1000));
     super::tests::scroll_inspector_to_control(&app, "Unshadowed authored lighting");
+    super::tests::scroll_inspector_to_control(&app, "Include LDR sky ambient");
+    let ambient = i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+        &app,
+        "Include LDR sky ambient",
+    )
+    .next()
+    .unwrap();
+    ambient.invoke_accessible_default_action();
+    assert!(!lock(&shared).view().lighting_sky_ambient);
+    ambient.invoke_accessible_default_action();
+    assert!(lock(&shared).view().lighting_sky_ambient);
     super::tests::save_ui_snapshot(app.window(), "authored-lighting-controls");
     app.hide().unwrap();
     app.set_lighting_preview(false);

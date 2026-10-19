@@ -1,9 +1,9 @@
 use std::collections::HashSet;
 
 use compiler::lighting::PointLight;
-use compiler::lighting::preview::{MAX_CONTRIBUTION, Parameters};
+use compiler::lighting::preview::{MAX_CONTRIBUTION, Parameters, Sun, SunParameters};
 use map_core::ObjectId;
-use render::lighting::{Light, MAX_LIGHTS, Preview, Report};
+use render::lighting::{Light, MAX_LIGHTS, MAX_SUNS, Preview, Report};
 use render::{SurfaceView, ViewOptions};
 use source_formats::vmf::{Entity, Vmf};
 
@@ -73,7 +73,11 @@ fn pack(parameters: Parameters) -> Light {
             parameters.coefficients[0],
             parameters.coefficients[1],
             parameters.coefficients[2],
-            if cone.is_some() { 1.0 } else { 0.0 },
+            if cone.is_some() {
+                render::lighting::SPOT_KIND
+            } else {
+                render::lighting::POINT_KIND
+            },
         ],
         direction_inner: cone.map_or([0.0; 4], |cone| {
             [
@@ -92,11 +96,37 @@ fn pack(parameters: Parameters) -> Light {
     }
 }
 
+fn pack_sun(parameters: SunParameters) -> Light {
+    Light {
+        origin_radius: [
+            parameters.ambient[0],
+            parameters.ambient[1],
+            parameters.ambient[2],
+            0.0,
+        ],
+        intensity_cap: [
+            parameters.intensity[0],
+            parameters.intensity[1],
+            parameters.intensity[2],
+            0.0,
+        ],
+        coefficients_spot: [0.0, 0.0, 0.0, render::lighting::SUN_KIND],
+        direction_inner: [
+            parameters.direction[0],
+            parameters.direction[1],
+            parameters.direction[2],
+            0.0,
+        ],
+        ..Default::default()
+    }
+}
+
 pub(super) fn prepare(vmf: &Vmf, visible: &HashSet<ObjectId>, view: ViewOptions) -> Preview {
     let mut preview = Preview {
         report: Report {
             requested: view.lighting_preview,
             active: view.lighting_preview && view.surface == SurfaceView::Textured,
+            sky_ambient: view.lighting_sky_ambient,
             ..Default::default()
         },
         ..Default::default()
@@ -116,12 +146,20 @@ pub(super) fn prepare(vmf: &Vmf, visible: &HashSet<ObjectId>, view: ViewOptions)
         preview.report.unavailable = Some("Fast authored lighting does not support normal maps; choose Detail or disable Normal map preview".into());
         return preview;
     }
-    let mut targets = map_core::light::Targets::new();
-    for entity in vmf
+    let entities = vmf
         .entities
         .iter()
-        .filter(|entity| !entity.hidden && visible.contains(&ObjectId::Entity(entity.id)))
-    {
+        .filter(|entity| !entity.hidden && visible.contains(&ObjectId::Entity(entity.id)));
+    let suns = entities
+        .clone()
+        .filter(|entity| {
+            entity
+                .classname()
+                .is_some_and(|class| class.eq_ignore_ascii_case("light_environment"))
+        })
+        .count();
+    let mut targets = map_core::light::Targets::new();
+    for entity in entities.clone() {
         if let (Some(name), Some(origin)) = (
             entity
                 .properties
@@ -134,18 +172,17 @@ pub(super) fn prepare(vmf: &Vmf, visible: &HashSet<ObjectId>, view: ViewOptions)
     }
     let mut valid = 0;
     let mut headroom = 0.0;
-    for entity in vmf
-        .entities
-        .iter()
-        .filter(|entity| !entity.hidden && visible.contains(&ObjectId::Entity(entity.id)))
-    {
+    for entity in entities {
         let class = entity.classname().unwrap_or_default().to_ascii_lowercase();
         if class != "light" && !class.starts_with("light_") {
             continue;
         }
-        let result = if !["light", "light_spot"].contains(&class.as_str()) {
+        let is_sun = class == "light_environment";
+        let result = if is_sun && suns > MAX_SUNS {
+            Err("Conflicting visible light_environment sources; every sun is excluded until only one remains visible".into())
+        } else if !["light", "light_spot", "light_environment"].contains(&class.as_str()) {
             Err(format!(
-                "Unshadowed preview does not support {class}; sun, ambient and dynamic lights are excluded"
+                "Unshadowed preview does not support {class}; ambient and dynamic lights are excluded"
             ))
         } else {
             constant(entity).and_then(|()| {
@@ -156,28 +193,42 @@ pub(super) fn prepare(vmf: &Vmf, visible: &HashSet<ObjectId>, view: ViewOptions)
                     brushes: Vec::new(),
                     origin: entity.origin(),
                 };
-                PointLight::from_entity(&source, -1)
-                    .and_then(|light| {
-                        if class == "light_spot" {
-                            light.with_spotlight(&source, &targets)
-                        } else {
-                            Ok(light)
-                        }
-                    })
-                    .and_then(|light| light.preview_parameters())
+                if is_sun {
+                    let light = if view.lighting_sky_ambient {
+                        Sun::from_entity_with_sky_ambient(&source, &targets)
+                    } else {
+                        Sun::from_entity(&source, &targets)
+                    };
+                    light
+                        .and_then(Sun::preview_parameters)
+                        .map(|parameters| (pack_sun(parameters), parameters.contribution_bound))
+                } else {
+                    PointLight::from_entity(&source, -1)
+                        .and_then(|light| {
+                            if class == "light_spot" {
+                                light.with_spotlight(&source, &targets)
+                            } else {
+                                Ok(light)
+                            }
+                        })
+                        .and_then(|light| light.preview_parameters())
+                        .map(|parameters| (pack(parameters), parameters.contribution_bound))
+                }
             })
         };
         match result {
-            Ok(parameters) => {
+            Ok((light, contribution_bound)) => {
                 valid += 1;
-                headroom += parameters.contribution_bound;
+                preview.report.admitted_suns += usize::from(is_sun);
+                headroom += contribution_bound;
                 if preview.lights.len() < MAX_LIGHTS {
-                    preview.lights.push(pack(parameters));
+                    preview.lights.push(light);
                     preview.report.admitted_entities.push(entity.id);
                 }
             }
             Err(error) => {
                 preview.report.excluded_lights += 1;
+                preview.report.excluded_suns += usize::from(is_sun);
                 preview.report.diagnostic(
                     Some(entity.id),
                     None,
@@ -198,6 +249,8 @@ pub(super) fn prepare(vmf: &Vmf, visible: &HashSet<ObjectId>, view: ViewOptions)
         preview.lights.clear();
         preview.report.admitted_entities.clear();
         preview.report.excluded_lights += valid;
+        preview.report.excluded_suns += preview.report.admitted_suns;
+        preview.report.admitted_suns = 0;
     } else {
         preview.report.admitted_lights = valid;
     }
@@ -210,10 +263,10 @@ impl Session {
         let report = self.build_scene_for_view(view).lighting.report;
         let source = report.source.clone();
         serde_json::json!({
-            "enabled":view.lighting_preview, "quality":view.lighting_quality.name(), "exposure_ev":view.lighting_exposure_ev,
+            "enabled":view.lighting_preview, "sky_ambient":view.lighting_sky_ambient, "quality":view.lighting_quality.name(), "exposure_ev":view.lighting_exposure_ev,
             "summary":report.summary(), "report":report,
             "source":source,"source_scope":"current render document and visible working region; includes pending geometry previews",
-            "limits":{"lights":MAX_LIGHTS,"diagnostics":render::lighting::MAX_DIAGNOSTICS,"summed_linear_headroom":MAX_CONTRIBUTION,"exposure_ev":[-8,8],"receiver_counts":render::lighting::RECEIVER_COUNTS,"policy":render::lighting::POLICY}
+            "limits":{"lights":MAX_LIGHTS,"suns":MAX_SUNS,"diagnostics":render::lighting::MAX_DIAGNOSTICS,"summed_linear_headroom":MAX_CONTRIBUTION,"exposure_ev":[-8,8],"receiver_counts":render::lighting::RECEIVER_COUNTS,"policy":render::lighting::POLICY}
         })
     }
 }

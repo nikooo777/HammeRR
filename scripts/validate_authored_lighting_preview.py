@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from validate_face_lighting import DEFAULT_BINARY, Client, detail
 from validate_normal_map_preview import fixture, texture
+from validate_recovery_exit import require_clean_eof
 from validate_sky_preview import rgba_png
 
 CONTROL_SIZE = 513
@@ -51,6 +52,7 @@ def assets(output):
                 ("light", "255 180 90"),
                 ("light_spot", "90 180 255"),
                 ("light_dynamic", "255 70 120"),
+                ("light_environment", "255 230 160"),
                 ("info_target", "100 180 140"),
             ]
         )
@@ -115,6 +117,7 @@ def validate(client, output, fgd, result):
             {
                 "surface": "textured",
                 "lighting_preview": False,
+                "lighting_sky_ambient": False,
                 "lighting_quality": "detail",
                 "lighting_exposure_ev": 0,
                 "normal_maps": False,
@@ -166,6 +169,7 @@ def validate(client, output, fgd, result):
     initial = client.call("get_lighting_preview")
     check(
         not initial["enabled"]
+        and not initial["sky_ambient"]
         and not initial["report"]["active"]
         and initial["report"]["admitted_lights"] == 0
         and not client.call("get_map_info")["rendering"]["initialized"],
@@ -277,6 +281,96 @@ def validate(client, output, fgd, result):
         "Unsupported dynamic lighting has an explicit exclusion and cannot illuminate receivers",
     )
     visibility([unsupported], "hide")
+    sun = emitter("light_environment", [0, -80, 64], color="255 0 0 200", pitch="-90", _ambient="0 0 255 1000", SunSpreadAngle="45")
+    client.call("select", {"ids": []})
+    sun_detail, sun_metadata = render("control-sun-detail", lighting_preview=True)
+    sun_fast, _ = render("control-sun-fast", lighting_preview=True, lighting_quality="fast")
+    sun_report = sun_metadata["lighting_preview"]["report"]
+    check(
+        sun_report["admitted_suns"] == 1 and sun_report["admitted_lights"] == 1
+        and patch_rgb(sun_detail, PROBE) == patch_rgb(sun_fast, PROBE)
+        and any(patch_rgb(sun_detail, PROBE))
+        and not any(patch_rgb(sun_detail, PROBE)[2::3]),
+        "Fast and Detail admit one direct red LDR sun while ignoring blue ambient",
+    )
+    sun_source = detail(client, [sun, floor])
+    sun_state = client.call("get_map_info")
+    sun_camera = client.call("get_camera")
+    client.call("transform_objects", {"ids": [sun], "translation": [200, 100, 50], "preview": True})
+    sun_draft = client.call("get_map_info")["transform"]["preview"]
+    translated, translated_metadata = render("control-sun-translated", lighting_preview=True)
+    ambient_detail, ambient_metadata = render("control-sun-ambient-detail", lighting_preview=True, lighting_sky_ambient=True)
+    ambient_fast, _ = render("control-sun-ambient-fast", lighting_preview=True, lighting_sky_ambient=True, lighting_quality="fast")
+    direct_again, direct_metadata = render("control-sun-direct-again", lighting_preview=True, lighting_sky_ambient=False)
+    check(
+        ambient_metadata["lighting_preview"]["report"]["sky_ambient"]
+        and ambient_metadata["view"]["lighting_sky_ambient"]
+        and ambient_metadata["lighting_preview"]["report"]["admitted_lights"] == 1
+        and patch_rgb(ambient_detail, PROBE) == patch_rgb(ambient_fast, PROBE)
+        and any(patch_rgb(ambient_detail, PROBE)[2::3])
+        and patch_rgb(ambient_detail, PROBE)[::3] == patch_rgb(sun_detail, PROBE)[::3]
+        and patch_rgb(direct_again, PROBE) == patch_rgb(sun_detail, PROBE)
+        and not direct_metadata["lighting_preview"]["report"]["sky_ambient"]
+        and client.call("get_map_info")["view"] == sun_state["view"],
+        "Temporary Fast/Detail sky ambient adds the authored blue contribution in the same sun slot and restores exact direct-only pixels",
+    )
+    client.call("set_view", {"lighting_sky_ambient": True})
+    check(
+        client.call("get_map_info")["transform"]["preview"] == sun_draft
+        and client.call("get_lighting_preview")["sky_ambient"],
+        "Shared sky ambient toggling preserves the owned transform draft",
+    )
+    client.call("set_view", {"lighting_sky_ambient": False})
+    check(
+        patch_rgb(translated, PROBE) == patch_rgb(sun_detail, PROBE)
+        and translated_metadata["lighting_preview"]["report"]["source"]["render_revision"]
+            != translated_metadata["lighting_preview"]["report"]["source"]["revision"]
+        and client.call("get_map_info")["transform"]["preview"] == sun_draft
+        and detail(client, [sun, floor]) == sun_source
+        and client.call("get_camera") == sun_camera
+        and client.call("get_map_info")["undo"] == sun_state["undo"],
+        "Sun translation has no attenuation and temporary renders preserve its owned draft and committed state",
+    )
+    client.call("cancel_transform_preview")
+    client.call("set_entity_properties", {"id": sun, "set": {"_ambient": "malformed"}})
+    malformed_ambient, metadata = render("control-invalid-requested-ambient", lighting_preview=True, lighting_sky_ambient=True)
+    ignored_ambient, ignored_metadata = render("control-invalid-ignored-ambient", lighting_preview=True, lighting_sky_ambient=False)
+    report = metadata["lighting_preview"]["report"]
+    check(
+        report["admitted_suns"] == 0 and report["excluded_suns"] == 1
+        and any("LDR sky ambient" in row["reason"] for row in report["diagnostics"])
+        and not any(patch_rgb(malformed_ambient, PROBE))
+        and ignored_metadata["lighting_preview"]["report"]["admitted_suns"] == 1
+        and patch_rgb(ignored_ambient, PROBE) == patch_rgb(sun_detail, PROBE),
+        "Malformed requested ambient excludes its sun while the default-off path ignores ambient fields",
+    )
+    client.call("set_entity_properties", {"id": sun, "remove": ["_ambient"]})
+    default_ambient, metadata = render("control-default-half-sun-ambient", lighting_preview=True, lighting_sky_ambient=True)
+    check(
+        metadata["lighting_preview"]["report"]["admitted_suns"] == 1
+        and sum(patch_rgb(default_ambient, PROBE)[::3]) > sum(patch_rgb(sun_detail, PROBE)[::3])
+        and not any(patch_rgb(default_ambient, PROBE)[2::3]),
+        "Missing optional LDR ambient uses the compiler's half-sun default",
+    )
+    other_sun = emitter("light_environment", [0, -80, 80], color="0 255 0 200", pitch="-90")
+    client.call("select", {"ids": []})
+    conflicting, metadata = render("control-conflicting-suns", lighting_preview=True)
+    report = metadata["lighting_preview"]["report"]
+    check(
+        report["admitted_suns"] == 0 and report["excluded_suns"] == 2
+        and not any(patch_rgb(conflicting, PROBE))
+        and all(any(row["entity"] == int(source.split(":")[1]) and "Conflicting" in row["reason"]
+                    for row in report["diagnostics"]) for source in [sun, other_sun]),
+        "Conflicting visible suns are all diagnosed without selecting a source prefix",
+    )
+    visibility([other_sun], "hide")
+    recovered_sun, metadata = render("control-sun-recovered", lighting_preview=True)
+    check(
+        metadata["lighting_preview"]["report"]["admitted_suns"] == 1
+        and patch_rgb(recovered_sun, PROBE) == patch_rgb(sun_detail, PROBE),
+        "Hiding the conflicting source restores the remaining sun",
+    )
+    visibility([sun], "hide")
     limit = client.call("get_lighting_preview")["limits"]["lights"]
     check(limit == 32, "The authored-light editor budget is explicitly reported as 32")
     extra = [
@@ -344,6 +438,7 @@ def validate(client, output, fgd, result):
         {"lighting_exposure_ev": 9},
         {"lighting_exposure_ev": -9},
         {"lighting_quality": "invalid"},
+        {"lighting_sky_ambient": "true"},
         {"lighting_preview": True, "lighting_quality": "fast", "normal_maps": True},
     ]:
         client.call("set_view", options, error=True)
@@ -465,6 +560,20 @@ def validate(client, output, fgd, result):
         and metadata["normal_maps"]["report"]["applied_faces"] > 0,
         "The final room render combines Detail lighting and flat-brush normal preview",
     )
+    emitter("light_environment", [0, -64, 128], color="255 224 184 80", pitch="-45", angle="315", _ambient="96 144 255 32")
+    client.call("select", {"ids": []})
+    room_sun, metadata = render("showcase-sun-point-spot", lighting_preview=True, normal_maps=True, **room_options)
+    check(
+        room_sun != room_normals and metadata["lighting_preview"]["report"]["admitted_suns"] == 1
+        and metadata["lighting_preview"]["report"]["admitted_lights"] == 3,
+        "Direct LDR sun combines with point/spot and Detail normal-map receivers under the existing display policy",
+    )
+    room_ambient, metadata = render("showcase-sky-ambient", lighting_preview=True, lighting_sky_ambient=True, normal_maps=True, **room_options)
+    check(
+        room_ambient != room_sun and metadata["lighting_preview"]["report"]["sky_ambient"]
+        and metadata["lighting_preview"]["report"]["admitted_lights"] == 3,
+        "Optional LDR sky ambient combines with sun, point/spot and Detail normal-map receivers without another light slot",
+    )
     client.call("set_camera", room_camera)
     client.call("save_map", {"path": str(output / "showcase-source.vmf")})
     result["showcase"] = {
@@ -475,6 +584,8 @@ def validate(client, output, fgd, result):
             "showcase-point.png",
             "showcase-point-spot.png",
             "showcase-detail-normals.png",
+            "showcase-sun-point-spot.png",
+            "showcase-sky-ambient.png",
         ],
         "policy": "Private unshadowed LDR editor preview; no native brightness or shadow claim",
     }
@@ -517,6 +628,7 @@ def main():
         ):
             client = Client(None, args.binary, output, gameinfo=gameinfo)
         validate(client, output, fgd, result)
+        result["exit_code"] = require_clean_eof(client)
         result["status"] = "passed"
     except Exception as error:
         result["status"] = "failed"

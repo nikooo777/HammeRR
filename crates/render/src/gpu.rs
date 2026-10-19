@@ -214,6 +214,7 @@ pub struct PaintGuide {
 pub struct ViewOptions {
     pub instance_contents: bool,
     pub lighting_preview: bool,
+    pub lighting_sky_ambient: bool,
     pub lighting_quality: crate::lighting::Quality,
     pub lighting_exposure_ev: f32,
     pub normal_maps: bool,
@@ -249,6 +250,7 @@ impl Default for ViewOptions {
             surface: SurfaceView::Textured,
             normal_maps: false,
             lighting_preview: false,
+            lighting_sky_ambient: false,
             lighting_quality: crate::lighting::Quality::Detail,
             lighting_exposure_ev: 0.0,
             smoothing_group: 1,
@@ -287,6 +289,7 @@ pub struct SceneKey {
     normal_maps: bool,
     normal_maps_textured: bool,
     lighting_preview: bool,
+    lighting_sky_ambient: bool,
     lighting_textured: bool,
     lighting_tool_textures: bool,
     additive_sprite_guides: bool,
@@ -311,6 +314,7 @@ impl ViewOptions {
             normal_maps: self.normal_maps,
             normal_maps_textured: self.normal_maps && self.surface == SurfaceView::Textured,
             lighting_preview: self.lighting_preview,
+            lighting_sky_ambient: self.lighting_sky_ambient,
             lighting_textured: self.lighting_preview && self.surface == SurfaceView::Textured,
             lighting_tool_textures: self.lighting_preview
                 && self.surface == SurfaceView::Textured

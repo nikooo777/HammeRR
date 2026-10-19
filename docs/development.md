@@ -2388,9 +2388,12 @@ python3 -B scripts/validate_authored_lighting_preview.py --binary target/debug/h
 python3 -B scripts/validate_additive_sprite_guides.py --binary target/debug/hammerr-headless --output /tmp/hammerr-additive-guides-check
 ```
 
-Use new private output directories. The lighting script checks actual point/spot
-renders, quality/exposure controls, explicit unshadowed behavior, unsupported and
-over-budget states, draft preservation and normal-map composition. It retains a
+Use new private output directories. The lighting script checks actual point/spot/
+direct-LDR-sun renders, Fast/Detail and exposure controls, default-off and optional
+LDR sky ambient, malformed requested ambient exclusion and half-sun defaults,
+translation without attenuation, duplicate-sun exclusion and visibility recovery,
+explicit unshadowed behavior, unsupported and over-budget states, draft
+preservation and normal-map composition. It retains a
 room/ramp VMF, raw PNGs and the corresponding scene reports. The Sprite script
 checks independent blend references, temporary/shared flags, appearance
 provenance, immutable shared assets and source/history/bounds preservation.
@@ -2400,6 +2403,26 @@ Explicit GPU checks include `authored_lighting_gpu_matches_compiler_oracle_and_p
 `authored_lighting_mcp_render_override_reports_the_rendered_snapshot_and_restores_pixels`,
 `additive_sprite_render_reports_retain_uploaded_scene_across_later_edits` and
 `additive_sprite_rgb_matches_independent_blend_reference_and_mixed_camera_order`.
+
+The authored-lighting compiler oracle covers both point/spot paths and sun
+direction sign, position independence, exposure, literal additive sky ambient
+and point lighting, half-sun defaults, and Detail normal maps on an
+actual GPU. Run it explicitly after the ordinary compiler/parser and Session
+admission tests:
+
+```sh
+cargo test -j8 -p compiler lighting::sky::tests
+cargo test -j8 -p compiler lighting::preview::tests
+cargo test -j8 -p editor-core --features mcp session::lighting_preview::tests
+cargo test -j8 -p editor-core --features mcp authored_lighting_gpu_matches_compiler_oracle_and_preserves_off_and_diagnostic_pixels -- --ignored --test-threads=1
+```
+
+Native compiler ambient defaults and LDR/HDR selection stay covered by the
+existing sky parser tests. Session tests check all conflicting visible suns,
+hidden/working-region filtering and one shared light-count/radiance budget,
+including the maximum per-channel direct-plus-ambient contribution. Existing
+software UI controls exercise **Include LDR sky ambient** through its actual
+checkbox and retain the owned property draft.
 
 ### Material channels and textured prefab thumbnails
 

@@ -1065,22 +1065,40 @@ remains separate. See [Normal-map preview](normal-maps.md).
 ### Authored lighting preview
 
 `set_view` and temporary `render_view` accept `lighting_preview` (default false),
-`lighting_quality` (`fast` or `detail`, default Detail) and
+`lighting_sky_ambient` (default false), `lighting_quality` (`fast` or `detail`, default Detail) and
 `lighting_exposure_ev` (finite −8..8, default 0). Fast interpolates vertex
 contributions; Detail evaluates fragments and supports `normal_maps`. Active
 Fast plus normal maps rejects atomically. These resource settings preserve
 camera, selection, source/history and owned editing reviews.
 
 `get_lighting_preview {}` uses the shared CPU scene without graphics startup.
-It returns admitted/excluded emitters, flat receiver polygons and separate
+It returns admitted/excluded emitters, direct LDR sun counts
+(`report.admitted_suns` / `report.excluded_suns`), flat receiver polygons and separate
 `report.terrain` surface/drawn-triangle counts and `report.models` admitted/excluded
 instance, selected-part and drawn-triangle counts, bounded diagnostics, limits, summary and the captured document/render/region/material
 source stamp. `render_view.lighting_preview.report` belongs to the scene that
 was rendered; temporary overrides leave shared settings unchanged.
 
-Only visible constant unnamed style-0 `light`/`light_spot` entities and opaque
-flat LightmappedGeneric brush receivers or supported power-2/3/4 world/detail
-terrain are admitted. Terrain uses checked sewn LOD normals, no declared
+`lighting_sky_ambient` matches **Include LDR sky ambient**. It uses the admitted
+sun's compiler LDR `_ambient` color/brightness, or half the direct sun intensity
+when that optional field is missing or empty. Ambient is constant for every
+supported receiver normal, without sky visibility or occlusion. It shares the
+sun's existing slot and charges `max(direct.rgb + ambient.rgb)` to the shared
+headroom. Malformed requested ambient excludes that sun; disabled ambient ignores
+its fields. `get_lighting_preview.sky_ambient` and `report.sky_ambient` capture
+the requested option; actual illumination still requires an admitted sun and
+active Textured authored lighting. This setting stays outside Preview defaults.
+
+Visible constant unnamed style-0 `light`/`light_spot` entities and at most one
+`light_environment` are admitted. All conflicting visible suns are excluded
+with entity diagnostics; point/spot lights remain eligible. Sun uses shared
+compiler LDR color/direction parsing, optional origin defaulting to zero and
+direction toward the source, without point attenuation. Its slot and radiance
+count toward the shared 32-light/headroom limits (`limits.suns` is 1). Sun
+sources follow the same current-render-document and visible-working-region
+filter as point/spot lights, including pending previews, unlike compiler
+cordons. Opaque flat LightmappedGeneric brush receivers or supported power-2/3/4
+world/detail terrain are admitted. Terrain uses checked sewn LOD normals, no declared
 bump/blend/detail effects and the same cached opaque base/material identity;
 outline-only or suppressed tool/sky sheets count zero drawn triangles. Models
 require whole-selected-instance opaque single-base VertexLitGeneric admission,
@@ -1094,8 +1112,10 @@ paired with old pixels. See [Models](models.md#preview-authored-lighting).
 The 32-light or summed
 radiance limit disables the whole preview with a reason. Zero admitted lights
 make supported receivers black. Excluded surfaces retain ordinary display.
-There are no shadows, sun, ambient, bounce, animation or native brightness
-claims. Display applies linear diffuse contribution, exposure and per-channel
+There are no shadows, bounce, animation, sky visibility or native
+brightness claims. Sun ignores HDR override illumination; validated
+`SunSpreadAngle` does not add penumbrae. Sky-camera miniatures retain separate
+fixed shading. Display applies linear diffuse contribution, exposure and per-channel
 Reinhard before sRGB output. Non-Textured modes perform no light admission.
 See [Authored lighting preview](lighting-preview.md).
 

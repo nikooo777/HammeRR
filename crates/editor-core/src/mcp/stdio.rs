@@ -194,6 +194,7 @@ impl StdioOutput {
         if state.used {
             return Err(StdioFenceError::AlreadyUsed);
         }
+        #[allow(deprecated, reason = "Atomic::try_update requires Rust 1.95")]
         let attempt = NEXT_ATTEMPT
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
                 value.checked_add(1)

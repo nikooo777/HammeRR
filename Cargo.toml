@@ -16,7 +16,7 @@ render = { path = "crates/render" }
 slint = { version = "1.18", default-features = false, features = ["std", "backend-winit", "renderer-femtovg-wgpu", "unstable-wgpu-30", "accessibility", "compat-1-2"] }
 
 [profile.dev]
-opt-level = 1
+opt-level = 2
 
 [profile.dev.package."*"]
 opt-level = 3
@@ -26,6 +26,14 @@ opt-level = 2
 
 [profile.dev.package.editor-ui]
 opt-level = 0
+debug = 0
 
 [profile.test.package.editor-ui]
 opt-level = 0
+debug = 0
+
+[profile.dev.package.editor-core]
+debug = "line-tables-only"
+
+[profile.test.package.editor-core]
+debug = "line-tables-only"

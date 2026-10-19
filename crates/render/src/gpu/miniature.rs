@@ -18,6 +18,7 @@ struct Reservation {
 
 impl Reservation {
     fn new(allocated: &Arc<AtomicUsize>, bytes: usize) -> Result<Self, String> {
+        #[allow(deprecated, reason = "Atomic::try_update requires Rust 1.95")]
         allocated.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
             current.checked_add(bytes).filter(|total| *total <= sky3d::MAX_GPU_ASSET_BYTES)
         }).map_err(|_| format!("3D sky retained GPU geometry/material payload exceeds {} bytes; release earlier scenes before replacement", sky3d::MAX_GPU_ASSET_BYTES))?;

@@ -19,6 +19,7 @@ static NEXT_DOCUMENT_ID: AtomicU64 = AtomicU64::new(1);
 pub struct DocumentId(u64);
 
 impl DocumentId {
+    #[allow(deprecated, reason = "Atomic::try_update requires Rust 1.95")]
     pub(crate) fn allocate() -> Result<Self, String> {
         NEXT_DOCUMENT_ID
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))

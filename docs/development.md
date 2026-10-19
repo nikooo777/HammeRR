@@ -113,9 +113,12 @@ cargo build -p editor-core --features mcp --bin hammerr-headless
 ```
 
 Development and test builds leave the generated `editor-ui` crate unoptimized
-to reduce compilation work. Slint's testing metadata stays enabled, other
-package settings keep their existing optimization levels, and release builds
-retain full UI optimization.
+and omit its DWARF debug symbols to reduce compilation work and memory. Core
+development and test builds retain file-and-line backtraces with line tables
+instead of full debug metadata. Both profiles use workspace optimization level
+2 so grouped test and production-binary builds can reuse compatible artifacts;
+registry dependencies retain level 3. Slint's testing metadata stays enabled,
+and release builds retain full UI optimization.
 
 The optional `test-support` feature exposes shared fixtures for desktop tests. It is not needed to run either program. `editor --headless` remains compatible with the standalone target.
 

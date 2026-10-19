@@ -12,6 +12,14 @@ from validate_face_lighting import Client, detail
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def private_output_directory(parser, output):
+    output = output.resolve()
+    if not any(output.is_relative_to(base) for base in (Path("/tmp"), ROOT / "target" / "validation")):
+        parser.error("Private acceptance output must be below /tmp or target/validation")
+    output.mkdir(parents=True, exist_ok=False)
+    return output
+
+
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -29,6 +37,13 @@ def close_with_status(client):
         client.log.close()
         client.process = None
     return code, process.stdout.read()
+
+
+def require_clean_eof(client):
+    code, trailing = close_with_status(client)
+    if code != 0 or trailing.strip():
+        raise RuntimeError(f"Headless EOF failed: exit={code}, trailing={trailing[:512]!r}")
+    return code
 
 
 def validate_case(binary, output, fail):

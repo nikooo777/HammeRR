@@ -9,6 +9,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from validate_face_lighting import Client
+from validate_recovery_exit import private_output_directory, require_clean_eof
 
 
 def decoded(result):
@@ -167,10 +168,7 @@ def main():
     parser.add_argument("--binary", type=Path, action="append", required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    output = args.output.resolve()
-    if not output.is_relative_to(Path("/tmp")):
-        parser.error("Private acceptance output must be below /tmp")
-    output.mkdir(parents=True, exist_ok=False)
+    output = private_output_directory(parser, args.output)
     original_maps = maps_manifest()
     reports = []
     try:
@@ -187,8 +185,7 @@ def main():
                 checks = Probe(client, directory).run()
                 reports.append({"binary": str(binary.resolve()), "checks": len(checks), "passed": checks})
             finally:
-                client.close()
-            assert client.process.returncode == 0, f"{binary} exited {client.process.returncode}"
+                require_clean_eof(client)
     finally:
         assert maps_manifest() == original_maps, "Repository maps/ changed during private acceptance"
     (output / "validation.json").write_text(json.dumps({"binaries": reports, "repository_maps_preserved": True}, indent=2) + "\n")

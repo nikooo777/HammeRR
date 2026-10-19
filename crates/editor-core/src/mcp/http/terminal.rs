@@ -67,6 +67,7 @@ impl TerminalAttempt {
             && matches!(message, ServerJsonRpcMessage::Response(response) if response.id == *request && matches!(&response.result, ServerResult::CallToolResult(result) if result == expected))
     }
 
+    #[allow(deprecated, reason = "Atomic::try_update requires Rust 1.95")]
     pub fn new() -> Result<Self, String> {
         NEXT_ATTEMPT
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {

@@ -31,7 +31,7 @@ render.workspace = true
 rmcp = { version = "3.5.1", features = ["server", "macros", "schemars", "transport-io", "transport-streamable-http-server"], optional = true }
 schemars = "1.2.2"
 serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.151"
+serde_json = { version = "1.0.151", features = ["float_roundtrip"] }
 sha2 = "0.10.9"
 sse-stream = { version = "0.2.6", optional = true }
 source-formats.workspace = true

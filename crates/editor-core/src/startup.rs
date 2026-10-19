@@ -84,6 +84,7 @@ pub struct Application {
     compile_queue: Option<crate::runtime::CompileQueue>,
     _path_claims: crate::path_claims::Authority,
     pub material_favorites: material_favorites::Authority,
+    pub color_palette: crate::color_palette::Authority,
     pub recent_maps: recent_maps::Authority,
     pub shortcuts: shortcuts::Authority,
     pub saved_defaults: crate::saved_defaults::SavedDefaults,
@@ -146,6 +147,7 @@ impl Application {
         let saved_defaults = crate::saved_defaults::SavedDefaults::configured(directory.clone());
         let path_claims = crate::path_claims::Authority::default();
         let material_favorites = material_favorites::Authority::configured(directory.clone());
+        let color_palette = crate::color_palette::Authority::configured(directory.clone());
         let recent_maps =
             recent_maps::Authority::configured(recent_maps::directory(directory.clone()));
         let shortcuts = shortcuts::Authority::configured(directory.clone());
@@ -162,6 +164,7 @@ impl Application {
             native: Some(compile_queue.native().clone()),
             path_claims: path_claims.clone(),
             material_favorites: material_favorites.clone(),
+            color_palette: color_palette.clone(),
             recent_maps: recent_maps.clone(),
             shortcuts: shortcuts.clone(),
             saved_defaults: saved_defaults.clone(),
@@ -186,6 +189,7 @@ impl Application {
             compile_queue: Some(compile_queue),
             _path_claims: path_claims,
             material_favorites,
+            color_palette,
             recent_maps,
             shortcuts,
             saved_defaults,

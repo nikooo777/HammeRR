@@ -1,5 +1,7 @@
+use crate::runtime::{DocumentAccess, DocumentContinuation};
 use editor_core::color::{Converted, Input, Space};
-use slint::ComponentHandle;
+use slint::{ComponentHandle, Model, VecModel};
+use std::rc::Rc;
 
 use crate::{ColorWindow, Session};
 
@@ -198,6 +200,170 @@ pub fn bind(window: &ColorWindow) {
             }
         }
     });
+}
+
+pub fn refresh_palette(window: &ColorWindow, session: &Session) {
+    let state = session.color_palette_state();
+    let selected = palette_selection(window);
+    let entries = state["entries"]
+        .as_array()
+        .expect("Palette entries are an array");
+    let mut names = vec![slint::SharedString::from("Choose a saved color")];
+    names.extend(
+        entries
+            .iter()
+            .map(|entry| entry["name"].as_str().unwrap().into()),
+    );
+    let index = selected
+        .as_ref()
+        .and_then(|name| real_palette_index(names.iter().cloned(), name))
+        .unwrap_or(0);
+    window.set_palette_names(Rc::new(VecModel::from(names)).into());
+    window.set_palette_index(index as i32);
+    window.set_palette_snapshot(state["snapshot"].as_str().unwrap().into());
+    window.set_palette_ready(state["ready"] == true);
+    window.set_palette_reload_available(state["reload_available"] == true);
+    let mut status = format!(
+        "{} / 16 saved colors · {}",
+        entries.len(),
+        if state["ready"] == true {
+            "Palette ready"
+        } else {
+            "Palette unavailable"
+        }
+    );
+    if let Some(path) = state["path"].as_str() {
+        status.push_str(&format!("\n{path}"));
+    }
+    if let Some(error) = state["error"].as_str() {
+        status.push_str(&format!("\n{error}"));
+    }
+    if state["write_committed"] == true && state["ready"] != true {
+        status.push_str(
+            "\nThe palette was written but could not be verified. Reload palette before using it.",
+        );
+    }
+    window.set_palette_status(status.into());
+}
+
+fn palette_selection(window: &ColorWindow) -> Option<slint::SharedString> {
+    let index = usize::try_from(window.get_palette_index()).ok()?;
+    (index > 0)
+        .then(|| window.get_palette_names().row_data(index))
+        .flatten()
+}
+
+fn real_palette_index(
+    names: impl Iterator<Item = slint::SharedString>,
+    name: &str,
+) -> Option<usize> {
+    names
+        .enumerate()
+        .skip(1)
+        .find_map(|(index, entry)| (entry.as_str() == name).then_some(index))
+}
+
+fn palette_callback(
+    window: &slint::Weak<ColorWindow>,
+    target: &DocumentContinuation,
+    body: impl FnOnce(&ColorWindow, &mut Session) -> Result<(), String>,
+) {
+    let Some(window) = window.upgrade() else {
+        return;
+    };
+    let result = target
+        .upgrade()
+        .and_then(|access| access.with_session(|session| body(&window, session)));
+    if let Err(error) = result {
+        window.set_message(error.into());
+    }
+}
+
+pub fn bind_palette(window: &ColorWindow, access: &DocumentAccess) {
+    window.on_palette_choice({
+        let window = window.as_weak();
+        move || {
+            let Some(window) = window.upgrade() else {
+                return;
+            };
+            if let Some(name) = palette_selection(&window) {
+                window.set_palette_name(name);
+            }
+        }
+    });
+    window.on_palette_action({
+        let (window, target) = (window.as_weak(), access.downgrade());
+        move |action| {
+            palette_callback(&window, &target, |window, session| {
+                change_palette(window, session, &action)
+            })
+        }
+    });
+}
+
+fn change_palette(window: &ColorWindow, session: &mut Session, action: &str) -> Result<(), String> {
+    let name = match action {
+        "save" => Some(window.get_palette_name()),
+        "reload" => None,
+        _ => palette_selection(window),
+    };
+    let color = if action == "save" || action == "replace" {
+        Some(Input {
+            space: Space::Rgb1,
+            channels: read(window)?.rgb1,
+        })
+    } else {
+        None
+    };
+    let selected_name = if action == "rename" {
+        Some(window.get_palette_name())
+    } else {
+        name.clone()
+    };
+    let result = if action == "rename" {
+        session.rename_color_palette(
+            &window.get_palette_snapshot(),
+            name.as_deref()
+                .ok_or("Choose an existing color to rename")?,
+            &window.get_palette_name(),
+        )
+    } else {
+        session.change_color_palette(
+            action,
+            &window.get_palette_snapshot(),
+            name.as_deref(),
+            color,
+        )
+    };
+    refresh_palette(window, session);
+    let result = result?;
+    if action == "use" {
+        let rgb1: [f64; 3] = serde_json::from_value(result["color"]["rgb1"].clone())
+            .map_err(|error| error.to_string())?;
+        let color = Session::convert_color(Input {
+            space: Space::Rgb1,
+            channels: rgb1,
+        })?;
+        store(window, &color);
+        display(window, &color);
+    }
+    if action == "save" || action == "rename" {
+        let names = window.get_palette_names();
+        if let Some(index) = selected_name
+            .as_deref()
+            .and_then(|name| real_palette_index(names.iter(), name))
+        {
+            window.set_palette_index(index as i32);
+        }
+    }
+    window.set_message(match action {
+        "save" | "replace" => "Saved in your user palette. Palette writes remain saved if you Cancel this color edit.",
+        "delete" => "Deleted the saved color. The current color stays unchanged.",
+        "rename" => "Renamed the saved color. The current color and brightness stay unchanged.",
+        "reload" => "Reloaded the user palette. The current color stays unchanged.",
+        _ => "Loaded the saved color locally. Apply color to use it; brightness stays unchanged.",
+    }.into());
+    Ok(())
 }
 
 #[cfg(test)]

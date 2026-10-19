@@ -92,7 +92,27 @@ Model entities can display mounted static meshes directly. See [Models](models.m
 
 ![HSL picker with independent light brightness](images/entity-color-hsl.png)
 
-Switching color models preserves the current color exactly, including normalized `color1` precision. Editing one RGB channel keeps untouched normalized channels; selecting a preset replaces the complete color. `color255` output rounds to the nearest byte, while `color1` retains normalized values. Invalid or nonfinite inputs are refused. Hue 360° equals 0°; conversions of gray, white and black report hue 0°. A hue chosen while saturation is zero stays available for the next saturation edit in that model. These are RGB coordinate conversions, without gamma correction or brightness changes. Persistent custom palettes remain unavailable.
+Switching color models preserves the current color exactly, including normalized `color1` precision. Editing one RGB channel keeps untouched normalized channels; selecting a preset replaces the complete color. `color255` output rounds to the nearest byte, while `color1` retains normalized values. Invalid or nonfinite inputs are refused. Hue 360° equals 0°; conversions of gray, white and black report hue 0°. A hue chosen while saturation is zero stays available for the next saturation edit in that model. These are RGB coordinate conversions, without gamma correction or brightness changes.
+
+### Save and reuse user colors
+
+Keep up to 16 named colors in one user palette shared by every open map.
+
+1. Open a color property's picker and adjust **RGB**, **HSV** or **HSL**.
+2. Enter **Saved color name**, then click **Save new color**. Invalid or incomplete channel input must be corrected before saving. The name must be new; **Replace saved color** explicitly updates the color selected under **Saved colors**.
+3. Choose any entry under **Saved colors** and click **Use saved color**. This replaces the picker's local color, including invalid unfinished color input. **Brightness** stays unchanged.
+4. Click **Apply color** to apply or stage that color as usual. **Cancel** discards the picker's local edits. Explicit palette Save, Replace, Rename and Delete actions remain saved even when this picker or the enclosing property draft is later cancelled.
+5. To rename an entry, select it under **Saved colors**, enter a distinct unused **Saved color name**, then click **Rename saved color**. Its exact color stays unchanged and the chooser follows the renamed entry after sorting. Rename also works with unfinished local color input; it preserves that input and **Brightness**.
+6. Select an entry and click **Delete saved color** to remove it. **Reload palette** explicitly rereads storage without changing the current picker color. The status below the controls shows the storage path, availability and errors.
+
+![Named user palette in the color picker](images/entity-color-palette.png)
+
+Limits:
+
+- One user palette, at most 16 entries. Names are exact and case-sensitive, with 1–48 characters and at most 128 UTF-8 bytes, without control characters or surrounding whitespace. Every entry remains available in the **Saved colors** chooser.
+- Only normalized RGB color values are stored. Normalized precision survives saving and restarting; brightness, map properties and Undo history are independent. Map-specific palettes, import/export and automatic reload are unavailable.
+- The bounded `color-palette.json` file is at most 16 KiB. A missing file is an empty palette. Invalid, oversized, unreadable or nonregular storage shows **Palette unavailable** and blocks Use and writes; existing color editing remains available. Repair the file externally, then click **Reload palette**. Reset is unavailable.
+- File bytes, identity and the original directory are checked before Use and writes. Outside changes require **Reload palette**. Save, Replace, Rename and Delete coordinate participating Linux writers through a nonblocking lock; programs ignoring that lock remain outside that guarantee. Storage failures require Reload before retrying. A write whose final verification failed remains reported as written but unavailable until Reload verifies storage.
 
 ## Lights and helpers
 

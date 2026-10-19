@@ -526,8 +526,8 @@ export struct KeyValue {
 
 export component ColorWindow inherits Window {
     title: "Choose Color - HammeRR";
-    width: 600px;
-    height: 660px;
+    preferred-width: 680px;
+    preferred-height: 900px;
     in property <string> field-label;
     in-out property <int> red;
     in-out property <int> green;
@@ -547,6 +547,15 @@ export component ColorWindow inherits Window {
     in-out property <float> hue-value;
     in-out property <float> saturation-value;
     in-out property <float> level-value;
+    in property <[string]> palette-names;
+    in-out property <int> palette-index;
+    in-out property <string> palette-name;
+    in-out property <string> palette-snapshot;
+    in property <bool> palette-ready;
+    in property <bool> palette-reload-available;
+    in property <string> palette-status;
+    callback palette-choice();
+    callback palette-action(string);
     callback select-model(int);
     callback rgb-changed();
     callback preset(int, int, int);
@@ -632,6 +641,37 @@ export component ColorWindow inherits Window {
                     Slider { minimum: 0; maximum: max(1000, root.brightness); value: root.brightness; released(value) => { root.brightness = value; root.intensity = "\{value}"; } }
                     LineEdit { width: 100px; text <=> root.intensity; input-type: decimal; }
                 }
+            }
+            VerticalLayout {
+                spacing: 8px;
+                Text { text: "Saved colors"; font-weight: 600; }
+                HorizontalLayout {
+                    spacing: 8px;
+                    ComboBox {
+                        accessible-label: "Saved colors";
+                        model: root.palette-names;
+                        current-index <=> root.palette-index;
+                        selected => { root.palette-choice(); }
+                    }
+                    Button { text: "Use saved color"; enabled: root.palette-ready && root.palette-index > 0; clicked => { root.palette-action("use"); } }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    LineEdit { accessible-label: "Saved color name"; text <=> root.palette-name; placeholder-text: "Name for a new saved color"; }
+                    Button { text: "Rename saved color"; enabled: root.palette-ready && root.palette-index > 0; clicked => { root.palette-action("rename"); } }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    Button { text: "Save new color"; enabled: root.palette-ready; clicked => { root.palette-action("save"); } }
+                    Button { text: "Replace saved color"; enabled: root.palette-ready && root.palette-index > 0; clicked => { root.palette-action("replace"); } }
+                    Button { text: "Delete saved color"; enabled: root.palette-ready && root.palette-index > 0; clicked => { root.palette-action("delete"); } }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    Button { text: "Reload palette"; enabled: root.palette-reload-available; clicked => { root.palette-action("reload"); } }
+                    Text { text: "16 named colors · brightness stays unchanged"; vertical-alignment: center; wrap: word-wrap; }
+                }
+                ScrollView { height: 64px; Text { text: root.palette-status; wrap: word-wrap; color: root.palette-ready ? #b9c5d6 : #f5b477; } }
             }
             Text { text: root.message; wrap: word-wrap; }
             HorizontalLayout {

@@ -448,3 +448,255 @@ fn failed_property_drain_keeps_exact_error_and_local_close_without_retry() {
     assert_eq!(f.document.shutdown().unwrap_err(), error);
     assert_eq!(std::fs::read_dir(&recovery).unwrap().count(), 0);
 }
+
+#[test]
+fn saved_palette_picker_buttons_preserve_precision_brightness_and_draft_cancel() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: false,
+        },
+    )))
+    .unwrap();
+    let f = fixture();
+    f.parent.invoke_pick_color("tint".into());
+    let before = state(&f.shared);
+    let precise: [f64; 3] = [0.12345678901234566, 0.25000000000000006, 0.9876543210987654];
+    crate::color_ui::load(
+        &f.color,
+        "color1",
+        &precise.map(|value| value.to_string()).join(" "),
+    )
+    .unwrap();
+    f.color.set_intensity("123.5".into());
+    f.color.set_palette_name("Choose a saved color".into());
+    fn press(window: &ColorWindow, label: &str) {
+        crate::ui::tests::assert_dialog_button_visible(window, label);
+        i_slint_backend_testing::ElementHandle::find_by_accessible_label(window, label)
+            .next()
+            .unwrap()
+            .invoke_accessible_default_action();
+    }
+    press(&f.color, "Save new color");
+    assert_eq!(f.color.get_palette_index(), 1);
+    crate::color_ui::refresh_palette(&f.color, &lock(&f.shared));
+    assert_eq!(f.color.get_palette_index(), 1);
+    assert_eq!(
+        f.color.get_palette_names().row_data(1).unwrap(),
+        "Choose a saved color"
+    );
+    assert_eq!(
+        i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+            &f.color,
+            "Use saved color"
+        )
+        .next()
+        .unwrap()
+        .accessible_enabled(),
+        Some(true)
+    );
+    assert_eq!(
+        lock(&f.shared).color_palette_state()["entries"][0]["rgb1"],
+        json!(precise)
+    );
+    assert_eq!(state(&f.shared), before);
+    let palette_path = std::path::PathBuf::from(
+        lock(&f.shared).color_palette_state()["path"]
+            .as_str()
+            .unwrap(),
+    );
+    let bytes = std::fs::read(&palette_path).unwrap();
+    f.color.invoke_select_model(1);
+    f.color.set_hue("incomplete".into());
+    press(&f.color, "Replace saved color");
+    assert!(f.color.get_message().contains("valid color numbers"));
+    assert_eq!(f.color.get_hue(), "incomplete");
+    assert_eq!(std::fs::read(&palette_path).unwrap(), bytes);
+    f.color.set_palette_name("Rejected invalid input".into());
+    press(&f.color, "Save new color");
+    assert_eq!(std::fs::read(&palette_path).unwrap(), bytes);
+    press(&f.color, "Use saved color");
+    assert_eq!(crate::color_ui::read(&f.color).unwrap().rgb1, precise);
+    assert_eq!(f.color.get_intensity(), "123.5");
+    f.color.invoke_preset(0, 255, 0);
+    press(&f.color, "Replace saved color");
+    assert_eq!(
+        lock(&f.shared).color_palette_state()["entries"][0]["rgb1"],
+        json!([0.0, 1.0, 0.0])
+    );
+    crate::color_ui::load(
+        &f.color,
+        "color1",
+        &precise.map(|value| value.to_string()).join(" "),
+    )
+    .unwrap();
+    press(&f.color, "Replace saved color");
+    for index in 1..16 {
+        let mut session = lock(&f.shared);
+        let snapshot = session.color_palette_state()["snapshot"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        session
+            .change_color_palette(
+                "save",
+                &snapshot,
+                Some(&format!("Color {index:02}")),
+                Some(editor_core::color::Input {
+                    space: editor_core::color::Space::Rgb1,
+                    channels: precise,
+                }),
+            )
+            .unwrap();
+    }
+    crate::color_ui::refresh_palette(&f.color, &lock(&f.shared));
+    assert_eq!(f.color.get_palette_names().row_count(), 17);
+    for index in 1..=16 {
+        f.color.set_palette_index(index);
+        f.color.invoke_palette_choice();
+        press(&f.color, "Use saved color");
+        assert_eq!(crate::color_ui::read(&f.color).unwrap().rgb1, precise);
+    }
+    assert_eq!(f.color.get_intensity(), "123.5");
+    f.color.set_palette_name("Choose a saved color".into());
+    f.color.invoke_select_model(2);
+    crate::ui::tests::save_ui_snapshot(f.color.window(), "entity-color-palette");
+    press(&f.color, "Reload palette");
+    press(&f.color, "Delete saved color");
+    assert_eq!(
+        lock(&f.shared).color_palette_state()["entries"]
+            .as_array()
+            .unwrap()
+            .len(),
+        15
+    );
+    assert_eq!(crate::color_ui::read(&f.color).unwrap().rgb1, precise);
+    let repaired = std::fs::read(&palette_path).unwrap();
+    std::fs::write(&palette_path, b"invalid").unwrap();
+    press(&f.color, "Reload palette");
+    assert!(!f.color.get_palette_ready());
+    assert!(f.color.get_palette_status().contains("Palette unavailable"));
+    assert!(f.color.get_palette_status().contains("could not load"));
+    assert_eq!(crate::color_ui::read(&f.color).unwrap().rgb1, precise);
+    assert_eq!(
+        i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+            &f.color,
+            "Save new color"
+        )
+        .next()
+        .unwrap()
+        .accessible_enabled(),
+        Some(false)
+    );
+    std::fs::write(&palette_path, repaired).unwrap();
+    press(&f.color, "Reload palette");
+    assert!(f.color.get_palette_ready());
+    f.color.invoke_cancel();
+    assert_eq!(state(&f.shared), before);
+    let mut restarted = Session::new(Err("no assets needed".into()));
+    restarted.configure_recovery(Ok(palette_path.parent().unwrap().into()));
+    assert_eq!(
+        restarted.color_palette_state()["entries"]
+            .as_array()
+            .unwrap()
+            .len(),
+        15
+    );
+    assert_eq!(restarted.color_palette_state()["ready"], true);
+}
+
+#[test]
+fn rename_saved_color_button_preserves_invalid_local_draft_and_selects_sorted_name() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: false,
+        },
+    )))
+    .unwrap();
+    let f = fixture();
+    f.parent.invoke_pick_color("tint".into());
+    let before = state(&f.shared);
+    let precise: [f64; 3] = [0.12345678901234566, 0.25000000000000006, 0.9876543210987654];
+    {
+        let mut session = lock(&f.shared);
+        for name in ["Middle", "Last"] {
+            let snapshot = session.color_palette_state()["snapshot"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            session
+                .change_color_palette(
+                    "save",
+                    &snapshot,
+                    Some(name),
+                    Some(editor_core::color::Input {
+                        space: editor_core::color::Space::Rgb1,
+                        channels: precise,
+                    }),
+                )
+                .unwrap();
+        }
+    }
+    crate::color_ui::refresh_palette(&f.color, &lock(&f.shared));
+    f.color.set_palette_index(2);
+    f.color.invoke_palette_choice();
+    f.color.invoke_select_model(1);
+    f.color.set_hue("unfinished".into());
+    f.color.set_intensity("450.5".into());
+    f.color.set_palette_name("Choose a saved color".into());
+    fn rename(window: &ColorWindow) {
+        crate::ui::tests::assert_dialog_button_visible(window, "Rename saved color");
+        i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+            window,
+            "Rename saved color",
+        )
+        .next()
+        .unwrap()
+        .invoke_accessible_default_action();
+    }
+    rename(&f.color);
+    assert_eq!(f.color.get_palette_index(), 1);
+    assert_eq!(
+        f.color.get_palette_names().row_data(1).unwrap(),
+        "Choose a saved color"
+    );
+    assert_eq!(f.color.get_hue(), "unfinished");
+    assert!(crate::color_ui::read(&f.color).is_err());
+    assert_eq!(f.color.get_intensity(), "450.5");
+    let renamed = lock(&f.shared).color_palette_state();
+    assert_eq!(renamed["entries"][0]["rgb1"], json!(precise));
+    assert_eq!(state(&f.shared), before);
+    let path = std::path::PathBuf::from(renamed["path"].as_str().unwrap());
+    let bytes = std::fs::read(&path).unwrap();
+    for invalid in ["Last", " invalid "] {
+        f.color.set_palette_name(invalid.into());
+        rename(&f.color);
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        assert_eq!(f.color.get_palette_index(), 1);
+        assert_eq!(f.color.get_hue(), "unfinished");
+        assert_eq!(f.color.get_intensity(), "450.5");
+    }
+    f.color.set_palette_name("Zulu".into());
+    rename(&f.color);
+    assert_eq!(f.color.get_palette_index(), 2);
+    crate::color_ui::refresh_palette(&f.color, &lock(&f.shared));
+    assert_eq!(f.color.get_palette_index(), 2);
+    assert_eq!(f.color.get_palette_names().row_data(2).unwrap(), "Zulu");
+    assert_eq!(f.color.get_hue(), "unfinished");
+    assert_eq!(state(&f.shared), before);
+    f.color.invoke_cancel();
+    assert_eq!(state(&f.shared), before);
+    let mut restarted = Session::new(Err("no assets needed".into()));
+    restarted.configure_recovery(Ok(path.parent().unwrap().into()));
+    assert_eq!(
+        restarted.color_palette_state()["entries"][1]["name"],
+        "Zulu"
+    );
+    assert_eq!(
+        restarted.color_palette_state()["entries"][1]["rgb1"],
+        json!(precise)
+    );
+}

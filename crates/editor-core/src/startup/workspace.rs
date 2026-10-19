@@ -97,6 +97,7 @@ pub(super) struct Services {
     pub native: Option<crate::runtime::native_activity::Authority>,
     pub path_claims: crate::path_claims::Authority,
     pub material_favorites: material_favorites::Authority,
+    pub color_palette: crate::color_palette::Authority,
     pub recent_maps: recent_maps::Authority,
     pub shortcuts: shortcuts::Authority,
     pub saved_defaults: crate::saved_defaults::SavedDefaults,
@@ -118,6 +119,7 @@ impl Services {
             )?;
         }
         session.use_application_material_favorites(self.material_favorites.clone());
+        session.use_application_color_palette(self.color_palette.clone());
         session.use_application_recent_maps(self.recent_maps.clone());
         session.use_application_shortcuts(self.shortcuts.clone());
         session.use_application_build_recipes(self.build_recipes.clone());

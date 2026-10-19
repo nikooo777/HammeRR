@@ -431,7 +431,7 @@ The shared desktop and private stdio server expose workspace and document tools.
 | Material browsing | `search_materials`, `browse_materials`, `preview_material`, `set_material_favorite`, `reload_material_favorites`, `reload_material_assets` |
 | Entities | `create_entity`, `set_entity_properties`, `tie_to_entity`, `move_to_world` |
 | Linked paths | `get_linked_path`, `set_linked_path` |
-| Entity definitions and inspector | `search_entity_classes`, `get_entity_class`, `load_entity_definitions`, `get_entity_inspector`, `set_entity_color`, `convert_color`, `set_entity_color_space`, `set_entity_component` |
+| Entity definitions and inspector | `search_entity_classes`, `get_entity_class`, `load_entity_definitions`, `get_entity_inspector`, `set_entity_color`, `convert_color`, `set_entity_color_space`, `get_color_palette`, `set_color_palette`, `set_entity_component` |
 | Particle definitions and choices | `browse_particles`, `inspect_particle`, `begin_particle_choice`, `choose_particle`, `get_particle_choice`, `apply_particle_choice`, `cancel_particle_choice`, `reload_particle_assets` |
 | Connections | `get_entity_connections`, `get_connection_choices`, `begin_connection_edit`, `update_connection_draft`, `commit_connection_edit`, `cancel_connection_edit`, `delete_entity_connection` |
 | Safe renaming | `get_entity_references`, `begin_entity_rename`, `update_entity_rename`, `commit_entity_rename`, `cancel_entity_rename` |
@@ -1955,6 +1955,57 @@ leaves the map/history unchanged; success is one Undo step. The existing
 first, then use the existing `update_property_edit` component changes with
 `rgb1` for normalized fields or `rgb255` for byte fields before committing the
 property draft. See [Color picking](entities.md#choose-rgb-hsv-or-hsl).
+
+### Persistent user color palette
+
+`get_color_palette` reports the shared user palette, up to 16 named `rgb1`
+colors and their `rgb255`/`hsv`/`hsl` conversions. It includes `snapshot`,
+`ready`, `error`, `path`, `stored`, `write_committed` and exact limits. Reading
+returns the last inspected state; `ready:false` may retain last known entries
+and blocks Use and writes. It never implies that an empty unavailable palette
+loaded successfully.
+
+`set_color_palette` uses the same Session operations as the picker's **Saved
+colors** controls. Every action requires the latest `snapshot`:
+
+```json
+{"action":"save","snapshot":"<get_color_palette.snapshot>","name":"Evening blue","color":{"space":"rgb1","channels":[0.12345678901234566,0.25000000000000006,0.9876543210987654]}}
+```
+
+- `save`: new `name` plus `color`; **Save new color** never overwrites an existing name.
+- `replace`: existing `name` plus `color`; **Replace saved color** explicitly replaces that entry.
+- `rename`: existing `name` plus a distinct unused `new_name`, without `color`; **Rename saved color** keeps the exact stored color, current picker input and brightness unchanged. The chooser follows the new name after sorting. Rename works at the 16-entry limit. Only Rename accepts `new_name`.
+- `delete`: existing `name`, without `color`; **Delete saved color** leaves the current map and picker color unchanged.
+- `reload`: neither `name` nor `color`; **Reload palette** explicitly rereads storage.
+- `use`: existing `name`, without `color`; **Use saved color** returns `{color,palette}`. It performs checked source validation but edits no map or draft. Pass the returned `color.rgb1` to `set_entity_color_space` with `space:"rgb1"`, or stage it through existing property-draft operations. Omit intensity to preserve light brightness.
+
+For example, rename an existing entry without resupplying or converting its color:
+
+```json
+{"action":"rename","snapshot":"<get_color_palette.snapshot>","name":"Evening blue","new_name":"Night blue"}
+```
+
+Rename validates both names and the current inspected source, then publishes
+one replacement palette. Missing, duplicate, invalid, unchanged, stale or
+unavailable targets reject without rewriting storage. It edits no map or draft.
+
+Save/Replace accept the same validated color spaces as `convert_color` and
+persist normalized RGB without precision loss. Names are case-sensitive,
+1–48 characters/128 UTF-8 bytes, without controls or surrounding whitespace.
+All entries are human-accessible in the chooser. Palette writes are explicit
+shared user settings and remain saved if a map's color draft is later Cancelled.
+No palette action changes map dirty state, Undo, selection or camera.
+
+Storage uses the reported `color-palette.json` path and a 16 KiB limit. Missing
+storage is intentionally empty. Malformed, oversized or unreadable storage is
+preserved and unavailable; repair externally and explicitly Reload. Source
+bytes/identity and the original directory binding are checked; stale external
+writes reject until Reload. Participating Linux writers coordinate with a
+nonblocking lock. Errors are returned as `isError`; inspect `ready/error` after
+failure. `write_committed:true` with `ready:false` means publication completed
+but final verification failed, so it does not attest a usable saved palette.
+There is no Reset, map palette, brightness persistence or automatic reload.
+See [Saved user colors](entities.md#save-and-reuse-user-colors).
 
 ### Model tint
 

@@ -263,10 +263,10 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 | ![Shared property editing with mixed values](docs/images/batch-properties.png) |
 | Change shared properties, flags and colors across a selection. |
 
-| RGB, HSV and HSL colors |
-| --- |
-| ![HSL color controls with separate light brightness](docs/images/entity-color-hsl.png) |
-| Pick colors in RGB, HSV or HSL and adjust light brightness independently. |
+| RGB, HSV and HSL colors | Saved user colors |
+| --- | --- |
+| ![HSL color controls with separate light brightness](docs/images/entity-color-hsl.png) | ![Named saved colors in the picker](docs/images/entity-color-palette.png) |
+| Pick colors in RGB, HSV or HSL and adjust light brightness independently. | Save, rename and reuse named colors across open maps without changing light brightness. |
 
 Also: a typed inspector with color pickers, brightness sliders and spawn flags; light, spotlight and sun helpers; brush entities; and world settings.
 

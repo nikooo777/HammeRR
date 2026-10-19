@@ -1861,6 +1861,40 @@ invalid Apply, untouched normalized channels and preset synchronization.
 `HAMMERR_UI_SNAPSHOTS` saves `entity-color-hsl.png` and `property-color-hsl.png`
 to an existing directory. These checks use no desktop input or game process.
 
+### Persistent user color palette
+
+```sh
+cargo test -p editor-core --features mcp color_palette
+cargo test -p editor-core --features mcp application_palette_authority
+cargo test -p editor --bin editor saved_palette_picker_buttons_preserve_precision_brightness_and_draft_cancel -- --test-threads=1
+cargo test -p editor --bin editor rename_saved_color_button_preserves_invalid_local_draft_and_selects_sorted_name -- --test-threads=1
+python3 -B scripts/validate_color_palette.py --binary target/debug/hammerr-headless --binary target/debug/editor --output target/validation/color-palette-check
+```
+
+Use a fresh private output directory under `target/validation` for retained
+artifacts. Palette and color/Save-all validators share a canonical-path guard
+that also accepts `/tmp` for temporary runs; existing directories reject.
+The production-MCP validator starts both
+binaries in isolated stdio mode and covers exact RGB1 persistence across a
+fresh process, independent-writer conflicts and explicit Reload, shared document
+authority, explicit Replace/Delete, exact Rename across restart and at the
+16-entry limit, rejected Rename targets/stale writers, all 16 entries and overflow, malformed
+startup/storage, property-draft Cancel, source/history/camera preservation and
+independent light brightness. It neither initializes rendering nor starts a
+visible editor or game, and verifies repository `maps/` remains unchanged.
+
+Storage checks cover invalid names/channels, bounded files, nonregular/symlink
+targets, directory replacement and participating Linux writer locks. The
+software picker test invokes the actual Save, Replace, Use, Reload and Delete
+buttons, checks incomplete HSV input cannot save the last valid color, visits
+all chooser entries, and confirms palette writes survive map draft Cancel.
+The Rename button regression preserves unfinished HSV input and brightness,
+keeps the renamed entry selected after sorting/refresh, rejects duplicate and
+invalid names without writing, and reloads the exact color in a fresh Session.
+`HAMMERR_UI_SNAPSHOTS` captures `entity-color-palette.png` to an existing directory
+without desktop input. Numeric JSON persistence enables serde_json's
+`float_roundtrip` feature to preserve exact normalized f64 channels.
+
 ### FGD size and color helpers
 
 ```sh

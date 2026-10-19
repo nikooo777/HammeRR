@@ -783,6 +783,7 @@ fn bind_color_actions(
     target: impl Fn() -> Option<(u32, String, u64)> + 'static,
 ) {
     crate::color_ui::bind(window);
+    crate::color_ui::bind_palette(window, access);
     window.on_cancel({
         let window = window.as_weak();
         move || {
@@ -877,6 +878,7 @@ pub(super) fn show_color_window(app: &AppWindow, ui: &SharedUi, key: &str) {
         app.set_message(error.into());
         return;
     }
+    crate::color_ui::refresh_palette(&window, &lock(&shared));
     window.set_field_label(field.label.into());
     window.set_has_intensity(field.intensity.is_some());
     window.set_intensity(field.intensity.unwrap_or_default().to_string().into());

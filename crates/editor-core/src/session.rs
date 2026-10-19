@@ -38,6 +38,7 @@ pub mod clip_drag;
 pub mod clip_points;
 pub mod clipboard;
 mod clipping;
+mod color_palette;
 mod colors;
 pub mod compilation;
 pub mod compile_region;
@@ -284,6 +285,7 @@ pub struct Session {
     material_index: Option<Vec<String>>,
     material_reload: Option<material_assets::Report>,
     material_favorites: favorites::Binding,
+    color_palette: color_palette::Binding,
     material_recent: VecDeque<String>,
     camera: Camera,
     view: ViewOptions,
@@ -513,6 +515,7 @@ impl Session {
             material_index: None,
             material_reload: None,
             material_favorites: favorites::Binding::default(),
+            color_palette: color_palette::Binding::default(),
             material_recent: VecDeque::new(),
             camera: Camera::looking_at(
                 DVec3::new(-512.0, -512.0, 384.0).as_vec3(),

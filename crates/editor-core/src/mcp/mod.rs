@@ -692,6 +692,7 @@ impl EditorServer {
             + Self::compile_region_tools()
             + Self::checks_tools()
             + Self::clipboard_tools()
+            + Self::color_palette_tools()
             + Self::components_tools()
             + Self::context_tools()
             + Self::cubemap_bindings_tools()

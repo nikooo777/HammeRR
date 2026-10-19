@@ -308,6 +308,7 @@ impl Session {
         self.configure_prefabs(directory.clone());
         self.configure_build_recipes(directory.clone());
         self.configure_material_favorites(directory.clone());
+        self.configure_color_palette(directory.clone());
         self.configure_grid_preferences(directory.clone());
         self.configure_preview_preferences(directory.clone());
         self.configure_navigation_preferences(directory.clone());

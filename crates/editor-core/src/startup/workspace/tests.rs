@@ -460,3 +460,51 @@ fn successful_close_releases_retained_source_bsp_and_lin_with_live_old_handles()
     assert_ne!(reopened.document().id(), a.id());
     drop(old_server);
 }
+
+#[test]
+fn application_palette_authority_survives_document_recovery_reconfiguration() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut application = application(directory.path());
+    let workspace = application.workspace();
+    let first = workspace.resolve(None).unwrap().document();
+    let second = workspace
+        .prepare_new(Actor::Agent)
+        .unwrap()
+        .publish(DocumentVisibility::Headless)
+        .unwrap()
+        .document();
+    let mut a = lock(first.session());
+    let snapshot = a.color_palette_state()["snapshot"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    a.change_color_palette(
+        "save",
+        &snapshot,
+        Some("Shared precise"),
+        Some(crate::color::Input {
+            space: crate::color::Space::Rgb1,
+            channels: [0.12345678901234566, 0.25000000000000006, 0.9876543210987654],
+        }),
+    )
+    .unwrap();
+    let state = a.color_palette_state();
+    drop(a);
+    let mut b = lock(second.session());
+    b.configure_recovery(Err("document-only recovery unavailable".into()));
+    assert_eq!(b.color_palette_state(), state);
+    let snapshot = b.color_palette_state()["snapshot"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    b.change_color_palette("delete", &snapshot, Some("Shared precise"), None)
+        .unwrap();
+    drop(b);
+    assert!(
+        lock(first.session()).color_palette_state()["entries"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    application.shutdown().unwrap();
+}

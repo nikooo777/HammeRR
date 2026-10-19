@@ -339,6 +339,7 @@ fn bind_color(
 ) -> Result<ColorWindow, slint::PlatformError> {
     let window = ColorWindow::new()?;
     crate::color_ui::bind(&window);
+    crate::color_ui::bind_palette(&window, access);
     let target = Rc::new(RefCell::new(None::<(u64, String, bool)>));
     parent.on_pick_color({
         let (parent, window, access, target) = (
@@ -360,6 +361,7 @@ fn bind_color(
                     let field = property.field;
                     field.color.ok_or("Property is not a color")?;
                     crate::color_ui::load(&window, &field.kind, &field.value)?;
+                    crate::color_ui::refresh_palette(&window, session);
                     *target.borrow_mut() = Some((token, key.into(), field.kind == "color1"));
                     window.set_field_label(field.label.into());
                     window.set_has_intensity(false);

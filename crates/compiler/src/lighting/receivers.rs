@@ -61,6 +61,18 @@ pub(super) fn direct_optional(
     sky_ambient: bool,
     budget: &mut Budget<'_>,
 ) -> Result<[DVec3; STYLE_COUNT], String> {
+    direct_skipping_owner(ctx, candidates, cluster, sample, sky_ambient, None, budget)
+}
+
+pub(super) fn direct_skipping_owner(
+    ctx: &Context<'_>,
+    candidates: &mut Candidates,
+    cluster: Option<usize>,
+    sample: Sample,
+    sky_ambient: bool,
+    skip_owner: Option<u32>,
+    budget: &mut Budget<'_>,
+) -> Result<[DVec3; STYLE_COUNT], String> {
     let mut colors = [DVec3::ZERO; STYLE_COUNT];
     for &candidate in candidates.for_cluster(cluster, ctx.lights, budget)? {
         budget.consume(1)?;
@@ -82,11 +94,12 @@ pub(super) fn direct_optional(
                         .blocked(sample.origin, light.origin, &mut |work| {
                             budget.consume(work)
                         })?
-                    && !ctx
-                        .props
-                        .blocked(sample.origin, light.origin, &mut |work| {
-                            budget.consume(work)
-                        })?
+                    && !ctx.props.blocked_skipping_owner(
+                        sample.origin,
+                        light.origin,
+                        skip_owner,
+                        &mut |work| budget.consume(work),
+                    )?
                 {
                     colors[usize::from(light.style)] += value;
                 }
@@ -96,13 +109,14 @@ pub(super) fn direct_optional(
                     sample.normal,
                     ctx.sun_directions,
                     &mut |direction| {
-                        super::bake::sky_visible(
+                        super::sky_visible_skipping_owner(
                             direction,
                             sample.origin,
                             ctx.shadows,
                             ctx.terrain,
                             ctx.props,
                             &None,
+                            skip_owner,
                             budget,
                         )
                     },
@@ -113,13 +127,14 @@ pub(super) fn direct_optional(
                         sample.normal,
                         ctx.ambient_directions,
                         &mut |direction| {
-                            super::bake::sky_visible(
+                            super::sky_visible_skipping_owner(
                                 direction,
                                 sample.origin,
                                 ctx.shadows,
                                 ctx.terrain,
                                 ctx.props,
                                 &None,
+                                skip_owner,
                                 budget,
                             )
                         },

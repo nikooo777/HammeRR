@@ -22,6 +22,16 @@ fn prop_vertex_lighting_settings_validate_atomically_without_assets_or_document_
         let initial = session.compile_settings();
         assert_eq!(initial["bake_static_prop_vertices"], false);
         assert_eq!(initial["prop_vertex_lighting"]["available"], false);
+        assert_eq!(
+            initial["prop_vertex_lighting"]["limits"]["receiver"]["self_shadowing"],
+            json!({"default":true,"disable_property":"disableselfshadowing","disable_value":1,"disabled_scope":"receiver_owned_triangles","retained_blockers":["other_props","world","terrain"]})
+        );
+        assert!(
+            !initial["prop_vertex_lighting"]["limits"]["unsupported"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("disabled self-shadowing"))
+        );
         assert!(
             session
                 .update_build_settings(

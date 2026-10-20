@@ -546,8 +546,11 @@ Limits: receivers require a static model with one bodypart, one model and all
 sections across all LODs together. Samples stay at the original vertices.
 Ordinary opaque brush contact is supported; vertices buried more than
 0.000001 units inside a world brush, or touching terrain or another prop within
-that tolerance, reject explicitly. Unsupported normal, self-shadow or
-lighting-origin behavior, styled lights and specialized materials reject the
+that tolerance, reject explicitly. Set `disableselfshadowing` to `1` in a
+prop's **Advanced properties** to omit only its own triangles from point/spot,
+sun and sky-ambient rays; other props, world and terrain remain blockers.
+Absence or `0` retains self shadows. Unsupported normal or lighting-origin
+behavior, styled lights and specialized materials reject the
 requested build. Set a prop's `disablevertexlighting` to `1` in
 **Advanced properties** to exclude that prop explicitly; its ordinary shadow
 and collision settings stay independent. Per-texel prop lightmaps and reflected

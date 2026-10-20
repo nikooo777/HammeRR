@@ -555,20 +555,9 @@ pub(super) fn sky_visible(
     model: &Option<ShadowIndex<Occluder>>,
     budget: &mut Budget<'_>,
 ) -> Result<bool, String> {
-    budget.consume(1)?;
-    let end = origin + direction * super::sky::TRACE_LENGTH;
-    if let Some(fraction) =
-        shadows.sky_fraction(origin, end, &mut |amount| budget.consume(amount))?
-    {
-        let hit = origin.lerp(end, fraction) + direction * super::sky::SKY_HIT_BIAS;
-        Ok(
-            !terrain.blocked(origin, hit, &mut |amount| budget.consume(amount))?
-                && !props.blocked(origin, hit, &mut |amount| budget.consume(amount))?
-                && !model_blocked(model, origin, hit, budget)?,
-        )
-    } else {
-        Ok(false)
-    }
+    super::sky_visible_skipping_owner(
+        direction, origin, shadows, terrain, props, model, None, budget,
+    )
 }
 
 pub(super) fn model_blocked(

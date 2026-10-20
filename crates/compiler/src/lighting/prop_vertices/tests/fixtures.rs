@@ -414,3 +414,66 @@ pub(super) fn grounded(height: f64) -> Vmf {
     }
     vmf
 }
+
+pub(super) fn self_shadow_model(directory: &std::path::Path) {
+    let [mut mdl, mut vvd, _] = model();
+    for offset in [104, 128] {
+        for axis in 0..2 {
+            float(&mut mdl, offset + axis * 4, -16.0);
+            float(&mut mdl, offset + 12 + axis * 4, 16.0);
+        }
+        float(&mut mdl, offset + 20, 10.0);
+    }
+    for offset in [496, 584, 628] {
+        int(&mut mdl, offset, 7);
+    }
+    int(&mut vvd, 16, 7);
+    vvd.resize(64 + 7 * 48, 0);
+    for (index, point) in [[-16.0, -16.0, 10.0], [16.0, -16.0, 10.0], [0.0, 16.0, 10.0]]
+        .into_iter()
+        .enumerate()
+    {
+        for (axis, value) in point.into_iter().enumerate() {
+            float(&mut vvd, 64 + (index + 4) * 48 + 16 + axis * 4, value);
+        }
+        float(&mut vvd, 64 + (index + 4) * 48 + 36, 1.0);
+    }
+    let mut vtx = vec![0; 376];
+    for (offset, value) in [
+        (0, 7),
+        (16, 7),
+        (20, 1),
+        (24, 173),
+        (28, 1),
+        (32, 36),
+        (36, 1),
+        (40, 8),
+        (44, 1),
+        (48, 8),
+        (52, 1),
+        (56, 12),
+        (64, 1),
+        (68, 9),
+        (73, 9),
+        (77, 183),
+        (81, 6),
+        (85, 264),
+        (89, 1),
+        (93, 276),
+        (349, 6),
+        (357, 9),
+    ] {
+        int(&mut vtx, offset, value);
+    }
+    vtx[97] = 2;
+    vtx[367] = 1;
+    for (index, original) in [2_u16, 0, 2, 1, 3, 3, 4, 5, 6].into_iter().enumerate() {
+        vtx[260 + index * 9..262 + index * 9].copy_from_slice(&original.to_le_bytes());
+    }
+    for (index, vertex) in [1_u16, 3, 0, 6, 7, 8].into_iter().enumerate() {
+        vtx[337 + index * 2..339 + index * 2].copy_from_slice(&vertex.to_le_bytes());
+    }
+    for (suffix, data) in ["mdl", "vvd", "dx90.vtx"].into_iter().zip([mdl, vvd, vtx]) {
+        std::fs::write(directory.join(format!("models/props/test.{suffix}")), data).unwrap();
+    }
+}

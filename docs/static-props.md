@@ -29,9 +29,13 @@ ambient samples. The result is stored in the BSP for every declared draw LOD.
    **Direct LDR + HDR**.
 2. Choose **Indirect light → Direct only**, then enable
    **Bake static-prop vertex lighting**.
-3. Click **Close**, then **Compile**. Unsupported requested props stop the
+3. Click **Close**. Optional: select a prop and enable **Advanced properties**. Enter
+   `disableselfshadowing` in **Property key**, enter `1` in **Value**, then
+   press Enter. This removes only that prop's own geometry from its lighting
+   rays. Use `0` to retain self shadows.
+4. Click **Compile**. Unsupported requested props stop the
    build; **Diagnostics** identifies the affected object.
-4. Open **Build details…** to inspect **Static-prop vertex lighting** and
+5. Open **Build details…** to inspect **Static-prop vertex lighting** and
    **Prop vertex lighting bytes** for the current published build.
 
 ![Static-prop vertex lighting in Build settings](images/build-prop-vertex-lighting.png)
@@ -39,9 +43,12 @@ ambient samples. The result is stored in the BSP for every declared draw LOD.
 Limits: this is an experimental, default-off direct-light bake for simple opaque
 models. Body 0, root LOD 0, unit scale, one bodypart/model and plain selected
 **VertexLitGeneric** materials are required. LDR and HDR are evaluated
-independently. See [the complete limits](compile-and-play.md#static-prop-vertex-lighting)
+independently. Self-shadow control applies to point/spot lights, sun and sky
+ambient; other props, world brushes and terrain still block light. It does not
+move embedded vertices or admit unsupported support contacts. See [the complete limits](compile-and-play.md#static-prop-vertex-lighting)
 before enabling it on a larger map. Per-texel prop lightmaps and reflected prop
 sources remain unavailable.
 
 Agents enable the same setting with `set_compile_settings` and
-`bake_static_prop_vertices: true`.
+`bake_static_prop_vertices: true`. Use `set_entity_properties` with
+`set: {"disableselfshadowing": "1"}` for the same per-prop shadow choice.

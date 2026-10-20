@@ -19,6 +19,14 @@ from validate_visibility import ROOM
 MANIFEST = "hammerr/generated-prop-lighting.json"
 VHV_NAME = re.compile(r"sp_(?:hdr_)?[0-9]+\.vhv\Z")
 WALL_MATERIAL = "hammerr_prop_vertex/wall"
+SELF_SHADOW_MODEL = "models/props_junk/wood_crate001a.mdl"
+SELF_SHADOW_MATERIAL = "materials/models/props_junk/woodcrates01a.vmt"
+SELF_SHADOW_HEIGHT = 20.01078987121582
+SELF_SHADOW_GEOMETRY = {
+    SELF_SHADOW_MODEL: "8fc43694049559d0512805630ff0ac7d6bb77fe819c98deeec2e02c364648126",
+    "models/props_junk/wood_crate001a.vvd": "3fa20fc03c7cd6f754018f69c486ff5390344ee8af6684f0a2395be85d720849",
+    "models/props_junk/wood_crate001a.dx90.vtx": "42879ae821ab5c95a482c1deca5451dc53c8875009c46dafc7195676c6c4734d",
+}
 
 
 def require(condition, message):
@@ -181,6 +189,122 @@ def rejected_compile(client, path, source, ids, prop, fragment):
     return failure
 
 
+def self_shadow_sources(args, game):
+    require(args.model == SELF_SHADOW_MODEL and args.origins[1][2] == SELF_SHADOW_HEIGHT,
+            "--self-shadow-control requires the proven grounded wood_crate001a fixture and --origin-z 20.01078987121582")
+    require(args.material in (None, SELF_SHADOW_MATERIAL), "Self-shadow control requires the crate's selected material")
+    expected = []
+    for name in sorted([*SELF_SHADOW_GEOMETRY, SELF_SHADOW_MATERIAL, f"materials/{WALL_MATERIAL}.vmt"]):
+        path = game / name if (game / name).is_file() else args.fixture_game / name
+        raw = probe.read_bounded(path, probe.MAX_BSP_BYTES)
+        digest = probe.digest(raw)
+        if name in SELF_SHADOW_GEOMETRY:
+            require(digest == SELF_SHADOW_GEOMETRY[name], f"Self-shadow geometry prerequisite changed: {name}")
+        expected.append({"path": name, "sha256": digest, "bytes": len(raw)})
+    return expected
+
+
+def compare_self_shadow(before, after, channels, sources):
+    left_lumps, right_lumps = probe.bsp_lumps(before), probe.bsp_lumps(after)
+    require(all(left == right for index, (left, right) in enumerate(zip(left_lumps, right_lumps, strict=True)) if index not in (35, 40)),
+            "Receiver self-shadow authoring changed world, terrain, ambient or other non-prop BSP lumps")
+    left_props, right_props = static_records(before), static_records(after)
+    expected = {**left_props, "props": list(left_props["props"])}
+    target = list(expected["props"][1])
+    require(target[10] & 0x80 == 0, "Absent self-shadow control already set native flag 0x80")
+    target[10] |= 0x80
+    expected["props"][1] = tuple(target)
+    require(right_props == expected, "Self-shadow flag changed another prop, ordinal, placement or native field")
+    left_records, right_records = probe.game_lump_records(before)[1], probe.game_lump_records(after)[1]
+    require(len(left_records) == len(right_records), "Self-shadow control changed game-lump membership")
+    for left, right in zip(left_records, right_records, strict=True):
+        require(left[:4] == right[:4], "Self-shadow control changed game-lump identity/layout")
+        if left[0] == int.from_bytes(b"sprp", "big"):
+            expected_payload = bytearray(left[4])
+            flag_offset = 4 + len(left_props["models"]) * 128 + 4 + len(left_props["leaves"]) * 2 + 4 + 64 + 31
+            expected_payload[flag_offset] |= 0x80
+            require(right[4] == bytes(expected_payload), "Self-shadow control changed sprp bytes beyond ordinal one's native flag")
+        else:
+            require(left == right, "Self-shadow control changed a non-static-prop game lump")
+    left_entries, left_flags = pak_and_flags(before)
+    right_entries, right_flags = pak_and_flags(after)
+    require(left_flags == right_flags and left_entries.keys() == right_entries.keys(), "Self-shadow control changed map bits or PAK membership")
+    left_manifest, right_manifest = json.loads(left_entries[MANIFEST]), json.loads(right_entries[MANIFEST])
+    require(left_manifest["sources"] == right_manifest["sources"] == sources
+            and left_manifest["missing_sources"] == right_manifest["missing_sources"] == [],
+            "Self-shadow control lost or changed the independent expected model/material source closure")
+    require({key: value for key, value in left_manifest.items() if key not in ("assets", "static_props_sha256")} ==
+            {key: value for key, value in right_manifest.items() if key not in ("assets", "static_props_sha256")},
+            "Self-shadow control changed receiver identities, channel order or hardware layout")
+    changed_names = {f"sp_{'hdr_' if channel == 'hdr' else ''}1.vhv" for channel in channels}
+    require(all(left_entries[name] == right_entries[name] for name in left_entries if name not in changed_names | {MANIFEST}),
+            "Self-shadow control changed another prop's VHV or an unrelated packed asset")
+    for left, right in zip(left_manifest["assets"], right_manifest["assets"], strict=True):
+        require({key: value for key, value in left.items() if key != "sha256"} ==
+                {key: value for key, value in right.items() if key != "sha256"}, "Self-shadow control changed generated asset ordinals/layout/byte counts")
+        if left["path"] not in changed_names:
+            require(left == right, "Self-shadow control changed another prop's asset identity")
+    receiver = left_manifest["receivers"][0]
+    require(receiver["ordinal"] == 1 and receiver["meshes"] == [{"lod": 0, "vertex_count": 400}, {"lod": 1, "vertex_count": 84}],
+            "Self-shadow fixture lost its independently checked hardware stream")
+    measurements = {}
+    for channel in channels:
+        name = f"sp_{'hdr_' if channel == 'hdr' else ''}1.vhv"
+        _, old = read_vhv(left_entries[name], receiver["checksum"], receiver["meshes"])
+        _, new = read_vhv(right_entries[name], receiver["checksum"], receiver["meshes"])
+        require(all(all(after_component >= before_component for before_component, after_component in zip(a[:3], b[:3], strict=True))
+                    for a, b in zip(old, new, strict=True)), "Removing own occlusion reduced a static direct vertex color")
+        changed = sum(a != b for a, b in zip(old, new, strict=True))
+        opened = sum(not any(a[:3]) and any(b[:3]) for a, b in zip(old, new, strict=True))
+        color = 2 if channel == "ldr" else 0
+        require(changed > 0 and opened > 0 and old[0][:3] == (0, 0, 0) and new[0][color] > 0,
+                "Known crate hardware vertex zero did not open its substantial own-frame occlusion")
+        measurements[channel] = {"changed_vertices": changed, "dark_vertices_opened": opened,
+                                 "hardware_vertex_zero_before_bgra": old[0], "hardware_vertex_zero_after_bgra": new[0],
+                                 "baseline_sha256": probe.digest(left_entries[name]), "disabled_sha256": probe.digest(right_entries[name])}
+    return measurements
+
+
+def validate_self_shadow(client, args, game, source, ids, props, report):
+    sources = self_shadow_sources(args, game)
+    policy = client.call("get_compile_settings")["prop_vertex_lighting"]["limits"]["receiver"]["self_shadowing"]
+    require(policy == {"default": True, "disable_property": "disableselfshadowing", "disable_value": 1,
+                       "disabled_scope": "receiver_owned_triangles", "retained_blockers": ["other_props", "world", "terrain"]},
+            "Shared compile metadata does not expose the supported owner-only self-shadow policy")
+    original_recipe = client.call("get_compile_settings")["recipe"]
+    original_props, original_source = detail(client, props), source.read_bytes()
+    baseline = {args.output / f"{mode}{suffix}.bsp": (args.output / f"{mode}{suffix}.bsp").read_bytes()
+                for mode in ("direct_ldr", "direct_ldr_hdr") for suffix in ("", "-background")}
+    saved_recipes = {row["name"]: row["id"] for row in client.call("get_build_recipes")["recipes"]}
+    cases = {}
+    try:
+        for mode, channels in [("direct_ldr", ["ldr"]), ("direct_ldr_hdr", ["ldr", "hdr"])]:
+            client.call("apply_build_recipe", {"id": saved_recipes[f"Prop vertex {mode}"]})
+            absent = baseline[args.output / f"{mode}.bsp"]
+            require(report["channels"][mode]["manifest"]["sources"] == sources, "Baseline does not retain the independent expected source closure")
+            client.call("set_entity_properties", {"id": props[1], "set": {"disableselfshadowing": "0"}})
+            _, zero, _ = compile_pair(client, args, source, ids, f"self-shadow-{mode}-zero", True)
+            require(zero == absent, "Explicit self-shadow zero differs from absent authoring in complete BSP bytes")
+            client.call("set_entity_properties", {"id": props[1], "set": {"disableselfshadowing": "1"}})
+            path, disabled, result = compile_pair(client, args, source, ids, f"self-shadow-{mode}-disabled", True)
+            verified = verify_output(args, game, disabled, result["stats"], channels)
+            measurements = compare_self_shadow(absent, disabled, channels, sources)
+            client.call("set_entity_properties", {"id": props[1], "remove": ["disableselfshadowing"]})
+            _, restored, _ = compile_pair(client, args, source, ids, f"self-shadow-{mode}-restored", True)
+            require(restored == absent and detail(client, props) == original_props and source.read_bytes() == original_source,
+                    "Removing authored self-shadow control failed to restore default BSP/property/source bytes")
+            cases[mode] = {"artifact": str(path), "bsp_sha256": verified["bsp_sha256"], "channels": measurements,
+                           "explicit_zero_matches_absence": True, "default_restored_exactly": True,
+                           "other_prop_and_world_bytes_unchanged": True, "source_closure": sources}
+    finally:
+        client.call("set_entity_properties", {"id": props[1], "remove": ["disableselfshadowing"]})
+        client.call("apply_build_recipe", {"id": original_recipe["id"]})
+    require(client.call("get_compile_settings")["recipe"] == original_recipe, "Self-shadow controls failed to restore the original active recipe")
+    require(all(path.read_bytes() == raw for path, raw in baseline.items()), "Self-shadow controls overwrote baseline native-evidence artifacts")
+    report["self_shadowing"] = {"policy": policy, "cases": cases, "baseline_artifacts_preserved": True,
+                               "compiler_preserves_source_history_recipe_each_compile": True, "native_exercised": False}
+
+
 def validate(client, args, game, report):
     initial = client.call("get_compile_settings")
     require(initial["bake_static_prop_vertices"] is False, "Prop vertex lighting is not default-off")
@@ -199,6 +323,9 @@ def validate(client, args, game, report):
         "model": args.model, "solid": "0", "disablevertexlighting": "1" if index == 0 else "0",
     }})["id"] for index, origin in enumerate(args.origins)]
     ids += [hidden, *props]
+    if args.self_shadow_control:
+        target = client.call("set_entity_properties", {"id": props[1], "remove": ["disableselfshadowing"]})
+        require("disableselfshadowing" not in dict(target["properties"]), "Self-shadow absence control retains an authored FGD default")
     source = args.output / "prop-vertex-lighting.vmf"
     client.call("save_map", {"path": str(source)})
     client.call("set_compile_settings", {"lighting": "direct_ldr", "physics": "none", "bounces": 0, "generate_reflections": False})
@@ -219,6 +346,8 @@ def validate(client, args, game, report):
         client.call("save_build_recipe", {"name": f"Prop vertex {mode}"})
         path, data, result = compile_pair(client, args, source, ids, mode, True)
         report["channels"][mode] = verify_output(args, game, data, result["stats"], channels)
+    if args.self_shadow_control:
+        validate_self_shadow(client, args, game, source, ids, props, report)
     manifest = report["channels"]["direct_ldr_hdr"]["manifest"]
     material_paths = [row["path"] for row in manifest["sources"] if row["path"].endswith(".vmt")]
     material = args.material or (material_paths[0] if len(material_paths) == 1 else None)
@@ -266,6 +395,7 @@ def main():
     parser.add_argument("--unsupported-model-diagnostic", default="root LOD")
     parser.add_argument("--material", help="Optional selected receiver materials/...vmt to shadow for rejection; auto-detected only when unambiguous")
     parser.add_argument("--origin-z", type=float, default=48.0, help="Receiver origin height; use the fixture's exact minimum-Z offset to check floor contact")
+    parser.add_argument("--self-shadow-control", action="store_true", help="Check positive own-occlusion using the exact grounded wood_crate001a companions; requires --origin-z 20.01078987121582")
     args = parser.parse_args()
     args.binary, args.fixture_game, args.output = args.binary.resolve(strict=True), args.fixture_game.resolve(strict=True), args.output.resolve()
     require(args.output.is_relative_to(ROOT / "target" / "validation"), "Keep acceptance artifacts on disk below target/validation")

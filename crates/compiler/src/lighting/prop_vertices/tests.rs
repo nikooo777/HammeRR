@@ -384,11 +384,7 @@ fn default_off_and_explicit_opt_out_produce_no_vhv_or_prop_map_flags() {
 #[test]
 fn unsupported_flags_styles_and_selected_skin_fail_with_source_diagnostics() {
     let (directory, game) = fixtures::game();
-    for (key, value) in [
-        ("ignorenormals", "1"),
-        ("disableselfshadowing", "1"),
-        ("mindxlevel", "80"),
-    ] {
+    for (key, value) in [("ignorenormals", "1"), ("mindxlevel", "80")] {
         let mut vmf = fixtures::scene(false);
         vmf.entities
             .iter_mut()
@@ -775,6 +771,7 @@ fn overlapping_other_prop_support_is_rejected_for_both_emitted_owner_orders() {
         let (directory, game) = fixtures::game();
         fixtures::caster(directory.path(), 255);
         let mut vmf = fixtures::caster_scene();
+        self_shadow_flag(&mut vmf, "1");
         vmf.entities
             .iter_mut()
             .find(|entity| entity.id == 9200)
@@ -809,8 +806,10 @@ fn overlapping_other_prop_support_is_rejected_for_both_emitted_owner_orders() {
 }
 
 fn floor() -> super::super::Occluder {
-    let mins = DVec3::new(-16.0, -16.0, -8.0);
-    let maxs = DVec3::new(16.0, 16.0, 0.0);
+    hull(DVec3::new(-16.0, -16.0, -8.0), DVec3::new(16.0, 16.0, 0.0))
+}
+
+fn hull(mins: DVec3, maxs: DVec3) -> super::super::Occluder {
     let planes = (0..3)
         .flat_map(|axis| {
             let mut normal = DVec3::ZERO;
@@ -1038,5 +1037,255 @@ fn unknown_cluster_samples_all_lights_and_floor_intervals_decide_contact_visibil
         assert_eq!(exposed.x, contact.x);
         assert!(exposed.z > 0.0);
         ctx.shadows = &brushes;
+    }
+}
+
+fn self_shadow_flag(vmf: &mut Vmf, value: &str) {
+    vmf.entities
+        .iter_mut()
+        .find(|entity| entity.id == 9101)
+        .unwrap()
+        .properties
+        .set("disableselfshadowing", value);
+}
+
+#[test]
+fn authored_self_shadow_disable_opens_only_own_point_and_spot_occlusion() {
+    let (directory, game) = fixtures::game();
+    fixtures::self_shadow_model(directory.path());
+    for spot in [false, true] {
+        let dual = !spot;
+        let mut vmf = fixtures::scene(false);
+        if spot {
+            let light = vmf
+                .entities
+                .iter_mut()
+                .find(|entity| entity.classname() == Some("light"))
+                .unwrap();
+            for (key, value) in [
+                ("classname", "light_spot"),
+                ("pitch", "-90"),
+                ("_inner_cone", "30"),
+                ("_cone", "45"),
+                ("_exponent", "1"),
+            ] {
+                light.properties.set(key, value);
+            }
+        }
+        let default = compile(&vmf, &game, dual);
+        let default_bsp = default.bsp.as_ref().unwrap();
+        assert_eq!(file(default_bsp, "sp_0.vhv").meshes[0].colors[1].red, 0);
+        self_shadow_flag(&mut vmf, "0");
+        let off = compile(&vmf, &game, dual);
+        assert_eq!(default_bsp.to_bytes(), off.bsp.as_ref().unwrap().to_bytes());
+        drop(default);
+        drop(off);
+        self_shadow_flag(&mut vmf, "1");
+        let enabled = compile(&vmf, &game, dual);
+        let bsp = enabled.bsp.as_ref().unwrap();
+        assert_eq!(
+            bsp.static_props().unwrap().unwrap().props[0].flags & 0x80,
+            0x80
+        );
+        assert_eq!(file(bsp, "sp_0.vhv").meshes[0].colors[1].red, 128);
+        if dual {
+            let hdr = file(bsp, "sp_hdr_0.vhv").meshes[0].colors[1];
+            assert_eq!((hdr.red, hdr.green, hdr.blue), (0, 0, 128));
+        }
+        let manifest =
+            crate::prop_lighting_assets::read_generated_prop_lighting(bsp, &Control::default())
+                .unwrap()
+                .unwrap();
+        assert!(
+            manifest
+                .sources
+                .iter()
+                .any(|source| source.path == "models/props/test.dx90.vtx")
+        );
+    }
+}
+
+#[test]
+fn self_shadow_disable_applies_to_both_sun_and_sky_ambient_visibility() {
+    let (directory, game) = fixtures::game();
+    fixtures::self_shadow_model(directory.path());
+    let mut vmf = fixtures::scene(false);
+    let ceiling = vmf
+        .world
+        .solids
+        .iter_mut()
+        .find(|solid| solid.sides.iter().all(|side| side.plane.0[0].z >= 256.0))
+        .unwrap();
+    ceiling
+        .sides
+        .iter_mut()
+        .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal.z < -0.99)
+        .unwrap()
+        .material = "sky".into();
+    let light = vmf
+        .entities
+        .iter_mut()
+        .find(|entity| entity.classname() == Some("light"))
+        .unwrap();
+    for (key, value) in [
+        ("classname", "light_environment"),
+        ("pitch", "-90"),
+        ("_light", "255 0 0 128"),
+        ("_ambient", "0 0 255 64"),
+    ] {
+        light.properties.set(key, value);
+    }
+    let default = compile(&vmf, &game, false);
+    let shadowed = file(default.bsp.as_ref().unwrap(), "sp_0.vhv").meshes[0].colors[1];
+    assert_eq!(shadowed.red, 0);
+    drop(default);
+    self_shadow_flag(&mut vmf, "1");
+    let enabled = compile(&vmf, &game, false);
+    let open = file(enabled.bsp.as_ref().unwrap(), "sp_0.vhv").meshes[0].colors[1];
+    assert_eq!(open.red, 93);
+    assert!(open.blue > shadowed.blue);
+}
+
+#[test]
+fn owner_skips_preserve_coincident_other_props_world_terrain_and_budget_errors() {
+    use super::super::{
+        props::PropTriangle,
+        shadows::{ShadowIndex, Triangle},
+    };
+
+    let points = [
+        DVec3::new(-16.0, -16.0, 8.0),
+        DVec3::new(16.0, -16.0, 8.0),
+        DVec3::new(0.0, 16.0, 8.0),
+    ];
+    let make_prop = |owner| {
+        let mut triangle = PropTriangle::new(points).unwrap();
+        triangle.set_owner(owner);
+        triangle
+    };
+    let own = ShadowIndex::new(vec![make_prop(7)], &mut |_| Ok(())).unwrap();
+    let empty = ShadowIndex::new(Vec::<Triangle>::new(), &mut |_| Ok(())).unwrap();
+    let sky = hull(DVec3::new(-64.0, -64.0, 64.0), DVec3::new(64.0, 64.0, 72.0))
+        .with_sky(vec![false, false, false, false, false, true])
+        .unwrap();
+    let world = ShadowIndex::new(vec![sky.clone()], &mut |_| Ok(())).unwrap();
+    let opaque = ShadowIndex::new(
+        vec![
+            sky,
+            hull(DVec3::new(-16.0, -16.0, 16.0), DVec3::new(16.0, 16.0, 24.0)),
+        ],
+        &mut |_| Ok(()),
+    )
+    .unwrap();
+    let terrain = ShadowIndex::new(vec![Triangle::new(points).unwrap()], &mut |_| Ok(())).unwrap();
+    let control = Control::default();
+    let mut budget = Budget::new(&control);
+    let start = DVec3::ZERO;
+    let end = DVec3::Z * 32.0;
+    assert!(
+        own.blocked_skipping_owner(start, end, None, &mut |work| budget.consume(work))
+            .unwrap()
+    );
+    assert!(
+        !own.blocked_skipping_owner(start, end, Some(7), &mut |work| budget.consume(work))
+            .unwrap()
+    );
+    assert!(
+        own.blocked_skipping_owner(start, end, Some(9), &mut |work| budget.consume(work))
+            .unwrap()
+    );
+    assert!(
+        !super::super::bake::sky_visible(DVec3::Z, start, &world, &empty, &own, &None, &mut budget)
+            .unwrap()
+    );
+    assert!(
+        super::super::sky_visible_skipping_owner(
+            DVec3::Z,
+            start,
+            &world,
+            &empty,
+            &own,
+            &None,
+            Some(7),
+            &mut budget
+        )
+        .unwrap()
+    );
+    assert!(
+        !super::super::sky_visible_skipping_owner(
+            DVec3::Z,
+            start,
+            &opaque,
+            &empty,
+            &own,
+            &None,
+            Some(7),
+            &mut budget
+        )
+        .unwrap()
+    );
+    assert!(
+        !super::super::sky_visible_skipping_owner(
+            DVec3::Z,
+            start,
+            &world,
+            &terrain,
+            &own,
+            &None,
+            Some(7),
+            &mut budget
+        )
+        .unwrap()
+    );
+    for reverse in [false, true] {
+        let mut triangles = vec![make_prop(7), make_prop(9)];
+        if reverse {
+            triangles.reverse();
+        }
+        let overlap = ShadowIndex::new(triangles, &mut |_| Ok(())).unwrap();
+        assert!(
+            overlap
+                .blocked_skipping_owner(start, end, Some(7), &mut |work| budget.consume(work))
+                .unwrap()
+        );
+        assert!(
+            !super::super::sky_visible_skipping_owner(
+                DVec3::Z,
+                start,
+                &world,
+                &empty,
+                &overlap,
+                &None,
+                Some(7),
+                &mut budget
+            )
+            .unwrap()
+        );
+    }
+    for canceled in [false, true] {
+        let control = Control::default();
+        let mut budget = Budget::new(&control);
+        if canceled {
+            control.cancel().unwrap();
+        } else {
+            budget.consume(100_000_000).unwrap();
+        }
+        assert!(
+            own.blocked_skipping_owner(start, end, Some(7), &mut |work| budget.consume(work))
+                .is_err()
+        );
+        assert!(
+            super::super::sky_visible_skipping_owner(
+                DVec3::Z,
+                start,
+                &world,
+                &empty,
+                &own,
+                &None,
+                Some(7),
+                &mut budget
+            )
+            .is_err()
+        );
     }
 }

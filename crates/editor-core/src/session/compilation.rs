@@ -680,13 +680,13 @@ impl Session {
         settings["prop_vertex_lighting"] = json!({
             "available":unavailable_reason.is_none(),
             "unavailable_reason":unavailable_reason,
-            "description":"Bake direct lighting on unit-scale static props with one bodypart/model, body0/root0, all 1–8 draw LODs and plain opaque VertexLitGeneric materials, up to 256 hardware sections total. Direct LDR + HDR evaluates both channels independently. Requires Direct only. Original vertices may touch opaque world brushes; buried vertices and terrain/other-prop contacts reject. Model/material compatibility is checked during compilation. Unsupported requested receivers stop the build; disablevertexlighting=1 explicitly opts out one prop. No native capture runtime is required.",
+            "description":"Bake direct lighting on unit-scale static props with one bodypart/model, body0/root0, all 1–8 draw LODs and plain opaque VertexLitGeneric materials, up to 256 hardware sections total. Direct LDR + HDR evaluates both channels independently. Requires Direct only. disableselfshadowing=1 omits only the receiving prop’s own shadow triangles. Original vertices may touch opaque world brushes; buried vertices and terrain/other-prop contacts reject. Model/material compatibility is checked during compilation. Unsupported requested receivers stop the build; disablevertexlighting=1 explicitly opts out one prop. No native capture runtime is required.",
             "limits":{
                 "lighting_modes":["direct_ldr","direct_ldr_hdr"],
-                "bounces":0,"receiver":{"body":0,"root_lod":0,"bodyparts":1,"models":1,"lods":{"min":1,"max":8,"all_required":true},"hardware_meshes_max":compiler::prop_lighting_assets::MAX_RECEIVER_MESHES,"scale":1,"sample_origin":"original_vertex","support_contacts":"opaque_world_brush"},
+                "bounces":0,"receiver":{"body":0,"root_lod":0,"bodyparts":1,"models":1,"lods":{"min":1,"max":8,"all_required":true},"hardware_meshes_max":compiler::prop_lighting_assets::MAX_RECEIVER_MESHES,"scale":1,"sample_origin":"original_vertex","support_contacts":"opaque_world_brush","self_shadowing":{"default":true,"disable_property":"disableselfshadowing","disable_value":1,"disabled_scope":"receiver_owned_triangles","retained_blockers":["other_props","world","terrain"]}},
                 "material":"plain opaque selected VertexLitGeneric",
                 "light_styles":[0],
-                "unsupported":["buried vertices","terrain/other-prop support contacts","ignore normals","disabled self-shadowing","lighting origins","specialized materials","per-texel prop lightmaps","reflected prop sources"]
+                "unsupported":["buried vertices","terrain/other-prop support contacts","ignore normals","lighting origins","specialized materials","per-texel prop lightmaps","reflected prop sources"]
             }
         });
         settings

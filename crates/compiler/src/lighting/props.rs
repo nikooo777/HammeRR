@@ -62,6 +62,21 @@ impl PropTriangle {
         }
         self.triangle.point_contact(point)
     }
+
+    fn fraction(&self, start: DVec3, end: DVec3) -> Result<Option<f64>, String> {
+        let Some((fraction, weights)) = self.triangle.intersection(start, end)? else {
+            return Ok(None);
+        };
+        let Some((material, coordinates)) = &self.alpha else {
+            return Ok(Some(fraction));
+        };
+        let uv = coordinates
+            .iter()
+            .zip(weights)
+            .map(|(point, weight)| *point * weight)
+            .sum::<DVec2>();
+        Ok(material.blocks(uv)?.then_some(fraction))
+    }
 }
 
 impl ShadowObject for PropTriangle {
@@ -76,18 +91,31 @@ impl ShadowObject for PropTriangle {
     }
 
     fn intersects(&self, start: DVec3, end: DVec3) -> Result<bool, String> {
-        let Some((material, coordinates)) = &self.alpha else {
-            return self.triangle.intersects(start, end);
+        Ok(self.fraction(start, end)?.is_some())
+    }
+}
+
+impl ShadowIndex<PropTriangle> {
+    pub(super) fn blocked_skipping_owner(
+        &self,
+        start: DVec3,
+        end: DVec3,
+        skip_owner: Option<u32>,
+        consume: &mut impl FnMut(usize) -> Result<(), String>,
+    ) -> Result<bool, String> {
+        let Some(owner) = skip_owner else {
+            return self.blocked(start, end, consume);
         };
-        let Some((_, weights)) = self.triangle.intersection(start, end)? else {
-            return Ok(false);
-        };
-        let uv = coordinates
-            .iter()
-            .zip(weights)
-            .map(|(point, weight)| *point * weight)
-            .sum::<DVec2>();
-        material.blocks(uv)
+        Ok(self
+            .nearest(start, end, consume, &mut |triangle| {
+                if triangle.owner == Some(owner) {
+                    return Ok(None);
+                }
+                Ok(triangle
+                    .fraction(start, end)?
+                    .map(|fraction| (fraction, ())))
+            })?
+            .is_some())
     }
 }
 

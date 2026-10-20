@@ -520,6 +520,33 @@ impl Occluder {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn sky_visible_skipping_owner(
+    direction: DVec3,
+    origin: DVec3,
+    shadows: &shadows::ShadowIndex<Occluder>,
+    terrain: &shadows::ShadowIndex<shadows::Triangle>,
+    props: &shadows::ShadowIndex<props::PropTriangle>,
+    model: &Option<shadows::ShadowIndex<Occluder>>,
+    skip_owner: Option<u32>,
+    budget: &mut bake::Budget<'_>,
+) -> Result<bool, String> {
+    budget.consume(1)?;
+    let end = origin + direction * sky::TRACE_LENGTH;
+    if let Some(fraction) = shadows.sky_fraction(origin, end, &mut |work| budget.consume(work))? {
+        let hit = origin.lerp(end, fraction) + direction * sky::SKY_HIT_BIAS;
+        Ok(
+            !terrain.blocked(origin, hit, &mut |work| budget.consume(work))?
+                && !props.blocked_skipping_owner(origin, hit, skip_owner, &mut |work| {
+                    budget.consume(work)
+                })?
+                && !bake::model_blocked(model, origin, hit, budget)?,
+        )
+    } else {
+        Ok(false)
+    }
+}
+
 #[cfg(test)]
 mod input_tests {
     use super::*;

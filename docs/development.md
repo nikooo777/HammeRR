@@ -107,7 +107,12 @@ bytes, final prop ordinals, independent channels, current statistics,
 foreground/background publication, rejection preservation, opt-outs and
 persistent settings. Pass `--origin-z` with the negative of the fixture model's
 actual minimum vertex Z to exercise exact brush-floor contact; the default
-height is 48 units.
+height is 48 units. Add `--self-shadow-control` for a fixture whose receiving
+vertices are genuinely occluded by its own geometry, such as the supported
+pinned wood-crate fixture: the check verifies its exact MDL/VVD/DX90 hashes
+and grounded placement, then compares absent/zero authoring, changes only one emitted
+ordinal, retains world/other-prop controls and restores the original output.
+Its additional BSP artifacts are separate from the baseline channel files.
 
 `validate_prop_vertex_lighting_native.py` consumes the resulting
 `direct_ldr_hdr.bsp`, a merged standalone model/material fixture, and the
@@ -211,7 +216,7 @@ remaining budget for one build:
 
 ```sh
 mkdir -p target
-systemd-run --user --scope --quiet -p MemoryMax=6656M -p MemoryHigh=6G -p MemorySwapMax=2G \
+systemd-run --user --scope --quiet -p MemoryMax=6656M -p MemoryHigh=6G -p MemorySwapMax=0 \
   env CARGO_BUILD_JOBS=8 RUSTC_WRAPPER="$PWD/scripts/cargo_memory_guard.sh" \
   flock target/hammerr-cargo.lock \
   cargo test -p editor-core -p editor --all-targets --features editor-core/mcp,editor-core/test-support
@@ -2638,7 +2643,7 @@ The ordinary software UI suite drives the production desktop scene refresh,
 including dedicated reference revisions and unchanged root editing tokens.
 
 The real UI ownership regression uses a software window with an offscreen GPU
-adapter. Run it explicitly under the same eight-job, 24 GiB build wrapper:
+adapter. Run it explicitly under the same eight-job build wrapper, sized within the current 16 GiB aggregate budget:
 
 ```sh
 cargo test -j8 -p editor --bin editor ui::ownership_tests::child_callbacks_work_then_release_ui_session_and_cached_resources -- --exact --ignored --test-threads=1

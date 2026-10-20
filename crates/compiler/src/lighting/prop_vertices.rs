@@ -30,7 +30,8 @@ const MAX_MODELS: usize = 128;
 const MAX_VERTICES: usize = 4_000_000;
 const MAX_GENERATED_BYTES: usize = 64 * 1024 * 1024;
 const DISABLED: u32 = 0x40;
-const UNSUPPORTED_FLAGS: u32 = 0x02 | 0x08 | 0x80;
+const UNSUPPORTED_FLAGS: u32 = 0x02 | 0x08;
+const NO_SELF_SHADOW: u32 = 0x80;
 
 struct ModelData {
     model: Model,
@@ -130,7 +131,7 @@ fn admit_model(data: &ModelData) -> Result<(), String> {
 
 fn admit_prop(entity: &Entity, prop: &StaticProp, model: &str) -> Result<(), String> {
     if prop.flags & UNSUPPORTED_FLAGS != 0 {
-        return Err("Baked prop vertices do not yet support lightingorigin, ignorenormals or disableselfshadowing; remove those settings or explicitly disablevertexlighting".into());
+        return Err("Baked prop vertices do not yet support lightingorigin or ignorenormals; remove those settings or explicitly disablevertexlighting".into());
     }
     if prop.dx_levels != [0; 2] {
         return Err("Baked prop vertices currently require unrestricted prop DX levels and the DX90 companion".into());
@@ -485,12 +486,14 @@ pub(super) fn bake_channel(
                                     ctx.visibility,
                                     budget,
                                 )?;
-                                receivers::direct_optional(
+                                receivers::direct_skipping_owner(
                                     &ctx.direct,
                                     candidates,
                                     cluster,
                                     sample,
                                     true,
+                                    (receiver.prop.flags & NO_SELF_SHADOW != 0)
+                                        .then_some(receiver.metadata.ordinal),
                                     budget,
                                 )
                             })()

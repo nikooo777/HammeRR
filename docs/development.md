@@ -3699,3 +3699,26 @@ rho, alias provenance and original source guards. Both MCP compile paths retain
 prior BSP/source/history/settings/assets and exit without graphics or a game.
 Retain the albedo and required-metric scripts for their distinct selection and
 availability contracts. These checks do not establish native image parity.
+
+
+## Independent material metric provider checks
+
+```sh
+cargo test -j 8 -p compiler --test material_metric_sources
+cargo test -j 8 -p compiler materials::prop_sources_tests
+cargo test -j 8 -p compiler lighting::prop_vertices::tests::indirect_sources
+python3 -B scripts/validate_material_metric_sources.py --binary target/debug/hammerr-headless --output target/validation/material-metric-sources-headless
+python3 -B scripts/validate_material_metric_sources.py --binary target/debug/editor --output target/validation/material-metric-sources-editor
+```
+
+Use fresh disk-backed output directories. Check independently selected diffuse,
+albedo and tool headers, authored reflectivity, deliberate no-preview0/1,
+explicit unsupported declarations, 241/242-byte selected-name boundaries,
+NaN-payload scalar versus explicit-VTF string names, and required-provider
+failures. Compare literal
+TexData and equivalent-header whole BSPs, actual LDR/HDR bounce color, source
+provenance and guards, unchanged no-key controls, both MCP build paths and clean
+EOF. Preserve prior BSP/source/history/settings/recipes/assets on refusal. The
+no-preview INFO diagnostic names a convention, not a measured texture. Retain
+the separate albedo, required-metric and authored-reflectivity scripts for their
+remaining contracts. These checks do not establish native image parity.

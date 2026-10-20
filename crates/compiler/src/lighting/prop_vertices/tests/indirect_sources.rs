@@ -162,75 +162,88 @@ fn one_bounce_publication_retains_original_selected_vtf_after_output_drop() {
 
 #[test]
 fn one_bounce_rejects_absent_optional_source_metrics_while_direct_keeps_its_scope() {
-    let (directory, game, vmf, _) = world_fixture(false);
-    std::fs::write(
-        directory
-            .path()
-            .join("materials/indirect_sources/surface.vmt"),
-        "LightmappedGeneric { }",
-    )
-    .unwrap();
-    let output_directory = tempfile::tempdir_in(directory.path().parent().unwrap()).unwrap();
-    let destination = output_directory.path().join("previous.bsp");
-    std::fs::write(&destination, b"previous complete output").unwrap();
-    let direct = compile(&vmf, &game, false);
-    let bsp = direct.bsp.as_ref().unwrap();
-    let metrics = source_metrics(bsp);
-    assert_eq!(
-        (metrics.width, metrics.height, metrics.reflectivity),
-        (64, 64, [0.5; 3])
-    );
-    let manifest =
-        crate::prop_lighting_assets::read_generated_prop_lighting(bsp, &Control::default())
-            .unwrap()
-            .unwrap();
-    assert!(
-        !manifest
-            .sources
-            .iter()
-            .any(|source| source.path == SOURCE_TEXTURE)
-    );
-    assert!(
-        !manifest
-            .missing_sources
-            .iter()
-            .any(|path| path == SOURCE_TEXTURE)
-    );
-    assert!(
-        !manifest
-            .sources
-            .iter()
-            .any(|source| source.path.ends_with(".vtf"))
-    );
-    let control = Control::default();
-    let previous = bsp.to_bytes();
-    assert!(direct.write_controlled(&destination, &control).unwrap());
-    assert_eq!(std::fs::read(&destination).unwrap(), previous);
-    drop(direct);
-    let failed = crate::compile_with_options(
-        &vmf,
-        &game,
-        Options {
-            bounces: 1,
-            ..options(false)
-        },
-    );
-    assert!(failed.report.has_errors());
-    assert!(failed.bsp.is_none());
-    assert!(failed.prop_lighting_assets.is_none());
-    assert!(
-        failed.report.diagnostics.iter().any(|diagnostic| {
-            let message = diagnostic.message.to_ascii_lowercase();
-            diagnostic.level == crate::Level::Error
-                && message.contains("measured")
-                && message.contains("reflectivity")
-                && message.contains(SOURCE_MATERIAL)
-        }),
-        "{:?}",
-        failed.report
-    );
-    assert!(!failed.write_controlled(&destination, &control).unwrap());
-    assert_eq!(std::fs::read(&destination).unwrap(), previous);
+    for (declaration, width, height) in [
+        ("", 64, 64),
+        ("%tooltexture indirect_textures/tool", 1, 1),
+        ("%notooltexture 0", 128, 128),
+    ] {
+        let (directory, game, vmf, _) = world_fixture(false);
+        std::fs::write(
+            directory
+                .path()
+                .join("materials/indirect_textures/tool.vtf"),
+            texture(),
+        )
+        .unwrap();
+        std::fs::write(
+            directory
+                .path()
+                .join("materials/indirect_sources/surface.vmt"),
+            format!("LightmappedGeneric {{ {declaration} }}"),
+        )
+        .unwrap();
+        let output_directory = tempfile::tempdir_in(directory.path().parent().unwrap()).unwrap();
+        let destination = output_directory.path().join("previous.bsp");
+        std::fs::write(&destination, b"previous complete output").unwrap();
+        let direct = compile(&vmf, &game, false);
+        let bsp = direct.bsp.as_ref().unwrap();
+        let metrics = source_metrics(bsp);
+        assert_eq!(
+            (metrics.width, metrics.height, metrics.reflectivity),
+            (width, height, [0.5; 3])
+        );
+        let manifest =
+            crate::prop_lighting_assets::read_generated_prop_lighting(bsp, &Control::default())
+                .unwrap()
+                .unwrap();
+        assert!(
+            !manifest
+                .sources
+                .iter()
+                .any(|source| source.path == SOURCE_TEXTURE)
+        );
+        assert!(
+            !manifest
+                .missing_sources
+                .iter()
+                .any(|path| path == SOURCE_TEXTURE)
+        );
+        assert!(
+            !manifest
+                .sources
+                .iter()
+                .any(|source| source.path.ends_with(".vtf"))
+        );
+        let control = Control::default();
+        let previous = bsp.to_bytes();
+        assert!(direct.write_controlled(&destination, &control).unwrap());
+        assert_eq!(std::fs::read(&destination).unwrap(), previous);
+        drop(direct);
+        let failed = crate::compile_with_options(
+            &vmf,
+            &game,
+            Options {
+                bounces: 1,
+                ..options(false)
+            },
+        );
+        assert!(failed.report.has_errors());
+        assert!(failed.bsp.is_none());
+        assert!(failed.prop_lighting_assets.is_none());
+        assert!(
+            failed.report.diagnostics.iter().any(|diagnostic| {
+                let message = diagnostic.message.to_ascii_lowercase();
+                diagnostic.level == crate::Level::Error
+                    && message.contains("measured")
+                    && message.contains("reflectivity")
+                    && message.contains(SOURCE_MATERIAL)
+            }),
+            "{:?}",
+            failed.report
+        );
+        assert!(!failed.write_controlled(&destination, &control).unwrap());
+        assert_eq!(std::fs::read(&destination).unwrap(), previous);
+    }
 }
 
 #[test]
@@ -300,6 +313,93 @@ fn authored_reflectivity_drives_measured_one_bounce_prop_lighting() {
             .iter()
             .any(|source| source.path == UNUSED_TEXTURE)
     );
+}
+
+#[test]
+fn independent_dimension_providers_and_authored_rho_drive_measured_prop_bounce() {
+    for no_preview in [false, true] {
+        let (directory, game, vmf, _) = world_fixture(true);
+        let direct = compile(&vmf, &game, false);
+        let direct_color = file(direct.bsp.as_ref().unwrap(), "sp_0.vhv").meshes[0].colors[1];
+        drop(direct);
+        let tool_path = "materials/indirect_textures/tool.vtf";
+        let mut tool = texture();
+        tool[16..18].copy_from_slice(&2_u16.to_le_bytes());
+        tool[32..36].copy_from_slice(&f32::NAN.to_le_bytes());
+        tool.resize(88, 128);
+        std::fs::write(directory.path().join(tool_path), &tool).unwrap();
+        let declaration = if no_preview {
+            "%notooltexture 1 %tooltexture ../unused_tool"
+        } else {
+            "%tooltexture indirect_textures/tool"
+        };
+        let text = format!(
+            "LightmappedGeneric {{ $basetexture _rt_Unused $reflectivity \"[0.5 0 0]\" {declaration} }}"
+        );
+        std::fs::write(
+            directory
+                .path()
+                .join("materials/indirect_sources/surface.vmt"),
+            &text,
+        )
+        .unwrap();
+        let output = crate::compile_with_options(
+            &vmf,
+            &game,
+            Options {
+                bounces: 1,
+                ..options(false)
+            },
+        );
+        assert!(!output.report.has_errors(), "{:?}", output.report);
+        assert_eq!(output.stats.bounces, 1);
+        assert!(output.stats.bounce_samples > 0);
+        assert_eq!(output.stats.prop_vertex_lighting.as_ref().unwrap().props, 1);
+        let bsp = output.bsp.as_ref().unwrap();
+        let metrics = source_metrics(bsp);
+        assert_eq!(
+            (metrics.width, metrics.height),
+            if no_preview { (128, 128) } else { (2, 1) }
+        );
+        assert_eq!(metrics.reflectivity, [0.5, 0.0, 0.0]);
+        let received = file(bsp, "sp_0.vhv").meshes[0].colors[1];
+        assert!(
+            received.red > direct_color.red,
+            "direct={direct_color:?}, bounce={received:?}"
+        );
+        assert_eq!((received.green, received.blue), (0, 0));
+        let manifest =
+            crate::prop_lighting_assets::read_generated_prop_lighting(bsp, &Control::default())
+                .unwrap()
+                .unwrap();
+        let observed_tool = manifest
+            .sources
+            .iter()
+            .find(|source| source.path == tool_path);
+        assert_eq!(observed_tool.is_some(), !no_preview);
+        if let Some(observed) = observed_tool {
+            assert_eq!(observed.sha256, crate::asset_sources::hash(&tool));
+        }
+        let material = manifest
+            .sources
+            .iter()
+            .find(|source| source.path == "materials/indirect_sources/surface.vmt")
+            .unwrap();
+        assert_eq!(material.sha256, crate::asset_sources::hash(text.as_bytes()));
+        for unused in [SOURCE_TEXTURE, UNUSED_TEXTURE, "materials/_rt_unused.vtf"] {
+            assert!(
+                !manifest.sources.iter().any(|source| source.path == unused),
+                "{unused}"
+            );
+            assert!(
+                !manifest
+                    .missing_sources
+                    .iter()
+                    .any(|source| source == unused),
+                "{unused}"
+            );
+        }
+    }
 }
 
 #[test]

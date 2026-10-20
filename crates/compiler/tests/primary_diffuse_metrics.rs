@@ -1,6 +1,6 @@
 mod common;
 
-use compiler::materials::{Materials, MetricSource};
+use compiler::materials::{DimensionSource, Materials, ReflectivitySource};
 use compiler::{LightingMode, Options, SkyQuality};
 use glam::DVec3;
 use map_core::{Document, Plane, edit};
@@ -180,7 +180,14 @@ fn canonical_shaders_measure_the_selected_primary_texture_without_reading_normal
             let mut materials = Materials::new(&game);
             let index = materials.load("dev/dev_measuregeneric01").unwrap();
             let metrics = materials.get(index).texture_metrics().unwrap();
-            assert_eq!(metrics.source, MetricSource::TextureHeader);
+            assert_eq!(
+                metrics.dimension_source,
+                DimensionSource::DiffuseTextureHeader
+            );
+            assert_eq!(
+                metrics.reflectivity_source,
+                ReflectivitySource::TextureHeader
+            );
             let expected = if suppression.ends_with('1') {
                 (32, 16, BASE_REFLECTIVITY)
             } else {
@@ -258,7 +265,7 @@ fn suppression_one_preserves_original_base_bytes_with_missing_unused_albedo() {
     let (_active_directory, active) = game(
         "LightmappedGeneric",
         "base",
-        "$albedo dev/not_present $nodiffusebumplighting 1 %tooltexture dev/not_present %notooltexture 0",
+        "$albedo dev/not_present $nodiffusebumplighting 1",
     );
     let (_reference_directory, reference) =
         game("LightmappedGeneric", "base", "$nodiffusebumplighting 1");
@@ -299,10 +306,27 @@ fn unsupported_or_unavailable_selected_albedo_preserves_prior_bsp_and_source() {
             Some(texture(64, 8, [f32::NAN, 0.0, 0.0], [255; 4])),
             "reflectivity must be finite",
         ),
-        ("dev/albedo", "%tooltexture dev/base", None, "%tooltexture"),
+        (
+            "dev/albedo",
+            "%tooltexture dev/not_present",
+            None,
+            "not_present.vtf",
+        ),
         ("dev/albedo", "%tooltexture \"\"", None, "%tooltexture"),
-        ("dev/albedo", "%notooltexture 0", None, "%notooltexture"),
+        (
+            "dev/not_present",
+            "%notooltexture 0",
+            None,
+            "not_present.vtf",
+        ),
+        (
+            "dev/albedo",
+            "%notooltexture 1",
+            Some(b"malformed".to_vec()),
+            "albedo.vtf",
+        ),
         ("dev/albedo", "%notooltexture \"\"", None, "%notooltexture"),
+        ("dev/albedo", "%notooltexture true", None, "%notooltexture"),
         (
             "dev/albedo",
             "$reflectivity \"0.5 0 0\"",
@@ -333,7 +357,14 @@ fn unsupported_or_unavailable_selected_albedo_preserves_prior_bsp_and_source() {
             "{:?}",
             output.report
         );
-        if !extra.is_empty() {
+        if [
+            "%tooltexture \"\"",
+            "%notooltexture \"\"",
+            "%notooltexture true",
+        ]
+        .contains(&extra)
+            || extra.starts_with("$reflectivity")
+        {
             assert!(output.report.diagnostics.iter().any(|item| {
                 item.message
                     .contains("materials/dev/dev_measuregeneric01.vmt")

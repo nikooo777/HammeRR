@@ -74,6 +74,14 @@ fn texture(reflectivity: [f32; 3]) -> Vec<u8> {
     bytes
 }
 
+fn sized_texture(width: u16, height: u16, reflectivity: [f32; 3]) -> Vec<u8> {
+    let mut bytes = texture(reflectivity);
+    bytes[16..18].copy_from_slice(&width.to_le_bytes());
+    bytes[18..20].copy_from_slice(&height.to_le_bytes());
+    bytes.resize(80 + usize::from(width) * usize::from(height) * 4, 128);
+    bytes
+}
+
 fn guard(
     sources: &[crate::prop_lighting_assets::SourceAsset],
     missing: &[String],
@@ -116,7 +124,8 @@ fn original_selected_texture_bytes_link_metrics_and_reject_header_or_payload_cha
         assert_eq!(
             materials.get(index).texture_metrics().unwrap(),
             TextureMetrics {
-                source: MetricSource::TextureHeader,
+                dimension_source: DimensionSource::DiffuseTextureHeader,
+                reflectivity_source: ReflectivitySource::TextureHeader,
                 width: 1,
                 height: 1,
                 reflectivity: [0.125, 0.25, 0.75],
@@ -337,7 +346,8 @@ fn optional_inputs_and_non_diffuse_surfaces_keep_metadata_without_texture_reads(
         assert_eq!(
             materials.get(index).texture_metrics().unwrap(),
             TextureMetrics {
-                source: MetricSource::CompileDefault,
+                dimension_source: DimensionSource::CompileDefault,
+                reflectivity_source: ReflectivitySource::CompileDefault,
                 width: 64,
                 height: 64,
                 reflectivity: [0.5; 3],
@@ -362,8 +372,8 @@ fn optional_inputs_and_non_diffuse_surfaces_keep_metadata_without_texture_reads(
         assert_ne!(info.surface & expected_surface, 0);
         assert_eq!(info.contents, expected_contents);
         assert_eq!(
-            info.texture_metrics().unwrap().source,
-            MetricSource::CompileDefault
+            info.texture_metrics().unwrap().reflectivity_source,
+            ReflectivitySource::CompileDefault
         );
         assert_eq!(info.texture_metrics().unwrap().reflectivity, [0.5; 3]);
         assert!(info.warnings.is_empty());
@@ -377,8 +387,12 @@ fn optional_inputs_and_non_diffuse_surfaces_keep_metadata_without_texture_reads(
     .unwrap();
     let index = materials.load("reflectivity/runtime_sky").unwrap();
     assert_eq!(
-        materials.get(index).texture_metrics().unwrap().source,
-        MetricSource::CompileDefault
+        materials
+            .get(index)
+            .texture_metrics()
+            .unwrap()
+            .reflectivity_source,
+        ReflectivitySource::CompileDefault
     );
     let (sources, missing) = materials.take_prop_lighting_sources().unwrap().into_parts();
     assert!(sources.iter().all(|source| source.path.ends_with(".vmt")));
@@ -438,41 +452,66 @@ fn runtime_texture_roots_are_unavailable_without_file_dependencies() {
 }
 
 #[test]
-fn missing_base_overrides_are_unavailable_but_present_headers_keep_their_scope() {
-    for (parameter, value) in [
-        ("%tooltexture", "reflectivity/chosen"),
-        ("%notooltexture", "0"),
-        ("$reflectivity", "[0.9 0.8 0.7]"),
+fn independent_dimensions_do_not_rescue_missing_diffuse_rho_or_missing_base_dimensions() {
+    for (parameter, value, dimension_source, width, height) in [
+        (
+            "%tooltexture",
+            "reflectivity/chosen",
+            DimensionSource::ToolTextureHeader,
+            1,
+            1,
+        ),
+        (
+            "%notooltexture",
+            "0",
+            DimensionSource::NativeNoPreview,
+            128,
+            128,
+        ),
+        (
+            "$reflectivity",
+            "[0.9 0.8 0.7]",
+            DimensionSource::DiffuseTextureHeader,
+            1,
+            1,
+        ),
     ] {
         let (directory, game) = fixture();
         std::fs::write(
             directory.path().join("materials/reflectivity/override.vmt"),
             format!("LightmappedGeneric {{ $basetexture texture_dependency/missing {parameter} \"{value}\" }}"),
-        )
-        .unwrap();
+        ).unwrap();
         let mut materials = Materials::new(&game);
         materials
             .track_prop_lighting_sources(PropSourceMode::WithReflectivity)
             .unwrap();
         let index = materials.load("reflectivity/override").unwrap();
         let error = materials.get(index).texture_metrics().unwrap_err();
-        assert!(error.contains("override.vmt"), "{error}");
-        assert!(error.contains("$basetexture"), "{error}");
+        assert!(
+            error.contains("override.vmt") && error.contains("$basetexture"),
+            "{error}"
+        );
         assert!(
             error.contains("materials/texture_dependency/missing.vtf"),
             "{error}"
         );
-        assert!(error.contains(parameter), "{error}");
+        assert!(error.contains("unavailable"), "{error}");
         assert!(
             error.contains(if parameter == "$reflectivity" {
-                "dimensions are unavailable"
+                "dimensions"
             } else {
-                "unsupported"
+                "reflectivity"
             }),
             "{error}"
         );
         let (sources, missing) = materials.take_prop_lighting_sources().unwrap().into_parts();
-        assert!(sources.iter().all(|source| source.path.ends_with(".vmt")));
+        assert_eq!(
+            sources
+                .iter()
+                .filter(|source| source.path.ends_with(".vtf"))
+                .count(),
+            usize::from(parameter == "%tooltexture")
+        );
         assert_eq!(missing, ["materials/texture_dependency/missing.vtf"]);
         let captured = guard(&sources, &missing, &game).unwrap();
         std::fs::write(
@@ -485,18 +524,398 @@ fn missing_base_overrides_are_unavailable_but_present_headers_keep_their_scope()
         assert!(captured.verify_metadata().is_err());
         let mut present = Materials::new(&game);
         let index = present.load("reflectivity/override").unwrap();
-        let metrics = present.get(index).texture_metrics().unwrap();
-        if parameter == "$reflectivity" {
+        assert_eq!(
+            present.get(index).texture_metrics().unwrap(),
+            TextureMetrics {
+                dimension_source,
+                reflectivity_source: if parameter == "$reflectivity" {
+                    ReflectivitySource::AuthoredMaterial
+                } else {
+                    ReflectivitySource::TextureHeader
+                },
+                width,
+                height,
+                reflectivity: if parameter == "$reflectivity" {
+                    [0.9, 0.8, 0.7]
+                } else {
+                    [0.125, 0.25, 0.75]
+                },
+            }
+        );
+    }
+}
+
+#[test]
+fn independent_tool_dimensions_retain_diffuse_rho_and_original_provider_guards() {
+    for mode in [PropSourceMode::Direct, PropSourceMode::WithReflectivity] {
+        for changed in ["chosen", "tool"] {
+            let (directory, game) = fixture();
+            let tool = sized_texture(4, 2, [f32::NAN, f32::INFINITY, -1.0]);
+            std::fs::write(
+                directory.path().join("materials/reflectivity/tool.vtf"),
+                &tool,
+            )
+            .unwrap();
+            std::fs::write(
+                directory.path().join("materials/reflectivity/split.vmt"),
+                "LightmappedGeneric { $basetexture reflectivity/chosen %tooltexture reflectivity/tool }",
+            ).unwrap();
+            let mut materials = Materials::new(&game);
+            materials.track_prop_lighting_sources(mode).unwrap();
+            let index = materials.load("reflectivity/split").unwrap();
+            let expected = TextureMetrics {
+                dimension_source: DimensionSource::ToolTextureHeader,
+                reflectivity_source: ReflectivitySource::TextureHeader,
+                width: 4,
+                height: 2,
+                reflectivity: [0.125, 0.25, 0.75],
+            };
+            assert_eq!(materials.get(index).texture_metrics().unwrap(), expected);
+            let alias = materials.add_alias(index, "maps/split/alias").unwrap();
+            assert_eq!(materials.get(alias).texture_metrics().unwrap(), expected);
+            let (sources, missing) = materials.take_prop_lighting_sources().unwrap().into_parts();
+            assert!(missing.is_empty());
+            let textures = sources
+                .iter()
+                .filter(|source| source.path.ends_with(".vtf"))
+                .collect::<Vec<_>>();
             assert_eq!(
-                metrics.source,
-                MetricSource::TextureHeaderWithAuthoredReflectivity
+                textures.len(),
+                if mode == PropSourceMode::WithReflectivity {
+                    2
+                } else {
+                    0
+                }
             );
-            assert_eq!(metrics.reflectivity, [0.9, 0.8, 0.7]);
-        } else {
-            assert_eq!(metrics.source, MetricSource::TextureHeader);
-            assert_eq!(metrics.reflectivity, [0.125, 0.25, 0.75]);
+            if mode == PropSourceMode::WithReflectivity {
+                for (path, bytes) in [
+                    ("materials/reflectivity/tool.vtf", tool),
+                    (
+                        "materials/reflectivity/chosen.vtf",
+                        texture([0.125, 0.25, 0.75]),
+                    ),
+                ] {
+                    let observed = textures.iter().find(|source| source.path == path).unwrap();
+                    assert_eq!(observed.sha256, crate::asset_sources::hash(&bytes));
+                }
+            }
+            let captured = guard(&sources, &missing, &game).unwrap();
+            overwrite(
+                &directory.path().join("materials/reflectivity/unused.vtf"),
+                &texture([0.875; 3]),
+            );
+            captured.verify_metadata().unwrap();
+            guard(&sources, &missing, &game).unwrap();
+            let replacement = if changed == "tool" {
+                sized_texture(4, 2, [0.25; 3])
+            } else {
+                texture([0.875; 3])
+            };
+            overwrite(
+                &directory
+                    .path()
+                    .join(format!("materials/reflectivity/{changed}.vtf")),
+                &replacement,
+            );
+            assert_eq!(
+                captured.verify_metadata().is_err(),
+                mode == PropSourceMode::WithReflectivity
+            );
+            assert_eq!(
+                guard(&sources, &missing, &game).is_err(),
+                mode == PropSourceMode::WithReflectivity
+            );
         }
     }
+}
+
+#[test]
+fn authored_rho_and_tool_dimensions_skip_unused_runtime_and_albedo_headers() {
+    for text in [
+        "LightmappedGeneric { $basetexture _rt_Unused %tooltexture reflectivity/chosen $reflectivity \"[0.5 0 0]\" }",
+        "LightmappedGeneric { $basetexture reflectivity/unused $bumpmap missing/normal $albedo _rt_Unused %tooltexture reflectivity/chosen $reflectivity \"[0.5 0 0]\" }",
+        "LightmappedGeneric { %tooltexture reflectivity/chosen $reflectivity \"[0.5 0 0]\" }",
+    ] {
+        let (directory, game) = fixture();
+        let runtime = directory.path().join("materials/_rt_unused.vtf");
+        std::fs::write(&runtime, b"unused malformed runtime asset").unwrap();
+        std::fs::write(
+            directory.path().join("materials/reflectivity/split.vmt"),
+            text,
+        )
+        .unwrap();
+        let mut materials = Materials::new(&game);
+        materials
+            .track_prop_lighting_sources(PropSourceMode::WithReflectivity)
+            .unwrap();
+        let index = materials.load("reflectivity/split").unwrap();
+        assert_eq!(
+            materials.get(index).texture_metrics().unwrap(),
+            TextureMetrics {
+                dimension_source: DimensionSource::ToolTextureHeader,
+                reflectivity_source: ReflectivitySource::AuthoredMaterial,
+                width: 1,
+                height: 1,
+                reflectivity: [0.5, 0.0, 0.0],
+            }
+        );
+        let (sources, missing) = materials.take_prop_lighting_sources().unwrap().into_parts();
+        assert!(missing.is_empty());
+        assert_eq!(
+            sources
+                .iter()
+                .filter(|source| source.path.ends_with(".vtf"))
+                .count(),
+            1
+        );
+        assert!(
+            sources
+                .iter()
+                .any(|source| source.path == "materials/reflectivity/chosen.vtf")
+        );
+        let captured = guard(&sources, &missing, &game).unwrap();
+        overwrite(&runtime, b"changed unused runtime payload");
+        captured.verify_metadata().unwrap();
+        guard(&sources, &missing, &game).unwrap();
+    }
+}
+
+#[test]
+fn split_header_identity_and_required_tool_failures_never_select_another_provider() {
+    let (directory, game) = fixture();
+    let path = directory.path().join("materials/reflectivity/split.vmt");
+    std::fs::write(&path, r#"LightmappedGeneric { $basetexture reflectivity/chosen %tooltexture " MATERIALS\REFLECTIVITY\CHOSEN.VTF " }"#).unwrap();
+    let mut materials = Materials::new(&game);
+    materials
+        .track_prop_lighting_sources(PropSourceMode::WithReflectivity)
+        .unwrap();
+    let index = materials.load("reflectivity/split").unwrap();
+    let metrics = materials.get(index).texture_metrics().unwrap();
+    assert_eq!(metrics.dimension_source, DimensionSource::ToolTextureHeader);
+    assert_eq!(
+        metrics.reflectivity_source,
+        ReflectivitySource::TextureHeader
+    );
+    assert_eq!(
+        (metrics.width, metrics.height, metrics.reflectivity),
+        (1, 1, [0.125, 0.25, 0.75])
+    );
+    let (sources, missing) = materials.take_prop_lighting_sources().unwrap().into_parts();
+    assert!(missing.is_empty());
+    assert_eq!(
+        sources
+            .iter()
+            .filter(|source| source.path.ends_with(".vtf"))
+            .count(),
+        1
+    );
+    for invalid in [
+        "",
+        " ",
+        "../outside",
+        "/absolute",
+        "C:/absolute",
+        "0",
+        "1.5",
+        "NaN",
+        "inf",
+        "0x1p2",
+        "-0x2",
+        "nan(0)",
+        "+NaN(foo_bar)",
+        "-nan()",
+    ] {
+        std::fs::write(&path, format!("LightmappedGeneric {{ $basetexture reflectivity/chosen %tooltexture \"{invalid}\" $reflectivity \"[0.5 0 0]\" }}")).unwrap();
+        let error = Materials::new(&game)
+            .load("reflectivity/split")
+            .unwrap_err();
+        assert!(
+            error.contains("split.vmt") && error.contains("%tooltexture"),
+            "{error}"
+        );
+    }
+    std::fs::write(
+        directory.path().join("materials/0x1p2.vtf"),
+        texture([0.875; 3]),
+    )
+    .unwrap();
+    std::fs::write(
+        &path,
+        "LightmappedGeneric { $basetexture reflectivity/chosen %tooltexture 0x1p2.vtf }",
+    )
+    .unwrap();
+    let mut string_control = Materials::new(&game);
+    let index = string_control.load("reflectivity/split").unwrap();
+    let metrics = string_control.get(index).texture_metrics().unwrap();
+    assert_eq!(metrics.dimension_source, DimensionSource::ToolTextureHeader);
+    assert_eq!(metrics.reflectivity, [0.125, 0.25, 0.75]);
+    for tool in ["reflectivity/absent", "_rt_Required"] {
+        std::fs::write(&path, format!("LightmappedGeneric {{ $basetexture reflectivity/chosen %tooltexture {tool} $reflectivity \"[0.5 0 0]\" }}")).unwrap();
+        let mut materials = Materials::new(&game);
+        materials
+            .track_prop_lighting_sources(PropSourceMode::WithReflectivity)
+            .unwrap();
+        let index = materials.load("reflectivity/split").unwrap();
+        let error = materials.get(index).texture_metrics().unwrap_err();
+        assert!(
+            error.contains("%tooltexture") && error.contains("dimensions"),
+            "{error}"
+        );
+        assert!(error.contains(&vmt::texture_path(tool)), "{error}");
+        let (sources, missing) = materials.take_prop_lighting_sources().unwrap().into_parts();
+        assert!(sources.iter().all(|source| source.path.ends_with(".vmt")));
+        assert_eq!(
+            missing,
+            if tool.starts_with("_rt_") {
+                Vec::<String>::new()
+            } else {
+                vec![vmt::texture_path(tool)]
+            }
+        );
+    }
+    std::fs::write(
+        directory.path().join("materials/reflectivity/broken.vtf"),
+        b"bad required tool header",
+    )
+    .unwrap();
+    std::fs::write(&path, "LightmappedGeneric { $basetexture reflectivity/chosen %tooltexture reflectivity/broken $reflectivity \"[0.5 0 0]\" }").unwrap();
+    let error = Materials::new(&game)
+        .load("reflectivity/split")
+        .unwrap_err();
+    assert!(error.contains("broken.vtf"), "{error}");
+}
+
+#[test]
+fn native_no_preview_is_selected_before_reads_and_keeps_independent_rho() {
+    for value in ["0", "1", " 0 "] {
+        for (parameters, reflectivity_source, rho, reads_header) in [
+            (
+                "$basetexture reflectivity/chosen",
+                ReflectivitySource::TextureHeader,
+                [0.125, 0.25, 0.75],
+                true,
+            ),
+            (
+                "$basetexture _rt_Unused $reflectivity \"[0.5 0 0]\"",
+                ReflectivitySource::AuthoredMaterial,
+                [0.5, 0.0, 0.0],
+                false,
+            ),
+            (
+                "$reflectivity \"[0.5 0 0]\"",
+                ReflectivitySource::AuthoredMaterial,
+                [0.5, 0.0, 0.0],
+                false,
+            ),
+            ("", ReflectivitySource::CompileDefault, [0.5; 3], false),
+        ] {
+            let (directory, game) = fixture();
+            let text = format!(
+                "LightmappedGeneric {{ {parameters} %notooltexture \"{value}\" %tooltexture ../ignored_tool }}"
+            );
+            std::fs::write(
+                directory
+                    .path()
+                    .join("materials/reflectivity/no_preview.vmt"),
+                text,
+            )
+            .unwrap();
+            let mut materials = Materials::new(&game);
+            materials
+                .track_prop_lighting_sources(PropSourceMode::WithReflectivity)
+                .unwrap();
+            let index = materials.load("reflectivity/no_preview").unwrap();
+            assert_eq!(
+                materials.get(index).texture_metrics().unwrap(),
+                TextureMetrics {
+                    dimension_source: DimensionSource::NativeNoPreview,
+                    reflectivity_source,
+                    width: 128,
+                    height: 128,
+                    reflectivity: rho,
+                }
+            );
+            let (sources, missing) = materials.take_prop_lighting_sources().unwrap().into_parts();
+            assert!(missing.is_empty());
+            assert_eq!(
+                sources
+                    .iter()
+                    .filter(|source| source.path.ends_with(".vtf"))
+                    .count(),
+                usize::from(reads_header)
+            );
+            let captured = guard(&sources, &missing, &game).unwrap();
+            overwrite(
+                &directory.path().join("materials/reflectivity/unused.vtf"),
+                &texture([0.875; 3]),
+            );
+            captured.verify_metadata().unwrap();
+            guard(&sources, &missing, &game).unwrap();
+        }
+    }
+    let (directory, game) = fixture();
+    let path = directory
+        .path()
+        .join("materials/reflectivity/no_preview.vmt");
+    for value in ["", " ", "2", "true", "0.0", "01"] {
+        std::fs::write(&path, format!("LightmappedGeneric {{ $basetexture reflectivity/chosen %notooltexture \"{value}\" %tooltexture ../ignored_tool }}")).unwrap();
+        let error = Materials::new(&game)
+            .load("reflectivity/no_preview")
+            .unwrap_err();
+        assert!(
+            error.contains("%notooltexture") && error.contains("unsupported"),
+            "{error}"
+        );
+    }
+    std::fs::write(
+        directory.path().join("materials/reflectivity/chosen.vtf"),
+        texture([f32::NAN, 0.25, 0.75]),
+    )
+    .unwrap();
+    std::fs::write(
+        &path,
+        "LightmappedGeneric { $basetexture reflectivity/chosen %notooltexture 1 }",
+    )
+    .unwrap();
+    assert!(
+        Materials::new(&game)
+            .load("reflectivity/no_preview")
+            .unwrap_err()
+            .contains("reflectivity must be finite")
+    );
+    std::fs::write(&path, "LightmappedGeneric { $basetexture reflectivity/chosen %notooltexture 1 $reflectivity \"[0.5 0 0]\" }").unwrap();
+    let mut materials = Materials::new(&game);
+    let index = materials.load("reflectivity/no_preview").unwrap();
+    assert_eq!(
+        materials.get(index).texture_metrics().unwrap().reflectivity,
+        [0.5, 0.0, 0.0]
+    );
+}
+
+#[test]
+fn tool_only_dimensions_keep_optional_neutral_rho_without_promoting_it_to_measured() {
+    let (directory, game) = fixture();
+    std::fs::write(
+        directory
+            .path()
+            .join("materials/reflectivity/tool_only.vmt"),
+        "LightmappedGeneric { %tooltexture reflectivity/chosen }",
+    )
+    .unwrap();
+    let mut materials = Materials::new(&game);
+    let index = materials.load("reflectivity/tool_only").unwrap();
+    let metrics = materials.get(index).texture_metrics().unwrap();
+    assert_eq!(
+        metrics,
+        TextureMetrics {
+            dimension_source: DimensionSource::ToolTextureHeader,
+            reflectivity_source: ReflectivitySource::CompileDefault,
+            width: 1,
+            height: 1,
+            reflectivity: [0.5; 3],
+        }
+    );
+    assert!(!metrics.reflectivity_source.is_measured_or_authored());
 }
 
 #[test]
@@ -515,14 +934,15 @@ fn authored_reflectivity_uses_resolved_patch_values_and_original_sources() {
         materials.track_prop_lighting_sources(mode).unwrap();
         let index = materials.load("reflectivity/patch").unwrap();
         let expected = TextureMetrics {
-            source: MetricSource::TextureHeaderWithAuthoredReflectivity,
+            dimension_source: DimensionSource::DiffuseTextureHeader,
+            reflectivity_source: ReflectivitySource::AuthoredMaterial,
             width: 1,
             height: 1,
             reflectivity: [0.5, 0.0, 0.0],
         };
         assert_eq!(materials.get(index).texture_metrics().unwrap(), expected);
-        assert!(expected.source.has_reflectivity_source());
-        assert!(!MetricSource::CompileDefault.has_reflectivity_source());
+        assert!(expected.reflectivity_source.is_measured_or_authored());
+        assert!(!ReflectivitySource::CompileDefault.is_measured_or_authored());
         let alias = materials.add_alias(index, "maps/authored/alias").unwrap();
         assert_eq!(materials.get(alias).texture_metrics().unwrap(), expected);
         let (sources, missing) = materials.take_prop_lighting_sources().unwrap().into_parts();
@@ -584,8 +1004,8 @@ fn authored_reflectivity_replaces_unused_header_values_without_rescuing_dimensio
         let index = materials.load(&format!("reflectivity/{name}")).unwrap();
         let metrics = materials.get(index).texture_metrics().unwrap();
         assert_eq!(
-            metrics.source,
-            MetricSource::TextureHeaderWithAuthoredReflectivity
+            metrics.reflectivity_source,
+            ReflectivitySource::AuthoredMaterial
         );
         assert_eq!(
             (metrics.width, metrics.height, metrics.reflectivity),
@@ -672,17 +1092,17 @@ fn demanded_authored_reflectivity_has_strict_bounded_syntax_and_metric_scope() {
         error.contains("$reflectivity") && error.contains("dimensions"),
         "{error}"
     );
-    for parameter in ["%tooltexture", "%notooltexture"] {
+    for (parameter, value) in [("%tooltexture", "0"), ("%notooltexture", "2")] {
         std::fs::write(
             &path,
-            format!("LightmappedGeneric {{ $basetexture reflectivity/chosen $reflectivity \"[0.5 0 0]\" {parameter} 0 }}"),
+            format!("LightmappedGeneric {{ $basetexture reflectivity/chosen $reflectivity \"[0.5 0 0]\" {parameter} {value} }}"),
         )
         .unwrap();
         let error = Materials::new(&game)
             .load("reflectivity/authored")
             .unwrap_err();
         assert!(
-            error.contains(parameter) && error.contains("$reflectivity"),
+            error.contains(parameter) && error.contains("unsupported"),
             "{error}"
         );
     }
@@ -694,8 +1114,12 @@ fn demanded_authored_reflectivity_has_strict_bounded_syntax_and_metric_scope() {
     let mut materials = Materials::new(&game);
     let index = materials.load("reflectivity/authored").unwrap();
     assert_eq!(
-        materials.get(index).texture_metrics().unwrap().source,
-        MetricSource::CompileDefault
+        materials
+            .get(index)
+            .texture_metrics()
+            .unwrap()
+            .reflectivity_source,
+        ReflectivitySource::CompileDefault
     );
     std::fs::write(
         &path,

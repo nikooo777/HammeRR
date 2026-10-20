@@ -30,9 +30,9 @@ POSITIVE = [
 NEGATIVE = [
     {"name": "required-ordinary", "base": "hammerr/required-missing", "error": "hammerr/required-missing", "modes": [FULL, BOUNCED]},
     {"name": "runtime-present-file", "base": "_rt_requiredmetrics", "error": "_rt_requiredmetrics", "modes": [FULL]},
-    {"name": "missing-tooltexture", "base": "hammerr/required-missing", "extra": {"%tooltexture": "hammerr/tool"}, "error": "%tooltexture"},
-    {"name": "missing-notooltexture", "base": "hammerr/required-missing", "extra": {"%notooltexture": "0"}, "error": "%notooltexture"},
-    {"name": "missing-reflectivity", "base": "hammerr/required-missing", "extra": {"$reflectivity": "[0.1 0.2 0.3]"}, "error": "$reflectivity"},
+    {"name": "missing-reflectivity-with-tool-dimensions", "base": "hammerr/required-missing", "extra": {"%tooltexture": "hammerr/tool"}, "error": "hammerr/required-missing"},
+    {"name": "missing-reflectivity-with-notool-dimensions", "base": "hammerr/required-missing", "extra": {"%notooltexture": "0"}, "error": "hammerr/required-missing"},
+    {"name": "missing-dimensions-with-authored-reflectivity", "base": "hammerr/required-missing", "extra": {"$reflectivity": "[0.1 0.2 0.3]"}, "error": "hammerr/required-missing"},
 ]
 
 

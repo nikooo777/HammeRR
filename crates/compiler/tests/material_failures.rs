@@ -173,6 +173,7 @@ fn unavailable_required_metrics_refuse_geometry_and_bounced_publication() {
         texture([0.125, 0.25, 0.75]),
     )
     .unwrap();
+    std::fs::write(materials.join("tool.vtf"), texture([0.875; 3])).unwrap();
     let mut game = common::empty_game();
     game.mounts.push(MountedPath {
         ids: vec!["game".into()],
@@ -185,9 +186,9 @@ fn unavailable_required_metrics_refuse_geometry_and_bounced_publication() {
         ("absent", "", "absent.vtf"),
         ("_rt_absent", "", "_rt_absent"),
         ("_rt_required", "", "_rt_required"),
-        ("absent", "%tooltexture tool", "%tooltexture"),
-        ("absent", "%notooltexture 0", "%notooltexture"),
-        ("absent", "$reflectivity \"[0.1 0.2 0.3]\"", "$reflectivity"),
+        ("absent", "%tooltexture tool", "absent.vtf"),
+        ("absent", "%notooltexture 0", "absent.vtf"),
+        ("absent", "$reflectivity \"[0.1 0.2 0.3]\"", "absent.vtf"),
     ] {
         std::fs::write(
             materials.join("required.vmt"),

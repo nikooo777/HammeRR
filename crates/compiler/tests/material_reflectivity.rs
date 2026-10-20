@@ -1,6 +1,6 @@
 mod common;
 
-use compiler::materials::{Materials, MetricSource};
+use compiler::materials::{DimensionSource, Materials, ReflectivitySource};
 use compiler::{LightingMode, Options, SkyQuality};
 use glam::DVec3;
 use map_core::{Document, Plane, edit};
@@ -170,7 +170,7 @@ fn floor(bsp: &Bsp, kind: LightingKind) -> DVec3 {
 }
 
 #[test]
-fn authored_reflectivity_keeps_selected_header_dimensions_and_combined_provenance() {
+fn authored_reflectivity_keeps_selected_header_dimensions_and_independent_provenance() {
     for shader in [
         "LightmappedGeneric",
         "WorldVertexTransition",
@@ -195,8 +195,12 @@ fn authored_reflectivity_keeps_selected_header_dimensions_and_combined_provenanc
             let index = materials.load(MATERIAL).unwrap();
             let metrics = materials.get(index).texture_metrics().unwrap();
             assert_eq!(
-                metrics.source,
-                MetricSource::TextureHeaderWithAuthoredReflectivity
+                metrics.dimension_source,
+                DimensionSource::DiffuseTextureHeader
+            );
+            assert_eq!(
+                metrics.reflectivity_source,
+                ReflectivitySource::AuthoredMaterial
             );
             assert_eq!((metrics.width, metrics.height), dimensions);
             assert_eq!(metrics.reflectivity, [0.5, 0.0, 0.0]);
@@ -389,12 +393,12 @@ fn malformed_overrides_and_unavailable_dimensions_preserve_prior_bsp_and_source(
             "not_present.vtf",
         ),
         (
-            "$basetexture dev/base $reflectivity \"[0.5 0 0]\" %tooltexture dev/reference_base",
-            "%tooltexture",
+            "$basetexture dev/base $reflectivity \"[0.5 0 0]\" %tooltexture dev/not_present",
+            "not_present.vtf",
         ),
         (
-            "$basetexture dev/base $bumpmap dev/absent_normal $albedo dev/albedo $reflectivity \"[0.5 0 0]\" %notooltexture 0",
-            "%notooltexture",
+            "$basetexture dev/base $bumpmap dev/absent_normal $albedo dev/albedo $reflectivity \"[0.5 0 0]\" %tooltexture dev/corrupt",
+            "corrupt.vtf",
         ),
     ] {
         std::fs::write(&material, format!("LightmappedGeneric {{ {fields} }}")).unwrap();

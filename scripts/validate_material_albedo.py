@@ -34,7 +34,7 @@ POSITIVE = [
     {"name": "two-texture-active", "shader": "WorldTwoTextureBlend", "selected": ALBEDO},
     {"name": "trimmed-zero", "suppression": " 0 ", "selected": ALBEDO},
     {"name": "trimmed-one", "shader": "WorldVertexTransition", "suppression": " 1 ", "selected": BASE},
-    {"name": "missing-albedo-legacy-tool", "albedo": None, "extra": {"%tooltexture": "hammerr/tool"}, "selected": BASE},
+    {"name": "missing-albedo-tool-dimensions", "albedo": None, "extra": {"%tooltexture": "hammerr/tool"}, "selected": BASE, "dimensions": (8, 1)},
     {"name": "missing-bump", "bump": None, "selected": BASE},
     {"name": "missing-base", "base": None, "selected": None, "modes": [FULL]},
     {"name": "unknown-shader", "shader": "UnknownShader", "suppression": "2", "selected": BASE},
@@ -50,7 +50,9 @@ NEGATIVE = [
     {"name": "nonfinite-albedo", "albedo": "hammerr/nonfinite", "error": "hammerr/nonfinite"},
     {"name": "unsupported-suppression", "suppression": "2", "error": "$nodiffusebumplighting", "mode": FULL},
     {"name": "tooltexture-presence", "shader": "WorldVertexTransition", "extra": {"%tooltexture": ""}, "error": "%tooltexture"},
-    {"name": "notooltexture-presence", "shader": "WorldTwoTextureBlend", "extra": {"%notooltexture": "0"}, "error": "%notooltexture", "mode": FULL},
+    {"name": "notooltexture-required-albedo", "shader": "WorldTwoTextureBlend", "albedo": "hammerr/nonfinite", "extra": {"%notooltexture": "0"}, "error": "hammerr/nonfinite", "mode": FULL},
+    {"name": "notooltexture-empty", "extra": {"%notooltexture": ""}, "error": "%notooltexture", "mode": FULL},
+    {"name": "notooltexture-noncanonical", "extra": {"%notooltexture": "true"}, "error": "%notooltexture", "mode": FULL},
     {"name": "blank-required-bump", "bump": "", "error": "$bumpmap", "mode": FULL},
     {"name": "blank-required-base", "base": "", "error": "$basetexture", "mode": FULL},
     {"name": "noncanonical-reflectivity", "extra": {"$reflectivity": "0.1 0.2 0.3"}, "error": "$reflectivity", "mode": FULL},
@@ -78,7 +80,7 @@ def payload(data, index):
     return data[offset:offset + size]
 
 
-def texture_metrics(data, selected):
+def texture_metrics(data, selected, dimensions=None):
     offsets = records(data, 44, "<i")
     strings = payload(data, 43)
     found = []
@@ -92,8 +94,10 @@ def texture_metrics(data, selected):
             found.append(row)
     require(len(found) == 1, "Fixture material has missing or ambiguous TexData")
     width, height, reflectivity, _pixels = METRICS[selected]
+    if dimensions is not None:
+        width, height = dimensions
     require(found[0][:3] == reflectivity and found[0][4:] == (width, height, width, height),
-            f"Selected texture dimensions/reflectivity differ: {found[0]} versus {METRICS[selected]}")
+            f"Selected dimensions/reflectivity differ: {found[0]} versus {(width, height, reflectivity)}")
     return {"dimensions": [width, height], "reflectivity": list(found[0][:3])}
 
 
@@ -261,7 +265,7 @@ def validate(args):
                     settings(clients[role], mode)
                     with stopped_on_exit(clients[role]):
                         data[role], measured[role] = compile_pair(clients[role], args.output, f"{label}-{role}", ids, source, games[role])
-                    measured[role]["metrics"] = texture_metrics(data[role], case["selected"])
+                    measured[role]["metrics"] = texture_metrics(data[role], case["selected"], case.get("dimensions"))
                 require(data["actual"] == data["reference"], f"{label}: effective-base reference BSP differs")
                 results["positive"][label] = measured
                 if case["name"] == "lmg-active" and mode == BOUNCED:

@@ -314,9 +314,10 @@ Limits: up to four diffuse bounces from world/detail/terrain lightmaps, preservi
 #### Required material texture metrics
 
 Drawn faces need dimensions and diffuse reflectivity for the BSP, including
-**Fullbright** builds. An authored ordinary `$basetexture` whose VTF is missing
-reports unavailable metrics and stops the build; it does not publish invented
-64×64 dimensions or neutral reflectivity.
+**Fullbright** builds. Each metric has its own selected provider. Without a
+preview or reflectivity override, both use the effective base/albedo VTF.
+A failed required provider stops the build; it does not substitute another
+texture or invent measured dimensions or reflectivity.
 
 1. Click **Compile**, then open **Build details…** for the material diagnostic.
 2. Check the named material, selected texture key and exact mounted texture path.
@@ -328,12 +329,52 @@ Limits: genuinely absent optional material/base declarations retain the existing
 64×64, neutral-reflectivity compile defaults. Raw-base nondrawn and sky surfaces
 use neutral metadata without reading an unused diffuse texture. Selected albedo
 keeps the stricter rules below. Root runtime-generated `_rt_` textures cannot be
-measured from an on-disk VTF and are explicitly unsupported for required metrics,
-even if a file with that name exists. Missing-base combinations with
-`%tooltexture`, `%notooltexture` or `$reflectivity` report an unsupported metric
-rule. Present ordinary files supply VTF dimensions and, without an authored
-override, header reflectivity. Complete native preview-override and broader
-reflectivity coercion rules remain unfinished.
+measured from an on-disk VTF and are explicitly unsupported when their header
+is required, even if a file with that name exists. An unused runtime texture
+is not read when independent providers supply both metrics. Broader native
+reflectivity coercions remain unavailable.
+
+#### Tool preview dimensions
+
+Use a material's tool preview for compiled dimensions while keeping its diffuse
+reflectivity independent. These declarations affect compiler metrics; the
+editor's displayed image retains its existing preview rules.
+
+1. Open **Browse materials…**, select the material, then **Source…** to identify
+   its **Selected VMT source**.
+2. In that source or its resolved Patch, author `%tooltexture "tools/my_preview"`
+   to measure dimensions from that VTF. Leave diffuse reflectivity to the
+   effective base/albedo header, or author a supported `$reflectivity` triple.
+3. Alternatively, author `%notooltexture "0"` or `%notooltexture "1"` to select
+   the SDK compiler's 128×128 no-preview convention. Either literal suppresses
+   tool/base dimension reads. Reflectivity still needs its own provider.
+4. Click **Compile**, then inspect **Build details…**. A no-preview INFO
+   diagnostic names the dimension convention; it does not report a measured
+   texture size. Failed providers identify the material and stop publication.
+
+| Metric | Provider |
+| --- | --- |
+| Dimensions, no preview override | Effective base/albedo VTF header |
+| Dimensions, `%tooltexture` | Declared tool VTF header |
+| Dimensions, `%notooltexture 0` or `1` | Named SDK 128×128 convention |
+| Diffuse reflectivity, `$reflectivity` | Authored linear RGB triple |
+| Diffuse reflectivity, no override | Effective base/albedo VTF header |
+
+Limits: only literal `0` and `1` are admitted for `%notooltexture`; empty and
+other values fail explicitly. A valid no-preview declaration takes precedence
+over `%tooltexture`, so an unused tool file is not read. Otherwise a tool value
+must be a nonempty supported asset-relative path, at most 241 bytes after
+trimming. Numeric values and numeric-looking root hex/NaN-payload declarations
+are unsupported; an explicit `.vtf` suffix or directory makes an ordinary
+string path. Required runtime textures, invalid paths and missing or malformed
+files fail. Prefix/extension normalization is a compiler convenience; this does
+not establish literal native preview behavior for every accepted spelling. A failed
+selected tool read never retries base dimensions or selects 128×128.
+Tool-header reflectivity is not used. A valid dimension provider cannot rescue
+failed required diffuse reflectivity, and an authored reflectivity cannot
+rescue failed required dimensions. An absent optional base can retain neutral
+reflectivity, but that default does not qualify as a measured or authored source
+for static-prop indirect lighting.
 
 #### Normal-map lighting
 
@@ -347,15 +388,17 @@ reflectivity coercion rules remain unfinished.
 Each lit face requesting diffuse normal-map lighting gets its base map and three directional maps per light style. On LightmappedGeneric, WorldVertexTransition and WorldTwoTextureBlend, `$nodiffusebumplighting 1` selects ordinary diffuse lightmaps while retaining the normal texture for other shader effects. Texture axes, mirrored mappings and world/model smooth normals orient those directions; terrain uses its shared smooth surface normals. Native style averages keep the base lighting. Brush models keep their own coordinate scope and self shadows.
 
 On those three shader families, a primary bump/base/albedo declaration with
-absent or literal `0` suppression measures the effective `$albedo` VTF for
-compiled dimensions and diffuse reflectivity. Literal `1` keeps `$basetexture`.
-The original VMT declaration stays unchanged. A missing, corrupt or unreadable
-selected albedo stops the build; the unused base is never substituted.
+absent or literal `0` suppression selects `$albedo` as the effective diffuse
+texture. Without independent metric overrides, its VTF supplies compiled
+dimensions and reflectivity. Literal `1` keeps `$basetexture`. The original
+VMT declaration stays unchanged. When the selected albedo header is required,
+a missing, corrupt or unreadable file stops the build; the unused base is
+never substituted.
 
-Active albedo with `%tooltexture` or `%notooltexture` is unavailable for
-compilation; even blank/zero declarations require unsupported native preview
-rules. A supported `$reflectivity` override is admitted as described below.
-Editor preview and atlas inspection retain their own display-override rules.
+Active albedo can combine with the supported tool/no-preview dimension rules
+above and an authored `$reflectivity` override below. Without an override,
+reflectivity still comes from the albedo header. Editor preview and atlas
+inspection retain their own display-override rules.
 
 Limits: a lit primary-normal material on those three shader families accepts an absent suppression key or trimmed literal `0`/`1`. Other provided spellings fail compilation; use the supported literal rather than relying on native integer coercion. The engine can clamp bright ordinary and bumped LDR lighting differently; compare modest brightness when tuning normal details. This changes compiled game lighting; the editor's material thumbnails and viewport use diffuse previews. WorldVertexTransition secondary normal mapping requires a primary `$bumpmap`; `$bumpmap2` alone does not activate the checked shader path. Initial rotations on parented models or other brush classes, world/terrain opacity and colored/refraction transmission, and per-texel prop lightmaps remain unfinished. Auxiliary directions share the 16 MiB lightmap limit per channel and 100-million work limit per build; larger scales or lower sampling can reduce work.
 
@@ -380,14 +423,16 @@ baked static props; it does not tint the editor's diffuse image.
 Limits: one ASCII square-bracket triple, at most 128 bytes, with exactly three
 finite components in `[0,1]`, rounded to native floats. Scalars, bare triples,
 brace colors, malformed syntax and values outside the range fail explicitly;
-no scaling, gamma conversion or clamping is applied. Dimensions still require
-an available valid selected base/albedo VTF. A valid override supplies reflectivity even
-when the unused header reflectivity is nonfinite; malformed VTF structure still fails.
-Overrides without a selected texture, runtime-generated textures and overrides
-combined with `%tooltexture` or `%notooltexture` remain unsupported. Raw nondrawn
-and sky surfaces retain unused neutral metadata. Geometry-only preparation does
-not evaluate these metrics. Native scalar/brace coercions and broader tool
-preview rules remain outside this compiler scope.
+no scaling, gamma conversion or clamping is applied. Dimensions require the
+selected base/albedo or tool header, or the deliberate no-preview convention
+above. A valid override supplies reflectivity even when unused header
+reflectivity is nonfinite; malformed required VTF structure still fails.
+When another provider supplies dimensions, an unused diffuse VTF is not read,
+including an absent or runtime-generated texture. An override without any
+dimension provider remains unavailable. Raw nondrawn and sky surfaces retain
+unused neutral metadata. Geometry-only preparation does not evaluate these
+metrics. Native scalar/brace coercions and broader preview declarations remain
+outside this compiler scope.
 
 #### Falloff
 
@@ -663,9 +708,11 @@ stay at actual vertices; finite nonzero model normals remain required.
 prop reception uses the world/terrain result after N−1 bounces and adds direct
 light once. One bounce therefore uses direct world lighting; four use the world
 result after three bounces. At nonzero depths, every lit source material must
-have measured reflectivity from its selected base VTF,
-with finite values from zero to one. The compiler hashes each complete VTF
-dependency; missing or unmeasured reflectivity stops the build and
+have texture-header or authored material reflectivity with finite values from
+zero to one. Dimensions independently use the effective diffuse/tool header or
+the deliberate SDK no-preview convention. The compiler hashes every complete
+VTF actually consumed for either metric; unavailable required providers or
+neutral default reflectivity stop the build and
 preserves the previous BSP. Props and brush models do not supply reflected
 light. The existing sampling and self-shadow choices apply to reflected rays.
 **Direct only** needs no additional VTF reflectivity reads, including with

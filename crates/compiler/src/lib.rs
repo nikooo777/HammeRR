@@ -922,7 +922,17 @@ fn build(
         .iter()
         .filter(|terrain| terrain.smoothing_angle.is_some())
         .count();
+    let mut no_preview_materials = 0;
     for info in map.materials.iter() {
+        if matches!(
+            &info.metrics,
+            materials::MetricState::Resolved(materials::TextureMetrics {
+                dimension_source: materials::DimensionSource::NativeNoPreview,
+                ..
+            })
+        ) {
+            no_preview_materials += 1;
+        }
         if !info.found {
             output.report.diagnostics.push(Diagnostic::warning(
                 format!("material {} was not found", info.name),
@@ -935,6 +945,15 @@ fn build(
                 .iter()
                 .map(|message| Diagnostic::warning(message, None, None)),
         );
+    }
+    if no_preview_materials != 0 {
+        output.report.diagnostics.push(Diagnostic::info(
+            format!(
+                "SDK no-preview dimensions (128x128) selected for {no_preview_materials} materials by authored convention; diffuse reflectivity resolves independently"
+            ),
+            None,
+            None,
+        ));
     }
     if output.report.has_errors() {
         return Ok(());

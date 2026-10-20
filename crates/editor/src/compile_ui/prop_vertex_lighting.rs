@@ -11,7 +11,7 @@ pub(super) fn refresh(window: &CompileWindow, session: &Session) {
     window.set_prop_vertex_lighting_enabled(
         settings["editable"] == true && lighting["available"] == true,
     );
-    let mut description = "Bake direct light and up to four diffuse bounces into static props. LDR and HDR are baked separately when both are enabled. Choose Direct only through Four diffuse bounces under Indirect light. Reflected light comes from the preceding world or terrain lighting pass and needs texture-header or authored material reflectivity and selected VTF dimensions from every lit source. Unsupported props stop the build and identify the affected object.".to_owned();
+    let mut description = "Bake direct light and up to four diffuse bounces into static props. LDR and HDR are baked separately when both are enabled. Choose Direct only through Four diffuse bounces under Indirect light. Reflected light comes from the preceding world or terrain lighting pass and needs texture-header or authored material reflectivity from every lit source. Dimensions independently use diffuse or tool VTF headers, or the SDK no-preview 128x128 convention. Only trimmed %notooltexture 0 or 1 selects that convention; unavailable required providers stop the build. Unsupported props stop the build and identify the affected object.".to_owned();
     if let Some(reason) = lighting["unavailable_reason"].as_str() {
         description.push(' ');
         description.push_str(reason);

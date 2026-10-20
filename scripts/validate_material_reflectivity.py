@@ -50,8 +50,8 @@ NEGATIVE = [
     {"name": "absent-dimensions", "base": None, "error": "$reflectivity"},
     {"name": "missing-dimensions", "base": "hammerr/missing-dimensions", "error": "hammerr/missing-dimensions"},
     {"name": "missing-albedo-dimensions", "albedo": "hammerr/missing-albedo", "bump": "hammerr/missing-normal", "error": "hammerr/missing-albedo"},
-    {"name": "unsupported-tool", "extra": {"%tooltexture": "hammerr/tool"}, "error": "%tooltexture"},
-    {"name": "unsupported-active-notool", "albedo": ALBEDO, "bump": "hammerr/missing-normal", "extra": {"%notooltexture": "0"}, "error": "%notooltexture"},
+    {"name": "missing-required-tool-dimensions", "extra": {"%tooltexture": "hammerr/missing-tool"}, "error": "hammerr/missing-tool"},
+    {"name": "corrupt-required-tool-dimensions", "albedo": ALBEDO, "bump": "hammerr/missing-normal", "extra": {"%tooltexture": "hammerr/corrupt"}, "error": "hammerr/corrupt"},
 ]
 
 
@@ -118,16 +118,28 @@ def validate(args):
         definitions = clients["actual"].rpc("tools/list", {})["tools"]
         by_name = {definition["name"]: definition for definition in definitions}
         for name in ["get_compile_settings", "set_compile_settings", "compile_map"]:
-            declaration = json.dumps(by_name[name])
+            declaration = by_name[name]["description"]
             require("authored material reflectivity" in declaration, f"{name}: authored reflectivity missing from discovery")
+            require("diffuse or tool VTF headers" in declaration, f"{name}: independent dimension headers missing from discovery")
+            require("SDK no-preview 128x128 convention" in declaration and "%notooltexture 0 or 1" in declaration,
+                    f"{name}: admitted no-preview convention missing from discovery")
             require("measured TextureHeader" not in declaration, f"{name}: stale header-only discovery")
+            require("selected VTF dimensions" not in declaration and "tool-preview combinations reject" not in declaration,
+                    f"{name}: stale coupled-provider discovery")
+        flag_schema = by_name["set_compile_settings"]["inputSchema"]["properties"]["bake_static_prop_vertices"]
+        require("diffuse or tool VTF headers" in flag_schema["description"]
+                and "SDK no-preview 128x128 convention" in flag_schema["description"]
+                and "%notooltexture 0 or 1" in flag_schema["description"],
+                "Derived static-prop boolean schema omits independent dimension providers")
         results["tool_discovery"] = {name: by_name[name] for name in ["get_compile_settings", "set_compile_settings", "compile_map"]}
         results["discovery"] = {}
         for role, client in clients.items():
             limits = client.call("get_compile_settings")["prop_vertex_lighting"]["limits"]
             require(limits["indirect_reflectivity"] == "texture_header_or_authored_material", "Authored reflectivity absent from shared discovery")
-            require(limits["indirect_dimensions"] == "selected_vtf_header", "Required selected VTF dimensions absent from shared discovery")
-            results["discovery"][role] = {key: limits[key] for key in ["indirect_reflectivity", "indirect_dimensions"]}
+            require(limits["indirect_dimensions"] == "header_or_native_no_preview", "Independent dimensions absent from shared discovery")
+            require(limits["indirect_dimension_sources"] == ["diffuse_vtf_header", "tool_vtf_header", "native_no_preview_convention"],
+                    "Independent dimension source kinds differ from shared discovery")
+            results["discovery"][role] = {key: limits[key] for key in ["indirect_reflectivity", "indirect_dimensions", "indirect_dimension_sources"]}
         ids = fixture(clients["actual"], source)
         saved_source = source.read_bytes()
         results["source_sha256"] = digest(saved_source)

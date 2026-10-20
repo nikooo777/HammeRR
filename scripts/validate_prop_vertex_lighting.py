@@ -309,6 +309,89 @@ def validate_self_shadow(client, args, game, source, ids, props, report):
                                "compiler_preserves_source_history_recipe_each_compile": True, "native_exercised": False}
 
 
+def compare_ignore_normals(before, after, channels):
+    left_lumps, right_lumps = probe.bsp_lumps(before), probe.bsp_lumps(after)
+    require(all(left == right for index, (left, right) in enumerate(zip(left_lumps, right_lumps, strict=True)) if index not in (35, 40)),
+            "IgnoreNormals changed world, terrain, ambient or other non-prop BSP lumps")
+    left_props, right_props = static_records(before), static_records(after)
+    expected = {**left_props, "props": list(left_props["props"])}
+    target = list(expected["props"][1])
+    require(target[10] & 8 == 0, "IgnoreNormals baseline already has native flag 0x08")
+    target[10] |= 8
+    expected["props"][1] = tuple(target)
+    require(right_props == expected, "IgnoreNormals changed another prop, ordinal, placement or native field")
+    left_entries, left_flags = pak_and_flags(before)
+    right_entries, right_flags = pak_and_flags(after)
+    require(left_flags == right_flags and left_entries.keys() == right_entries.keys(), "IgnoreNormals changed map flags or PAK membership")
+    left_manifest, right_manifest = json.loads(left_entries[MANIFEST]), json.loads(right_entries[MANIFEST])
+    require({key: value for key, value in left_manifest.items() if key not in ("assets", "static_props_sha256")} ==
+            {key: value for key, value in right_manifest.items() if key not in ("assets", "static_props_sha256")},
+            "IgnoreNormals changed receiver layout/channels or the original exact source closure")
+    changed_names = {f"sp_{'hdr_' if channel == 'hdr' else ''}1.vhv" for channel in channels}
+    require(all(left_entries[name] == right_entries[name] for name in left_entries if name not in changed_names | {MANIFEST}),
+            "IgnoreNormals changed another prop's VHV or an unrelated packed file")
+    for left, right in zip(left_manifest["assets"], right_manifest["assets"], strict=True):
+        require({key: value for key, value in left.items() if key != "sha256"} ==
+                {key: value for key, value in right.items() if key != "sha256"}, "IgnoreNormals changed generated asset identities/layout/size")
+    receiver = left_manifest["receivers"][0]
+    measurements = {}
+    for channel in channels:
+        name = f"sp_{'hdr_' if channel == 'hdr' else ''}1.vhv"
+        _, old = read_vhv(left_entries[name], receiver["checksum"], receiver["meshes"])
+        _, new = read_vhv(right_entries[name], receiver["checksum"], receiver["meshes"])
+        changed = sum(left != right for left, right in zip(old, new, strict=True))
+        require(changed > 0, "IgnoreNormals did not change any selected receiver colors")
+        measurements[channel] = {"changed_vertices": changed, "baseline_sha256": probe.digest(left_entries[name]),
+                                 "flagged_sha256": probe.digest(right_entries[name])}
+    return measurements
+
+
+def validate_ignore_normals(client, args, game, source, ids, props, report):
+    original_settings = client.call("get_compile_settings")
+    original_props, original_source = detail(client, props), source.read_bytes()
+    original_value = dict(original_props[1]["properties"]).get("ignorenormals")
+    require(original_value in (None, "0"), "IgnoreNormals control requires an initially normal-sensitive receiver")
+    restore = {"remove": ["ignorenormals"]} if original_value is None else {"set": {"ignorenormals": original_value}}
+    preserved = {path: path.read_bytes() for path in args.output.glob("*.bsp")}
+    saved_recipes = {row["name"]: row["id"] for row in client.call("get_build_recipes")["recipes"]}
+    cases = {}
+    try:
+        for mode, channels in [("direct_ldr", ["ldr"]), ("direct_ldr_hdr", ["ldr", "hdr"])]:
+            client.call("apply_build_recipe", {"id": saved_recipes[f"Prop vertex {mode}"]})
+            baseline = preserved[args.output / f"{mode}.bsp"]
+            client.call("set_entity_properties", {"id": props[1], "remove": ["ignorenormals"]})
+            _, absent, _ = compile_pair(client, args, source, ids, f"ignore-normals-{mode}-absent", True)
+            require(absent == baseline, "Removing authored IgnoreNormals zero changed the complete baseline BSP")
+            client.call("set_entity_properties", {"id": props[1], "set": {"ignorenormals": "0"}})
+            _, zero, _ = compile_pair(client, args, source, ids, f"ignore-normals-{mode}-zero", True)
+            require(zero == baseline, "Explicit IgnoreNormals zero differs from absence in complete BSP bytes")
+            client.call("set_entity_properties", {"id": props[1], "set": {"ignorenormals": "1"}})
+            path, flagged, result = compile_pair(client, args, source, ids, f"ignore-normals-{mode}-flagged", True)
+            verified = verify_output(args, game, flagged, result["stats"], channels)
+            measurements = compare_ignore_normals(baseline, flagged, channels)
+            rejected = {}
+            for bounces in (1, 2, 3, 4):
+                client.call("set_compile_settings", {"bounces": bounces})
+                rejected[str(bounces)] = rejected_compile(client, path, source, ids, props[1], "ignorenormals require Direct only")
+            client.call("set_compile_settings", {"bounces": 0})
+            client.call("set_entity_properties", {"id": props[1], **restore})
+            _, restored, _ = compile_pair(client, args, source, ids, f"ignore-normals-{mode}-restored", True)
+            require(restored == baseline and detail(client, props) == original_props and source.read_bytes() == original_source,
+                    "IgnoreNormals failed to restore exact output/properties or changed saved source bytes")
+            cases[mode] = {"artifact": str(path), "bsp_sha256": verified["bsp_sha256"], "channels": measurements,
+                           "positive_depth_rejections": rejected, "default_and_explicit_zero_match": True,
+                           "default_restored_exactly": True, "source_closure_unchanged": True}
+    finally:
+        client.call("set_entity_properties", {"id": props[1], **restore})
+        client.call("apply_build_recipe", {"id": original_settings["recipe"]["id"]})
+    require(client.call("get_compile_settings") == original_settings and detail(client, props) == original_props
+            and source.read_bytes() == original_source, "IgnoreNormals controls failed to restore settings/properties/source")
+    require(all(path.read_bytes() == raw for path, raw in preserved.items()), "IgnoreNormals controls overwrote prior native-evidence artifacts")
+    require(not client.call("get_map_info")["rendering"]["initialized"], "IgnoreNormals controls initialized graphics")
+    report["ignore_normals"] = {"cases": cases, "baseline_artifacts_preserved": True,
+                                "compiler_preserves_source_history_recipe_each_compile": True, "native_exercised": False}
+
+
 def validate_one_bounce(client, args, game, source, ids, report):
     original_recipe = client.call("get_compile_settings")["recipe"]
     original_state = protected_state(client), detail(client, ids), source.read_bytes()
@@ -735,6 +818,9 @@ def validate(client, args, game, report):
     if args.self_shadow_control:
         target = client.call("set_entity_properties", {"id": props[1], "remove": ["disableselfshadowing"]})
         require("disableselfshadowing" not in dict(target["properties"]), "Self-shadow absence control retains an authored FGD default")
+    if args.ignore_normals_control:
+        target = client.call("set_entity_properties", {"id": props[1], "remove": ["ignorenormals"]})
+        require("ignorenormals" not in dict(target["properties"]), "IgnoreNormals absence control retains an authored FGD default")
     source = args.output / "prop-vertex-lighting.vmf"
     client.call("save_map", {"path": str(source)})
     client.call("set_compile_settings", {"lighting": "direct_ldr", "physics": "none", "bounces": 0, "generate_reflections": False})
@@ -757,6 +843,8 @@ def validate(client, args, game, report):
         report["channels"][mode] = verify_output(args, game, data, result["stats"], channels)
     if args.self_shadow_control:
         validate_self_shadow(client, args, game, source, ids, props, report)
+    if args.ignore_normals_control:
+        validate_ignore_normals(client, args, game, source, ids, props, report)
     if args.one_bounce_control:
         validate_one_bounce(client, args, game, source, ids, report)
     if args.lighting_origin_control:
@@ -818,6 +906,7 @@ def main():
     parser.add_argument("--material", help="Optional selected receiver materials/...vmt to shadow for rejection; auto-detected only when unambiguous")
     parser.add_argument("--origin-z", type=float, default=48.0, help="Receiver origin height; use the fixture's exact minimum-Z offset to check floor contact")
     parser.add_argument("--self-shadow-control", action="store_true", help="Check positive own-occlusion using the exact grounded wood_crate001a companions; requires --origin-z 20.01078987121582")
+    parser.add_argument("--ignore-normals-control", action="store_true", help="Author IgnoreNormals through shared property operations; compare N0 foreground/background colors and exact default/zero restoration, reject depths 1..4 without replacing output or changing source/history, preserve every existing artifact and avoid graphics")
     parser.add_argument("--one-bounce-control", action="store_true", help="Build, reject incompatible depths, clear and restore one-bounce prop lighting in both channels using the private measured wall VTF")
     parser.add_argument("--lighting-origin-control", action="store_true", help="Author a native info_lighting point through MCP; require unchanged N0/N1 dual-channel VHV at open and solid-floor points, exact native metadata, missing-helper refusal and restoration")
     parser.add_argument("--bounce-depth-control", action="store_true", help="Publish depths 2/3/4 in both channels through foreground/background MCP, verify complete assets, invalid-depth preservation and exact recipe restoration, then persist/restart depth 4")

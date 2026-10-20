@@ -96,6 +96,27 @@ writes `build-prop-vertex-lighting.png` when `HAMMERR_UI_SNAPSHOTS` names an
 existing directory. Native consumer acceptance remains a separate gate; these
 checks require no game or desktop input.
 
+Ignored-normal prop checks:
+
+```sh
+cargo test -p compiler --lib ignore_normals
+python3 -B scripts/validate_prop_vertex_lighting.py \
+  --binary target/debug/hammerr-headless --fixture-game target/validation/610/fixture \
+  --model models/props_junk/wood_crate001a.mdl \
+  --unsupported-model models/hammerr/invalid-root.mdl \
+  --material materials/models/props_junk/woodcrates01a.vmt \
+  --origin-z 20.01078987121582 --ignore-normals-control \
+  --output target/validation/prop-ignore-normals
+```
+
+The compiler cases cover independent linear/color oracles, full-sphere sky
+visibility, real blockers, native LOD/ordinal output, original-point admission,
+source lifetime and positive-depth refusal. The optional MCP control authors
+the existing prop property, checks foreground/background publication, exact
+absent/zero/restored output and preservation on refusal without initializing
+graphics. Reuse the prepared fixture described under static-prop validation;
+choose an absent output path. Native rendering remains a separate check.
+
 Shared reflected-light visibility checks:
 
 ```sh

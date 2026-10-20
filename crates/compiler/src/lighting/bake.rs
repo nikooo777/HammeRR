@@ -818,12 +818,15 @@ pub(crate) fn bake(
     let mut prop_vertices = if options.bake_static_prop_vertices {
         super::prop_vertices::prepare(
             map,
-            settings.vmf,
+            super::prop_vertices::Settings {
+                vmf: settings.vmf,
+                prop_sources: settings.prop_sources,
+                bounces: options.bounces,
+            },
             prop_assets
                 .take()
                 .ok_or("Static-prop source tracking is missing")?,
             bsp,
-            settings.prop_sources,
             report,
             &mut budget,
         )?

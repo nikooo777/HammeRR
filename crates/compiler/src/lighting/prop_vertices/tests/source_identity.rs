@@ -54,10 +54,13 @@ fn replacing_a_valid_model_after_leaf_emission_rejects_the_old_receiver_snapshot
     assert!(
         prepare(
             &map,
-            &vmf,
+            Settings {
+                vmf: &vmf,
+                prop_sources: &props.sources,
+                bounces: 0,
+            },
             tracker,
             &bsp,
-            &props.sources,
             &mut report,
             &mut budget,
         )

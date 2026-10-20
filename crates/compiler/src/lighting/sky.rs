@@ -1,7 +1,9 @@
 use glam::DVec3;
 use source_formats::bsp::{LightingKind, WorldLight, world_light_kind};
 
-use super::{PointLight, checked_intensity, hdr_color, hdr_scale, number, property};
+use super::{
+    PointLight, ReceiverAngularMode, checked_intensity, hdr_color, hdr_scale, number, property,
+};
 use crate::map::MapEntity;
 
 pub(super) const TRACE_LENGTH: f64 = crate::map::MAX_COMPILE_COORD * 4.0;
@@ -188,7 +190,17 @@ impl SkyLight {
         directions: &[DVec3],
         visible: &mut impl FnMut(DVec3) -> Result<bool, String>,
     ) -> Result<DVec3, String> {
-        let color = self.contribution(normal)?;
+        self.sun_contribution_with_mode(normal, directions, ReceiverAngularMode::Normal, visible)
+    }
+
+    pub(super) fn sun_contribution_with_mode(
+        self,
+        normal: DVec3,
+        directions: &[DVec3],
+        mode: ReceiverAngularMode,
+        visible: &mut impl FnMut(DVec3) -> Result<bool, String>,
+    ) -> Result<DVec3, String> {
+        let color = self.contribution_with_mode(normal, mode)?;
         if color == DVec3::ZERO {
             return Ok(color);
         }
@@ -203,10 +215,18 @@ impl SkyLight {
     }
 
     pub(super) fn contribution(self, normal: DVec3) -> Result<DVec3, String> {
+        self.contribution_with_mode(normal, ReceiverAngularMode::Normal)
+    }
+
+    fn contribution_with_mode(
+        self,
+        normal: DVec3,
+        mode: ReceiverAngularMode,
+    ) -> Result<DVec3, String> {
         let normal = normal
             .try_normalize()
             .ok_or("Sky sample normal must be finite and nonzero")?;
-        let color = self.intensity * normal.dot(-self.direction).clamp(0.0, 1.0);
+        let color = self.intensity * mode.direct_factor(normal, -self.direction);
         if !color.is_finite() {
             return Err("Sky light contribution is nonfinite".into());
         }
@@ -248,13 +268,28 @@ impl SkyLight {
         directions: &[DVec3],
         visible: &mut impl FnMut(DVec3) -> Result<bool, String>,
     ) -> Result<DVec3, String> {
+        self.ambient_contribution_with_mode(
+            normal,
+            directions,
+            ReceiverAngularMode::Normal,
+            visible,
+        )
+    }
+
+    pub(super) fn ambient_contribution_with_mode(
+        self,
+        normal: DVec3,
+        directions: &[DVec3],
+        mode: ReceiverAngularMode,
+        visible: &mut impl FnMut(DVec3) -> Result<bool, String>,
+    ) -> Result<DVec3, String> {
         let normal = normal
             .try_normalize()
             .ok_or("Sky ambient needs a finite nonzero normal")?;
         let mut total = 0.0;
         let mut received = 0.0;
         for &direction in directions {
-            let weight = normal.dot(direction).max(0.0);
+            let weight = mode.ambient_weight(normal, direction);
             if weight == 0.0 {
                 continue;
             }
@@ -264,7 +299,11 @@ impl SkyLight {
             }
         }
         if total <= 0.0 {
-            return Err("Sky ambient hemisphere has no valid directions".into());
+            return Err(match mode {
+                ReceiverAngularMode::Normal => "Sky ambient hemisphere has no valid directions",
+                ReceiverAngularMode::IgnoreNormals => "Sky ambient sphere has no valid directions",
+            }
+            .into());
         }
         Ok(self.ambient * (received / total))
     }
@@ -274,6 +313,111 @@ impl SkyLight {
 mod tests {
     use super::*;
     use crate::SkyQuality;
+
+    #[test]
+    fn ignore_normals_sun_uses_constant_reception_and_all_visibility_rays() {
+        let light = SkyLight {
+            direction: -DVec3::Z,
+            intensity: DVec3::splat(100.0),
+            ambient: DVec3::splat(40.0),
+            origin: DVec3::ZERO,
+            spread: 0.0,
+        };
+        let directions = [DVec3::Z, DVec3::X, DVec3::Y, -DVec3::X];
+        for normal in [
+            DVec3::X,
+            -DVec3::X,
+            DVec3::Y,
+            -DVec3::Y,
+            DVec3::Z,
+            -DVec3::Z,
+        ] {
+            let mut calls = 0;
+            let received = light
+                .sun_contribution_with_mode(
+                    normal,
+                    &directions,
+                    ReceiverAngularMode::IgnoreNormals,
+                    &mut |direction| {
+                        calls += 1;
+                        Ok(direction != -DVec3::X)
+                    },
+                )
+                .unwrap();
+            assert_eq!(received, DVec3::splat(26.25));
+            assert_eq!(calls, 4);
+        }
+        assert_eq!(
+            light
+                .sun_contribution(-DVec3::Z, &directions, &mut |_| Ok(true))
+                .unwrap(),
+            DVec3::ZERO
+        );
+        assert!(
+            light
+                .sun_contribution_with_mode(
+                    DVec3::Z,
+                    &directions,
+                    ReceiverAngularMode::IgnoreNormals,
+                    &mut |_| Err("canceled visibility".into())
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn ignore_normals_ambient_is_a_full_sphere_mean_without_direct_scaling() {
+        let light = SkyLight {
+            direction: -DVec3::Z,
+            intensity: DVec3::splat(100.0),
+            ambient: DVec3::splat(40.0),
+            origin: DVec3::ZERO,
+            spread: 0.0,
+        };
+        for quality in [SkyQuality::Fast, SkyQuality::Balanced, SkyQuality::Detailed] {
+            let directions = ambient_directions(quality);
+            for normal in [DVec3::Z, -DVec3::Z, DVec3::new(1.0, 2.0, -3.0).normalize()] {
+                for (visibility, expected) in [(0, 0.0), (1, 20.0), (2, 40.0)] {
+                    let mut calls = 0;
+                    let received = light
+                        .ambient_contribution_with_mode(
+                            normal,
+                            &directions,
+                            ReceiverAngularMode::IgnoreNormals,
+                            &mut |direction| {
+                                calls += 1;
+                                Ok(visibility == 2 || (visibility == 1 && direction.z > 0.0))
+                            },
+                        )
+                        .unwrap();
+                    assert_eq!(received, DVec3::splat(expected));
+                    assert_eq!(calls, directions.len());
+                }
+            }
+        }
+        for normal in [DVec3::ZERO, DVec3::splat(f64::NAN)] {
+            assert!(
+                light
+                    .ambient_contribution_with_mode(
+                        normal,
+                        &[DVec3::Z],
+                        ReceiverAngularMode::IgnoreNormals,
+                        &mut |_| Ok(true)
+                    )
+                    .is_err()
+            );
+            assert!(
+                light
+                    .sun_contribution_with_mode(
+                        normal,
+                        &[DVec3::Z],
+                        ReceiverAngularMode::IgnoreNormals,
+                        &mut |_| Ok(true)
+                    )
+                    .is_err()
+            );
+        }
+    }
 
     fn environment(properties: &[(&str, &str)]) -> MapEntity {
         MapEntity {

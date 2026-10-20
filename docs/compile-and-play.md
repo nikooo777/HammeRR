@@ -531,6 +531,7 @@ static-prop shadow controls.
    **Three diffuse bounces** or **Four diffuse bounces**, then enable
    **Bake static-prop vertex lighting**. Incompatible lighting or bounce
    changes are refused without changing either setting.
+   For a prop with `ignorenormals` set to `1`, choose **Direct only**.
 3. Click **Close**, then **Compile** or **Run Map**. Unsupported requested
    receivers stop the build and preserve the previous BSP.
 4. Open **Build details…** after a successful build. **Static-prop vertex
@@ -553,16 +554,26 @@ sun, sky-ambient and reflected receiver rays; other props, world and terrain
 remain blockers.
 Absence or `0` retains self shadows. A named `lightingorigin` may refer to one
 visible `info_lighting`; its finite point is stored for native runtime lighting.
-All supported bounce depths still sample actual vertices with their normals
-and PVS, even if the helper is inside a world brush. It does not recover buried vertices.
+All supported bounce depths still sample actual vertices and their PVS,
+even if the helper is inside a world brush. It does not recover buried vertices.
 Use **Advanced properties → Property key / Value** to set the helper
 `targetname` and the prop's matching `lightingorigin`; see [Static props](static-props.md#native-lighting-origin).
-Missing, hidden-only or ambiguous helpers, unsupported ignore-normal behavior,
-styled lights and specialized materials reject the
+Missing, hidden-only or ambiguous helpers, styled lights and specialized materials reject the
 requested build. Set a prop's `disablevertexlighting` to `1` in
 **Advanced properties** to exclude that prop explicitly; its ordinary shadow
 and collision settings stay independent. Per-texel prop lightmaps and reflected
 prop sources remain unavailable.
+
+With **Indirect light → Direct only**, use **Advanced properties → Property
+key / Value** to set `ignorenormals` to `1` on a prop. Point, spot and sun
+reception then uses a constant angular factor of 0.35, retaining distance
+falloff, the spotlight's emission cone and every real shadow. Sky ambient
+averages visibility over the full sphere, without that 0.35 factor. Samples
+stay at actual vertices; finite nonzero model normals remain required.
+`ignorenormals` does not change the separate self-shadow choice. Absence or
+`0` retains normal-facing reception. An active receiver with `ignorenormals`
+set to `1` rejects every positive bounce depth before publication; choose
+**Direct only**, remove the property or set `disablevertexlighting` to `1`.
 
 **Indirect light** supports zero to four diffuse bounces. At depth N above zero,
 prop reception uses the world/terrain result after N−1 bounces and adds direct
@@ -573,7 +584,8 @@ with finite values from zero to one. The compiler hashes each complete VTF
 dependency; missing or unmeasured reflectivity stops the build and
 preserves the previous BSP. Props and brush models do not supply reflected
 light. The existing sampling and self-shadow choices apply to reflected rays.
-**Direct only** retains its existing output and dependency cost.
+**Direct only** needs no additional VTF reflectivity reads, including with
+`ignorenormals` enabled.
 
 **Direct LDR + HDR** independently evaluates both channels and publishes only
 complete output. The bake uses CPU sampling and needs no capture runtime.

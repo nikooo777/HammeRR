@@ -30,7 +30,7 @@ const MAX_MODELS: usize = 128;
 const MAX_VERTICES: usize = 4_000_000;
 const MAX_GENERATED_BYTES: usize = 64 * 1024 * 1024;
 const DISABLED: u32 = 0x40;
-const UNSUPPORTED_FLAGS: u32 = 0x08;
+const IGNORE_NORMALS: u32 = 0x08;
 const NO_SELF_SHADOW: u32 = 0x80;
 
 struct ModelData {
@@ -68,6 +68,12 @@ pub(super) struct Context<'a> {
 pub(super) struct Indirect<'a> {
     pub surfaces: &'a super::radiance::SurfaceIndex,
     pub quality: crate::SkyQuality,
+}
+
+pub(super) struct Settings<'a> {
+    pub vmf: &'a Vmf,
+    pub prop_sources: &'a [usize],
+    pub bounces: u8,
 }
 
 fn source(vmf: &Vmf, id: usize) -> Result<&Entity, String> {
@@ -135,9 +141,6 @@ fn admit_model(data: &ModelData) -> Result<(), String> {
 }
 
 fn admit_prop(entity: &Entity, prop: &StaticProp, model: &str) -> Result<(), String> {
-    if prop.flags & UNSUPPORTED_FLAGS != 0 {
-        return Err("Baked prop vertices do not yet support ignorenormals; remove that setting or explicitly disablevertexlighting".into());
-    }
     if prop.dx_levels != [0; 2] {
         return Err("Baked prop vertices currently require unrestricted prop DX levels and the DX90 companion".into());
     }
@@ -160,13 +163,17 @@ fn admit_prop(entity: &Entity, prop: &StaticProp, model: &str) -> Result<(), Str
 
 pub(super) fn prepare(
     map: &Map,
-    vmf: &Vmf,
+    settings: Settings<'_>,
     tracker: super::asset_tracking::Tracker<'_>,
     bsp: &Bsp,
-    prop_sources: &[usize],
     report: &mut Report,
     budget: &mut Budget<'_>,
 ) -> Result<Option<Prepared>, String> {
+    let Settings {
+        vmf,
+        prop_sources,
+        bounces,
+    } = settings;
     let start = budget.work();
     let Some(lump) = bsp.game_lumps.iter().find(|lump| lump.id == *b"sprp") else {
         if !prop_sources.is_empty() {
@@ -196,6 +203,19 @@ pub(super) fn prepare(
         return Err("Baked prop vertices exceed their 1,024 receiver limit; explicitly disable vertex lighting on other props".into());
     }
     unstyled(map, report, budget)?;
+    if bounces > 0 {
+        for (prop, &source_id) in props.props.iter().zip(prop_sources) {
+            budget.consume(1)?;
+            if prop.flags & DISABLED == 0 && prop.flags & IGNORE_NORMALS != 0 {
+                report.diagnostics.push(Diagnostic::error(
+                    "Baked prop vertices with ignorenormals require Direct only (zero diffuse bounces); remove ignorenormals or explicitly disablevertexlighting",
+                    Some(format!("entity:{source_id}")),
+                    Some(DVec3::from_array(prop.origin.map(f64::from))),
+                ));
+                return Err("Static-prop vertex receiver preparation failed".into());
+            }
+        }
+    }
     let mut assets = assets::Assets::new(tracker);
     let mut allocation = budget.reserve_bytes(
         count * size_of::<BoundReceiver>()
@@ -511,13 +531,21 @@ pub(super) fn bake_channel(
                                 )?;
                                 let skipped_owner = (receiver.prop.flags & NO_SELF_SHADOW != 0)
                                     .then_some(receiver.metadata.ordinal);
-                                let mut colors = receivers::direct_skipping_owner(
+                                let angular = if receiver.prop.flags & IGNORE_NORMALS != 0 {
+                                    super::ReceiverAngularMode::IgnoreNormals
+                                } else {
+                                    super::ReceiverAngularMode::Normal
+                                };
+                                let mut colors = receivers::direct_with_reception(
                                     &ctx.direct,
                                     candidates,
                                     cluster,
                                     sample,
                                     true,
-                                    skipped_owner,
+                                    receivers::Reception {
+                                        angular,
+                                        skip_owner: skipped_owner,
+                                    },
                                     budget,
                                 )?;
                                 if let Some(indirect) = &indirect {

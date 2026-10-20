@@ -1,9 +1,9 @@
 use glam::DVec3;
 
-use super::Occluder;
 use super::bake::{Budget, Emitter};
 use super::culling::Candidates;
 use super::shadows::{ShadowIndex, Triangle};
+use super::{Occluder, ReceiverAngularMode};
 use crate::{map::Map, tree::Tree, visibility::Visibility};
 
 pub(super) const STYLE_COUNT: usize = 64;
@@ -21,6 +21,11 @@ pub(super) struct Sample {
     pub point: DVec3,
     pub normal: DVec3,
     pub origin: DVec3,
+}
+
+pub(super) struct Reception {
+    pub angular: ReceiverAngularMode,
+    pub skip_owner: Option<u32>,
 }
 
 pub(super) fn cluster(
@@ -73,6 +78,29 @@ pub(super) fn direct_skipping_owner(
     skip_owner: Option<u32>,
     budget: &mut Budget<'_>,
 ) -> Result<[DVec3; STYLE_COUNT], String> {
+    direct_with_reception(
+        ctx,
+        candidates,
+        cluster,
+        sample,
+        sky_ambient,
+        Reception {
+            angular: ReceiverAngularMode::Normal,
+            skip_owner,
+        },
+        budget,
+    )
+}
+
+pub(super) fn direct_with_reception(
+    ctx: &Context<'_>,
+    candidates: &mut Candidates,
+    cluster: Option<usize>,
+    sample: Sample,
+    sky_ambient: bool,
+    reception: Reception,
+    budget: &mut Budget<'_>,
+) -> Result<[DVec3; STYLE_COUNT], String> {
     let mut colors = [DVec3::ZERO; STYLE_COUNT];
     for &candidate in candidates.for_cluster(cluster, ctx.lights, budget)? {
         budget.consume(1)?;
@@ -82,7 +110,8 @@ pub(super) fn direct_skipping_owner(
         }
         match light {
             Emitter::Point(light) => {
-                let value = light.contribution(sample.point, sample.normal)?;
+                let value =
+                    light.contribution_with_mode(sample.point, sample.normal, reception.angular)?;
                 if value != DVec3::ZERO
                     && !ctx
                         .shadows
@@ -97,7 +126,7 @@ pub(super) fn direct_skipping_owner(
                     && !ctx.props.blocked_skipping_owner(
                         sample.origin,
                         light.origin,
-                        skip_owner,
+                        reception.skip_owner,
                         &mut |work| budget.consume(work),
                     )?
                 {
@@ -105,9 +134,10 @@ pub(super) fn direct_skipping_owner(
                 }
             }
             Emitter::Sky(light) => {
-                colors[0] += light.sun_contribution(
+                colors[0] += light.sun_contribution_with_mode(
                     sample.normal,
                     ctx.sun_directions,
+                    reception.angular,
                     &mut |direction| {
                         super::sky_visible_skipping_owner(
                             direction,
@@ -116,16 +146,17 @@ pub(super) fn direct_skipping_owner(
                             ctx.terrain,
                             ctx.props,
                             &None,
-                            skip_owner,
+                            reception.skip_owner,
                             budget,
                         )
                     },
                 )?;
                 if sky_ambient && light.has_ambient() {
                     budget.consume(ctx.ambient_directions.len())?;
-                    colors[0] += light.ambient_contribution(
+                    colors[0] += light.ambient_contribution_with_mode(
                         sample.normal,
                         ctx.ambient_directions,
+                        reception.angular,
                         &mut |direction| {
                             super::sky_visible_skipping_owner(
                                 direction,
@@ -134,7 +165,7 @@ pub(super) fn direct_skipping_owner(
                                 ctx.terrain,
                                 ctx.props,
                                 &None,
-                                skip_owner,
+                                reception.skip_owner,
                                 budget,
                             )
                         },

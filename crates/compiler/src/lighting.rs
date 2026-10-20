@@ -29,6 +29,29 @@ pub(crate) use bake::{Settings, bake};
 const PROJECTION_EPSILON: f64 = 1e-10;
 const MIN_LIGHT_DISTANCE: f64 = 1.0;
 const REFERENCE_DISTANCE: f64 = 100.0;
+pub const IGNORE_NORMALS_FACTOR: f64 = 0.35;
+
+#[derive(Clone, Copy)]
+pub(super) enum ReceiverAngularMode {
+    Normal,
+    IgnoreNormals,
+}
+
+impl ReceiverAngularMode {
+    fn direct_factor(self, normal: DVec3, direction: DVec3) -> f64 {
+        match self {
+            Self::Normal => normal.dot(direction).clamp(0.0, 1.0),
+            Self::IgnoreNormals => IGNORE_NORMALS_FACTOR,
+        }
+    }
+
+    fn ambient_weight(self, normal: DVec3, direction: DVec3) -> f64 {
+        match self {
+            Self::Normal => normal.dot(direction).max(0.0),
+            Self::IgnoreNormals => 1.0,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct LuxelFrame {
@@ -345,6 +368,15 @@ impl PointLight {
     }
 
     pub fn contribution(&self, point: DVec3, normal: DVec3) -> Result<DVec3, String> {
+        self.contribution_with_mode(point, normal, ReceiverAngularMode::Normal)
+    }
+
+    fn contribution_with_mode(
+        &self,
+        point: DVec3,
+        normal: DVec3,
+        mode: ReceiverAngularMode,
+    ) -> Result<DVec3, String> {
         if !point.is_finite() || !normal.is_finite() {
             return Err("Light sample and normal must be finite".into());
         }
@@ -359,7 +391,7 @@ impl PointLight {
         if distance == 0.0 {
             return Ok(DVec3::ZERO);
         }
-        let dot = normal.dot(offset / distance).clamp(0.0, 1.0);
+        let dot = mode.direct_factor(normal, offset / distance);
         let falloff = self.falloff.factor(distance)?;
         let cone = if let Some(cone) = self.cone {
             let angle = cone.direction.dot(-offset / offset.length());
@@ -591,6 +623,108 @@ fn sky_visible_skipping_owner(
 #[cfg(test)]
 mod input_tests {
     use super::*;
+
+    #[test]
+    fn ignore_normals_point_reception_is_constant_but_keeps_falloff_and_validation() {
+        let source = entity(&[("_light", "255 255 255 100"), ("_constant_attn", "1")]);
+        let light = PointLight::from_entity(&source, -1).unwrap();
+        for normal in [
+            DVec3::X,
+            -DVec3::X,
+            DVec3::Y,
+            -DVec3::Y,
+            DVec3::Z,
+            -DVec3::Z,
+        ] {
+            assert_eq!(
+                light
+                    .contribution_with_mode(DVec3::ZERO, normal, ReceiverAngularMode::IgnoreNormals)
+                    .unwrap(),
+                DVec3::splat(35.0)
+            );
+        }
+        assert_eq!(
+            light.contribution(DVec3::ZERO, DVec3::Z).unwrap(),
+            DVec3::splat(100.0)
+        );
+        assert_eq!(
+            light.contribution(DVec3::ZERO, -DVec3::Z).unwrap(),
+            DVec3::ZERO
+        );
+        let attenuated = PointLight::from_entity(
+            &entity(&[
+                ("_light", "255 255 255 100"),
+                ("_linear_attn", "1"),
+                ("_distance", "250"),
+            ]),
+            -1,
+        )
+        .unwrap();
+        assert!(
+            attenuated
+                .contribution_with_mode(
+                    -DVec3::Z * 100.0,
+                    -DVec3::Z,
+                    ReceiverAngularMode::IgnoreNormals
+                )
+                .unwrap()
+                .abs_diff_eq(DVec3::splat(17.5), 1e-12)
+        );
+        assert_eq!(
+            attenuated
+                .contribution_with_mode(
+                    -DVec3::Z * 200.0,
+                    -DVec3::Z,
+                    ReceiverAngularMode::IgnoreNormals
+                )
+                .unwrap(),
+            DVec3::ZERO
+        );
+        for normal in [
+            DVec3::ZERO,
+            DVec3::splat(f64::NAN),
+            DVec3::splat(f64::INFINITY),
+        ] {
+            assert!(
+                light
+                    .contribution_with_mode(DVec3::ZERO, normal, ReceiverAngularMode::IgnoreNormals)
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn ignore_normals_spotlight_retains_emitter_cosine_cone_and_focus() {
+        let mut light = PointLight::from_entity(
+            &entity(&[("_light", "255 255 255 100"), ("_constant_attn", "1")]),
+            -1,
+        )
+        .unwrap();
+        for (direction, expected) in [
+            (-DVec3::Z, 35.0),
+            (DVec3::new(7.0_f64.sqrt() * 0.25, 0.0, -0.75), 6.5625),
+            (DVec3::X, 0.0),
+        ] {
+            light.cone = Some(SpotCone {
+                direction,
+                inner: 1.0,
+                outer: 0.5,
+                exponent: 2.0,
+            });
+            for normal in [DVec3::Z, -DVec3::Z, DVec3::X] {
+                assert!(
+                    light
+                        .contribution_with_mode(
+                            DVec3::ZERO,
+                            normal,
+                            ReceiverAngularMode::IgnoreNormals
+                        )
+                        .unwrap()
+                        .abs_diff_eq(DVec3::splat(expected), 1e-12)
+                );
+            }
+        }
+    }
 
     fn entity(properties: &[(&str, &str)]) -> MapEntity {
         MapEntity {

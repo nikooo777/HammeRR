@@ -79,10 +79,34 @@ The name is case-sensitive and must resolve to exactly one visible
 `info_lighting` with a finite point within ±16384 units. Missing, hidden-only
 or ambiguous helpers reject publication and preserve the previous BSP. The
 helper may lie inside a world brush: it is native runtime metadata, not the
-baked receiver. Every supported bounce depth still uses each actual vertex,
-its normal and its PVS location. The helper does not recover embedded vertices
-or relax brush, terrain or other-prop contact limits. `ignorenormals` remains
-unsupported by the vertex bake.
+baked receiver. Every supported bounce depth still uses each actual vertex
+and its PVS location. The helper does not recover embedded vertices or relax
+brush, terrain or other-prop contact limits. Finite nonzero model normals remain
+required, including when the prop ignores their receiver-facing direction.
 
 Agents create the same helper with `create_entity` and bind it with
 `set_entity_properties`, using `set: {"lightingorigin":"helper_name"}`.
+
+
+## Ignore receiver normals
+
+1. Select the static prop and enable **Advanced properties**.
+2. Set **Property key** to `ignorenormals` and **Value** to `1`, then press Enter. Remove the override or set `0` for normal-facing reception.
+3. Open **Build settings…**, choose **Indirect light → Direct only** and enable
+   **Bake static-prop vertex lighting**. Choose **Build lighting → Direct LDR** or **Direct LDR + HDR**.
+4. Click **Close**, then **Compile**. Read **Build details… → Diagnostics** if
+   the receiver is unsupported.
+
+Point, spot and sun reception uses a constant angular factor of 0.35 while
+retaining falloff, spotlight emission cones and actual shadow rays. Sky ambient
+uses a full-sphere visibility mean without that factor. The separate
+`disableselfshadowing` choice still controls only the receiver's own shadows.
+Agents set the same property with `set_entity_properties` and use shared compile
+settings; `get_compile_settings` describes the supported receiver limits.
+
+Limits: active ignored-normal receivers require zero diffuse bounces. Positive
+bounce depths reject before publication; choose **Direct only**, remove
+`ignorenormals` or explicitly set `disablevertexlighting` to `1`. Finite nonzero
+model normals, original-point contact/burial rules, opaque materials, source
+guards, native ordinals and hardware-section limits remain the same. This does
+not enable VTX morph strip groups or change normal-facing world/terrain lighting.

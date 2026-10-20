@@ -8,6 +8,7 @@ use source_formats::{
 };
 
 mod fixtures;
+mod ignore_normals;
 mod indirect_sources;
 mod lighting_origins;
 mod source_identity;
@@ -386,7 +387,7 @@ fn default_off_and_explicit_opt_out_produce_no_vhv_or_prop_map_flags() {
 #[test]
 fn unsupported_flags_styles_and_selected_skin_fail_with_source_diagnostics() {
     let (directory, game) = fixtures::game();
-    for (key, value) in [("ignorenormals", "1"), ("mindxlevel", "80")] {
+    for (key, value) in [("mindxlevel", "80"), ("maxdxlevel", "90")] {
         let mut vmf = fixtures::scene(false);
         vmf.entities
             .iter_mut()

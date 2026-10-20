@@ -313,7 +313,7 @@ fn buried_vertices_still_fail_with_open_or_solid_authored_origins() {
 }
 
 #[test]
-fn invalid_helpers_fail_before_receiver_opt_out_and_ignore_normals_remains_unsupported() {
+fn invalid_helpers_precede_opt_out_and_ignore_normals_preserves_native_origins() {
     let (_directory, game, vmf) = fixture(fixtures::scene(false));
     for bounces in [0, 1] {
         for disabled in [false, true] {
@@ -360,7 +360,7 @@ fn invalid_helpers_fail_before_receiver_opt_out_and_ignore_normals_remains_unsup
         let mut source = vmf.clone();
         set_origin(&mut source, [64.0, 0.0, 64.0]);
         receiver(&mut source).properties.set("ignorenormals", "1");
-        let failed = crate::compile_with_options(
+        let result = crate::compile_with_options(
             &source,
             &game,
             Options {
@@ -368,18 +368,37 @@ fn invalid_helpers_fail_before_receiver_opt_out_and_ignore_normals_remains_unsup
                 ..options(false)
             },
         );
-        assert!(failed.bsp.is_none());
-        assert!(
-            failed.report.diagnostics.iter().any(|diagnostic| {
-                diagnostic.object.as_deref() == Some("entity:9101")
-                    && diagnostic
-                        .message
-                        .contains("do not yet support ignorenormals")
-                    && !diagnostic.message.contains("lightingorigin")
-            }),
-            "{:?}",
-            failed.report
-        );
+        if bounces == 0 {
+            assert!(!result.report.has_errors(), "{:?}", result.report);
+            let bsp = result.bsp.as_ref().unwrap();
+            let prop = &bsp.static_props().unwrap().unwrap().props[0];
+            assert_eq!(prop.flags & (2 | 8 | 64), 2 | 8);
+            assert_eq!(prop.lighting_origin, [64.0, 0.0, 64.0]);
+            let payloads = [payload(bsp, "sp_0.vhv")];
+            receiver(&mut source).properties.remove("lightingorigin");
+            source
+                .entities
+                .retain(|entity| entity.classname() != Some("info_lighting"));
+            let ordinary = bake(&source, &game, bounces, false);
+            assert_eq!(
+                payloads,
+                [payload(ordinary.bsp.as_ref().unwrap(), "sp_0.vhv")]
+            );
+            set_origin(&mut source, [64.0, 0.0, 64.0]);
+        } else {
+            assert!(result.bsp.is_none());
+            assert!(
+                result.report.diagnostics.iter().any(|diagnostic| {
+                    diagnostic.object.as_deref() == Some("entity:9101")
+                        && diagnostic
+                            .message
+                            .contains("ignorenormals require Direct only")
+                        && !diagnostic.message.contains("lightingorigin")
+                }),
+                "{:?}",
+                result.report
+            );
+        }
         receiver(&mut source)
             .properties
             .set("disablevertexlighting", "1");

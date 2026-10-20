@@ -38,7 +38,12 @@ fn prop_vertex_lighting_settings_validate_atomically_without_assets_or_document_
             .as_array()
             .unwrap();
         assert!(!unsupported.contains(&json!("lighting origins")));
-        assert!(unsupported.contains(&json!("ignore normals")));
+        assert!(!unsupported.contains(&json!("ignore normals")));
+        assert!(unsupported.contains(&json!("ignore normals with diffuse bounces")));
+        assert_eq!(
+            initial["prop_vertex_lighting"]["limits"]["receiver"]["ignore_normals"],
+            json!({"property":"ignorenormals","enabled_value":1,"bounces":{"min":0,"max":0},"direct_factor":0.35,"sky_ambient":"full_sphere_visibility_mean","keeps_shadows":true})
+        );
         assert!(
             !initial["prop_vertex_lighting"]["limits"]["unsupported"]
                 .as_array()

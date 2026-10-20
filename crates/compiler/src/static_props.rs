@@ -18,6 +18,7 @@ pub(crate) struct Stats {
     pub props: usize,
     pub models: usize,
     pub leaf_refs: usize,
+    pub sources: Vec<usize>,
 }
 
 struct ModelAsset {
@@ -265,6 +266,7 @@ pub(crate) fn bake(
     bsp: &mut Bsp,
     report: &mut Report,
     control: &Control,
+    mut source_reads: Option<&mut crate::lighting::asset_tracking::SourceReads>,
 ) -> Result<Stats, String> {
     let mut props = StaticProps {
         version: 6,
@@ -273,6 +275,7 @@ pub(crate) fn bake(
         props: Vec::new(),
     };
     let mut models = BTreeMap::<String, ModelAsset>::new();
+    let mut sources = Vec::new();
     let entities: Vec<_> = vmf
         .entities
         .iter()
@@ -315,10 +318,19 @@ pub(crate) fn bake(
                     return Err("Static-prop model dictionary exceeds the native limit".into());
                 }
                 let name = StaticProps::model_record(&path).map_err(|e| e.to_string())?;
-                let data = fs
-                    .read_limited(&path, source_formats::mdl::MAX_MODEL_BYTES)
-                    .map_err(|e| e.to_string())?
-                    .ok_or_else(|| format!("model {path} was not found"))?;
+                let maximum = match source_reads.as_deref() {
+                    Some(reads) => reads
+                        .read_limit(&path, source_formats::mdl::MAX_MODEL_BYTES)
+                        .map_err(|error| error.to_string())?,
+                    None => source_formats::mdl::MAX_MODEL_BYTES,
+                };
+                let data = fs.read_limited(&path, maximum).map_err(|e| e.to_string())?;
+                if let Some(reads) = &mut source_reads {
+                    reads
+                        .record(&path, data.as_deref())
+                        .map_err(|error| error.to_string())?;
+                }
+                let data = data.ok_or_else(|| format!("model {path} was not found"))?;
                 let header = ModelHeader::parse(&data).map_err(|e| format!("{path}: {e}"))?;
                 if !header.is_static_prop() {
                     return Err(format!("{path} was not built with $staticprop"));
@@ -374,6 +386,7 @@ pub(crate) fn bake(
             prop.leaf_count = leaves.len() as u16;
             props.leaves.extend(leaves);
             props.props.push(prop);
+            sources.push(entity.id as usize);
             Ok(())
         })();
         if let Err(message) = result {
@@ -389,12 +402,13 @@ pub(crate) fn bake(
         return Ok(Stats::default());
     }
     if !props.props.is_empty() {
-        report.diagnostics.push(Diagnostic::warning("Static props use model assets and conservative header-box leaf membership, with rotated boxes clipped through world leaves; baked prop lighting and exact model-hull leaf clipping are unfinished", None, None));
+        report.diagnostics.push(Diagnostic::warning("Static props use model assets and conservative header-box leaf membership, with rotated boxes clipped through world leaves; exact model-hull leaf clipping is unfinished", None, None));
     }
     bsp.set_static_props(&props).map_err(|e| e.to_string())?;
     Ok(Stats {
         props: props.props.len(),
         models: props.models.len(),
         leaf_refs: props.leaves.len(),
+        sources,
     })
 }

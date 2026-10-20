@@ -745,6 +745,71 @@ mod tests {
     }
 
     #[test]
+    fn prop_vertex_lighting_recipes_restart_restore_and_reject_incompatible_saved_settings() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join(FILE_NAME);
+        let mut current = session();
+        current.configure_build_recipes_at(Ok(path.clone()));
+        current
+            .update_build_settings(
+                Actor::User,
+                BuildSettingsUpdate {
+                    lighting: Some("direct_ldr_hdr"),
+                    bake_static_prop_vertices: Some(true),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        current
+            .save_build_recipe(Actor::User, "Lit props", None, None)
+            .unwrap();
+        let retained = current.compile_options();
+        let bytes = fs::read(&path).unwrap();
+        let mut restarted = session();
+        restarted.configure_build_recipes_at(Ok(path.clone()));
+        restarted
+            .apply_build_recipe(Actor::Agent, "custom:1", None)
+            .unwrap();
+        assert_eq!(restarted.compile_options(), retained);
+        assert!(
+            restarted.build_recipes()["recipes"][2]["description"]
+                .as_str()
+                .unwrap()
+                .contains("static-prop vertex lighting on")
+        );
+        for id in ["fast", "final"] {
+            restarted.apply_build_recipe(Actor::User, id, None).unwrap();
+            assert!(!restarted.compile_options().bake_static_prop_vertices);
+        }
+        let mut invalid: Value = serde_json::from_slice(&bytes).unwrap();
+        invalid["recipes"][0]["settings"]["bounces"] = 1.into();
+        let invalid = serde_json::to_vec(&invalid).unwrap();
+        fs::write(&path, &invalid).unwrap();
+        let before = restarted.build_recipes()["recipes"].clone();
+        let options = restarted.compile_options();
+        assert!(restarted.reload_build_recipes(Actor::Agent, None).is_err());
+        assert_eq!(restarted.build_recipes()["recipes"], before);
+        assert_eq!(restarted.compile_options(), options);
+        assert_eq!(fs::read(&path).unwrap(), invalid);
+        fs::write(&path, bytes).unwrap();
+        restarted.reload_build_recipes(Actor::User, None).unwrap();
+        restarted
+            .apply_build_recipe(Actor::User, "custom:1", None)
+            .unwrap();
+        restarted
+            .apply_build_recipe(Actor::User, "fast", None)
+            .unwrap();
+        restarted
+            .save_build_recipe(Actor::User, "Lit props", Some("custom:1"), None)
+            .unwrap();
+        assert!(
+            !String::from_utf8(fs::read(&path).unwrap())
+                .unwrap()
+                .contains("bake_static_prop_vertices")
+        );
+    }
+
+    #[test]
     fn sky_packing_custom_recipes_restart_restore_replace_and_freeze() {
         for actor in [Actor::User, Actor::Agent] {
             let directory = tempfile::tempdir().unwrap();
@@ -764,6 +829,7 @@ mod tests {
                         smoothing_angle: Some(35),
                         generate_reflections: Some(true),
                         pack_sky_assets: Some(true),
+                        bake_static_prop_vertices: Some(false),
                     },
                 )
                 .unwrap();

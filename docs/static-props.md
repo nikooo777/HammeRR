@@ -19,3 +19,29 @@ Limits: MDL versions 44/48, scale 1 and body 0. Native static-prop collision cho
 HammeRR bounds static-prop leaf traversal and clipping to 16 million work units and four million cumulative reserved polygon points per build. A clipped fragment reserves at most 4,096 points and 256 faces. Exceeding these budgets, an invalid asset or a prop with no open leaf fails before publication. Existing native prop/model/leaf-table limits also apply. The source map and Undo history stay unchanged during compilation.
 
 Agents use the same `create_entity`, `set_entity_properties`, `compile_map` and `start_compile` operations.
+
+## Bake vertex lighting
+
+Bake direct light into supported static models instead of relying on the game's
+ambient samples. The result is stored in the BSP for every declared draw LOD.
+
+1. Open **Build settings…** and choose **Build lighting → Direct LDR** or
+   **Direct LDR + HDR**.
+2. Choose **Indirect light → Direct only**, then enable
+   **Bake static-prop vertex lighting**.
+3. Click **Close**, then **Compile**. Unsupported requested props stop the
+   build; **Diagnostics** identifies the affected object.
+4. Open **Build details…** to inspect **Static-prop vertex lighting** and
+   **Prop vertex lighting bytes** for the current published build.
+
+![Static-prop vertex lighting in Build settings](images/build-prop-vertex-lighting.png)
+
+Limits: this is an experimental, default-off direct-light bake for simple opaque
+models. Body 0, root LOD 0, unit scale, one bodypart/model and plain selected
+**VertexLitGeneric** materials are required. LDR and HDR are evaluated
+independently. See [the complete limits](compile-and-play.md#static-prop-vertex-lighting)
+before enabling it on a larger map. Per-texel prop lightmaps and reflected prop
+sources remain unavailable.
+
+Agents enable the same setting with `set_compile_settings` and
+`bake_static_prop_vertices: true`.

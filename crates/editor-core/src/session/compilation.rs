@@ -26,6 +26,8 @@ mod ownership_tests;
 mod instance_dependency_tests;
 #[cfg(test)]
 mod instance_rejection_tests;
+#[cfg(test)]
+mod prop_vertex_lighting_settings_tests;
 mod recipes;
 #[cfg(test)]
 mod reflection_settings_tests;
@@ -601,6 +603,7 @@ pub struct BuildSettingsUpdate<'a> {
     pub smoothing_angle: Option<u8>,
     pub generate_reflections: Option<bool>,
     pub pack_sky_assets: Option<bool>,
+    pub bake_static_prop_vertices: Option<bool>,
 }
 
 impl Session {
@@ -659,8 +662,34 @@ impl Session {
             .enumerate()
             .map(|(count, label)| json!({"bounces": count, "label": label}))
             .collect::<Vec<_>>();
-        json!({"pack_sky_assets":self.compilation.options.pack_sky_assets,"sky_packing_description":"Pack the complete exact authored sky family, original materials, Patch dependencies and supported LDR/HDR textures during Compile or Run Map. Default off. Incomplete or unsupported families fail without publication or automatic family fallback. Does not pack unrelated assets or select the game's rendering channel.","generate_reflections":self.compilation.options.generate_reflections,"reflection_description":"Generate one native reflection bounce during Compile or Run Map. Direct LDR captures LDR; Direct LDR + HDR captures and verifies both channels before publication. Requires a verified CS:S capture runtime. Fullbright generation is unsupported.","smoothing_angle":self.compilation.options.smoothing_angle,"smoothing_angle_range":{"min":0,"max":90,"unit":"degrees","disabled":0},"bounces":self.compilation.options.bounces,"bounce_choices":bounce_choices,"visibility":self.compilation.options.visibility.name(), "visibility_choices":visibility_choices, "sky_quality":self.compilation.options.sky_quality.name(),"sky_choices":sky_choices,"lighting":self.compilation.options.lighting.name(),"physics":self.compilation.options.physics.name(),
-            "recipe":self.active_build_recipe(),"editable":!self.compiling() && !self.closing,"choices":choices,"physics_choices":physics_choices})
+        let mut settings = json!({"pack_sky_assets":self.compilation.options.pack_sky_assets,"sky_packing_description":"Pack the complete exact authored sky family, original materials, Patch dependencies and supported LDR/HDR textures during Compile or Run Map. Default off. Incomplete or unsupported families fail without publication or automatic family fallback. Does not pack unrelated assets or select the game's rendering channel.","generate_reflections":self.compilation.options.generate_reflections,"reflection_description":"Generate one native reflection bounce during Compile or Run Map. Direct LDR captures LDR; Direct LDR + HDR captures and verifies both channels before publication. Requires a verified CS:S capture runtime. Fullbright generation is unsupported.","smoothing_angle":self.compilation.options.smoothing_angle,"smoothing_angle_range":{"min":0,"max":90,"unit":"degrees","disabled":0},"bounces":self.compilation.options.bounces,"bounce_choices":bounce_choices,"visibility":self.compilation.options.visibility.name(), "visibility_choices":visibility_choices, "sky_quality":self.compilation.options.sky_quality.name(),"sky_choices":sky_choices,"lighting":self.compilation.options.lighting.name(),"physics":self.compilation.options.physics.name(),
+            "recipe":self.active_build_recipe(),"editable":!self.compiling() && !self.closing,"choices":choices,"physics_choices":physics_choices});
+        let unavailable_reason = if !self.compilation.options.lighting.performs_lighting() {
+            Some(
+                "Choose Direct LDR or Direct LDR + HDR before enabling static-prop vertex lighting.",
+            )
+        } else if self.compilation.options.bounces != 0 {
+            Some(
+                "Choose Direct only under Indirect light before enabling static-prop vertex lighting.",
+            )
+        } else {
+            None
+        };
+        settings["bake_static_prop_vertices"] =
+            self.compilation.options.bake_static_prop_vertices.into();
+        settings["prop_vertex_lighting"] = json!({
+            "available":unavailable_reason.is_none(),
+            "unavailable_reason":unavailable_reason,
+            "description":"Bake direct lighting on unit-scale static props with one bodypart/model, body0/root0, all 1–8 draw LODs and plain opaque VertexLitGeneric materials, up to 256 hardware sections total. Direct LDR + HDR evaluates both channels independently. Requires Direct only. Original vertices may touch opaque world brushes; buried vertices and terrain/other-prop contacts reject. Model/material compatibility is checked during compilation. Unsupported requested receivers stop the build; disablevertexlighting=1 explicitly opts out one prop. No native capture runtime is required.",
+            "limits":{
+                "lighting_modes":["direct_ldr","direct_ldr_hdr"],
+                "bounces":0,"receiver":{"body":0,"root_lod":0,"bodyparts":1,"models":1,"lods":{"min":1,"max":8,"all_required":true},"hardware_meshes_max":compiler::prop_lighting_assets::MAX_RECEIVER_MESHES,"scale":1,"sample_origin":"original_vertex","support_contacts":"opaque_world_brush"},
+                "material":"plain opaque selected VertexLitGeneric",
+                "light_styles":[0],
+                "unsupported":["buried vertices","terrain/other-prop support contacts","ignore normals","disabled self-shadowing","lighting origins","specialized materials","per-texel prop lightmaps","reflected prop sources"]
+            }
+        });
+        settings
     }
 
     pub fn set_compile_settings(&mut self, actor: Actor, lighting: &str) -> Result<Value, String> {
@@ -731,9 +760,12 @@ impl Session {
             smoothing_angle,
             generate_reflections,
             pack_sky_assets,
+            bake_static_prop_vertices,
         } = update;
         let bounces = bounces.unwrap_or(self.compilation.options.bounces);
         let options = compiler::Options {
+            bake_static_prop_vertices: bake_static_prop_vertices
+                .unwrap_or(self.compilation.options.bake_static_prop_vertices),
             pack_sky_assets: pack_sky_assets.unwrap_or(self.compilation.options.pack_sky_assets),
             generate_reflections: generate_reflections
                 .unwrap_or(self.compilation.options.generate_reflections),
@@ -775,12 +807,13 @@ impl Session {
             self.log(
                 actor,
                 format!(
-                    "Build settings: {} · {} · {} visibility · {} diffuse bounces · {}° brush smoothing · reflections {} · sky packing {}",
+                    "Build settings: {} · {} · {} visibility · {} diffuse bounces · {}° brush smoothing · static-prop vertex lighting {} · reflections {} · sky packing {}",
                     options.lighting.label(),
                     options.physics.label(),
                     options.visibility.label(),
                     options.bounces,
                     options.smoothing_angle,
+                    if options.bake_static_prop_vertices { "on" } else { "off" },
                     if options.generate_reflections { "on" } else { "off" },
                     if options.pack_sky_assets { "on" } else { "off" }
                 ),
@@ -985,6 +1018,8 @@ impl Session {
         let outcome: Result<(), String> = (|| {
             let activity = if result.options.generate_reflections {
                 "reflection capture"
+            } else if result.options.bake_static_prop_vertices {
+                "static-prop vertex lighting"
             } else if result.output.instance_dependencies.is_some() {
                 "instance compilation"
             } else {
@@ -1278,7 +1313,7 @@ impl Session {
                 "stage":progress.stage.name(),"stage_label":progress.stage.label(),"cancellable":matches!(job.status(), "queued" | "running") && progress.cancellable && !progress.cancel_requested,
                 "elapsed_ms":job.elapsed().as_millis(),
                 "path":job.path.display().to_string(),"generation":job.snapshot.generation,"revision":job.snapshot.revision,
-                "compile_region":job.region,"recipe":job.recipe,"native_runtime":job.native_runtime,"reflections":{"channel":if job.options.lighting==compiler::LightingMode::DirectLdrHdr {"ldr_hdr"} else {"ldr"},"samples_complete":progress.reflection_samples_complete,"samples_total":progress.reflection_samples_total},"settings":{"pack_sky_assets":job.options.pack_sky_assets,"generate_reflections":job.options.generate_reflections,"smoothing_angle":job.options.smoothing_angle,"bounces":job.options.bounces,"lighting":job.options.lighting.name(),"physics":job.options.physics.name(),"sky_quality":job.options.sky_quality.name(),"visibility":job.options.visibility.name()},
+                "compile_region":job.region,"recipe":job.recipe,"native_runtime":job.native_runtime,"reflections":{"channel":if job.options.lighting==compiler::LightingMode::DirectLdrHdr {"ldr_hdr"} else {"ldr"},"samples_complete":progress.reflection_samples_complete,"samples_total":progress.reflection_samples_total},"settings":{"bake_static_prop_vertices":job.options.bake_static_prop_vertices,"pack_sky_assets":job.options.pack_sky_assets,"generate_reflections":job.options.generate_reflections,"smoothing_angle":job.options.smoothing_angle,"bounces":job.options.bounces,"lighting":job.options.lighting.name(),"physics":job.options.physics.name(),"sky_quality":job.options.sky_quality.name(),"visibility":job.options.visibility.name()},
                 "stale":!self.current_snapshot(&job.snapshot) || job.options != self.compilation.options || ((job.options.requires_guarded_publication() || job.instance_dependencies.is_some()) && job.content_epoch != self.content_epoch) || dependency_issue.is_some(),"result":job.result()});
             if let Some(queue) = &job.queue { status["queue"] = queue.snapshot(); }
             if job.instance_dependencies.is_some() { status["instance_dependencies"]=json!({"current":dependency_issue.is_none(),"error":dependency_issue}); }

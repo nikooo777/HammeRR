@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import subprocess
@@ -13,6 +14,45 @@ from private_runtime_config import reject_configuration_writes
 
 
 class PrivateRuntimeGuards(unittest.TestCase):
+    def test_prop_lighting_controls_keep_lan_and_insecure_launch(self):
+        controls = {
+            "r_proplightingfromdisk": 1,
+            "r_debugrandomstaticlighting": 0,
+            "r_proplightingpooling": 0,
+            "r_rootlod": 0,
+            "r_lod": 0,
+            "mat_queue_mode": 0,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "installed"
+            game = Path(directory) / "private/cstrike"
+            engine = root / "bin/linux64/engine.so"
+            engine.parent.mkdir(parents=True)
+            engine.write_bytes(b"private engine fixture")
+            (game / "cfg").mkdir(parents=True)
+            (game / "gameinfo.txt").write_text("GameInfo {}")
+            digest = hashlib.sha256(engine.read_bytes()).hexdigest()
+            with (
+                patch.object(private_runtime, "PLAYABLE_ENGINE_SHA256", digest),
+                patch.object(private_runtime, "begin_private_launch") as begin,
+            ):
+                arguments = private_runtime.private_launch_options(
+                    root, game, hdr_level=0, controls=controls
+                )
+                self.assertIn("-insecure", arguments)
+                begin.assert_called_once_with(root, game)
+                lines = (game / "cfg/hammerr_private_launch.cfg").read_text().splitlines()
+                for name, value in {**controls, "sv_lan": 1}.items():
+                    self.assertIn(f"toggle {name} {value}", lines)
+                    self.assertIn(f"help {name}", lines)
+                    self.assertLess(lines.index(f"toggle {name} {value}"), lines.index("map hammerr_runtime"))
+                begin.reset_mock()
+                with self.assertRaisesRegex(ValueError, "cannot override LAN"):
+                    private_runtime.private_launch_options(
+                        root, game, hdr_level=0, controls={**controls, "sv_lan": 0}
+                    )
+                begin.assert_not_called()
+
     def test_readonly_launch_keeps_host_paths_readonly_and_tmp_private(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory).resolve()

@@ -8,7 +8,7 @@ use compiler::{
 use source_formats::gamefs::GameFs;
 use source_formats::vmf::Vmf;
 
-const USAGE: &str = "usage: hammerr-compile <map.vmf> --game <gameinfo.txt> [-o <map.bsp>] [--lighting fullbright|direct_ldr|direct_ldr_hdr] [--physics none|engine] [--sky-quality fast|balanced|detailed] [--visibility fast|detailed] [--bounces 0..4] [--smoothing-angle 0..90] [--pack-sky-assets] [--generate-reflections] [--reflection-engine-root <directory>] [--reflection-steam-root <directory>]";
+const USAGE: &str = "usage: hammerr-compile <map.vmf> --game <gameinfo.txt> [-o <map.bsp>] [--lighting fullbright|direct_ldr|direct_ldr_hdr] [--physics none|engine] [--sky-quality fast|balanced|detailed] [--visibility fast|detailed] [--bounces 0..4] [--smoothing-angle 0..90] [--pack-sky-assets] [--bake-static-prop-vertices] [--generate-reflections] [--reflection-engine-root <directory>] [--reflection-steam-root <directory>]";
 
 fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args_os().skip(1);
@@ -22,6 +22,7 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
         match arg.to_str() {
             Some("--generate-reflections") => options.generate_reflections = true,
             Some("--pack-sky-assets") => options.pack_sky_assets = true,
+            Some("--bake-static-prop-vertices") => options.bake_static_prop_vertices = true,
             Some("--reflection-engine-root") => {
                 reflection_engine = Some(PathBuf::from(args.next().ok_or(USAGE)?))
             }
@@ -210,6 +211,12 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
         println!(
             "Packed sky {}: {} · {} asset files · {} asset bytes",
             sky.family, sky.channels, sky.files, sky.asset_bytes
+        );
+    }
+    if let Some(props) = &stats.prop_vertex_lighting {
+        println!(
+            "Static-prop vertex lighting: {} props · {} meshes · {} vertices · {} LDR bytes · {} HDR bytes",
+            props.props, props.meshes, props.vertices, props.ldr_bytes, props.hdr_bytes
         );
     }
     println!(

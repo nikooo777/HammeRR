@@ -133,6 +133,7 @@ pub struct Materials<'a> {
     geometry_reads: GeometryReads,
     infos: Vec<MaterialInfo>,
     by_name: HashMap<String, usize>,
+    prop_lighting_sources: Option<crate::lighting::asset_tracking::SourceReads>,
 }
 
 #[derive(Default)]
@@ -176,11 +177,28 @@ impl<'a> Materials<'a> {
             geometry_reads: GeometryReads::default(),
             infos: Vec::new(),
             by_name: HashMap::new(),
+            prop_lighting_sources: None,
         }
     }
 
     pub fn get(&self, index: usize) -> &MaterialInfo {
         &self.infos[index]
+    }
+
+    pub(crate) fn track_prop_lighting_sources(&mut self) {
+        self.prop_lighting_sources = Some(Default::default());
+    }
+
+    pub(crate) fn take_prop_lighting_sources(
+        &mut self,
+    ) -> Option<crate::lighting::asset_tracking::SourceReads> {
+        self.prop_lighting_sources.take()
+    }
+
+    pub(crate) fn prop_lighting_sources_mut(
+        &mut self,
+    ) -> Option<&mut crate::lighting::asset_tracking::SourceReads> {
+        self.prop_lighting_sources.as_mut()
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &MaterialInfo> {
@@ -208,7 +226,18 @@ impl<'a> Materials<'a> {
             return Ok(index);
         }
         let material = match self.requirements {
-            Requirements::Compile => Material::load(self.fs, &key),
+            Requirements::Compile => {
+                if let Some(sources) = &mut self.prop_lighting_sources {
+                    Material::load_with_reader(&vmt::material_path(&key), &mut |path| {
+                        let limit = sources.read_limit(path, MAX_GEOMETRY_MATERIAL_BYTES)?;
+                        let bytes = self.fs.read_limited(path, limit)?;
+                        sources.record(path, bytes.as_deref())?;
+                        Ok(bytes)
+                    })
+                } else {
+                    Material::load(self.fs, &key)
+                }
+            }
             Requirements::GeometrySemantics => {
                 Material::load_with_reader(&vmt::material_path(&key), &mut |path| {
                     self.geometry_reads.read(self.fs, path)

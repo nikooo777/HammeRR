@@ -365,6 +365,51 @@ mod tests {
     }
 
     #[test]
+    fn prop_vertex_lighting_recent_context_preserves_legacy_bytes_and_validates_saved_settings() {
+        let legacy = br#"{"lighting":"fullbright","physics":"none","sky_quality":"fast","visibility":"fast","bounces":0,"smoothing_angle":0,"generate_reflections":false}"#;
+        let settings: BuildSettings = serde_json::from_slice(legacy).unwrap();
+        assert!(!settings.bake_static_prop_vertices);
+        assert_eq!(serde_json::to_vec(&settings).unwrap(), legacy.as_slice());
+        let directory = tempfile::tempdir().unwrap();
+        let store = Store {
+            directory: directory.path().to_owned(),
+        };
+        let path = directory.path().join(FILE_NAME);
+        let mut saved = entry(directory.path().join("lit-prop.vmf"));
+        store.save(std::slice::from_ref(&saved)).unwrap();
+        let disabled = fs::read(&path).unwrap();
+        assert!(
+            !String::from_utf8(disabled.clone())
+                .unwrap()
+                .contains("bake_static_prop_vertices")
+        );
+        for lighting in ["direct_ldr", "direct_ldr_hdr"] {
+            saved.build_settings = BuildSettings::from_options(compiler::Options {
+                lighting: compiler::LightingMode::parse(lighting).unwrap(),
+                bake_static_prop_vertices: true,
+                ..Default::default()
+            });
+            store.save(std::slice::from_ref(&saved)).unwrap();
+            assert_eq!(store.load().unwrap(), [saved.clone()]);
+        }
+        let bytes = fs::read(&path).unwrap();
+        saved.build_settings.bounces = 1;
+        assert!(store.save(std::slice::from_ref(&saved)).is_err());
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        let mut invalid: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        invalid["entries"][0]["build_settings"]["lighting"] = "fullbright".into();
+        let invalid = serde_json::to_vec(&invalid).unwrap();
+        fs::write(&path, &invalid).unwrap();
+        assert!(store.load().is_err());
+        assert_eq!(fs::read(&path).unwrap(), invalid);
+        fs::write(&path, &disabled).unwrap();
+        let loaded = store.load().unwrap();
+        assert!(!loaded[0].build_settings.bake_static_prop_vertices);
+        store.save(&loaded).unwrap();
+        assert_eq!(fs::read(path).unwrap(), disabled);
+    }
+
+    #[test]
     fn sky_packing_context_roundtrips_and_legacy_bytes_stay_compatible() {
         let legacy = br#"{"lighting":"fullbright","physics":"none","sky_quality":"fast","visibility":"fast","bounces":0,"smoothing_angle":0,"generate_reflections":false}"#;
         let settings: BuildSettings = serde_json::from_slice(legacy).unwrap();

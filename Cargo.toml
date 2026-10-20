@@ -37,3 +37,9 @@ debug = "line-tables-only"
 
 [profile.test.package.editor-core]
 debug = "line-tables-only"
+
+[profile.dev.package.compiler]
+debug = "line-tables-only"
+
+[profile.test.package.compiler]
+debug = "line-tables-only"

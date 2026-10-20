@@ -334,8 +334,30 @@ impl<'a> Map<'a> {
         report: &mut Report,
         control: &Control,
     ) -> Result<Self, String> {
+        Self::load_inner(vmf, fs, report, control, false)
+    }
+
+    pub(crate) fn load_with_prop_sources_controlled(
+        vmf: &Vmf,
+        fs: &'a GameFs,
+        report: &mut Report,
+        control: &Control,
+    ) -> Result<Self, String> {
+        Self::load_inner(vmf, fs, report, control, true)
+    }
+
+    fn load_inner(
+        vmf: &Vmf,
+        fs: &'a GameFs,
+        report: &mut Report,
+        control: &Control,
+        prop_sources: bool,
+    ) -> Result<Self, String> {
         control.checkpoint()?;
         let mut map = Self::empty(fs, Requirements::Compile);
+        if prop_sources {
+            map.materials.track_prop_lighting_sources();
+        }
         if let Err(error) = vmf.validate_ids() {
             report
                 .diagnostics

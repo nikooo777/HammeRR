@@ -19,6 +19,7 @@ mod overlays;
 pub mod physics;
 pub mod planes;
 pub mod portals;
+pub mod prop_lighting_assets;
 mod publication;
 pub mod sky_assets;
 pub mod sky_region;
@@ -161,6 +162,7 @@ pub struct Options {
     pub smoothing_angle: u8,
     pub generate_reflections: bool,
     pub pack_sky_assets: bool,
+    pub bake_static_prop_vertices: bool,
 }
 
 pub const MAX_LIGHT_BOUNCES: u8 = 4;
@@ -181,10 +183,21 @@ pub fn bounce_label(count: u8) -> &'static str {
 
 impl Options {
     pub const fn requires_guarded_publication(self) -> bool {
-        self.generate_reflections || self.pack_sky_assets
+        self.generate_reflections || self.pack_sky_assets || self.bake_static_prop_vertices
     }
 
     pub fn validate(self) -> Result<Self, String> {
+        if self.bake_static_prop_vertices {
+            if !self.lighting.performs_lighting() {
+                return Err("Bake static-prop vertex lighting requires Direct LDR or Direct LDR + HDR lighting".into());
+            }
+            if self.bounces != 0 {
+                return Err(
+                    "Bake static-prop vertex lighting currently requires Direct only light bounces"
+                        .into(),
+                );
+            }
+        }
         if self.generate_reflections && !self.lighting.performs_lighting() {
             return Err(
                 "Generate reflections requires Direct LDR or Direct LDR + HDR lighting".into(),
@@ -485,6 +498,8 @@ pub struct Stats {
     pub reflections: Option<ReflectionStats>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sky_assets: Option<PackedSkyStats>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prop_vertex_lighting: Option<PropVertexLightingStats>,
     #[serde(rename = "elapsed_ms", serialize_with = "serialize_elapsed")]
     pub elapsed: Duration,
 }
@@ -509,6 +524,18 @@ pub struct PackedSkyStats {
     pub asset_bytes: usize,
 }
 
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct PropVertexLightingStats {
+    pub props: usize,
+    pub models: usize,
+    pub meshes: usize,
+    pub vertices: usize,
+    pub ldr_bytes: usize,
+    pub hdr_bytes: usize,
+    pub work: usize,
+    pub asset_bytes: usize,
+}
+
 fn serialize_elapsed<S: serde::Serializer>(
     elapsed: &Duration,
     serializer: S,
@@ -526,6 +553,7 @@ pub struct Output {
     pub stats: Stats,
     pub cubemap_assets: Option<CubemapAssetManifest>,
     pub sky_assets: Option<SkyAssetPlan>,
+    pub prop_lighting_assets: Option<prop_lighting_assets::PropLightingPlan>,
 }
 
 #[derive(Debug)]
@@ -535,6 +563,7 @@ pub struct PreparedWrite {
     success: bool,
     instance_dependencies: Option<instances::DependencyGuard>,
     instance_output_stamp: Option<FileStamp>,
+    prop_lighting_sources: Option<asset_sources::AssetSourceGuard>,
 }
 
 #[derive(Debug)]
@@ -599,6 +628,9 @@ impl PreparedWrite {
             return self.commit_checked_with_receipt(&lease, control, || Ok(()));
         }
         control.publish(|| {
+            if let Some(sources) = &self.prop_lighting_sources {
+                sources.verify_metadata()?;
+            }
             self.staged.commit().map(|publication| PublicationReceipt {
                 success: self.success,
                 publication,
@@ -637,6 +669,9 @@ impl PreparedWrite {
                 stamp.verify_lease(lease)?;
             }
             validate()?;
+            if let Some(sources) = &self.prop_lighting_sources {
+                sources.verify_metadata()?;
+            }
             lease.verify_commit(&self.destination)?;
             self.staged.commit().map(|publication| PublicationReceipt {
                 success: self.success,
@@ -668,6 +703,7 @@ impl Output {
             && self.leak.is_none()
             && self.cubemap_assets.is_none()
             && self.sky_assets.is_none()
+            && self.prop_lighting_assets.is_none()
         {
             return Ok(None);
         }
@@ -740,6 +776,22 @@ impl Output {
             }
             verify_packed_sky(bsp, &plan.manifest(), control)?;
         }
+        let prop_lighting_sources = if let Some(plan) = &self.prop_lighting_assets {
+            let bsp = self
+                .bsp
+                .as_ref()
+                .ok_or_else(|| io::Error::other("Static-prop vertex lighting output has no BSP"))?;
+            if self.report.has_errors() {
+                return Err(io::Error::other(
+                    "Static-prop vertex lighting diagnostics contain errors",
+                ));
+            }
+            plan.verify_source_metadata()?;
+            prop_lighting_assets::verify_generated_prop_lighting(bsp, plan.manifest(), control)?;
+            Some(plan.source_guard())
+        } else {
+            None
+        };
         if self.bsp.is_none() && self.leak.is_none() {
             return Ok(None);
         }
@@ -770,6 +822,7 @@ impl Output {
             success,
             instance_dependencies: self.instance_dependencies.clone(),
             instance_output_stamp,
+            prop_lighting_sources,
         }))
     }
 }
@@ -807,7 +860,11 @@ fn build(
     });
     output.stats.compile_region = prepared.region;
     let vmf = prepared.vmf.as_ref();
-    let mut map = map::Map::load_controlled(vmf, fs, &mut output.report, control)?;
+    let mut map = if options.bake_static_prop_vertices {
+        map::Map::load_with_prop_sources_controlled(vmf, fs, &mut output.report, control)?
+    } else {
+        map::Map::load_controlled(vmf, fs, &mut output.report, control)?
+    };
     let reflection_plan = if options.generate_reflections && !output.report.has_errors() {
         control.advance(Stage::PrepareReflections)?;
         output.report.diagnostics.retain(|item| {
@@ -1092,7 +1149,14 @@ fn build(
             .sum::<usize>();
     }
     control.advance(Stage::StaticProps)?;
-    let prop_stats = static_props::bake(vmf, fs, &mut bsp, &mut output.report, control)?;
+    let prop_stats = static_props::bake(
+        vmf,
+        fs,
+        &mut bsp,
+        &mut output.report,
+        control,
+        map.materials.prop_lighting_sources_mut(),
+    )?;
     if output.report.has_errors() {
         return Ok(());
     }
@@ -1116,6 +1180,7 @@ fn build(
     output.stats.detail_prop_sprites = detail_stats.sprites;
     if options.lighting.performs_lighting() {
         control.advance(Stage::Lighting)?;
+        let prop_material_sources = map.materials.take_prop_lighting_sources();
         let stats = lighting::bake(
             &map,
             &models[0].tree,
@@ -1133,6 +1198,8 @@ fn build(
                 detail_model_centers: &detail_stats.model_centers,
                 detail_lighting_origins: &detail_stats.lighting_origins,
                 detail_lighting_tints: &detail_stats.lighting_tints,
+                prop_sources: &prop_stats.sources,
+                prop_material_sources,
             },
         )?;
         if output.report.has_errors() {
@@ -1149,6 +1216,8 @@ fn build(
         output.stats.lighting_bytes = stats.bytes;
         output.stats.lighting_work = stats.work;
         output.stats.lighting_total_work = stats.total_work;
+        output.prop_lighting_assets = stats.prop_lighting_assets;
+        output.stats.prop_vertex_lighting = stats.prop_vertex_lighting;
         output.stats.hdr = stats.hdr;
         if let Some(hdr) = output
             .stats
@@ -1313,6 +1382,7 @@ pub fn compile_with_source_controlled(
         stats: Stats::default(),
         cubemap_assets: None,
         sky_assets: None,
+        prop_lighting_assets: None,
     };
     output.stats.lighting_mode = options.lighting;
     output.stats.physics_mode = options.physics;

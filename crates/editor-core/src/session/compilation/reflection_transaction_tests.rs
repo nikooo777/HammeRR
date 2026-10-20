@@ -80,6 +80,7 @@ fn prepared_assets(
             stats: Default::default(),
             cubemap_assets: None,
             sky_assets: None,
+            prop_lighting_assets: None,
             instance_dependencies: None,
         }
     };

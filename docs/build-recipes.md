@@ -11,10 +11,10 @@ Build recipes recall a complete set of native compiler settings. Use the built-i
 3. Click **Apply recipe**. **Current recipe** identifies the applied recipe; the individual controls below show its settings.
 4. Click **Close**, then **Compile** or **Run Map**. Applying a recipe does not start a build.
 
-| Recipe | Lighting | Sky packing | Reflections | Physics | Visibility | Sampling | Indirect light | Brush smoothing |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| **Fast preview** | Fullbright | Off | Off | No physics bodies | Fast (conservative) | Fast (32 directions) | Direct only | 0° |
-| **Final lighting** | Direct LDR | Off | Off | CS:S engine physics | Detailed (portal clipping) | Detailed (512 directions) | Four diffuse bounces | 45° |
+| Recipe | Lighting | Prop vertex lighting | Sky packing | Reflections | Physics | Visibility | Sampling | Indirect light | Brush smoothing |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| **Fast preview** | Fullbright | Off | Off | Off | No physics bodies | Fast (conservative) | Fast (32 directions) | Direct only | 0° |
+| **Final lighting** | Direct LDR | Off | Off | Off | CS:S engine physics | Detailed (portal clipping) | Detailed (512 directions) | Four diffuse bounces | 45° |
 
 **Final lighting** uses the supported detailed settings of the experimental compiler. It requires the installed CS:S collision library and the `hammerr-physics` helper. Adjust **Physics bodies** to **No physics bodies** and save a custom recipe when collision bodies are unnecessary. See [Compile and play](compile-and-play.md) for the compiler's current capabilities.
 
@@ -22,8 +22,8 @@ Build recipes recall a complete set of native compiler settings. Use the built-i
 
 ## Save or change a custom recipe
 
-1. Set **Build lighting**, **Pack sky assets**, **Generate reflections**, **Physics bodies**, **Visibility quality**, **Indirect light**, **Brush smoothing angle**, and **Sampling quality** as needed. Sky packing supports every lighting mode; reflection generation requires **Direct LDR** or **Direct LDR + HDR**. A changed value clears the applied recipe label to **Custom settings**.
-2. Enter a unique **Recipe name**, then click **Save current as new**. The new recipe stores all eight current values. Capture runtime paths remain separate machine settings; see [Generated reflections](reflections.md).
+1. Set **Build lighting**, **Bake static-prop vertex lighting**, **Pack sky assets**, **Generate reflections**, **Physics bodies**, **Visibility quality**, **Indirect light**, **Brush smoothing angle**, and **Sampling quality** as needed. Sky packing supports every lighting mode; reflection generation requires **Direct LDR** or **Direct LDR + HDR**. A changed value clears the applied recipe label to **Custom settings**.
+2. Enter a unique **Recipe name**, then click **Save current as new**. The new recipe stores all nine current values. Capture runtime paths remain separate machine settings; see [Generated reflections](reflections.md).
 3. To update an existing custom recipe, choose it under **Build recipe**, adjust the individual settings, and click **Replace with current**. **Recipe name** also becomes the replacement's name.
 4. To change only its name, choose the recipe, edit **Recipe name**, then click **Rename recipe**. To remove it, click **Delete recipe**; current compiler settings remain available.
 5. Click **Cancel recipe edit** to discard the pending name and selection edits. Settings already applied or changed with the individual controls remain in effect.
@@ -40,7 +40,7 @@ Custom recipes save on this computer separately from VMF files and map undo. The
 
 Reload is unavailable for session-only storage and while a build runs or the editor closes. Completed jobs keep their captured recipe name and settings. The per-document action revision rejects actions prepared before a shared-list or local-settings change; review the refreshed list and current controls before retrying a stale action.
 
-Both built-in recipes disable sky packing and reflection generation. Missing booleans in older custom recipes default to off; a disabled packing field remains omitted from stored version-1 records. See [Pack portable sky assets](compile-and-play.md#pack-portable-sky-assets).
+Both built-in recipes disable static-prop vertex lighting, sky packing and reflection generation. Static-prop vertex lighting requires **Direct LDR** or **Direct LDR + HDR** with **Indirect light → Direct only**; see [Compile and play](compile-and-play.md#static-prop-vertex-lighting). Missing booleans in older custom recipes default to off; disabled packing and static-prop vertex-lighting fields remain omitted from stored version-1 records. See [Pack portable sky assets](compile-and-play.md#pack-portable-sky-assets).
 
 ## Builds and cancellation
 

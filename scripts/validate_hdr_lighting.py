@@ -265,7 +265,7 @@ def verify_controls(text, level):
     return values
 
 
-def worker(args):
+def worker(args, process_observer=None):
     root = args.game_dir.resolve()
     output = args.output.resolve()
     assert not os.environ.get("LD_PRELOAD"), "Run the private worker without an inherited LD_PRELOAD"
@@ -303,6 +303,8 @@ def worker(args):
             else:
                 raise TimeoutError(f"Private HDR observer did not complete; inspect {output}")
             samples = hardware["samples"]
+            if process_observer is not None:
+                result.update(process_observer(process, records))
             subprocess.run(["grim", str(output / "game.png")], check=True, timeout=10)
             subprocess.run(["grim", "-t", "ppm", str(output / "game.ppm")], check=True, timeout=10)
             console = (game / "hammerr-runtime.log").read_text(errors="replace")

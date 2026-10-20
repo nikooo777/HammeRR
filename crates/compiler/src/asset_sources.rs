@@ -24,6 +24,7 @@ impl AssetSourceGuard {
 pub struct OutputAssetSourceGuard {
     reflections: Option<crate::cubemap_assets::ReflectionSourceGuard>,
     sky: Option<crate::sky_assets::SkyAssetSourceGuard>,
+    prop_lighting: Option<AssetSourceGuard>,
 }
 
 impl OutputAssetSourceGuard {
@@ -33,6 +34,9 @@ impl OutputAssetSourceGuard {
         }
         if let Some(sky) = &self.sky {
             sky.verify_metadata()?;
+        }
+        if let Some(prop_lighting) = &self.prop_lighting {
+            prop_lighting.verify_metadata()?;
         }
         Ok(())
     }
@@ -56,7 +60,16 @@ pub fn capture_output_asset_source_guard(
         .as_ref()
         .map(|plan| plan.capture_source_guard(game, control))
         .transpose()?;
-    let guard = OutputAssetSourceGuard { reflections, sky };
+    let prop_lighting = output
+        .prop_lighting_assets
+        .as_ref()
+        .map(|plan| plan.capture_source_guard(game, control))
+        .transpose()?;
+    let guard = OutputAssetSourceGuard {
+        reflections,
+        sky,
+        prop_lighting,
+    };
     control.checkpoint().map_err(io::Error::other)?;
     guard.verify_metadata()?;
     Ok(guard)

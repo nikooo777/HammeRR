@@ -50,8 +50,8 @@ not reload storage automatically. Pass the exact `path` returned by
 - The list retains twenty maps. Each absolute UTF-8 path fits in 4096 bytes, and
   preferences fit in a 192 KiB regular file.
 - Build context includes lighting, physics, sky quality, visibility, bounce count,
-  smoothing angle, **Generate reflections** and **Pack sky assets**. Missing
-  booleans in older records default to off. Game content and custom FGD files do
+  smoothing angle, **Bake static-prop vertex lighting**, **Generate reflections**
+  and **Pack sky assets**. Missing booleans in older records default to off. Game content and custom FGD files do
   not switch automatically. A different mounted game keeps the current build settings and
   retains the original entry's context until you explicitly change settings or
   save the map. Active compiles keep their current settings; reopen after the

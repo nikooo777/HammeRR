@@ -436,6 +436,7 @@ mod tests {
             success: true,
             instance_dependencies: None,
             instance_output_stamp: None,
+            prop_lighting_sources: None,
         };
         fs::write(&path, b"external replacement").unwrap();
         assert!(lease.verify(&Control::default()).is_err());
@@ -460,6 +461,7 @@ mod tests {
             success: true,
             instance_dependencies: None,
             instance_output_stamp: None,
+            prop_lighting_sources: None,
         };
         control.cancel().unwrap();
         assert!(prepared.commit_checked(&lease, &control).is_err());

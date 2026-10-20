@@ -13,6 +13,8 @@ pub struct BuildSettings {
     pub generate_reflections: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub pack_sky_assets: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub bake_static_prop_vertices: bool,
 }
 
 impl From<compiler::Options> for BuildSettings {
@@ -32,6 +34,7 @@ impl BuildSettings {
             smoothing_angle: options.smoothing_angle,
             generate_reflections: options.generate_reflections,
             pack_sky_assets: options.pack_sky_assets,
+            bake_static_prop_vertices: options.bake_static_prop_vertices,
         }
     }
 
@@ -45,6 +48,7 @@ impl BuildSettings {
             smoothing_angle: self.smoothing_angle,
             generate_reflections: self.generate_reflections,
             pack_sky_assets: self.pack_sky_assets,
+            bake_static_prop_vertices: self.bake_static_prop_vertices,
         }
         .validate()
     }
@@ -65,6 +69,7 @@ impl BuildSettings {
             smoothing_angle: Some(self.smoothing_angle),
             generate_reflections: Some(self.generate_reflections),
             pack_sky_assets: Some(self.pack_sky_assets),
+            bake_static_prop_vertices: Some(self.bake_static_prop_vertices),
         }
     }
 }

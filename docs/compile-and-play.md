@@ -14,6 +14,7 @@ HammeRR includes its own native compiler, so it builds Counter-Strike: Source ma
    - **Indirect light**: **Direct only** (default), or **One diffuse bounce**, **Two diffuse bounces**, **Three diffuse bounces** or **Four diffuse bounces** to reflect light from world brushes and terrain.
    - **Brush smoothing angle**: **0°** keeps unassigned brush faces flat; higher angles blend eligible neighbors. Assigned face groups keep their rules.
    - **Sampling quality**, for either lit mode’s sky, model ambient and bounced light: **Fast (32 directions)**, **Balanced (128 directions)** or **Detailed (512 directions)**.
+   - **Bake static-prop vertex lighting**: opt in to direct vertex lighting for admitted simple opaque models. Choose a lit **Build lighting** mode and **Indirect light → Direct only** first.
    - **Pack sky assets**: include the applied sky family's supported materials and textures in the BSP. This is off by default and works with every lighting mode.
 3. Click **Close**, then **Compile** to build with the chosen settings, or **Run Map** to build and launch CS:S. Choose an output file if the map has not been saved.
 4. The progress bar below the toolbar offers **Build details…** to inspect the build. **Play built map** in that window launches the last successful build again without compiling, as long as the map and settings haven't changed.
@@ -361,7 +362,7 @@ Sunlight requires sky in the sampled sun directions, while ambient samples all v
 - **SunSpreadAngle** must be finite and between 0 and 90 degrees. Zero uses one sun ray, regardless of sky quality; positive spread uses the chosen 32, 128 or 512 directions per sun sample.
 - Invalid styles, conflicting named-group states, invalid falloff values and invalid sun angles fail with actionable diagnostics.
 
-Not yet: other light types, transparent world shadows, fractional transmission, second-normal-map-only materials and baked prop lighting. Fixed sun samples can leave steps at low quality; adaptive sampling remains unfinished.
+Not yet: other light types, transparent world shadows, fractional transmission, second-normal-map-only materials and per-texel prop lightmaps. Fixed sun samples can leave steps at low quality; adaptive sampling remains unfinished.
 
 #### Model ambient lighting
 
@@ -516,7 +517,47 @@ the compiler retains the legacy sample-only limit of 1,024 and sizes up to
 - Models without `$casttextureshadows` keep opaque shadows and existing approximation warnings for alpha/translucent/additive materials, nonstandard shaders, animation/conditional blocks and missing materials. Fullbright and `disableshadows` skip texture-shadow decoding.
 - Texture dimensions are limited to 4096 pixels per axis and decoded alpha to 64 MiB per build. Texture input shares the 256 MiB shadow-asset budget; each asset file is limited to 64 MiB. Invalid assets, scaling, lightmap requests and ambiguous lighting origins fail with a diagnostic. **Build details…** reports participating props, triangles, disabled props, alpha-test triangles and alpha textures under **Prop mesh shadows**.
 
-Not yet: fractional/translucent transmission, filtered cutout edges, per-vertex/per-texel prop lighting, reflected prop sources, animated-prop shadows and exact mesh/hull leaf placement. Mesh preparation, alpha decoding and ray traversal share the bounded, cancellable lighting work budget; the [mesh-shadow limits](prop-shadows.md#limits) also bound geometry and asset reads. Binary cutouts do not reproduce native VRAD's fractional texture coverage.
+Not yet: fractional/translucent transmission, filtered cutout edges, per-texel prop lightmaps, reflected prop sources, animated-prop shadows and exact mesh/hull leaf placement. Mesh preparation, alpha decoding and ray traversal share the bounded, cancellable lighting work budget; the [mesh-shadow limits](prop-shadows.md#limits) also bound geometry and asset reads. Binary cutouts do not reproduce native VRAD's fractional texture coverage.
+
+### Static-prop vertex lighting
+
+Bake direct light at the model's hardware vertices and pack the result into the
+BSP for every declared draw LOD. Enable it independently of the existing
+static-prop shadow controls.
+
+1. Open **Build settings…** and choose **Build lighting → Direct LDR** or
+   **Direct LDR + HDR**.
+2. Choose **Indirect light → Direct only**, then enable
+   **Bake static-prop vertex lighting**. Incompatible lighting or bounce
+   changes are refused without changing either setting.
+3. Click **Close**, then **Compile** or **Run Map**. Unsupported requested
+   receivers stop the build and preserve the previous BSP.
+4. Open **Build details…** after a successful build. **Static-prop vertex
+   lighting** reports actual props, models, hardware meshes and vertices;
+   **Prop vertex lighting bytes** separates LDR and HDR sizes. These rows
+   appear only for completed, published output using the current snapshot
+   and settings.
+
+![Static-prop vertex lighting in Build settings](images/build-prop-vertex-lighting.png)
+
+Limits: receivers require a static model with one bodypart, one model and all
+1–8 draw LODs, body 0, authored root LOD 0, unit scale and plain opaque selected
+**VertexLitGeneric** materials. A receiver may have at most 256 hardware-color
+sections across all LODs together. Samples stay at the original vertices.
+Ordinary opaque brush contact is supported; vertices buried more than
+0.000001 units inside a world brush, or touching terrain or another prop within
+that tolerance, reject explicitly. Unsupported normal, self-shadow or
+lighting-origin behavior, styled lights and specialized materials reject the
+requested build. Set a prop's `disablevertexlighting` to `1` in
+**Advanced properties** to exclude that prop explicitly; its ordinary shadow
+and collision settings stay independent. Per-texel prop lightmaps and reflected
+prop sources remain unavailable.
+
+**Direct LDR + HDR** independently evaluates both channels and publishes only
+complete output. The bake uses CPU sampling and needs no capture runtime.
+Recipes and compatible recent maps retain this default-off setting. Older
+saved settings omit it and load with the bake disabled. Asset, work, archive,
+source-change and cancellation failures preserve previous output.
 
 ### Terrain (displacements)
 

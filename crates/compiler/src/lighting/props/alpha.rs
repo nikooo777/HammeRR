@@ -96,7 +96,7 @@ fn texture_allocations(
 
 pub(super) fn prepare(
     material: &vmt::Material,
-    assets: &mut Assets<'_>,
+    assets: &mut Assets<'_, '_>,
     budget: &mut Budget<'_>,
 ) -> Result<Option<Arc<Material>>, String> {
     if !matches!(

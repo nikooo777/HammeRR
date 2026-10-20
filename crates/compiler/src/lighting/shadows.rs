@@ -7,6 +7,7 @@ const MAX_OCCLUDERS: usize = 65_536;
 const LEAF_SIZE: usize = 4;
 const STACK_SIZE: usize = usize::BITS as usize;
 const TRIANGLE_EPSILON: f64 = 1e-9;
+pub(super) const CONTACT_EPSILON: f64 = 1e-6;
 
 enum Visit {
     Continue(f64),
@@ -77,6 +78,33 @@ impl Triangle {
             mins: a.min(b).min(c) - DVec3::splat(0.0001),
             maxs: a.max(b).max(c) + DVec3::splat(0.0001),
         })
+    }
+
+    pub(super) fn point_contact(&self, point: DVec3) -> Result<bool, String> {
+        let [a, b, c] = self.points;
+        let normal = (b - a).cross(c - a).normalize();
+        let distance = (point - a).dot(normal);
+        if !point.is_finite() || !normal.is_finite() || !distance.is_finite() {
+            return Err("Triangle contact arithmetic must be finite".into());
+        }
+        if distance.abs() > CONTACT_EPSILON {
+            return Ok(false);
+        }
+        let mut inside = true;
+        let mut edge_distance = f64::INFINITY;
+        for (start, end) in [(a, b), (b, c), (c, a)] {
+            let edge = end - start;
+            let offset = point - start;
+            let side = edge.cross(offset).dot(normal);
+            let along = offset.dot(edge) / edge.length_squared();
+            let squared = (offset - edge * along.clamp(0.0, 1.0)).length_squared();
+            if !side.is_finite() || !along.is_finite() || !squared.is_finite() {
+                return Err("Triangle contact arithmetic must be finite".into());
+            }
+            inside &= side >= 0.0;
+            edge_distance = edge_distance.min(squared);
+        }
+        Ok(inside || edge_distance <= CONTACT_EPSILON * CONTACT_EPSILON)
     }
 
     pub(super) fn fraction(&self, start: DVec3, end: DVec3) -> Result<Option<f64>, String> {
@@ -406,6 +434,49 @@ mod tests {
                 None
             );
         }
+    }
+
+    #[test]
+    fn triangle_point_contact_keeps_edges_vertices_and_a_bounded_geometric_band() {
+        let points = [DVec3::ZERO, DVec3::X * 8.0, DVec3::Y * 8.0];
+        for points in [points, [points[2], points[1], points[0]]] {
+            let triangle = Triangle::new(points).unwrap();
+            let index = ShadowIndex::new(vec![triangle.clone()], &mut |_| Ok(())).unwrap();
+            for point in [
+                DVec3::ZERO,
+                DVec3::new(2.0, 2.0, 0.0),
+                DVec3::new(4.0, 4.0, 0.0),
+                DVec3::new(2.0, 2.0, CONTACT_EPSILON * 0.5),
+                DVec3::new(2.0, 2.0, -CONTACT_EPSILON * 0.5),
+                DVec3::new(-CONTACT_EPSILON * 0.5, 0.0, 0.0),
+            ] {
+                assert!(
+                    index
+                        .nearest(point, point, &mut |_| Ok(()), &mut |triangle| {
+                            Ok(triangle.point_contact(point)?.then_some((0.0, ())))
+                        })
+                        .unwrap()
+                        .is_some(),
+                    "{point}"
+                );
+            }
+            for point in [
+                DVec3::new(2.0, 2.0, CONTACT_EPSILON * 2.0),
+                DVec3::new(2.0, 2.0, -CONTACT_EPSILON * 2.0),
+                DVec3::new(-CONTACT_EPSILON * 2.0, 0.0, 0.0),
+                DVec3::new(6.0, 6.0, 0.0),
+            ] {
+                assert!(!triangle.point_contact(point).unwrap(), "{point}");
+            }
+            assert!(triangle.point_contact(DVec3::splat(f64::NAN)).is_err());
+        }
+        let thin =
+            Triangle::new([DVec3::ZERO, DVec3::X * 8.0, DVec3::new(8.0, 1e-8, 0.0)]).unwrap();
+        assert!(
+            !thin
+                .point_contact(-DVec3::X * 10.0 * CONTACT_EPSILON)
+                .unwrap()
+        );
     }
 
     #[test]

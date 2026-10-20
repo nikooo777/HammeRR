@@ -45,13 +45,18 @@ impl Recipe {
             .options()
             .expect("recipe settings are validated");
         let description = format!(
-            "{} · {} · {} · {} · {} · {}° brush smoothing · reflections {} · sky packing {}",
+            "{} · {} · {} · {} · {} · {}° brush smoothing · static-prop vertex lighting {} · reflections {} · sky packing {}",
             options.lighting.label(),
             options.physics.label(),
             options.visibility.label(),
             options.sky_quality.label(),
             compiler::bounce_label(options.bounces),
             options.smoothing_angle,
+            if options.bake_static_prop_vertices {
+                "on"
+            } else {
+                "off"
+            },
             if options.generate_reflections {
                 "on"
             } else {
@@ -122,6 +127,7 @@ pub(crate) fn builtins() -> [Recipe; 2] {
                 smoothing_angle: 45,
                 generate_reflections: false,
                 pack_sky_assets: false,
+                bake_static_prop_vertices: false,
             }
             .into(),
         },

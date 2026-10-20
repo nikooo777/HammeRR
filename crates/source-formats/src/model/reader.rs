@@ -3,6 +3,8 @@ use std::io;
 
 use super::invalid;
 
+pub(super) const MAX_STRING_BYTES: usize = 1025;
+
 pub struct Reader<'a> {
     data: &'a [u8],
 }
@@ -126,7 +128,7 @@ impl<'a> Reader<'a> {
     }
 
     pub fn string(&self, start: usize) -> io::Result<String> {
-        let available = self.data.len().saturating_sub(start).min(1025);
+        let available = self.data.len().saturating_sub(start).min(MAX_STRING_BYTES);
         let bytes = self.bytes(start, available)?;
         CStr::from_bytes_until_nul(bytes)
             .map_err(|_| invalid("model string is missing its bounded terminator"))?

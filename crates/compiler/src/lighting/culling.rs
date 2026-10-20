@@ -237,6 +237,81 @@ mod tests {
     }
 
     #[test]
+    fn boundary_and_unclustered_points_keep_all_lights_under_the_shared_budget() {
+        let game = common::empty_game();
+        let mut map = Map::load(&common::room(), &game, &mut crate::Report::default()).unwrap();
+        let split = map.planes.find(DVec3::X, 0.0);
+        let leaf = |split, contents| crate::tree::Node {
+            split,
+            contents,
+            volume: crate::tree::Polyhedron { sides: Vec::new() },
+            brushes: Vec::new(),
+        };
+        let tree = Tree {
+            nodes: vec![
+                leaf(Some((split, [1, 2])), 0),
+                leaf(None, 0),
+                leaf(None, source_formats::bsp::contents::SOLID),
+            ],
+        };
+        let visibility = Visibility {
+            clusters: vec![None, Some(0), None],
+            count: 2,
+            portals: 0,
+            data: Vec::new(),
+            sky: vec![0; 2],
+            work: 0,
+            removed_pairs: 0,
+            workers: 0,
+        };
+        let lights = [source(0, &[]), source(1, &[])];
+        let mut candidates = Candidates {
+            all: vec![0, 1],
+            rows: HashMap::from([(0, vec![0b01]), (1, vec![0b10])]),
+            cached: HashMap::new(),
+            entries: 0,
+            enabled: true,
+            stats: Stats::default(),
+        };
+        let control = Control::default();
+        let mut budget = Budget::new(&control);
+        for x in [-2e-6, -0.5e-6, 0.0, 0.5e-6] {
+            let cluster = candidates
+                .cluster(DVec3::X * x, &map, &tree, &visibility, &mut budget)
+                .unwrap();
+            assert_eq!(cluster, None);
+            assert_eq!(
+                candidates
+                    .for_cluster(cluster, &lights, &mut budget)
+                    .unwrap(),
+                [0, 1]
+            );
+        }
+        let known = candidates
+            .cluster(DVec3::X * 2e-6, &map, &tree, &visibility, &mut budget)
+            .unwrap();
+        assert_eq!(known, Some(0));
+        assert_eq!(
+            candidates.for_cluster(known, &lights, &mut budget).unwrap(),
+            [0]
+        );
+        budget.consume(100_000_000 - budget.work()).unwrap();
+        assert!(
+            candidates
+                .cluster(DVec3::ZERO, &map, &tree, &visibility, &mut budget)
+                .is_err()
+        );
+        let control = Control::default();
+        let mut budget = Budget::new(&control);
+        control.cancel().unwrap();
+        assert!(
+            candidates
+                .cluster(DVec3::ZERO, &map, &tree, &visibility, &mut budget)
+                .is_err()
+        );
+    }
+
+    #[test]
     fn range_culling_matches_exact_falloff_endpoints_and_keeps_soft_tails() {
         let cases = [
             (

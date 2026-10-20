@@ -10,6 +10,7 @@ pub mod model;
 pub mod particle;
 pub mod render_color;
 pub mod sound;
+pub mod vhv;
 pub mod vmf;
 pub mod vmt;
 pub mod vpk;

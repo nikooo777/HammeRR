@@ -4,7 +4,7 @@ use glam::{DAffine3, DQuat, DVec3};
 
 use super::{invalid, reader::Reader};
 
-const MAX_BONES: usize = 256;
+pub(super) const MAX_BONES: usize = 256;
 const WEIGHT_EPSILON: f64 = 4.0 * f32::EPSILON as f64;
 
 fn resolve(

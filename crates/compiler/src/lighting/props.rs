@@ -9,6 +9,7 @@ use source_formats::{
     vmt::Material,
 };
 
+use super::asset_tracking::Tracker;
 use super::bake::{Allocation, Budget};
 use super::shadows::{ShadowIndex, ShadowObject, Triangle};
 use crate::{Diagnostic, Report, map::MAX_COMPILE_COORD};
@@ -38,6 +39,7 @@ pub(crate) struct Stats {
 
 pub(super) struct PropTriangle {
     triangle: Triangle,
+    owner: Option<u32>,
     alpha: Option<(Arc<alpha::Material>, [DVec2; 3])>,
 }
 
@@ -45,8 +47,20 @@ impl PropTriangle {
     pub(super) fn new(points: [DVec3; 3]) -> Result<Self, String> {
         Ok(Self {
             triangle: Triangle::new(points)?,
+            owner: None,
             alpha: None,
         })
+    }
+
+    pub(super) fn set_owner(&mut self, owner: u32) {
+        self.owner = Some(owner);
+    }
+
+    pub(super) fn point_contact(&self, point: DVec3, receiver: u32) -> Result<bool, String> {
+        if self.owner == Some(receiver) {
+            return Ok(false);
+        }
+        self.triangle.point_contact(point)
     }
 }
 
@@ -133,8 +147,9 @@ impl Buffers {
     }
 }
 
-struct Assets<'a> {
-    fs: &'a GameFs,
+struct Assets<'fs, 'tracking> {
+    fs: &'fs GameFs,
+    tracking: Option<&'tracking mut Tracker<'fs>>,
     bytes: usize,
     lookups: usize,
     textures: BTreeMap<String, Arc<alpha::Texture>>,
@@ -142,17 +157,24 @@ struct Assets<'a> {
     allocations: Vec<Allocation>,
 }
 
-impl Assets<'_> {
+impl Assets<'_, '_> {
     fn read(&mut self, path: &str, budget: &mut Budget<'_>) -> Result<Vec<u8>, String> {
-        budget.consume(1)?;
         let limit = source_formats::mdl::MAX_MODEL_BYTES.min(MAX_ASSET_BYTES - self.bytes);
-        let data = self
-            .fs
-            .read_limited(path, limit)
-            .map_err(|error| format!("{path}: {error}"))?
-            .ok_or_else(|| format!("Static-prop shadow asset {path} was not found"))?;
+        let data = if let Some(tracking) = &mut self.tracking {
+            tracking.read(path, limit, budget)?
+        } else {
+            budget.consume(1)?;
+            let data = self
+                .fs
+                .read_limited(path, limit)
+                .map_err(|error| format!("{path}: {error}"))?;
+            if let Some(data) = &data {
+                budget.consume(data.len().div_ceil(64))?;
+            }
+            data
+        }
+        .ok_or_else(|| format!("Static-prop shadow asset {path} was not found"))?;
         self.bytes += data.len();
-        budget.consume(data.len().div_ceil(64))?;
         Ok(data)
     }
 
@@ -195,9 +217,20 @@ impl Assets<'_> {
                     "Static-prop shadow material lookup exceeds its 65,536 lookup limit".into(),
                 );
             }
-            if let Some(material) = Material::load_limited(self.fs, &candidate, MAX_MATERIAL_BYTES)
-                .map_err(|error| format!("Static-prop shadow material {candidate}: {error}"))?
-            {
+            let material = if let Some(tracking) = &mut self.tracking {
+                Material::load_with_reader(
+                    &source_formats::vmt::material_path(&candidate),
+                    &mut |path| {
+                        tracking
+                            .read(path, MAX_MATERIAL_BYTES, budget)
+                            .map_err(std::io::Error::other)
+                    },
+                )
+            } else {
+                Material::load_limited(self.fs, &candidate, MAX_MATERIAL_BYTES)
+            }
+            .map_err(|error| format!("Static-prop shadow material {candidate}: {error}"))?;
+            if let Some(material) = material {
                 return Ok(Some(material));
             }
         }
@@ -282,10 +315,11 @@ fn append(
     Ok(degenerate)
 }
 
-pub(super) fn build(
+pub(super) fn build<'a>(
     bsp: &Bsp,
     vmf: &Vmf,
-    fs: &GameFs,
+    fs: &'a GameFs,
+    tracking: Option<&mut Tracker<'a>>,
     report: &mut Report,
     budget: &mut Budget<'_>,
 ) -> Result<Prepared, String> {
@@ -310,6 +344,7 @@ pub(super) fn build(
         }
         let mut assets = Assets {
             fs,
+            tracking,
             bytes: 0,
             lookups: 0,
             textures: BTreeMap::new(),
@@ -410,7 +445,8 @@ pub(super) fn build(
                         budget.consume(triangles.len() - before)?;
                         let mut mins = DVec3::splat(f64::INFINITY);
                         let mut maxs = DVec3::splat(f64::NEG_INFINITY);
-                        for triangle in &triangles[before..] {
+                        for triangle in &mut triangles[before..] {
+                            triangle.set_owner(index as u32);
                             let (low, high) = triangle.bounds();
                             mins = mins.min(low);
                             maxs = maxs.max(high);

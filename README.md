@@ -338,10 +338,10 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Named build recipes and their compiler settings](docs/images/build-recipes.png) | ![Sky asset packing enabled in Build settings](docs/images/build-pack-sky-assets.png) |
 | Save, recall and reload named compiler settings alongside Fast preview and Final lighting. | Include supported LDR/HDR sky materials and textures in the BSP with their original names and bytes. |
 
-| Baked lightmaps |
-| --- |
-| ![Baked face lightmap inspection](docs/images/baked-lightmaps.png) |
-| Inspect baked samples and trace compiled fragments to their retained authored contributors. |
+| Baked lightmaps | Static-prop vertex lighting |
+| --- | --- |
+| ![Baked face lightmap inspection](docs/images/baked-lightmaps.png) | ![Static-prop vertex lighting in Build settings](docs/images/build-prop-vertex-lighting.png) |
+| Inspect baked samples and trace compiled fragments to their retained authored contributors. | Bake independent LDR/HDR colors into supported static models across every draw LOD. |
 
 [Baked lightmaps →](docs/baked-lightmaps.md)
 
@@ -515,7 +515,7 @@ The editor covers most everyday brush work. Notable gaps:
 
 - **Terrain**: creation, resolution edits, live sculpt/blend strokes, vertex handles and full/half-edge subdivision work; other fractional edge tools remain planned.
 - **Models**: static meshes, reference poses, skins, bodygroups and visual browsing work; animation remains planned.
-- **Compiler**: Fast and Detailed visibility, independent LDR/HDR lighting, diffuse bounces and reflection generation are available; exposure and prop lighting remain planned.
+- **Compiler**: Fast and Detailed visibility, independent LDR/HDR lighting, diffuse bounces, static-prop vertex lighting and reflection generation are available; exposure and per-texel prop lightmaps remain planned.
 
 The full picture is in [Status and roadmap](docs/status.md).
 

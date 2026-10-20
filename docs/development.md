@@ -60,6 +60,84 @@ context and ownership guards in `editor/src/face_edit_ui.rs`.
 
 ## Build and test
 
+Static-prop vertex-lighting settings and presentation checks:
+
+```sh
+cargo test -p editor-core --features mcp,test-support --lib prop_vertex_lighting
+cargo test -p editor prop_vertex_lighting
+cargo test -p editor compile_ui::admission_tests
+```
+
+These cover atomic shared option validation, default-off persisted-byte
+compatibility, recipe/recent-map restore, frozen CPU-only jobs, stale results,
+strict MCP forwarding and actual software checkbox callbacks. The UI fixture
+writes `build-prop-vertex-lighting.png` when `HAMMERR_UI_SNAPSHOTS` names an
+existing directory. Native consumer acceptance remains a separate gate; these
+checks require no game or desktop input.
+
+Hardware color-stream and compiler publication checks:
+
+```sh
+cargo test -p source-formats --lib model::hardware_tests
+cargo test -p source-formats --test vhv
+cargo test -p compiler --lib prop_vertices
+cargo test -p compiler --lib prop_lighting_assets
+```
+
+`validate_prop_vertex_lighting.py` exercises either production MCP program.
+Prepare a standalone game directory containing local MDL/VVD/DX90 companions
+and plain opaque selected model materials. The supported model needs one
+bodypart/model, authored root LOD 0, all 1–8 declared draw LODs and at most
+256 hardware sections total. Provide a separate otherwise valid model with
+authored root LOD 1 for the structural rejection check. The script creates
+its own world texture and writable overlay, leaving fixture inputs untouched.
+
+```sh
+python3 -B scripts/validate_prop_vertex_lighting.py \
+  --binary target/debug/hammerr-headless \
+  --fixture-game target/validation/prop-fixture/game \
+  --model models/props_junk/wood_crate001a.mdl \
+  --unsupported-model models/hammerr/invalid-root.mdl \
+  --output target/validation/prop-mcp-headless
+```
+
+Repeat with `--binary target/debug/editor` and a fresh output directory to
+exercise its private headless MCP entry point. Checks cover actual VHV/PAK
+bytes, final prop ordinals, independent channels, current statistics,
+foreground/background publication, rejection preservation, opt-outs and
+persistent settings. Pass `--origin-z` with the negative of the fixture model's
+actual minimum vertex Z to exercise exact brush-floor contact; the default
+height is 48 units.
+
+`validate_prop_vertex_lighting_native.py` consumes the resulting
+`direct_ldr_hdr.bsp`, a merged standalone model/material fixture, and the
+hardware probe built under [Independent LDR and HDR lighting](#independent-ldr-and-hdr-lighting). Include the MCP overlay's
+world material and texture in that fixture. It runs four fresh private Cage
+processes for LDR/HDR and forced draw LOD 0/1, without desktop input or focus
+changes; the model must actually contain LOD 1 to test that request.
+
+```sh
+python3 -B scripts/validate_prop_vertex_lighting_native.py \
+  --bsp target/validation/prop-mcp-headless/direct_ldr_hdr.bsp \
+  --fixture-game target/validation/prop-native-game \
+  --output target/validation/prop-native --disk-off-control
+```
+
+This is a channel/LOD smoke check with hardware queries, asset-error checks,
+preservation receipts and screenshots. Reported frame colors do not alone
+prove VHV consumption or vertex correspondence; use independently written
+color/gradient files and disabled-flag/checksum controls for that contract.
+Compare bounded model-interior regions between disk-on/off images and retain
+unchanged world and explicit-opt-out regions as controls; record how regions
+were selected. This comparison checks consumption, while independent gradients
+check vertex correspondence.
+The optional disk-off case pairs the same BSP, camera and LDR/LOD 0 settings
+with disk lighting disabled, retaining both images and hashes for a bounded
+model-region comparison. The hardware observer's executable and parent chain
+are checked while the game is live. Receipts retain known stock shader
+diagnostics and the absent optional map cubemap; this fixture does not validate
+reflection rendering. Other asset or lighting errors fail the check.
+
 Save/import, material semantics and gesture lifecycle regressions:
 
 ```sh
@@ -114,7 +192,7 @@ cargo build -p editor-core --features mcp --bin hammerr-headless
 
 Development and test builds leave the generated `editor-ui` crate unoptimized
 and omit its DWARF debug symbols to reduce compilation work and memory. Core
-development and test builds retain file-and-line backtraces with line tables
+and compiler development and test builds retain file-and-line backtraces with line tables
 instead of full debug metadata. Both profiles use workspace optimization level
 2 so grouped test and production-binary builds can reuse compatible artifacts;
 registry dependencies retain level 3. Slint's testing metadata stays enabled,

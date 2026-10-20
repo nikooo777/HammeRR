@@ -24,6 +24,8 @@ pub(super) const SAMPLE_BIAS: f64 = 0.5;
 
 #[derive(Debug, Default)]
 pub(crate) struct BakeStats {
+    pub prop_lighting_assets: Option<crate::prop_lighting_assets::PropLightingPlan>,
+    pub prop_vertex_lighting: Option<crate::PropVertexLightingStats>,
     pub hdr: Option<crate::HdrLightingStats>,
     pub total_work: usize,
     pub lights: usize,
@@ -154,6 +156,18 @@ pub(super) struct Budget<'a> {
 pub(super) struct Allocation {
     bytes: usize,
     live_bytes: std::rc::Rc<std::cell::Cell<usize>>,
+}
+
+impl Allocation {
+    pub(super) fn grow(&mut self, budget: &Budget<'_>, bytes: usize) -> Result<(), String> {
+        if !std::rc::Rc::ptr_eq(&self.live_bytes, &budget.live_bytes) {
+            return Err("Lighting allocation belongs to another budget".into());
+        }
+        let mut additional = budget.reserve_bytes(bytes)?;
+        self.bytes += additional.bytes;
+        additional.bytes = 0;
+        Ok(())
+    }
 }
 
 impl Drop for Allocation {
@@ -592,6 +606,8 @@ pub(crate) struct Settings<'a> {
     pub vmf: &'a source_formats::vmf::Vmf,
     pub options: crate::Options,
     pub model_entities: &'a [usize],
+    pub prop_sources: &'a [usize],
+    pub prop_material_sources: Option<super::asset_tracking::SourceReads>,
     pub world_leaf_nodes: &'a [Option<usize>],
     pub detail_model_centers: &'a [DVec3],
     pub detail_lighting_origins: &'a [Option<DVec3>],
@@ -745,12 +761,48 @@ pub(crate) fn bake(
     report.diagnostics.push(Diagnostic::info("Direct LDR bakes native directional normal-map channels and static, switchable and animated point/spot styles, sampled soft sun, sky ambient and model ambient with indexed opaque brush/terrain shadows; up to four style-preserving diffuse world-light bounces are supported; brush entities receive pivot-aware direct and bounced maps with isolated self shadows; reflected model sources and prop lightmaps remain unfinished", None, None));
     let shadows = ShadowIndex::new(world_hulls, &mut |amount| budget.consume(amount))?;
     let terrain_shadows = terrain_shadows(map, &mut budget)?;
+    let mut prop_assets = if options.bake_static_prop_vertices {
+        Some(super::asset_tracking::Tracker::new(
+            settings.fs,
+            settings.prop_material_sources.ok_or(
+                "Baked prop vertex lighting is missing its original world-material source capture",
+            )?,
+            &mut budget,
+        )?)
+    } else {
+        None
+    };
     let super::props::Prepared {
         shadows: prop_shadows,
         bounds: prop_bounds,
         stats: prop_stats,
         allocations: _prop_allocations,
-    } = super::props::build(bsp, settings.vmf, settings.fs, report, &mut budget)?;
+    } = super::props::build(
+        bsp,
+        settings.vmf,
+        settings.fs,
+        prop_assets.as_mut(),
+        report,
+        &mut budget,
+    )?;
+    let mut prop_vertices = if options.bake_static_prop_vertices {
+        if options.bounces != 0 {
+            return Err("Baked prop vertices currently require zero lighting bounces".into());
+        }
+        super::prop_vertices::prepare(
+            map,
+            settings.vmf,
+            prop_assets
+                .take()
+                .ok_or("Static-prop source tracking is missing")?,
+            bsp,
+            settings.prop_sources,
+            report,
+            &mut budget,
+        )?
+    } else {
+        None
+    };
     if !map.terrains.is_empty() {
         let mut data = bsp
             .displacements()
@@ -829,6 +881,7 @@ pub(crate) fn bake(
         report,
         &mut budget,
         &mut detail_ldr,
+        &mut prop_vertices,
     )?;
     stats.work = budget.work;
     stats.smoothed_faces = normals.faces;
@@ -843,6 +896,7 @@ pub(crate) fn bake(
             report,
             &mut budget,
             &mut detail_hdr,
+            &mut prop_vertices,
         )?;
         stats.hdr = Some(crate::HdrLightingStats {
             world_lights: hdr.lights,
@@ -887,6 +941,18 @@ pub(crate) fn bake(
     } else {
         stats.work += style_work;
     }
+    if !report.has_errors()
+        && let Some(prepared) = prop_vertices
+    {
+        let (plan, prop_stats) =
+            super::prop_vertices::finish(prepared, bsp, dual, settings.fs, control, &mut budget)?;
+        report.diagnostics.push(Diagnostic::info(format!(
+            "Baked static-prop vertex colors for {} props, {} models, {} hardware sections and {} vertices in {} channel(s)",
+            prop_stats.props, prop_stats.models, prop_stats.meshes, prop_stats.vertices,
+            if dual { 2 } else { 1 }), None, None));
+        stats.prop_lighting_assets = Some(plan);
+        stats.prop_vertex_lighting = Some(prop_stats);
+    }
     stats.total_work = budget.work;
     Ok(stats)
 }
@@ -919,6 +985,7 @@ fn bake_channel(
     report: &mut Report,
     budget: &mut Budget<'_>,
     detail_lighting: &mut Option<super::details::Channel>,
+    prop_vertices: &mut Option<super::prop_vertices::Prepared>,
 ) -> Result<BakeStats, String> {
     let start_work = budget.work;
     let ChannelContext {
@@ -978,6 +1045,28 @@ fn bake_channel(
         .unwrap_or_default();
     if sun_directions.len() > 1 {
         budget.consume(sun_directions.len())?;
+    }
+    if let Some(prepared) = prop_vertices {
+        super::prop_vertices::bake_channel(
+            prepared,
+            &super::prop_vertices::Context {
+                map,
+                tree,
+                visibility,
+                direct: super::receivers::Context {
+                    lights: &lights,
+                    shadows,
+                    terrain: terrain_shadows,
+                    props: prop_shadows,
+                    sun_directions: &sun_directions,
+                    ambient_directions: &ambient_directions,
+                },
+            },
+            kind,
+            &mut candidates,
+            report,
+            budget,
+        )?;
     }
     let mut used_styles = std::collections::BTreeSet::new();
     let mut styled_faces = 0;

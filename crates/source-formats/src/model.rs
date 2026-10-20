@@ -4,11 +4,19 @@ use crate::mdl::ModelHeader;
 
 mod attachments;
 mod bones;
+mod hardware;
+#[cfg(test)]
+mod hardware_tests;
 mod reader;
 #[cfg(test)]
 mod tests;
 mod vtx;
 mod vvd;
+
+pub use hardware::{
+    HardwareCharge, HardwareLayout, HardwareLimits, HardwareSection, MAX_HARDWARE_BYTES,
+    MAX_HARDWARE_SECTIONS, MAX_HARDWARE_VERTICES, MAX_HARDWARE_WORK,
+};
 
 pub fn material_candidates<'a>(
     name: &'a str,
@@ -33,6 +41,7 @@ const MAX_SKIN_ENTRIES: usize = 1_000_000;
 const MAX_BODY_PARTS: usize = 128;
 const MAX_MODELS: usize = 512;
 const MAX_MESHES: usize = 4096;
+const MAX_LODS: usize = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Vertex {
@@ -104,6 +113,7 @@ struct Mesh {
     material: usize,
     first: usize,
     count: usize,
+    lod_counts: [usize; MAX_LODS],
 }
 
 fn invalid(message: &str) -> io::Error {
@@ -112,9 +122,44 @@ fn invalid(message: &str) -> io::Error {
 
 impl Model {
     pub fn parse(mdl: &[u8], vvd: &[u8], vtx: &[u8]) -> io::Result<Self> {
+        Self::parse_inner(mdl, vvd, vtx, &mut hardware::Budget::ordinary()).map(|(model, _)| model)
+    }
+
+    /// Charges cumulative parsing allocations and work before growth, with zero-charge
+    /// cancellation checkpoints. The returned mappings always address fixed-up root LOD 0.
+    pub fn parse_with_hardware(
+        mdl: &[u8],
+        vvd: &[u8],
+        vtx: &[u8],
+        limits: HardwareLimits,
+        charge: &mut impl FnMut(HardwareCharge) -> io::Result<()>,
+    ) -> io::Result<(Self, HardwareLayout)> {
+        let mut budget = hardware::Budget::hardware(limits, charge)?;
+        let (model, layout) = Self::parse_inner(mdl, vvd, vtx, &mut budget)?;
+        Ok((model, layout.unwrap()))
+    }
+
+    fn parse_inner(
+        mdl: &[u8],
+        vvd: &[u8],
+        vtx: &[u8],
+        budget: &mut hardware::Budget<'_>,
+    ) -> io::Result<(Self, Option<HardwareLayout>)> {
         let header = ModelHeader::parse(mdl)?;
+        if budget.enabled() && !header.is_static_prop() {
+            return Err(invalid("model hardware layout requires a static-prop MDL"));
+        }
         let reader = reader::Reader::new(mdl, 248)?;
+        reader::Reader::new(vvd, 64)?;
+        reader::Reader::new(vtx, 36)?;
         let attachment_count = reader.count(240, attachments::MAX_ATTACHMENTS)?;
+        if attachment_count > 0 && budget.enabled() {
+            let bone_count = reader.count(156, bones::MAX_BONES)?;
+            budget.array::<glam::DAffine3>(bone_count * 5)?;
+            budget.array::<usize>(bone_count * 2)?;
+            budget.array::<Attachment>(attachment_count)?;
+            budget.array::<u8>(attachment_count * reader::MAX_STRING_BYTES)?;
+        }
         let reference = (!header.is_static_prop() || attachment_count > 0)
             .then(|| bones::reference(&reader))
             .transpose()?;
@@ -123,8 +168,11 @@ impl Model {
             reference.as_ref().map_or(&[], |pose| pose.poses.as_slice()),
         )?;
         let textures = reader.table(0, 204, 208, 64, MAX_MATERIALS)?;
+        budget.array::<String>(textures.len)?;
+        budget.array::<u8>(textures.len * reader::MAX_STRING_BYTES * 3)?;
         let mut materials = Vec::with_capacity(textures.len);
         for index in 0..textures.len {
+            budget.checkpoint(index)?;
             let base = textures.at(index)?;
             let path = reader.string(reader.relative(base, 0)?)?;
             let path = crate::gamefs::asset_relative(&path)?;
@@ -134,6 +182,8 @@ impl Model {
             materials.push(path);
         }
         let directories = reader.table(0, 212, 216, 4, MAX_MATERIALS)?;
+        budget.array::<String>(directories.len)?;
+        budget.array::<u8>(directories.len * reader::MAX_STRING_BYTES * 3)?;
         let mut material_directories = Vec::with_capacity(directories.len);
         for index in 0..directories.len {
             material_directories.push(crate::gamefs::asset_relative(
@@ -147,8 +197,11 @@ impl Model {
             .ok_or_else(|| invalid("MDL skin table exceeds its resource limit"))?;
         let skin_start = reader.count(228, mdl.len())?;
         reader.bytes(skin_start, skin_entries * 2)?;
+        budget.array::<Vec<usize>>(header.skins)?;
+        budget.array::<usize>(skin_entries)?;
         let mut skins = Vec::with_capacity(header.skins);
         for family in 0..header.skins {
+            budget.checkpoint(family)?;
             let mut skin = Vec::with_capacity(skin_refs);
             for index in 0..skin_refs {
                 let material =
@@ -162,19 +215,28 @@ impl Model {
         }
         let skinning =
             (!header.is_static_prop()).then(|| reference.as_ref().unwrap().skinning.as_slice());
-        let vertices = vvd::parse(vvd, header.checksum, skinning)?;
+        let vertex_data = vvd::parse(vvd, header.checksum, skinning, budget)?;
+        let vertices = vertex_data.vertices;
         let bodies = reader.table(0, 232, 236, 16, MAX_BODY_PARTS)?;
+        budget.array::<Vec<Vec<Mesh>>>(bodies.len)?;
+        budget.array::<BodyGroup>(bodies.len)?;
+        budget.array::<u8>(bodies.len * reader::MAX_STRING_BYTES)?;
         let mut meshes = Vec::with_capacity(bodies.len);
         let mut body_groups = Vec::with_capacity(bodies.len);
         let mut total_meshes = 0;
         let mut total_models = 0;
+        let mut model_vertices = [0usize; MAX_LODS];
         for index in 0..bodies.len {
+            budget.checkpoint(index)?;
             let base = bodies.at(index)?;
             let models = reader.table(base, 4, 12, 148, MAX_MODELS)?;
             total_models += models.len;
             if models.len == 0 || total_models > MAX_MODELS {
                 return Err(invalid("MDL body variants exceed their resource limit"));
             }
+            budget.array::<BodyVariant>(models.len)?;
+            budget.array::<Vec<Mesh>>(models.len)?;
+            budget.array::<u8>(models.len * 64)?;
             let value_base = reader.count(base + 8, i32::MAX as usize)? as u32;
             if models.len > 1 && value_base == 0 {
                 return Err(invalid("MDL bodygroup base must be positive"));
@@ -201,12 +263,26 @@ impl Model {
                 if first + count > vertices.len() {
                     return Err(invalid("MDL model vertices exceed fixed-up VVD data"));
                 }
+                if budget.enabled() && first != model_vertices[0] {
+                    return Err(invalid(
+                        "MDL model vertex offset differs from root-LOD-0 mesh order",
+                    ));
+                }
+                if budget.enabled()
+                    && (reader.int(model + 64)? != 0 || reader.int(model + 100)? != 0)
+                {
+                    return Err(invalid(
+                        "model hardware layout does not support specialized model types or eyes",
+                    ));
+                }
                 let parts = reader.table(model, 72, 76, 116, MAX_MESHES)?;
                 total_meshes += parts.len;
                 if total_meshes > MAX_MESHES {
                     return Err(invalid("MDL mesh count exceeds its resource limit"));
                 }
+                budget.array::<Mesh>(parts.len)?;
                 let mut model_meshes = Vec::with_capacity(parts.len);
+                let mut mesh_vertices = [0usize; MAX_LODS];
                 for part in 0..parts.len {
                     let mesh = parts.at(part)?;
                     let material = reader.count(mesh, MAX_MATERIALS)?;
@@ -218,11 +294,54 @@ impl Model {
                     if offset + size > count {
                         return Err(invalid("MDL mesh vertex range exceeds its model"));
                     }
+                    let mut lod_counts = [0usize; MAX_LODS];
+                    if budget.enabled() {
+                        if reader.count(mesh + 32, MAX_MESHES)? != total_meshes - parts.len + part {
+                            return Err(invalid(
+                                "MDL mesh IDs differ from native hardware mesh order",
+                            ));
+                        }
+                        if reader.int(mesh + 16)? != 0 || reader.int(mesh + 24)? != 0 {
+                            return Err(invalid(
+                                "model hardware layout does not support flexes or specialized materials",
+                            ));
+                        }
+                        if offset != mesh_vertices[0] {
+                            return Err(invalid(
+                                "MDL mesh vertex offset differs from root-LOD-0 mesh order",
+                            ));
+                        }
+                        let mut previous = size;
+                        for (lod, count) in lod_counts[..vertex_data.lods].iter_mut().enumerate() {
+                            let value = reader.count(mesh + 52 + lod * 4, size)?;
+                            if value > previous || (lod == 0 && value != size) {
+                                return Err(invalid(
+                                    "MDL mesh LOD vertex counts do not match its root vertices",
+                                ));
+                            }
+                            *count = value;
+                            mesh_vertices[lod] = mesh_vertices[lod]
+                                .checked_add(value)
+                                .ok_or_else(|| invalid("MDL mesh LOD vertex count overflow"))?;
+                            previous = value;
+                        }
+                    }
                     model_meshes.push(Mesh {
                         material,
                         first: first + offset,
                         count: size,
+                        lod_counts,
                     });
+                }
+                if budget.enabled() {
+                    if mesh_vertices[0] != count {
+                        return Err(invalid("MDL root mesh vertices do not cover their model"));
+                    }
+                    for (total, value) in model_vertices.iter_mut().zip(mesh_vertices) {
+                        *total = total
+                            .checked_add(value)
+                            .ok_or_else(|| invalid("MDL model LOD vertex count overflow"))?;
+                    }
                 }
                 body_meshes.push(model_meshes);
                 variants.push(BodyVariant {
@@ -238,12 +357,29 @@ impl Model {
                 variants,
             });
         }
-        let geometry = vtx::parse(vtx, header.checksum, &meshes)?;
+        if budget.enabled() && model_vertices != vertex_data.counts {
+            return Err(invalid("MDL mesh LOD vertex totals do not match VVD"));
+        }
+        let root_lod = if budget.enabled() {
+            usize::from(reader.byte(377)?)
+        } else {
+            0
+        };
+        let geometry = vtx::parse(
+            vtx,
+            header.checksum,
+            vertex_data.lods,
+            root_lod,
+            &meshes,
+            budget,
+        )?;
         let parts = geometry.parts;
+        let index_count = parts.iter().map(|part| part.indices.len()).sum::<usize>();
+        budget.charge(0, index_count * 2)?;
         for (group, ranges) in body_groups.iter_mut().zip(geometry.models) {
             for (variant, range) in group.variants.iter_mut().zip(ranges) {
                 variant.parts = range.clone();
-                variant.bounds = part_bounds(&vertices, &parts[range]);
+                variant.bounds = part_bounds(&vertices, &parts[range], budget)?;
             }
         }
         let mut mins = [f32::INFINITY; 3];
@@ -251,7 +387,8 @@ impl Model {
         let mut triangles = 0;
         for part in &parts {
             triangles += part.indices.len() / 3;
-            for &index in &part.indices {
+            for (work, &index) in part.indices.iter().enumerate() {
+                budget.checkpoint(work)?;
                 let point = vertices[index as usize].position;
                 for axis in 0..3 {
                     mins[axis] = mins[axis].min(point[axis]);
@@ -276,7 +413,7 @@ impl Model {
             attachments,
         };
         result.bounds = result.bounds_for_body(0).unwrap_or(result.bounds);
-        Ok(result)
+        Ok((result, geometry.hardware))
     }
 
     pub fn parts_for_body(&self, body: u32) -> impl Iterator<Item = &Part> {
@@ -379,12 +516,17 @@ impl Model {
     }
 }
 
-fn part_bounds(vertices: &[Vertex], parts: &[Part]) -> Option<[[f32; 3]; 2]> {
+fn part_bounds(
+    vertices: &[Vertex],
+    parts: &[Part],
+    budget: &mut hardware::Budget<'_>,
+) -> io::Result<Option<[[f32; 3]; 2]>> {
     let mut low = [f32::INFINITY; 3];
     let mut high = [f32::NEG_INFINITY; 3];
     let mut present = false;
     for part in parts {
-        for &index in &part.indices {
+        for (work, &index) in part.indices.iter().enumerate() {
+            budget.checkpoint(work)?;
             present = true;
             let point = vertices[index as usize].position;
             for axis in 0..3 {
@@ -393,5 +535,5 @@ fn part_bounds(vertices: &[Vertex], parts: &[Part]) -> Option<[[f32; 3]; 2]> {
             }
         }
     }
-    present.then_some([low, high])
+    Ok(present.then_some([low, high]))
 }

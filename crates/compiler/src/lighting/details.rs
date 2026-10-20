@@ -6,6 +6,7 @@ use source_formats::bsp::{
 
 use super::bake::{Budget, Emitter};
 use super::culling::Candidates;
+use super::receivers::STYLE_COUNT;
 use super::shadows::{ShadowIndex, Triangle};
 use super::{Occluder, encode_color};
 use crate::detail_props::Tint;
@@ -15,7 +16,6 @@ use crate::visibility::Visibility;
 use crate::{Diagnostic, Report};
 
 const LIGHTING_SCALE: f64 = 255.0;
-const STYLE_COUNT: usize = 64;
 const MAX_AUTHORED_STYLE_GAIN: f32 = 550.0 * (1.0 / 264.0);
 const OPEN_RECEIVER: &str =
     "Detail lighting hull or sprite midpoint must lie in open visible world space";
@@ -83,15 +83,14 @@ fn receiver(
 }
 
 fn cluster(ctx: &Context<'_>, point: DVec3, budget: &mut Budget<'_>) -> Result<usize, String> {
-    let mut node = 0;
-    while let Some((plane, children)) = ctx.tree.nodes[node].split {
-        budget.consume(1)?;
-        node = children[usize::from(ctx.map.planes.get(plane).distance(point) < 0.0)];
-    }
-    budget.consume(1)?;
-    ctx.visibility.clusters[node]
-        .filter(|_| !ctx.tree.nodes[node].solid())
-        .ok_or_else(|| OPEN_RECEIVER.into())
+    super::receivers::cluster(
+        ctx.map,
+        ctx.tree,
+        ctx.visibility,
+        point,
+        OPEN_RECEIVER,
+        budget,
+    )
 }
 
 fn direct(
@@ -102,47 +101,25 @@ fn direct(
     budget: &mut Budget<'_>,
 ) -> Result<[DVec3; STYLE_COUNT], String> {
     let cluster = cluster(ctx, point, budget)?;
-    let mut colors = [DVec3::ZERO; STYLE_COUNT];
-    for &candidate in candidates.for_cluster(Some(cluster), ctx.lights, budget)? {
-        budget.consume(1)?;
-        let light = &ctx.lights[candidate];
-        if super::culling::outside_range(light, point) {
-            continue;
-        }
-        match light {
-            Emitter::Point(light) => {
-                let value = light.contribution(point, normal)?;
-                if value != DVec3::ZERO
-                    && !ctx
-                        .shadows
-                        .blocked(point, light.origin, &mut |work| budget.consume(work))?
-                    && !ctx
-                        .terrain
-                        .blocked(point, light.origin, &mut |work| budget.consume(work))?
-                    && !ctx
-                        .props
-                        .blocked(point, light.origin, &mut |work| budget.consume(work))?
-                {
-                    colors[usize::from(light.style)] += value;
-                }
-            }
-            Emitter::Sky(light) => {
-                colors[0] +=
-                    light.sun_contribution(normal, ctx.sun_directions, &mut |direction| {
-                        super::bake::sky_visible(
-                            direction,
-                            point,
-                            ctx.shadows,
-                            ctx.terrain,
-                            ctx.props,
-                            &None,
-                            budget,
-                        )
-                    })?;
-            }
-        }
-    }
-    Ok(colors)
+    super::receivers::direct(
+        &super::receivers::Context {
+            lights: ctx.lights,
+            shadows: ctx.shadows,
+            terrain: ctx.terrain,
+            props: ctx.props,
+            sun_directions: ctx.sun_directions,
+            ambient_directions: ctx.directions,
+        },
+        candidates,
+        cluster,
+        super::receivers::Sample {
+            point,
+            normal,
+            origin: point,
+        },
+        false,
+        budget,
+    )
 }
 
 pub(super) fn bake(

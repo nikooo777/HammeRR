@@ -5,6 +5,7 @@ use source_formats::bsp::{
 };
 
 use crate::map::MapEntity;
+pub(crate) mod asset_tracking;
 mod bake;
 mod bounce;
 mod bump;
@@ -15,8 +16,10 @@ mod models;
 mod normals;
 pub mod preview;
 mod probes;
+mod prop_vertices;
 mod props;
 mod radiance;
+mod receivers;
 mod shadows;
 mod sky;
 pub(crate) mod styles;

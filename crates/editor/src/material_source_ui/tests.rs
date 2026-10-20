@@ -88,6 +88,140 @@ fn material_browser_source_window_reads_refreshes_reports_errors_and_closes_with
     browser.hide().unwrap();
 }
 
+#[test]
+fn software_material_source_shows_shared_water_inventory_and_keeps_declarations_first() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: false,
+        },
+    )))
+    .unwrap();
+    let (root, game) = crate::test_assets::game();
+    let path = root.path().join("materials/test/water.vmt");
+    let text = "Water_DX9_HDR { $normalmap test/checker $basetexture test/checker %tooltexture test/checker $underwateroverlay 0 }";
+    std::fs::write(&path, text).unwrap();
+    let mut session = Session::new(Ok(game));
+    let id = session
+        .create_block(
+            Actor::User,
+            glam::DVec3::ZERO,
+            glam::DVec3::splat(64.0),
+            "test/checker",
+            false,
+        )
+        .unwrap();
+    session
+        .preview_transform(
+            Actor::Agent,
+            &[id],
+            map_core::edit::Transform {
+                translation: glam::DVec3::X * 32.0,
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+    let source = session.document().vmf().clone();
+    let draft = session.render_document().vmf().clone();
+    let history = session.history_snapshot();
+    let camera = session.camera();
+    let selection = session.selected_ids();
+    let settings = session.compile_settings();
+    let shared = Arc::new(Mutex::new(session));
+    let expected = lock(&shared).inspect_material_source("test/water").unwrap();
+    assert_eq!(
+        expected.water_dependencies.state,
+        WaterDependencyState::SupportedStaticInventory
+    );
+    let browser = MaterialWindow::new().unwrap();
+    let state = bind(&browser, shared.clone());
+    browser.set_material("test/water".into());
+    browser.invoke_inspect_source();
+    let window = source_window(&state);
+    assert!(window.window().is_visible());
+    assert_eq!(
+        window.get_source().to_string(),
+        expected.raw_source.unwrap()
+    );
+    let resolved = window.get_resolved().to_string();
+    assert!(resolved.starts_with("Resolved shader declaration: water_dx9_hdr"));
+    assert!(
+        resolved.find("$normalmap = test/checker").unwrap()
+            < resolved.find("Water dependencies:").unwrap()
+    );
+    for label in [
+        "Water dependencies: Supported static inventory",
+        "CS:S SDK DX90 static Water",
+        "Normal texture:",
+        "Editor preview texture:",
+        "SDK default",
+        "Runtime resource",
+        "Evidence: SDK",
+        "materials/test/checker.vtf",
+        "VTF header: 64 × 32",
+        "Layout observation: existing VTF parser",
+    ] {
+        assert!(
+            resolved.contains(label),
+            "Missing Water inventory row: {label}"
+        );
+    }
+    assert!(!resolved.contains("supported_static_inventory"));
+    assert!(window.get_status().contains("Supported static inventory"));
+    window.window().take_snapshot().unwrap();
+    crate::ui::tests::save_ui_snapshot(window.window(), "material-source-water");
+    crate::ui::tests::assert_dialog_button_visible(&window, "Refresh source");
+    crate::ui::tests::assert_dialog_button_visible(&window, "Close");
+
+    std::fs::write(
+        &path,
+        "Water { $normalmap test/checker $flowmap test/unknown }",
+    )
+    .unwrap();
+    window.invoke_refresh_source();
+    assert!(window.get_status().contains("Unsupported inventory"));
+    assert!(
+        window
+            .get_resolved()
+            .contains("Issue [Unsupported inventory]")
+    );
+    assert!(window.get_resolved().contains("$flowmap"));
+    assert!(window.get_source().contains("Water"));
+    std::fs::write(&path, "Water { $normalmap test/missing }").unwrap();
+    window.invoke_refresh_source();
+    assert!(window.get_status().contains("Source unavailable"));
+    assert!(!window.get_status().contains("Resolution error"));
+    assert!(window.get_resolved().contains("$normalmap = test/missing"));
+    assert!(window.get_resolved().contains("Issue [Source unavailable]"));
+    std::fs::write(&path, "invalid").unwrap();
+    window.invoke_refresh_source();
+    assert!(window.get_status().starts_with("Resolution error:"));
+    assert_eq!(window.get_source(), "invalid");
+    assert!(!window.get_resolved().contains("Water dependencies:"));
+    std::fs::write(&path, "UnlitGeneric { $basetexture test/not-read }").unwrap();
+    window.invoke_refresh_source();
+    assert_eq!(
+        window.get_status(),
+        "Source and Patch declarations resolved."
+    );
+    assert!(!window.get_resolved().contains("Water dependencies:"));
+    assert!(
+        window
+            .get_resolved()
+            .contains("$basetexture = test/not-read")
+    );
+    assert_eq!(lock(&shared).document().vmf(), &source);
+    assert_eq!(lock(&shared).render_document().vmf(), &draft);
+    assert_eq!(lock(&shared).history_snapshot(), history);
+    assert_eq!(lock(&shared).camera(), camera);
+    assert_eq!(lock(&shared).selected_ids(), selection);
+    assert_eq!(lock(&shared).compile_settings(), settings);
+    window.invoke_close_dialog();
+    assert!(!window.window().is_visible());
+}
+
 fn admitted_fixture() -> (
     tempfile::TempDir,
     crate::runtime::DocumentHandle,

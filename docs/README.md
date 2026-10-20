@@ -31,7 +31,7 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | [Vertices, edges and faces](components.md) | Moving, scaling, rotating, welding, splitting and roof ridges |
 | [Flat partitions](partitions.md) | Dividing a face into pieces to raise, extrude or restyle them |
 | [Materials and textures](textures.md) | Material browser, texture editing, sampling, wrapping, painting, replacement, face lighting |
-| [Material source](material-source.md) | Mounted VMT origins, raw source, Patch includes and resolved declarations |
+| [Material source](material-source.md) | Mounted VMT source, Patch declarations and bounded Water dependencies |
 | [Atlas-region texturing](atlas-texturing.md) | Fit flat faces into a numeric rectangle of an existing material image |
 | [Normal-map preview](normal-maps.md) | Preview supported flat-brush normal textures under editor directional shading |
 | [Authored lighting preview](lighting-preview.md) | Unshadowed point/spot diffuse light, quality, exposure and supported receivers |

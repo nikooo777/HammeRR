@@ -1,5 +1,10 @@
 use std::io;
 
+use compiler::{
+    Control,
+    asset_sources::{MaterialInspectionCapture, SourceGuardPolicy},
+    water_dependencies::{self, WaterDependencyReport},
+};
 use serde::Serialize;
 use source_formats::{
     gamefs::{AssetOrigin, asset_relative},
@@ -86,6 +91,7 @@ pub struct Report {
     pub raw_source_bytes: usize,
     pub raw_source_truncated: bool,
     pub resolved: Option<Resolved>,
+    pub water_dependencies: WaterDependencyReport,
     pub error: Option<String>,
     pub error_truncated: bool,
     pub limits: Limits,
@@ -164,6 +170,7 @@ impl Session {
             raw_source_bytes: 0,
             raw_source_truncated: false,
             resolved: None,
+            water_dependencies: WaterDependencyReport::not_applicable(&vmt_path),
             error: None,
             error_truncated: false,
             limits: Limits {
@@ -181,6 +188,17 @@ impl Session {
         };
         let mut total = 0;
         let mut reads = 0;
+        let control = Control::default();
+        let mut sources = MaterialInspectionCapture::new(
+            &self.game,
+            &control,
+            SourceGuardPolicy {
+                label: "Material inspection",
+                missing_label: "Material inspection candidate",
+                asset_bytes: water_dependencies::MAX_TEXTURE_BYTES,
+                physical_paths: water_dependencies::MAX_PHYSICAL_PATHS,
+            },
+        );
         let result = Material::load_with_reader(&vmt_path, &mut |path| {
             reads += 1;
             if reads > MAX_FILES {
@@ -194,9 +212,8 @@ impl Session {
                 ));
             }
             let path = asset_relative(path)?;
-            let asset = self
-                .game
-                .read_asset_limited(&path, MAX_FILE_BYTES.min(MAX_TOTAL_BYTES - total))
+            let asset = sources
+                .read_material(&path, MAX_FILE_BYTES.min(MAX_TOTAL_BYTES - total))
                 .map_err(|error| io::Error::new(error.kind(), format!("{path}: {error}")))?;
             let Some(asset) = asset else {
                 report.files.push(SourceFile {
@@ -206,16 +223,16 @@ impl Session {
                 });
                 return Ok(None);
             };
-            total += asset.data.len();
+            total += asset.bytes().len();
             report.files.push(SourceFile {
                 path: path.clone(),
-                origin: Some(origin(asset.origin)),
-                bytes: asset.data.len(),
+                origin: Some(origin(asset.origin().clone())),
+                bytes: asset.bytes().len(),
             });
             if path == vmt_path && report.raw_source.is_none() {
-                report.raw_source_bytes = asset.data.len();
+                report.raw_source_bytes = asset.bytes().len();
             }
-            let text = std::str::from_utf8(&asset.data)
+            let text = std::str::from_utf8(asset.bytes())
                 .map_err(|_| io::Error::other(format!("{path}: VMT source is not valid UTF-8")))?;
             if path == vmt_path && report.raw_source.is_none() {
                 let mut end = text.len().min(MAX_SOURCE_BYTES);
@@ -225,7 +242,7 @@ impl Session {
                 report.raw_source = Some(text[..end].to_owned());
                 report.raw_source_truncated = end < text.len();
             }
-            Ok(Some(asset.data))
+            Ok(Some(asset.bytes().to_vec()))
         });
         match result {
             Ok(Some(material)) => {
@@ -257,6 +274,17 @@ impl Session {
                 report.error_truncated = truncated;
             }
         }
+        report.water_dependencies = if let Some(error) = &report.error {
+            WaterDependencyReport::unavailable_source(&vmt_path, error)
+        } else if report
+            .resolved
+            .as_ref()
+            .is_some_and(|resolved| water_dependencies::is_water_shader(&resolved.shader))
+        {
+            water_dependencies::inspect_water_dependencies(&vmt_path, &mut sources, &control)
+        } else {
+            WaterDependencyReport::not_applicable(&vmt_path)
+        };
         Ok(report)
     }
 }

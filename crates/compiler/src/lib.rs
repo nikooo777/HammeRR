@@ -29,6 +29,7 @@ pub mod tree;
 mod visclusters;
 mod visibility;
 mod water;
+pub mod water_dependencies;
 pub mod winding;
 
 #[cfg(test)]

@@ -143,7 +143,7 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 | Material source | Material alpha |
 | --- | --- |
 | ![Mounted VMT source, Patch includes and resolved declarations](docs/images/material-source.png) | ![Selected image alpha with source identity and mip details](docs/images/material-alpha-preview.png) |
-| Inspect a material's original text, mounted origin and resolved Patch declarations. | Switch between Color and opaque grayscale Alpha from the selected display image. |
+| Inspect VMT source, mounted origins, Patch declarations and a bounded Water dependency inventory. | Switch between Color and opaque grayscale Alpha from the selected display image. |
 
 [Material source →](docs/material-source.md)
 

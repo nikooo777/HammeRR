@@ -2155,6 +2155,28 @@ Set `HAMMERR_UI_SNAPSHOTS` to an existing directory for `grid-defaults.png`,
 `entity-catalog-mapsize.png`. Scripts require fresh output directories and never
 launch a game or send desktop input.
 
+### Water dependency inspection
+
+```sh
+python3 -B scripts/validate_water_dependencies.py \
+  --binary target/debug/hammerr-headless \
+  --output target/validation/692/water-dependencies-headless-1
+python3 -B scripts/validate_water_dependencies.py \
+  --binary target/debug/editor \
+  --output target/validation/692/water-dependencies-editor-1
+```
+
+Use a fresh disk-backed output directory for each run. The public MCP fixture
+inspects private literal Water/Patch/VTF assets through `get_material_source`,
+checking independently expected typed material/texture/default/runtime roles,
+paths, hashes, origins and VTF header/framing observations. Supported, partial
+unsupported, unavailable and limited cases must retain ordinary source reports
+and preserve source/history/selection, active drafts, settings, recipes, assets
+and clean EOF. Non-Water declarations retain their existing scope. Inspection
+requires no compile, GPU, installed game assets or game launch; it establishes
+an SDK-qualified static inventory, not native appearance or portable packing.
+Keep `validate_material_source.py` for its ordinary source-inspection coverage.
+
 ### Saved preview defaults
 
 ```sh

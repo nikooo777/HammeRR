@@ -1207,6 +1207,42 @@ paths reject. The report exposes limits and truncation flags. It never substitut
 a lower-priority source behind a broken winner and changes no cached texture,
 map, selection, preview or history. See [Material source](material-source.md).
 
+The same call adds `water_dependencies` for the SDK-qualified static Water,
+Water_DX90 and Water_DX9_HDR declaration model, including checked Patch chains.
+`model_basis` is `css_sdk_dx90_static_water`. `assets` report mounted VMT/VTF
+paths, states, byte counts, SHA256 and directory/VPK origins; VTF `texture` rows
+contain header/framing observations with `layout_scope:"existing_vtf_parser"`.
+`edges` retain owner/key/reference/target, typed role, authored/Patch-effective/SDK
+default origin, state and evidence basis. `issues`, `counters` and `limits`
+describe incomplete inspection.
+
+| `water_dependencies.state` | Meaning |
+| --- | --- |
+| `supported_static_inventory` | The admitted graph is enumerated and required files inspected, with original source identities verified before return. |
+| `unsupported` | Unsupported shader, declaration or texture layout; rows are partial. |
+| `unavailable_source` | Required source missing, unsafe, unreadable, malformed or changed; rows are partial. |
+| `limited` | A bound stopped inspection; rows are partial. |
+| `not_applicable` | Non-Water material; ordinary declarations retain their previous scope. |
+
+`$bottommaterial` and `$underwateroverlay` are material edges, not textures.
+Editor `%tooltexture`, SDK-default `dev/water_normal`, runtime reflection/
+refraction targets and the `env_cubemap` binding have distinct roles. Runtime
+resources require no file lookup. Unknown child shaders and dynamic, conditional,
+ambiguous or cyclic forms cannot yield a supported inventory. Water-only
+failures leave the ordinary source/declaration report available; failed root
+source resolution retains `error` and an unavailable Water state.
+
+The complete graph allows nine VMTs (1 MiB each, 4 MiB total), 64 distinct asset
+lookups including missing paths, 128 edges, 16 issues, 16 MiB per VTF and 64 MiB
+distinct source payload. Source tracking caps both unique physical stamps and
+retained lookup-path rows, including repeats, at 8192. Other parser, depth and
+texture-shape limits are in the report and [manual](material-source.md#water-dependency-inventory).
+Hashes identify first-read bytes; final verification checks their original
+source metadata and mounted lookup identities. The synchronous shared operation
+has no interactive Cancel or latency guarantee. It returns no durable token,
+asset watcher, pixels, rendering readiness, whole-map closure or packing authority;
+it needs no compile, GPU or game.
+
 `preview_material` accepts optional `channel: "color" | "alpha"`, matching
 the material browser's **Color / Alpha** control. Omitted/null selects Color
 and preserves the existing PNG. Alpha outputs opaque `[a,a,a,255]` from that
@@ -2021,7 +2057,7 @@ time. See [Water](water.md#water-pressure-damping).
 
 Use `create_block`, `select_faces` and `edit_faces` to author horizontal structural-world water whose horizontal top and exposed vertical water sides use VMTs declaring their own `$bottommaterial`. Existing `compile_map`, `start_compile` and `run_map` calls resolve material patches and bind each resolved bottom material to the corresponding clipped inward faces. Each generated inward face keeps its authored face's texture/lightmap vectors and surface flags, belongs to submerged leaves and receives no overlays attached to its authored face. The top material remains the water-fog reference; connected lowest-depth metadata and fluid physics retain their existing behavior. `$bottommaterial` names the surface viewed from below, rather than the pool-floor material; `$underwateroverlay` remains a runtime setting of the top material.
 
-A missing `$bottommaterial` leaves a one-sided surface with a warning. An explicitly named missing or malformed target fails without replacing prior output. No new tool or setting is required. Depth-specific material packing, sloped/detail/model liquids, per-pool/player currents, per-pool damping and broader native rendering validation remain unfinished. See [Water](water.md).
+A missing `$bottommaterial` leaves a one-sided surface with a warning. An explicitly named missing or malformed target fails without replacing prior output. No new tool or setting is required. Portable packing of authored water materials/textures, sloped/detail/model liquids, per-pool/player currents, per-pool damping and broader native rendering validation remain unfinished. `get_material_source` provides the read-only one-material Water inventory described above; it does not pack assets. Historical map-local `$waterdepth` aliases remain an unverified consumer question separate from supported depth metadata and missing portable asset packing. See [Water](water.md).
 
 ### Terrain triangle classifications
 

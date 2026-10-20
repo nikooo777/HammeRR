@@ -6,6 +6,11 @@ use source_formats::gamefs::{AssetSourcePaths, GameFs};
 
 use crate::{Control, FileStamp};
 
+mod material_inspection;
+
+pub(crate) use material_inspection::MaterialInspectionIssueKind;
+pub use material_inspection::{CapturedMaterial, MaterialInspectionCapture};
+
 #[derive(Debug, Clone)]
 pub struct AssetSourceGuard {
     stamps: Vec<FileStamp>,

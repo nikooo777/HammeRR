@@ -15,6 +15,38 @@ Create a horizontal world-water volume with connected depth metadata, inward-fac
 
 ![Build settings and diagnostics](images/build-status.png)
 
+## Inspect water material dependencies
+
+Inspect one mounted material's static declaration graph before resolving missing
+content. This does not compile the map or pack its assets.
+
+1. Open **Browse materials…**, select the water material or enter its
+   **Material path**, then click **Source…**.
+2. Read **Resolved shader declaration**, then scroll to **Water dependencies**.
+   Water, Water_DX90 and Water_DX9_HDR use the **CS:S SDK DX90 static Water**
+   model. Read the state and issues before treating the inventory as complete.
+3. Follow **Compiler material** for `$bottommaterial` and **Runtime material**
+   for `$underwateroverlay`; both name VMTs. Normal, color, cubemap and editor
+   preview textures have separate roles. **SDK default** and **Runtime resource**
+   entries identify inferred defaults and resources with no mounted-file lookup.
+4. Read each **File** entry's **Origin**, **SHA256** and **VTF header** where
+   available. Use **Refresh source** after repairing external files, then
+   **Close**. Inspection preserves the map, selection, history and pending edits.
+
+![Water dependency roles, source identities and VTF observations](images/material-source.png)
+
+Limits: a **Supported static inventory** covers only the admitted SDK declaration
+model. **Unsupported inventory**, **Source unavailable** and **Inspection limit
+reached** retain partial rows and explain why inspection could not finish.
+Other child shaders, proxies, conditional forms and unsupported VTF layouts can
+prevent completion without changing compilation admission. Header/framing
+observations do not establish native water appearance, shader availability or
+portability. The call is synchronous, without
+interactive cancellation or a latency guarantee; it returns no durable source
+token or file watcher. See [Material source](material-source.md#water-dependency-inventory)
+for graph, byte and source-tracking limits. MCP `get_material_source` returns
+the same inventory without graphics or a game.
+
 ## Steady physical current
 
 1. Open **World settings…**. Enter `Water current` in **Find a property…**.
@@ -77,4 +109,9 @@ VMFs with explicit `info_overlay_transition` projections can use [Build imported
 
 Agents use the same material and compile operations: `create_block`, `select_faces`, `edit_faces`, `set_compile_settings`, `compile_map` and `start_compile`. Inspect either water field with `get_property_inspector {"world":true}` and stage it through `begin_property_edit`, `update_property_edit` and `commit_property_edit`; `cancel_property_edit` discards it. See [MCP](mcp.md#steady-physical-water-current).
 
-Limits: structural-world water with a visible horizontal top; inward faces cover the top and exposed vertical sides. HammeRR caps their combined generation at four million work units, 65,536 prospective fragments and one million cumulative winding point allocations. Conservative reservations include clipping and merging; exceeding a budget fails the build and preserves previous output. Current input must contain exactly three ASCII-whitespace-separated finite decimal/scientific components in at most 128 UTF-8 bytes, with finite representable native velocity and vector length at most 128 units/s; invalid values or duplicate keys reject atomically. Damping input is one finite ASCII decimal/scientific coefficient in at most 32 bytes, within 0–0.01 before native conversion; a nonzero value must remain nonzero after conversion. Invalid, duplicate or unsupported controls fail explicitly. Either stored control rejects without engine physics, without emitted eligible water, or when retained slime/detail/model liquids are present. Hidden or region-omitted liquids do not supply eligible bodies. Sloped sides, negative-Z bottom faces, depth-specific material packing, per-pool current/damping, player/NPC currents, sloped or enclosed tops and detail/model liquids remain unfinished. Conflicting overlapping liquids fail with a diagnostic. Editor previews use the material's editor texture; they do not render the game's water reflection, refraction or underwater view. In-game appearance depends on the water materials and renderer settings. Material assets must remain available in the game's mounted content. Compile regions must contain the complete water volume.
+Limits: structural-world water with a visible horizontal top; inward faces cover the top and exposed vertical sides. HammeRR caps their combined generation at four million work units, 65,536 prospective fragments and one million cumulative winding point allocations. Conservative reservations include clipping and merging; exceeding a budget fails the build and preserves previous output. Current input must contain exactly three ASCII-whitespace-separated finite decimal/scientific components in at most 128 UTF-8 bytes, with finite representable native velocity and vector length at most 128 units/s; invalid values or duplicate keys reject atomically. Damping input is one finite ASCII decimal/scientific coefficient in at most 32 bytes, within 0–0.01 before native conversion; a nonzero value must remain nonzero after conversion. Invalid, duplicate or unsupported controls fail explicitly. Either stored control rejects without engine physics, without emitted eligible water, or when retained slime/detail/model liquids are present. Hidden or region-omitted liquids do not supply eligible bodies. Sloped sides, negative-Z bottom faces, portable packing of authored water materials/textures, per-pool current/damping, player/NPC currents, sloped or enclosed tops and detail/model liquids remain unfinished. Conflicting overlapping liquids fail with a diagnostic. Editor previews use the material's editor texture; they do not render the game's water reflection, refraction or underwater view. In-game appearance depends on the water materials and renderer settings. Material assets must remain available in the game's mounted content. Compile regions must contain the complete water volume.
+
+Historical map-local `$waterdepth` material aliases are not generated; their
+active consumer remains unverified. That is separate from portable asset
+packing. Existing connected depth and fog metadata remain supported; this does
+not establish that the engine lacks depth semantics.

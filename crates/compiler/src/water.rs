@@ -303,7 +303,7 @@ pub(crate) fn build(
         }
     }
     if !water.records.is_empty() {
-        report.diagnostics.push(Diagnostic::warning("Native liquid leaf and surface metadata compiled; depth-specific material patches, sloped below-water faces and broader CS:S rendering validation remain unfinished", None, None));
+        report.diagnostics.push(Diagnostic::warning("Native liquid leaf and surface metadata compiled; water material assets must remain mounted, portable water asset packing is unavailable, and sloped below-water faces remain unsupported", None, None));
     }
     Ok(water)
 }

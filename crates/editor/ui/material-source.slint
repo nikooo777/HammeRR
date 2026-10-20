@@ -27,12 +27,12 @@ export component MaterialSourceWindow inherits Window {
         Text { text: root.material; wrap: word-wrap; }
         Text { text: "Mounted source and Patch includes"; font-weight: 600; }
         TextEdit { text: root.provenance; read-only: true; wrap: word-wrap; height: 145px; accessible-label: "Material source provenance"; }
-        TextEdit { text: root.resolved; read-only: true; wrap: word-wrap; height: 100px; accessible-label: "Resolved material declarations"; }
+        TextEdit { text: root.resolved; read-only: true; wrap: word-wrap; height: 180px; accessible-label: "Resolved material declarations"; }
         Text { text: root.status; wrap: word-wrap; color: #bac2ce; }
         Text { text: "Selected VMT source"; font-weight: 600; }
         TextEdit { text: root.source; read-only: true; font-family: "monospace"; wrap: word-wrap; vertical-stretch: 1; accessible-label: "Raw VMT source"; }
         Text {
-            text: "Read-only inspection of current mounted files. Shader and texture names are declarations; availability and rendering are not checked. Existing material previews refresh through Reload material assets.";
+            text: "Read-only inspection of current mounted files. Ordinary shader and texture names are declarations. The Water section checks a bounded SDK-qualified file inventory and VTF headers, not rendering or map portability. Material previews refresh separately through Reload material assets.";
             wrap: word-wrap;
             color: #bac2ce;
             font-size: 12px;

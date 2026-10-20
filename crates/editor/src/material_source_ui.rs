@@ -1,6 +1,10 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use compiler::water_dependencies::{
+    self, AssetKind, AssetState, DeclarationOrigin, DependencyRole, EdgeState,
+    WaterDependencyReport, WaterDependencyState,
+};
 use slint::ComponentHandle;
 
 #[cfg(test)]
@@ -14,7 +18,160 @@ pub struct Controller {
     material: Rc<RefCell<String>>,
 }
 
+fn water_state(state: WaterDependencyState) -> &'static str {
+    match state {
+        WaterDependencyState::NotApplicable => "Not applicable",
+        WaterDependencyState::SupportedStaticInventory => "Supported static inventory",
+        WaterDependencyState::Unsupported => "Unsupported inventory",
+        WaterDependencyState::UnavailableSource => "Source unavailable",
+        WaterDependencyState::Limited => "Inspection limit reached",
+    }
+}
+
+fn water_inventory(report: &WaterDependencyReport) -> String {
+    let model_basis = match report.model_basis {
+        "css_sdk_dx90_static_water" => "CS:S SDK DX90 static Water",
+        other => other,
+    };
+    let mut text = format!(
+        "Water dependencies: {} · {} files · {} references · {} issues\nModel basis: {}\nRead: {} materials · {} textures · {:.1} KiB\nLimits: {} materials · {} files · {} references · {} MiB total",
+        water_state(report.state),
+        report.assets.len(),
+        report.edges.len(),
+        report.issues.len(),
+        model_basis,
+        report.counters.material_reads,
+        report.counters.texture_reads,
+        report.counters.source_bytes as f64 / 1024.0,
+        report.limits.material_reads,
+        report.limits.assets,
+        report.limits.edges,
+        report.limits.source_bytes.div_ceil(1024 * 1024),
+    );
+    for issue in &report.issues {
+        text.push_str(&format!(
+            "\n\nIssue [{}]: {}{}{}\n{}",
+            water_state(issue.state),
+            issue.owner,
+            issue
+                .key
+                .as_ref()
+                .map_or_else(String::new, |key| format!(" · {key}")),
+            issue
+                .path
+                .as_ref()
+                .map_or_else(String::new, |path| format!(" · {path}")),
+            issue.message,
+        ));
+    }
+    for edge in &report.edges {
+        let role = match edge.role {
+            DependencyRole::PatchInclude => "Patch include",
+            DependencyRole::NormalTexture => "Normal texture",
+            DependencyRole::ColorTexture => "Color texture",
+            DependencyRole::CubemapTexture => "Cubemap texture",
+            DependencyRole::CompilerMaterial => "Compiler material",
+            DependencyRole::RuntimeMaterial => "Runtime material",
+            DependencyRole::EditorPreviewTexture => "Editor preview texture",
+        };
+        let origin = match edge.origin {
+            DeclarationOrigin::Authored => "Authored",
+            DeclarationOrigin::PatchEffective => "Patch effective",
+            DeclarationOrigin::SdkDefault => "SDK default",
+        };
+        let state = match edge.state {
+            EdgeState::Mounted => "Mounted file",
+            EdgeState::RuntimeResource => "Runtime resource",
+            EdgeState::Disabled => "Disabled",
+            EdgeState::Unsupported => "Unsupported",
+            EdgeState::Missing => "Missing file",
+            EdgeState::Unavailable => "Source unavailable",
+        };
+        let evidence = match edge.evidence_basis {
+            "sdk" => "SDK",
+            "installed_client_and_sdk" => "Installed client and SDK",
+            other => other,
+        };
+        text.push_str(&format!(
+            "\n\n{}: {} · {} = {}\nTarget: {} · {} · {} · Evidence: {}",
+            role,
+            edge.owner,
+            edge.key,
+            edge.reference,
+            edge.target.as_deref().unwrap_or("No mounted-file target"),
+            origin,
+            state,
+            evidence,
+        ));
+    }
+    for asset in &report.assets {
+        let kind = match asset.kind {
+            AssetKind::Material => "VMT",
+            AssetKind::Texture => "VTF",
+        };
+        let state = match asset.state {
+            AssetState::Found => "Inspected",
+            AssetState::Missing => "Missing",
+            AssetState::Unavailable => "Unavailable",
+            AssetState::UnsupportedTexture => "Unsupported texture",
+        };
+        text.push_str(&format!(
+            "\n\nFile: {} · {} · {} · {} bytes\nSHA256: {}",
+            asset.path,
+            kind,
+            state,
+            asset.bytes,
+            asset.sha256.as_deref().unwrap_or("Unavailable"),
+        ));
+        if let Some(origin) = &asset.origin {
+            text.push_str(&format!("\nOrigin: {} · {}", origin.kind, origin.mount));
+            if let Some(file) = &origin.file {
+                text.push_str(&format!("\nFile: {file}"));
+            }
+            if !origin.storage_files.is_empty() {
+                text.push_str(&format!("\nStorage: {}", origin.storage_files.join(", ")));
+            }
+            if origin.paths_truncated {
+                text.push_str("\nOrigin paths truncated for display");
+            }
+        }
+        if let Some(shader) = &asset.shader {
+            text.push_str(&format!("\nShader declaration: {shader}"));
+        }
+        if let Some(texture) = &asset.texture {
+            let depth = texture
+                .authored_depth
+                .map_or_else(|| "implicit one".into(), |depth| depth.to_string());
+            let layout = match texture.layout_scope {
+                "existing_vtf_parser" => "existing VTF parser",
+                other => other,
+            };
+            text.push_str(&format!(
+                "\nVTF header: {} × {} · {} · version {}.{} · depth {} (authored {}) · authored frames {} · first frame {} · faces {} · mips {} · flags {:#x}\nLayout observation: {}",
+                texture.width,
+                texture.height,
+                texture.format,
+                texture.version[0],
+                texture.version[1],
+                texture.depth,
+                depth,
+                texture.authored_frames,
+                texture.first_frame,
+                texture.faces,
+                texture.mip_count,
+                texture.flags,
+                layout,
+            ));
+        }
+    }
+    text
+}
+
 fn present(window: &MaterialSourceWindow, report: Report) {
+    let show_water = report
+        .resolved
+        .as_ref()
+        .is_some_and(|resolved| water_dependencies::is_water_shader(&resolved.shader));
     window.set_material(format!("{} · {}", report.material, report.vmt_path).into());
     let provenance = report
         .files
@@ -56,47 +213,47 @@ fn present(window: &MaterialSourceWindow, report: Report) {
         }
         .into(),
     );
-    window.set_resolved(
-        report
-            .resolved
-            .map_or_else(
-                || "Material declarations could not be resolved.".into(),
-                |resolved| {
-                    let textures = resolved
-                        .texture_parameters
-                        .iter()
-                        .map(|texture| {
-                            format!(
-                                "{} = {}{}",
-                                texture.parameter,
-                                texture.value,
-                                if texture.truncated {
-                                    "… [truncated]"
-                                } else {
-                                    ""
-                                }
-                            )
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n");
+    let mut resolved = report.resolved.map_or_else(
+        || "Material declarations could not be resolved.".into(),
+        |resolved| {
+            let textures = resolved
+                .texture_parameters
+                .iter()
+                .map(|texture| {
                     format!(
-                        "Resolved shader declaration: {}{}\n{}",
-                        resolved.shader,
-                        if resolved.shader_truncated {
+                        "{} = {}{}",
+                        texture.parameter,
+                        texture.value,
+                        if texture.truncated {
                             "… [truncated]"
                         } else {
                             ""
-                        },
-                        if textures.is_empty() {
-                            "No recognized texture parameters declared.".into()
-                        } else {
-                            textures
                         }
                     )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!(
+                "Resolved shader declaration: {}{}\n{}",
+                resolved.shader,
+                if resolved.shader_truncated {
+                    "… [truncated]"
+                } else {
+                    ""
                 },
+                if textures.is_empty() {
+                    "No recognized texture parameters declared.".into()
+                } else {
+                    textures
+                }
             )
-            .into(),
+        },
     );
+    if show_water {
+        resolved.push_str("\n\n");
+        resolved.push_str(&water_inventory(&report.water_dependencies));
+    }
+    window.set_resolved(resolved.into());
     let mut status = report.error.map_or_else(
         || "Source and Patch declarations resolved.".into(),
         |error| {
@@ -115,6 +272,13 @@ fn present(window: &MaterialSourceWindow, report: Report) {
             " Showing the first {} source bytes of {}.",
             report.raw_source.as_ref().map_or(0, String::len),
             report.raw_source_bytes
+        ));
+    }
+    if show_water {
+        status.push_str(&format!(
+            " Water dependencies: {} ({} issues).",
+            water_state(report.water_dependencies.state),
+            report.water_dependencies.issues.len(),
         ));
     }
     window.set_status(status.into());

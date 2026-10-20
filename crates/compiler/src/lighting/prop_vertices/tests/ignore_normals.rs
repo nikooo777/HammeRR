@@ -324,7 +324,7 @@ fn absent_and_explicit_zero_keep_exact_dual_channel_bytes_at_every_supported_dep
 }
 
 #[test]
-fn positive_depth_mixed_receivers_fail_atomically_but_opt_out_retains_ordinal_hole() {
+fn positive_depth_mixed_modes_keep_normal_bytes_and_atomic_dx_failure_with_opt_out() {
     let mut vmf = fixtures::scene(true);
     let (directory, game) = measured_game(&mut vmf);
     prop(&mut vmf, 9103).properties.set("ignorenormals", "1");
@@ -335,8 +335,49 @@ fn positive_depth_mixed_receivers_fail_atomically_but_opt_out_retains_ordinal_ho
     std::fs::write(&destination, b"previous complete output").unwrap();
     std::fs::write(&pointfile, b"previous pointfile").unwrap();
     for bounces in 1..=4 {
-        let failed = crate::compile_with_options(
+        let mut normal = vmf.clone();
+        prop(&mut normal, 9103).properties.set("ignorenormals", "0");
+        let normal = crate::compile_with_options(
+            &normal,
+            &game,
+            Options {
+                bounces,
+                ..options(true)
+            },
+        );
+        assert!(!normal.report.has_errors(), "{:?}", normal.report);
+        let output = crate::compile_with_options(
             &vmf,
+            &game,
+            Options {
+                bounces,
+                ..options(true)
+            },
+        );
+        assert!(!output.report.has_errors(), "{:?}", output.report);
+        let bsp = output.bsp.as_ref().unwrap();
+        assert_eq!(
+            manifest(bsp)
+                .receivers
+                .iter()
+                .map(|receiver| receiver.ordinal)
+                .collect::<Vec<_>>(),
+            [0, 2]
+        );
+        for name in ["sp_0.vhv", "sp_hdr_0.vhv"] {
+            assert_eq!(
+                payload(bsp, name),
+                payload(normal.bsp.as_ref().unwrap(), name)
+            );
+        }
+        assert_eq!(vmf, before);
+        let mut unsupported = vmf.clone();
+        prop(&mut unsupported, 9103)
+            .properties
+            .set("mindxlevel", "80");
+        let unsupported_before = unsupported.clone();
+        let failed = crate::compile_with_options(
+            &unsupported,
             &game,
             Options {
                 bounces,
@@ -351,9 +392,7 @@ fn positive_depth_mixed_receivers_fail_atomically_but_opt_out_retains_ordinal_ho
                 .iter()
                 .any(
                     |diagnostic| diagnostic.object.as_deref() == Some("entity:9103")
-                        && diagnostic
-                            .message
-                            .contains("ignorenormals require Direct only")
+                        && diagnostic.message.contains("unrestricted prop DX levels")
                 ),
             "{:?}",
             failed.report
@@ -364,8 +403,8 @@ fn positive_depth_mixed_receivers_fail_atomically_but_opt_out_retains_ordinal_ho
             b"previous complete output"
         );
         assert_eq!(std::fs::read(&pointfile).unwrap(), b"previous pointfile");
-        assert_eq!(vmf, before);
-        let mut disabled = vmf.clone();
+        assert_eq!(unsupported, unsupported_before);
+        let mut disabled = unsupported;
         prop(&mut disabled, 9103)
             .properties
             .set("disablevertexlighting", "1");
@@ -402,10 +441,11 @@ fn positive_depth_mixed_receivers_fail_atomically_but_opt_out_retains_ordinal_ho
 }
 
 #[test]
-fn positive_depth_preflight_precedes_all_receiver_companion_and_material_reads() {
+fn flagged_dx_admission_precedes_receiver_companion_and_material_reads() {
     let (directory, game) = fixtures::game();
-    let mut vmf = fixtures::scene(true);
-    prop(&mut vmf, 9103).properties.set("ignorenormals", "1");
+    let mut vmf = fixtures::scene(false);
+    flag(&mut vmf);
+    prop(&mut vmf, 9101).properties.set("mindxlevel", "80");
     let mut bsp = crate::compile_with_options(&vmf, &game, Options::default())
         .bsp
         .unwrap();
@@ -448,7 +488,6 @@ fn positive_depth_preflight_precedes_all_receiver_companion_and_material_reads()
             Settings {
                 vmf: &vmf,
                 prop_sources: &props.sources,
-                bounces: 1
             },
             tracker,
             &bsp,
@@ -462,10 +501,8 @@ fn positive_depth_preflight_precedes_all_receiver_companion_and_material_reads()
             .diagnostics
             .iter()
             .any(
-                |diagnostic| diagnostic.object.as_deref() == Some("entity:9103")
-                    && diagnostic
-                        .message
-                        .contains("ignorenormals require Direct only")
+                |diagnostic| diagnostic.object.as_deref() == Some("entity:9101")
+                    && diagnostic.message.contains("unrestricted prop DX levels")
             ),
         "{report:?}"
     );

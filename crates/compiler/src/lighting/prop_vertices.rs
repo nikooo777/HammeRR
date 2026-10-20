@@ -22,6 +22,7 @@ use crate::{tree::Tree, visibility::Visibility};
 
 mod assets;
 mod color;
+mod indirect;
 #[cfg(test)]
 mod tests;
 
@@ -73,7 +74,6 @@ pub(super) struct Indirect<'a> {
 pub(super) struct Settings<'a> {
     pub vmf: &'a Vmf,
     pub prop_sources: &'a [usize],
-    pub bounces: u8,
 }
 
 fn source(vmf: &Vmf, id: usize) -> Result<&Entity, String> {
@@ -169,11 +169,7 @@ pub(super) fn prepare(
     report: &mut Report,
     budget: &mut Budget<'_>,
 ) -> Result<Option<Prepared>, String> {
-    let Settings {
-        vmf,
-        prop_sources,
-        bounces,
-    } = settings;
+    let Settings { vmf, prop_sources } = settings;
     let start = budget.work();
     let Some(lump) = bsp.game_lumps.iter().find(|lump| lump.id == *b"sprp") else {
         if !prop_sources.is_empty() {
@@ -203,19 +199,6 @@ pub(super) fn prepare(
         return Err("Baked prop vertices exceed their 1,024 receiver limit; explicitly disable vertex lighting on other props".into());
     }
     unstyled(map, report, budget)?;
-    if bounces > 0 {
-        for (prop, &source_id) in props.props.iter().zip(prop_sources) {
-            budget.consume(1)?;
-            if prop.flags & DISABLED == 0 && prop.flags & IGNORE_NORMALS != 0 {
-                report.diagnostics.push(Diagnostic::error(
-                    "Baked prop vertices with ignorenormals require Direct only (zero diffuse bounces); remove ignorenormals or explicitly disablevertexlighting",
-                    Some(format!("entity:{source_id}")),
-                    Some(DVec3::from_array(prop.origin.map(f64::from))),
-                ));
-                return Err("Static-prop vertex receiver preparation failed".into());
-            }
-        }
-    }
     let mut assets = assets::Assets::new(tracker);
     let mut allocation = budget.reserve_bytes(
         count * size_of::<BoundReceiver>()
@@ -488,13 +471,26 @@ pub(super) fn bake_channel(
     } else {
         Vec::new()
     };
-    let cone = if directions.is_empty() {
-        0.0
+    let normal_cone = indirect::cone(super::ReceiverAngularMode::Normal, directions.len());
+    let sphere_cone = if indirect.is_some() {
+        indirect::cone(
+            super::ReceiverAngularMode::IgnoreNormals,
+            ctx.direct.ambient_directions.len(),
+        )
     } else {
-        (1.0 - 1.0 / directions.len() as f64).acos().tan()
+        0.0
     };
     for receiver in &prepared.receivers {
         budget.consume(1)?;
+        let angular = if receiver.prop.flags & IGNORE_NORMALS != 0 {
+            super::ReceiverAngularMode::IgnoreNormals
+        } else {
+            super::ReceiverAngularMode::Normal
+        };
+        let cone = match angular {
+            super::ReceiverAngularMode::Normal => normal_cone,
+            super::ReceiverAngularMode::IgnoreNormals => sphere_cone,
+        };
         let data = &prepared.models[receiver.model];
         let placement = Placement::new(&receiver.prop);
         let _cache = budget.reserve::<Option<vhv::Bgra8>>(data.model.vertices.len())?;
@@ -531,11 +527,6 @@ pub(super) fn bake_channel(
                                 )?;
                                 let skipped_owner = (receiver.prop.flags & NO_SELF_SHADOW != 0)
                                     .then_some(receiver.metadata.ordinal);
-                                let angular = if receiver.prop.flags & IGNORE_NORMALS != 0 {
-                                    super::ReceiverAngularMode::IgnoreNormals
-                                } else {
-                                    super::ReceiverAngularMode::Normal
-                                };
                                 let mut colors = receivers::direct_with_reception(
                                     &ctx.direct,
                                     candidates,
@@ -549,9 +540,11 @@ pub(super) fn bake_channel(
                                     budget,
                                 )?;
                                 if let Some(indirect) = &indirect {
-                                    colors[0] += super::bounce::gather(
+                                    colors[0] += indirect::gather(
+                                        angular,
                                         normal,
                                         &directions,
+                                        ctx.direct.ambient_directions,
                                         &mut |direction| {
                                             let hit = indirect
                                                 .surfaces

@@ -111,9 +111,9 @@ python3 -B scripts/validate_prop_vertex_lighting.py \
 
 The compiler cases cover independent linear/color oracles, full-sphere sky
 visibility, real blockers, native LOD/ordinal output, original-point admission,
-source lifetime and positive-depth refusal. The optional MCP control authors
-the existing prop property, checks foreground/background publication, exact
-absent/zero/restored output and preservation on refusal without initializing
+source lifetime and spherical diffuse reception. The optional MCP control authors
+the existing prop property, checks foreground/background publication at depths zero through four, current owned hardware-color pages, exact
+absent/zero/restored output and preservation on unsupported DX refusal without initializing
 graphics. Reuse the prepared fixture described under static-prop validation;
 choose an absent output path. Native rendering remains a separate check.
 
@@ -334,6 +334,23 @@ This retains the same dependency feature unification across core and desktop
 tests and avoids rebuilding the core under another feature combination.
 The generated `editor-ui` crate has no tests; the `editor` tests compile its
 bindings. Skip a standalone `editor-ui --all-targets` test pass.
+
+Independent spherical reflected-transfer check:
+
+```sh
+python3 -B scripts/validate_prop_spherical_lighting.py \
+  --binary target/debug/hammerr-compile \
+  --output target/validation/prop-spherical-lighting
+```
+
+This builds a bounded six-face fixture at Fast sampling, reads separately
+published world-only passes zero through four and independently predicts
+spherical prop transfer. It requires quantized separation from wrong pass,
+doubled direct, unit-sphere and hemisphere policies before comparing three
+valid ignored-normal orientations and ordinary controls in both channels.
+The existing floor-depth reference remains a separate check. This validates
+receiver transfer from the published world fields, not the world solver or
+native appearance.
 
 ### Document-bound UI actions
 

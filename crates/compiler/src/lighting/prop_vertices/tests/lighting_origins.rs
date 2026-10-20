@@ -368,37 +368,22 @@ fn invalid_helpers_precede_opt_out_and_ignore_normals_preserves_native_origins()
                 ..options(false)
             },
         );
-        if bounces == 0 {
-            assert!(!result.report.has_errors(), "{:?}", result.report);
-            let bsp = result.bsp.as_ref().unwrap();
-            let prop = &bsp.static_props().unwrap().unwrap().props[0];
-            assert_eq!(prop.flags & (2 | 8 | 64), 2 | 8);
-            assert_eq!(prop.lighting_origin, [64.0, 0.0, 64.0]);
-            let payloads = [payload(bsp, "sp_0.vhv")];
-            receiver(&mut source).properties.remove("lightingorigin");
-            source
-                .entities
-                .retain(|entity| entity.classname() != Some("info_lighting"));
-            let ordinary = bake(&source, &game, bounces, false);
-            assert_eq!(
-                payloads,
-                [payload(ordinary.bsp.as_ref().unwrap(), "sp_0.vhv")]
-            );
-            set_origin(&mut source, [64.0, 0.0, 64.0]);
-        } else {
-            assert!(result.bsp.is_none());
-            assert!(
-                result.report.diagnostics.iter().any(|diagnostic| {
-                    diagnostic.object.as_deref() == Some("entity:9101")
-                        && diagnostic
-                            .message
-                            .contains("ignorenormals require Direct only")
-                        && !diagnostic.message.contains("lightingorigin")
-                }),
-                "{:?}",
-                result.report
-            );
-        }
+        assert!(!result.report.has_errors(), "{:?}", result.report);
+        let bsp = result.bsp.as_ref().unwrap();
+        let prop = &bsp.static_props().unwrap().unwrap().props[0];
+        assert_eq!(prop.flags & (2 | 8 | 64), 2 | 8);
+        assert_eq!(prop.lighting_origin, [64.0, 0.0, 64.0]);
+        let payloads = [payload(bsp, "sp_0.vhv")];
+        receiver(&mut source).properties.remove("lightingorigin");
+        source
+            .entities
+            .retain(|entity| entity.classname() != Some("info_lighting"));
+        let ordinary = bake(&source, &game, bounces, false);
+        assert_eq!(
+            payloads,
+            [payload(ordinary.bsp.as_ref().unwrap(), "sp_0.vhv")]
+        );
+        set_origin(&mut source, [64.0, 0.0, 64.0]);
         receiver(&mut source)
             .properties
             .set("disablevertexlighting", "1");

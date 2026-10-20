@@ -12,6 +12,7 @@ mod ignore_normals;
 mod indirect_sources;
 mod lighting_origins;
 mod source_identity;
+mod spherical_indirect;
 
 fn options(dual: bool) -> Options {
     Options {

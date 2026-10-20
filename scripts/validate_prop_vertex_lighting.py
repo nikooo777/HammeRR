@@ -352,6 +352,8 @@ def validate_ignore_normals(client, args, game, source, ids, props, report):
     original_value = dict(original_props[1]["properties"]).get("ignorenormals")
     require(original_value in (None, "0"), "IgnoreNormals control requires an initially normal-sensitive receiver")
     restore = {"remove": ["ignorenormals"]} if original_value is None else {"set": {"ignorenormals": original_value}}
+    original_dx = dict(original_props[1]["properties"]).get("mindxlevel")
+    restore_dx = {"remove": ["mindxlevel"]} if original_dx is None else {"set": {"mindxlevel": original_dx}}
     preserved = {path: path.read_bytes() for path in args.output.glob("*.bsp")}
     saved_recipes = {row["name"]: row["id"] for row in client.call("get_build_recipes")["recipes"]}
     cases = {}
@@ -369,20 +371,55 @@ def validate_ignore_normals(client, args, game, source, ids, props, report):
             path, flagged, result = compile_pair(client, args, source, ids, f"ignore-normals-{mode}-flagged", True)
             verified = verify_output(args, game, flagged, result["stats"], channels)
             measurements = compare_ignore_normals(baseline, flagged, channels)
-            rejected = {}
+            depths = {}
             for bounces in (1, 2, 3, 4):
                 client.call("set_compile_settings", {"bounces": bounces})
-                rejected[str(bounces)] = rejected_compile(client, path, source, ids, props[1], "ignorenormals require Direct only")
+                client.call("set_entity_properties", {"id": props[1], "set": {"ignorenormals": "0"}})
+                _, normal, _ = compile_pair(client, args, source, ids, f"ignore-normals-{mode}-N{bounces}-normal", True)
+                client.call("set_entity_properties", {"id": props[1], "set": {"ignorenormals": "1"}})
+                depth_name = f"ignore-normals-{mode}-N{bounces}-flagged"
+                depth_path, depth_data, depth_result = compile_pair(client, args, source, ids, depth_name, True)
+                depth_verified = verify_output(args, game, depth_data, depth_result["stats"], channels)
+                difference = compare_ignore_normals(normal, depth_data, channels)
+                require(depth_result["stats"]["bounces"] == bounces and
+                        (mode != "direct_ldr_hdr" or depth_result["stats"]["hdr"]["bounces"] == bounces),
+                        "IgnoreNormals did not execute the requested world pass depth")
+                owned = args.output / f"{depth_name}-background.bsp"
+                observed = inspect_readonly(client, source, ids, owned, {"vertex_limit": 2})
+                require(observed["build"]["status"] == "current" and observed["historical"] is False,
+                        "New spherical bake is not available as a current owned build")
+                entries = pak_and_flags(depth_data)[0]
+                receiver = depth_verified["manifest"]["receivers"][0]
+                pages = {}
+                for channel in channels:
+                    page = inspect_readonly(client, source, ids, owned,
+                                            {"build_token": observed["build"]["token"], "prop": 1,
+                                             "channel": channel, "vertex_limit": 2})
+                    name = f"sp_{'hdr_' if channel == 'hdr' else ''}1.vhv"
+                    _, colors = read_vhv(entries[name], receiver["checksum"], receiver["meshes"])
+                    count = min(2, receiver["meshes"][0]["vertex_count"])
+                    require(len(page["vertices"]["rows"]) == count and
+                            [row["bgra8"] for row in page["vertices"]["rows"]] == [list(color) for color in colors[:count]],
+                            "Spherical receiver inspection differs from actual packed hardware colors")
+                    pages[channel] = {"path": page["selected"]["path"], "sha256": page["selected"]["sha256"],
+                                      "rows": len(page["vertices"]["rows"])}
+                client.call("set_entity_properties", {"id": props[1], "set": {"mindxlevel": "90"}})
+                rejected = rejected_compile(client, depth_path, source, ids, props[1], "unrestricted prop DX levels")
+                client.call("set_entity_properties", {"id": props[1], **restore_dx})
+                depths[str(bounces)] = {"artifact": str(depth_path), "bsp_sha256": depth_verified["bsp_sha256"],
+                                        "channels": difference, "inspection": pages,
+                                        "unsupported_receiver_rejected": not rejected["success"]}
             client.call("set_compile_settings", {"bounces": 0})
             client.call("set_entity_properties", {"id": props[1], **restore})
             _, restored, _ = compile_pair(client, args, source, ids, f"ignore-normals-{mode}-restored", True)
             require(restored == baseline and detail(client, props) == original_props and source.read_bytes() == original_source,
                     "IgnoreNormals failed to restore exact output/properties or changed saved source bytes")
             cases[mode] = {"artifact": str(path), "bsp_sha256": verified["bsp_sha256"], "channels": measurements,
-                           "positive_depth_rejections": rejected, "default_and_explicit_zero_match": True,
+                           "diffuse_depths": depths, "default_and_explicit_zero_match": True,
                            "default_restored_exactly": True, "source_closure_unchanged": True}
     finally:
         client.call("set_entity_properties", {"id": props[1], **restore})
+        client.call("set_entity_properties", {"id": props[1], **restore_dx})
         client.call("apply_build_recipe", {"id": original_settings["recipe"]["id"]})
     require(client.call("get_compile_settings") == original_settings and detail(client, props) == original_props
             and source.read_bytes() == original_source, "IgnoreNormals controls failed to restore settings/properties/source")
@@ -906,7 +943,7 @@ def main():
     parser.add_argument("--material", help="Optional selected receiver materials/...vmt to shadow for rejection; auto-detected only when unambiguous")
     parser.add_argument("--origin-z", type=float, default=48.0, help="Receiver origin height; use the fixture's exact minimum-Z offset to check floor contact")
     parser.add_argument("--self-shadow-control", action="store_true", help="Check positive own-occlusion using the exact grounded wood_crate001a companions; requires --origin-z 20.01078987121582")
-    parser.add_argument("--ignore-normals-control", action="store_true", help="Author IgnoreNormals through shared property operations; compare N0 foreground/background colors and exact default/zero restoration, reject depths 1..4 without replacing output or changing source/history, preserve every existing artifact and avoid graphics")
+    parser.add_argument("--ignore-normals-control", action="store_true", help="Author IgnoreNormals through shared property operations; compare foreground/background colors at depths 0..4, exact default/zero restoration and current owned hardware-color inspection, retain atomic unsupported-receiver rejection and preserve every existing artifact without graphics")
     parser.add_argument("--one-bounce-control", action="store_true", help="Build, reject incompatible depths, clear and restore one-bounce prop lighting in both channels using the private measured wall VTF")
     parser.add_argument("--lighting-origin-control", action="store_true", help="Author a native info_lighting point through MCP; require unchanged N0/N1 dual-channel VHV at open and solid-floor points, exact native metadata, missing-helper refusal and restoration")
     parser.add_argument("--bounce-depth-control", action="store_true", help="Publish depths 2/3/4 in both channels through foreground/background MCP, verify complete assets, invalid-depth preservation and exact recipe restoration, then persist/restart depth 4")

@@ -57,7 +57,6 @@ fn replacing_a_valid_model_after_leaf_emission_rejects_the_old_receiver_snapshot
             Settings {
                 vmf: &vmf,
                 prop_sources: &props.sources,
-                bounces: 0,
             },
             tracker,
             &bsp,

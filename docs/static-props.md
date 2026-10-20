@@ -92,21 +92,19 @@ Agents create the same helper with `create_entity` and bind it with
 
 1. Select the static prop and enable **Advanced properties**.
 2. Set **Property key** to `ignorenormals` and **Value** to `1`, then press Enter. Remove the override or set `0` for normal-facing reception.
-3. Open **Build settings…**, choose **Indirect light → Direct only** and enable
+3. Open **Build settings…**, choose **Indirect light → Direct only** or one to four diffuse bounces and enable
    **Bake static-prop vertex lighting**. Choose **Build lighting → Direct LDR** or **Direct LDR + HDR**.
 4. Click **Close**, then **Compile**. Read **Build details… → Diagnostics** if
    the receiver is unsupported.
 
 Point, spot and sun reception uses a constant angular factor of 0.35 while
 retaining falloff, spotlight emission cones and actual shadow rays. Sky ambient
-uses a full-sphere visibility mean without that factor. The separate
+uses a full-sphere visibility mean without that factor. At positive depths, reflected light uses full-sphere sampling with SDK angular normalization, receiving the preceding world/terrain pass and adding direct light once. The separate
 `disableselfshadowing` choice still controls only the receiver's own shadows.
 Agents set the same property with `set_entity_properties` and use shared compile
 settings; `get_compile_settings` describes the supported receiver limits.
 
-Limits: active ignored-normal receivers require zero diffuse bounces. Positive
-bounce depths reject before publication; choose **Direct only**, remove
-`ignorenormals` or explicitly set `disablevertexlighting` to `1`. Finite nonzero
+Limits: zero to four diffuse bounces are supported. The spherical reflected kernel differs from a unit visibility average; this is an angular policy, not full VRAD parity. Finite nonzero
 model normals, original-point contact/burial rules, opaque materials, source
 guards, native ordinals and hardware-section limits remain the same. This does
 not enable VTX morph strip groups or change normal-facing world/terrain lighting.

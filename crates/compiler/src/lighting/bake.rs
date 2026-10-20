@@ -821,7 +821,6 @@ pub(crate) fn bake(
             super::prop_vertices::Settings {
                 vmf: settings.vmf,
                 prop_sources: settings.prop_sources,
-                bounces: options.bounces,
             },
             prop_assets
                 .take()

@@ -531,7 +531,7 @@ static-prop shadow controls.
    **Three diffuse bounces** or **Four diffuse bounces**, then enable
    **Bake static-prop vertex lighting**. Incompatible lighting or bounce
    changes are refused without changing either setting.
-   For a prop with `ignorenormals` set to `1`, choose **Direct only**.
+   Props with `ignorenormals` set to `1` support the same zero-to-four bounce choices.
 3. Click **Close**, then **Compile** or **Run Map**. Unsupported requested
    receivers stop the build and preserve the previous BSP.
 4. Open **Build details…** after a successful build. **Static-prop vertex
@@ -564,16 +564,13 @@ requested build. Set a prop's `disablevertexlighting` to `1` in
 and collision settings stay independent. Per-texel prop lightmaps and reflected
 prop sources remain unavailable.
 
-With **Indirect light → Direct only**, use **Advanced properties → Property
-key / Value** to set `ignorenormals` to `1` on a prop. Point, spot and sun
+Use **Advanced properties → Property key / Value** to set `ignorenormals` to `1` on a prop with any supported **Indirect light** choice. Point, spot and sun
 reception then uses a constant angular factor of 0.35, retaining distance
 falloff, the spotlight's emission cone and every real shadow. Sky ambient
 averages visibility over the full sphere, without that 0.35 factor. Samples
 stay at actual vertices; finite nonzero model normals remain required.
 `ignorenormals` does not change the separate self-shadow choice. Absence or
-`0` retains normal-facing reception. An active receiver with `ignorenormals`
-set to `1` rejects every positive bounce depth before publication; choose
-**Direct only**, remove the property or set `disablevertexlighting` to `1`.
+`0` retains normal-facing reception. At positive depths, ignored normals use spherical reflected reception with SDK angular normalization. Every sampled direction counts, including blocked and missed rays. The gather uses the same preceding world/terrain pass and adds direct light once; this is distinct from the unit sky-ambient visibility mean and does not claim full VRAD parity.
 
 **Indirect light** supports zero to four diffuse bounces. At depth N above zero,
 prop reception uses the world/terrain result after N−1 bounces and adds direct

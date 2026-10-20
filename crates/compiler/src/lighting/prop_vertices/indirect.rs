@@ -52,6 +52,41 @@ mod tests {
     use crate::SkyQuality;
 
     #[test]
+    fn both_prop_reception_kernels_gather_actual_transmitted_source_hits() {
+        let control = crate::Control::default();
+        let mut budget = super::super::Budget::new(&control);
+        let (surfaces, shadows, props) =
+            super::super::super::radiance::receiver_tests::transmitted_source(&mut budget);
+        let hemisphere = super::super::super::bounce::directions(32);
+        let sphere = super::super::super::sky::ambient_directions(SkyQuality::Fast);
+        for (mode, expected) in [
+            (
+                ReceiverAngularMode::Normal,
+                DVec3::new(0.7490196078431373, 0.3759784698193003, 0.18798923490965015),
+            ),
+            (
+                ReceiverAngularMode::IgnoreNormals,
+                DVec3::new(1.0592838851928694, 0.5317189698223032, 0.2658594849111516),
+            ),
+        ] {
+            let color = gather(mode, -DVec3::Z, &hemisphere, &sphere, &mut |direction| {
+                Ok(surfaces
+                    .trace(
+                        DVec3::Z * 16.0,
+                        direction,
+                        0.0,
+                        &shadows,
+                        &props,
+                        &mut budget,
+                    )?
+                    .map_or(DVec3::ZERO, |hit| hit.color))
+            })
+            .unwrap();
+            assert!(color.abs_diff_eq(expected, 1e-12), "{color:?}");
+        }
+    }
+
+    #[test]
     fn sdk_sphere_normalization_keeps_all_rays_and_ignores_valid_normal_orientation() {
         assert_eq!((IGNORE_NORMALS_NORMALIZATION as f32).to_bits(), 0x3eb5_0481);
         for quality in [SkyQuality::Fast, SkyQuality::Balanced, SkyQuality::Detailed] {

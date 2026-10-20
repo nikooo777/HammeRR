@@ -123,6 +123,32 @@ fn direct(
     )
 }
 
+fn ambient(
+    surfaces: &super::radiance::SurfaceIndex,
+    point: DVec3,
+    cone: f64,
+    directions: &[DVec3],
+    shadows: &ShadowIndex<Occluder>,
+    props: &ShadowIndex<super::props::PropTriangle>,
+    budget: &mut Budget<'_>,
+) -> Result<[DVec3; STYLE_COUNT], String> {
+    let mut colors = [DVec3::ZERO; STYLE_COUNT];
+    for &direction in directions {
+        budget.consume(1)?;
+        if let Some(hit) = surfaces.trace(point, direction, cone, shadows, props, budget)? {
+            for (style, value) in surfaces.styled_colors(&hit, cone, budget)? {
+                if style != 255 {
+                    let slot = colors
+                        .get_mut(usize::from(style))
+                        .ok_or("Detail lighting style exceeds native range 1–63")?;
+                    *slot += value;
+                }
+            }
+        }
+    }
+    Ok(colors)
+}
+
 pub(super) fn bake(
     ctx: &Context<'_>,
     bsp: &mut Bsp,
@@ -189,22 +215,15 @@ pub(super) fn bake(
                 "Named detail lighting origin must lie in open visible world space; helpers outside a sealed compile region remain referenced but cannot be sampled. Enlarge the region or disable it".into()
             } else {error}
         })?;
-        let mut ambient = [DVec3::ZERO; STYLE_COUNT];
-        for &direction in ctx.directions {
-            budget.consume(1)?;
-            if let Some(hit) =
-                surfaces.trace(point, direction, cone, ctx.shadows, ctx.props, budget)?
-            {
-                for (style, value) in surfaces.styled_colors(&hit, cone, budget)? {
-                    if style != 255 {
-                        let slot = ambient
-                            .get_mut(usize::from(style))
-                            .ok_or("Detail lighting style exceeds native range 1–63")?;
-                        *slot += value;
-                    }
-                }
-            }
-        }
+        let ambient = ambient(
+            &surfaces,
+            point,
+            cone,
+            ctx.directions,
+            ctx.shadows,
+            ctx.props,
+            budget,
+        )?;
         budget.consume(STYLE_COUNT)?;
         let ambient_scale = LIGHTING_SCALE / ctx.directions.len() as f64;
         details.props[index].lighting =
@@ -360,6 +379,38 @@ fn check_native_sum(base: RgbExp32, extras: &[DetailPropLighting]) -> Result<(),
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detail_ambient_retains_fractional_base_and_extra_style_radiance_once() {
+        let control = crate::Control::default();
+        let mut budget = Budget::new(&control);
+        let (surfaces, shadows, props) =
+            super::super::radiance::receiver_tests::transmitted_source(&mut budget);
+        let colors = ambient(
+            &surfaces,
+            DVec3::Z * 16.0,
+            0.0,
+            &[-DVec3::Z],
+            &shadows,
+            &props,
+            &mut budget,
+        )
+        .unwrap();
+        assert!((colors[0] * 255.0).abs_diff_eq(
+            DVec3::new(191.0, 95.87450980392157, 47.937254901960784),
+            1e-12
+        ));
+        assert!((colors[7] * 255.0).abs_diff_eq(
+            DVec3::new(47.937254901960784, 95.87450980392157, 143.81176470588235),
+            1e-12
+        ));
+        assert!(
+            colors
+                .iter()
+                .enumerate()
+                .all(|(index, color)| index == 0 || index == 7 || *color == DVec3::ZERO)
+        );
+    }
     use source_formats::bsp::DetailSprite;
 
     #[test]

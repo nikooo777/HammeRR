@@ -65,7 +65,7 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | [Model detail props](model-detail-props.md) | Explicit decorative models compiled without collision |
 | [Explicit detail sprites](detail-sprites.md) | Place scaled atlas cards or fixed cross/tri shapes with optional sway |
 | [Material detail scattering](material-detail-scattering.md) | Generate decorative models and sprites from ground materials when building |
-| [Static-prop shadows](prop-shadows.md) | Opaque and requested alpha-test model blockers, shadow flags and material limits |
+| [Static-prop shadows](prop-shadows.md) | Opaque, alpha-test and requested translucent model shadows, shadow flags and material limits |
 | [Occluders](occluders.md) | Compiling static visibility blockers and their native activation records |
 | [Visibility clusters](visclusters.md) | Group dry open leaves conservatively without merging geometry or ambient samples |
 | [Build recipes](build-recipes.md) | Recalling Fast preview, Final lighting and named custom compiler settings |

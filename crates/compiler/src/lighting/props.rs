@@ -23,6 +23,8 @@ const NO_SHADOW: u32 = 0x10;
 const CAST_TEXTURE_SHADOWS: u32 = 0x0004_0000;
 
 mod alpha;
+#[cfg(test)]
+pub(super) use alpha::fractional_triangle;
 
 #[derive(Debug, Default)]
 pub(crate) struct Stats {
@@ -77,6 +79,21 @@ impl PropTriangle {
             .sum::<DVec2>();
         Ok(material.blocks(uv)?.then_some(fraction))
     }
+
+    fn coverage(&self, start: DVec3, end: DVec3) -> Result<u8, String> {
+        let Some((_, weights)) = self.triangle.intersection(start, end)? else {
+            return Ok(0);
+        };
+        let Some((material, coordinates)) = &self.alpha else {
+            return Ok(255);
+        };
+        let uv = coordinates
+            .iter()
+            .zip(weights)
+            .map(|(point, weight)| *point * weight)
+            .sum();
+        material.coverage(uv)
+    }
 }
 
 impl ShadowObject for PropTriangle {
@@ -93,9 +110,45 @@ impl ShadowObject for PropTriangle {
     fn intersects(&self, start: DVec3, end: DVec3) -> Result<bool, String> {
         Ok(self.fraction(start, end)?.is_some())
     }
+
+    fn fractional(&self) -> bool {
+        self.alpha
+            .as_ref()
+            .is_some_and(|(material, _)| material.fractional())
+    }
 }
 
 impl ShadowIndex<PropTriangle> {
+    pub(super) fn visibility_skipping_owner(
+        &self,
+        start: DVec3,
+        end: DVec3,
+        skip_owner: Option<u32>,
+        consume: &mut impl FnMut(usize) -> Result<(), String>,
+    ) -> Result<f64, String> {
+        if !self.has_fractional() {
+            return Ok(
+                if self.blocked_skipping_owner(start, end, skip_owner, consume)? {
+                    0.0
+                } else {
+                    1.0
+                },
+            );
+        }
+        let mut coverage = 0_u8;
+        self.visit(start, end, consume, &mut |triangle| {
+            if skip_owner.is_none() || triangle.owner != skip_owner {
+                coverage = coverage.saturating_add(triangle.coverage(start, end)?);
+            }
+            Ok(if coverage == 255 {
+                super::shadows::Visit::Stop
+            } else {
+                super::shadows::Visit::Continue(1.0)
+            })
+        })?;
+        Ok(f64::from(255 - coverage) / 255.0)
+    }
+
     pub(super) fn blocked_skipping_owner(
         &self,
         start: DVec3,
@@ -515,7 +568,7 @@ pub(super) fn build<'a>(
     let probe_bounds = ShadowIndex::new(probe_bounds, &mut |amount| budget.consume(amount))?;
     stats.work = budget.work() - start_work;
     if stats.props > 0 {
-        report.diagnostics.push(Diagnostic::info(format!("Static-prop mesh shadows: {} props, {} models, {} LOD0 triangles; {} props disable shadows. {} triangles use {} alpha-test materials and {} textures ({} decoded alpha bytes). Two-sided opaque/cutout triangles block direct, sky, bounced and ambient rays. Cutouts use mip0 nearest texels, not filtered or fractional transmission. Prop vertex/lightmap baking, reflected prop sources and animated props remain unfinished", stats.props, stats.models, stats.triangles, stats.disabled, stats.alpha_triangles, stats.alpha_materials, stats.alpha_textures, stats.alpha_bytes), None, None));
+        report.diagnostics.push(Diagnostic::info(format!("Static-prop mesh shadows: {} props, {} models, {} LOD0 triangles; {} props disable shadows. {} triangles use {} alpha-texture materials and {} textures ({} decoded alpha bytes). Two-sided opaque, cutout and requested translucent triangles attenuate direct, sky, bounced and ambient rays. Texture shadows use mip0 nearest texels; translucent coverage adds and saturates per intersected triangle. Reflected prop sources and animated props remain unfinished", stats.props, stats.models, stats.triangles, stats.disabled, stats.alpha_triangles, stats.alpha_materials, stats.alpha_textures, stats.alpha_bytes), None, None));
     }
     Ok(Prepared {
         shadows: index,

@@ -594,6 +594,7 @@ impl Occluder {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 fn sky_visible_skipping_owner(
     direction: DVec3,
     origin: DVec3,
@@ -604,19 +605,37 @@ fn sky_visible_skipping_owner(
     skip_owner: Option<u32>,
     budget: &mut bake::Budget<'_>,
 ) -> Result<bool, String> {
+    Ok(sky_visibility_skipping_owner(
+        direction, origin, shadows, terrain, props, model, skip_owner, budget,
+    )? > 0.0)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn sky_visibility_skipping_owner(
+    direction: DVec3,
+    origin: DVec3,
+    shadows: &shadows::ShadowIndex<Occluder>,
+    terrain: &shadows::ShadowIndex<shadows::Triangle>,
+    props: &shadows::ShadowIndex<props::PropTriangle>,
+    model: &Option<shadows::ShadowIndex<Occluder>>,
+    skip_owner: Option<u32>,
+    budget: &mut bake::Budget<'_>,
+) -> Result<f64, String> {
     budget.consume(1)?;
     let end = origin + direction * sky::TRACE_LENGTH;
     if let Some(fraction) = shadows.sky_fraction(origin, end, &mut |work| budget.consume(work))? {
         let hit = origin.lerp(end, fraction) + direction * sky::SKY_HIT_BIAS;
-        Ok(
-            !terrain.blocked(origin, hit, &mut |work| budget.consume(work))?
-                && !props.blocked_skipping_owner(origin, hit, skip_owner, &mut |work| {
-                    budget.consume(work)
-                })?
-                && !bake::model_blocked(model, origin, hit, budget)?,
-        )
+        if terrain.blocked(origin, hit, &mut |work| budget.consume(work))? {
+            return Ok(0.0);
+        }
+        let visibility = props
+            .visibility_skipping_owner(origin, hit, skip_owner, &mut |work| budget.consume(work))?;
+        if visibility == 0.0 || bake::model_blocked(model, origin, hit, budget)? {
+            return Ok(0.0);
+        }
+        Ok(visibility)
     } else {
-        Ok(false)
+        Ok(0.0)
     }
 }
 

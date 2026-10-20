@@ -281,13 +281,40 @@ pub(super) fn bake(
     };
     bsp.set_leaf_ambient(ctx.kind, &LeafAmbient::Indexed { indices, samples })
         .map_err(|error| error.to_string())?;
-    report.diagnostics.push(Diagnostic::info("Model ambient uses up to 1/4/8 separated probes per open world leaf at Fast/Balanced/Detailed quality, sampled from filtered local world/terrain lightmaps and sky radiance. Opaque static-prop meshes block probe rays; adaptive refinement and reflected prop sources remain unfinished", None, None));
+    report.diagnostics.push(Diagnostic::info("Model ambient uses up to 1/4/8 separated probes per open world leaf at Fast/Balanced/Detailed quality, sampled from filtered local world/terrain lightmaps and sky radiance. Static-prop opaque, cutout and requested translucent meshes attenuate probe rays; adaptive refinement and reflected prop sources remain unfinished", None, None));
     Ok(stats)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn leaf_cube_gathers_transmitted_source_color() {
+        let control = crate::Control::default();
+        let mut budget = Budget::new(&control);
+        let (surfaces, shadows, props) =
+            super::super::radiance::receiver_tests::transmitted_source(&mut budget);
+        let cube = gather(&CUBE_AXES, &mut |direction| {
+            Ok(surfaces
+                .trace(
+                    DVec3::Z * 16.0,
+                    direction,
+                    0.0,
+                    &shadows,
+                    &props,
+                    &mut budget,
+                )?
+                .map_or(DVec3::ZERO, |hit| hit.color * 255.0))
+        })
+        .unwrap();
+        for color in &cube[..5] {
+            assert_eq!(*color, DVec3::ZERO);
+        }
+        assert!(cube[5].abs_diff_eq(
+            DVec3::new(191.0, 95.87450980392157, 47.937254901960784),
+            1e-12
+        ));
+    }
     #[test]
     fn directional_cube_normalization_keeps_uniform_radiance_and_its_hemispheres() {
         let directions = super::super::sky::ambient_directions(crate::SkyQuality::Fast);

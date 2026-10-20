@@ -18,7 +18,7 @@ mod source_boundary_tests;
 
 #[cfg(test)]
 #[path = "radiance/receiver_tests.rs"]
-mod receiver_tests;
+pub(super) mod receiver_tests;
 
 struct Surface {
     triangle: Triangle,
@@ -512,6 +512,7 @@ pub(super) struct Hit {
     source: usize,
     uv: Option<DVec2>,
     distance: f64,
+    visibility: f64,
 }
 
 impl SurfaceIndex {
@@ -535,7 +536,7 @@ impl SurfaceIndex {
                     hit.uv,
                     hit.distance,
                     cone,
-                ),
+                ) * hit.visibility,
             );
         }
         Ok(colors)
@@ -642,19 +643,22 @@ impl SurfaceIndex {
             return Ok(None);
         }
         let distance = fraction * super::sky::TRACE_LENGTH;
-        if props.blocked_skipping_owner(point, position, skipped_owner, &mut |amount| {
-            budget.consume(amount)
-        })? {
+        let visibility =
+            props.visibility_skipping_owner(point, position, skipped_owner, &mut |amount| {
+                budget.consume(amount)
+            })?;
+        if visibility == 0.0 {
             return Ok(None);
         }
         Ok(Some(Hit {
-            color: radiance.at(position, uv, distance, cone),
+            color: radiance.at(position, uv, distance, cone) * visibility,
             point: position,
             sky: radiance.sky,
             front,
             source,
             uv,
             distance,
+            visibility,
         }))
     }
 }

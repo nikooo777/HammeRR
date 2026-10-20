@@ -11,6 +11,13 @@ pub(super) const SKY_HIT_BIAS: f64 = 0.0001;
 const GOLDEN_ANGLE: f64 = 2.399963229728653;
 const MAX_SUN_SPREAD_ANGLE: f64 = 90.0;
 
+fn checked_visibility(value: f64) -> Result<f64, String> {
+    if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+        return Err("Light visibility must be finite and between zero and one".into());
+    }
+    Ok(value)
+}
+
 fn sphere_direction(index: usize, count: usize) -> DVec3 {
     let z = 1.0 - 2.0 * (index as f64 + 0.5) / count as f64;
     let radius = (1.0 - z * z).sqrt();
@@ -184,6 +191,7 @@ impl SkyLight {
             .collect()
     }
 
+    #[cfg(test)]
     pub(super) fn sun_contribution(
         self,
         normal: DVec3,
@@ -193,12 +201,39 @@ impl SkyLight {
         self.sun_contribution_with_mode(normal, directions, ReceiverAngularMode::Normal, visible)
     }
 
+    #[cfg(test)]
     pub(super) fn sun_contribution_with_mode(
         self,
         normal: DVec3,
         directions: &[DVec3],
         mode: ReceiverAngularMode,
         visible: &mut impl FnMut(DVec3) -> Result<bool, String>,
+    ) -> Result<DVec3, String> {
+        self.sun_contribution_with_mode_visibility(normal, directions, mode, &mut |direction| {
+            visible(direction).map(|visible| if visible { 1.0 } else { 0.0 })
+        })
+    }
+
+    pub(super) fn sun_contribution_with_visibility(
+        self,
+        normal: DVec3,
+        directions: &[DVec3],
+        visible: &mut impl FnMut(DVec3) -> Result<f64, String>,
+    ) -> Result<DVec3, String> {
+        self.sun_contribution_with_mode_visibility(
+            normal,
+            directions,
+            ReceiverAngularMode::Normal,
+            visible,
+        )
+    }
+
+    pub(super) fn sun_contribution_with_mode_visibility(
+        self,
+        normal: DVec3,
+        directions: &[DVec3],
+        mode: ReceiverAngularMode,
+        visible: &mut impl FnMut(DVec3) -> Result<f64, String>,
     ) -> Result<DVec3, String> {
         let color = self.contribution_with_mode(normal, mode)?;
         if color == DVec3::ZERO {
@@ -207,11 +242,11 @@ impl SkyLight {
         if directions.is_empty() {
             return Err("Sun visibility needs at least one direction".into());
         }
-        let mut received = 0;
+        let mut received = 0.0;
         for &direction in directions {
-            received += usize::from(visible(direction)?);
+            received += checked_visibility(visible(direction)?)?;
         }
-        Ok(color * (received as f64 / directions.len() as f64))
+        Ok(color * (received / directions.len() as f64))
     }
 
     pub(super) fn contribution(self, normal: DVec3) -> Result<DVec3, String> {
@@ -262,6 +297,7 @@ impl SkyLight {
         self.ambient / 255.0
     }
 
+    #[cfg(test)]
     pub(super) fn ambient_contribution(
         self,
         normal: DVec3,
@@ -276,12 +312,39 @@ impl SkyLight {
         )
     }
 
+    #[cfg(test)]
     pub(super) fn ambient_contribution_with_mode(
         self,
         normal: DVec3,
         directions: &[DVec3],
         mode: ReceiverAngularMode,
         visible: &mut impl FnMut(DVec3) -> Result<bool, String>,
+    ) -> Result<DVec3, String> {
+        self.ambient_contribution_with_mode_visibility(normal, directions, mode, &mut |direction| {
+            visible(direction).map(|visible| if visible { 1.0 } else { 0.0 })
+        })
+    }
+
+    pub(super) fn ambient_contribution_with_visibility(
+        self,
+        normal: DVec3,
+        directions: &[DVec3],
+        visible: &mut impl FnMut(DVec3) -> Result<f64, String>,
+    ) -> Result<DVec3, String> {
+        self.ambient_contribution_with_mode_visibility(
+            normal,
+            directions,
+            ReceiverAngularMode::Normal,
+            visible,
+        )
+    }
+
+    pub(super) fn ambient_contribution_with_mode_visibility(
+        self,
+        normal: DVec3,
+        directions: &[DVec3],
+        mode: ReceiverAngularMode,
+        visible: &mut impl FnMut(DVec3) -> Result<f64, String>,
     ) -> Result<DVec3, String> {
         let normal = normal
             .try_normalize()
@@ -294,9 +357,7 @@ impl SkyLight {
                 continue;
             }
             total += weight;
-            if visible(direction)? {
-                received += weight;
-            }
+            received += weight * checked_visibility(visible(direction)?)?;
         }
         if total <= 0.0 {
             return Err(match mode {
@@ -313,6 +374,64 @@ impl SkyLight {
 mod tests {
     use super::*;
     use crate::SkyQuality;
+
+    #[test]
+    fn fractional_visibility_preserves_sun_ambient_weights_and_rejects_invalid_scalars() {
+        let light = SkyLight {
+            direction: -DVec3::Z,
+            intensity: DVec3::splat(100.0),
+            ambient: DVec3::splat(80.0),
+            origin: DVec3::ZERO,
+            spread: 0.0,
+        };
+        let directions = [DVec3::Z, DVec3::X, DVec3::Y, -DVec3::X];
+        for (mode, normal, expected) in [
+            (ReceiverAngularMode::Normal, DVec3::Z, 49.901_960_784_313_72),
+            (
+                ReceiverAngularMode::IgnoreNormals,
+                -DVec3::Z,
+                17.465686274509803,
+            ),
+        ] {
+            let mut values = [1.0, 191.0 / 255.0, 63.0 / 255.0, 0.0].into_iter();
+            let color = light
+                .sun_contribution_with_mode_visibility(normal, &directions, mode, &mut |_| {
+                    Ok(values.next().unwrap())
+                })
+                .unwrap();
+            assert!(color.abs_diff_eq(DVec3::splat(expected), 1e-12));
+        }
+        let directions = [DVec3::new((8.0_f64 / 9.0).sqrt(), 0.0, 1.0 / 3.0), DVec3::Z];
+        let mut values = [191.0 / 255.0, 63.0 / 255.0].into_iter();
+        let ambient = light
+            .ambient_contribution_with_visibility(DVec3::Z, &directions, &mut |_| {
+                Ok(values.next().unwrap())
+            })
+            .unwrap();
+        assert!(ambient.abs_diff_eq(DVec3::splat(29.80392156862745), 1e-12));
+        let mut values = [1.0, 191.0 / 255.0, 63.0 / 255.0, 0.0].into_iter();
+        let ambient = light
+            .ambient_contribution_with_mode_visibility(
+                -DVec3::Z,
+                &[DVec3::Z; 4],
+                ReceiverAngularMode::IgnoreNormals,
+                &mut |_| Ok(values.next().unwrap()),
+            )
+            .unwrap();
+        assert!(ambient.abs_diff_eq(DVec3::splat(39.92156862745098), 1e-12));
+        for value in [f64::NAN, f64::INFINITY, -0.1, 1.0001] {
+            assert!(
+                light
+                    .sun_contribution_with_visibility(DVec3::Z, &[DVec3::Z], &mut |_| Ok(value))
+                    .is_err()
+            );
+            assert!(
+                light
+                    .ambient_contribution_with_visibility(DVec3::Z, &[DVec3::Z], &mut |_| Ok(value))
+                    .is_err()
+            );
+        }
+    }
 
     #[test]
     fn ignore_normals_sun_uses_constant_reception_and_all_visibility_rays() {

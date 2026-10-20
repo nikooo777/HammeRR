@@ -5,7 +5,7 @@ use compiler::{LightingMode, Options};
 use glam::DVec3;
 use map_core::Plane;
 use source_formats::{
-    bsp::{self, Bsp, Face, LightingKind, TexInfo},
+    bsp::{self, Bsp, LightingKind, TexInfo},
     gamefs::{GameFs, Mount, MountedPath},
     vmf::{Entity, Vmf},
 };
@@ -145,10 +145,20 @@ fn fixture() -> [Vec<u8>; 3] {
 }
 
 fn floor_sample(bsp: &Bsp, point: DVec3) -> DVec3 {
-    let faces = bsp.records::<Face>().unwrap();
+    floor_sample_layer(bsp, point, LightingKind::Ldr, 0, 0)
+}
+
+fn floor_sample_layer(
+    bsp: &Bsp,
+    point: DVec3,
+    kind: LightingKind,
+    style: usize,
+    map: usize,
+) -> DVec3 {
+    let faces = bsp.lighting_faces(kind).unwrap();
     let infos = bsp.records::<TexInfo>().unwrap();
     let planes = bsp.records::<bsp::Plane>().unwrap();
-    let lighting = bsp.lighting(LightingKind::Ldr).unwrap().unwrap();
+    let lighting = bsp.lighting(kind).unwrap().unwrap();
     for face in &faces {
         let plane = planes[face.plane as usize];
         if plane.normal[2] < 0.99 || plane.dist.abs() > 0.01 {
@@ -171,7 +181,7 @@ fn floor_sample(bsp: &Bsp, point: DVec3) -> DVec3 {
             for s in 0..width {
                 if frame.position(s, t).unwrap().distance(point) < 0.001 {
                     return DVec3::from_array(
-                        samples.samples(0, 0).unwrap()[t * width + s].linear(),
+                        samples.samples(style, map).unwrap()[t * width + s].linear(),
                     );
                 }
             }
@@ -562,8 +572,20 @@ fn requested_alpha_assets_and_effects_fail_on_the_prop_and_preserve_the_build() 
             "rotated",
         ),
         (
-            "VertexLitGeneric { $translucent 1 $basetexture test }",
+            "VertexLitGeneric { $translucent 1 $alphatest 1 $basetexture test }",
             "$translucent",
+        ),
+        (
+            "VertexLitGeneric { $translucent 1 $alpha 0.5 $basetexture test }",
+            "$alpha modulation",
+        ),
+        (
+            "VertexLitGeneric { $translucent 1 $alphatestreference 0.5 $basetexture test }",
+            "$alphatestreference",
+        ),
+        (
+            "VertexLitGeneric { $translucent 1 $envmap env_cubemap $basetexture test }",
+            "$envmap",
         ),
         (
             "Refract { $alphatest 1 $basetexture test }",
@@ -618,6 +640,166 @@ fn requested_alpha_assets_and_effects_fail_on_the_prop_and_preserve_the_build() 
     }));
     assert!(!failed.write(&destination).unwrap());
     assert_eq!(std::fs::read(&destination).unwrap(), old);
+}
+
+#[test]
+fn requested_fractional_alpha_bakes_literal_dual_channel_point_sun_and_styled_samples() {
+    let (directory, game) = alpha_game();
+    std::fs::write(
+        directory.path().join("materials/models/test/two.vmt"),
+        "VertexLitGeneric { $translucent 1 $basetexture test }",
+    )
+    .unwrap();
+    std::fs::write(
+        directory.path().join("materials/bump.vmt"),
+        "LightmappedGeneric { $bumpmap dev/normal }",
+    )
+    .unwrap();
+    let mut vmf = scene();
+    for solid in &mut vmf.world.solids {
+        if solid
+            .sides
+            .iter()
+            .all(|side| side.plane.0.iter().all(|point| point.z <= 0.0))
+        {
+            for side in &mut solid.sides {
+                side.material = "bump".into();
+            }
+        }
+    }
+    let prop = vmf.entities.len() - 1;
+    let light = prop - 1;
+    vmf.entities[prop].properties.set("skin", "1");
+    for (key, value) in [
+        ("_light", "255 0 0 255"),
+        ("_lightHDR", "0 0 255 510"),
+        ("_constant_attn", "1"),
+        ("_quadratic_attn", "0"),
+    ] {
+        vmf.entities[light].properties.set(key, value);
+    }
+    let before = vmf.clone();
+    for (alpha, ldr, hdr, directional_ldr, directional_hdr) in [
+        (0, 255.0, 510.0, 147.0, 294.0),
+        (64, 191.0, 382.0, 110.0, 220.0),
+        (128, 127.0, 254.0, 73.0, 146.0),
+        (255, 0.0, 0.0, 0.0, 0.0),
+    ] {
+        let mut texture = alpha_texture();
+        for pixel in texture[80..].as_chunks_mut::<4>().0 {
+            pixel[3] = alpha;
+        }
+        std::fs::write(directory.path().join("materials/test.vtf"), texture).unwrap();
+        let output = compiler::compile_with_options(
+            &vmf,
+            &game,
+            Options {
+                lighting: LightingMode::DirectLdrHdr,
+                ..options()
+            },
+        );
+        assert!(!output.report.has_errors(), "{:?}", output.report);
+        let bsp = output.bsp.unwrap();
+        assert_eq!(
+            floor_sample_layer(&bsp, DVec3::ZERO, LightingKind::Ldr, 0, 0),
+            DVec3::new(ldr, 0.0, 0.0)
+        );
+        assert_eq!(
+            floor_sample_layer(&bsp, DVec3::ZERO, LightingKind::Hdr, 0, 0),
+            DVec3::new(0.0, 0.0, hdr)
+        );
+        for map in 1..4 {
+            assert_eq!(
+                floor_sample_layer(&bsp, DVec3::ZERO, LightingKind::Ldr, 0, map),
+                DVec3::new(directional_ldr, 0.0, 0.0)
+            );
+            assert_eq!(
+                floor_sample_layer(&bsp, DVec3::ZERO, LightingKind::Hdr, 0, map),
+                DVec3::new(0.0, 0.0, directional_hdr)
+            );
+        }
+        assert_eq!(vmf, before);
+    }
+    let mut texture = alpha_texture();
+    for pixel in texture[80..].as_chunks_mut::<4>().0 {
+        pixel[3] = 128;
+    }
+    std::fs::write(directory.path().join("materials/test.vtf"), texture).unwrap();
+    vmf.entities[light].properties.set("style", "1");
+    let styled = compiler::compile_with_options(
+        &vmf,
+        &game,
+        Options {
+            lighting: LightingMode::DirectLdrHdr,
+            ..options()
+        },
+    );
+    assert!(!styled.report.has_errors(), "{:?}", styled.report);
+    let bsp = styled.bsp.unwrap();
+    assert_eq!(
+        floor_sample_layer(&bsp, DVec3::ZERO, LightingKind::Ldr, 1, 0),
+        DVec3::new(127.0, 0.0, 0.0)
+    );
+    assert_eq!(
+        floor_sample_layer(&bsp, DVec3::ZERO, LightingKind::Hdr, 1, 0),
+        DVec3::new(0.0, 0.0, 254.0)
+    );
+    for map in 1..4 {
+        assert_eq!(
+            floor_sample_layer(&bsp, DVec3::ZERO, LightingKind::Ldr, 1, map),
+            DVec3::new(73.0, 0.0, 0.0)
+        );
+        assert_eq!(
+            floor_sample_layer(&bsp, DVec3::ZERO, LightingKind::Hdr, 1, map),
+            DVec3::new(0.0, 0.0, 146.0)
+        );
+    }
+    vmf.entities[light].properties.remove("style");
+    vmf.entities[light]
+        .properties
+        .set("classname", "light_environment");
+    vmf.entities[light].properties.set("pitch", "-90");
+    vmf.entities[light].properties.set("_ambient", "0");
+    vmf.entities[light].properties.set("_ambientHDR", "0");
+    for solid in &mut vmf.world.solids {
+        if solid
+            .sides
+            .iter()
+            .all(|side| side.plane.0.iter().all(|point| point.z >= 256.0))
+        {
+            for side in &mut solid.sides {
+                side.material = "sky".into();
+            }
+        }
+    }
+    let sun = compiler::compile_with_options(
+        &vmf,
+        &game,
+        Options {
+            lighting: LightingMode::DirectLdrHdr,
+            ..options()
+        },
+    );
+    assert!(!sun.report.has_errors(), "{:?}", sun.report);
+    let bsp = sun.bsp.unwrap();
+    assert_eq!(
+        floor_sample_layer(&bsp, DVec3::ZERO, LightingKind::Ldr, 0, 0),
+        DVec3::new(127.0, 0.0, 0.0)
+    );
+    assert_eq!(
+        floor_sample_layer(&bsp, DVec3::ZERO, LightingKind::Hdr, 0, 0),
+        DVec3::new(0.0, 0.0, 254.0)
+    );
+    for map in 1..4 {
+        assert_eq!(
+            floor_sample_layer(&bsp, DVec3::ZERO, LightingKind::Ldr, 0, map),
+            DVec3::new(73.0, 0.0, 0.0)
+        );
+        assert_eq!(
+            floor_sample_layer(&bsp, DVec3::ZERO, LightingKind::Hdr, 0, map),
+            DVec3::new(0.0, 0.0, 146.0)
+        );
+    }
 }
 
 #[test]

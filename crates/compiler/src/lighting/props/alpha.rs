@@ -20,10 +20,19 @@ pub(super) struct Material {
     texture: Arc<Texture>,
     transform: [f64; 4],
     reference: f64,
+    fractional: bool,
 }
 
 impl Material {
     pub(super) fn blocks(&self, uv: DVec2) -> Result<bool, String> {
+        Ok(self.coverage(uv)? != 0)
+    }
+
+    pub(super) fn fractional(&self) -> bool {
+        self.fractional
+    }
+
+    pub(super) fn coverage(&self, uv: DVec2) -> Result<u8, String> {
         let uv = uv * DVec2::new(self.transform[0], self.transform[1])
             + DVec2::new(self.transform[2], self.transform[3]);
         if !uv.is_finite() {
@@ -39,7 +48,13 @@ impl Material {
                 .min(self.texture.dimensions[axis] - 1)
         });
         let alpha = self.texture.alpha[texel[1] * self.texture.dimensions[0] + texel[0]];
-        Ok(f64::from(alpha) / 255.0 >= self.reference)
+        Ok(if self.fractional {
+            alpha
+        } else if f64::from(alpha) / 255.0 >= self.reference {
+            255
+        } else {
+            0
+        })
     }
 }
 
@@ -113,12 +128,16 @@ pub(super) fn prepare(
             "material animation and conditional blocks are unsupported for texture shadows".into(),
         );
     }
-    for key in [
-        "$translucent",
-        "$additive",
-        "$vertexalpha",
-        "$distancealpha",
-    ] {
+    let translucent = scalar(material, "$translucent", 0.0)?;
+    let alpha_test = scalar(material, "$alphatest", 0.0)?;
+    let fractional = translucent != 0.0;
+    if fractional && (translucent != 1.0 || alpha_test != 0.0) {
+        return Err("$translucent texture shadows require value one and no alpha test".into());
+    }
+    if fractional && material.get("$alphatestreference").is_some() {
+        return Err("$alphatestreference is unsupported for $translucent texture shadows".into());
+    }
+    for key in ["$additive", "$vertexalpha", "$distancealpha"] {
         if scalar(material, key, 0.0)? != 0.0 {
             return Err(format!("{key} is unsupported for texture shadows"));
         }
@@ -126,8 +145,7 @@ pub(super) fn prepare(
     if scalar(material, "$alpha", 1.0)? != 1.0 {
         return Err("$alpha modulation is unsupported for texture shadows".into());
     }
-    let alpha_test = scalar(material, "$alphatest", 0.0)?;
-    if alpha_test == 0.0 {
+    if alpha_test == 0.0 && !fractional {
         return Ok(None);
     }
     for key in ["$selfillum", "$basealphaenvmapmask", "$seamless_scale"] {
@@ -140,11 +158,37 @@ pub(super) fn prepare(
         "vertexlitgeneric" | "unlitgeneric"
     ) {
         return Err(format!(
-            "alpha-test texture shadows do not support shader {}",
+            "alpha-texture shadows do not support shader {}",
             material.shader
         ));
     }
     for (key, _) in &material.params {
+        if fractional
+            && !matches!(
+                key.as_str(),
+                "$basetexture"
+                    | "$basetexturetransform"
+                    | "$translucent"
+                    | "$alphatest"
+                    | "$alpha"
+                    | "$additive"
+                    | "$vertexalpha"
+                    | "$distancealpha"
+                    | "$selfillum"
+                    | "$basealphaenvmapmask"
+                    | "$seamless_scale"
+                    | "$frame"
+                    | "$model"
+                    | "$surfaceprop"
+                    | "$surfaceprop2"
+                    | "%keywords"
+                    | "%tooltexture"
+            )
+        {
+            return Err(format!(
+                "unsupported $translucent texture-shadow parameter {key}"
+            ));
+        }
         if !matches!(
             key.as_str(),
             "$basetexture"
@@ -199,7 +243,7 @@ pub(super) fn prepare(
     let path = material
         .get("$basetexture")
         .filter(|value| !value.trim().is_empty())
-        .ok_or("alpha-test texture shadows require $basetexture")?;
+        .ok_or("alpha-texture shadows require $basetexture")?;
     let path = vmt::texture_path(path);
     let texture = match assets.textures.get(&path) {
         Some(texture) => Arc::clone(texture),
@@ -256,7 +300,32 @@ pub(super) fn prepare(
         texture,
         transform,
         reference,
+        fractional,
     })))
+}
+
+#[cfg(test)]
+pub(in crate::lighting) fn fractional_triangle(
+    points: [glam::DVec3; 3],
+    alpha: u8,
+    owner: Option<u32>,
+) -> super::PropTriangle {
+    let mut triangle = super::PropTriangle::new(points).unwrap();
+    triangle.owner = owner;
+    triangle.alpha = Some((
+        Arc::new(Material {
+            texture: Arc::new(Texture {
+                dimensions: [1, 1],
+                clamp: [false; 2],
+                alpha: vec![alpha],
+            }),
+            transform: [1.0, 1.0, 0.0, 0.0],
+            reference: 0.5,
+            fractional: true,
+        }),
+        [DVec2::ZERO; 3],
+    ));
+    triangle
 }
 
 #[cfg(test)]
@@ -281,6 +350,7 @@ mod tests {
                 }),
                 transform,
                 reference,
+                fractional: false,
             }),
             [DVec2::ZERO, DVec2::X * 2.0, DVec2::Y * 2.0],
         ));
@@ -393,5 +463,194 @@ mod tests {
                     .consume(work))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn fractional_coverage_is_additive_saturated_owner_aware_and_counts_each_primitive() {
+        let points = |height| {
+            [
+                DVec3::new(-8.0, -8.0, height),
+                DVec3::new(8.0, -8.0, height),
+                DVec3::new(0.0, 8.0, height),
+            ]
+        };
+        for (alphas, expected) in [
+            (vec![0], 255),
+            (vec![64], 191),
+            (vec![128], 127),
+            (vec![255], 0),
+            (vec![64, 128], 63),
+            (vec![128, 64], 63),
+            (vec![128, 128], 0),
+        ] {
+            let index = ShadowIndex::new(
+                alphas
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, alpha)| fractional_triangle(points(index as f64), alpha, Some(7)))
+                    .collect(),
+                &mut |_| Ok(()),
+            )
+            .unwrap();
+            let received = index
+                .visibility_skipping_owner(-DVec3::Z, DVec3::Z * 4.0, None, &mut |_| Ok(()))
+                .unwrap();
+            assert!((received * 255.0 - f64::from(expected)).abs() < 1e-12);
+            assert_eq!(
+                index
+                    .visibility_skipping_owner(-DVec3::Z, DVec3::Z * 4.0, Some(7), &mut |_| Ok(()))
+                    .unwrap(),
+                1.0
+            );
+        }
+        for owner in [None, Some(9)] {
+            let index = ShadowIndex::new(
+                vec![
+                    fractional_triangle(points(0.0), 64, Some(7)),
+                    fractional_triangle(points(0.0), 128, owner),
+                ],
+                &mut |_| Ok(()),
+            )
+            .unwrap();
+            assert!(
+                (index
+                    .visibility_skipping_owner(-DVec3::Z, DVec3::Z, Some(7), &mut |_| Ok(()))
+                    .unwrap()
+                    * 255.0
+                    - 127.0)
+                    .abs()
+                    < 1e-12
+            );
+        }
+        let shared = [
+            [
+                DVec3::new(-1.0, -1.0, 0.0),
+                DVec3::new(1.0, -1.0, 0.0),
+                DVec3::new(1.0, 1.0, 0.0),
+            ],
+            [
+                DVec3::new(-1.0, -1.0, 0.0),
+                DVec3::new(1.0, 1.0, 0.0),
+                DVec3::new(-1.0, 1.0, 0.0),
+            ],
+        ];
+        let index = ShadowIndex::new(
+            shared
+                .map(|points| fractional_triangle(points, 64, None))
+                .into(),
+            &mut |_| Ok(()),
+        )
+        .unwrap();
+        assert!(
+            (index
+                .visibility_skipping_owner(-DVec3::Z, DVec3::Z, None, &mut |_| Ok(()))
+                .unwrap()
+                * 255.0
+                - 127.0)
+                .abs()
+                < 1e-12
+        );
+        assert_eq!(
+            index
+                .visibility_skipping_owner(DVec3::ZERO, DVec3::Z, None, &mut |_| Ok(()))
+                .unwrap(),
+            1.0
+        );
+        assert_eq!(
+            index
+                .visibility_skipping_owner(-DVec3::Z, DVec3::ZERO, None, &mut |_| Ok(()))
+                .unwrap(),
+            1.0
+        );
+        for reverse in [false, true] {
+            let mut triangles = vec![
+                fractional_triangle(points(0.0), 64, None),
+                PropTriangle::new(points(0.0)).unwrap(),
+            ];
+            if reverse {
+                triangles.reverse();
+            }
+            let index = ShadowIndex::new(triangles, &mut |_| Ok(())).unwrap();
+            assert_eq!(
+                index
+                    .visibility_skipping_owner(-DVec3::Z, DVec3::Z, None, &mut |_| Ok(()))
+                    .unwrap(),
+                0.0
+            );
+        }
+        let index = ShadowIndex::new(
+            vec![
+                fractional_triangle(points(0.0), 64, None),
+                fractional_triangle(points(0.5), 128, None),
+            ],
+            &mut |_| Ok(()),
+        )
+        .unwrap();
+        for cancel in [false, true] {
+            let control = crate::Control::default();
+            let mut budget = Budget::new(&control);
+            if !cancel {
+                budget.consume(100_000_000 - 2).unwrap();
+            }
+            let mut calls = 0;
+            assert!(
+                index
+                    .visibility_skipping_owner(-DVec3::Z, DVec3::Z, None, &mut |work| {
+                        calls += 1;
+                        if cancel && calls == 3 {
+                            control.cancel().unwrap();
+                        }
+                        budget.consume(work)
+                    })
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn fractional_uv_sampling_keeps_raw_bytes_and_legacy_visibility_keeps_work() {
+        let mut fractional = triangle([false; 2], [1.0, 1.0, 0.0, 0.0], 0.75);
+        Arc::get_mut(&mut fractional.alpha.as_mut().unwrap().0)
+            .unwrap()
+            .fractional = true;
+        for (point, expected) in [
+            (DVec3::new(1.0, 3.0, 0.0), 128),
+            (DVec3::new(3.0, 3.0, 0.0), 64),
+            (DVec3::new(5.0, 1.0, 0.0), 0),
+        ] {
+            assert_eq!(
+                fractional
+                    .coverage(point - DVec3::Z, point + DVec3::Z)
+                    .unwrap(),
+                expected
+            );
+        }
+        for triangles in [
+            vec![triangle([false; 2], [1.0, 1.0, 0.0, 0.0], 0.5)],
+            vec![PropTriangle::new([DVec3::ZERO, DVec3::X * 8.0, DVec3::Y * 8.0]).unwrap()],
+        ] {
+            let index = ShadowIndex::new(triangles, &mut |_| Ok(())).unwrap();
+            assert!(!index.has_fractional());
+            let start = DVec3::new(1.0, 1.0, -1.0);
+            let end = start + DVec3::Z * 2.0;
+            for owner in [None, Some(7)] {
+                let mut before = 0;
+                let blocked = index
+                    .blocked_skipping_owner(start, end, owner, &mut |work| {
+                        before += work;
+                        Ok(())
+                    })
+                    .unwrap();
+                let mut after = 0;
+                let visibility = index
+                    .visibility_skipping_owner(start, end, owner, &mut |work| {
+                        after += work;
+                        Ok(())
+                    })
+                    .unwrap();
+                assert_eq!(visibility, if blocked { 0.0 } else { 1.0 });
+                assert_eq!(before, after);
+            }
+        }
     }
 }

@@ -346,7 +346,7 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
         stats.detail_props, stats.detail_prop_models, stats.detail_prop_sprites
     );
     println!(
-        "static-prop mesh shadows: {} props, {} models, {} triangles, {} disabled, {} preparation work units; {} alpha-test triangles, {} materials, {} textures, {} decoded alpha bytes",
+        "static-prop mesh shadows: {} props, {} models, {} triangles, {} disabled, {} preparation work units; {} alpha-texture triangles, {} materials, {} textures, {} decoded alpha bytes",
         stats.prop_shadow_props,
         stats.prop_shadow_models,
         stats.prop_shadow_triangles,

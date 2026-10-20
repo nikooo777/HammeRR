@@ -501,10 +501,10 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 
 [Cubemap faces →](docs/cubemap-faces.md) · [Generated reflections →](docs/reflections.md)
 
-| Static-prop cutout shadows |
+| Static-prop texture shadows |
 | --- |
 | ![Baked light passing through a fence model's cutout texture](docs/images/prop-shadow-cutouts.png) |
-| Bake shadows through alpha-test cutouts on supported static props. |
+| Bake binary cutout or fractional translucent texture shadows on supported static props. |
 
 | Hint planes |
 | --- |

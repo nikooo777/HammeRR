@@ -123,23 +123,23 @@ pub(super) fn direct_with_reception(
                         .blocked(sample.origin, light.origin, &mut |work| {
                             budget.consume(work)
                         })?
-                    && !ctx.props.blocked_skipping_owner(
+                {
+                    let visibility = ctx.props.visibility_skipping_owner(
                         sample.origin,
                         light.origin,
                         reception.skip_owner,
                         &mut |work| budget.consume(work),
-                    )?
-                {
-                    colors[usize::from(light.style)] += value;
+                    )?;
+                    colors[usize::from(light.style)] += value * visibility;
                 }
             }
             Emitter::Sky(light) => {
-                colors[0] += light.sun_contribution_with_mode(
+                colors[0] += light.sun_contribution_with_mode_visibility(
                     sample.normal,
                     ctx.sun_directions,
                     reception.angular,
                     &mut |direction| {
-                        super::sky_visible_skipping_owner(
+                        super::sky_visibility_skipping_owner(
                             direction,
                             sample.origin,
                             ctx.shadows,
@@ -153,12 +153,12 @@ pub(super) fn direct_with_reception(
                 )?;
                 if sky_ambient && light.has_ambient() {
                     budget.consume(ctx.ambient_directions.len())?;
-                    colors[0] += light.ambient_contribution_with_mode(
+                    colors[0] += light.ambient_contribution_with_mode_visibility(
                         sample.normal,
                         ctx.ambient_directions,
                         reception.angular,
                         &mut |direction| {
-                            super::sky_visible_skipping_owner(
+                            super::sky_visibility_skipping_owner(
                                 direction,
                                 sample.origin,
                                 ctx.shadows,

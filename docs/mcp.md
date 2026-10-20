@@ -2557,21 +2557,11 @@ Existing synchronous and background compile results expose `prop_shadow_props`,
 prop blockers across direct, sky, bounce and ambient rays, honoring native
 `disableshadows`. No new compile setting or tool is required.
 
-Models compiled with `$casttextureshadows` request supported alpha-tested
-materials through their native MDL flag; there is no editor toggle. Results expose
-`prop_shadow_alpha_triangles`, `prop_shadow_alpha_materials`,
-`prop_shadow_alpha_textures` and decoded `prop_shadow_alpha_bytes`. Cutouts use
-barycentric mesh UVs, mip-0 nearest alpha, VTF wrap/clamp and an inclusive
-`$alphatestreference` threshold. They remain two-sided blockers with no fractional
-transmission. Unflagged models retain opaque mesh shadows and material warnings.
+Models compiled with `$casttextureshadows` request supported texture-alpha materials through their native MDL flag; there is no separate editor or MCP toggle. Results expose `prop_shadow_alpha_triangles`, `prop_shadow_alpha_materials`, `prop_shadow_alpha_textures` and decoded `prop_shadow_alpha_bytes` for both binary cutout and fractional modes. Build details labels these as **alpha-texture triangles**. Unflagged models retain their existing opaque mesh shadows and material warnings.
 
-Requested cutouts support bounded VertexLitGeneric/UnlitGeneric materials,
-axis-aligned scale/translation, and one-frame 2D textures up to 4096 pixels per
-axis / 64 MiB total decoded alpha. Unsupported shaders, rotated transforms,
-animation/conditional blocks, translucent/additive effects and missing/corrupt
-required assets fail the build without replacing prior output. Prop vertex/
-lightmap baking and animated props remain unavailable. See
-[Static-prop shadows](prop-shadows.md).
+Cutouts retain barycentric UVs, nearest mip-0 alpha, VTF wrap/clamp and their inclusive `$alphatestreference` threshold. Plain selected VertexLitGeneric/UnlitGeneric with `$translucent 1`, no alpha test and `$alpha` absent or exactly `1` uses raw alpha bytes: `visibility = (255 − min(255, sum(hit_alpha)))/255`. Distinct admitted triangle hits count separately, including two-sided entry/exit and shared-edge hits; this is additive saturating coverage, not per-sheet multiplication. Direct/directional maps, weighted sun/sky, base/extra reflected styles, ambient cubes, details and normal/IgnoreNormals baked prop receivers share the scalar transfer without changing source-boundary or owner-skip rules.
+
+Textures retain axis-aligned transforms, one frame/face/depth, at most 4096 pixels per axis and 64 MiB total decoded alpha. Mixed translucent+alpha-test, `$alphatestreference` in fractional mode, scalar alpha modulation, additive/vertex/distance alpha, unsupported shaders/effects, rotated transforms, animation/conditional blocks and missing/corrupt required assets fail without replacing prior BSP. World/terrain translucency, tint/refraction, filtered edges, physical-sheet deduplication, animated props and per-texel baking remain unavailable. Translucent materials still cannot receive optional prop vertex lighting; use the existing `disablevertexlighting: "1"` property on such casters when that option is enabled. See [Static-prop shadows](prop-shadows.md).
 
 Create `func_occluder` through the existing brush-entity operations, set `StartActive`, and author its Activate/Deactivate/Toggle connections through the existing entity tools. Compiles report `occluders`, `occluder_polygons` and `occluder_vertex_refs` with the same entity-linked diagnostics as the human build panel. Each helper supports 1–16 visible convex brushes in one unambiguous visibility area. Separated brushes, exact face contacts and overlapping volumes produce a bounded union boundary; gaps and concave outlines remain. Edge-only/point-only contacts, thin or ambiguous contacts and collapsed fragments reject with diagnostics. Combined inputs are bounded to 256 sides and 4096 polygon vertices; boundary output and total union work have separate limits. Native records, activation indices and Activate/Deactivate/Toggle control runtime culling. See [Occluders](occluders.md).
 

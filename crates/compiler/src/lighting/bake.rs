@@ -558,6 +558,7 @@ fn terrain_shadows(map: &Map, budget: &mut Budget<'_>) -> Result<ShadowIndex<Tri
     ShadowIndex::new(triangles, &mut |amount| budget.consume(amount))
 }
 
+#[cfg(test)]
 pub(super) fn sky_visible(
     direction: DVec3,
     origin: DVec3,
@@ -568,6 +569,20 @@ pub(super) fn sky_visible(
     budget: &mut Budget<'_>,
 ) -> Result<bool, String> {
     super::sky_visible_skipping_owner(
+        direction, origin, shadows, terrain, props, model, None, budget,
+    )
+}
+
+pub(super) fn sky_visibility(
+    direction: DVec3,
+    origin: DVec3,
+    shadows: &ShadowIndex<Occluder>,
+    terrain: &ShadowIndex<Triangle>,
+    props: &ShadowIndex<super::props::PropTriangle>,
+    model: &Option<ShadowIndex<Occluder>>,
+    budget: &mut Budget<'_>,
+) -> Result<f64, String> {
+    super::sky_visibility_skipping_owner(
         direction, origin, shadows, terrain, props, model, None, budget,
     )
 }
@@ -1139,11 +1154,11 @@ fn bake_channel(
                         && light.has_ambient()
                     {
                         budget.consume(ambient_directions.len())?;
-                        let contribution = light.ambient_contribution(
+                        let contribution = light.ambient_contribution_with_visibility(
                             normal,
                             &ambient_directions,
                             &mut |direction| {
-                                sky_visible(
+                                sky_visibility(
                                     direction,
                                     origin,
                                     shadows,
@@ -1161,11 +1176,11 @@ fn bake_channel(
                             budget,
                             &mut |normal, budget| {
                                 budget.consume(ambient_directions.len())?;
-                                light.ambient_contribution(
+                                light.ambient_contribution_with_visibility(
                                     normal,
                                     &ambient_directions,
                                     &mut |direction| {
-                                        sky_visible(
+                                        sky_visibility(
                                             direction,
                                             origin,
                                             shadows,
@@ -1192,32 +1207,41 @@ fn bake_channel(
                                     light.origin,
                                     &mut |amount| budget.consume(amount),
                                 )?
-                                && !prop_shadows.blocked(origin, light.origin, &mut |amount| {
-                                    budget.consume(amount)
-                                })?
-                                && !model_blocked(
-                                    &model_shadows[plan.model],
+                            {
+                                let visibility = prop_shadows.visibility_skipping_owner(
                                     origin,
                                     light.origin,
-                                    budget,
-                                )?
-                            {
+                                    None,
+                                    &mut |amount| budget.consume(amount),
+                                )?;
+                                if visibility == 0.0
+                                    || model_blocked(
+                                        &model_shadows[plan.model],
+                                        origin,
+                                        light.origin,
+                                        budget,
+                                    )?
+                                {
+                                    continue;
+                                }
                                 let contributions = mapped_colors(
-                                    contribution,
+                                    contribution * visibility,
                                     &normals,
                                     plan.map_count(),
                                     budget,
-                                    &mut |normal, _| light.contribution(point, normal),
+                                    &mut |normal, _| {
+                                        Ok(light.contribution(point, normal)? * visibility)
+                                    },
                                 )?;
                                 channels.add(light.style, &contributions, &mut color, budget)?;
                             }
                         }
                         Emitter::Sky(light) => {
-                            let contribution = light.sun_contribution(
+                            let contribution = light.sun_contribution_with_visibility(
                                 normal,
                                 &sun_directions,
                                 &mut |direction| {
-                                    sky_visible(
+                                    sky_visibility(
                                         direction,
                                         origin,
                                         shadows,
@@ -1234,11 +1258,11 @@ fn bake_channel(
                                 plan.map_count(),
                                 budget,
                                 &mut |normal, budget| {
-                                    light.sun_contribution(
+                                    light.sun_contribution_with_visibility(
                                         normal,
                                         &sun_directions,
                                         &mut |direction| {
-                                            sky_visible(
+                                            sky_visibility(
                                                 direction,
                                                 origin,
                                                 shadows,

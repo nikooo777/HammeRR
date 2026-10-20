@@ -1536,7 +1536,7 @@ Software UI tests `recent_map_controls_share_reopen_and_guard_discard_remove_cle
 ### Prop shadows and native occluders
 
 ```sh
-python3 -B scripts/validate_prop_shadows.py --binary target/debug/hammerr-headless --output /tmp/hammerr-prop-shadows-check
+python3 -B scripts/validate_prop_shadows.py --binary target/debug/hammerr-headless --output target/validation/prop-shadows-check
 python3 -B scripts/validate_occluders.py --binary target/debug/hammerr-headless --output /tmp/hammerr-occluders-check
 ```
 
@@ -1985,15 +1985,28 @@ explicit overlay rebinding and cached model material-path changes. Model checks
 retain geometry and bounds through path failure/repair and account for held
 asset references within the cache budget.
 
-### Requested static-prop cutout shadows
+### Requested static-prop texture shadows
 
 ```sh
 cargo test -p compiler --test prop_shadows
 cargo test -p compiler --lib lighting::props
 cargo build -p compiler --example prop_shadow_fixture
-python3 -B scripts/validate_prop_shadows.py --binary target/debug/hammerr-headless --output /tmp/hammerr-prop-shadow-check
-python3 -B scripts/validate_prop_shadows_native.py --binary target/debug/hammerr-headless --output /tmp/hammerr-prop-cutout-check --runtime
+python3 -B scripts/validate_prop_shadows.py --binary target/debug/hammerr-headless --output target/validation/prop-shadow-check
+python3 -B scripts/validate_prop_shadows_native.py --binary target/debug/hammerr-headless --output target/validation/prop-cutout-check --runtime
 ```
+
+The independent fractional-transfer fixture uses both production MCP programs:
+
+```sh
+python3 -B scripts/validate_prop_shadow_transmission.py \
+  --binary target/debug/hammerr-headless \
+  --output target/validation/prop-transmission-headless
+python3 -B scripts/validate_prop_shadow_transmission.py \
+  --binary target/debug/editor \
+  --output target/validation/prop-transmission-editor
+```
+
+Use a fresh output directory under `target/`. Literal alpha-byte coverage cases distinguish additive saturation from threshold, multiplied layers, nearest-only hits or doubled attenuation. Public builds compare foreground/background bytes, protected state, actual world samples and normal/IgnoreNormals VHV reception; unsupported requested materials must preserve prior output. Rust tests cover weighted sun/ambient, source styles, reflected/probe/detail transfer, finite visibility, ownership, endpoints, cancellation and legacy fast-path behavior. These headless checks establish the documented bounded transfer policy, not native VRAD intersection or translucency appearance parity. Keep the old opaque/cutout checks and retained BSP byte comparisons.
 
 The native fixture copies one mounted fence model and its companions into private
 content, changes the copy's texture-shadow flag and material, and compares opaque

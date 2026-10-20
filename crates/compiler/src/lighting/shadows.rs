@@ -9,7 +9,7 @@ const STACK_SIZE: usize = usize::BITS as usize;
 const TRIANGLE_EPSILON: f64 = 1e-9;
 pub(super) const CONTACT_EPSILON: f64 = 1e-6;
 
-enum Visit {
+pub(super) enum Visit {
     Continue(f64),
     Stop,
 }
@@ -40,6 +40,9 @@ pub(super) trait ShadowObject {
     fn bounds(&self) -> (DVec3, DVec3);
     fn work(&self) -> usize;
     fn intersects(&self, start: DVec3, end: DVec3) -> Result<bool, String>;
+    fn fractional(&self) -> bool {
+        false
+    }
 }
 
 impl ShadowObject for Occluder {
@@ -191,6 +194,7 @@ pub(super) struct ShadowIndex<T> {
     hulls: Vec<T>,
     order: Vec<usize>,
     nodes: Vec<Node>,
+    fractional: bool,
 }
 
 impl<T: ShadowObject> ShadowIndex<T> {
@@ -211,10 +215,12 @@ impl<T: ShadowObject> ShadowIndex<T> {
             ));
         }
         consume(hulls.len())?;
+        let fractional = hulls.iter().any(ShadowObject::fractional);
         let mut index = Self {
             order: (0..hulls.len()).collect(),
             nodes: Vec::with_capacity(hulls.len().saturating_mul(2)),
             hulls,
+            fractional,
         };
         if !index.hulls.is_empty() {
             index.build(0..index.hulls.len(), consume)?;
@@ -308,7 +314,11 @@ impl<T: ShadowObject> ShadowIndex<T> {
         Ok(first)
     }
 
-    fn visit(
+    pub(super) fn has_fractional(&self) -> bool {
+        self.fractional
+    }
+
+    pub(super) fn visit(
         &self,
         start: DVec3,
         end: DVec3,

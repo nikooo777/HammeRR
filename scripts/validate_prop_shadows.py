@@ -1,7 +1,9 @@
 import argparse
 import json
+import os
 import struct
 from pathlib import Path
+from unittest.mock import patch
 
 from validate_compile_jobs import wait_job
 from validate_direct_lighting import center_sample, floor_samples
@@ -145,10 +147,22 @@ def validate(client, output, game):
     material_path.write_text('VertexLitGeneric { $alphatest 1 $basetexture test $alphatestreference 0.5 }')
     client.call("compile_map", {"path": str(bsp)})
     check(center_sample(bsp.read_bytes()) == [0, 0, 0], "The same texel above a lower reference blocks the direct ray")
+    material_path.write_text('VertexLitGeneric { $translucent 1 $basetexture test }')
+    transmitted = client.call("compile_map", {"path": str(bsp)})
+    transmitted_bytes = bsp.read_bytes()
+    check(transmitted["success"] and center_sample(transmitted_bytes) == [99.5, 0, 0]
+          and floor_sample(transmitted_bytes, -16, 0) == [0, 0, 0],
+          "Requested translucent alpha128 transmits 127/255 before RGBExp32 encoding and alpha255 remains opaque")
+    client.call("start_compile", {"path": str(background)})
+    check(wait_job(client)["status"] == "completed" and background.read_bytes() == transmitted_bytes,
+          "Synchronous and background builds produce identical fractional texture shadows")
+    check(detail(client, [prop]) == alpha_objects and client.call("get_map_info")["undo"] == alpha_history and vmf.read_bytes() == source,
+          "Fractional texture-shadow baking preserves authored props, history and VMF bytes")
     previous = bsp.read_bytes()
     for material, expected in [
         ('VertexLitGeneric { $alphatest 1 $basetexture test $basetexturetransform "rotate 15" }', "rotated"),
-        ('VertexLitGeneric { $translucent 1 $basetexture test }', "$translucent"),
+        ('VertexLitGeneric { $translucent 1 $alphatest 1 $basetexture test }', "$translucent"),
+        ('VertexLitGeneric { $translucent 1 $alpha 0.5 $basetexture test }', "$alpha modulation"),
         ('Refract { $alphatest 1 $basetexture test }', "unsupported texture-shadow shader"),
     ]:
         material_path.write_text(material)
@@ -187,7 +201,10 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     game = args.output / "game"
     fixture(game)
-    client = Client(None, args.binary.resolve(), args.output, game / "gameinfo.txt")
+    with patch.dict(os.environ, {"HAMMERR_RECENT_MAPS_DIR": str(args.output / "recent"), "HAMMERR_BUILD_RECIPES": str(args.output / "recipes.json"),
+                               "HAMMERR_PREFABS_DIR": str(args.output / "prefabs"), "XDG_CONFIG_HOME": str(args.output / "config"),
+                               "XDG_STATE_HOME": str(args.output / "state")}):
+        client = Client(None, args.binary.resolve(), args.output, game / "gameinfo.txt")
     try:
         checks = validate(client, args.output, game)
         (args.output / "results.json").write_text(json.dumps({"checks": len(checks), "passed": checks}, indent=2) + "\n")

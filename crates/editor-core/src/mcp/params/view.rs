@@ -20,6 +20,28 @@ pub(in crate::mcp) struct InspectBakedLightmapsArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(in crate::mcp) struct InspectBakedPropVerticesArgs {
+    /// Opaque successful-build token; required for explicit prop/section or nonzero page offsets.
+    pub build_token: Option<String>,
+    /// ldr (default) or hdr; absent HDR never falls back to LDR.
+    pub channel: Option<String>,
+    /// Native zero-based sprp ordinal, including disabled-prop holes; not an authored entity ID.
+    pub prop: Option<u32>,
+    /// Ordered VHV hardware section index, not an MDL mesh number.
+    pub section: Option<usize>,
+    pub prop_offset: Option<usize>,
+    /// 1–32 compiled props; default 32.
+    pub prop_limit: Option<usize>,
+    pub section_offset: Option<usize>,
+    /// 1–32 hardware sections; default 32.
+    pub section_limit: Option<usize>,
+    pub vertex_offset: Option<usize>,
+    /// 1–256 stored color rows within one section; default 256.
+    pub vertex_limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub(in crate::mcp) struct PointfileLoadArgs {
     pub(in crate::mcp) path: String,
 }

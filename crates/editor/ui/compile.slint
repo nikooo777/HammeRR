@@ -71,6 +71,7 @@ export component CompileWindow inherits Window {
     callback cancel-build();
     callback play-build();
     callback inspect-baked-lightmaps();
+    callback inspect-baked-prop-vertices();
     callback close-dialog();
     callback change-lighting(int);
     callback change-physics(int);
@@ -197,11 +198,19 @@ export component CompileWindow inherits Window {
             padding-left: 24px;
             padding-right: 24px;
             padding-top: 8px;
+            spacing: 8px;
+            Button { text: "Inspect baked lightmaps…"; clicked => { root.inspect-baked-lightmaps(); } }
+            Button { text: "Inspect baked prop vertices…"; clicked => { root.inspect-baked-prop-vertices(); } }
+            Rectangle { horizontal-stretch: 1; }
+        }
+        HorizontalLayout {
+            padding-left: 24px;
+            padding-right: 24px;
+            padding-top: 8px;
             padding-bottom: 24px;
             spacing: 8px;
             Button { text: "Cancel build"; enabled: root.cancellable; clicked => { root.cancel-build(); } }
             Button { text: "Play built map"; enabled: root.launch-ready; clicked => { root.play-build(); } }
-            Button { text: "Inspect baked lightmaps…"; clicked => { root.inspect-baked-lightmaps(); } }
             Rectangle { horizontal-stretch: 1; }
             Button { text: "Close"; clicked => { root.close-dialog(); } }
         }

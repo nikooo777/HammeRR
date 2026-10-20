@@ -60,6 +60,13 @@ context and ownership guards in `editor/src/face_edit_ui.rs`.
 
 ## Build and test
 
+Compiler, core and renderer development/test builds retain line tables while
+omitting full variable debug information to fit the aggregate memory budget.
+Set a package debug override to `2` temporarily when full variable inspection
+is needed. Optimization levels remain unchanged.
+Generated UI builds disable incremental compilation to avoid retaining the
+large generated dependency graph in memory.
+
 World physics worker publication checks:
 
 ```sh
@@ -145,7 +152,12 @@ Use `--lighting-origin-control` for named-helper movement, native metadata,
 missing-helper refusal and unchanged actual-vertex colors in both channels.
 Use `--bounce-depth-control` for depths two through four, foreground/background
 publication, complete source identity, recipe restore and depth-four restart
-persistence. These options can run together.
+persistence. Use `--inspection-control` to exercise the shared read-only baked-prop
+inspector on actual owned output: native ordinal holes, token/LOD/channel paging,
+packed VHV identity and raw color/page-statistic equality, missing HDR, no-bake,
+strict malformed queries, historical source/settings and replaced-output clearing.
+It restores private assets/settings, publishes a fresh ownership check and preserves
+all earlier channel/native-evidence artifacts. These options can run together.
 Prepare a standalone game directory containing local MDL/VVD/DX90 companions
 and plain opaque selected model materials. The supported model needs one
 bodypart/model, authored root LOD 0, all 1–8 declared draw LODs and at most
@@ -788,6 +800,39 @@ isolated HTTP Session with no existing successful build. The validator launches
 no game and requires no graphics adapter. It adds no authored VMF face mapping,
 viewport baked-lighting mode, arbitrary BSP path API or native tone-mapping/
 channel-selection claim.
+
+### Baked prop vertex inspection
+
+```sh
+cargo test -p editor-core --features mcp,test-support --lib baked_prop_vertices
+cargo test -p editor --bin editor baked_prop_vertices
+cargo test -p editor --bin editor compile_ui::admission_tests
+```
+
+Core checks cover validated manifest/VHV/native-table identity, ordinal holes,
+all-LOD hardware ordering, repeated/unused draw records, strict token/range
+limits, stale source/output guards, cancellation and bounded reports. MCP checks
+compare actual compiled fixture pages with the shared Session report and reject
+unknown paths/types without initializing graphics. Software callbacks open the
+inspector before a build, inspect actual independent channels, page 300 hardware
+rows, switch LOD sections, select a disabled native ordinal and clear retained
+rows after settings/output changes. They preserve pending property reviews,
+source/history/camera/selection/recipes; retained callbacks reject draining,
+terminal and vanished documents. `HAMMERR_UI_SNAPSHOTS` writes
+`baked-prop-vertices.png` into an existing directory.
+
+Add `--inspection-control` to the production
+`validate_prop_vertex_lighting.py` command above for each of
+`target/debug/hammerr-headless` and `target/debug/editor`, using separate fresh
+output directories. This phase verifies actual packed BGRA/RGBA and page
+statistics through MCP against the independent bounded VHV reader, final native
+ordinals/model/origins and manifest/channel sizes. It checks no-bake, absent HDR,
+wrong tokens/ranges, intact historical rows and unavailable priority when assets
+and output both change. Restored output bytes must remain unavailable until a
+new successful compile. The fixture overlay is restored and baseline LDR/HDR,
+N1/N4 and lighting-origin artifacts remain untouched. No game, GPU or desktop
+input is needed; these checks establish stored bytes and shared controls rather
+than native screen brightness or authored/root-model vertex mapping.
 
 ### Water underside materials
 

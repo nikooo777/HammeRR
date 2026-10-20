@@ -27,10 +27,12 @@ opt-level = 2
 [profile.dev.package.editor-ui]
 opt-level = 0
 debug = 0
+incremental = false
 
 [profile.test.package.editor-ui]
 opt-level = 0
 debug = 0
+incremental = false
 
 [profile.dev.package.editor-core]
 debug = "line-tables-only"
@@ -42,4 +44,10 @@ debug = "line-tables-only"
 debug = "line-tables-only"
 
 [profile.test.package.compiler]
+debug = "line-tables-only"
+
+[profile.dev.package.render]
+debug = "line-tables-only"
+
+[profile.test.package.render]
 debug = "line-tables-only"

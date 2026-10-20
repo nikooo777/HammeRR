@@ -3,6 +3,35 @@ use super::super::*;
 #[tool_router(router = view_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
+        description = "Inspect actual baked static-prop VHV colors from this Session's successful owned BSP, shared with Build settings… / Build details… → Inspect baked prop vertices…. CPU-only and read-only; no graphics, game, model loading, arbitrary paths or map/history/selection/camera/settings changes. Returns current/stale/unavailable build provenance, native sprp ordinals/model/origin/flags, independent LDR/HDR availability and packed-file identity, ordered all-LOD hardware sections and exact stored BGRA8/RGBA8 rows. These are encoded 0–255 vertex-color bytes, not linear irradiance or native screen brightness. Pages contain at most 32 props, 32 sections and 256 vertices, with offset/limit/returned/total/next_offset. Omit build_token only for a fresh observation; explicit prop/section and nonzero offsets require the returned opaque token. Changed tokens/ranges reject without silently reusing indices. Disabled props retain ordinal holes and have no color rows; missing HDR has no fallback. Intact historical output remains explicitly stale after source/assets/settings changes; replaced/corrupt output clears all rows. Pending displayed drafts are explicitly not baked. No authored entity/root-model vertex/position mapping or viewport shading.",
+        annotations(read_only_hint = true)
+    )]
+    pub(in crate::mcp) fn inspect_baked_prop_vertices(
+        &self,
+        Parameters(args): Parameters<InspectBakedPropVerticesArgs>,
+    ) -> ToolResult {
+        use crate::session::baked_prop_vertices::{Channel, Query};
+        run(|| {
+            let defaults = Query::default();
+            let query = Query {
+                build_token: args.build_token,
+                channel: Channel::parse(args.channel.as_deref().unwrap_or("ldr"))?,
+                prop: args.prop,
+                section: args.section,
+                prop_offset: args.prop_offset.unwrap_or(defaults.prop_offset),
+                prop_limit: args.prop_limit.unwrap_or(defaults.prop_limit),
+                section_offset: args.section_offset.unwrap_or(defaults.section_offset),
+                section_limit: args.section_limit.unwrap_or(defaults.section_limit),
+                vertex_offset: args.vertex_offset.unwrap_or(defaults.vertex_offset),
+                vertex_limit: args.vertex_limit.unwrap_or(defaults.vertex_limit),
+            };
+            self.session()
+                .inspect_baked_prop_vertices(&query)
+                .map(|inspection| inspection.report)
+        })
+    }
+
+    #[tool(
         description = "Inspect the default-off unshadowed authored LDR point/spot/direct-sun lighting preview without graphics initialization. Reports admitted/excluded lights, flat brush receiver polygons, separate world/func_detail terrain surfaces/drawn triangles and authored MDL instance/selected-part/drawn-triangle coverage, current render-document/working-region/material snapshot, bounded diagnostics and editor limits. Static unnamed style-0 lights only, maximum 32 including one visible light_environment; conflicting visible suns are all excluded; overflow disables preview rather than choosing a prefix. Zero admitted lights make supported receivers black. Set shared lighting_preview, lighting_quality fast/detail, lighting_exposure_ev and default-off lighting_sky_ambient with set_view, or temporary render_view overrides. Optional LDR sky ambient uses the admitted sun's compiler _ambient or half-sun default without sky visibility/occlusion, shares its slot and summed radiance budget, and rejects the whole sun for malformed requested ambient. Fast interpolates vertex lighting and rejects enabled normal maps; Detail composes with supported flat-brush normal maps. Terrain uses checked sewn LOD normals and opaque single-base materials; declared bump/blend/detail or unsafe normals reject receiver admission. Authored MDL meshes use selected body/skin, positive uniform scale and world normals; whole-instance opaque single-base VertexLitGeneric and Normal render mode only. Model bump/normal/proxy/effect, unsupported declarations, opacity and unsafe triangles keep ordinary display with diagnostics. Direct sun has no distance attenuation and uses the same visible working-region source filter; unlike compiler cordons it does not retain sources outside that region. HDR overrides, sky visibility, shadows, penumbrae, bounce, animation and native brightness/tone-map parity are excluded. Disabled sky ambient ignores ambient fields. Sky-camera miniatures keep separate fixed shading. Source/history/camera and pending geometry reviews remain unchanged.",
         annotations(read_only_hint = true)
     )]
@@ -456,3 +485,6 @@ impl EditorServer {
         })
     }
 }
+
+#[cfg(test)]
+mod baked_prop_vertices_tests;

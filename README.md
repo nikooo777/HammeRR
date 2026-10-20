@@ -345,6 +345,13 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 
 [Baked lightmaps →](docs/baked-lightmaps.md)
 
+| Baked prop vertices |
+| --- |
+| ![Baked static-prop vertex color inspection](docs/images/baked-prop-vertices.png) |
+| Inspect compiled LDR/HDR colors by native prop, draw LOD, hardware section and vertex. |
+
+[Baked prop vertices →](docs/baked-prop-vertices.md)
+
 | Compile regions |
 | --- |
 | ![Orange compile-region bounds inside the full source map](docs/images/compile-region-preview.png) |

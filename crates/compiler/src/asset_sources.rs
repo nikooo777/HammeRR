@@ -28,6 +28,10 @@ pub struct OutputAssetSourceGuard {
 }
 
 impl OutputAssetSourceGuard {
+    pub fn prop_lighting_guard(&self) -> Option<AssetSourceGuard> {
+        self.prop_lighting.clone()
+    }
+
     pub fn verify_metadata(&self) -> io::Result<()> {
         if let Some(reflections) = &self.reflections {
             reflections.verify_metadata()?;

@@ -1,0 +1,102 @@
+import { Button, ComboBox, ListView, ScrollView, TextEdit } from "std-widgets.slint";
+
+export component BakedPropVerticesWindow inherits Window {
+    title: "Baked prop vertices - HammeRR";
+    width: 1020px;
+    height: 900px;
+    in-out property <string> channel: "LDR";
+    in property <string> build-state;
+    in property <string> channels;
+    in property <string> selected;
+    in property <string> statistics;
+    in property <string> diagnostics;
+    in property <[string]> prop-rows;
+    in property <[string]> section-rows;
+    in property <[string]> vertex-rows;
+    in property <string> prop-page;
+    in property <string> section-page;
+    in property <string> vertex-page;
+    in property <bool> previous-props;
+    in property <bool> next-props;
+    in property <bool> previous-sections;
+    in property <bool> next-sections;
+    in property <bool> previous-vertices;
+    in property <bool> next-vertices;
+    callback refresh-inspection();
+    callback change-channel();
+    callback inspect-prop(int);
+    callback inspect-section(int);
+    callback page-props(int);
+    callback page-sections(int);
+    callback page-vertices(int);
+    callback close-dialog();
+    forward-focus: keys;
+    keys := FocusScope {
+        key-pressed(event) => { if event.text == Key.Escape { root.close-dialog(); accept } else { reject } }
+        VerticalLayout {
+            ScrollView {
+                content-width: self.width;
+                VerticalLayout {
+                    padding: 20px;
+                    spacing: 10px;
+                    Text { text: "Baked prop vertices"; font-size: 24px; font-weight: 600; }
+                    Text { text: root.build-state; wrap: word-wrap; color: #ffcb80; }
+                    Text { text: root.channels; wrap: word-wrap; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text { text: "Channel"; vertical-alignment: center; }
+                        ComboBox { model: ["LDR", "HDR"]; current-value <=> root.channel; selected(value) => { root.change-channel(); } }
+                        Button { text: "Refresh inspection"; clicked => { root.refresh-inspection(); } }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+                    Text { text: "Compiled props"; font-size: 18px; font-weight: 600; }
+                    Text { text: root.prop-page; }
+                    ListView {
+                        height: 110px;
+                        for row[i] in root.prop-rows: Button { text: row; clicked => { root.inspect-prop(i); } }
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Button { text: "Previous props"; enabled: root.previous-props; clicked => { root.page-props(-1); } }
+                        Button { text: "Next props"; enabled: root.next-props; clicked => { root.page-props(1); } }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+                    Text { text: "Hardware sections"; font-size: 18px; font-weight: 600; }
+                    Text { text: root.section-page; }
+                    ListView {
+                        height: 85px;
+                        for row[i] in root.section-rows: Button { text: row; clicked => { root.inspect-section(i); } }
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Button { text: "Previous sections"; enabled: root.previous-sections; clicked => { root.page-sections(-1); } }
+                        Button { text: "Next sections"; enabled: root.next-sections; clicked => { root.page-sections(1); } }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+                    Text { text: root.selected; wrap: word-wrap; }
+                    Text { text: "Vertex colors"; font-size: 18px; font-weight: 600; }
+                    Text { text: "Local index · hardware index · R · G · B · A"; }
+                    Text { text: root.vertex-page; }
+                    ListView {
+                        height: 150px;
+                        for row in root.vertex-rows: Text { text: row; font-family: "monospace"; }
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Button { text: "Previous vertices"; enabled: root.previous-vertices; clicked => { root.page-vertices(-1); } }
+                        Button { text: "Next vertices"; enabled: root.next-vertices; clicked => { root.page-vertices(1); } }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+                    Text { text: root.statistics; wrap: word-wrap; }
+                    Text { text: "Stored encoded RGB bytes, range 0–255. HDR is baked independently with the same byte encoding. Values do not measure linear irradiance or game screen brightness. Native ordinals and hardware rows belong to this build; inspecting them leaves editor selection unchanged."; wrap: word-wrap; color: #bac2ce; }
+                    TextEdit { text: root.diagnostics; read-only: true; min-height: 65px; max-height: 100px; }
+                }
+            }
+            HorizontalLayout {
+                padding: 16px;
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Close"; clicked => { root.close-dialog(); } }
+            }
+        }
+    }
+}

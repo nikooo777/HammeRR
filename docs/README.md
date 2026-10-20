@@ -52,6 +52,7 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | [Organizing and checking maps](map-tools.md) | Finding objects, visibility, statistics, map checks, design notes, autosave and recovery |
 | [Compile and play](compile-and-play.md) | Building BSPs, portable sky assets, lighting, physics, leaks and launching Counter-Strike: Source |
 | [Baked lightmaps](baked-lightmaps.md) | Actual compiled LDR/HDR face samples, style and directional-map inspection |
+| [Baked prop vertices](baked-prop-vertices.md) | Native prop ordinals, LOD hardware sections and exact packed LDR/HDR color bytes |
 | [Water](water.md) | Flat world pools, underwater materials, fog and floating objects |
 | [Instance authoring](instance-authoring.md) | Place and edit saved VMF references with readable path and transform controls |
 | [Extract brush assemblies](instance-extraction.md) | Export selected brushes and replace them with a guarded instance reference |

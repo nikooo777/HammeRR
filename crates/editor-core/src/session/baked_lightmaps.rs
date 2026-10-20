@@ -1,8 +1,8 @@
-use std::io::Read;
+#[cfg(test)]
 use std::path::Path;
 
 use serde_json::{Value, json};
-use source_formats::bsp::{Bsp, Face, LUMP_COUNT, Lighting, LightingKind, RgbExp32, TexInfo};
+use source_formats::bsp::{Bsp, Face, Lighting, LightingKind, RgbExp32, TexInfo};
 use source_formats::vtf::RgbaImage;
 
 use super::Session;
@@ -13,79 +13,11 @@ pub use origins::SourceReference;
 pub const MAX_PAGE_FACES: usize = 32;
 pub const MAX_PREVIEW_SIDE: usize = 128;
 const MAX_SOURCE_FILE_BYTES: usize = 4096;
-const MAX_BSP_BYTES: u64 = 128 * 1024 * 1024;
 const RGBEXP_BYTES: usize = size_of::<RgbExp32>();
-const BSP_HEADER_AND_PADDING_BYTES: usize = 12 + LUMP_COUNT * 19 + 4;
-const GAME_LUMP_DIRECTORY_BYTES: usize = 16;
 const DISPLAY_CONVERSION: &str = "Each linear RGB channel uses (v / (1 + v))^(1 / 2.2), v = intensity / 255. Nearest sample reduction, no exposure adaptation or native game tone mapping.";
 
-pub(super) struct BuildIdentity {
-    token: u64,
-    output: Result<compiler::FileIdentity, String>,
-    source: Result<Option<compiler::FileIdentity>, String>,
-}
-
-impl BuildIdentity {
-    pub(super) fn source(
-        path: &Path,
-        control: &compiler::Control,
-    ) -> Result<compiler::FileIdentity, String> {
-        let metadata = std::fs::metadata(path)
-            .map_err(|error| format!("Saved VMF source is missing or unreadable: {error}"))?;
-        if !metadata.is_file() || metadata.len() > MAX_BSP_BYTES {
-            return Err(format!(
-                "Saved VMF source must be a regular file within the {MAX_BSP_BYTES}-byte inspection budget"
-            ));
-        }
-        compiler::FileIdentity::capture(path, control).map_err(|error| error.to_string())
-    }
-
-    pub(super) fn capture(
-        token: u64,
-        output: &Path,
-        source: Result<Option<compiler::FileIdentity>, String>,
-        expected: Option<&Bsp>,
-    ) -> Self {
-        let identity = (|| {
-            let expected = expected.ok_or("Compiler BSP bytes are unavailable")?;
-            let overhead = expected
-                .game_lumps
-                .len()
-                .checked_mul(GAME_LUMP_DIRECTORY_BYTES)
-                .and_then(|bytes| bytes.checked_add(BSP_HEADER_AND_PADDING_BYTES));
-            let upper_bound = expected
-                .lumps
-                .iter()
-                .map(|lump| lump.data.len())
-                .chain(expected.game_lumps.iter().map(|lump| lump.data.len()))
-                .try_fold(overhead.unwrap_or(usize::MAX), usize::checked_add);
-            if upper_bound.is_none_or(|bytes| bytes as u64 > MAX_BSP_BYTES)
-                || std::fs::metadata(output)
-                    .map_err(|error| error.to_string())?
-                    .len()
-                    > MAX_BSP_BYTES
-            {
-                return Err(format!(
-                    "BSP exceeds the {MAX_BSP_BYTES}-byte inspection budget"
-                ));
-            }
-            let identity = compiler::FileIdentity::capture(output, &compiler::Control::default())
-                .map_err(|error| error.to_string())?;
-            identity
-                .verify_bytes(&expected.to_bytes())
-                .map_err(|error| error.to_string())?;
-            identity
-                .verify_metadata()
-                .map_err(|error| error.to_string())?;
-            Ok(identity)
-        })();
-        Self {
-            token,
-            output: identity,
-            source,
-        }
-    }
-}
+pub(super) use super::baked_build::BuildIdentity;
+use super::baked_build::{MAX_BSP_BYTES, read_owned_bytes};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum Channel {
@@ -103,14 +35,14 @@ impl Channel {
         }
     }
 
-    fn kind(self) -> LightingKind {
+    pub(super) fn kind(self) -> LightingKind {
         match self {
             Self::Ldr => LightingKind::Ldr,
             Self::Hdr => LightingKind::Hdr,
         }
     }
 
-    fn name(self) -> &'static str {
+    pub(super) fn name(self) -> &'static str {
         match self {
             Self::Ldr => "ldr",
             Self::Hdr => "hdr",
@@ -154,77 +86,7 @@ pub struct Inspection {
 
 impl Session {
     pub fn baked_lightmap_build_state(&self) -> Value {
-        let Some(build) = &self.compiled else {
-            return json!({"status":"unavailable", "current":false, "diagnostics":["Compile the map successfully in this session before inspecting baked lightmaps"]});
-        };
-        let identity = &build.lightmap_identity;
-        let pending_preview = !std::ptr::eq(self.render_document(), self.document());
-        let mut diagnostics = Vec::new();
-        if !self.current_snapshot(&build.snapshot) {
-            diagnostics.push("The map changed since this successful build".to_owned());
-        }
-        if build.options != self.compile_options() {
-            diagnostics.push("Build settings changed since this successful build".to_owned());
-        }
-        if build.content_epoch != self.content_epoch {
-            diagnostics.push(
-                "Mounted content or capture configuration changed since this build".to_owned(),
-            );
-        }
-        if let Some(error) = self.instance_dependency_issue(
-            build.instance_dependencies.as_ref(),
-            &build.instance_source_path,
-        ) {
-            diagnostics.push(format!(
-                "Instance source/dependencies changed or cannot be verified: {error}"
-            ));
-        }
-        if self.compiling() {
-            diagnostics
-                .push("A new build is running; this is the previous successful build".to_owned());
-        }
-        let output_issue = match &identity.output {
-            Ok(output) => output
-                .verify_metadata()
-                .err()
-                .map(|error| error.to_string()),
-            Err(error) => Some(error.clone()),
-        };
-        if let Some(issue) = &output_issue {
-            diagnostics.push(format!(
-                "Compiled BSP changed, is missing, or cannot be verified: {issue}"
-            ));
-        }
-        match &identity.source {
-            Ok(Some(source)) => {
-                if let Err(error) = source.verify_metadata() {
-                    diagnostics.push(format!("Saved VMF source changed or is missing: {error}"));
-                }
-                if self
-                    .path
-                    .as_ref()
-                    .and_then(|path| path.canonicalize().ok())
-                    .as_deref()
-                    != Some(source.path())
-                {
-                    diagnostics.push("The source map path changed since this build".to_owned());
-                }
-            }
-            Err(error) => {
-                diagnostics.push(format!("Saved VMF source identity unavailable: {error}"))
-            }
-            Ok(None) if self.path.is_some() => diagnostics
-                .push("The map was saved to a new source path after this build".to_owned()),
-            Ok(None) => {}
-        }
-        json!({
-            "status":if output_issue.is_some() {"unavailable"} else if diagnostics.is_empty() {"current"} else {"stale"},
-            "current":diagnostics.is_empty(), "token":identity.token.to_string(),
-            "render_context":{"pending_preview":pending_preview,"current_for_display":diagnostics.is_empty() && !pending_preview,"diagnostics":if pending_preview {vec!["The displayed geometry/face draft was not baked; this inspection uses the committed build snapshot"]} else {Vec::<&str>::new()}},
-            "bsp":build.path, "generation":build.snapshot.generation, "revision":build.snapshot.revision,
-            "lighting":build.options.lighting.name(), "diagnostics":diagnostics,
-            "source":identity.source.as_ref().ok().and_then(|source| source.as_ref()).map(compiler::FileIdentity::path),
-        })
+        super::baked_build::build_state(self)
     }
 
     pub fn inspect_baked_lightmaps(&self, query: &Query) -> Result<Inspection, String> {
@@ -293,17 +155,8 @@ impl Session {
                 });
             }
         };
-        if let Some(dependencies) = &build.instance_dependencies {
-            if let Err(error) = dependencies.verify(&compiler::Control::default()) {
-                mark_stale(
-                    &mut report,
-                    format!("Instance source/dependencies changed: {error}"),
-                );
-            }
-        } else if let Ok(Some(source)) = &build.lightmap_identity.source
-            && let Err(error) = read_owned_bytes(source)
-        {
-            mark_stale(&mut report, format!("Saved VMF source changed: {error}"));
+        if let Some(error) = super::baked_build::source_issue(build) {
+            mark_stale(&mut report, error);
         }
         let mut effective = query.clone();
         let mapping = build
@@ -423,67 +276,13 @@ fn mark_unavailable(report: &mut Value, error: String) {
 }
 
 fn recheck(build: &super::CompiledMap, report: &mut Value) {
-    if let Some(error) = build
-        .instance_dependencies
-        .as_ref()
-        .and_then(|dependencies| dependencies.verify_metadata().err())
-    {
-        mark_stale(
-            report,
-            format!("Instance source/dependencies changed during inspection: {error}"),
-        );
+    let observed = super::baked_build::recheck(build);
+    for error in observed.stale {
+        mark_stale(report, error);
     }
-    if let Ok(Some(source)) = &build.lightmap_identity.source
-        && let Err(error) = source.verify_metadata()
-    {
-        mark_stale(
-            report,
-            format!("Saved VMF source changed during inspection: {error}"),
-        );
+    if let Some(error) = observed.unavailable {
+        mark_unavailable(report, error);
     }
-    if let Ok(output) = &build.lightmap_identity.output
-        && let Err(error) = output.verify_metadata()
-    {
-        mark_unavailable(
-            report,
-            format!("Compiled BSP changed during inspection: {error}"),
-        );
-    }
-}
-
-fn read_owned_bytes(identity: &compiler::FileIdentity) -> Result<Vec<u8>, String> {
-    identity
-        .verify_metadata()
-        .map_err(|error| error.to_string())?;
-    if std::fs::metadata(identity.path())
-        .map_err(|error| error.to_string())?
-        .len()
-        > MAX_BSP_BYTES
-    {
-        return Err(format!(
-            "BSP exceeds the {MAX_BSP_BYTES}-byte inspection limit"
-        ));
-    }
-    let file = std::fs::File::open(identity.path()).map_err(|error| error.to_string())?;
-    if file.metadata().map_err(|error| error.to_string())?.len() > MAX_BSP_BYTES {
-        return Err(format!(
-            "BSP exceeds the {MAX_BSP_BYTES}-byte inspection limit"
-        ));
-    }
-    let mut bytes = Vec::new();
-    file.take(MAX_BSP_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|error| error.to_string())?;
-    if bytes.len() as u64 > MAX_BSP_BYTES {
-        return Err("BSP grew beyond the inspection limit".into());
-    }
-    identity
-        .verify_bytes(&bytes)
-        .map_err(|error| error.to_string())?;
-    identity
-        .verify_metadata()
-        .map_err(|error| error.to_string())?;
-    Ok(bytes)
 }
 
 fn channel_summary(bsp: &Bsp, channel: Channel) -> Value {

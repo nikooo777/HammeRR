@@ -1,5 +1,6 @@
 use super::*;
 use crate::runtime::{DocumentHandle, DocumentLifecycle};
+use slint::Model;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
@@ -146,6 +147,18 @@ fn retained_actions(controller: &Controller, error: &str) {
     assert_eq!(baked.get_selected(), "Retained sample");
     assert_eq!(baked.get_diagnostics(), error);
     baked.invoke_close_dialog();
+    let props = controller.baked_prop_vertices.window();
+    window.invoke_inspect_baked_prop_vertices();
+    props.invoke_refresh_inspection();
+    props.invoke_change_channel();
+    props.invoke_inspect_prop(0);
+    props.invoke_inspect_section(0);
+    props.invoke_page_props(1);
+    props.invoke_page_sections(1);
+    props.invoke_page_vertices(1);
+    assert_eq!(props.get_diagnostics(), error);
+    assert_eq!(props.get_vertex_rows().row_count(), 0);
+    props.invoke_close_dialog();
     window.invoke_cancel_capture_edit();
     assert!(!window.get_capture_editing());
     window.invoke_close_dialog();
@@ -244,6 +257,11 @@ fn vanished_compile_windows_and_runtime_are_not_retained_by_callbacks() {
     let weak_window = fixture.controller.window.as_weak();
     let target = fixture.access.downgrade();
     let baked = fixture.controller.baked_lightmaps.window().clone_strong();
+    let props = fixture
+        .controller
+        .baked_prop_vertices
+        .window()
+        .clone_strong();
     drop(fixture.controller);
     assert!(weak_window.upgrade().is_none());
     admitted(&weak_window, &target, |_, _| {
@@ -259,6 +277,9 @@ fn vanished_compile_windows_and_runtime_are_not_retained_by_callbacks() {
     baked.invoke_inspect_face();
     assert_eq!(baked.get_diagnostics(), "the document is closed");
     baked.invoke_close_dialog();
+    props.invoke_refresh_inspection();
+    assert_eq!(props.get_diagnostics(), "the document is closed");
+    props.invoke_close_dialog();
 }
 
 #[test]

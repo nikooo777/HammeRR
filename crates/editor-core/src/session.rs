@@ -24,7 +24,9 @@ use crate::inspector;
 use crate::spatial;
 
 pub mod atlas_texturing;
+mod baked_build;
 pub mod baked_lightmaps;
+pub mod baked_prop_vertices;
 mod buffer_replacement;
 mod document_close;
 #[cfg(test)]
@@ -159,6 +161,7 @@ struct CompiledMap {
     options: compiler::Options,
     content_epoch: u64,
     lightmap_identity: baked_lightmaps::BuildIdentity,
+    prop_lighting_guard: Option<compiler::asset_sources::AssetSourceGuard>,
     instance_dependencies: Option<compiler::instances::DependencyGuard>,
     instance_source_path: Option<PathBuf>,
 }

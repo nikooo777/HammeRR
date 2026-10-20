@@ -540,6 +540,179 @@ def validate_lighting_origin(client, args, game, source, ids, props, report):
                                  "compiler_preserves_source_history_recipe_each_compile": True, "native_exercised": False}
 
 
+def inspect_readonly(client, source, ids, output, arguments=None, error=False):
+    before = unchanged(client, source, ids), client.call("get_compile_settings"), output.read_bytes()
+    result = client.call("inspect_baked_prop_vertices", arguments or {}, error=error)
+    require((unchanged(client, source, ids), client.call("get_compile_settings"), output.read_bytes()) == before,
+            "Baked-prop inspection changed source, history, selection, recipes, settings or output")
+    if not error:
+        require(len(json.dumps(result).encode()) <= 256 * 1024, "Inspection exceeded its bounded JSON response budget")
+    return result
+
+
+def require_empty_inspection(result):
+    require(all(result[key]["rows"] == [] for key in ("props", "sections", "vertices"))
+            and result["selected"] is None and result["statistics"] is None and result["channels"] == [],
+            "Unavailable inspection retained stale rows, colors, statistics or channels")
+
+
+def validate_inspection(client, args, game, source, ids, report):
+    original_settings = client.call("get_compile_settings")
+    original_state, original_detail, original_source = protected_state(client), detail(client, ids), source.read_bytes()
+    original_recipes = client.call("get_build_recipes")
+    recipe_path = Path(original_recipes["path"])
+    recipe_bytes = recipe_path.read_bytes()
+    preserved = {path: path.read_bytes() for path in args.output.glob("*.bsp")}
+    cases = {}
+    try:
+        client.call("set_compile_settings", {"lighting": "direct_ldr_hdr", "bounces": 0, "bake_static_prop_vertices": False})
+        compile_pair(client, args, source, ids, "inspection-no-bake", False)
+        owned = args.output / "inspection-no-bake-background.bsp"
+        off = inspect_readonly(client, source, ids, owned)
+        require(off["bake"]["status"] == "not_baked" and off["selected"] is None and off["vertices"]["rows"] == [],
+                "Feature-off inspection invented baked colors")
+        client.call("set_compile_settings", {"lighting": "direct_ldr", "bake_static_prop_vertices": True})
+        compile_pair(client, args, source, ids, "inspection-ldr", True)
+        owned = args.output / "inspection-ldr-background.bsp"
+        ldr = inspect_readonly(client, source, ids, owned)
+        missing = inspect_readonly(client, source, ids, owned, {"channel": "hdr"})
+        require(next(row for row in missing["channels"] if row["channel"] == "hdr")["available"] is False
+                and missing["selected"] is None and missing["vertices"]["rows"] == [] and missing["diagnostics"],
+                "Missing HDR inspection reused LDR colors")
+        client.call("set_compile_settings", {"lighting": "direct_ldr_hdr"})
+        _, data, result = compile_pair(client, args, source, ids, "inspection-dual", True)
+        owned = args.output / "inspection-dual-background.bsp"
+        verified = verify_output(args, game, data, result["stats"], ["ldr", "hdr"])
+        entries = pak_and_flags(data)[0]
+        current = inspect_readonly(client, source, ids, owned)
+        token = current["build"]["token"]
+        require(current["build"]["status"] == "current" and current["selected"]["ordinal"] == 1
+                and current["props"]["total"] == 3 and current["build"]["bounces"] == 0,
+                "Current inspection lost captured settings, native ordinals or the disabled ordinal hole")
+        require(current["bake"]["status"] == "available" and current["bake"]["source_closure"] == "verified"
+                and all(current["bake"][key] == verified["manifest"][key]
+                        for key in ("static_props_version", "static_props_sha256"))
+                and current["bake"]["manifest_version"] == verified["manifest"]["version"]
+                and current["bake"]["map_flags"] == verified["map_flags"],
+                "Inspection differs from the validated manifest/native-table identity")
+        require(current["channels"] == [{"channel": channel, "available": True,
+                "bytes": sum(asset["bytes"] for asset in verified["manifest"]["assets"] if asset["channel"] == channel)}
+                for channel in ("ldr", "hdr")], "Inspection channel sizes differ from complete packed VHV siblings")
+        for offset in range(3):
+            page = inspect_readonly(client, source, ids, owned,
+                                    {"build_token": token, "prop_offset": offset, "prop_limit": 1})
+            row = page["props"]["rows"][0]
+            require(page["props"]["returned"] == 1 and row["ordinal"] == offset
+                    and row["model"].lower() == args.model and row["origin"] == list(args.origins[offset]),
+                    "Native prop paging changed ordinal/model/origin identity")
+        disabled = inspect_readonly(client, source, ids, owned, {"build_token": token, "prop": 0})
+        require(disabled["selected"] is None and disabled["sections"]["rows"] == disabled["vertices"]["rows"] == [],
+                "Disabled ordinal inspection fell through to another prop")
+        checked = 0
+        for receiver in verified["manifest"]["receivers"]:
+            meshes = receiver["meshes"]
+            require(len(meshes) <= 256, "Fixture exceeds the independent native section limit")
+            starts, cursor = [], 0
+            for mesh in meshes:
+                starts.append(cursor)
+                cursor += mesh["vertex_count"]
+            for channel in ("ldr", "hdr"):
+                arguments = {"build_token": token, "prop": receiver["ordinal"], "channel": channel}
+                name = f"sp_{'hdr_' if channel == 'hdr' else ''}{receiver['ordinal']}.vhv"
+                identity, colors = read_vhv(entries[name], receiver["checksum"], meshes)
+                sections = []
+                for offset in range(0, len(meshes), 32):
+                    page = inspect_readonly(client, source, ids, owned, {**arguments, "section_offset": offset})
+                    selected = page["selected"]
+                    require(all(selected[key] == value for key, value in {"ordinal": receiver["ordinal"], "model": args.model,
+                            "checksum": receiver["checksum"], "channel": channel, "path": name, "sha256": identity["sha256"],
+                            "bytes": identity["bytes"], "version": 2, "flags": 4, "stride": 4,
+                            "section_count": len(meshes), "vertex_count": len(colors)}.items()),
+                            "Inspection selected identity differs from independently read packed VHV bytes")
+                    sections.extend(page["sections"]["rows"])
+                require(len(sections) == len(meshes) and all(row["index"] == index and row["lod"] == mesh["lod"]
+                        and row["vertex_count"] == mesh["vertex_count"] and row["hardware_start"] == starts[index]
+                        for index, (row, mesh) in enumerate(zip(sections, meshes, strict=True))),
+                        "Inspection reordered native hardware sections or omitted a declared LOD")
+                samples = {0, len(meshes) - 1}
+                samples.update(next(index for index, mesh in enumerate(meshes) if mesh["lod"] == lod)
+                               for lod in {mesh["lod"] for mesh in meshes})
+                for section in sorted(samples):
+                    count = meshes[section]["vertex_count"]
+                    for offset in sorted({0, max(0, count - 2)}):
+                        page = inspect_readonly(client, source, ids, owned, {**arguments, "section": section,
+                                                "vertex_offset": offset, "vertex_limit": 2})
+                        require(page["vertices"]["section"] == section and page["vertices"]["lod"] == meshes[section]["lod"]
+                                and page["vertices"]["total"] == count, "Vertex page lost section/LOD identity")
+                        rows = page["vertices"]["rows"]
+                        require(len(rows) == min(2, count - offset), "Vertex page limit/count differs")
+                        for index, row in enumerate(rows, offset):
+                            hardware = starts[section] + index
+                            bgra = list(colors[hardware])
+                            require(row == {"index": index, "hardware_index": hardware, "bgra8": bgra,
+                                            "rgba8": [bgra[2], bgra[1], bgra[0], bgra[3]]},
+                                    "Inspection color/index differs from independent native VHV payload")
+                        rgb = [row["rgba8"][:3] for row in rows]
+                        expected_statistics = {"minimum": [min(row[axis] for row in rgb) for axis in range(3)],
+                                               "mean": [sum(row[axis] for row in rgb) / len(rgb) for axis in range(3)],
+                                               "maximum": [max(row[axis] for row in rgb) for axis in range(3)]}
+                        require(page["statistics"] == {"scope": "returned_vertex_page", "count": len(rows),
+                                                       "encoded_rgb8": expected_statistics},
+                                "Inspection statistics differ from independently read returned encoded color bytes")
+                        checked += len(rows)
+        for arguments in [{"channel": "invalid"}, {"prop": 1}, {"build_token": "foreign", "prop": 1},
+                          {"build_token": ldr["build"]["token"], "prop": 1}, {"vertex_limit": 257},
+                          {"build_token": token, "prop": 1, "section": 256}]:
+            inspect_readonly(client, source, ids, owned, arguments, error=True)
+        client.call("set_compile_settings", {"bounces": 1})
+        stale = inspect_readonly(client, source, ids, owned)
+        require(stale["build"]["status"] == "stale" and stale["historical"] is True
+                and stale["build"]["bounces"] == 0 and stale["vertices"]["rows"] == current["vertices"]["rows"],
+                "Settings staleness relabeled or discarded intact historical color rows")
+        client.call("set_compile_settings", {"bounces": 0})
+        material = game / f"materials/{WALL_MATERIAL}.vmt"
+        material_bytes, output_bytes = material.read_bytes(), owned.read_bytes()
+        try:
+            material.write_bytes(material_bytes + b"\n")
+            asset_stale = inspect_readonly(client, source, ids, owned)
+            require(asset_stale["build"]["status"] == "stale" and asset_stale["historical"] is True
+                    and asset_stale["vertices"]["rows"] == current["vertices"]["rows"]
+                    and asset_stale["bake"]["source_closure"] == "changed",
+                    "Changed captured source did not preserve explicitly historical rows")
+            owned.write_bytes(b"replaced inspector output\n")
+            unavailable = inspect_readonly(client, source, ids, owned)
+            require(unavailable["build"]["status"] == unavailable["bake"]["status"] == "unavailable",
+                    "Changed asset masked replaced-output unavailability")
+            require_empty_inspection(unavailable)
+        finally:
+            material.write_bytes(material_bytes)
+            owned.write_bytes(output_bytes)
+        restored_bytes = inspect_readonly(client, source, ids, owned)
+        require(restored_bytes["build"]["status"] == "unavailable", "Replaced output regained ownership merely from byte restoration")
+        require_empty_inspection(restored_bytes)
+        compile_pair(client, args, source, ids, "inspection-restored", True)
+        owned = args.output / "inspection-restored-background.bsp"
+        fresh = inspect_readonly(client, source, ids, owned)
+        require(fresh["build"]["status"] == "current" and fresh["build"]["token"] != token,
+                "New successful publication did not restore current inspection with a new token")
+        inspect_readonly(client, source, ids, owned, {"build_token": token, "prop": 1}, error=True)
+        cases = {"checked_raw_color_rows": checked, "native_ordinals": [0, 1, 2],
+                 "token_and_bounded_pages": True, "missing_hdr_and_no_bake": True,
+                 "historical_rows_preserved": True, "unavailable_rows_cleared": True,
+                 "restored_artifact": str(owned), "source_history_settings_and_output_read_only": True}
+    finally:
+        client.call("apply_build_recipe", {"id": original_settings["recipe"]["id"]})
+    restored_recipes = client.call("get_build_recipes")
+    require(protected_state(client) == original_state and detail(client, ids) == original_detail and source.read_bytes() == original_source,
+            "Inspection controls changed authored document state or saved source")
+    require(client.call("get_compile_settings") == original_settings
+            and {key: value for key, value in restored_recipes.items() if key != "revision"} ==
+            {key: value for key, value in original_recipes.items() if key != "revision"}
+            and recipe_path.read_bytes() == recipe_bytes, "Inspection controls failed to restore exact settings/recipe contents")
+    require(all(path.read_bytes() == raw for path, raw in preserved.items()), "Inspection controls overwrote prior native evidence artifacts")
+    report["inspection"] = cases
+
+
 def validate(client, args, game, report):
     initial = client.call("get_compile_settings")
     require(initial["bake_static_prop_vertices"] is False, "Prop vertex lighting is not default-off")
@@ -590,6 +763,8 @@ def validate(client, args, game, report):
         validate_lighting_origin(client, args, game, source, ids, props, report)
     if args.bounce_depth_control:
         validate_bounce_depths(client, args, game, source, ids, report)
+    if args.inspection_control:
+        validate_inspection(client, args, game, source, ids, report)
     manifest = report["channels"]["direct_ldr_hdr"]["manifest"]
     material_paths = [row["path"] for row in manifest["sources"] if row["path"].endswith(".vmt")]
     material = args.material or (material_paths[0] if len(material_paths) == 1 else None)
@@ -646,6 +821,7 @@ def main():
     parser.add_argument("--one-bounce-control", action="store_true", help="Build, reject incompatible depths, clear and restore one-bounce prop lighting in both channels using the private measured wall VTF")
     parser.add_argument("--lighting-origin-control", action="store_true", help="Author a native info_lighting point through MCP; require unchanged N0/N1 dual-channel VHV at open and solid-floor points, exact native metadata, missing-helper refusal and restoration")
     parser.add_argument("--bounce-depth-control", action="store_true", help="Publish depths 2/3/4 in both channels through foreground/background MCP, verify complete assets, invalid-depth preservation and exact recipe restoration, then persist/restart depth 4")
+    parser.add_argument("--inspection-control", action="store_true", help="Inspect actual owned VHV through MCP: bounded token/ordinal/LOD/channel pages, exact raw colors and identities, read-only preservation, historical assets and replaced-output clearing")
     args = parser.parse_args()
     args.binary, args.fixture_game, args.output = args.binary.resolve(strict=True), args.fixture_game.resolve(strict=True), args.output.resolve()
     require(args.output.is_relative_to(ROOT / "target" / "validation"), "Keep acceptance artifacts on disk below target/validation")

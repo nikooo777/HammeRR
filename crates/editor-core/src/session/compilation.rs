@@ -210,6 +210,15 @@ impl CompileResult {
             .take()
     }
 
+    fn prop_lighting_guard(&self) -> Option<compiler::asset_sources::AssetSourceGuard> {
+        self.publication
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .sources
+            .as_ref()
+            .and_then(compiler::asset_sources::OutputAssetSourceGuard::prop_lighting_guard)
+    }
+
     fn publication_warning(&self) -> Option<String> {
         self.publication
             .lock()
@@ -1141,6 +1150,7 @@ impl Session {
     }
 
     pub fn finish_compile(&mut self, actor: Actor, result: &Result<CompileResult, String>) {
+        let mut prop_lighting_guard = None;
         if let Ok(result) = result {
             if self.compilation.job.as_ref().is_none_or(|job| {
                 !job.origin.same(&result.origin)
@@ -1149,6 +1159,7 @@ impl Session {
             }) {
                 return;
             }
+            prop_lighting_guard = result.prop_lighting_guard();
             if result.options.requires_guarded_publication()
                 || result.output.instance_dependencies.is_some()
             {
@@ -1198,6 +1209,7 @@ impl Session {
                     .map(|job| job.inspection_source.clone())
                     .unwrap_or_else(|| Err("Build source identity is unavailable".into()));
                 self.compiled = Some(CompiledMap {
+                    prop_lighting_guard,
                     claim: result.take_artifact_claim(),
                     face_origins: result.output.face_origins.clone(),
                     path: result.path.clone(),

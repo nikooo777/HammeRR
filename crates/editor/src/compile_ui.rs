@@ -10,6 +10,7 @@ use crate::session::{Actor, Session};
 #[cfg(test)]
 mod admission_tests;
 mod baked_lightmaps;
+mod baked_prop_vertices;
 mod capture;
 #[cfg(test)]
 mod instance_dependency_tests;
@@ -26,6 +27,7 @@ pub struct Controller {
     recipes: Rc<RefCell<RecipeForm>>,
     capture: capture::Form,
     baked_lightmaps: baked_lightmaps::Form,
+    baked_prop_vertices: baked_prop_vertices::Form,
 }
 
 #[derive(Default)]
@@ -395,6 +397,7 @@ impl Controller {
 
     pub(crate) fn hide_windows(&self, errors: &mut Vec<String>) {
         self.baked_lightmaps.hide_window(errors);
+        self.baked_prop_vertices.hide_window(errors);
         crate::ui::hide_window("Compile", self.window.window(), errors);
     }
 
@@ -414,6 +417,7 @@ impl Controller {
         sky_packing::bind(&window, &access, &recipes);
         prop_vertex_lighting::bind(&window, &access, &recipes);
         let baked_lightmaps = baked_lightmaps::bind(&window, &access)?;
+        let baked_prop_vertices = baked_prop_vertices::bind(&window, &access)?;
         window.on_choose_recipe({
             let (target, window, recipes) = (access.downgrade(), window.as_weak(), recipes.clone());
             move |index| {
@@ -725,6 +729,7 @@ impl Controller {
             recipes,
             capture,
             baked_lightmaps,
+            baked_prop_vertices,
         })
     }
 
@@ -732,6 +737,7 @@ impl Controller {
         refresh_recipes(&self.window, session, &self.recipes);
         self.capture.refresh(&self.window, session);
         self.baked_lightmaps.refresh(session);
+        self.baked_prop_vertices.refresh(session);
         self.token.set(session.compile_token());
         self.window.set_cancellable(session.compile_cancellable());
         let status = session.compile_status();
@@ -1166,7 +1172,9 @@ impl Controller {
     }
 
     pub fn is_visible(&self) -> bool {
-        self.window.window().is_visible() || self.baked_lightmaps.is_visible()
+        self.window.window().is_visible()
+            || self.baked_lightmaps.is_visible()
+            || self.baked_prop_vertices.is_visible()
     }
 }
 

@@ -67,6 +67,75 @@ pub struct Metadata {
     pub decoded_bytes: usize,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct View<'a> {
+    data: &'a [u8],
+    metadata: Metadata,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Section<'a> {
+    pub index: usize,
+    pub layout: MeshLayout,
+    pub hardware_start: usize,
+    pub payload_offset: usize,
+    colors: &'a [Bgra8],
+}
+
+impl<'a> View<'a> {
+    pub fn parse(data: &'a [u8], limits: Limits) -> io::Result<Self> {
+        Ok(Self {
+            data,
+            metadata: inspect(data, limits)?,
+        })
+    }
+
+    pub fn metadata(self) -> Metadata {
+        self.metadata
+    }
+
+    pub fn section(self, index: usize) -> io::Result<Section<'a>> {
+        if index >= self.metadata.mesh_count {
+            return Err(invalid("VHV section index exceeds its descriptor count"));
+        }
+        let mut hardware_start = 0_usize;
+        for previous in 0..index {
+            hardware_start = hardware_start
+                .checked_add(
+                    mesh_layout(self.data, HEADER_BYTES + previous * MESH_HEADER_BYTES)?
+                        .vertex_count as usize,
+                )
+                .ok_or_else(|| invalid("VHV hardware prefix overflow"))?;
+        }
+        let base = HEADER_BYTES + index * MESH_HEADER_BYTES;
+        let layout = mesh_layout(self.data, base)?;
+        let payload_offset = word(self.data, base + 8)? as usize;
+        let colors = bytemuck::cast_slice(bytes(
+            self.data,
+            payload_offset,
+            vertex_bytes(layout.vertex_count as usize)?,
+        )?);
+        Ok(Section {
+            index,
+            layout,
+            hardware_start,
+            payload_offset,
+            colors,
+        })
+    }
+}
+
+impl<'a> Section<'a> {
+    pub fn page(self, offset: usize, count: usize) -> io::Result<&'a [Bgra8]> {
+        let end = offset
+            .checked_add(count)
+            .ok_or_else(|| invalid("VHV vertex page range overflow"))?;
+        self.colors
+            .get(offset..end)
+            .ok_or_else(|| invalid("VHV vertex page exceeds its section"))
+    }
+}
+
 struct Encoding {
     payload_start: usize,
     encoded_bytes: usize,
@@ -349,4 +418,110 @@ fn reserve<T>(values: &mut Vec<T>, count: usize) -> io::Result<()> {
 
 fn invalid(message: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message.into())
+}
+
+#[cfg(test)]
+mod view_tests {
+    use super::*;
+
+    fn literal() -> Vec<u8> {
+        let mut data = vec![0u8; 1024];
+        for (offset, value) in [
+            (0, 2u32),
+            (4, 0x10203040),
+            (8, 4),
+            (12, 4),
+            (16, 5),
+            (20, 2),
+            (40, 0),
+            (44, 3),
+            (48, 512),
+            (68, 2),
+            (72, 2),
+            (76, 524),
+        ] {
+            data[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        data[512..532].copy_from_slice(&[
+            1, 2, 3, 4, 9, 8, 7, 6, 1, 2, 3, 4, 21, 22, 23, 24, 31, 32, 33, 34,
+        ]);
+        data
+    }
+
+    #[test]
+    fn borrowed_view_retains_literal_channels_boundaries_lods_and_duplicate_rows() {
+        let data = literal();
+        let view = View::parse(&data, Limits::default()).unwrap();
+        assert_eq!(view.metadata().checksum, 0x10203040);
+        let first = view.section(0).unwrap();
+        let second = view.section(1).unwrap();
+        assert_eq!(
+            (first.hardware_start, first.payload_offset, first.layout.lod),
+            (0, 512, 0)
+        );
+        assert_eq!(
+            (
+                second.hardware_start,
+                second.payload_offset,
+                second.layout.lod
+            ),
+            (3, 524, 2)
+        );
+        assert_eq!(
+            first.page(0, 1).unwrap()[0],
+            Bgra8 {
+                blue: 1,
+                green: 2,
+                red: 3,
+                alpha: 4
+            }
+        );
+        assert_eq!(first.page(0, 1).unwrap(), first.page(2, 1).unwrap());
+        assert_eq!(
+            second.page(1, 1).unwrap()[0],
+            Bgra8 {
+                blue: 31,
+                green: 32,
+                red: 33,
+                alpha: 34
+            }
+        );
+        assert_eq!(
+            first.page(0, 3).unwrap().as_ptr() as usize,
+            data[512..].as_ptr() as usize
+        );
+        assert!(first.page(3, 0).unwrap().is_empty());
+        assert!(first.page(4, 0).is_err());
+        assert!(first.page(usize::MAX, 1).is_err());
+        assert!(view.section(2).is_err());
+    }
+
+    #[test]
+    fn invalid_other_section_or_padding_prevents_every_borrowed_page() {
+        for offset in [76, 80, 100, 1023] {
+            let mut data = literal();
+            data[offset] ^= 1;
+            assert!(View::parse(&data, Limits::default()).is_err());
+        }
+        assert!(
+            View::parse(
+                &literal(),
+                Limits {
+                    max_vertices: 4,
+                    ..Limits::default()
+                }
+            )
+            .is_err()
+        );
+        assert!(
+            View::parse(
+                &literal(),
+                Limits {
+                    max_meshes: 1,
+                    ..Limits::default()
+                }
+            )
+            .is_err()
+        );
+    }
 }

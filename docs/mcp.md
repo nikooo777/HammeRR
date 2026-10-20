@@ -387,6 +387,7 @@ The shared desktop and private stdio server expose workspace and document tools.
 | Sky asset inspection | `inspect_sky_assets` |
 | 3D sky preview | `get_3d_sky_preview`, `set_3d_sky_preview` |
 | Baked lightmap inspection | `inspect_baked_lightmaps` |
+| Baked prop vertex inspection | `inspect_baked_prop_vertices` |
 | Authored lighting preview | `get_lighting_preview`; shared `set_view` and temporary `render_view` settings |
 | Selection and history | `select`, `get_selection`, `set_selection_mode`, `undo`, `redo`, `get_history`, `navigate_history` |
 | Measurement guides | `get_measurements`, `set_measurement` |
@@ -1791,6 +1792,65 @@ mismatched channel/face layouts. Explicit inspection checks exact root/output an
 instance-child bytes. `build.render_context` separately marks displayed drafts as
 not baked; stale numeric IDs cannot become current merely by existing again.
 See [Baked lightmaps](baked-lightmaps.md).
+
+### Baked prop vertex inspection
+
+`inspect_baked_prop_vertices` reads actual generated VHV from this Session's
+last successful owned BSP through the same operation as **Build settings…** or
+**Build details… → Inspect baked prop vertices…**. It is a CPU read-only call:
+no graphics, game, arbitrary path, model loading or source/history/selection/
+camera/settings/draft mutation.
+
+Start with `{}` for LDR or `{"channel":"hdr"}`. Omitted `prop` selects the first
+baked native ordinal in that channel; omitted `section` selects section zero.
+The response's `build.token` is an opaque decimal string. Pass it as
+`build_token` for any explicit `prop`/`section` or nonzero page offset. A token
+from another build, invalid range or malformed argument rejects without
+reusing retained indices.
+
+Optional paging fields are `prop_offset`/`prop_limit`,
+`section_offset`/`section_limit` and `vertex_offset`/`vertex_limit`. Defaults are
+`0/32`, `0/32` and `0/256`; limits are 1–32, 1–32 and 1–256. Each page returns
+`offset`, `limit`, `returned`, `total`, `next_offset` and `rows`. For example,
+after observing token `"12"`, request `{"build_token":"12","channel":"hdr",
+"prop":1,"section":0,"vertex_offset":256,"vertex_limit":2}`. Tokens belong to
+the observed output and must not be copied between Sessions.
+
+`props.rows` identifies final native `ordinal`, `model`, `origin`, `skin`,
+`flags`, status and hardware counts. Disabled props retain their ordinal hole
+with `status:"disabled_by_prop"` and no color file. `selected` identifies the
+channel's exact packed path, checksum, SHA256, bytes, format and section/vertex
+counts. `sections.rows` retains file order with `index`, `lod`, `vertex_count`,
+`hardware_start` and `payload_offset`. `vertices` adds the selected `section`
+and `lod`; rows contain local `index`, flattened `hardware_index`, `bgra8` and
+`rgba8`. All hardware rows remain distinct, including repeated and unused draw
+records. There is no authored entity/root-model vertex or world-position map.
+
+`statistics.scope:"returned_vertex_page"` and `count` bound
+`encoded_rgb8.minimum`, `mean` and `maximum` to returned rows. Values are raw
+lossy gamma/overbright encoded 0–255 vertex-color bytes, not linear RGBExp32
+irradiance, material-modulated pixels or exposure-adapted brightness. RGBA only
+reorders storage bytes; HDR is independently baked with the same byte encoding.
+`color_encoding` explains units and stored alpha. `channels` lists both channel
+availabilities and actual packed sizes; missing HDR has no LDR fallback.
+
+`build` reports captured lighting/bounces/bake settings and
+`current|stale|unavailable` provenance. An intact stale build retains raw rows
+with `historical:true`, `bake.status:"available"` and
+`build.render_context.current_for_display:false`. `bake.source_closure` reports
+`verified|changed|unverifiable`, or `not_applicable` for a valid feature-off
+build. Fresh source capture never replaces the original publication guard.
+Missing/replaced/corrupt output clears all page rows, selected file, statistics
+and channels even if assets also changed. Restoring bytes alone does not regain
+ownership. Feature-off output returns `bake.status:"not_baked"`; disabled props,
+missing channels and invalid data do not invent samples. Draft-display
+diagnostics remain separate from historical compiled bytes.
+
+The report is capped at 256 KiB, with 32 prop/section rows and 256 vertex rows
+per page, at most 256 hardware sections per receiver and bounded source/BSP/
+archive work. Diagnostics cap at 64 strings across the report, each at most
+512 UTF-8 bytes; containers expose `diagnostics_total`/`diagnostics_truncated`. Limits or validation failures never
+return partial colors. See [Baked prop vertices](baked-prop-vertices.md).
 
 ### Water material binding
 

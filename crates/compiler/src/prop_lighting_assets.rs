@@ -118,6 +118,66 @@ pub struct PropLightingPlan {
     guard: AssetSourceGuard,
 }
 
+pub struct ValidatedPropLighting {
+    manifest: Option<PropLightingManifest>,
+    static_props: Option<bsp::StaticProps>,
+    map_flags: u32,
+    archive: PakArchive,
+}
+
+impl ValidatedPropLighting {
+    pub fn manifest(&self) -> Option<&PropLightingManifest> {
+        self.manifest.as_ref()
+    }
+
+    pub fn static_props(&self) -> Option<&bsp::StaticProps> {
+        self.static_props.as_ref()
+    }
+
+    pub fn map_flags(&self) -> u32 {
+        self.map_flags
+    }
+
+    pub fn asset(&self, ordinal: u32, channel: Channel) -> Option<(&PackedAsset, &[u8])> {
+        let asset = self
+            .manifest
+            .as_ref()?
+            .assets
+            .iter()
+            .find(|asset| asset.ordinal == ordinal && asset.channel == channel)?;
+        let entry = self
+            .archive
+            .entries
+            .iter()
+            .find(|entry| entry.name == asset.path)?;
+        Some((asset, &entry.data))
+    }
+
+    pub fn verify_published_sources(
+        &self,
+        published: &AssetSourceGuard,
+        game: &GameFs,
+        control: &Control,
+    ) -> io::Result<()> {
+        published.verify_metadata()?;
+        let manifest = self
+            .manifest
+            .as_ref()
+            .ok_or_else(|| invalid("Generated prop lighting manifest is missing"))?;
+        verify_source_bytes(manifest, game, control)?;
+        for path in &manifest.missing_sources {
+            checkpoint(control)?;
+            if game.asset_source_paths(path)?.is_some() {
+                return Err(invalid(format!(
+                    "Prop lighting missing candidate appeared: {path}"
+                )));
+            }
+        }
+        published.verify_metadata()?;
+        checkpoint(control)
+    }
+}
+
 impl PropLightingPlan {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -263,6 +323,13 @@ pub fn read_generated_prop_lighting(
     bsp: &Bsp,
     control: &Control,
 ) -> io::Result<Option<PropLightingManifest>> {
+    Ok(read_validated_prop_lighting(bsp, control)?.manifest)
+}
+
+pub fn read_validated_prop_lighting(
+    bsp: &Bsp,
+    control: &Control,
+) -> io::Result<ValidatedPropLighting> {
     checkpoint(control)?;
     check_lumps(bsp)?;
     let mut check = || checkpoint(control);
@@ -280,7 +347,12 @@ pub fn read_generated_prop_lighting(
         {
             return Err(invalid("Generated prop lighting has no manifest"));
         }
-        return Ok(None);
+        return Ok(ValidatedPropLighting {
+            manifest: None,
+            static_props: bsp.static_props()?,
+            map_flags: map_flags(bsp)?,
+            archive,
+        });
     };
     if entry.name != MANIFEST_PATH || entry.data.len() > MAX_MANIFEST_BYTES {
         return Err(invalid(
@@ -289,9 +361,15 @@ pub fn read_generated_prop_lighting(
     }
     let manifest: PropLightingManifest = serde_json::from_slice(&entry.data)
         .map_err(|error| invalid(format!("Invalid generated prop lighting manifest: {error}")))?;
-    verify_archive(bsp, &archive, &manifest, map_flags(bsp)?, control)?;
+    let flags = map_flags(bsp)?;
+    let static_props = verify_archive(bsp, &archive, &manifest, flags, control)?;
     verify_bsp_size(bsp, bsp.lumps[bsp::lump::PAKFILE].data.len(), control)?;
-    Ok(Some(manifest))
+    Ok(ValidatedPropLighting {
+        manifest: Some(manifest),
+        static_props: Some(static_props),
+        map_flags: flags,
+        archive,
+    })
 }
 
 pub fn verify_generated_prop_lighting(
@@ -446,7 +524,7 @@ fn verify_archive(
     manifest: &PropLightingManifest,
     flags: u32,
     control: &Control,
-) -> io::Result<()> {
+) -> io::Result<bsp::StaticProps> {
     checkpoint(control)?;
     check_lumps(bsp)?;
     verify_bsp_size(bsp, bsp.lumps[bsp::lump::PAKFILE].data.len(), control)?;
@@ -538,7 +616,8 @@ fn verify_archive(
             }
         }
     }
-    checkpoint(control)
+    checkpoint(control)?;
+    Ok(props)
 }
 
 fn append(
@@ -589,6 +668,29 @@ fn source_guard(
     game: &GameFs,
     control: &Control,
 ) -> io::Result<AssetSourceGuard> {
+    verify_source_bytes(manifest, game, control)?;
+    capture_asset_source_guard(
+        manifest
+            .sources
+            .iter()
+            .map(|source| (source.path.as_str(), source.sha256.as_str())),
+        manifest.missing_sources.iter().map(String::as_str),
+        game,
+        control,
+        SourceGuardPolicy {
+            label: "Prop lighting",
+            missing_label: "Prop lighting material candidate",
+            asset_bytes: MAX_SOURCE_BYTES,
+            physical_paths: MAX_PHYSICAL_PATHS,
+        },
+    )
+}
+
+fn verify_source_bytes(
+    manifest: &PropLightingManifest,
+    game: &GameFs,
+    control: &Control,
+) -> io::Result<()> {
     for source in &manifest.sources {
         checkpoint(control)?;
         let bytes = game
@@ -617,21 +719,7 @@ fn source_guard(
             }
         }
     }
-    capture_asset_source_guard(
-        manifest
-            .sources
-            .iter()
-            .map(|source| (source.path.as_str(), source.sha256.as_str())),
-        manifest.missing_sources.iter().map(String::as_str),
-        game,
-        control,
-        SourceGuardPolicy {
-            label: "Prop lighting",
-            missing_label: "Prop lighting material candidate",
-            asset_bytes: MAX_SOURCE_BYTES,
-            physical_paths: MAX_PHYSICAL_PATHS,
-        },
-    )
+    Ok(())
 }
 
 fn capture_lookups(

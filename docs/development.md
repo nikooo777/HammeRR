@@ -441,11 +441,11 @@ cargo test -j8 -p source-formats --lib keyvalues::static_material_tests
 cargo test -j8 -p compiler --lib water_dependencies::tests
 python3 -B scripts/validate_material_read_limits.py \
   --binary target/debug/hammerr-headless \
-  --old-controls target/validation/693/old-controls-v2/results.json \
+  --old-controls target/validation/693/old-controls-v3/results.json \
   --output target/validation/693/material-read-limits-headless-1
 python3 -B scripts/validate_material_read_limits.py \
   --binary target/debug/editor \
-  --old-controls target/validation/693/old-controls-v2/results.json \
+  --old-controls target/validation/693/old-controls-v3/results.json \
   --output target/validation/693/material-read-limits-editor-1
 ```
 
@@ -883,11 +883,11 @@ retained output. Build the matching `hammerr-physics` worker before running them
 ```sh
 python3 -B scripts/validate_static_prop_physics_limits.py \
   --binary target/debug/hammerr-headless \
-  --old-controls target/validation/694/old-valid-v1/results.json \
+  --old-controls target/validation/694/old-valid-v2/results.json \
   --output target/validation/694/physics-limits-headless-1
 python3 -B scripts/validate_static_prop_physics_limits.py \
   --binary target/debug/editor \
-  --old-controls target/validation/694/old-valid-v1/results.json \
+  --old-controls target/validation/694/old-valid-v2/results.json \
   --output target/validation/694/physics-limits-editor-1
 ```
 
@@ -1310,6 +1310,50 @@ python3 -B scripts/validate_vphysics_backend.py \
 ```
 
 Checks the installed CS:S Linux64 **VPhysicsCollision007** library that engine physics builds rely on: convex construction, serialization, compound geometry and solid loading. It runs in a timed child process with a 24 GiB address-space limit, rejects library builds it doesn't recognize, and doesn't launch the game.
+
+### Explicit terrain density chains
+
+```sh
+cargo test -j8 -p compiler --test terrain_density_chains
+CSS_DIR="$HOME/.local/share/Steam/steamapps/common/Counter-Strike Source" \
+  cargo test -j8 -p compiler --test terrain_density_chains \
+  native_physics_worker_receives_all_288_active_chain_triangles -- --ignored --exact
+uv run scripts/validate_terrain_density_chains.py \
+  --binary target/debug/hammerr-headless \
+  --output target/validation/695/headless
+uv run scripts/validate_terrain_density_chains.py \
+  --binary target/debug/editor \
+  --output target/validation/695/editor \
+  --reference-output target/validation/695/headless
+```
+
+Use fresh disk-backed output directories. The second run requires the accepted
+first result and its retained BSPs from the same frozen script and helpers, then
+compares complete output across the two programs.
+
+The fixture supplies four explicit grids at powers 2/2/3/3 across three cage
+densities, joined by two whole-to-half links and one full link. It checks literal
+reciprocal slots, orientations, allowed masks, every emitted position and alpha,
+and independent active-triangle coverage. Flat and curved Fullbright builds,
+curved Direct LDR + HDR and exact saved-source reopen each use both shared MCP
+compile paths. The lit control retains the displacement geometry bytes. An
+unsupported-flags case must fail while preserving the prior BSP and pointfile.
+Grid inspection, owned terrain preview, invalid-request retention and Cancel
+leave source/history and published output unchanged; compile checks retain the
+active property draft and verify the existing face-preview cancellation at
+compile completion. Settings, recipes and fixture assets remain guarded through
+clean EOF.
+
+The public script checks existing compiler support for this explicit chain. It
+does not run Subdivide, broaden its one/two cage-density authoring limit, admit
+approximate edge matching or arbitrary chains, or launch graphics, a native
+physics worker or the game.
+
+The separate native-worker test is ignored by default. Running it explicitly
+requires `CSS_DIR` and the matching built worker; missing prerequisites fail
+rather than pass without exercising the check. It cooks the chain's active
+terrain mesh and checks its native collision framing. Native game rendering and
+contact remain separate checks.
 
 ### Terrain triangle checks
 

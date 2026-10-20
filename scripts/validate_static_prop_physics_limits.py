@@ -18,7 +18,7 @@ DIRECTORY_MODEL = "models/hammerr694/directory.mdl"
 ARCHIVE_MODEL = "models/hammerr694/archive.mdl"
 ORIGIN = (32.125, 48.25, 8.375)
 OVERSIZED_BYTES = 64 * 1024 * 1024 + 1
-LIMITS_SOURCE_SHA = "c9e7d4e622be3afd3f37fc2774e82eb061e36fa42cccadd88426f8a0c7c4dcca"
+LIMITS_SOURCE_SHA = "ce85ebcf3939e02993defadd7cfd611471c77df8f026f701fe99a1f7d482e162"
 
 
 def model_bytes():

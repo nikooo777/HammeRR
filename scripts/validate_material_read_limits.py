@@ -119,6 +119,8 @@ def after_compile_refresh(before):
         state["preview"] = False
         state["preview_token"] = None
         state["preview_faces"] = []
+        for face in state["faces"]:
+            face["preview"] = None
     require(expected["history"]["navigation_blocked"] == "Apply or cancel the active preview before navigating history.",
             "Fixture history is not blocked solely by its face preview")
     expected["history"]["navigation_blocked"] = None

@@ -48,7 +48,7 @@ Round connected base quad faces into a smooth terrain surface.
 
 ![Shared seam geometry across three terrain grid resolutions](images/subdivided-terrain-half-edge-wireframe.png)
 
-Limits: 1–16 quad cages, four Catmull–Clark refinement rounds, sampled at each surface's existing power. Exact whole-to-half junctions use a shared quad cage with two grid densities; one large edge may meet one or two smaller edges. Nested chains requiring a third density, inconsistent density cycles, other fractional contacts, corner-only contacts, ambiguous overlaps, non-manifold or inconsistently oriented cages, opaque data and nonzero offset-normal caches reject together. It generates geometry from the base faces, replacing prior sculpting on interiors and boundaries. Unmatched outer base edges stay pinned. Compilation and the displayed surface share mixed-resolution LOD snapping; picking, framing and guides follow that surface. Raw grid inspection and editing retain authored samples, including vertices inactive at a native seam. Border-normal rules remain separate. The saved `subdiv` marker alone does not block supported editing operations. Crease controls remain planned.
+Limits: 1–16 quad cages, four Catmull–Clark refinement rounds, sampled at each surface's existing power. The generator allows one or two cage densities per connected component; exact whole-to-half junctions may join one large edge to one or two smaller edges. Nested chains requiring a third density, inconsistent density cycles, other fractional contacts, corner-only contacts, ambiguous overlaps, non-manifold or inconsistently oriented cages, opaque data and nonzero offset-normal caches reject together. This is a **Subdivide base cage** authoring limit; [compilation of existing explicit grids](#compile-split-borders) uses their full/half links. Subdivision generates geometry from the base faces, replacing prior sculpting on interiors and boundaries. Unmatched outer base edges stay pinned. Compilation and the displayed surface share mixed-resolution LOD snapping; picking, framing and guides follow that surface. Raw grid inspection and editing retain authored samples, including vertices inactive at a native seam. Border-normal rules remain separate. The saved `subdiv` marker alone does not block supported editing operations. Crease controls remain planned.
 
 ## Sculpt heights
 
@@ -228,7 +228,7 @@ Limits: every target must contain terrain, with 1–16 faces per action. Invalid
 
 ![Compiled terrain with adjacent grid resolutions](images/terrain-mixed-resolution.png)
 
-Limits: powers 2–4, complete base edges with matching common heights, and bounded topology work. Compilation removes unsupported fine vertices and snaps their geometry onto the compatible surface. The editable grid remains unchanged, so the compiled surface can be less detailed near a coarse neighbor. Lighting and physics use the compiled geometry. Exact whole-to-half connections also compile; other partial spans and holes remain planned. **Sew borders & corners** repairs these source borders through a preview.
+Limits: powers 2–4, complete base edges with matching common heights, and bounded topology work. Compilation removes unsupported fine vertices and snaps their geometry onto the compatible surface. The editable grid remains unchanged, so the compiled surface can be less detailed near a coarse neighbor. Lighting and physics use the compiled geometry. Exact whole-to-half connections also compile; other fractional contacts need partitioning into grids with full or half borders. Holes remain unsupported. **Sew borders & corners** repairs supported source borders through a preview.
 
 ## Compile split borders
 
@@ -239,7 +239,9 @@ Limits: powers 2–4, complete base edges with matching common heights, and boun
 
 ![Compiled terrain across a split border](images/terrain-half-edge.png)
 
-Limits: exact full-to-half base edges with matching common samples. Masks and geometry snapping follow sample spacing within each covered interval. Shared junction samples stay aligned; other fractional spans and holes remain planned. Imported subdivided grids compile their saved rows; source editing rejects actual unsupported caches. Source grids stay unchanged.
+Four explicit grids at powers 2, 2, 3 and 3 can form a chain across three cage densities, with two successive whole-to-half links and one full-edge link. Flat or curved saved grids retain their authored rows while native LOD masks and snapping align the compiled surface. These grids compile without running **Subdivide base cage**, whose one/two-density authoring cap remains separate.
+
+Limits: exact full-to-half base edges with matching common samples. Masks and geometry snapping follow sample spacing within each covered interval. Shared junction samples stay aligned. General chain compatibility remains unverified; other fractional contacts require partitioning into native full/half grids. Removed-triangle tags are rejected, and holes need a different supported surface representation. Imported subdivided grids compile their saved rows; source editing rejects actual unsupported caches. Source grids stay unchanged.
 
 ## Compile terrain as detail
 

@@ -1081,7 +1081,7 @@ its native view validator expose external files read-only.
 ```sh
 cargo test -p compiler --lib physics::terrain::tests
 cargo test -p compiler --test terrain_physics -- --nocapture
-python3 -B scripts/validate_terrain_physics_surfaces.py --binary target/debug/hammerr-headless --output /tmp/hammerr-terrain-physics-surfaces-check
+python3 -B scripts/validate_terrain_physics_surfaces.py --binary target/debug/hammerr-headless --output target/validation/terrain-physics-surfaces-check
 ```
 
 Checks actual emitted LOD triangles, strict stored-float blend thresholds,
@@ -1090,6 +1090,20 @@ definitions and native collision serialization/reload. The MCP validator paints
 an inclined patch, saves and reopens it, compares foreground/background output
 and checks unchanged geometry. It uses the native physics helper; it does not
 launch a game or measure friction in a running client.
+
+For native terrain friction acceptance, use identical inclined world-terrain
+lanes with primary ice and secondary rubber, then run paired, swapped and
+stored-float threshold controls. A guarded read-only contact observer must bind
+the original crates and world bodies, qualify contacts on decoded emitted top
+triangles, bracket actual motion-enable callbacks and measure native simulation
+time. Freeze numerical gates before launch. Retain exact source/BSP/PHY, native
+module, model, surface and staged script/config/material identities; explicitly
+stage audited private Cloud assets before freezing the material tree. Use the
+private launch/compositor helpers with `-insecure`, post-map `sv_lan 1`, bounded
+logs and owned-process drain. Every case requires the complete preference/Cloud
+and staged-input audit after exit. Keep raw failed attempts and count attempted,
+started and accepted cases separately. Retain private observer adaptations and
+receipts on disk under `target/`.
 
 ### Private launch guards and cubemap capture probe
 

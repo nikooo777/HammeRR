@@ -49,7 +49,9 @@ Paint terrain contact properties with a material that declares primary
 2. Open **Edit terrain…** and choose **Operation → Paint blend**. Set
    **Brush center · world coordinates** and **Radius · world units**.
 3. Set **Blend value · 0 first texture, 255 second texture** and
-   **Strength · 0 leaves terrain unchanged, 1 applies fully**. Click **Preview**,
+   **Strength · 0 leaves terrain unchanged, 1 applies fully**. For a uniform
+   contact patch, choose **Operation → Fill blend**: `0` selects the primary
+   property throughout the grid and `255` selects the secondary. Click **Preview**,
    then **Apply**. See [Paint a material blend](terrain.md#paint-a-material-blend)
    for fills, inversion and viewport strokes.
 4. Open **Build settings…**, choose **Physics bodies → CS:S engine physics**,

@@ -1852,11 +1852,52 @@ archive work. Diagnostics cap at 64 strings across the report, each at most
 512 UTF-8 bytes; containers expose `diagnostics_total`/`diagnostics_truncated`. Limits or validation failures never
 return partial colors. See [Baked prop vertices](baked-prop-vertices.md).
 
+### Steady physical water current
+
+`get_property_inspector {"world":true}` exposes **Water current · world units/s**
+for `_hammerr_water_current_velocity` before an override exists, with
+`field.kind:"vector"`, `field.control:"vector"`, XYZ components and the same
+numeric controls as **World settings…**. Absent values report `stored:null`,
+`stored_count:0` and effective `"0 0 0"`; this is an intentional compiler default,
+not an authored value or invented FGD default. FGD read-only restrictions remain
+enforced. Invalid stored text stays visible as a text control with its diagnostic,
+rather than becoming zero or a normalized direction.
+
+Call `begin_property_edit {"world":true}`, then `update_property_edit` with its
+token and `changes:[{"action":"set","key":"_hammerr_water_current_velocity",
+"value":"64 -16 0"}]`. The equivalent numeric operation is
+`{"action":"component","key":"_hammerr_water_current_velocity","index":0,
+"value":64}` with indices 0/1/2 for world X/Y/Z. Use `action:"set"` when exact
+decimal/scientific source spelling matters; numeric components carry already
+parsed numbers. Replacing the pending change
+list validates every change atomically. `commit_property_edit` applies one
+undoable edit; `cancel_property_edit` preserves source/history. Use
+`{"action":"remove","key":"_hammerr_water_current_velocity"}` to restore
+absence. Explicit zero remains an authored request with normal build checks.
+
+Input is at most 128 UTF-8 bytes containing exactly three ASCII-whitespace-separated
+finite decimal or scientific components. The L2 vector length must be at most 128 world units/s,
+with representable finite native velocity; overflow/underflow, malformed values,
+nonfinite components and duplicate source keys reject without partial mutation.
+Components are not normalized or clamped. Ordinary save/reopen and Undo/Redo
+preserve the source string.
+
+Compilation requires `set_compile_settings {"physics":"engine"}` and actual
+emitted structural-world WATER with a visible horizontal top. Any stored value,
+including zero, rejects with no engine physics, no eligible bodies or retained
+slime/detail/model liquids. Hidden/region-omitted liquids do not provide eligible
+bodies. All supported pools receive the same steady VPhysics current with fixed
+fluid damping `0.01`. This adds no player/NPC current contents, per-pool control,
+custom damping, water-material setting or visual preview. The compiler consumes
+the source-only world key rather than emitting it at runtime. Existing
+`compile_map`, `start_compile` and `run_map` publication guards preserve previous
+output on refusal. See [Water](water.md#steady-physical-current).
+
 ### Water material binding
 
 Use `create_block`, `select_faces` and `edit_faces` to author horizontal structural-world water whose horizontal top and exposed vertical water sides use VMTs declaring their own `$bottommaterial`. Existing `compile_map`, `start_compile` and `run_map` calls resolve material patches and bind each resolved bottom material to the corresponding clipped inward faces. Each generated inward face keeps its authored face's texture/lightmap vectors and surface flags, belongs to submerged leaves and receives no overlays attached to its authored face. The top material remains the water-fog reference; connected lowest-depth metadata and fluid physics retain their existing behavior. `$bottommaterial` names the surface viewed from below, rather than the pool-floor material; `$underwateroverlay` remains a runtime setting of the top material.
 
-A missing `$bottommaterial` leaves a one-sided surface with a warning. An explicitly named missing or malformed target fails without replacing prior output. No new tool or setting is required. Depth-specific material packing, sloped/detail/model liquids, currents and broader native rendering validation remain unfinished. See [Water](water.md).
+A missing `$bottommaterial` leaves a one-sided surface with a warning. An explicitly named missing or malformed target fails without replacing prior output. No new tool or setting is required. Depth-specific material packing, sloped/detail/model liquids, per-pool/player currents, custom damping and broader native rendering validation remain unfinished. See [Water](water.md).
 
 ### Terrain triangle classifications
 

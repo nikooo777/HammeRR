@@ -352,6 +352,13 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 
 [Baked prop vertices →](docs/baked-prop-vertices.md)
 
+| Physical water currents |
+| --- |
+| ![World-axis water velocity in World settings](docs/images/water-current-world-settings.png) |
+| Give supported water volumes a steady world-axis velocity for floating physics objects. |
+
+[Water →](docs/water.md)
+
 | Compile regions |
 | --- |
 | ![Orange compile-region bounds inside the full source map](docs/images/compile-region-preview.png) |

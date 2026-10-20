@@ -7,7 +7,6 @@ use super::{MAX_PHYSICS_SOLIDS, MAX_SURFACE_PROPERTIES, Model};
 use crate::Control;
 
 pub(super) const FLUID_DAMPING: f32 = 0.01;
-pub(super) const FLUID_CURRENT: [f32; 3] = [0.0; 3];
 pub(super) const FLUID_NORMAL: [f32; 3] = [0.0, 0.0, 1.0];
 
 const STATIC_FIELDS: [&str; 2] = ["index", "contents"];
@@ -186,7 +185,8 @@ pub(super) fn validate(
                 || !field(values, "surfaceprop")?
                     .eq_ignore_ascii_case(fluid_property(body.contents)?)
                 || number(field(values, "damping")?)? != FLUID_DAMPING
-                || vector::<3>(field(values, "currentvelocity")?)? != FLUID_CURRENT
+                || vector::<3>(field(values, "currentvelocity")?)?
+                    != super::current::native(body.current_hu)
             {
                 return Err(
                     "fluid surface, property, damping or current disagrees with the request".into(),

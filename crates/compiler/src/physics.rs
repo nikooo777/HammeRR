@@ -15,6 +15,7 @@ use crate::emit;
 use crate::map::{MAX_COMPILE_COORD, Map};
 use crate::{Control, Diagnostic, Report};
 
+pub(crate) mod current;
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 mod native;
 mod surface_data;
@@ -51,6 +52,8 @@ struct Body {
     shapes: Vec<Shape>,
     #[serde(default)]
     surface: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    current_hu: Option<[f32; 3]>,
     #[serde(default)]
     surface_property: Option<String>,
     #[serde(default)]
@@ -301,6 +304,7 @@ fn plan(
                     contents,
                     shapes,
                     surface: None,
+                    current_hu: None,
                     surface_property: mass.as_ref().map(|(name, _)| name.clone()),
                     mass_area: mass.as_ref().map(|(_, area)| *area),
                     mesh: None,
@@ -372,6 +376,7 @@ fn plan(
                     contents: MASK_SOLID,
                     shapes: Vec::new(),
                     surface: None,
+                    current_hu: None,
                     surface_property: None,
                     mass_area: None,
                     mesh: Some(mesh),
@@ -405,6 +410,7 @@ fn plan(
                     contents,
                     shapes,
                     surface: Some(record.surface_z),
+                    current_hu: map.water_current,
                     surface_property: None,
                     mass_area: None,
                     mesh: None,
@@ -420,6 +426,19 @@ fn plan(
     }
     if request.surface_data.is_empty() && request.models.iter().any(|model| model.index > 0) {
         request.surface_data = surface_data::load(fs, control)?;
+    }
+    if map.water_current.is_some()
+        && !request
+            .models
+            .iter()
+            .flat_map(|model| &model.bodies)
+            .any(|body| body.current_hu.is_some())
+    {
+        return Err(format!(
+            "World {} {} requires emitted structural world WATER fluid bodies",
+            map.entities[0].id,
+            current::WATER_CURRENT_VELOCITY_KEY
+        ));
     }
     validate(&request)?;
     Ok(request)
@@ -496,6 +515,9 @@ fn validate(request: &Request) -> Result<(), String> {
     let mut convexes = 0;
     let mut vertices = 0;
     let mut mesh_triangles = 0;
+    let mut uniform_current = None;
+    let mut controlled_fluids = 0_usize;
+    let mut fluids = 0_usize;
     for model in &request.models {
         if model.index >= request.model_count
             || !seen_models.insert(model.index)
@@ -507,6 +529,30 @@ fn validate(request: &Request) -> Result<(), String> {
         let mut seen_masks = BTreeSet::new();
         let mut seen_mesh = false;
         for body in &model.bodies {
+            if body.surface.is_some() {
+                fluids += 1;
+            }
+            if let Some(value) = body.current_hu {
+                if model.index != 0
+                    || body.surface.is_none()
+                    || body.mesh.is_some()
+                    || body.contents != contents::WATER
+                {
+                    return Err(
+                        "Authored water current requires a structural world WATER fluid body"
+                            .into(),
+                    );
+                }
+                current::validate(value)?;
+                if uniform_current.is_some_and(|previous| previous != value) {
+                    return Err(
+                        "Authored water current must be uniform across all world WATER fluids"
+                            .into(),
+                    );
+                }
+                uniform_current = Some(value);
+                controlled_fluids += 1;
+            }
             if let Some(name) = &body.surface_property
                 && (model.index == 0
                     || body.surface.is_some()
@@ -678,6 +724,11 @@ fn validate(request: &Request) -> Result<(), String> {
                 }
             }
         }
+    }
+    if uniform_current.is_some() && controlled_fluids != fluids {
+        return Err(
+            "Authored water current must cover every fluid body without unsupported liquids".into(),
+        );
     }
     Ok(())
 }
@@ -971,6 +1022,7 @@ mod tests {
                     contents: MASK_SOLID,
                     shapes: Vec::new(),
                     surface: None,
+                    current_hu: None,
                     surface_property: None,
                     mass_area: None,
                     mesh: Some(mesh),
@@ -1048,6 +1100,7 @@ mod tests {
                     contents: MASK_SOLID,
                     shapes: vec![shape],
                     surface: None,
+                    current_hu: None,
                     surface_property: Some("ice".into()),
                     mass_area: Some(6145.0),
                     mesh: None,

@@ -42,6 +42,7 @@ PRIVATE_CVARS = frozenset(
         "r_rootlod",
         "servercfgfile",
         "sv_cheats",
+        "sv_gravity",
         "sv_lan",
     }
 )

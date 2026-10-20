@@ -14,6 +14,7 @@ fn body(contents: i32, surface: Option<f32>) -> Body {
         contents,
         shapes: Vec::new(),
         surface,
+        current_hu: None,
         surface_property: None,
         mass_area: None,
         mesh: None,
@@ -287,6 +288,53 @@ fn material_tables_require_the_exact_requested_index_to_surface_mapping() {
         changed.as_bytes(),
         &model(),
         &["default".into(), "Metal".into(), "metal".into()],
+        &Control::default(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn authored_current_requires_exactly_one_native_scale_without_axis_remapping() {
+    let mut expected = model();
+    expected.bodies.pop();
+    expected.bodies[3].current_hu = Some([64.0, -32.0, 16.0]);
+    let original = keys().replace(SLIME, "");
+    let encoded = original.replace(
+        "\"currentvelocity\" \"0 0 0\"",
+        "\"currentvelocity\" \"1.6256 -0.8128 0.4064\"",
+    );
+    validate(
+        encoded.as_bytes(),
+        &expected,
+        &materials(),
+        &Control::default(),
+    )
+    .unwrap();
+    for wrong in [
+        "0 0 0",
+        "64 -32 16",
+        "0.04129024 -0.02064512 0.01032256",
+        "1.6256 -0.4064 -0.8128",
+        "1.6256 0.8128 0.4064",
+        "NaN 0 0",
+    ] {
+        let changed = encoded.replace("1.6256 -0.8128 0.4064", wrong);
+        assert!(
+            validate(
+                changed.as_bytes(),
+                &expected,
+                &materials(),
+                &Control::default()
+            )
+            .is_err(),
+            "{wrong}"
+        );
+    }
+    expected.bodies[3].current_hu = Some([0.0; 3]);
+    validate(
+        original.as_bytes(),
+        &expected,
+        &materials(),
         &Control::default(),
     )
     .unwrap();

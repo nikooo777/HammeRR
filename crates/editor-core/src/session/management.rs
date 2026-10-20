@@ -12,6 +12,10 @@ use crate::inspector;
 #[path = "management/generated_detail_tint_tests.rs"]
 mod generated_detail_tint_tests;
 
+#[cfg(test)]
+#[path = "management/water_current_tests.rs"]
+mod water_current_tests;
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct ObjectFilter {
     pub query: Option<String>,
@@ -494,11 +498,14 @@ impl Session {
                     .definitions
                     .class(&classname)
                     .and_then(|class| class.property(key));
+                let water_current = classname.eq_ignore_ascii_case("worldspawn")
+                    && key.eq_ignore_ascii_case(compiler::WATER_CURRENT_VELOCITY_KEY);
                 let default = property.and_then(|property| property.default_value());
                 let current = entity
                     .properties
                     .get(key)
                     .map(str::to_owned)
+                    .or_else(|| water_current.then(|| inspector::WATER_CURRENT_DEFAULT.into()))
                     .or_else(|| default.clone())
                     .unwrap_or_default();
                 let value = match change {
@@ -540,7 +547,11 @@ impl Session {
                             "_light" | "_ambient" => "color255",
                             _ => "",
                         };
-                        let kind = property.map_or(fallback, |property| property.kind.as_str());
+                        let kind = if water_current {
+                            "vector"
+                        } else {
+                            property.map_or(fallback, |property| property.kind.as_str())
+                        };
                         if !value.is_finite()
                             || !["origin", "vector", "angle", "angles", "color255", "color1"]
                                 .contains(&kind)
@@ -624,14 +635,20 @@ impl Session {
                 && field
                     .key
                     .eq_ignore_ascii_case(compiler::GENERATED_DETAIL_LIGHTING_TINT_KEY);
+            let water_current = target == PropertyTarget::World
+                && field
+                    .key
+                    .eq_ignore_ascii_case(compiler::WATER_CURRENT_VELOCITY_KEY);
             let mut values = Vec::new();
             let mut compatible = true;
             for entity in &entities {
                 let class = self.definitions.class(entity.classname().unwrap_or(""));
                 let property = class.and_then(|class| class.property(&field.key));
-                if entity.properties.get(&field.key).is_none() && property.is_none()
+                if entity.properties.get(&field.key).is_none()
+                    && property.is_none()
+                    && !water_current
                     || property.is_some_and(|property| {
-                        (!generated_detail_tint && property.kind != field.kind)
+                        (!generated_detail_tint && !water_current && property.kind != field.kind)
                             || property.read_only != field.read_only
                     })
                 {
@@ -648,6 +665,7 @@ impl Session {
                     },
                     effective: stored
                         .clone()
+                        .or_else(|| water_current.then(|| inspector::WATER_CURRENT_DEFAULT.into()))
                         .or_else(|| default.clone())
                         .unwrap_or_default(),
                     stored,

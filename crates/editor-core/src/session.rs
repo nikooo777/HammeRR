@@ -1106,6 +1106,11 @@ impl Session {
         {
             compiler::validate_generated_detail_lighting_tint(value)?;
         }
+        if classname.eq_ignore_ascii_case("worldspawn")
+            && key.eq_ignore_ascii_case(compiler::WATER_CURRENT_VELOCITY_KEY)
+        {
+            compiler::validate_water_current_velocity(value)?;
+        }
         if let Some(property) = self
             .definitions
             .class(classname)

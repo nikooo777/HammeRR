@@ -171,6 +171,7 @@ pub struct Map<'a> {
     /// Material index of each texdata entry.
     pub texdata: Vec<usize>,
     pub(crate) water_bottom_texinfos: HashMap<usize, usize>,
+    pub(crate) water_current: Option<[f32; 3]>,
     pub brushes: Vec<MapBrush>,
     /// Entity 0 is worldspawn.
     pub entities: Vec<MapEntity>,
@@ -217,6 +218,7 @@ impl<'a> Map<'a> {
             texinfos: TexInfos::default(),
             texdata: Vec::new(),
             water_bottom_texinfos: HashMap::new(),
+            water_current: None,
             brushes: Vec::new(),
             entities: Vec::new(),
             cubemaps: Vec::new(),
@@ -238,7 +240,10 @@ impl<'a> Map<'a> {
             .world
             .properties
             .iter()
-            .filter(|(key, _)| !key.eq_ignore_ascii_case(crate::GENERATED_DETAIL_LIGHTING_TINT_KEY))
+            .filter(|(key, _)| {
+                !key.eq_ignore_ascii_case(crate::GENERATED_DETAIL_LIGHTING_TINT_KEY)
+                    && !key.eq_ignore_ascii_case(crate::WATER_CURRENT_VELOCITY_KEY)
+            })
             .map(|(key, value)| (key.to_owned(), value.to_owned()))
             .collect();
         if !properties.iter().any(|(key, _)| key == "classname") {

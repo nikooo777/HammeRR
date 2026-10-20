@@ -7,7 +7,8 @@ use glam::DVec3;
 use libloading::os::unix::{Library, RTLD_GLOBAL, RTLD_NOW};
 use sha2::{Digest, Sha256};
 use source_formats::bsp::{
-    CollisionHeader, MAX_COLLISION_BYTES, PhysicsCollision, PhysicsModel, PhysicsSolid,
+    CollisionHeader, MAX_COLLISION_BYTES, MAX_PHYSICS_KEY_BYTES, PhysicsCollision, PhysicsModel,
+    PhysicsSolid,
 };
 
 use super::{Body, Request, Shape, read_bounded};
@@ -483,17 +484,15 @@ pub(super) fn write(request: &Request, directory: &Path, output: &Path) -> Resul
                 return Err("Native physics data exceeds its 64 MiB limit".into());
             }
             if let Some(surface) = body.surface {
-                let property = if body.contents == source_formats::bsp::contents::SLIME {
-                    "slime"
-                } else {
-                    "water"
-                };
-                keys.push_str(&format!("fluid {{\n\"index\" \"{index}\"\n\"surfaceprop\" \"{property}\"\n\"damping\" \"0.01\"\n\"contents\" \"{}\"\n\"surfaceplane\" \"0 0 1 {surface}\"\n\"currentvelocity\" \"0 0 0\"\n}}\n", body.contents));
+                append_keys(&mut keys, &fluid_keys(index, body, surface)?)?;
             } else if model.index == 0 {
-                keys.push_str(&format!(
-                    "staticsolid {{\n\"index\" \"{index}\"\n\"contents\" \"{}\"\n}}\n",
-                    body.contents
-                ));
+                append_keys(
+                    &mut keys,
+                    &format!(
+                        "staticsolid {{\n\"index\" \"{index}\"\n\"contents\" \"{}\"\n}}\n",
+                        body.contents
+                    ),
+                )?;
             } else {
                 let property = body
                     .surface_property
@@ -506,16 +505,21 @@ pub(super) fn write(request: &Request, directory: &Path, output: &Path) -> Resul
                     .as_ref()
                     .ok_or("Brush-model mass surface database is unavailable")?
                     .mass(property, volume, area)?;
-                keys.push_str(&format!("solid {{\n\"index\" \"{index}\"\n\"mass\" \"{mass}\"\n\"surfaceprop\" \"{property}\"\n\"volume\" \"{volume}\"\n}}\n"));
+                append_keys(
+                    &mut keys,
+                    &format!(
+                        "solid {{\n\"index\" \"{index}\"\n\"mass\" \"{mass}\"\n\"surfaceprop\" \"{property}\"\n\"volume\" \"{volume}\"\n}}\n"
+                    ),
+                )?;
             }
             solids.push(solid);
         }
         if model.index == 0 {
-            keys.push_str("materialtable {\n");
+            append_keys(&mut keys, "materialtable {\n")?;
             for (index, name) in request.materials.iter().enumerate() {
-                keys.push_str(&format!("\"{name}\" \"{}\"\n", index + 1));
+                append_keys(&mut keys, &format!("\"{name}\" \"{}\"\n", index + 1))?;
             }
-            keys.push_str("}\n");
+            append_keys(&mut keys, "}\n")?;
         }
         keys.push('\0');
         bytes += 16 + keys.len();
@@ -539,3 +543,30 @@ pub(super) fn write(request: &Request, directory: &Path, output: &Path) -> Resul
         .map_err(|error| error.to_string())?;
     std::fs::write(output, data).map_err(|error| error.to_string())
 }
+
+fn fluid_keys(index: usize, body: &Body, surface: f32) -> Result<String, String> {
+    let property = super::world_keys::fluid_property(body.contents)?;
+    let damping = super::world_keys::FLUID_DAMPING;
+    let [nx, ny, nz] = super::world_keys::FLUID_NORMAL;
+    let [x, y, z] = super::current::native(body.current_hu);
+    Ok(format!(
+        "fluid {{\n\"index\" \"{index}\"\n\"surfaceprop\" \"{property}\"\n\"damping\" \"{damping}\"\n\"contents\" \"{}\"\n\"surfaceplane\" \"{nx} {ny} {nz} {surface}\"\n\"currentvelocity\" \"{x} {y} {z}\"\n}}\n",
+        body.contents
+    ))
+}
+
+fn append_keys(keys: &mut String, text: &str) -> Result<(), String> {
+    if keys
+        .len()
+        .checked_add(text.len())
+        .and_then(|bytes| bytes.checked_add(1))
+        .is_none_or(|bytes| bytes > MAX_PHYSICS_KEY_BYTES)
+    {
+        return Err("Native physics keys exceed their 65,535-byte model limit".into());
+    }
+    keys.push_str(text);
+    Ok(())
+}
+
+#[cfg(test)]
+mod current_tests;

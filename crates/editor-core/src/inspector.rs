@@ -5,6 +5,8 @@ use source_formats::vmf::Entity;
 #[cfg(test)]
 mod scale_tests;
 
+pub(crate) const WATER_CURRENT_DEFAULT: &str = "0 0 0";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Control {
@@ -132,7 +134,13 @@ fn field(entity: &Entity, class: Option<&Class>, key: String) -> Field {
         && entity
             .classname()
             .is_some_and(|class| class.eq_ignore_ascii_case("worldspawn"));
-    let kind = if detail_tint || generated_detail_tint {
+    let water_current = lower == compiler::WATER_CURRENT_VELOCITY_KEY
+        && entity
+            .classname()
+            .is_some_and(|class| class.eq_ignore_ascii_case("worldspawn"));
+    let kind = if water_current {
+        "vector"
+    } else if detail_tint || generated_detail_tint {
         "string"
     } else {
         property.map_or_else(
@@ -149,6 +157,7 @@ fn field(entity: &Entity, class: Option<&Class>, key: String) -> Field {
         .properties
         .get(&key)
         .map(str::to_owned)
+        .or_else(|| water_current.then(|| WATER_CURRENT_DEFAULT.into()))
         .or_else(|| property.and_then(Property::default_value))
         .unwrap_or_default();
     let mut result = Field {
@@ -188,6 +197,15 @@ fn field(entity: &Entity, class: Option<&Class>, key: String) -> Field {
     }
     if generated_detail_tint {
         result.description = "Three integer linear RGB channels from 0 to 255 attenuate baked lighting on all generated detail models, cards and shapes. White preserves their lighting; 128 approximately halves a linear channel. Explicit detail entities keep their own tint. Compiler Fullbright starts from tinted white; dynamic lights and the client's mat_fullbright override keep their engine behavior. This map-wide control does not edit dictionary entries.".into();
+    }
+    if water_current {
+        result.label = "Water current · world units/s".into();
+        result.description = format!(
+            "Map-wide steady physical water velocity in world X/Y/Z units per second. Absent means 0 0 0 without a stored override. Exactly three finite components, at most {} input bytes and vector length at most {} units/s; no clamping or normalization. A stored value, including zero, requires CS:S engine physics and emitted structural-world WATER with a visible horizontal top; retained slime/detail/model liquids reject. Fixed fluid damping is 0.01. This does not drive player/NPC movement or edit water materials.",
+            compiler::MAX_WATER_CURRENT_VALUE_BYTES,
+            compiler::MAX_WATER_CURRENT_SPEED
+        );
+        result.advanced = false;
     }
     match kind {
         "choices" => {
@@ -374,6 +392,16 @@ fn field(entity: &Entity, class: Option<&Class>, key: String) -> Field {
             result.control = Control::Text;
         }
     }
+    if water_current
+        && let Err(error) = compiler::validate_water_current_velocity(Some(&result.value))
+    {
+        result.control = Control::Text;
+        result.components.clear();
+        result.component_labels.clear();
+        result
+            .description
+            .push_str(&format!(" Stored current is invalid: {error}"));
+    }
     result
 }
 
@@ -400,6 +428,15 @@ pub fn inspect(entity: &Entity, class: Option<&Class>) -> Inspector {
             .any(|name| name.eq_ignore_ascii_case("modelscale"))
     {
         names.push("modelscale".into());
+    }
+    if entity
+        .classname()
+        .is_some_and(|class| class.eq_ignore_ascii_case("worldspawn"))
+        && !names
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(compiler::WATER_CURRENT_VELOCITY_KEY))
+    {
+        names.push(compiler::WATER_CURRENT_VELOCITY_KEY.into());
     }
     let mut properties: Vec<Field> = names
         .into_iter()

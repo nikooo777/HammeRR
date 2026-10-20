@@ -56,6 +56,10 @@ pub use cubemap_assets::{
 pub use detail_props::{
     GENERATED_DETAIL_LIGHTING_TINT_KEY, validate_generated_detail_lighting_tint,
 };
+pub use physics::current::{
+    MAX_WATER_CURRENT_SPEED, MAX_WATER_CURRENT_VALUE_BYTES, WATER_CURRENT_COMPONENTS,
+    WATER_CURRENT_VELOCITY_KEY, validate_water_current_velocity,
+};
 pub use portals::Leak;
 pub use publication::{FileIdentity, FileStamp, OutputLease};
 pub use sky_assets::{SkyAssetManifest, SkyAssetPlan, read_packed_sky, verify_packed_sky};
@@ -832,6 +836,7 @@ fn build(
     mut face_origins: Result<face_origins::FaceOrigins, String>,
 ) -> Result<(), String> {
     options.validate()?;
+    let water_current = physics::current::from_world(vmf, options.physics)?;
     control.advance(Stage::Loading)?;
     for entity in &vmf.entities {
         control.checkpoint()?;
@@ -870,6 +875,7 @@ fn build(
     } else {
         map::Map::load_controlled(vmf, fs, &mut output.report, control)?
     };
+    map.water_current = water_current;
     let reflection_plan = if options.generate_reflections && !output.report.has_errors() {
         control.advance(Stage::PrepareReflections)?;
         output.report.diagnostics.retain(|item| {
@@ -929,6 +935,7 @@ fn build(
     if options.lighting.performs_lighting() {
         output.stats.switchable_light_groups = lighting::styles::prepare(&mut map, control)?;
     }
+    physics::current::admit_map(&map, control)?;
     let neighbors = map.connect_terrain(&mut output.report, control)?;
     output.stats.displacement_neighbor_pairs = neighbors.pairs;
     output.stats.displacement_corner_neighbor_pairs = neighbors.corner_pairs;

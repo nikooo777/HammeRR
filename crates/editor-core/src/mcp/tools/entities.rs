@@ -3,7 +3,7 @@ use super::super::*;
 #[tool_router(router = entities_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
-        description = "Inspect world settings or common entity properties with typed controls, mixed values, individual stored values, FGD defaults and mixed flags. Absent values are reported separately from explicit overrides.",
+        description = "Inspect world settings or common entity properties with typed controls, mixed values, individual stored values, FGD defaults and mixed flags. Absent values are reported separately from explicit overrides. World settings include the synthetic Water current · world units/s XYZ vector (_hammerr_water_current_velocity), even before authoring: absent means zero without writing an override. A stored value requires engine physics and emitted structural-world WATER; finite vector length is at most 128 units/s, with fixed damping 0.01 and no player/NPC current. Use the shared property draft to stage, commit or remove the override.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_property_inspector(
@@ -587,3 +587,6 @@ impl EditorServer {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod water_current_tests;

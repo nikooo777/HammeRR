@@ -70,3 +70,20 @@ surface definitions, stops the build and preserves the previous BSP.
 
 An incomplete or inconsistent world collision body, fluid controller or surface
 material table stops the build and preserves the previous BSP.
+
+## Physical water current
+
+Supported structural-world water can carry a map-wide steady velocity for
+VPhysics bodies. Open **World settings…**, find **Water current · world units/s**,
+stage its **X**, **Y**, **Z** values, then click **Apply properties**. Use
+**Build settings… → Physics bodies → CS:S engine physics** and compile.
+See [Steady physical current](water.md#steady-physical-current) for the full
+workflow and source-property removal.
+
+Absence intentionally means zero velocity without a stored override. A stored
+value, including explicit zero, requires eligible emitted structural-world WATER.
+The finite vector's length is at most 128 world units/s and its source text is at
+most 128 UTF-8 bytes. The compiler converts authored units once for the checked
+native fluid controller; no normalization or clamping is applied. Damping remains
+`0.01`; per-pool/custom damping, player/NPC currents and slime/detail/model liquid
+currents remain unavailable. Rejected values/builds preserve previous output.

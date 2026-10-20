@@ -125,6 +125,19 @@ fn stage(window: &PropertiesWindow, session: &mut Session, change: PropertyChang
     }
 }
 
+fn property_component(world: bool, key: &str, index: i32, value: &str) -> Result<f64, String> {
+    let index = usize::try_from(index).map_err(|_| "Enter a finite number".to_owned())?;
+    if world && key.eq_ignore_ascii_case(compiler::WATER_CURRENT_VELOCITY_KEY) {
+        let mut parts = ["0"; compiler::WATER_CURRENT_COMPONENTS];
+        let component = parts
+            .get_mut(index)
+            .ok_or_else(|| format!("{key} has no component {index}"))?;
+        *component = value;
+        compiler::validate_water_current_velocity(Some(&parts.join(" ")))?;
+    }
+    value.parse().map_err(|_| "Enter a finite number".into())
+}
+
 fn with_properties<R>(
     window: &slint::Weak<PropertiesWindow>,
     access: &DocumentContinuation,
@@ -271,18 +284,27 @@ pub(crate) fn bind_properties_with_access(
     window.on_component_edit({
         let (window, access) = (window.as_weak(), access.downgrade());
         move |key, index, value| {
-            with_properties(&window, &access, |window, session| match value.parse() {
-                Ok(value) if index >= 0 => stage(
-                    window,
-                    session,
-                    PropertyChange::Component {
-                        key: key.into(),
-                        index: index as usize,
-                        value,
-                    },
-                ),
-                _ => window.set_message("Enter a finite number".into()),
-            });
+            with_properties(
+                &window,
+                &access,
+                |window, session| match property_component(
+                    window.get_world_settings(),
+                    &key,
+                    index,
+                    &value,
+                ) {
+                    Ok(value) => stage(
+                        window,
+                        session,
+                        PropertyChange::Component {
+                            key: key.into(),
+                            index: index as usize,
+                            value,
+                        },
+                    ),
+                    Err(error) => window.set_message(error.into()),
+                },
+            );
         }
     });
     window.on_apply({
@@ -759,3 +781,6 @@ mod tests;
 
 #[cfg(test)]
 mod entity_report_admission_tests;
+
+#[cfg(test)]
+mod water_current_tests;

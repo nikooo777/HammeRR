@@ -36,9 +36,11 @@ incremental = false
 
 [profile.dev.package.editor-core]
 debug = "line-tables-only"
+incremental = false
 
 [profile.test.package.editor-core]
 debug = "line-tables-only"
+incremental = false
 
 [profile.dev.package.compiler]
 debug = "line-tables-only"

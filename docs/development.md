@@ -64,8 +64,8 @@ Compiler, core and renderer development/test builds retain line tables while
 omitting full variable debug information to fit the aggregate memory budget.
 Set a package debug override to `2` temporarily when full variable inspection
 is needed. Optimization levels remain unchanged.
-Generated UI builds disable incremental compilation to avoid retaining the
-large generated dependency graph in memory.
+Core and generated UI builds disable incremental compilation to limit compiler
+graph memory and restart interrupted compilation with complete objects.
 
 World physics worker publication checks:
 
@@ -833,6 +833,39 @@ new successful compile. The fixture overlay is restored and baseline LDR/HDR,
 N1/N4 and lighting-origin artifacts remain untouched. No game, GPU or desktop
 input is needed; these checks establish stored bytes and shared controls rather
 than native screen brightness or authored/root-model vertex mapping.
+
+### Physical water-current authoring
+
+```sh
+cargo test -p editor-core --features mcp,test-support --lib water_current
+cargo test -p editor --bin editor water_current_numeric_world_callbacks
+```
+
+Shared property tests exercise discoverable absent-default XYZ metadata, FGD
+read-only behavior, atomic invalid text/vector-component batches, Cancel,
+User/Agent commit equality, Undo/Redo, save/reopen, duplicate source keys and
+malformed stored-value exposure. MCP tests forward the actual world draft and
+compare staged previews with Session without graphics. Software callbacks use
+the existing Properties window's numeric inputs to stage, reject an excessive
+magnitude or raw decimal underflow, cancel, apply and remove an override; they preserve source/history
+until Apply and do not normalize velocity. `HAMMERR_UI_SNAPSHOTS` writes
+`water-current-world-settings.png` into an existing directory. These controls
+checks need no assets, engine worker, GPU or game; native fluid-current response
+and compiler publication are separate checks.
+
+```sh
+python3 -B scripts/validate_water_currents.py \
+  --binary target/debug/hammerr-headless \
+  --output target/validation/water-currents-headless --runtime
+```
+
+Use a fresh output path under `target/`. Repeat with `--binary target/debug/editor`
+and another output directory. `--game-dir` overrides the installed CS:S fixture
+root; `--port` overrides the private server port. The validator authors through
+actual world drafts, publishes through foreground/background MCP, checks native
+fluid keys and refusal preservation, then optionally runs private Cage physical
+current controls with `--runtime`. It preserves the user's desktop/editor and
+starts no game when that flag is absent.
 
 ### Water underside materials
 

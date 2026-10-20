@@ -182,6 +182,26 @@ The existing MCP operations use the same compiler: paint through `edit_faces`,
 change `detailvbsp` and `detailmaterial` through the world property draft, then call `compile_map` or
 `start_compile`. No separate scatter objects or authoring operation are needed.
 
+To attenuate one dictionary entry's baked lighting:
+
+1. Open your loose `.vbsp` dictionary in mounted game content with an external
+   text editor.
+2. Inside the individual model, plain sprite or cross/tri shape entry, alongside
+   `model` or `sprite`, add:
+
+   ```text
+   _detail_lighting_tint "255 128 64"
+   ```
+
+3. Save the dictionary, then **Compile** the map using the same material and
+   **Detail.vbsp file** selection. Recompile after further dictionary edits.
+
+Entry tint accepts exactly three integer linear RGB channels from 0 to 255.
+An omitted entry tint is white; omission and `255 255 255` retain the existing
+World-only compiled bytes. Entries sharing the same model or sprite can have
+different tints. Dictionary files are edited externally; the editor and MCP
+consume them through the material, World and build operations above.
+
 To attenuate baked lighting on every generated model, card and shape in this map:
 
 1. Open **World settings…**.
@@ -200,24 +220,29 @@ To attenuate baked lighting on every generated model, card and shape in this map
 Each channel must be an integer from 0 to 255 and multiplies that channel's
 linear lighting by its value divided by 255. These are attenuation factors,
 not display sRGB values: `128` keeps approximately half the linear intensity.
-Omission and `255 255 255` preserve the original compiled bytes. To reset,
-select **Remove override** for this property, then **Apply properties**.
+The World and entry factors combine as `(World/255) × (Entry/255)`, without
+rounding their product to an intermediate byte. Omitting the World property and
+storing `255 255 255` produce identical compiled bytes for unchanged entry tints.
+To reset the World factor, select **Remove override** for this property, then
+**Apply properties**.
 Malformed imported tint values and repeated tint keys stop the build.
 
-The modifier applies once to each completed baked base and style contribution
-in both lighting channels. Black retains contributing style slots and the
-existing native precision rules. Dynamic lights and the client's
+The combined factor applies once to each completed baked base and style
+contribution before native encoding in both lighting channels. Black retains
+contributing style slots and the existing native precision rules. Dynamic lights and the client's
 `mat_fullbright` override keep their engine behavior. Runtime tint, opacity and
 `rendercolor` modulation are unsupported.
 
 This world property affects generated details on flat surfaces and terrain.
 Explicit [models](model-detail-props.md) and [cards/shapes](detail-sprites.md)
-keep their independent `_detail_lighting_tint`. Dictionaries and materials stay
-unchanged; per-entry dictionary tint remains unavailable. The same world edit
+keep their independent `_detail_lighting_tint`. Tint leaves sampling, terrain
+alpha selection, placement, scale and leaf assignment unchanged. Compilation
+leaves dictionary and material files unchanged. The same world edit
 uses the existing `begin_property_edit`, `update_property_edit` and
 `commit_property_edit` MCP operations.
 
-**Fullbright** stores white or the authored tint as unbaked detail colors.
+**Fullbright** starts from white and encodes the combined tint as unbaked detail
+colors.
 **Direct LDR** bakes each model and sprite's direct light and spherical ambient
 from the final filtered world/terrain lightmaps and sky. Configured diffuse bounces contribute through
 those maps. **Direct LDR + HDR** leaves the HDR pass's color in the single shared
@@ -245,6 +270,12 @@ entries and finite values; an unsupported selected group rejects the
 complete build before replacing its previous BSP. Unused groups do not reject
 a build: flat faces can select an empty alpha-one group even when lower groups
 contain unsupported entries, while terrain only accepts a lower group when it is supported.
+Entry tint must be a scalar inside an individual entry; root, type or group
+scalar placement and `color`/`rendercolor` aliases are unsupported. Empty,
+malformed, out-of-range, non-scalar or repeated entry tint keys, including
+case aliases, reject a selected group even with `amount 0`, `density 0` or no
+generated samples. Unused-group errors retain their deferred behavior.
+
 Dictionaries are limited to 2 MiB, eight levels and 32,768 nodes. Each build
 allows 65,536 sample attempts, 16,384 combined
 explicit/generated instances, 1,024 distinct detail models and 4,096 sprite

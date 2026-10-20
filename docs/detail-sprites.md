@@ -118,7 +118,9 @@ retain the tinted final HDR shared base and separate tinted LDR/HDR extras.
 This compiler property does not provide runtime tint, opacity or a
 `rendercolor` alias. Dynamic light is added afterward; the game's
 `mat_fullbright` override can bypass the slow-path baked color. Generated
-dictionary details do not accept this property.
+dictionary details use their own
+[entry tint and World factor](material-detail-scattering.md); those factors do
+not affect explicit entities.
 
 Lit builds sample a plain card's
 scaled anchor midpoint or a cross/tri shape's stored origin, using the stored

@@ -308,7 +308,7 @@ impl<'a> Builder<'a> {
         }
         prop.leaf = u16::try_from(leaf)
             .map_err(|_| "Detail model leaf exceeds the native unsigned short")?;
-        prop.lighting = lighting_tint.fullbright();
+        prop.lighting = lighting_tint.fullbright()?;
         self.pending.push(Pending {
             prop,
             lighting_origin,

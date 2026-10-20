@@ -2568,8 +2568,37 @@ parity and previous-output/source/history preservation. `--runtime` uses the
 guards for generated model/card fast/slow/style/HDR controls and the existing
 pixel comparisons. Use a fresh output directory; `--game-dir`, `--fgd`,
 `--probe-library` and `--port` override installed paths or private runtime
-inputs. Per-entry dictionary tint, runtime render tint/opacity and a compiled
-detail-color viewport preview remain outside this property.
+inputs. Dictionary entry tint uses the external-file procedure below. Runtime
+render tint/opacity and a compiled detail-color viewport preview remain unavailable.
+
+### Dictionary entry lighting tint
+
+```sh
+python3 -B scripts/validate_detail_entry_tint.py \
+  --binary target/debug/hammerr-headless \
+  --controls target/validation/691/old-controls-v3/results.json \
+  --old-binary-sha256 d2cb12b4ccad0f8470b40ee571756044893d371979441772dd048ef46f301914 \
+  --output target/validation/detail-entry-tint-check
+```
+
+Use a fresh output directory under `target/validation`. The command requires the
+locally retained pre-entry control receipt and every VMF, dictionary and BSP file
+named by it; these are not shipped fixtures in a clean checkout. The controls
+are captured separately with the trusted retained pre-entry binary, using the
+same frozen public oracle and private asset bytes. The explicit
+`--old-binary-sha256` pins that independently trusted binary identity; the tested
+binary never generates its own expected old BSPs.
+
+The private fixture uses public MCP calls to check both compile paths, exact
+omitted/white whole-BSP controls, entry-only equivalence to World tint, unrounded fractional
+World/entry products and independent colors for entries sharing an asset. It
+checks black style membership, different LDR/HDR style samples, one actual
+diffuse bounce, unchanged placement and explicit entity tint. Selected malformed,
+duplicate, non-scalar and misplaced values reject even at zero amount or density;
+unused groups remain deferred. Refusals preserve prior BSP/LIN, source, history,
+selection, camera, settings, recipes and private assets; EOF must drain cleanly.
+No graphics, installed assets or game process are required. These verify compiled
+records; native generated-detail HDR precision is outside their scope.
 
 ### Explicit detail sprites
 

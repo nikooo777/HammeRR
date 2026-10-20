@@ -1754,9 +1754,9 @@ and the sprite half-precision path. Dual builds store the tinted final HDR share
 base with separate tinted LDR/HDR extras. `fullbright` stores the authored tint
 from white without styles. The client still applies its normal gamma conversion;
 dynamic light added afterward and the game's `mat_fullbright` override remain
-outside this baked modifier. There is no runtime tint/opacity control or per-entry
-dictionary tint. Existing bounds, asset, leaf, lighting-origin, region,
-atomic-publication and source/history rules remain in force.
+outside this baked modifier. There is no runtime tint/opacity control. Existing
+bounds, asset, leaf, lighting-origin, region, atomic-publication and source/history
+rules remain in force.
 
 For generated details, author world `_generated_detail_lighting_tint` through
 `begin_property_edit {"world":true}`, then `update_property_edit` with its token
@@ -1766,18 +1766,37 @@ override. The human path is **World settings… → Custom property key / Value 
 Stage value → Apply properties**; the stored field is labeled **Generated detail
 lighting tint · linear RGB** and stays a text input for the exact three integer
 0–255 factors. Each channel multiplies linear baked lighting by `channel/255`;
-absent or white preserves BSP bytes. The map-wide value applies once to every
-generated dictionary model, plain card and cross/tri shape on flat surfaces or
-terrain, independently of explicit entity tint. It retains the same base/style,
-black-membership, half-precision, HDR and dynamic-light/`mat_fullbright` rules
+absent or white retains the entry factor. For every generated dictionary model,
+plain card and cross/tri shape on flat surfaces or terrain, the map-wide value
+combines with that entry's tint, independently of explicit entity tint. It retains
+the same base/style, black-membership, half-precision, HDR and dynamic-light/`mat_fullbright` rules
 above. Invalid or repeated world values reject even when no details are emitted.
 The compiler consumes this key from runtime worldspawn. It does not recolor the
-viewport, rewrite dictionaries or add per-entry tint. See [Material detail
-lighting](material-detail-scattering.md).
+viewport or rewrite dictionaries. See
+[Material detail lighting](material-detail-scattering.md).
 
 ### Material detail scattering
 
 For [material-driven model and sprite scattering](material-detail-scattering.md), assign a mounted VMT declaring `%detailtype` through `edit_faces` or the material tools, and set world `detailvbsp` through the shared property draft (**World settings… → Detail.vbsp file**). Compilation samples exposed world/detail polygons and valid convex planar terrain quads, including skewed bases, with deterministic samples on clipped flat regions and wholly retained terrain. Skewed bases use projected final native base-triangle areas to distribute samples; final terrain LOD triangles supply displaced positions, geometric normals and barycentric alpha; adjacent alpha groups are selected probabilistically. Flat faces use the highest group. Selected empty groups emit nothing without substitution; unsupported unused groups do not reject a different selection. Generated and explicit records share statistics, bounds and resource caps.
+
+An externally authored mounted dictionary may put
+`_detail_lighting_tint "255 128 64"` inside an individual model, card or shape
+entry. Exactly three integer linear RGB channels from 0 to 255 are required;
+absent means white.
+Omitted and white entries preserve existing World-only BSP bytes. The effective
+per-channel factor is `(World/255) × (Entry/255)`, applied once to the completed
+linear base and each style before native encoding, without intermediate byte
+rounding. Entries sharing an asset keep independent tint; explicit entity tint,
+placement, alpha selection, scale, leaf ordering and style membership retain
+their existing rules.
+
+Empty, malformed, non-scalar, out-of-range or repeated/case-aliased entry values
+reject selected groups even with zero amount, zero density or no emitted samples.
+Root/type/group scalar placement and `color`/`rendercolor` aliases are unsupported;
+unused-group errors remain deferred. Neither UI nor MCP edits dictionary entries.
+Save the external file and compile through the same Session operations.
+Dictionary editing, reload and watching APIs are unavailable; publication does
+not recheck external dictionary freshness.
 
 Plain sprite dictionary entries use `sprite` for logical atlas coordinates and `spritesize` for anchors and world dimensions. `detailOrientation` accepts exact integers: `0` (default) keeps stored angles, `1` faces the camera including its height, and `2` faces the camera while remaining vertical. All three accept `spriterandomscale` from 0–1 as Gaussian standard deviation around one followed by absolute value; omitted or zero deviation keeps scale one. World `detailmaterial` (**Detail material file**) selects the atlas, defaulting to `detail/detailsprites`. Custom atlases require checked `UnlitGeneric` material flags and a static square texture; see the manual for exact asset limits.
 
@@ -1785,11 +1804,11 @@ Fixed shapes use `sprite_shape "cross"` or `sprite_shape "tri"` in the same spri
 
 Generated plain sprites at orientations 0/1/2 and cross/tri shapes at orientation 0 may use finite dictionary `sway` from 0–1, default 0. SDK encoding converts to float, multiplies by 255 and truncates to a byte: 0/0.5/1 become 0/127/255. Dictionary and explicit model details reject nonzero sway; explicit sprites accept it through their properties. The CS:S client global `cl_detail_max_sway` defaults to 0, so authored sway needs an explicit runtime opt-in such as `cl_detail_max_sway 8` in the game console; set it back to 0 to disable motion. Runtime sway and player avoidance can move vertices outside the checked rest bounds. No new map property, compiler setting, MCP tool, animated bounds or collision is added.
 
-Existing `set_compile_settings` lighting controls apply to explicit/generated models, plain sprites and fixed shapes. `lighting: "fullbright"` retains white unbaked base colors, or the respective explicit/world-generated baked tint, without style extras. `direct_ldr` bakes static direct light plus spherical ambient from filtered world/terrain lightmaps and sky, including configured diffuse bounces through those maps. `direct_ldr_hdr` leaves the HDR pass's final color in the native format's single shared detail base field; detail records do not hold separate LDR/HDR base colors. Placement and source/history stay unchanged by the lighting mode, and failed builds preserve the previous output.
+Existing `set_compile_settings` lighting controls apply to explicit/generated models, plain sprites and fixed shapes. `lighting: "fullbright"` starts from white and encodes the explicit tint or combined generated World/entry tint without style extras. `direct_ldr` bakes static direct light plus spherical ambient from filtered world/terrain lightmaps and sky, including configured diffuse bounces through those maps. `direct_ldr_hdr` leaves the HDR pass's final color in the native format's single shared detail base field; detail records do not hold separate LDR/HDR base colors. Placement and source/history stay unchanged by the lighting mode, and failed builds preserve the previous output.
 
 Styles 1–63 contribute through separate native extras alongside style 0's base. Author named groups, appearances and initial state through the existing light properties (`targetname`, `style`, `pattern`, `spawnflags`) and control them through connections. Following the SDK, each extra encodes half its direct-plus-filtered-ambient color; the client applies the current style value without restoring a factor of two. Its final intensity can differ from an equivalent static-base light. Each receiver permits 63 extras. LDR stores its array in `dplt`; dual-channel builds add `dplh` with matching per-receiver sorted style unions and zero color for a style absent from one channel. Both arrays together permit 65,536 records, so dual builds allow at most 32,768 union entries per channel. Static builds without extras emit no new style lumps. Contribution counts appear in build diagnostics.
 
-Invalid dictionaries, unsupported shapes or sway forms, folded/collapsed/nonplanar terrain bases, crossing terrain regions, runtime models, missing or vertex-lit assets, invalid style layouts and exceeded budgets reject before publication. Fixed/full billboards, cross/tri shapes and vertical billboards with styles or encoded nonzero sway require raw scale from 2⁻²⁴ to 65504 for the native half-precision path; positive half conversion truncates downward. Emitted float scales remain unchanged for SDK lighting, while raw scaled bounds conservatively cover the smaller static native geometry at rest. Unstyled vertical billboards with encoded sway zero retain their existing fast path and positive-float scale rules, including authored values that quantize to byte zero. Detail objects do not cast new baked shadows. Generated models, sprites and shapes keep their existing lighting points; the world tint applies map-wide, while per-entry dictionary tint remains unavailable. Use the existing `compile_map`, `start_compile` and `run_map` calls; no additional tool or setting is required.
+Invalid dictionaries, unsupported shapes or sway forms, folded/collapsed/nonplanar terrain bases, crossing terrain regions, runtime models, missing or vertex-lit assets, invalid style layouts and exceeded budgets reject before publication. Fixed/full billboards, cross/tri shapes and vertical billboards with styles or encoded nonzero sway require raw scale from 2⁻²⁴ to 65504 for the native half-precision path; positive half conversion truncates downward. Emitted float scales remain unchanged for SDK lighting, while raw scaled bounds conservatively cover the smaller static native geometry at rest. Unstyled vertical billboards with encoded sway zero retain their existing fast path and positive-float scale rules, including authored values that quantize to byte zero. Detail objects do not cast new baked shadows. Generated models, sprites and shapes keep their existing lighting points; the World tint combines with each entry tint. Use the existing `compile_map`, `start_compile` and `run_map` calls; no additional tool or setting is required.
 
 ### HDR build channels
 

@@ -1,6 +1,16 @@
 use super::*;
 
 const KEY: &str = compiler::GENERATED_DETAIL_LIGHTING_TINT_KEY;
+const ENTRY_KEY: &str = "_detail_lighting_tint";
+
+fn entry_fields(fixture: &Fixture, dictionary: &str, fields: &str) {
+    assert_eq!(dictionary.matches(" amount ").count(), 6);
+    std::fs::write(
+        fixture.directory.path().join("detail.vbsp"),
+        dictionary.replace(" amount ", &format!(" {fields} amount ")),
+    )
+    .unwrap();
+}
 
 fn generated_fixture() -> Fixture {
     let mut fixture = fixture();
@@ -104,11 +114,14 @@ fn assert_tinted(actual: &Bsp, reference: &Bsp, factors: [u8; 3]) {
 #[test]
 fn generated_detail_tint_keeps_white_bytes_rng_and_explicit_lighting_independent() {
     let mut fixture = generated_fixture();
+    let path = fixture.directory.path().join("detail.vbsp");
+    let dictionary = std::fs::read_to_string(&path).unwrap();
     for mode in [
         LightingMode::Fullbright,
         LightingMode::DirectLdr,
         LightingMode::DirectLdrHdr,
     ] {
+        std::fs::write(&path, &dictionary).unwrap();
         fixture.source.world.properties.remove(KEY);
         let reference = compiled(&fixture, mode, 0);
         let details = reference.detail_props().unwrap().unwrap();
@@ -125,6 +138,13 @@ fn generated_detail_tint_keeps_white_bytes_rng_and_explicit_lighting_independent
                 .collect()
         );
         assert!(details.props.iter().any(|prop| prop.scale != 1.0));
+        entry_fields(
+            &fixture,
+            &dictionary,
+            "_DETAIL_LIGHTING_TINT \"255 255 255\"",
+        );
+        assert_eq!(compiled(&fixture, mode, 0).to_bytes(), reference.to_bytes());
+        std::fs::write(&path, &dictionary).unwrap();
         fixture
             .source
             .world
@@ -155,6 +175,18 @@ fn generated_detail_tint_keeps_white_bytes_rng_and_explicit_lighting_independent
                     .all(|prop| prop.lighting.rgb == [128, 64, 0] && prop.lighting.exponent == 0)
             );
         }
+        entry_fields(
+            &fixture,
+            &dictionary,
+            "_detail_lighting_tint \"255 255 255\"",
+        );
+        assert_eq!(compiled(&fixture, mode, 0).to_bytes(), tinted.to_bytes());
+        fixture.source.world.properties.remove(KEY);
+        entry_fields(&fixture, &dictionary, "_detail_lighting_tint \"128 64 0\"");
+        let dictionary_before = std::fs::read(&path).unwrap();
+        assert_eq!(compiled(&fixture, mode, 0).to_bytes(), tinted.to_bytes());
+        assert_eq!(std::fs::read(&path).unwrap(), dictionary_before);
+        std::fs::write(&path, &dictionary).unwrap();
         if mode == LightingMode::DirectLdrHdr {
             fixture.source.world.properties.set(KEY, "0 0 0");
             let black = compiled(&fixture, mode, 0);
@@ -170,6 +202,175 @@ fn generated_detail_tint_keeps_white_bytes_rng_and_explicit_lighting_independent
             );
         }
     }
+}
+
+fn assert_product_color(actual: source_formats::bsp::RgbExp32, old: source_formats::bsp::RgbExp32) {
+    let expected =
+        DVec3::from_array(old.linear()) * (DVec3::new(16_512.0, 8_128.0, 448.0) / 65_025.0);
+    let tolerance =
+        2.0_f64.powi(i32::from(actual.exponent)) + 2.0_f64.powi(i32::from(old.exponent));
+    let actual = DVec3::from_array(actual.linear());
+    assert!(
+        (actual - expected).abs().max_element() <= tolerance,
+        "{actual} != {expected}"
+    );
+}
+
+fn assert_product(actual: &Bsp, reference: &Bsp) {
+    let old = reference.detail_props().unwrap().unwrap();
+    let new = actual.detail_props().unwrap().unwrap();
+    assert_eq!(new.models, old.models);
+    assert_eq!(new.sprites, old.sprites);
+    assert_eq!(new.props.len(), old.props.len());
+    for (&new, &old) in new.props.iter().zip(&old.props) {
+        let mut normalized = new;
+        if old.origin[2] == 16.0 {
+            assert_eq!(new.lighting, old.lighting);
+        } else {
+            assert_product_color(new.lighting, old.lighting);
+        }
+        normalized.lighting = old.lighting;
+        assert_eq!(normalized, old);
+        for hdr in [false, true] {
+            let old_styles = reference.detail_prop_lighting(hdr).unwrap();
+            let new_styles = actual.detail_prop_lighting(hdr).unwrap();
+            assert_eq!(new_styles.is_some(), old_styles.is_some());
+            if let Some(old_styles) = old_styles {
+                let new_styles = new_styles.unwrap();
+                assert_eq!(new_styles.len(), old_styles.len());
+                let start = old.light_styles as usize;
+                for index in start..start + usize::from(old.light_style_count) {
+                    assert_eq!(new_styles[index].style, old_styles[index].style);
+                    if old.origin[2] == 16.0 {
+                        assert_eq!(new_styles[index].lighting, old_styles[index].lighting);
+                    } else {
+                        assert_product_color(
+                            new_styles[index].lighting,
+                            old_styles[index].lighting,
+                        );
+                        if old_styles[index].lighting.rgb == [0; 3] {
+                            assert_eq!(new_styles[index].lighting.rgb, [0; 3]);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    for index in 0..source_formats::bsp::LUMP_COUNT {
+        assert_eq!(actual.lump(index), reference.lump(index));
+    }
+}
+
+#[test]
+fn dictionary_entry_tint_composes_fractional_fullbright_and_preserves_dual_styles() {
+    let mut fixture = generated_fixture();
+    let path = fixture.directory.path().join("detail.vbsp");
+    let dictionary = std::fs::read_to_string(&path).unwrap();
+    let fullbright = compiled(&fixture, LightingMode::Fullbright, 0);
+    let dual = compiled(&fixture, LightingMode::DirectLdrHdr, 0);
+    fixture.source.world.properties.set(KEY, "128 64 7");
+    entry_fields(
+        &fixture,
+        &dictionary,
+        "_detail_lighting_tint \"129 127 64\"",
+    );
+    let composed = compiled(&fixture, LightingMode::Fullbright, 0);
+    assert_product(&composed, &fullbright);
+    for prop in composed.detail_props().unwrap().unwrap().props {
+        let expected = if prop.origin[2] == 16.0 {
+            source_formats::bsp::RgbExp32 {
+                rgb: [64, 255, 128],
+                exponent: 0,
+            }
+        } else {
+            source_formats::bsp::RgbExp32 {
+                rgb: [129, 63, 3],
+                exponent: -1,
+            }
+        };
+        assert_eq!(prop.lighting, expected);
+    }
+    let composed = compiled(&fixture, LightingMode::DirectLdrHdr, 0);
+    assert_product(&composed, &dual);
+    let details = composed.detail_props().unwrap().unwrap();
+    assert!(details.props.iter().all(|prop| prop.light_style_count == 2));
+    for (hdr, absent_style) in [(false, 2), (true, 1)] {
+        let styles = composed.detail_prop_lighting(hdr).unwrap().unwrap();
+        assert!(styles.iter().any(|style| style.style == absent_style));
+        assert!(
+            styles
+                .iter()
+                .filter(|style| style.style == absent_style)
+                .all(|style| style.lighting.rgb == [0; 3])
+        );
+    }
+    entry_fields(&fixture, &dictionary, "_detail_lighting_tint \"0 0 0\"");
+    let black = compiled(&fixture, LightingMode::DirectLdrHdr, 0);
+    assert_tinted(&black, &dual, [0; 3]);
+    assert!(
+        black
+            .detail_props()
+            .unwrap()
+            .unwrap()
+            .props
+            .iter()
+            .all(|prop| prop.light_style_count == 2)
+    );
+    assert!(!composed.entities().unwrap().contains(ENTRY_KEY));
+}
+
+#[test]
+fn dictionary_entry_tint_is_applied_once_after_reflected_lighting() {
+    let mut fixture = generated_fixture();
+    let dictionary = std::fs::read_to_string(fixture.directory.path().join("detail.vbsp")).unwrap();
+    std::fs::write(
+        fixture.directory.path().join("materials/test/lit.vmt"),
+        "LightmappedGeneric { }",
+    )
+    .unwrap();
+    std::fs::write(
+        fixture.directory.path().join("materials/test/ground.vmt"),
+        "LightmappedGeneric { %detailtype tufts }",
+    )
+    .unwrap();
+    for side in fixture
+        .source
+        .world
+        .solids
+        .iter_mut()
+        .flat_map(|solid| &mut solid.sides)
+    {
+        if side.material != "test/ground" {
+            side.material = "test/lit".into();
+        }
+    }
+    let direct = compiled(&fixture, LightingMode::DirectLdr, 0);
+    let bounced = compiled(&fixture, LightingMode::DirectLdr, 1);
+    let direct_details = direct.detail_props().unwrap().unwrap();
+    let bounced_details = bounced.detail_props().unwrap().unwrap();
+    assert!(
+        bounced_details
+            .props
+            .iter()
+            .zip(&direct_details.props)
+            .any(|(new, old)| old.origin[2] == 0.0
+                && new.lighting.linear()[0] > old.lighting.linear()[0])
+    );
+    fixture.source.world.properties.set(KEY, "128 64 7");
+    let world = compiled(&fixture, LightingMode::DirectLdr, 1);
+    fixture.source.world.properties.remove(KEY);
+    entry_fields(&fixture, &dictionary, "_detail_lighting_tint \"128 64 7\"");
+    assert_eq!(
+        compiled(&fixture, LightingMode::DirectLdr, 1).to_bytes(),
+        world.to_bytes()
+    );
+    fixture.source.world.properties.set(KEY, "128 64 7");
+    entry_fields(
+        &fixture,
+        &dictionary,
+        "_detail_lighting_tint \"129 127 64\"",
+    );
+    assert_product(&compiled(&fixture, LightingMode::DirectLdr, 1), &bounced);
 }
 
 #[test]

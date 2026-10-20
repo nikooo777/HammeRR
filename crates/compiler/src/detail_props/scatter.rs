@@ -6,7 +6,7 @@ use source_formats::gamefs::asset_relative;
 use source_formats::keyvalues::{self, Node};
 use source_formats::vmf::Vmf;
 
-use super::{Builder, Tint, sprites};
+use super::{Builder, Tint, sprites, tint};
 use crate::{Control, Diagnostic, Report, emit, faces::Face, map::Map};
 
 mod terrain;
@@ -157,6 +157,7 @@ fn model(nodes: &[Node], lighting_tint: Tint) -> Result<Model, String> {
             "shape_angle",
             "shape_size",
             "sway",
+            tint::KEY,
         ]
         .iter()
         .any(|key| node.key.eq_ignore_ascii_case(key))
@@ -167,6 +168,7 @@ fn model(nodes: &[Node], lighting_tint: Tint) -> Result<Model, String> {
             ));
         }
     }
+    let lighting_tint = lighting_tint.with_entry(value(nodes, tint::KEY)?)?;
     let asset = if sprite {
         if value(nodes, "model")?.is_some() {
             return Err("Detail dictionary entry must select exactly one model or sprite".into());
@@ -487,10 +489,19 @@ fn dictionary(vmf: &Vmf, builder: &Builder) -> Result<Vec<Node>, String> {
     if nodes.len() != 1 {
         return Err("Detail dictionary requires one root block".into());
     }
-    nodes[0]
+    let fields = nodes[0]
         .children()
-        .map(<[Node]>::to_vec)
-        .ok_or_else(|| "Detail dictionary requires one root block".into())
+        .ok_or("Detail dictionary requires one root block")?;
+    if fields
+        .iter()
+        .any(|node| node.key.eq_ignore_ascii_case(tint::KEY) && node.as_str().is_some())
+    {
+        return Err(format!(
+            "Detail dictionary {} is only supported inside an entry",
+            tint::KEY
+        ));
+    }
+    Ok(fields.to_vec())
 }
 
 pub(super) fn bake(

@@ -359,7 +359,7 @@ fn lights(
     Ok(lights)
 }
 
-fn occluders(
+pub(super) fn occluders(
     map: &Map,
     entity: usize,
     report: &mut Report,
@@ -395,8 +395,20 @@ fn occluders(
             .filter(|side| !side.bevel)
             .map(|side| map.texinfos.infos[side.texinfo].flags & (surf::SKY | surf::SKY2D) != 0)
             .collect();
-        result
-            .push(Occluder::new(planes, brush.mins + offset, brush.maxs + offset)?.with_sky(sky)?);
+        let sources = brush
+            .sides
+            .iter()
+            .filter(|side| !side.bevel)
+            .map(|side| super::HullSideSource {
+                plane: side.plane,
+                side: side.source_id,
+            })
+            .collect();
+        result.push(
+            Occluder::new(planes, brush.mins + offset, brush.maxs + offset)?
+                .with_sky(sky)?
+                .with_source(index, sources)?,
+        );
     }
     Ok(result)
 }
@@ -602,18 +614,24 @@ pub(crate) struct Settings<'a> {
     pub detail_lighting_origins: &'a [Option<DVec3>],
     pub detail_lighting_tints: &'a [crate::detail_props::Tint],
     pub smoothing_sources: &'a [Option<std::sync::Arc<crate::faces::SmoothingSource>>],
+    pub face_sources: &'a [std::sync::Arc<[u32]>],
 }
 
 fn shared_geometry_allocation(
     map: &Map,
     bsp: &Bsp,
     smoothing: &[Option<std::sync::Arc<crate::faces::SmoothingSource>>],
-    budget: &Budget<'_>,
+    face_sources: &[std::sync::Arc<[u32]>],
+    budget: &mut Budget<'_>,
 ) -> Result<Allocation, String> {
     let mut bytes = 0usize;
     for brush in &map.brushes {
         bytes = bytes
-            .checked_add(2 * (size_of::<Occluder>() + brush.sides.len() * (size_of::<Plane>() + 1)))
+            .checked_add(
+                2 * (size_of::<Occluder>()
+                    + brush.sides.len()
+                        * (size_of::<Plane>() + size_of::<super::HullSideSource>() + 1)),
+            )
             .ok_or("Lighting shared hull allocation size overflow")?;
     }
     bytes = bytes
@@ -622,6 +640,24 @@ fn shared_geometry_allocation(
         )?)
         .ok_or("Lighting shared shadow allocation size overflow")?;
     let mut sources = std::collections::HashSet::new();
+    let _contributor_lookup = budget.reserve::<usize>(
+        face_sources
+            .len()
+            .checked_mul(4)
+            .ok_or("Lighting contributor lookup allocation size overflow")?,
+    )?;
+    budget.consume(face_sources.len())?;
+    let mut contributors = std::collections::HashSet::with_capacity(face_sources.len());
+    bytes = bytes
+        .checked_add(std::mem::size_of_val(face_sources))
+        .ok_or("Lighting face contributor allocation size overflow")?;
+    for ids in face_sources {
+        if contributors.insert(std::sync::Arc::as_ptr(ids) as *const u32) {
+            bytes = bytes
+                .checked_add(std::mem::size_of_val(ids.as_ref()) + 2 * size_of::<usize>())
+                .ok_or("Lighting face contributor allocation size overflow")?;
+        }
+    }
     for source in smoothing.iter().flatten() {
         if sources.insert(std::sync::Arc::as_ptr(source)) {
             bytes = bytes
@@ -666,8 +702,13 @@ pub(crate) fn bake(
     let options = settings.options;
     let dual = options.lighting == crate::LightingMode::DirectLdrHdr;
     let mut budget = Budget::new(control);
-    let _shared_geometry_allocation =
-        shared_geometry_allocation(map, bsp, settings.smoothing_sources, &budget)?;
+    let _shared_geometry_allocation = shared_geometry_allocation(
+        map,
+        bsp,
+        settings.smoothing_sources,
+        settings.face_sources,
+        &mut budget,
+    )?;
     let _detail_centers = budget.reserve::<DVec3>(settings.detail_model_centers.len())?;
     let _detail_origins =
         budget.reserve::<Option<DVec3>>(settings.detail_lighting_origins.len())?;
@@ -859,6 +900,7 @@ pub(crate) fn bake(
         detail_model_centers: settings.detail_model_centers,
         detail_lighting_origins: settings.detail_lighting_origins,
         detail_lighting_tints: settings.detail_lighting_tints,
+        face_sources: settings.face_sources,
         options,
     };
     let mut detail_ldr = None;
@@ -947,6 +989,7 @@ pub(crate) fn bake(
 }
 
 struct ChannelContext<'a> {
+    face_sources: &'a [std::sync::Arc<[u32]>],
     world_leaf_nodes: &'a [Option<usize>],
     map: &'a Map<'a>,
     tree: &'a Tree,
@@ -978,6 +1021,7 @@ fn bake_channel(
 ) -> Result<BakeStats, String> {
     let start_work = budget.work;
     let ChannelContext {
+        face_sources,
         world_leaf_nodes,
         map,
         tree,
@@ -1248,6 +1292,7 @@ fn bake_channel(
             budget.consume(0)?;
             final_stats = super::bounce::bake(
                 &mut super::bounce::Context {
+                    face_sources,
                     map,
                     kind,
                     plans,
@@ -1304,6 +1349,7 @@ fn bake_channel(
         .unwrap_or(DVec3::ZERO);
     let ambient = super::probes::bake(
         &super::probes::Context {
+            face_sources,
             world_leaf_nodes,
             map,
             kind,
@@ -1322,6 +1368,7 @@ fn bake_channel(
     )?;
     *detail_lighting = super::details::bake(
         &super::details::Context {
+            face_sources,
             map,
             tree,
             visibility,

@@ -1193,6 +1193,7 @@ fn build(
                 vmf,
                 options,
                 smoothing_sources: &emission.smoothing_sources,
+                face_sources: &emission.face_sources,
                 model_entities: &emission.model_entities,
                 world_leaf_nodes: &emission.world_leaf_nodes,
                 detail_model_centers: &detail_stats.model_centers,

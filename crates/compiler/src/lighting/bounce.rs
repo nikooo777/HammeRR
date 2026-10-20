@@ -11,6 +11,7 @@ const LIGHTMAP_SCALE: f64 = 255.0;
 const GOLDEN_ANGLE: f64 = 2.399_963_229_728_653;
 
 pub(super) struct Context<'a> {
+    pub face_sources: &'a [std::sync::Arc<[u32]>],
     pub kind: LightingKind,
     pub map: &'a Map<'a>,
     pub plans: &'a [Plan],
@@ -121,7 +122,7 @@ pub(super) fn bake(
             ));
         }
     }
-    let surfaces = super::radiance::build_styled(ctx.map, bsp, ctx.kind, budget)?;
+    let surfaces = super::radiance::build_styled(ctx.map, bsp, ctx.kind, ctx.face_sources, budget)?;
     let directions = directions(ctx.quality.directions());
     let cone = (1.0 - 1.0 / directions.len() as f64).acos().tan();
     let mut stats = Stats {

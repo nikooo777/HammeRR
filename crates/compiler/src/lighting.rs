@@ -435,8 +435,28 @@ pub fn encode_color(color: DVec3) -> Result<RgbExp32, String> {
 pub struct Occluder {
     planes: Vec<Plane>,
     sky: Vec<bool>,
+    source: Option<HullSource>,
     mins: DVec3,
     maxs: DVec3,
+}
+
+#[derive(Debug, Clone)]
+struct HullSource {
+    brush: usize,
+    sides: Vec<HullSideSource>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct HullSideSource {
+    plane: usize,
+    side: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct HullInterval {
+    entering: f64,
+    leaving: f64,
+    sky: bool,
 }
 
 impl Occluder {
@@ -456,6 +476,7 @@ impl Occluder {
         }
         Ok(Self {
             sky: vec![false; planes.len()],
+            source: None,
             planes,
             mins,
             maxs,
@@ -479,6 +500,20 @@ impl Occluder {
     }
 
     pub(super) fn entry(&self, start: DVec3, end: DVec3) -> Result<Option<(f64, bool)>, String> {
+        Ok(self
+            .interval(start, end)?
+            .map(|hit| (hit.entering, hit.sky)))
+    }
+
+    fn with_source(mut self, brush: usize, sides: Vec<HullSideSource>) -> Result<Self, String> {
+        if sides.len() != self.planes.len() {
+            return Err("Shadow hull source sides must match its planes".into());
+        }
+        self.source = Some(HullSource { brush, sides });
+        Ok(self)
+    }
+
+    fn interval(&self, start: DVec3, end: DVec3) -> Result<Option<HullInterval>, String> {
         if !start.is_finite() || !end.is_finite() {
             return Err("Shadow ray must be finite".into());
         }
@@ -516,7 +551,13 @@ impl Occluder {
                 return Ok(None);
             }
         }
-        Ok((entering < leaving && leaving > 0.0 && entering < 1.0).then_some((entering, sky)))
+        Ok(
+            (entering < leaving && leaving > 0.0 && entering < 1.0).then_some(HullInterval {
+                entering,
+                leaving,
+                sky,
+            }),
+        )
     }
 }
 

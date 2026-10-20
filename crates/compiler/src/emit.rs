@@ -10,6 +10,7 @@ use crate::map::Map;
 use crate::tree::Tree;
 
 const VERTEX_PRECISION: f64 = 10_000.0;
+const MAX_FACE_SOURCE_BYTES: usize = 64 * 1024 * 1024;
 
 fn vertex_key(point: DVec3) -> [i64; 3] {
     (point * VERTEX_PRECISION).round().as_i64vec3().to_array()
@@ -213,6 +214,7 @@ pub struct Emission {
     pub world_leaf_nodes: Vec<Option<usize>>,
     pub bsp: Bsp,
     pub smoothing_sources: Vec<Option<Arc<crate::faces::SmoothingSource>>>,
+    pub face_sources: Vec<Arc<[u32]>>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -226,6 +228,27 @@ pub fn build(
     control: &crate::Control,
     mut face_origins: Result<crate::face_origins::FaceOrigins, String>,
 ) -> Result<Emission, String> {
+    let mut source_faces = 0usize;
+    let mut source_bytes = 0usize;
+    for face in models.iter().flat_map(|model| &model.faces) {
+        control.checkpoint()?;
+        source_faces = source_faces
+            .checked_add(1)
+            .filter(|&count| count <= bsp::MAX_LIGHTING_FACES)
+            .ok_or("Radiance source face count exceeds the native face limit")?;
+        source_bytes = source_bytes
+            .checked_add(size_of::<Arc<[u32]>>())
+            .and_then(|bytes| {
+                face.source_sides
+                    .len()
+                    .checked_mul(size_of::<u32>())
+                    .and_then(|ids| bytes.checked_add(ids))
+            })
+            .filter(|&bytes| bytes <= MAX_FACE_SOURCE_BYTES)
+            .ok_or("Radiance face contributors exceed their 64 MiB retained metadata limit")?;
+    }
+    control.checkpoint()?;
+    let mut face_sources = Vec::with_capacity(source_faces);
     face_origins = face_origins.and_then(|mut origins| {
         let count = models
             .iter()
@@ -307,6 +330,7 @@ pub fn build(
                     });
                     faces.push(emitted);
                     smoothing_sources.push(face.smoothing_source.clone());
+                    face_sources.push(face.source_sides.clone());
                     for &leaf in &face.leaves {
                         let leaf = (-1 - mapping[leaf]) as usize;
                         leaf_faces[leaf].push(id);
@@ -383,6 +407,7 @@ pub fn build(
             });
             faces.push(emitted);
             smoothing_sources.push(face.smoothing_source.clone());
+            face_sources.push(face.source_sides.clone());
             for &leaf in &face.leaves {
                 leaf_faces[(-1 - mapping[leaf]) as usize].push(id);
             }
@@ -579,11 +604,15 @@ pub fn build(
         origins.seal_geometry(&bsp)?;
         Ok(origins)
     });
+    if face_sources.len() != faces.len() || face_sources.len() != source_faces {
+        return Err("Emitted radiance face contributors do not match native face order".into());
+    }
     Ok(Emission {
         face_origins,
         model_entities: models.iter().map(|model| model.entity).collect(),
         world_leaf_nodes,
         bsp,
         smoothing_sources,
+        face_sources,
     })
 }

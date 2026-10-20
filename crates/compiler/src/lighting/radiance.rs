@@ -1,20 +1,27 @@
 use glam::{DVec2, DVec3};
 use source_formats::bsp::{Bsp, Edge, LightingKind, Model, RgbExp32, TexInfo, surf};
+use std::cell::Cell;
+use std::sync::Arc;
 
 use super::Occluder;
 use super::bake::Budget;
 use super::shadows::{ShadowIndex, ShadowObject, Triangle};
 use crate::map::Map;
 
-const SURFACE_HIT_BIAS: f64 = 0.05;
 const LOCAL_FILTER_START: f64 = 20.0;
 const LOCAL_FILTER_END: f64 = 40.0;
+const SOURCE_ROUNDING_OPERATIONS: f64 = 64.0;
+
+#[cfg(test)]
+#[path = "radiance/source_boundary_tests.rs"]
+mod source_boundary_tests;
 
 struct Surface {
     triangle: Triangle,
     normal: DVec3,
     source: usize,
     coordinates: Option<[DVec2; 3]>,
+    boundary_error: f64,
 }
 
 struct Radiance {
@@ -26,6 +33,60 @@ struct Radiance {
     mins: [i32; 2],
     sky: bool,
     extras: Vec<Layer>,
+    boundary: Option<SourceBoundary>,
+}
+
+struct SourceBoundary {
+    plane: usize,
+    equation: map_core::Plane,
+    sides: Arc<[u32]>,
+    owners: Vec<usize>,
+}
+
+impl SourceBoundary {
+    fn terminal(
+        &self,
+        hull: &Occluder,
+        interval: super::HullInterval,
+        start: DVec3,
+        end: DVec3,
+        error: f64,
+    ) -> Result<(bool, usize), String> {
+        let Some(source) = &hull.source else {
+            return Ok((false, 1));
+        };
+        let mut work = self.owners.len().checked_ilog2().unwrap_or(0) as usize + 1;
+        if interval.entering <= 0.0
+            || interval.leaving <= interval.entering
+            || self.owners.binary_search(&source.brush).is_err()
+        {
+            return Ok((false, work));
+        }
+        for (identity, plane) in source.sides.iter().zip(&hull.planes) {
+            work += self.sides.len().checked_ilog2().unwrap_or(0) as usize + 2;
+            if identity.plane != self.plane
+                || !identity
+                    .side
+                    .is_some_and(|side| self.sides.binary_search(&side).is_ok())
+            {
+                continue;
+            }
+            if plane.normal != self.equation.normal || plane.dist != self.equation.dist {
+                continue;
+            }
+            let a = plane.distance_to(start);
+            let b = plane.distance_to(end);
+            let scale = (plane.normal * end).abs().element_sum() + plane.dist.abs() + 1.0;
+            let allowance = error + scale * (SOURCE_ROUNDING_OPERATIONS * f64::EPSILON);
+            if !a.is_finite() || !b.is_finite() || !allowance.is_finite() {
+                return Err("Radiance source boundary arithmetic must be finite".into());
+            }
+            if a > 0.0 && b <= 0.0 && b.abs() <= allowance {
+                return Ok((true, work));
+            }
+        }
+        Ok((false, work))
+    }
 }
 
 struct Layer {
@@ -104,6 +165,7 @@ fn add_surface(
     points: [DVec3; 3],
     source: usize,
     coordinates: Option<[DVec2; 3]>,
+    boundary: Option<&SourceBoundary>,
     budget: &mut Budget<'_>,
 ) -> Result<(), String> {
     budget.consume(1)?;
@@ -117,6 +179,15 @@ fn add_surface(
     if surfaces.len() == Surface::MAX_OBJECTS {
         return Err("Surface radiance surface count exceeds the bounded triangle limit".into());
     }
+    let boundary_error = boundary.map_or(0.0, |boundary| {
+        points
+            .iter()
+            .map(|&point| boundary.equation.distance_to(point).abs())
+            .fold(0.0_f64, f64::max)
+    });
+    if !boundary_error.is_finite() {
+        return Err("Radiance native source support must be finite".into());
+    }
     surfaces.push(Surface {
         triangle: Triangle::new(points)?,
         normal: (points[0] - points[1])
@@ -124,6 +195,7 @@ fn add_surface(
             .normalize(),
         source,
         coordinates,
+        boundary_error,
     });
     Ok(())
 }
@@ -133,18 +205,20 @@ pub(super) fn build(
     bsp: &Bsp,
     kind: LightingKind,
     sky_radiance: DVec3,
+    face_sources: &[Arc<[u32]>],
     budget: &mut Budget<'_>,
 ) -> Result<SurfaceIndex, String> {
-    build_with_styles(map, bsp, kind, sky_radiance, false, budget)
+    build_with_styles(map, bsp, kind, sky_radiance, false, face_sources, budget)
 }
 
 pub(super) fn build_styled(
     map: &Map<'_>,
     bsp: &Bsp,
     kind: LightingKind,
+    face_sources: &[Arc<[u32]>],
     budget: &mut Budget<'_>,
 ) -> Result<SurfaceIndex, String> {
-    build_with_styles(map, bsp, kind, DVec3::ZERO, true, budget)
+    build_with_styles(map, bsp, kind, DVec3::ZERO, true, face_sources, budget)
 }
 
 pub(super) fn build_styled_sky(
@@ -152,9 +226,10 @@ pub(super) fn build_styled_sky(
     bsp: &Bsp,
     kind: LightingKind,
     sky_radiance: DVec3,
+    face_sources: &[Arc<[u32]>],
     budget: &mut Budget<'_>,
 ) -> Result<SurfaceIndex, String> {
-    build_with_styles(map, bsp, kind, sky_radiance, true, budget)
+    build_with_styles(map, bsp, kind, sky_radiance, true, face_sources, budget)
 }
 
 fn build_with_styles(
@@ -163,6 +238,7 @@ fn build_with_styles(
     kind: LightingKind,
     sky_radiance: DVec3,
     styled: bool,
+    face_sources: &[Arc<[u32]>],
     budget: &mut Budget<'_>,
 ) -> Result<SurfaceIndex, String> {
     let decoded_bytes = [
@@ -189,6 +265,9 @@ fn build_with_styles(
     let faces = bsp
         .lighting_faces(kind)
         .map_err(|error| error.to_string())?;
+    if face_sources.len() != faces.len() {
+        return Err("Radiance contributors do not match the emitted face count".into());
+    }
     let infos = bsp
         .records::<TexInfo>()
         .map_err(|error| error.to_string())?;
@@ -198,6 +277,40 @@ fn build_with_styles(
     let lighting = bsp.lighting(kind).map_err(|error| error.to_string())?;
     let world_faces =
         &faces[world.first_face as usize..(world.first_face + world.face_count) as usize];
+    let source_side_count = map.entities[0]
+        .brushes
+        .iter()
+        .try_fold(0usize, |count, &index| {
+            count.checked_add(map.brushes[index].sides.len())
+        })
+        .ok_or("Radiance source-side lookup size overflow")?;
+    let _source_lookup = budget.reserve::<(u32, usize)>(source_side_count)?;
+    budget.consume(source_side_count)?;
+    let mut source_owners = Vec::with_capacity(source_side_count);
+    for &owner in &map.entities[0].brushes {
+        for side in &map.brushes[owner].sides {
+            if !side.bevel
+                && let Some(id) = side.source_id
+            {
+                source_owners.push((id, owner));
+            }
+        }
+    }
+    budget.consume(
+        source_owners
+            .len()
+            .checked_mul(source_owners.len().checked_ilog2().unwrap_or(0) as usize + 1)
+            .ok_or("Radiance source-side sort work overflow")?,
+    )?;
+    source_owners.sort_unstable_by_key(|&(side, _)| side);
+    if source_owners.windows(2).any(|pair| pair[0].0 == pair[1].0) {
+        return Err("Radiance source-side ownership is ambiguous".into());
+    }
+    let contributor_count = face_sources
+        [world.first_face as usize..(world.first_face + world.face_count) as usize]
+        .iter()
+        .try_fold(0usize, |count, sides| count.checked_add(sides.len()))
+        .ok_or("Radiance contributor allocation size overflow")?;
     let triangles = world_faces
         .iter()
         .try_fold(0usize, |total, face| {
@@ -214,11 +327,16 @@ fn build_with_styles(
     let bytes = ShadowIndex::<Surface>::allocation_bytes(triangles)?
         .checked_add(world_faces.len() * (size_of::<Radiance>() + 3 * size_of::<Layer>()))
         .and_then(|bytes| bytes.checked_add(source_formats::bsp::MAX_LIGHTING_BYTES))
+        .and_then(|bytes| {
+            contributor_count
+                .checked_mul(size_of::<usize>())
+                .and_then(|owners| bytes.checked_add(owners))
+        })
         .ok_or("Surface radiance allocation size overflow")?;
     let allocation = budget.reserve_bytes(bytes)?;
     let mut surfaces = Vec::with_capacity(triangles);
     let mut radiance = Vec::with_capacity(world_faces.len());
-    for face in world_faces {
+    for (relative, face) in world_faces.iter().enumerate() {
         budget.consume(1)?;
         let info = infos[face.texinfo as usize];
         let sky = info.flags & (surf::SKY | surf::SKY2D) != 0;
@@ -283,6 +401,44 @@ fn build_with_styles(
                 });
             }
         }
+        let boundary = if face.dispinfo < 0 {
+            if face.side != (face.plane & 1) as u8 || usize::from(face.plane) >= map.planes.len() {
+                return Err("Radiance source does not use its emitted outward plane".into());
+            }
+            let sides = &face_sources[world.first_face as usize + relative];
+            budget.consume(sides.len() + 1)?;
+            if sides.windows(2).any(|pair| pair[0] >= pair[1]) {
+                return Err("Radiance source contributors must be sorted and unique".into());
+            }
+            let mut owners = Vec::with_capacity(sides.len());
+            for &id in sides.iter() {
+                budget.consume(source_owners.len().checked_ilog2().unwrap_or(0) as usize + 1)?;
+                let index = source_owners
+                    .binary_search_by_key(&id, |&(side, _)| side)
+                    .map_err(|_| "Radiance source contributor has no world-brush owner")?;
+                owners.push(source_owners[index].1);
+            }
+            budget.consume(
+                owners
+                    .len()
+                    .checked_mul(owners.len().checked_ilog2().unwrap_or(0) as usize + 1)
+                    .ok_or("Radiance contributor sort work overflow")?,
+            )?;
+            owners.sort_unstable();
+            owners.dedup();
+            let plane = map.planes.get(usize::from(face.plane));
+            Some(SourceBoundary {
+                plane: usize::from(face.plane),
+                equation: map_core::Plane {
+                    normal: plane.normal,
+                    dist: plane.dist,
+                },
+                sides: sides.clone(),
+                owners,
+            })
+        } else {
+            None
+        };
         let source = radiance.len();
         radiance.push(Radiance {
             average,
@@ -293,6 +449,7 @@ fn build_with_styles(
             mins: face.lightmap_mins,
             sky,
             extras,
+            boundary,
         });
         if face.dispinfo >= 0 {
             let terrain = &map.terrains[face.dispinfo as usize];
@@ -310,6 +467,7 @@ fn build_with_styles(
                     Some(indices.map(|index| {
                         DVec2::new((index % size) as f64, (index / size) as f64) / (size - 1) as f64
                     })),
+                    None,
                     budget,
                 )?;
             }
@@ -329,6 +487,7 @@ fn build_with_styles(
                     [points[0], points[index], points[index + 1]],
                     source,
                     None,
+                    radiance[source].boundary.as_ref(),
                     budget,
                 )?;
             }
@@ -407,33 +566,64 @@ impl SurfaceIndex {
                         });
                         (
                             fraction,
-                            (surface.source, uv, surface.normal.dot(-direction) > 0.0),
+                            (
+                                surface.source,
+                                uv,
+                                surface.normal.dot(-direction) > 0.0,
+                                surface.triangle.point(weights),
+                                surface.boundary_error
+                                    * weights.into_iter().map(f64::abs).sum::<f64>(),
+                            ),
                         )
                     }))
             },
         )?;
-        let Some((fraction, (source, uv, front))) = hit else {
+        let Some((fraction, (source, uv, front, position, boundary_error))) = hit else {
             return Ok(None);
         };
         let radiance = &self.radiance[source];
-        let blocker = if radiance.sky {
-            let Some(hit) = shadows.sky_fraction(point, end, &mut |work| budget.consume(work))?
-            else {
-                return Ok(None);
-            };
-            Some((hit, ()))
-        } else {
-            shadows.nearest(point, end, &mut |work| budget.consume(work), &mut |hull| {
-                Ok(hull.entry(point, end)?.map(|hit| (hit.0, ())))
-            })?
-        };
-        if blocker.is_some_and(|(blocked, _)| {
-            (fraction - blocked) * super::sky::TRACE_LENGTH > SURFACE_HIT_BIAS
-        }) {
+        if radiance.sky
+            && shadows
+                .sky_fraction(point, end, &mut |work| budget.consume(work))?
+                .is_none()
+        {
+            return Ok(None);
+        }
+        let pending = Cell::new(0usize);
+        let blocker = shadows.nearest(
+            point,
+            position,
+            &mut |work| {
+                budget.consume(
+                    work.checked_add(pending.replace(0))
+                        .ok_or("Radiance source certificate work overflow")?,
+                )
+            },
+            &mut |hull| {
+                let Some(interval) = hull.interval(point, position)? else {
+                    return Ok(None);
+                };
+                if let Some(boundary) = &radiance.boundary {
+                    let (terminal, work) =
+                        boundary.terminal(hull, interval, point, position, boundary_error)?;
+                    pending.set(
+                        pending
+                            .get()
+                            .checked_add(work)
+                            .ok_or("Radiance source certificate work overflow")?,
+                    );
+                    if terminal {
+                        return Ok(None);
+                    }
+                }
+                Ok(Some((interval.entering, ())))
+            },
+        );
+        budget.consume(pending.replace(0))?;
+        if blocker?.is_some() {
             return Ok(None);
         }
         let distance = fraction * super::sky::TRACE_LENGTH;
-        let position = point + direction * distance;
         if props.blocked(point, position, &mut |amount| budget.consume(amount))? {
             return Ok(None);
         }
@@ -474,6 +664,7 @@ mod tests {
                     normal: DVec3::NEG_Z,
                     source: 0,
                     coordinates: None,
+                    boundary_error: 0.0,
                 }],
                 &mut |work| budget.consume(work),
             )
@@ -487,6 +678,7 @@ mod tests {
                 mins: [0; 2],
                 sky: false,
                 extras: Vec::new(),
+                boundary: None,
             }],
             _allocation: allocation,
         };
@@ -544,6 +736,7 @@ mod tests {
             mins: [0, 0],
             sky: false,
             extras: Vec::new(),
+            boundary: None,
         };
         assert_eq!(field.at(DVec3::ZERO, None, 10.0, 0.1), DVec3::ZERO);
         assert_eq!(

@@ -63,6 +63,14 @@ pub(super) struct Triangle {
 }
 
 impl Triangle {
+    pub(super) fn point(&self, weights: [f64; 3]) -> DVec3 {
+        self.points
+            .into_iter()
+            .zip(weights)
+            .map(|(point, weight)| point * weight)
+            .sum()
+    }
+
     pub(super) fn new(points: [DVec3; 3]) -> Result<Self, String> {
         let [a, b, c] = points;
         let normal = (b - a).cross(c - a);

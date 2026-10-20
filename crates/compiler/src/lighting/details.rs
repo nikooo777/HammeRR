@@ -27,6 +27,7 @@ pub(super) struct Channel {
 }
 
 pub(super) struct Context<'a> {
+    pub face_sources: &'a [std::sync::Arc<[u32]>],
     pub map: &'a Map<'a>,
     pub tree: &'a Tree,
     pub visibility: &'a Visibility,
@@ -154,8 +155,14 @@ pub(super) fn bake(
     if details.props.is_empty() {
         return Ok(None);
     }
-    let surfaces =
-        super::radiance::build_styled_sky(ctx.map, bsp, ctx.kind, ctx.sky_radiance, budget)?;
+    let surfaces = super::radiance::build_styled_sky(
+        ctx.map,
+        bsp,
+        ctx.kind,
+        ctx.sky_radiance,
+        ctx.face_sources,
+        budget,
+    )?;
     if ctx.directions.is_empty() {
         return Err("Detail ambient lighting requires sphere directions".into());
     }
@@ -599,6 +606,7 @@ mod tests {
         let terrain = ShadowIndex::new(Vec::new(), &mut |work| budget.consume(work)).unwrap();
         let props = ShadowIndex::new(Vec::new(), &mut |work| budget.consume(work)).unwrap();
         let ctx = Context {
+            face_sources: &[],
             map: &map,
             tree: &tree,
             visibility: &visibility,

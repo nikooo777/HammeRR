@@ -23,6 +23,7 @@ const CUBE_AXES: [DVec3; 6] = [
 ];
 
 pub(super) struct Context<'a> {
+    pub face_sources: &'a [std::sync::Arc<[u32]>],
     pub kind: LightingKind,
     pub map: &'a Map<'a>,
     pub tree: &'a Tree,
@@ -196,7 +197,14 @@ pub(super) fn bake(
     report: &mut Report,
     budget: &mut Budget<'_>,
 ) -> Result<Stats, String> {
-    let surfaces = super::radiance::build(ctx.map, bsp, ctx.kind, ctx.sky_radiance, budget)?;
+    let surfaces = super::radiance::build(
+        ctx.map,
+        bsp,
+        ctx.kind,
+        ctx.sky_radiance,
+        ctx.face_sources,
+        budget,
+    )?;
     let cone = (1.0 - 2.0 / ctx.directions.len() as f64).acos().tan();
     let leaves = bsp.records::<Leaf>().map_err(|error| error.to_string())?;
     let _ambient_allocation = budget.reserve_bytes(

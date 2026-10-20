@@ -75,6 +75,16 @@ writes `build-prop-vertex-lighting.png` when `HAMMERR_UI_SNAPSHOTS` names an
 existing directory. Native consumer acceptance remains a separate gate; these
 checks require no game or desktop input.
 
+Shared reflected-light visibility checks:
+
+```sh
+cargo test -p compiler --lib source_boundary_tests
+```
+
+These cover source-adjacent nodraw blockers, actual emitted contributors,
+rounded own boundaries, merged/tied hulls, terrain/sky, transforms and resource
+errors without a game or desktop input.
+
 Hardware color-stream and compiler publication checks:
 
 ```sh

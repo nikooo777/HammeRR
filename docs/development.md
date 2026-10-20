@@ -3964,6 +3964,7 @@ support.
 
 ```sh
 cargo test -p editor-core --features mcp build_recipes::coordination_tests
+cargo test -p editor-core --features mcp unrepresentable_configured_paths
 cargo test -p editor-core --features mcp preference_file
 python3 -B scripts/validate_recipe_coordination.py --binary target/debug/hammerr-headless --output target/validation/recipe-coordination-headless
 python3 -B scripts/validate_recipe_coordination.py --binary target/debug/editor --output target/validation/recipe-coordination-editor
@@ -3979,3 +3980,11 @@ and stale save/replace/rename/delete requests, Reload/retry, distinct saved
 settings and unchanged owned map reviews. Both programs must drain cleanly on
 EOF and leave graphics uninitialized. Output directories must not already exist.
 No desktop input or game is required.
+
+The same public validator also checks invalid UTF-8 recipe configuration through
+actual MCP responses, explicit blocked editing and unchanged map reviews. A
+valid UTF-8 configured symlink must still write the exact non-UTF-8 physical
+target without a lossy substitute. Each additional process must drain cleanly;
+configuration checks must not panic or initialize graphics. The unit test covers
+both override and fallback path selection without changing global environment
+variables in parallel tests.

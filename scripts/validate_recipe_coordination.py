@@ -90,13 +90,184 @@ def text_error(response):
     return "\n".join(row["text"] for row in response["content"] if row["type"] == "text")
 
 
+def require_builtins(catalog):
+    expected = [
+        ("fast", True, stored_options(0)),
+        ("final", True, {"lighting": "direct_ldr", "physics": "engine", "sky_quality": "detailed",
+                         "visibility": "detailed", "bounces": 4, "smoothing_angle": 45,
+                         "generate_reflections": False}),
+    ]
+    require([(row["id"], row["builtin"], row["settings"]) for row in catalog["recipes"][:2]] == expected,
+            "Path handling changed immutable Fast preview or Final lighting recipe settings")
+
+
+def finish_path_case(clients, report, directory):
+    errors = []
+    report["cleanup"] = []
+    for client in clients:
+        if client.process is not None:
+            process_id = client.process.pid
+            try:
+                report["cleanup"].append({"pid": process_id, "clean_eof": require_clean_eof(client)})
+            except Exception as error:
+                errors.append(f"{type(error).__name__}: {error}")
+        elif client.log is not None and not client.log.closed:
+            client.log.close()
+    log = directory / "editor.log"
+    if log.exists():
+        report["stderr"] = fingerprint(log)
+        if log.stat().st_size > 1024 * 1024:
+            errors.append("Path case stderr exceeded its bounded fixture size")
+        elif "panic" in log.read_text(errors="replace").lower():
+            errors.append("Path case stderr contains a panic")
+    if errors:
+        report["status"], report["cleanup_errors"] = "failed", errors
+        raise RuntimeError("; ".join(errors))
+
+
+def invalid_requested_path(args, game, report):
+    clients = []
+    directory = args.output / "invalid-path-process"
+    parent = args.output / "invalid-path-store"
+    parent.mkdir()
+    raw_name = b"recipes-\xff.json"
+    requested = parent / os.fsdecode(raw_name)
+    lossy = parent / raw_name.decode("utf-8", errors="replace")
+    report.update({"status": "failed", "requested_path_hex": os.fsencode(requested).hex(),
+                   "rejections": []})
+    try:
+        client = open_process(args.binary, directory, requested, game, clients)
+        report["process_id"] = client.process.pid
+        source, ids = fixture(client, directory, 0)
+        baseline = owned(client, source, ids)
+        settings = client.call("get_compile_settings")
+        initial = client.call("get_build_recipes")
+        require_builtins(initial)
+        require(initial["path"] is None and initial["persistence"] == "blocked"
+                and not initial["custom_editable"] and "UTF-8" in initial["error"]
+                and "HAMMERR_BUILD_RECIPES" in initial["error"]
+                and [row["id"] for row in initial["recipes"]] == ["fast", "final"],
+                "Invalid requested recipe bytes did not produce a responsive explicit blocked report")
+        require(baseline["state"]["unsaved_changes"] and baseline["history"]["undo_count"] > 0
+                and baseline["property_draft"]["draft"] is not None,
+                "Invalid-path case lacks genuine source/history and its owned World draft")
+        report["initial_catalog"], report["protected_baseline"] = initial, baseline
+        for tool, arguments, tokens in (
+            ("save_build_recipe", {"name": "Unavailable path"}, ("did not load", "Reload recipes")),
+            ("reload_build_recipes", {}, ("storage", "unavailable")),
+        ):
+            before = client.call("get_build_recipes")
+            response = client.call(tool, arguments, error=True)
+            message = text_error(response)
+            require(all(token.lower() in message.lower() for token in tokens),
+                    f"Wrong invalid-path refusal for {tool}: {message}")
+            expected = copy.deepcopy(before)
+            if tool == "save_build_recipe":
+                expected["error"] = message
+            require(client.call("get_build_recipes") == expected,
+                    "Invalid-path refusal changed catalog metadata beyond its explicit error")
+            require(owned(client, source, ids) == baseline
+                    and client.call("get_compile_settings") == settings,
+                    "Invalid-path refusal changed map/history/settings or its owned draft")
+            require(not requested.exists() and not lossy.exists() and not list(parent.iterdir()),
+                    "Invalid requested path created storage, a lock or a lossy substitute")
+            report["rejections"].append({"tool": tool, "diagnostic": message})
+        report["final_catalog"] = client.call("get_build_recipes")
+        report["clean_eof"] = require_clean_eof(client)
+        require(fingerprint(source) == baseline["source"] and not list(parent.iterdir()),
+                "Invalid-path EOF changed saved source or the empty destination parent")
+    except Exception as error:
+        report["error"] = f"{type(error).__name__}: {error}"
+        raise
+    finally:
+        finish_path_case(clients, report, directory)
+    report["status"] = "accepted"
+
+
+def valid_alias_path(args, game, report):
+    clients = []
+    directory = args.output / "alias-path-process"
+    parent = args.output / "alias-path-store"
+    physical, requested_parent = parent / "physical", parent / "requested"
+    physical.mkdir(parents=True)
+    requested_parent.mkdir()
+    raw_name = b"custom-recipes-\xff.store"
+    destination = physical / os.fsdecode(raw_name)
+    alias = requested_parent / "recipes.json"
+    lossy = physical / raw_name.decode("utf-8", errors="replace")
+    initial_bytes = b'{"version":1,"next_id":1,"recipes":[]}\n'
+    destination.write_bytes(initial_bytes)
+    alias.symlink_to(destination)
+    report.update({"status": "failed", "requested_path": str(alias),
+                   "physical_path_hex": os.fsencode(destination).hex()})
+    try:
+        client = open_process(args.binary, directory, alias, game, clients)
+        report["process_id"] = client.process.pid
+        source, ids = fixture(client, directory, 0)
+        baseline = owned(client, source, ids)
+        settings = client.call("get_compile_settings")
+        initial = client.call("get_build_recipes")
+        require_builtins(initial)
+        require(initial["path"] == str(alias) and initial["persistence"] == "persistent"
+                and initial["custom_editable"] and initial["error"] is None
+                and [row["id"] for row in initial["recipes"]] == ["fast", "final"]
+                and read_store(alias) == initial_bytes,
+                "Valid UTF-8 alias did not load the exact non-UTF8 physical store")
+        saved = client.call("save_build_recipe", {"name": "UTF-8 alias", "revision": initial["revision"]})
+        require_builtins(saved)
+        expected_file = {"version": 1, "next_id": 2, "recipes": [
+            {"id": "custom:1", "name": "UTF-8 alias", "settings": stored_options(0)}]}
+        require(saved["active"] == {"id": "custom:1", "name": "UTF-8 alias"}
+                and saved["path"] == str(alias) and saved["error"] is None
+                and saved["persistence"] == "persistent" and saved["custom_editable"]
+                and [row["id"] for row in saved["recipes"]] == ["fast", "final", "custom:1"]
+                and saved["settings"] == stored_options(0)
+                and json.loads(read_store(destination)) == expected_file,
+                "UTF-8 alias Save did not publish custom:1 to the exact byte-name target")
+        expected_settings = copy.deepcopy(settings)
+        expected_settings["recipe"] = saved["active"]
+        saved_bytes = read_store(destination)
+        loaded = client.call("reload_build_recipes", {"revision": saved["revision"]})
+        require(loaded["recipes"] == saved["recipes"] and loaded["active"] == saved["active"]
+                and loaded["path"] == str(alias) and loaded["error"] is None
+                and loaded["custom_editable"] and loaded["persistence"] == "persistent"
+                and read_store(alias) == saved_bytes,
+                "UTF-8 alias Reload failed to retain the exact saved catalog")
+        require(owned(client, source, ids) == baseline
+                and client.call("get_compile_settings") == expected_settings,
+                "Alias publication/reload changed map/history/options or its owned draft")
+        require(alias.is_symlink() and os.fsencode(alias.readlink()) == os.fsencode(destination)
+                and not lossy.exists()
+                and {os.fsencode(path.name) for path in physical.iterdir()} == {raw_name, LOCK_NAME.encode()}
+                and {path.name for path in requested_parent.iterdir()} == {alias.name},
+                "Alias publication replaced its symlink or created a lossy/unrelated store")
+        report["initial_catalog"], report["saved_catalog"], report["reloaded_catalog"] = initial, saved, loaded
+        report["protected_baseline"] = baseline
+        report["final_store"] = {**fingerprint(destination), "value": expected_file}
+        report["clean_eof"] = require_clean_eof(client)
+        require(fingerprint(source) == baseline["source"] and read_store(destination) == saved_bytes
+                and alias.is_symlink() and not lossy.exists()
+                and {os.fsencode(path.name) for path in physical.iterdir()} == {raw_name, LOCK_NAME.encode()}
+                and {path.name for path in requested_parent.iterdir()} == {alias.name},
+                "Alias EOF changed source, target bytes, symlink or destination entries")
+    except Exception as error:
+        report["error"] = f"{type(error).__name__}: {error}"
+        raise
+    finally:
+        finish_path_case(clients, report, directory)
+    report["status"] = "accepted"
+
+
 def validate(args):
     clients, fixtures, baselines, settings = [], [], [], []
     result = {"status": "failed", "binary": str(args.binary), "binary_fingerprint": fingerprint(args.binary),
               "script_fingerprint": fingerprint(Path(__file__)),
               "helper_fingerprints": {name: fingerprint(Path(__file__).parent / name) for name in HELPERS},
-              "transport": "two separate private stdio MCP processes", "steps": [], "compiles": 0,
-              "graphics": False, "native": False, "game": False}
+              "transport": "two coordinated writers plus two isolated path-case private stdio MCP processes",
+              "steps": [], "compiles": 0,
+              "graphics": False, "native": False, "game": False,
+              "path_encoding": {"invalid_requested": {"status": "not_run"},
+                                "valid_alias": {"status": "not_run"}}}
     store = args.output / "shared/build-recipes.json"
     store.parent.mkdir()
     game = args.output / "game"
@@ -233,16 +404,6 @@ def validate(args):
         require([row["active"]["id"] for row in catalogs] == ["custom:1", "custom:2"], "Peer writes changed document-local active recipes")
         require({path.name for path in store.parent.iterdir()} == {store.name, LOCK_NAME}, "Publication left unexpected store artifacts")
         result["final_store"] = {"path": str(store), **fingerprint(store), "value": expected_file}
-        if args.reference_output is not None:
-            reference = json.loads((args.reference_output / "results.json").read_text())
-            require(reference["status"] == "accepted" and reference["script_fingerprint"] == result["script_fingerprint"]
-                    and reference["helper_fingerprints"] == result["helper_fingerprints"]
-                    and reference["binary_fingerprint"]["sha256"] != result["binary_fingerprint"]["sha256"],
-                    "Cross-program reference is not the same accepted frozen oracle")
-            previous = Path(reference["final_store"]["path"])
-            require(fingerprint(previous)["sha256"] == reference["final_store"]["sha256"]
-                    and previous.read_bytes() == read_store(store), "Production programs saved different final recipe bytes")
-            result["cross_program_store_bytes_equal"] = True
         record("final-converged-catalogs")
         result["clean_eof"] = []
         for client in clients:
@@ -251,6 +412,45 @@ def validate(args):
                 and fingerprints(game) == asset_manifest, "EOF changed accepted storage/assets")
         for index, (source, _) in enumerate(fixtures):
             require(fingerprint(source) == baselines[index]["source"], "EOF rewrote saved source")
+        require(len(result["steps"]) == 22 and result["clean_eof"] == [0, 0],
+                "Original coordination workflow or its clean exits changed")
+        invalid_requested_path(args, game, result["path_encoding"]["invalid_requested"])
+        valid_alias_path(args, game, result["path_encoding"]["valid_alias"])
+        require(all(case["status"] == "accepted" and case["clean_eof"] == 0
+                    for case in result["path_encoding"].values())
+                and fingerprints(game) == asset_manifest,
+                "Path-encoding cases failed, did not exit cleanly or changed mounted assets")
+        path_processes = [case["process_id"] for case in result["path_encoding"].values()]
+        result["counts"] = {"coordination_steps": len(result["steps"]), "path_encoding_cases": 2,
+                            "processes": len(result["process_ids"]) + len(path_processes),
+                            "clean_eof": len(result["clean_eof"]) + sum(
+                                case["clean_eof"] == 0 for case in result["path_encoding"].values())}
+        require(result["counts"] == {"coordination_steps": 22, "path_encoding_cases": 2,
+                                     "processes": 4, "clean_eof": 4},
+                "Final report lacks the complete coordination and path-case exits")
+        if args.reference_output is not None:
+            reference = json.loads((args.reference_output / "results.json").read_text())
+            require(reference["status"] == "accepted" and reference["script_fingerprint"] == result["script_fingerprint"]
+                    and reference["helper_fingerprints"] == result["helper_fingerprints"]
+                    and reference["binary_fingerprint"]["sha256"] != result["binary_fingerprint"]["sha256"]
+                    and reference["counts"] == result["counts"]
+                    and set(reference["path_encoding"]) == set(result["path_encoding"])
+                    and all(case["status"] == "accepted" and case["clean_eof"] == 0
+                            for case in reference["path_encoding"].values()),
+                    "Cross-program reference lacks the same accepted frozen workflow and path cases")
+            previous = Path(reference["final_store"]["path"])
+            require(fingerprint(previous)["sha256"] == reference["final_store"]["sha256"]
+                    and previous.read_bytes() == read_store(store), "Production programs saved different final recipe bytes")
+            prior_alias = reference["path_encoding"]["valid_alias"]
+            current_alias = result["path_encoding"]["valid_alias"]
+            previous = Path(os.fsdecode(bytes.fromhex(prior_alias["physical_path_hex"])))
+            current = Path(os.fsdecode(bytes.fromhex(current_alias["physical_path_hex"])))
+            require(fingerprint(previous) == {key: prior_alias["final_store"][key] for key in ("bytes", "sha256")}
+                    and previous.read_bytes() == read_store(current)
+                    and prior_alias["final_store"]["value"] == current_alias["final_store"]["value"],
+                    "Production programs saved different exact non-UTF8 alias target bytes")
+            result["cross_program_store_bytes_equal"] = True
+            result["cross_program_alias_store_bytes_equal"] = True
         result["status"] = "accepted"
     except Exception as error:
         result["error"] = f"{type(error).__name__}: {error}"
@@ -279,7 +479,7 @@ def validate(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Validate deterministic cross-process recipe publication through two private headless MCP sessions and held Linux locks.")
+    parser = argparse.ArgumentParser(description="Validate coordinated recipe publication and requested-path encoding through private headless MCP sessions.")
     parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--reference-output", type=Path)
@@ -290,7 +490,9 @@ def main():
     require(args.output.is_relative_to(ROOT / "target/validation"), "Retain private artifacts under target/validation")
     args.output.mkdir(parents=True, exist_ok=False)
     result = validate(args)
-    print(json.dumps({"status": result["status"], "steps": len(result["steps"]), "output": str(args.output)}))
+    print(json.dumps({"status": result["status"], "steps": len(result["steps"]),
+                      "path_cases": result["counts"]["path_encoding_cases"],
+                      "clean_eof": result["counts"]["clean_eof"], "output": str(args.output)}))
 
 
 if __name__ == "__main__":

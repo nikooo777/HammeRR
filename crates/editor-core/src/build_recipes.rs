@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -235,11 +235,24 @@ pub(crate) enum Edit<'a> {
 }
 
 pub(crate) fn configured_path(directory: Result<PathBuf, String>) -> Result<PathBuf, String> {
-    match std::env::var_os("HAMMERR_BUILD_RECIPES") {
-        Some(path) if path.is_empty() => Err("HAMMERR_BUILD_RECIPES must be a file path".into()),
-        Some(path) => Ok(PathBuf::from(path)),
-        None => directory.map(|directory| directory.join(FILE_NAME)),
+    configured_path_with_override(directory, std::env::var_os("HAMMERR_BUILD_RECIPES"))
+}
+
+fn configured_path_with_override(
+    directory: Result<PathBuf, String>,
+    override_path: Option<OsString>,
+) -> Result<PathBuf, String> {
+    let path = match override_path {
+        Some(path) if path.is_empty() => {
+            return Err("HAMMERR_BUILD_RECIPES must be a file path".into());
+        }
+        Some(path) => PathBuf::from(path),
+        None => directory?.join(FILE_NAME),
+    };
+    if path.to_str().is_none() {
+        return Err("Build recipe storage path must be valid UTF-8; set HAMMERR_BUILD_RECIPES to a UTF-8 path and restart".into());
     }
+    Ok(path)
 }
 
 impl Snapshot {
@@ -501,6 +514,65 @@ mod coordination_tests;
 mod tests {
     use super::*;
     use crate::session::{Actor, Session};
+
+    #[cfg(unix)]
+    #[test]
+    fn unrepresentable_configured_paths_report_blocked_storage_without_panicking() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let invalid = OsString::from_vec(b"recipes-\xff.json".to_vec());
+        for (directory, override_path) in [
+            (Ok(PathBuf::from("unused")), Some(invalid.clone())),
+            (Ok(PathBuf::from(invalid.clone())), None),
+        ] {
+            let authority = Authority::default();
+            let error = authority
+                .configure_at(configured_path_with_override(directory, override_path))
+                .unwrap_err();
+            assert!(error.contains("UTF-8") && error.contains("HAMMERR_BUILD_RECIPES"));
+            let mut session =
+                Session::with_build_recipes(Err("no assets needed".into()), authority);
+            let options = session.compile_options();
+            let history = session.history_snapshot();
+            let report = session.build_recipes();
+            assert!(report["path"].is_null());
+            assert_eq!(report["persistence"], "blocked");
+            assert_eq!(report["custom_editable"], false);
+            assert_eq!(report["active"]["id"], "fast");
+            assert!(report["error"].as_str().unwrap().contains("UTF-8"));
+            assert_eq!(
+                report["recipes"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|recipe| recipe["id"].as_str().unwrap())
+                    .collect::<Vec<_>>(),
+                ["fast", "final"]
+            );
+            assert!(
+                session
+                    .save_build_recipe(Actor::Agent, "Blocked", None, None)
+                    .is_err()
+            );
+            assert_eq!(session.compile_options(), options);
+            assert_eq!(session.history_snapshot(), history);
+            assert_eq!(session.build_recipes()["recipes"], report["recipes"]);
+        }
+        assert_eq!(
+            configured_path_with_override(Err("no default".into()), Some("chosen.json".into()))
+                .unwrap(),
+            PathBuf::from("chosen.json")
+        );
+        assert_eq!(
+            configured_path_with_override(Ok("chosen".into()), None).unwrap(),
+            PathBuf::from("chosen/build-recipes.json")
+        );
+        assert!(
+            configured_path_with_override(Ok("unused".into()), Some(OsString::new()))
+                .unwrap_err()
+                .contains("must be a file path")
+        );
+    }
 
     #[test]
     fn high_registry_revisions_and_under_lock_guards_do_not_alias_local_action_tokens() {

@@ -43,10 +43,42 @@ pub struct Face {
 
 impl Face {
     pub(crate) fn lightmap_bounds(&self, info: &TexInfo) -> Result<([i32; 2], [i32; 2]), String> {
-        lightmap_bounds(&self.winding, info).map_err(|error| match self.source_sides.first() {
+        lightmap_bounds(&self.winding, info).map_err(|error| self.source_error(error))
+    }
+
+    pub(crate) fn checked_lightmap_bounds(
+        &self,
+        map: &Map,
+    ) -> Result<([i32; 2], [i32; 2]), String> {
+        let bounds = self.lightmap_bounds(&map.texinfos.infos[self.texinfo])?;
+        if self.lightmap_split_axis(map, bounds.1).is_some() {
+            return Err(self.source_error(format!(
+                "Flat lit-face lightmap extent {:?} exceeds the {MAX_LIGHTMAP_EXTENT}-luxel limit",
+                bounds.1
+            )));
+        }
+        Ok(bounds)
+    }
+
+    fn has_flat_lightmap(&self, map: &Map) -> bool {
+        let info = &map.texinfos.infos[self.texinfo];
+        self.displacement.is_none()
+            && info.flags & surf::NOLIGHT == 0
+            && map.materials.get(map.texdata[info.texdata as usize]).lit()
+    }
+
+    fn lightmap_split_axis(&self, map: &Map, size: [i32; 2]) -> Option<usize> {
+        if !self.has_flat_lightmap(map) {
+            return None;
+        }
+        (0..2).find(|&axis| size[axis] > MAX_LIGHTMAP_EXTENT)
+    }
+
+    fn source_error(&self, error: String) -> String {
+        match self.source_sides.first() {
             Some(id) => format!("side:{id}: {error}"),
             None => error,
-        })
+        }
     }
 }
 
@@ -84,10 +116,7 @@ fn subdivide(
     output: &mut Vec<Face>,
     control: &Control,
 ) -> Result<(), String> {
-    let material = map
-        .materials
-        .get(map.texdata[map.texinfos.infos[face.texinfo].texdata as usize]);
-    if !material.lit() || map.texinfos.infos[face.texinfo].flags & surf::NOLIGHT != 0 {
+    if !face.has_flat_lightmap(map) {
         output.push(face);
         return Ok(());
     }
@@ -96,9 +125,16 @@ fn subdivide(
     while let Some(face) = pending.pop() {
         control.checkpoint()?;
         let (mins, size) = face.lightmap_bounds(info)?;
-        let Some(axis) = (0..2).find(|&axis| size[axis] > MAX_LIGHTMAP_EXTENT) else {
+        let Some(axis) = face.lightmap_split_axis(map, size) else {
             output.push(face);
             continue;
+        };
+        let split_error = || {
+            face.source_error(format!(
+                "Lightmap subdivision could not reduce axis {} extent {} to the {MAX_LIGHTMAP_EXTENT}-luxel limit; adjust this side's lightmap scale or texture axes",
+                axis + 1,
+                size[axis]
+            ))
         };
         let v = info.lightmap_vecs[axis];
         let normal = DVec3::new(v[0] as f64, v[1] as f64, v[2] as f64);
@@ -107,9 +143,15 @@ fn subdivide(
             .winding
             .split(normal.normalize(), distance / normal.length());
         let (Some(front), Some(back)) = (front, back) else {
-            output.push(face);
-            continue;
+            return Err(split_error());
         };
+        for winding in [&front, &back] {
+            let (_, child_size) =
+                lightmap_bounds(winding, info).map_err(|error| face.source_error(error))?;
+            if child_size[axis] >= size[axis] {
+                return Err(split_error());
+            }
+        }
         pending.push(Face {
             smoothing_source: face.smoothing_source.clone(),
             source_sides: face.source_sides.clone(),
@@ -582,6 +624,51 @@ fn merge_sources(a: &Arc<[u32]>, b: &Arc<[u32]>, work: &mut usize) -> Result<Arc
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn subdivision_rejects_two_children_when_one_keeps_the_parent_extent() {
+        let source = crate::test_common::room();
+        let game = crate::test_common::empty_game();
+        let mut report = crate::Report::default();
+        let mut map = Map::load(&source, &game, &mut report).unwrap();
+        assert!(!report.has_errors(), "{report:?}");
+        let texinfo = map.texinfos.add(TexInfo {
+            lightmap_vecs: [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]],
+            texdata: 0,
+            ..TexInfo::default()
+        });
+        let winding = Winding(vec![
+            DVec3::new(-0.001, 0.0, 0.0),
+            DVec3::new(31.001, 1.0, 0.0),
+            DVec3::new(32.0, 0.0, 0.0),
+        ]);
+        let (front, back) = winding.split(DVec3::X, 31.0);
+        assert!(front.is_some());
+        assert_eq!(
+            lightmap_bounds(&back.unwrap(), &map.texinfos.infos[texinfo]).unwrap(),
+            ([-1, 0], [33, 1])
+        );
+        let face = Face {
+            smoothing_source: None,
+            source_sides: Arc::from([91]),
+            plane: 0,
+            texinfo,
+            smoothing_groups: 0,
+            winding,
+            node: None,
+            leaves: Vec::new(),
+            water_region: None,
+            displacement: None,
+        };
+        let mut output = Vec::new();
+        let error = subdivide(face, &map, &mut output, &Control::default()).unwrap_err();
+        assert!(
+            error.starts_with("side:91: Lightmap subdivision"),
+            "{error}"
+        );
+        assert!(error.contains("extent 33"), "{error}");
+        assert!(output.is_empty());
+    }
 
     #[test]
     fn provenance_union_preserves_sorted_ids_shares_equal_scopes_and_bounds_work() {

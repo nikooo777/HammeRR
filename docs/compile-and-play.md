@@ -165,11 +165,18 @@ Limits: static textures with one frame, one face, depth one and at most 4096 pix
 - Larger Fast and Detailed builds compute independent portal-facing rows on up to eight available CPUs; Detailed also parallelizes separator flow. Small jobs stay serial.
 - Visibility work is bounded. Exceeded work or stack limits keep the previous BSP; choose **Fast (conservative)** or use `func_detail` for non-sealing decoration to simplify structural geometry. [Occluders](occluders.md) compile separately and provide runtime prop culling with activation inputs.
 
-Unreadable or malformed material definitions, broken patch includes and malformed
-base textures needed for compilation stop the build and retain the previous
-BSP. Nonfinite texture reflectivity is also rejected. Absent material or base
-texture files produce explicit missing-content warnings; mount the required
-content before relying on its flags, dimensions or lighting.
+Unreadable or malformed material definitions, broken patch includes and missing
+or malformed declared textures needed for compilation stop the build and retain
+the previous BSP. Nonfinite texture reflectivity is also rejected. Missing
+material definitions produce explicit warnings; absent optional texture
+declarations retain the documented compile defaults.
+
+Flat lit faces are subdivided to a maximum lightmap extent of 32 luxels per
+axis, including in **Fullbright** builds. If an imported projection prevents a
+valid smaller split, the build reports the source side and preserves the
+previous BSP and pointfile. Adjust that face's [Lightmap scale or texture
+axes](textures.md#face-lighting), then compile again. Unlit/sky faces and
+terrain retain their separate rules.
 
 ### Hint planes
 

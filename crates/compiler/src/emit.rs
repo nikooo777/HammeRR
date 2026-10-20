@@ -126,6 +126,7 @@ impl Geometry {
         model: &Model,
         water: &crate::water::Water,
     ) -> Result<bsp::Face, String> {
+        let (lightmap_mins, lightmap_size) = face.checked_lightmap_bounds(map)?;
         let vertices = face
             .winding
             .0
@@ -139,8 +140,6 @@ impl Geometry {
             self.surfedges.push(edge);
             self.normal_indices.push(plane);
         }
-        let info = &map.texinfos.infos[face.texinfo];
-        let (lightmap_mins, lightmap_size) = face.lightmap_bounds(info)?;
         Ok(bsp::Face {
             plane,
             side: (face.plane & 1) as u8,
@@ -615,4 +614,111 @@ pub fn build(
         smoothing_sources,
         face_sources,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use source_formats::bsp::{TexInfo, surf};
+    use source_formats::gamefs::{Mount, MountedPath};
+
+    fn extent_face(texinfo: usize, size: [i32; 2], displacement: Option<usize>) -> Face {
+        let [width, height] = size.map(f64::from);
+        Face {
+            smoothing_source: None,
+            source_sides: Arc::from([91]),
+            plane: 0,
+            texinfo,
+            smoothing_groups: 0,
+            winding: crate::winding::Winding(vec![
+                DVec3::ZERO,
+                DVec3::new(0.0, height, 0.0),
+                DVec3::new(width, height, 0.0),
+                DVec3::new(width, 0.0, 0.0),
+            ]),
+            node: None,
+            leaves: Vec::new(),
+            water_region: None,
+            displacement,
+        }
+    }
+
+    #[test]
+    fn emission_checks_flat_lit_extents_and_preserves_material_and_displacement_exemptions() {
+        let directory = tempfile::tempdir().unwrap();
+        let materials = directory.path().join("materials");
+        std::fs::create_dir(&materials).unwrap();
+        for (name, text) in [
+            ("lit", "LightmappedGeneric { }"),
+            ("unlit", "UnlitGeneric { }"),
+            ("nodraw", "LightmappedGeneric { %compilenodraw 1 }"),
+            ("sky", "LightmappedGeneric { %compilesky 1 }"),
+            ("sky2d", "LightmappedGeneric { %compile2dsky 1 }"),
+        ] {
+            std::fs::write(materials.join(format!("{name}.vmt")), text).unwrap();
+        }
+        let mut game = crate::test_common::empty_game();
+        game.mounts.push(MountedPath {
+            ids: vec!["game".into()],
+            mount: Mount::Directory(directory.path().into()),
+        });
+        let source = crate::test_common::room();
+        let mut report = crate::Report::default();
+        let mut map = Map::load(&source, &game, &mut report).unwrap();
+        assert!(!report.has_errors(), "{report:?}");
+        let model = Model {
+            entity: 1,
+            tree: Tree { nodes: Vec::new() },
+            faces: Vec::new(),
+        };
+        let water = crate::water::build(
+            &map,
+            &model.tree,
+            &[],
+            &mut report,
+            &crate::Control::default(),
+        )
+        .unwrap();
+        for (name, flags, size, displacement, reject) in [
+            ("lit", 0, [32, 32], None, false),
+            ("lit", 0, [33, 32], None, true),
+            ("lit", 0, [32, 33], None, true),
+            ("lit", surf::NOLIGHT, [33, 33], None, false),
+            ("unlit", 0, [33, 33], None, false),
+            ("nodraw", 0, [33, 33], None, false),
+            ("sky", 0, [33, 33], None, false),
+            ("sky2d", 0, [33, 33], None, false),
+            ("lit", 0, [125, 125], Some(0), false),
+        ] {
+            let material = map.materials.load(name).unwrap();
+            assert_eq!(map.materials.get(material).lit(), name == "lit");
+            let texdata = map.texdata.len() as i32;
+            map.texdata.push(material);
+            let texinfo = map.texinfos.add(TexInfo {
+                lightmap_vecs: [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]],
+                flags,
+                texdata,
+                ..TexInfo::default()
+            });
+            let face = extent_face(texinfo, size, displacement);
+            let mut geometry = Geometry::default();
+            let result = geometry.face(&face, &map, 0, &model, &water);
+            if reject {
+                let error = result.unwrap_err();
+                assert!(
+                    error.starts_with("side:91: Flat lit-face lightmap extent"),
+                    "{error}"
+                );
+                assert!(error.contains("32-luxel limit"), "{error}");
+                assert!(geometry.vertices.is_empty());
+                assert!(geometry.edges.is_empty());
+                assert!(geometry.surfedges.is_empty());
+            } else {
+                let emitted = result.unwrap();
+                assert_eq!(emitted.lightmap_mins, [0, 0]);
+                assert_eq!(emitted.lightmap_size, size);
+                assert_eq!(emitted.dispinfo, displacement.map_or(-1, |id| id as i16));
+            }
+        }
+    }
 }

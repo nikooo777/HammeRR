@@ -4039,7 +4039,7 @@ pub(crate) fn compile_controls_share_cancel_status_and_guard_replaced_jobs() {
         controller
             .window
             .get_diagnostics()
-            .contains("depth-specific material")
+            .contains("has no $bottommaterial; its surface has no below-water face")
     );
     let sky = stats["sky_clusters"].as_u64().unwrap();
     assert!(sky > 0);

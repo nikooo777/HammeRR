@@ -7,9 +7,178 @@ use map_core::{
     texel_uv,
 };
 use source_formats::{
-    bsp::{Face, TexInfo},
+    bsp::{self, Face, TexInfo},
+    gamefs::{GameFs, Mount, MountedPath},
     vmf::Vmf,
 };
+
+fn lightmap_projection_game() -> (tempfile::TempDir, GameFs) {
+    let directory = tempfile::tempdir().unwrap();
+    let materials = directory.path().join("materials/dev");
+    std::fs::create_dir_all(&materials).unwrap();
+    std::fs::write(
+        materials.join("dev_measuregeneric01.vmt"),
+        "LightmappedGeneric { }",
+    )
+    .unwrap();
+    let mut game = common::empty_game();
+    game.mounts.push(MountedPath {
+        ids: vec!["game".into()],
+        mount: Mount::Directory(directory.path().into()),
+    });
+    (directory, game)
+}
+
+fn thin_projected_room(magnitude: f64) -> (Vmf, u32) {
+    let mut source = common::room();
+    for solid in &mut source.world.solids {
+        for side in &mut solid.sides {
+            for point in &mut side.plane.0 {
+                point.x = point.x.signum() * (0.125 + (point.x.abs() - 256.0).max(0.0) / 8.0);
+                point.y /= 8.0;
+                point.z /= 8.0;
+            }
+        }
+    }
+    for entity in &mut source.entities {
+        entity.properties.set("origin", "0 0 8");
+    }
+    let mut document = Document::new(source);
+    document
+        .edit("point light", |tx| {
+            edit::create_entity(
+                tx,
+                "light",
+                Some(DVec3::new(0.0, 0.0, 16.0)),
+                &[("_light".into(), "255 255 255 12".into())],
+                Vec::new(),
+            )
+        })
+        .unwrap();
+    let mut source = document.vmf().clone();
+    let side = source.world.solids[0]
+        .sides
+        .iter_mut()
+        .find(|side| Plane::from_points(side.plane.0).unwrap().normal == DVec3::Z)
+        .unwrap();
+    side.lightmap_scale = 16;
+    side.u_axis.axis = DVec3::new(magnitude, 0.0, 0.0);
+    side.u_axis.scale = 0.25;
+    side.u_axis.offset = 0.0;
+    side.v_axis.axis = DVec3::new(0.0, -0.001, 0.0);
+    side.v_axis.scale = 0.25;
+    side.v_axis.offset = 6.4;
+    let id = side.id;
+    let source = Vmf::parse(&source.try_write(&Default::default()).unwrap()).unwrap();
+    (source, id)
+}
+
+#[test]
+fn finite_no_progress_lightmap_splits_fail_and_preserve_bsp_and_pointfile() {
+    let (directory, game) = lightmap_projection_game();
+    let (ordinary, _) = thin_projected_room(1.0);
+    let (source, side) = thin_projected_room(64_000.0);
+    let original = source.clone();
+    for lighting in [
+        compiler::LightingMode::Fullbright,
+        compiler::LightingMode::DirectLdr,
+    ] {
+        let options = compiler::Options {
+            lighting,
+            ..Default::default()
+        };
+        let destination = directory.path().join(format!("{}.bsp", lighting.name()));
+        let pointfile = destination.with_extension("lin");
+        let baseline = compiler::compile_with_options(&ordinary, &game, options);
+        assert!(!baseline.report.has_errors(), "{:?}", baseline.report);
+        assert!(baseline.write(&destination).unwrap());
+        let previous = std::fs::read(&destination).unwrap();
+        std::fs::write(&pointfile, b"previous pointfile").unwrap();
+
+        let output = compiler::compile_with_options(&source, &game, options);
+        assert!(output.bsp.is_none());
+        assert!(output.leak.is_none());
+        assert!(
+            output.report.diagnostics.iter().any(|diagnostic| {
+                diagnostic.level == compiler::Level::Error
+                    && diagnostic.message.contains(&format!("side:{side}:"))
+                    && diagnostic.message.contains("Lightmap subdivision")
+                    && diagnostic.message.contains("extent 1000")
+            }),
+            "{:?}",
+            output.report
+        );
+        assert!(!output.write(&destination).unwrap());
+        assert_eq!(std::fs::read(&destination).unwrap(), previous);
+        assert_eq!(std::fs::read(&pointfile).unwrap(), b"previous pointfile");
+        let fresh = directory
+            .path()
+            .join(format!("fresh-{}.bsp", lighting.name()));
+        assert!(!output.write(&fresh).unwrap());
+        assert!(!fresh.exists());
+        assert!(!fresh.with_extension("lin").exists());
+        assert_eq!(source, original);
+    }
+}
+
+#[test]
+fn ordinary_and_subdividing_authored_projections_keep_literal_lightmap_bounds() {
+    let (_directory, game) = lightmap_projection_game();
+    for lighting in [
+        compiler::LightingMode::Fullbright,
+        compiler::LightingMode::DirectLdr,
+    ] {
+        for (magnitude, expected) in [
+            (1.0, vec![([-1, 0], [2, 1])]),
+            (4096.0, vec![([-32, 0], [32, 1]), ([0, 0], [32, 1])]),
+        ] {
+            let (source, _) = thin_projected_room(magnitude);
+            let output = compiler::compile_with_options(
+                &source,
+                &game,
+                compiler::Options {
+                    lighting,
+                    ..Default::default()
+                },
+            );
+            assert!(!output.report.has_errors(), "{:?}", output.report);
+            assert!(output.leak.is_none());
+            assert!(output.stats.lightmap_samples < 256);
+            let bsp = output.bsp.unwrap();
+            let planes = bsp.records::<bsp::Plane>().unwrap();
+            let infos = bsp.records::<TexInfo>().unwrap();
+            let faces = bsp.records::<Face>().unwrap();
+            let floor = faces
+                .iter()
+                .filter(|face| {
+                    let plane = planes[face.plane as usize];
+                    plane.normal == [0.0, 0.0, 1.0] && plane.dist == 0.0
+                })
+                .collect::<Vec<_>>();
+            let mut bounds = floor
+                .iter()
+                .map(|face| (face.lightmap_mins, face.lightmap_size))
+                .collect::<Vec<_>>();
+            bounds.sort_unstable();
+            assert_eq!(bounds, expected);
+            for face in floor {
+                assert_eq!(
+                    infos[face.texinfo as usize].lightmap_vecs[0],
+                    [(magnitude / 16.0) as f32, 0.0, 0.0, 0.0]
+                );
+                assert_eq!(
+                    face.light_offset >= 0,
+                    lighting == compiler::LightingMode::DirectLdr
+                );
+            }
+            assert!(
+                faces
+                    .iter()
+                    .all(|face| face.lightmap_size.iter().all(|&extent| extent <= 32))
+            );
+        }
+    }
+}
 
 #[test]
 fn extreme_finite_source_projections_fail_without_panics_or_output_replacement() {

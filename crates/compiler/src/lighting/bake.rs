@@ -485,12 +485,7 @@ fn posed_occluders(
             .collect();
         let (mins, maxs) = if pose.rotation.is_some() {
             budget.consume(16)?;
-            let raw = pose.bounds(brush.mins, brush.maxs)?;
-            let stored = pose.bounds(
-                crate::emit::stored_vertex(brush.mins),
-                crate::emit::stored_vertex(brush.maxs),
-            )?;
-            (raw.0.min(stored.0), raw.1.max(stored.1))
+            pose.raw_and_stored_bounds(brush.mins, brush.maxs)?
         } else {
             (brush.mins + pose.offset, brush.maxs + pose.offset)
         };

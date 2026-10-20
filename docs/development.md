@@ -3644,3 +3644,21 @@ against independently mounted effective-base references, checks a contrasting
 one-bounce control and verifies foreground/background refusal preservation,
 saved source/history/settings/recipes/assets, clean EOF and uninitialized graphics.
 Selected missing/corrupt assets and unsupported metric overrides must fail.
+
+
+## Initial brush reflection assignment checks
+
+```sh
+cargo test -j 8 -p compiler cubemap_assets::rotation_tests
+python3 -B scripts/validate_rotated_cubemap_bindings.py --binary target/debug/hammerr-headless --output target/validation/rotated-cubemap-headless
+python3 -B scripts/validate_rotated_cubemap_bindings.py --binary target/debug/editor --output target/validation/rotated-cubemap-editor
+```
+
+Use fresh disk-backed output directories. Literal transformed centers and normals
+with adversarial sample positions distinguish an ignored rotation from a missing
+position or normal transform. Compiler tests cover fractional/native-float pivots,
+zero-angle compatibility, raw/stored bounds, manual overrides, pending LDR/dual
+plans and unsupported-pose refusals. The public MCP check inspects assignments and
+reviews manual binding replacement/removal/Undo through shared Session operations,
+retaining source, settings, history and uninitialized graphics. It performs no
+compile, native capture or desktop interaction and does not establish image parity.

@@ -497,7 +497,7 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | Reflection face bindings | Generated reflections |
 | --- | --- |
 | ![Reviewing reflection sample assignments](docs/images/cubemap-faces.png) | ![Local reflections on a compiled floor in Counter-Strike: Source](docs/images/compiled-reflections.png) |
-| Preview and override which reflection sample a face uses. | Capture local LDR or paired LDR/HDR reflections during Compile and keep them working when you play. |
+| Preview and override reflection samples, including initial rotated brush poses. | Capture local LDR or paired LDR/HDR reflections during Compile and keep them working when you play. |
 
 [Cubemap faces →](docs/cubemap-faces.md) · [Generated reflections →](docs/reflections.md)
 

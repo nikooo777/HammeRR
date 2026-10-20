@@ -41,7 +41,9 @@ described in [Generated reflections](reflections.md).
 - Automatic assignment uses source polygons, world-space brush-model pivots
   and the compiler's front-side preference. It does not test visibility or
   occlusion between a face and its sample.
-- Reflective faces on an initially rotated `func_brush` require explicit manual sides bindings. Automatic assignment and inspection of an unbound reflective face fail with its entity/side diagnostic instead of using an unrotated center or normal.
+- Automatic assignment supports bounded initial rotations of unparented `func_brush` models. It transforms both the source polygon center and face normal into the initial game pose, using the emitted native-float origin. The viewport still shows authored geometry.
+- Nonzero rotations on other classes, parenting, ambiguous pose fields and models outside ±16,384 units reject automatic assignment with an entity/side diagnostic. Manual bindings remain explicit choices and do not need automatic pose selection. See [Initial brush-model rotation](compile-and-play.md#initial-brush-model-rotation) for pose syntax.
+- Assignment has separate four-million-unit limits for pose preparation and face/sample comparisons. Exceeded limits fail explicitly; they do not select an unrotated substitute.
 - Manual targets must be unique, visible authored faces that survive the
   committed compile region. Missing faces, ambiguous IDs, malformed lists,
   duplicate owners and non-emitting targets reject with a diagnostic.

@@ -277,7 +277,7 @@ Limits: this is an experimental compiler mode. A successful compile or an **HDR 
 
 ![Pivot-aware direct lighting on moving brush entities](images/compiled-brush-models.png)
 
-Limits: direct point/spot styles and sun/sky lighting at the authored pose, with scoped authored/angle brush smoothing and isolated self-shadow hulls. Choose **Indirect light → One diffuse bounce** to receive reflected world/detail/terrain light. Moving models do not add permanent world shadows or supply reflected light. Independently rotated initial poses, dynamic relighting and prop lightmaps remain unfinished. Local geometry, UVs, pivots and collision remain fixed during compilation; source properties and undo history are preserved. Models share the lighting allocation/work budgets.
+Limits: direct point/spot styles and sun/sky lighting at the authored pose, with scoped authored/angle brush smoothing and isolated self-shadow hulls. Choose **Indirect light → One diffuse bounce** to receive reflected world/detail/terrain light. Moving models do not add permanent world shadows or supply reflected light. Bounded initial `func_brush` rotations are supported as described in [Initial brush-model rotation](#initial-brush-model-rotation); other initial brush rotations, dynamic relighting and prop lightmaps remain unfinished. Local geometry, UVs, pivots and collision remain fixed during compilation; source properties and undo history are preserved. Models share the lighting allocation/work budgets.
 
 #### Switchable lights and appearances
 
@@ -433,7 +433,7 @@ Limits: this supports initial `func_brush` orientation with one unambiguous `ang
 
 Imported nonzero pose and origin text must contain plain finite numeric components in at most 127 ASCII bytes; absent or exact-zero angle fields retain the 128-byte limit. Duplicate, suffixed or space-padded angle keys fail explicitly; nonzero rotations also reject ambiguous origin, class and parent fields. Keys on a receiving model are limited to 2047 bytes. The complete rotated model must fit ±16,384 units. Fix the reported field or use **Fullbright** when the lighting pose is unsupported.
 
-Rotated `func_brush` targets for areaportal windows are unavailable, including with **Fullbright**. Automatic cubemap assignment to reflective rotated faces is also unavailable: use explicit [Cubemap faces](cubemap-faces.md) bindings. Failed builds preserve the previous BSP. Compile regions retain whole brush entities selected by their pivot; rotation does not clip a model to the region.
+Rotated `func_brush` targets for areaportal windows are unavailable, including with **Fullbright**. Automatic [Cubemap faces](cubemap-faces.md) assignment uses the same checked initial pose, transforming both face centers and normals; explicit manual bindings remain available. Failed builds preserve the previous BSP. Compile regions retain whole brush entities selected by their pivot; rotation does not clip a model to the region.
 
 ### Rotating doors and removable restraints
 

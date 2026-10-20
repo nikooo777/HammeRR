@@ -59,6 +59,19 @@ impl Pose {
         }
         Ok(bounds)
     }
+
+    pub(crate) fn raw_and_stored_bounds(
+        self,
+        mins: DVec3,
+        maxs: DVec3,
+    ) -> Result<(DVec3, DVec3), String> {
+        let raw = self.bounds(mins, maxs)?;
+        let stored = self.bounds(
+            crate::emit::stored_vertex(mins),
+            crate::emit::stored_vertex(maxs),
+        )?;
+        Ok((raw.0.min(stored.0), raw.1.max(stored.1)))
+    }
 }
 
 fn component(token: &str) -> Result<f64, String> {

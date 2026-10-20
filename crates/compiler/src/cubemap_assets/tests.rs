@@ -8,6 +8,9 @@ use source_formats::vmf::Vmf;
 use super::*;
 use crate::{Control, LightingMode, Options, Output, compile_with_context_controlled};
 
+#[path = "rotation_tests.rs"]
+mod rotation_tests;
+
 pub(super) fn game() -> (tempfile::TempDir, GameFs) {
     let directory = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(directory.path().join("materials/dev")).unwrap();
@@ -404,7 +407,7 @@ fn model_source() -> (Vmf, [u32; 2], u32) {
 }
 
 #[test]
-fn automatic_rotated_model_assignments_fail_in_compile_and_inspection() {
+fn unsupported_automatic_model_poses_fail_in_compile_and_inspection() {
     for dependency_only in [false, true] {
         let (directory, game) = game();
         if dependency_only {
@@ -424,7 +427,6 @@ fn automatic_rotated_model_assignments_fail_in_compile_and_inspection() {
             .unwrap();
         }
         for fields in [
-            vec![("angles", "0 90 0")],
             vec![("angles", "bad")],
             vec![("angles", "0 0 0"), ("AnGlEs", "0 90 0")],
         ] {

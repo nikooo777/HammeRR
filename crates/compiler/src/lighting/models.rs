@@ -48,14 +48,7 @@ pub(super) fn admit_initial_poses(
                         bounds = (bounds.0.min(brush.mins), bounds.1.max(brush.maxs));
                     }
                     budget.consume(16)?;
-                    pose.bounds(bounds.0, bounds.1)
-                        .and_then(|_| {
-                            pose.bounds(
-                                crate::emit::stored_vertex(bounds.0),
-                                crate::emit::stored_vertex(bounds.1),
-                            )
-                        })
-                        .map(|_| pose)
+                    pose.raw_and_stored_bounds(bounds.0, bounds.1).map(|_| pose)
                 }
                 Err(error) => Err(error),
             },

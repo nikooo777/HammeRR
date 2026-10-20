@@ -7,8 +7,11 @@ use source_formats::vmf::Vmf;
 
 use super::material::{Graph, ensure_default_unmounted, material_name, sample_texture};
 use super::*;
+use crate::brush_model_pose::{Pose, initial_offset, initial_rotation};
 use crate::map::Map;
 use crate::{Control, Report};
+
+const POSE_PROPERTY_SCANS: usize = 3;
 
 pub(crate) struct Plan {
     pub manifest: CubemapAssetManifest,
@@ -20,7 +23,7 @@ struct Side {
     id: u32,
     entity: usize,
     texinfo: usize,
-    center: DVec3,
+    local_center: DVec3,
     normal: DVec3,
 }
 
@@ -242,8 +245,9 @@ pub(crate) fn prepare(
     }
     let mut sides = BTreeMap::new();
     for brush in &map.brushes {
-        let origin = map.entities[brush.entity].origin.unwrap_or(DVec3::ZERO);
+        control.checkpoint()?;
         for side in &brush.sides {
+            control.checkpoint()?;
             if !side.visible || side.bevel {
                 continue;
             }
@@ -255,7 +259,7 @@ pub(crate) fn prepare(
                     "side:{id}: cubemap assignment needs a finite source winding"
                 ));
             }
-            let center = winding.0.iter().copied().sum::<DVec3>() / winding.0.len() as f64 + origin;
+            let local_center = winding.0.iter().copied().sum::<DVec3>() / winding.0.len() as f64;
             let normal = map.planes.get(side.plane).normal;
             if sides
                 .insert(
@@ -264,7 +268,7 @@ pub(crate) fn prepare(
                         id,
                         entity: brush.entity,
                         texinfo: side.texinfo,
-                        center,
+                        local_center,
                         normal,
                     },
                 )
@@ -275,6 +279,7 @@ pub(crate) fn prepare(
         }
     }
     for terrain in &map.terrains {
+        control.checkpoint()?;
         let center = terrain.base.iter().copied().sum::<DVec3>() / 4.0;
         if sides
             .insert(
@@ -283,7 +288,7 @@ pub(crate) fn prepare(
                     id: terrain.side,
                     entity: 0,
                     texinfo: terrain.texinfo,
-                    center,
+                    local_center: center,
                     normal: map.planes.get(terrain.plane).normal,
                 },
             )
@@ -338,10 +343,12 @@ pub(crate) fn prepare(
     let mut assignments = Vec::new();
     let mut replacements = BTreeMap::new();
     let mut alias_materials = BTreeMap::new();
-    let mut unrotated_models = BTreeSet::new();
+    let mut model_poses: BTreeMap<usize, Pose> = BTreeMap::new();
+    let mut pose_work = 0;
     for side in sides.values() {
         control.checkpoint()?;
-        if !side.center.is_finite() || !side.normal.is_finite() {
+        let center = side.local_center + map.entities[side.entity].origin.unwrap_or(DVec3::ZERO);
+        if !center.is_finite() || !side.normal.is_finite() {
             return Err(format!(
                 "side:{}: nonfinite cubemap source geometry",
                 side.id
@@ -357,29 +364,34 @@ pub(crate) fn prepare(
         let sample = if let Some(&sample) = manual.get(&side.id) {
             sample
         } else {
-            let entity = &map.entities[side.entity];
-            if entity.classname.eq_ignore_ascii_case("func_brush")
-                && !unrotated_models.contains(&side.entity)
-            {
-                let error = match crate::brush_model_pose::initial_rotation(
-                    &entity.classname,
-                    &entity.properties,
-                ) {
-                    Ok(None) => None,
-                    Ok(Some(_)) => {
-                        Some("rotated faces require explicit env_cubemap sides assignments".into())
-                    }
-                    Err(error) => Some(error),
+            let (center, normal) = if side.entity == 0 {
+                (center, side.normal)
+            } else {
+                let pose = if let Some(pose) = model_poses.get(&side.entity) {
+                    *pose
+                } else {
+                    let pose = checked_pose(map, side.entity, control, &mut pose_work)
+                        .map_err(|error| format!(
+                            "entity:{}: side:{}: Unsupported initial pose for automatic cubemap assignment: {error}",
+                            map.entities[side.entity].id, side.id,
+                        ))?;
+                    model_poses.insert(side.entity, pose);
+                    pose
                 };
-                if let Some(error) = error {
-                    return Err(format!(
-                        "entity:{}: side:{}: Unsupported func_brush initial pose for automatic cubemap assignment: {error}",
-                        entity.id, side.id,
-                    ));
+                if pose.rotation.is_some() {
+                    consume_pose_work(control, &mut pose_work, 2)?;
+                    (pose.point(side.local_center), pose.normal(side.normal))
+                } else {
+                    (center, side.normal)
                 }
-                unrotated_models.insert(side.entity);
+            };
+            if !center.is_finite() || !normal.is_finite() {
+                return Err(format!(
+                    "side:{}: nonfinite posed cubemap source geometry",
+                    side.id
+                ));
             }
-            nearest(side, &samples)
+            nearest(center, normal, &samples)
         };
         let alias = graph.generate(&material, sample, &samples, context.namespace())?;
         assignments.push(CubemapAssignment {
@@ -477,16 +489,61 @@ pub(crate) fn prepare(
     })
 }
 
-fn nearest(side: &Side, samples: &[CubemapSampleAsset]) -> usize {
+fn consume_pose_work(control: &Control, work: &mut usize, amount: usize) -> Result<(), String> {
+    control.checkpoint()?;
+    *work = work
+        .checked_add(amount)
+        .ok_or("Cubemap initial-pose work count overflow")?;
+    if *work > MAX_ASSIGNMENT_WORK {
+        return Err("Cubemap initial-pose work budget exceeded".into());
+    }
+    Ok(())
+}
+
+fn checked_pose(
+    map: &Map<'_>,
+    entity: usize,
+    control: &Control,
+    work: &mut usize,
+) -> Result<Pose, String> {
+    let source = &map.entities[entity];
+    for (key, value) in &source.properties {
+        let amount = key
+            .len()
+            .max(1)
+            .checked_add(value.len())
+            .and_then(|amount| amount.checked_mul(POSE_PROPERTY_SCANS))
+            .ok_or("Cubemap initial-pose work count overflow")?;
+        consume_pose_work(control, work, amount)?;
+    }
+    let rotation = initial_rotation(&source.classname, &source.properties)?;
+    let pose = Pose {
+        offset: if rotation.is_some() {
+            initial_offset(&source.properties)?
+        } else {
+            source.origin.unwrap_or(DVec3::ZERO)
+        },
+        rotation,
+    };
+    if rotation.is_some() {
+        consume_pose_work(control, work, source.brushes.len())?;
+        let bounds = map.model_bounds(entity);
+        consume_pose_work(control, work, 16)?;
+        pose.raw_and_stored_bounds(bounds.0, bounds.1)?;
+    }
+    Ok(pose)
+}
+
+fn nearest(center: DVec3, normal: DVec3, samples: &[CubemapSampleAsset]) -> usize {
     let mut front = None;
     let mut any = (0, f64::INFINITY);
     for (index, sample) in samples.iter().enumerate() {
-        let delta = DVec3::from_array(sample.origin.map(f64::from)) - side.center;
+        let delta = DVec3::from_array(sample.origin.map(f64::from)) - center;
         let distance = delta.length_squared();
         if distance < any.1 {
             any = (index, distance);
         }
-        if delta.dot(side.normal) >= 0.0 && front.is_none_or(|(_, best)| distance < best) {
+        if delta.dot(normal) >= 0.0 && front.is_none_or(|(_, best)| distance < best) {
             front = Some((index, distance));
         }
     }

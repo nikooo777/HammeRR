@@ -78,6 +78,7 @@ capture cleanup, even when the capture and Play installations differ.
 
 ## Limits
 
+- Automatic face assignment supports checked initial rotations of unparented `func_brush` models; manual bindings select their authored helper directly. Later model motion does not reassign samples. See [Cubemap faces](cubemap-faces.md) for pose and work limits.
 - Generation supports one capture bounce per channel: LDR alone or paired LDR/HDR. Additional capture bounces, moving-scene reassignment and reflection preview inside the editor are unavailable. HDR playback still depends on the game setting and hardware; **HDR data ready** describes baked map data.
 - A build supports 1–32 samples at distinct integer positions. Sample size `0` uses the declared 128-pixel default. Explicit cube edges up to 128 pixels are supported; 256 pixels is rejected before launch. The private capture viewport must verify as 1280×720.
 - A supported CS:S installation, running Steam client, native runtime helper, Cage, grim and Bubblewrap must pass preflight. Bubblewrap needs usable Linux user namespaces. Unsupported materials, sample sizes, missing assets or unverified captures fail the build with diagnostics.

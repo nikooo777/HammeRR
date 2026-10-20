@@ -67,3 +67,6 @@ Limits: each compiled collision triangle uses one property. Its three stored
 properties do not blend continuously. Mixed-resolution borders use the emitted
 LOD triangles. An explicit invalid or undefined secondary name, or missing
 surface definitions, stops the build and preserves the previous BSP.
+
+An incomplete or inconsistent world collision body, fluid controller or surface
+material table stops the build and preserves the previous BSP.

@@ -19,6 +19,7 @@ use crate::{Control, Diagnostic, Report};
 mod native;
 mod surface_data;
 mod terrain;
+mod world_keys;
 
 const MAX_REQUEST_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_CONVEXES: usize = 8192;
@@ -865,6 +866,9 @@ pub(crate) fn bake(
     let properties = surface_data::resolve(&request.surface_data)?;
     for (actual, expected) in physics.models.iter().zip(&request.models) {
         if actual.index == 0 {
+            world_keys::validate(actual.key_data, expected, &request.materials, control).map_err(
+                |error| format!("Physics worker world keys disagree with the request: {error}"),
+            )?;
             continue;
         }
         let text = std::str::from_utf8(actual.key_data)

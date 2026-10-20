@@ -60,6 +60,20 @@ context and ownership guards in `editor/src/face_edit_ui.rs`.
 
 ## Build and test
 
+World physics worker publication checks:
+
+```sh
+cargo test -p compiler --lib physics::world_keys::tests
+CSS_DIR="$HOME/.local/share/Steam/steamapps/common/Counter-Strike Source" \
+  cargo test -p compiler --test world_physics_keys
+```
+
+The native test requires the installed Linux64 collision library. It runs the
+real isolated worker, preserves its collision geometry, removes only a fluid
+key block, and checks rejection before replacing the existing BSP. Its pass-
+through control requires byte-identical published physics. Artifacts remain
+on disk under `target/validation/630/`. No game or desktop input is used.
+
 Static-prop vertex-lighting settings and presentation checks:
 
 ```sh

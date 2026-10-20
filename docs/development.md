@@ -878,6 +878,42 @@ Mass checks use mounted definitions and native collision volumes to cover solid,
 shell and mixed-material masses, omitted collision brushes, invalid inputs and
 retained output. Build the matching `hammerr-physics` worker before running them.
 
+### Static-prop physics source limits
+
+```sh
+python3 -B scripts/validate_static_prop_physics_limits.py \
+  --binary target/debug/hammerr-headless \
+  --old-controls target/validation/694/old-valid-v1/results.json \
+  --output target/validation/694/physics-limits-headless-1
+python3 -B scripts/validate_static_prop_physics_limits.py \
+  --binary target/debug/editor \
+  --old-controls target/validation/694/old-valid-v1/results.json \
+  --output target/validation/694/physics-limits-editor-1
+```
+
+Use a fresh disk-backed output directory for each binary. `--old-controls`
+requires the separately retained old valid-control receipt, exact VMF, model/PHY
+fixture assets and BSP/control files. The receipt is produced with the trusted
+retained binary and the same frozen oracle source; these local validation
+artifacts are not supplied by a clean checkout. The tested binary does not
+generate its own old expected BSP. The old capture selects only the small valid
+model/PHY pair; oversized fixture assets remain unused.
+
+The public fixture uses literal model/PHY framing and the existing shared MCP
+compile operations with Fullbright and physics disabled. It checks exact valid
+whole-BSP controls and selected oversized, malformed or missing `.phy` failures,
+preserving prior BSP/LIN, source, history, the active property draft, selection,
+camera, settings, recipes and assets through both compile paths. It also checks
+the existing face-preview cancellation at compile completion. Collision modes
+0 and 2 leave an oversized `.phy` unused and retain their expected compiled
+solid values. Sparse-file fingerprints stream rather than loading the complete
+payload into Python memory. No GPU, installed content, native physics worker or game process is required. Synthetic framing
+establishes source admission only, not a native collision hull or contact result.
+Compiler regressions separately cover directory/VPK read limits, the unchanged
+validator/cache and unused `.phy` deferral for collision modes 0 and 2. This is a
+per-file bound, without a global read budget, source freshness or peak-memory
+claim.
+
 ### Imported water overlays
 
 ```sh

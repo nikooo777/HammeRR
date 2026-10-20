@@ -16,6 +16,8 @@ Place static scenery with model assets, native collision choices and visibility 
 
 Limits: MDL versions 44/48, scale 1 and body 0. Native static-prop collision choices remain none, bounding box or model VPhysics; VPhysics needs the model's checked `.phy` asset. Leaf clipping uses header boxes rather than the exact mesh or physics hull, so it can retain extra leaves. It preserves the existing 0.01-unit world-axis boundary padding, omits solid leaves and keeps the existing unrotated membership. It does not change collision, shadows, materials or baked lighting.
 
+Selected model VPhysics files are limited to 64 MiB before their payload is allocated, for both directory and VPK sources. Missing, unreadable, oversized or malformed `.phy` files stop publication even with **Fullbright** and **No physics bodies**; non-solid and bounding-box props leave unused `.phy` files unread.
+
 HammeRR bounds static-prop leaf traversal and clipping to 16 million work units and four million cumulative reserved polygon points per build. A clipped fragment reserves at most 4,096 points and 256 faces. Exceeding these budgets, an invalid asset or a prop with no open leaf fails before publication. Existing native prop/model/leaf-table limits also apply. The source map and Undo history stay unchanged during compilation.
 
 Agents use the same `create_entity`, `set_entity_properties`, `compile_map` and `start_compile` operations.

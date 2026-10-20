@@ -2724,6 +2724,16 @@ work units and four million cumulative reserved polygon points per build. Invali
 assets/trees, exceeded limits, cancellation or no open leaf preserve prior output.
 No new setting or tool is required. See [Static props](static-props.md).
 
+For a selected `prop_static` with `solid:"6"` (VPhysics), the matching `.phy`
+source is limited to 64 MiB. Mounted directory and VPK reads apply the existing
+parser maximum before payload allocation. Missing, unreadable, oversized or
+malformed selected sources fail with a prop/source diagnostic and preserve the
+prior BSP/LIN. This check applies even with `lighting:"fullbright"` and
+`physics:"none"`; `solid:"0"` and `solid:"2"` leave an unused `.phy` unread.
+Accepted files retain the existing parser and collision-cache behavior.
+The per-file bound adds no global source budget, freshness or packing guarantee,
+interruptible I/O or native hull/contact validation.
+
 Existing synchronous and background compile results expose `prop_shadow_props`,
 `prop_shadow_models`, `prop_shadow_triangles`, `prop_shadow_disabled` and
 `prop_shadow_work`, also shown in **Build details…**. Both lit modes share LOD0

@@ -351,8 +351,11 @@ pub(crate) fn bake(
             if prop.solid == 6 {
                 if asset.collision.is_none() {
                     let phy_path = format!("{}.phy", &path[..path.len() - 4]);
-                    asset.collision =
-                        Some(match fs.read(&phy_path).map_err(|e| e.to_string())? {
+                    asset.collision = Some(
+                        match fs
+                            .read_limited(&phy_path, bsp::MAX_PHYSICS_BYTES)
+                            .map_err(|e| format!("{phy_path}: {e}"))?
+                        {
                             Some(bytes) => {
                                 source_formats::mdl::validate_physics(
                                     &bytes,
@@ -362,7 +365,8 @@ pub(crate) fn bake(
                                 true
                             }
                             None => false,
-                        });
+                        },
+                    );
                 }
                 if asset.collision != Some(true) {
                     return Err(format!(

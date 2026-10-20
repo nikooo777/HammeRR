@@ -6,6 +6,8 @@ use source_formats::bsp::{self, Bsp, Leaf};
 use source_formats::gamefs::{GameFs, Mount, MountedPath};
 use source_formats::vmf::{Entity, Vmf};
 
+const PHYSICS_ASSET: &str = "models/props/test.phy";
+
 fn game() -> (tempfile::TempDir, GameFs) {
     let directory = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(directory.path().join("models/props")).unwrap();
@@ -45,6 +47,287 @@ fn add_prop(vmf: &mut Vmf, origin: &str) -> usize {
     }
     vmf.entities.push(prop);
     vmf.entities.len() - 1
+}
+
+fn physics_bytes(checksum: i32) -> Vec<u8> {
+    let mut bytes = [16_i32, 0, 1, checksum].map(i32::to_le_bytes).concat();
+    bytes.extend_from_slice(&32_i32.to_le_bytes());
+    bytes.extend_from_slice(b"VPHY");
+    bytes.extend_from_slice(&0x100_u16.to_le_bytes());
+    bytes.extend_from_slice(&0_u16.to_le_bytes());
+    bytes.extend_from_slice(&4_u32.to_le_bytes());
+    bytes.extend_from_slice(&[0; 20]);
+    bytes.extend_from_slice(b"solid {}\0");
+    bytes
+}
+
+fn physics_directory() -> tempfile::TempDir {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/validation/694/compiler-tests");
+    std::fs::create_dir_all(&root).unwrap();
+    let directory = tempfile::Builder::new()
+        .prefix("static-prop-phy-")
+        .tempdir_in(root)
+        .unwrap();
+    std::fs::create_dir_all(directory.path().join("models/props")).unwrap();
+    directory
+}
+
+fn physics_vpk(path: &std::path::Path, preload: &[u8], length: u32) -> Mount {
+    let mut tree = b"phy\0models/props\0test\0".to_vec();
+    tree.extend(0_u32.to_le_bytes());
+    tree.extend(u16::try_from(preload.len()).unwrap().to_le_bytes());
+    tree.extend(42_u16.to_le_bytes());
+    tree.extend(0_u32.to_le_bytes());
+    tree.extend(length.to_le_bytes());
+    tree.extend(0xffff_u16.to_le_bytes());
+    tree.extend(preload);
+    tree.extend(b"\0\0\0");
+    let mut bytes = 0x55aa_1234_u32.to_le_bytes().to_vec();
+    bytes.extend(1_u32.to_le_bytes());
+    bytes.extend(u32::try_from(tree.len()).unwrap().to_le_bytes());
+    bytes.extend(tree);
+    std::fs::write(path, bytes).unwrap();
+    Mount::Pak(source_formats::vpk::Vpk::open(path).unwrap())
+}
+
+fn assert_physics_refusal(
+    source: &Vmf,
+    game: &GameFs,
+    prop: usize,
+    destination: &std::path::Path,
+    previous: &[u8],
+    expected: &str,
+) {
+    let before = source.clone();
+    let output = compiler::compile(source, game);
+    assert!(output.bsp.is_none() && output.report.has_errors());
+    assert!(
+        output.report.diagnostics.iter().any(|row| {
+            row.object == Some(format!("entity:{}", source.entities[prop].id))
+                && row.message.contains(expected)
+        }),
+        "{:?}",
+        output.report
+    );
+    assert!(!output.write(destination).unwrap());
+    assert_eq!(std::fs::read(destination).unwrap(), previous);
+    assert_eq!(
+        std::fs::read(destination.with_extension("lin")).unwrap(),
+        b"previous pointfile"
+    );
+    assert_eq!(*source, before);
+}
+
+#[test]
+fn static_prop_physics_directory_reads_are_bounded_before_parser_validation() {
+    let (_models, mut game) = game();
+    let assets = physics_directory();
+    let physics = assets.path().join(PHYSICS_ASSET);
+    std::fs::write(&physics, physics_bytes(0)).unwrap();
+    game.mounts.insert(
+        0,
+        MountedPath {
+            ids: vec!["game".into()],
+            mount: Mount::Directory(assets.path().to_owned()),
+        },
+    );
+    let mut source = common::room();
+    let prop = add_prop(&mut source, "32 32 8");
+    source.entities[prop].properties.set("solid", "6");
+    let second = add_prop(&mut source, "-32 32 8");
+    source.entities[second].properties.set("solid", "6");
+    let baseline = compiler::compile(&source, &game);
+    assert!(!baseline.report.has_errors(), "{:?}", baseline.report);
+    let bsp = baseline.bsp.unwrap();
+    let props = bsp.static_props().unwrap().unwrap();
+    assert_eq!(props.models.len(), 1);
+    assert_eq!(props.props.len(), 2);
+    assert!(props.props.iter().all(|prop| prop.solid == 6));
+    assert_eq!(props.props[0].origin, [32.0, 32.0, 8.0]);
+    assert_eq!(props.props[1].origin, [-32.0, 32.0, 8.0]);
+    let previous = bsp.to_bytes();
+    let destination = assets.path().join("previous.bsp");
+    std::fs::write(&destination, &previous).unwrap();
+    std::fs::write(destination.with_extension("lin"), b"previous pointfile").unwrap();
+
+    let file = std::fs::File::create(&physics).unwrap();
+    file.set_len(bsp::MAX_PHYSICS_BYTES as u64).unwrap();
+    assert_physics_refusal(
+        &source,
+        &game,
+        prop,
+        &destination,
+        &previous,
+        "models/props/test.phy: model physics header/count/checksum is invalid",
+    );
+    file.set_len(bsp::MAX_PHYSICS_BYTES as u64 + 1).unwrap();
+    assert_physics_refusal(
+        &source,
+        &game,
+        prop,
+        &destination,
+        &previous,
+        "models/props/test.phy: asset exceeds the caller's byte read limit",
+    );
+    assert_eq!(
+        std::fs::metadata(&physics).unwrap().len(),
+        bsp::MAX_PHYSICS_BYTES as u64 + 1
+    );
+    drop(file);
+
+    for (bytes, expected) in [
+        (
+            physics_bytes(17),
+            "model physics header/count/checksum is invalid",
+        ),
+        (
+            physics_bytes(0)[..20].to_vec(),
+            "model physics solid is truncated",
+        ),
+        (b"bad".to_vec(), "model physics file size is invalid"),
+    ] {
+        std::fs::write(&physics, &bytes).unwrap();
+        assert_physics_refusal(
+            &source,
+            &game,
+            prop,
+            &destination,
+            &previous,
+            &format!("{PHYSICS_ASSET}: {expected}"),
+        );
+        assert_eq!(std::fs::read(&physics).unwrap(), bytes);
+    }
+    std::fs::remove_file(&physics).unwrap();
+    assert_physics_refusal(
+        &source,
+        &game,
+        prop,
+        &destination,
+        &previous,
+        "models/props/test.mdl needs its .phy collision asset for VPhysics",
+    );
+}
+
+#[test]
+fn static_prop_physics_vpk_limit_includes_preload_and_keeps_the_winning_source() {
+    let (models, mut game) = game();
+    let assets = physics_directory();
+    let bytes = physics_bytes(0);
+    std::fs::write(models.path().join(PHYSICS_ASSET), &bytes).unwrap();
+    let mut source = common::room();
+    let prop = add_prop(&mut source, "32 32 8");
+    source.entities[prop].properties.set("solid", "6");
+    let baseline = compiler::compile(&source, &game).bsp.unwrap().to_bytes();
+    let (preload, payload) = bytes.split_at(16);
+    std::fs::write(assets.path().join("valid_042.vpk"), payload).unwrap();
+    game.mounts.insert(
+        0,
+        MountedPath {
+            ids: vec!["game".into()],
+            mount: physics_vpk(
+                &assets.path().join("valid_dir.vpk"),
+                preload,
+                u32::try_from(payload.len()).unwrap(),
+            ),
+        },
+    );
+    assert_eq!(
+        compiler::compile(&source, &game).bsp.unwrap().to_bytes(),
+        baseline
+    );
+    let destination = assets.path().join("previous.bsp");
+    std::fs::write(&destination, &baseline).unwrap();
+    std::fs::write(destination.with_extension("lin"), b"previous pointfile").unwrap();
+    game.mounts[0].mount = physics_vpk(
+        &assets.path().join("oversized_dir.vpk"),
+        b"x",
+        u32::try_from(bsp::MAX_PHYSICS_BYTES).unwrap(),
+    );
+    assert_physics_refusal(
+        &source,
+        &game,
+        prop,
+        &destination,
+        &baseline,
+        "models/props/test.phy: VPK entry exceeds the caller's byte read limit",
+    );
+    assert!(!assets.path().join("oversized_042.vpk").exists());
+    let corrupt = physics_bytes(17);
+    game.mounts[0].mount = physics_vpk(&assets.path().join("corrupt_dir.vpk"), &corrupt, 0);
+    assert_physics_refusal(
+        &source,
+        &game,
+        prop,
+        &destination,
+        &baseline,
+        "models/props/test.phy: model physics header/count/checksum is invalid",
+    );
+    assert_eq!(
+        std::fs::read(models.path().join(PHYSICS_ASSET)).unwrap(),
+        bytes
+    );
+}
+
+#[test]
+fn static_prop_physics_files_remain_unread_for_unused_collision_sources() {
+    let (models, mut game) = game();
+    let assets = physics_directory();
+    let physics = assets.path().join(PHYSICS_ASSET);
+    game.mounts.insert(
+        0,
+        MountedPath {
+            ids: vec!["game".into()],
+            mount: Mount::Directory(assets.path().to_owned()),
+        },
+    );
+    let mut source = common::room();
+    let prop = add_prop(&mut source, "32 32 8");
+    let mut cases = Vec::new();
+    for solid in ["0", "2"] {
+        source.entities[prop].properties.set("solid", solid);
+        cases.push(source.clone());
+    }
+    source.entities[prop].properties.set("solid", "6");
+    source.entities[prop].hidden = true;
+    cases.push(source.clone());
+    source.entities[prop].hidden = false;
+    source.entities[prop].properties.set("origin", "192 32 8");
+    let tools = models.path().join("materials/tools");
+    std::fs::create_dir_all(&tools).unwrap();
+    std::fs::write(tools.join("toolsblack.vmt"), "UnlitGeneric { }").unwrap();
+    let mut document = Document::new(source);
+    document
+        .edit("region", |tx| {
+            map_core::compile_region::apply(
+                tx,
+                Some(map_core::compile_region::Definition {
+                    enabled: true,
+                    bounds: map_core::compile_region::Bounds {
+                        mins: DVec3::new(-128.0, -128.0, 0.0),
+                        maxs: DVec3::new(128.0, 128.0, 256.0),
+                    },
+                }),
+            )
+        })
+        .unwrap();
+    cases.push(document.vmf().clone());
+    for source in cases {
+        let absent = compiler::compile(&source, &game);
+        assert!(!absent.report.has_errors(), "{:?}", absent.report);
+        let file = std::fs::File::create(&physics).unwrap();
+        file.set_len(bsp::MAX_PHYSICS_BYTES as u64 + 1).unwrap();
+        let before = source.clone();
+        let unused = compiler::compile(&source, &game);
+        assert!(!unused.report.has_errors(), "{:?}", unused.report);
+        assert_eq!(
+            unused.bsp.unwrap().to_bytes(),
+            absent.bsp.unwrap().to_bytes()
+        );
+        assert_eq!(source, before);
+        drop(file);
+        std::fs::remove_file(&physics).unwrap();
+    }
 }
 
 #[test]

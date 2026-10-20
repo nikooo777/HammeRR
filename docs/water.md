@@ -71,6 +71,8 @@ the same inventory without graphics or a game.
 
 The current affects VPhysics bodies in all supported world-water volumes; it
 does not add player/NPC movement-current contents or change water rendering.
+Player/NPC currents remain unavailable. CS:S converts legacy world-current
+direction bits into ordinary water before player movement reads them.
 The current is a native fluid-provider velocity, not a promised terminal body
 speed or settling time. Water pressure damping is a separate control below.
 The compiler consumes the source-only `_hammerr_water_current_velocity` world

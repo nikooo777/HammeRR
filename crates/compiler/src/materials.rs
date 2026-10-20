@@ -81,7 +81,7 @@ impl MaterialInfo {
         self.draws && self.surface & (surf::NOLIGHT | surf::SKY | surf::SKY2D) == 0
     }
 
-    fn from_material(name: &str, material: Option<&Material>) -> Self {
+    fn from_material(name: &str, material: Option<&Material>) -> Result<Self, String> {
         let mut info = Self {
             name: name.to_ascii_uppercase(),
             contents: contents::SOLID,
@@ -104,9 +104,9 @@ impl MaterialInfo {
             detail_type: None,
         };
         let Some(m) = material else {
-            return info;
+            return Ok(info);
         };
-        let semantics = m.compile_semantics();
+        let semantics = vmt::CompileSemantics::checked_from_material(m)?;
         info.contents = semantics.contents;
         info.surface = semantics.surface;
         info.draws = semantics.draws;
@@ -129,7 +129,7 @@ impl MaterialInfo {
             .filter(|value| !value.is_empty())
             .map(str::to_ascii_lowercase);
         info.unsupported_flags = semantics.unsupported_flags;
-        info
+        Ok(info)
     }
 }
 
@@ -261,7 +261,8 @@ impl<'a> Materials<'a> {
             }
         }
         .map_err(|error| format!("Material {}: {error}", vmt::material_path(&key)))?;
-        let mut info = MaterialInfo::from_material(name.trim(), material.as_ref());
+        let mut info = MaterialInfo::from_material(name.trim(), material.as_ref())
+            .map_err(|error| format!("Material {}: {error}", vmt::material_path(&key)))?;
         match self.requirements {
             Requirements::Compile => {
                 if let Some(material) = &material {
@@ -321,6 +322,24 @@ mod prop_sources_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checked_material_admission_preserves_optional_defaults_and_inert_parameters() {
+        let missing = MaterialInfo::from_material("missing", None).unwrap();
+        assert!(!missing.found && missing.lit());
+        assert_eq!(missing.surface, 0);
+        for text in [
+            "LightmappedGeneric { %compilenolight 1 $bumpmap primary $nodiffusebumplighting 2 }",
+            "LightmappedGeneric { $nodiffusebumplighting 2 }",
+            "WorldVertexTransition { $bumpmap2 secondary $nodiffusebumplighting true }",
+            "UnknownShader { $bumpmap primary $nodiffusebumplighting 1.0 }",
+        ] {
+            let material = Material::parse(text).unwrap();
+            let info = MaterialInfo::from_material("inert", Some(&material)).unwrap();
+            assert_eq!(info.surface, material.compile_semantics().surface);
+            assert_eq!(info.contents, material.compile_semantics().contents);
+        }
+    }
 
     #[test]
     fn geometry_semantics_bounds_patch_reads_and_bytes_without_changing_compilation() {
@@ -441,7 +460,7 @@ mod tests {
             ),
         ] {
             let material = Material::parse(text).unwrap();
-            let info = MaterialInfo::from_material("blend", Some(&material));
+            let info = MaterialInfo::from_material("blend", Some(&material)).unwrap();
             assert_eq!(info.surface_prop, "ice");
             assert_eq!(info.surface_prop2.as_deref(), expected);
         }

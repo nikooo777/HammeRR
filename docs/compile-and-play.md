@@ -309,7 +309,7 @@ Limits: at most 32 named light groups and four contributing styles per face, inc
 | --- | --- |
 | ![One reflected styled-light pass on the shadowed model](images/styled-bounce-on.png) | ![Four reflected styled-light passes on the same model](images/four-bounce-on.png) |
 
-Limits: up to four diffuse bounces from world/detail/terrain lightmaps, preserving each static, switchable or animated light style, using average base-texture reflectivity. Source reflectivity must be between zero and one. Sky is handled by direct sky lighting and is excluded from the bounce gather. Translucent world surfaces cast opaque shadows. Opaque nodraw brushes also block reflected paths, including when they sit close to a lit surface. Brush entities receive world bounce and block it with their own geometry; separate brush models do not cast permanent bounce shadows or supply reflected light. Static-prop meshes apply the same opaque, alpha-test or requested translucent coverage to reflected rays but do not supply reflected light. More than four bounces, emissive materials and per-texel prop lightmaps remain unfinished. Baked model lighting moves with the model and does not relight as it moves. The shared 100-million lighting work budget and 16 MiB lightmap budget per channel apply; exceeded limits keep the previous BSP. Use fewer bounces, lower sampling, larger lightmap scales or **Direct only** to reduce work. **Fullbright** retains this setting but performs no lighting work.
+Limits: up to four diffuse bounces from world/detail/terrain lightmaps, preserving each static, switchable or animated light style, using average base-texture reflectivity. Source reflectivity must be between zero and one. Sky is handled by direct sky lighting and is excluded from the bounce gather. Translucent world surfaces cast opaque shadows. Opaque nodraw brushes also block reflected paths, including when they sit close to a lit surface. Brush entities receive world bounce and block it with their own geometry; separate brush models do not cast permanent bounce shadows or supply reflected light. Static-prop meshes apply the same opaque, alpha-test or requested translucent coverage to reflected rays but do not supply reflected light. More than four bounces, emissive materials and per-texel prop lightmaps remain unfinished. Baked model lighting moves with the model and does not relight as it moves. Unparented `func_brush` models can bake bounded initial rotations; see [Initial brush-model rotation](#initial-brush-model-rotation). Other classes still require absent or exact-zero initial angles. Malformed or ambiguous pose fields stop lit builds with an entity diagnostic. Hidden models and models without lightmap receivers are unaffected. The shared 100-million lighting work budget and 16 MiB lightmap budget per channel apply; exceeded limits keep the previous BSP. Use fewer bounces, lower sampling, larger lightmap scales or **Direct only** to reduce work. **Fullbright** retains this setting but performs no lighting work.
 
 #### Normal-map lighting
 
@@ -320,9 +320,9 @@ Limits: up to four diffuse bounces from world/detail/terrain lightmaps, preservi
 
 ![Directional shading on a normal-mapped floor](images/compiled-normal-maps.png)
 
-Each lit face gets its base map and three directional maps per light style. Texture axes, mirrored mappings and world/model smooth normals orient those directions; terrain uses its shared smooth surface normals. Native style averages keep the base lighting. Brush models keep their own coordinate scope and self shadows.
+Each lit face requesting diffuse normal-map lighting gets its base map and three directional maps per light style. On LightmappedGeneric, WorldVertexTransition and WorldTwoTextureBlend, `$nodiffusebumplighting 1` selects ordinary diffuse lightmaps while retaining the normal texture for other shader effects. Texture axes, mirrored mappings and world/model smooth normals orient those directions; terrain uses its shared smooth surface normals. Native style averages keep the base lighting. Brush models keep their own coordinate scope and self shadows.
 
-Limits: the engine can clamp bright ordinary and bumped LDR lighting differently; compare modest brightness when tuning normal details. This changes compiled game lighting; the editor's material thumbnails and viewport use diffuse previews. WorldVertexTransition secondary normal mapping requires a primary `$bumpmap`; `$bumpmap2` alone does not activate the checked shader path. Independently rotated initial model poses, world/terrain opacity and colored/refraction transmission, and per-texel prop lightmaps remain unfinished. Auxiliary directions share the 16 MiB lightmap limit per channel and 100-million work limit per build; larger scales or lower sampling can reduce work.
+Limits: a lit primary-normal material on those three shader families accepts an absent suppression key or trimmed literal `0`/`1`. Other provided spellings fail compilation; use the supported literal rather than relying on native integer coercion. The engine can clamp bright ordinary and bumped LDR lighting differently; compare modest brightness when tuning normal details. This changes compiled game lighting; the editor's material thumbnails and viewport use diffuse previews. WorldVertexTransition secondary normal mapping requires a primary `$bumpmap`; `$bumpmap2` alone does not activate the checked shader path. Initial rotations on parented models or other brush classes, world/terrain opacity and colored/refraction transmission, and per-texel prop lightmaps remain unfinished. Auxiliary directions share the 16 MiB lightmap limit per channel and 100-million work limit per build; larger scales or lower sampling can reduce work.
 
 #### Falloff
 
@@ -405,6 +405,23 @@ Limits: at most 127 shared world, terrain and brush-model surface properties inc
 Brush entities keep their **origin** property. To set the pivot with geometry instead, put one visible `tools/toolsorigin` brush inside the entity: the center of that brush becomes the pivot. The compiler removes the origin brush and writes the rest of the entity relative to it, keeping texture and lightmap placement. The VMF itself is not changed.
 
 These fail with a diagnostic: more than one origin brush in an entity, origin brushes in the world or `func_detail`, entities made only of an origin brush, and models larger than ±16,384 units around their pivot. Hidden origin brushes are ignored.
+
+### Initial brush-model rotation
+
+Bake an unparented `func_brush` at its initial game orientation, including direct light, smooth normals, directional normal-map maps, self shadows and reflected world light.
+
+1. Select the brushes, click **Tie to entity…**, choose `func_brush`, then **Tie selected brushes to entity**. Set its pivot as described above.
+2. Open **Edit selected entity properties…** and set **Pitch Yaw Roll (Y Z X)**. Each component must be between −360 and 360 degrees. For example, `0 90 0` turns the model 90 degrees around its pivot in game. Leave **Parent** empty, then click **Apply properties**.
+3. Open **Build settings…** and choose **Build lighting → Direct LDR** or **Direct LDR + HDR**. Choose **Indirect light** if reflected world light is wanted, then **Close**.
+4. Click **Compile**, review **Build details…** for diagnostics, then **Play built map** to see the initial pose.
+
+![A rotated func_brush receiving ordinary top lighting and directional front lighting in CS:S](images/compiled-initial-brush-rotation.png)
+
+Limits: this supports initial `func_brush` orientation with one unambiguous `angles` triple. Nonzero legacy `angle`, parenting and other brush classes are unsupported for lit builds. The viewport shows the authored brush geometry. Baked lighting travels with later model motion and does not relight dynamically.
+
+Imported nonzero pose and origin text must contain plain finite numeric components in at most 127 ASCII bytes; absent or exact-zero angle fields retain the 128-byte limit. Duplicate, suffixed or space-padded angle keys fail explicitly; nonzero rotations also reject ambiguous origin, class and parent fields. Keys on a receiving model are limited to 2047 bytes. The complete rotated model must fit ±16,384 units. Fix the reported field or use **Fullbright** when the lighting pose is unsupported.
+
+Rotated `func_brush` targets for areaportal windows are unavailable, including with **Fullbright**. Automatic cubemap assignment to reflective rotated faces is also unavailable: use explicit [Cubemap faces](cubemap-faces.md) bindings. Failed builds preserve the previous BSP. Compile regions retain whole brush entities selected by their pivot; rotation does not clip a model to the region.
 
 ### Rotating doors and removable restraints
 

@@ -1,4 +1,4 @@
-use glam::DVec3;
+use glam::{DMat3, DVec3};
 use source_formats::bsp::{TexInfo, surf};
 
 pub(super) const MAPS: usize = 4;
@@ -38,6 +38,10 @@ impl Basis {
             tangent * -x + bitangent * y + normal * z,
             tangent * -x - bitangent * y + normal * z,
         ])
+    }
+
+    pub(super) fn rotate(&mut self, rotation: DMat3) {
+        self.s = rotation * self.s;
     }
 }
 
@@ -99,5 +103,68 @@ mod tests {
         };
         assert!(basis.normals(DVec3::ZERO).is_err());
         assert!(basis.normals(DVec3::X).is_err());
+    }
+
+    #[test]
+    fn rotated_texture_axes_preserve_directional_order_handedness_and_smooth_normals() {
+        for angles in [
+            [0.0, 90.0, 0.0],
+            [90.0, 0.0, 0.0],
+            [0.0, 0.0, 90.0],
+            [20.0, 35.0, 10.0],
+        ] {
+            let [pitch, yaw, roll] = angles.map(f64::to_radians);
+            let rotation = DMat3::from_quat(glam::DQuat::from_euler(
+                glam::EulerRot::ZYX,
+                yaw,
+                pitch,
+                roll,
+            ));
+            let (sp, cp) = pitch.sin_cos();
+            let (sy, cy) = yaw.sin_cos();
+            let (sr, cr) = roll.sin_cos();
+            let expected_rotation = |point: DVec3| {
+                DVec3::new(
+                    cy * cp * point.x
+                        + (cy * sp * sr - sy * cr) * point.y
+                        + (cy * sp * cr + sy * sr) * point.z,
+                    sy * cp * point.x
+                        + (sy * sp * sr + cy * cr) * point.y
+                        + (sy * sp * cr - cy * sr) * point.z,
+                    -sp * point.x + cp * sr * point.y + cp * cr * point.z,
+                )
+            };
+            for mirrored in [false, true] {
+                let info = TexInfo {
+                    flags: surf::BUMPLIGHT,
+                    texture_vecs: [
+                        [2.0, 0.0, 0.0, 17.0],
+                        [0.0, if mirrored { -3.0 } else { 3.0 }, 0.0, -9.0],
+                    ],
+                    ..Default::default()
+                };
+                for (normal, tangent) in [
+                    (DVec3::Z, DVec3::X),
+                    (DVec3::new(0.6, 0.0, 0.8), DVec3::new(0.8, 0.0, -0.6)),
+                ] {
+                    let mut basis = Basis::new(&info, DVec3::Z).unwrap().unwrap();
+                    basis.rotate(rotation);
+                    let actual = basis.normals(rotation * normal).unwrap();
+                    let bitangent = if mirrored { DVec3::NEG_Y } else { DVec3::Y };
+                    let local = [
+                        normal,
+                        tangent * (2.0_f64 / 3.0).sqrt() + normal / 3.0_f64.sqrt(),
+                        -tangent / 6.0_f64.sqrt()
+                            + bitangent / 2.0_f64.sqrt()
+                            + normal / 3.0_f64.sqrt(),
+                        -tangent / 6.0_f64.sqrt() - bitangent / 2.0_f64.sqrt()
+                            + normal / 3.0_f64.sqrt(),
+                    ];
+                    for (actual, local) in actual.into_iter().zip(local) {
+                        assert!(actual.distance(expected_rotation(local)) < 1e-12);
+                    }
+                }
+            }
+        }
     }
 }

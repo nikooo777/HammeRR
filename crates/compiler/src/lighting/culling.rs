@@ -484,4 +484,64 @@ mod tests {
         assert!(removed > 0);
         assert!(ranged > 0);
     }
+
+    #[test]
+    fn rotated_model_styles_match_unculled_reference_in_both_channels() {
+        struct RestoreCulling(bool);
+
+        impl Drop for RestoreCulling {
+            fn drop(&mut self) {
+                ENABLED.set(self.0);
+            }
+        }
+
+        let mut removed = 0;
+        let mut ranged = 0;
+        for connected in [false, true] {
+            for angles in ["0 90 0", "20 35 10"] {
+                let mut vmf = fixture(connected, true, true);
+                vmf.entities
+                    .iter_mut()
+                    .find(|entity| entity.classname() == Some("func_brush"))
+                    .unwrap()
+                    .properties
+                    .set("angles", angles);
+                for lighting in [LightingMode::DirectLdr, LightingMode::DirectLdrHdr] {
+                    let options = Options {
+                        lighting,
+                        visibility: VisibilityMode::Detailed,
+                        ..Options::default()
+                    };
+                    assert!(ENABLED.get());
+                    let result = crate::compile_with_options(&vmf, &common::empty_game(), options);
+                    let reference = {
+                        let _restore = RestoreCulling(ENABLED.replace(false));
+                        crate::compile_with_options(&vmf, &common::empty_game(), options)
+                    };
+                    assert!(ENABLED.get());
+                    assert!(!result.report.has_errors(), "{:?}", result.report);
+                    assert!(!reference.report.has_errors(), "{:?}", reference.report);
+                    assert_eq!(result.stats.lit_brush_models, 1);
+                    assert_eq!(result.stats.model_lighting_faces, 6);
+                    assert!(result.stats.styled_faces > 0);
+                    if lighting == LightingMode::DirectLdrHdr {
+                        let hdr = result.stats.hdr.as_ref().unwrap();
+                        assert!(hdr.map_data_present && hdr.styled_faces > 0);
+                        assert_eq!(hdr.lit_brush_models, 1);
+                        assert_eq!(hdr.model_lighting_faces, 6);
+                    }
+                    assert!(result.stats.light_culling_work > 0);
+                    assert!(result.stats.light_evaluations <= reference.stats.light_evaluations);
+                    assert!(
+                        result.bsp.unwrap().to_bytes() == reference.bsp.unwrap().to_bytes(),
+                        "Culling changed rotated native output: connected={connected}, angles={angles}, lighting={lighting:?}"
+                    );
+                    removed += result.stats.light_pvs_skipped;
+                    ranged += result.stats.light_range_skipped;
+                }
+            }
+        }
+        assert!(removed > 0);
+        assert!(ranged > 0);
+    }
 }

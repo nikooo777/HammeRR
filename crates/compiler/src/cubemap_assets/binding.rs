@@ -18,6 +18,7 @@ pub(crate) struct Plan {
 
 struct Side {
     id: u32,
+    entity: usize,
     texinfo: usize,
     center: DVec3,
     normal: DVec3,
@@ -261,6 +262,7 @@ pub(crate) fn prepare(
                     id,
                     Side {
                         id,
+                        entity: brush.entity,
                         texinfo: side.texinfo,
                         center,
                         normal,
@@ -279,6 +281,7 @@ pub(crate) fn prepare(
                 terrain.side,
                 Side {
                     id: terrain.side,
+                    entity: 0,
                     texinfo: terrain.texinfo,
                     center,
                     normal: map.planes.get(terrain.plane).normal,
@@ -335,6 +338,7 @@ pub(crate) fn prepare(
     let mut assignments = Vec::new();
     let mut replacements = BTreeMap::new();
     let mut alias_materials = BTreeMap::new();
+    let mut unrotated_models = BTreeSet::new();
     for side in sides.values() {
         control.checkpoint()?;
         if !side.center.is_finite() || !side.normal.is_finite() {
@@ -353,6 +357,28 @@ pub(crate) fn prepare(
         let sample = if let Some(&sample) = manual.get(&side.id) {
             sample
         } else {
+            let entity = &map.entities[side.entity];
+            if entity.classname.eq_ignore_ascii_case("func_brush")
+                && !unrotated_models.contains(&side.entity)
+            {
+                let error = match crate::brush_model_pose::initial_rotation(
+                    &entity.classname,
+                    &entity.properties,
+                ) {
+                    Ok(None) => None,
+                    Ok(Some(_)) => {
+                        Some("rotated faces require explicit env_cubemap sides assignments".into())
+                    }
+                    Err(error) => Some(error),
+                };
+                if let Some(error) = error {
+                    return Err(format!(
+                        "entity:{}: side:{}: Unsupported func_brush initial pose for automatic cubemap assignment: {error}",
+                        entity.id, side.id,
+                    ));
+                }
+                unrotated_models.insert(side.entity);
+            }
             nearest(side, &samples)
         };
         let alias = graph.generate(&material, sample, &samples, context.namespace())?;

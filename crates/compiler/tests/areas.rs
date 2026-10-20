@@ -4,6 +4,7 @@ mod fixtures;
 
 use fixtures::{room, window_room};
 use glam::DVec3;
+use map_core::{Document, ObjectId, edit};
 use source_formats::bsp::{Bsp, Leaf, Model, Node, Plane, contents};
 
 #[test]
@@ -314,4 +315,134 @@ fn hidden_window_portals_leave_their_render_models_and_equal_fades_are_valid() {
     assert_eq!(output.stats.areaportal_windows, 0);
     assert_eq!(output.stats.areaportals, 0);
     assert_eq!(output.bsp.unwrap().records::<Model>().unwrap().len(), 2);
+}
+
+#[test]
+fn window_targets_reject_rotated_and_ambiguous_poses_before_bounds_validation() {
+    for (background, missing_rendered) in [(false, false), (true, false), (true, true)] {
+        for fields in [
+            vec![("angles", "0 90 0")],
+            vec![("angles", "bad")],
+            vec![("angles", "0 0 0"), ("AnGlEs", "0 90 0")],
+        ] {
+            let (mut vmf, portal, rendered, foreground) = window_room(true);
+            if missing_rendered {
+                vmf.entities
+                    .iter_mut()
+                    .find(|entity| entity.id == portal)
+                    .unwrap()
+                    .properties
+                    .set("target", "missing_rendered");
+            }
+            let owner = if background {
+                foreground.unwrap()
+            } else {
+                rendered
+            };
+            let target = vmf
+                .entities
+                .iter_mut()
+                .find(|entity| entity.id == owner)
+                .unwrap();
+            target.properties.0.extend(
+                fields
+                    .iter()
+                    .map(|&(key, value)| (key.into(), value.into())),
+            );
+            for side in &mut target.solids[0].sides {
+                for point in &mut side.plane.0 {
+                    point.y *= 0.5;
+                }
+            }
+            let original = vmf.clone();
+            for lighting in [
+                compiler::LightingMode::Fullbright,
+                compiler::LightingMode::DirectLdr,
+            ] {
+                let output = compiler::compile_with_options(
+                    &vmf,
+                    &common::empty_game(),
+                    compiler::Options {
+                        lighting,
+                        ..Default::default()
+                    },
+                );
+                let label = if background {
+                    "Foreground bmodel"
+                } else {
+                    "Rendered Window"
+                };
+                assert!(output.bsp.is_none());
+                assert!(
+                    output.report.diagnostics.iter().any(|diagnostic| {
+                        diagnostic.level == compiler::Level::Error
+                            && diagnostic.object.as_deref() == Some(&format!("entity:{owner}"))
+                            && diagnostic.message.contains(&format!("entity:{portal}"))
+                            && diagnostic.message.contains(label)
+                            && diagnostic.message.contains("initial pose")
+                    }),
+                    "{lighting:?} {fields:?}: {:?}",
+                    output.report
+                );
+                assert!(
+                    !output.report.diagnostics.iter().any(|diagnostic| {
+                        diagnostic.message.contains("bounds must enclose")
+                            || diagnostic
+                                .message
+                                .contains("must share the Rendered Window pivot")
+                    }),
+                    "{:?}",
+                    output.report
+                );
+            }
+            assert_eq!(vmf, original);
+        }
+    }
+}
+
+#[test]
+fn zero_window_targets_and_unrelated_rotated_models_remain_available() {
+    let (mut vmf, _, rendered, foreground) = window_room(true);
+    for entity in vmf
+        .entities
+        .iter_mut()
+        .filter(|entity| entity.id == rendered || Some(entity.id) == foreground)
+    {
+        entity.properties.set("angles", "-0 0 -0.0e3");
+    }
+    let mut document = Document::new(vmf);
+    document
+        .edit("unrelated rotated brush", |tx| {
+            let ObjectId::Solid(solid) = edit::create_block(
+                tx,
+                DVec3::new(-160.0, -32.0, 16.0),
+                DVec3::new(-128.0, 32.0, 48.0),
+                "dev/dev_measuregeneric01",
+            )?
+            else {
+                unreachable!()
+            };
+            edit::tie_to_entity(
+                tx,
+                &[solid],
+                "func_brush",
+                &[("angles".into(), "0 90 0".into())],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    let vmf = document.vmf().clone();
+    let original = vmf.clone();
+    let output = compiler::compile_with_options(
+        &vmf,
+        &common::empty_game(),
+        compiler::Options {
+            lighting: compiler::LightingMode::Fullbright,
+            ..Default::default()
+        },
+    );
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    assert!(output.bsp.is_some());
+    assert_eq!(output.stats.areaportal_windows, 1);
+    assert_eq!(vmf, original);
 }

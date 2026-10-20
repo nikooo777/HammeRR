@@ -3,12 +3,75 @@ use std::ops::Range;
 use glam::DVec3;
 use source_formats::bsp::Model;
 
+use crate::brush_model_pose::{MAX_INITIAL_POSE_BYTES, Pose, initial_offset, initial_rotation};
 use crate::map::Map;
+use crate::{Diagnostic, Report};
 
 pub(super) struct Scope {
     pub entity: usize,
-    pub offset: DVec3,
+    pub pose: Pose,
     pub faces: Range<usize>,
+}
+
+pub(super) fn admit_initial_poses(
+    map: &Map<'_>,
+    scopes: &mut [Scope],
+    receivers: &[bool],
+    report: &mut Report,
+    budget: &mut super::bake::Budget<'_>,
+) -> Result<(), String> {
+    if scopes.len() != receivers.len() {
+        return Err("Initial lighting pose scopes do not match receivers".into());
+    }
+    for (scope, &receiver) in scopes.iter_mut().zip(receivers) {
+        budget.consume(0)?;
+        if scope.entity == 0 || !receiver {
+            continue;
+        }
+        let entity = &map.entities[scope.entity];
+        for (key, value) in &entity.properties {
+            budget.consume(key.len().max(1))?;
+            budget.consume(value.len().min(MAX_INITIAL_POSE_BYTES))?;
+        }
+        let rotation = initial_rotation(&entity.classname, &entity.properties);
+        let checked = match rotation {
+            Ok(Some(rotation)) => match initial_offset(&entity.properties) {
+                Ok(offset) => {
+                    let pose = Pose {
+                        offset,
+                        rotation: Some(rotation),
+                    };
+                    let mut bounds = (DVec3::MAX, DVec3::MIN);
+                    for &index in &entity.brushes {
+                        budget.consume(1)?;
+                        let brush = &map.brushes[index];
+                        bounds = (bounds.0.min(brush.mins), bounds.1.max(brush.maxs));
+                    }
+                    budget.consume(16)?;
+                    pose.bounds(bounds.0, bounds.1)
+                        .and_then(|_| {
+                            pose.bounds(
+                                crate::emit::stored_vertex(bounds.0),
+                                crate::emit::stored_vertex(bounds.1),
+                            )
+                        })
+                        .map(|_| pose)
+                }
+                Err(error) => Err(error),
+            },
+            Ok(None) => Ok(scope.pose),
+            Err(error) => Err(error),
+        };
+        match checked {
+            Ok(pose) => scope.pose = pose,
+            Err(error) => report.diagnostics.push(Diagnostic::error(
+                    format!("Unsupported authored initial brush-model lighting pose: {error}; use one bounded angles triple on an unparented func_brush, zero angles, or Fullbright"),
+                    Some(format!("entity:{}", entity.id)),
+                    Some(scope.pose.offset),
+                )),
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn scopes(
@@ -52,7 +115,10 @@ pub(super) fn scopes(
         }
         scopes.push(Scope {
             entity,
-            offset,
+            pose: Pose {
+                offset,
+                rotation: None,
+            },
             faces: first..end,
         });
     }

@@ -2,6 +2,7 @@
 
 mod areas;
 pub mod asset_sources;
+mod brush_model_pose;
 pub mod control;
 mod cordons;
 pub mod cubemap_assets;

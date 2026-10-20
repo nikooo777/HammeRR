@@ -41,6 +41,7 @@ described in [Generated reflections](reflections.md).
 - Automatic assignment uses source polygons, world-space brush-model pivots
   and the compiler's front-side preference. It does not test visibility or
   occlusion between a face and its sample.
+- Reflective faces on an initially rotated `func_brush` require explicit manual sides bindings. Automatic assignment and inspection of an unbound reflective face fail with its entity/side diagnostic instead of using an unrotated center or normal.
 - Manual targets must be unique, visible authored faces that survive the
   committed compile region. Missing faces, ambiguous IDs, malformed lists,
   duplicate owners and non-emitting targets reject with a diagnostic.

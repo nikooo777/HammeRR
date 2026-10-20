@@ -67,6 +67,7 @@ pub(crate) fn validate(
             names.entry(name).or_default().push(index);
         }
     }
+    let mut poses = HashMap::new();
     for portal in &map.area_portals {
         control.checkpoint()?;
         let entity = &map.entities[portal.entity];
@@ -74,6 +75,7 @@ pub(crate) fn validate(
             continue;
         }
         let mut targets = [None; 2];
+        let mut unsupported_pose = false;
         for (slot, (field, label)) in [
             ("target", "Rendered Window"),
             ("BackgroundBModel", "Foreground bmodel"),
@@ -102,9 +104,36 @@ pub(crate) fn validate(
             };
             if let Some(index) = index {
                 targets[slot] = Some(index);
+                let target = &map.entities[index];
+                if target.classname.eq_ignore_ascii_case("func_brush") {
+                    let pose = poses.entry(index).or_insert_with(|| {
+                        crate::brush_model_pose::initial_rotation(
+                            &target.classname,
+                            &target.properties,
+                        )
+                        .and_then(|rotation| {
+                            if rotation.is_some() {
+                                Err("rotated func_brush targets are not supported".into())
+                            } else {
+                                Ok(())
+                            }
+                        })
+                    });
+                    if let Err(error) = pose {
+                        report.diagnostics.push(Diagnostic::error(
+                            format!("Unsupported initial pose for window portal entity:{} {label} target entity:{}: {error}", entity.id, target.id),
+                            Some(format!("entity:{}", target.id)),
+                            target.origin,
+                        ));
+                        unsupported_pose = true;
+                    }
+                }
             } else {
                 report.diagnostics.push(Diagnostic::error(format!("Window portal {label} must name exactly one visible rendered brush model; {name:?} does not"), Some(format!("entity:{}", entity.id)), None));
             }
+        }
+        if unsupported_pose {
+            continue;
         }
         if let Some(target) = targets[0] {
             let (low, high) = map.model_bounds(target);

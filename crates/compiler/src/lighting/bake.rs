@@ -9,7 +9,8 @@ use super::shadows::{ShadowIndex, ShadowObject, Triangle};
 use super::sky::SkyLight;
 use super::terrain::TerrainPlan;
 use super::{LuxelFrame, Occluder, PointLight};
-use crate::map::Map;
+use crate::brush_model_pose::Pose;
+use crate::map::{MAX_COMPILE_COORD, Map};
 use crate::tree::Tree;
 use crate::visibility::Visibility;
 use crate::{Control, Diagnostic, Report};
@@ -58,7 +59,7 @@ pub(crate) struct BakeStats {
 pub(super) struct Plan {
     pub face: usize,
     pub model: usize,
-    offset: DVec3,
+    pose: Pose,
     surface: Surface,
     bump: Option<super::bump::Basis>,
 }
@@ -67,6 +68,7 @@ enum Surface {
     Plane {
         frame: LuxelFrame,
         normal: DVec3,
+        world_normal: DVec3,
         points: Vec<DVec3>,
         normals: Option<std::sync::Arc<super::normals::Field>>,
     },
@@ -74,6 +76,37 @@ enum Surface {
 }
 
 impl Plan {
+    fn apply_pose(&mut self, pose: Pose, budget: &mut Budget<'_>) -> Result<(), String> {
+        let Some(rotation) = pose.rotation else {
+            return Ok(());
+        };
+        let Surface::Plane {
+            normal,
+            world_normal,
+            points,
+            ..
+        } = &mut self.surface
+        else {
+            return Err("Rotated brush-model lighting cannot contain terrain".into());
+        };
+        for &point in points.iter() {
+            budget.consume(1)?;
+            checked_model_point(pose.point(point))?;
+        }
+        budget.consume(1)?;
+        let transformed_normal = pose.normal(*normal);
+        if !transformed_normal.is_finite() || transformed_normal.length_squared() == 0.0 {
+            return Err("Rotated brush-model lighting needs a finite nonzero normal".into());
+        }
+        if let Some(basis) = &mut self.bump {
+            budget.consume(1)?;
+            basis.rotate(rotation);
+        }
+        *world_normal = transformed_normal;
+        self.pose = pose;
+        Ok(())
+    }
+
     pub(super) fn map_count(&self) -> usize {
         if self.bump.is_some() {
             super::bump::MAPS
@@ -120,6 +153,7 @@ impl Plan {
                 normal,
                 points,
                 normals,
+                ..
             } => {
                 budget.consume(points.len() + 1)?;
                 let point = inside_or_closest(frame.position(s, t)?, points, *normal);
@@ -129,7 +163,21 @@ impl Plan {
                 } else {
                     *normal
                 };
-                Ok((point + self.offset, shading))
+                if self.pose.rotation.is_some() {
+                    budget.consume(2)?;
+                    let point = self.pose.point(point);
+                    let shading = self.pose.normal(shading);
+                    checked_model_point(point)?;
+                    if !shading.is_finite() || shading.length_squared() == 0.0 {
+                        return Err(
+                            "Rotated brush-model lighting needs a finite nonzero shading normal"
+                                .into(),
+                        );
+                    }
+                    Ok((point, shading))
+                } else {
+                    Ok((point + self.pose.offset, shading))
+                }
             }
             Surface::Terrain(plan) => {
                 budget.consume(1)?;
@@ -140,11 +188,20 @@ impl Plan {
     }
     pub(super) fn origin(&self, point: DVec3, normal: DVec3) -> DVec3 {
         let bias = match &self.surface {
-            Surface::Plane { normal, .. } => *normal,
+            Surface::Plane { world_normal, .. } => *world_normal,
             Surface::Terrain(_) => normal,
         };
         point + bias * SAMPLE_BIAS
     }
+}
+
+fn checked_model_point(point: DVec3) -> Result<(), String> {
+    if !point.is_finite() || point.abs().max_element() > MAX_COMPILE_COORD {
+        return Err(format!(
+            "Rotated brush-model lighting geometry exceeds finite Source bounds ±{MAX_COMPILE_COORD}"
+        ));
+    }
+    Ok(())
 }
 
 pub(super) struct Budget<'a> {
@@ -365,8 +422,26 @@ pub(super) fn occluders(
     report: &mut Report,
     budget: &mut Budget<'_>,
 ) -> Result<Vec<Occluder>, String> {
+    posed_occluders(
+        map,
+        entity,
+        Pose {
+            offset: map.entities[entity].origin.unwrap_or(DVec3::ZERO),
+            rotation: None,
+        },
+        report,
+        budget,
+    )
+}
+
+fn posed_occluders(
+    map: &Map,
+    entity: usize,
+    pose: Pose,
+    report: &mut Report,
+    budget: &mut Budget<'_>,
+) -> Result<Vec<Occluder>, String> {
     let mut result = Vec::new();
-    let offset = map.entities[entity].origin.unwrap_or(DVec3::ZERO);
     for &index in &map.entities[entity].brushes {
         budget.consume(1)?;
         let brush = &map.brushes[index];
@@ -383,12 +458,16 @@ pub(super) fn occluders(
             .filter(|side| !side.bevel)
             .map(|side| {
                 let plane = map.planes.get(side.plane);
-                Plane {
-                    normal: plane.normal,
-                    dist: plane.dist + plane.normal.dot(offset),
+                if pose.rotation.is_some() {
+                    budget.consume(1)?;
                 }
+                let normal = pose.normal(plane.normal);
+                Ok(Plane {
+                    normal,
+                    dist: plane.dist + normal.dot(pose.offset),
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>, String>>()?;
         let sky = brush
             .sides
             .iter()
@@ -404,8 +483,19 @@ pub(super) fn occluders(
                 side: side.source_id,
             })
             .collect();
+        let (mins, maxs) = if pose.rotation.is_some() {
+            budget.consume(16)?;
+            let raw = pose.bounds(brush.mins, brush.maxs)?;
+            let stored = pose.bounds(
+                crate::emit::stored_vertex(brush.mins),
+                crate::emit::stored_vertex(brush.maxs),
+            )?;
+            (raw.0.min(stored.0), raw.1.max(stored.1))
+        } else {
+            (brush.mins + pose.offset, brush.maxs + pose.offset)
+        };
         result.push(
-            Occluder::new(planes, brush.mins + offset, brush.maxs + offset)?
+            Occluder::new(planes, mins, maxs)?
                 .with_sky(sky)?
                 .with_source(index, sources)?,
         );
@@ -483,7 +573,7 @@ fn plans(
                 plans.push(Plan {
                     face: index,
                     model,
-                    offset: scope.offset,
+                    pose: scope.pose,
                     surface: Surface::Terrain(terrain),
                     bump,
                 });
@@ -520,13 +610,15 @@ fn plans(
             if points.len() < 3 || points.iter().any(|point| !point.is_finite()) {
                 return Err("Direct lighting face has invalid corners".into());
             }
+            let normal = plane.normal.normalize();
             plans.push(Plan {
                 face: index,
                 model,
-                offset: scope.offset,
+                pose: scope.pose,
                 surface: Surface::Plane {
                     frame,
-                    normal: plane.normal.normalize(),
+                    normal,
+                    world_normal: normal,
                     points,
                     normals: normals.fields.remove(&index),
                 },
@@ -744,7 +836,9 @@ pub(crate) fn bake(
         .records::<TexInfo>()
         .map_err(|error| error.to_string())?;
     let model_records = bsp.records::<Model>().map_err(|error| error.to_string())?;
-    let scopes = super::models::scopes(map, &model_records, settings.model_entities, faces.len())?;
+    let _scope_allocation = budget.reserve::<super::models::Scope>(model_records.len())?;
+    let mut scopes =
+        super::models::scopes(map, &model_records, settings.model_entities, faces.len())?;
     let normal_start = budget.work;
     let mut normals = super::normals::build(
         bsp,
@@ -772,7 +866,7 @@ pub(crate) fn bake(
             })?;
     let _terrain_plan_allocation = budget.reserve_bytes(terrain_plan_bytes)?;
     let _plan_allocation = budget.reserve::<Plan>(faces.len())?;
-    let plans = plans(
+    let mut plans = plans(
         map,
         bsp,
         &mut faces,
@@ -787,11 +881,22 @@ pub(crate) fn bake(
         has_receivers[plan.model] = true;
         model_faces += usize::from(plan.model != 0);
     }
+    super::models::admit_initial_poses(map, &mut scopes, &has_receivers, report, &mut budget)?;
+    if report.has_errors() {
+        return Ok(BakeStats::default());
+    }
+    for plan in &mut plans {
+        let scope = &scopes[plan.model];
+        if scope.pose.rotation.is_some() {
+            plan.apply_pose(scope.pose, &mut budget)
+                .map_err(|error| format!("entity:{}: {error}", map.entities[scope.entity].id))?;
+        }
+    }
     let mut model_shadows = Vec::with_capacity(scopes.len());
     for (model, scope) in scopes.iter().enumerate() {
         let shadows = if model != 0 && has_receivers[model] {
             Some(ShadowIndex::new(
-                occluders(map, scope.entity, report, &mut budget)?,
+                posed_occluders(map, scope.entity, scope.pose, report, &mut budget)?,
                 &mut |amount| budget.consume(amount),
             )?)
         } else {
@@ -1473,6 +1578,176 @@ fn bake_channel(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn plane_plan() -> Plan {
+        let info = TexInfo {
+            lightmap_vecs: [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]],
+            ..Default::default()
+        };
+        Plan {
+            face: 0,
+            model: 1,
+            pose: Pose {
+                offset: DVec3::new(10.5, -20.25, 30.125),
+                rotation: None,
+            },
+            surface: Surface::Plane {
+                frame: LuxelFrame::new(
+                    Plane {
+                        normal: DVec3::Z,
+                        dist: 4.0,
+                    },
+                    &info,
+                    [0, 0],
+                    [1, 1],
+                )
+                .unwrap(),
+                normal: DVec3::Z,
+                world_normal: DVec3::Z,
+                points: vec![
+                    DVec3::new(-2.0, -2.0, 4.0),
+                    DVec3::new(-2.0, 2.0, 4.0),
+                    DVec3::new(2.0, 2.0, 4.0),
+                    DVec3::new(2.0, -2.0, 4.0),
+                ],
+                normals: None,
+            },
+            bump: None,
+        }
+    }
+
+    fn pitch_quarter_turn(offset: DVec3) -> Pose {
+        Pose {
+            offset,
+            rotation: Some(glam::DMat3::from_cols(DVec3::NEG_Z, DVec3::Y, DVec3::X)),
+        }
+    }
+
+    #[test]
+    fn translation_only_receiver_keeps_sample_bias_bits_and_work() {
+        let control = Control::default();
+        let mut budget = Budget::new(&control);
+        let mut plan = plane_plan();
+        plan.apply_pose(plan.pose, &mut budget).unwrap();
+        assert_eq!(budget.work(), 0);
+        let (point, normal) = plan.sample(1, 1, &mut budget).unwrap();
+        let expected = DVec3::new(1.0, 1.0, 4.0) + plan.pose.offset;
+        assert_eq!(
+            point.to_array().map(f64::to_bits),
+            expected.to_array().map(f64::to_bits)
+        );
+        assert_eq!(
+            normal.to_array().map(f64::to_bits),
+            DVec3::Z.to_array().map(f64::to_bits)
+        );
+        let bias = plan.origin(point, DVec3::new(0.6, 0.0, 0.8));
+        let expected_bias = expected + DVec3::Z * SAMPLE_BIAS;
+        assert_eq!(
+            bias.to_array().map(f64::to_bits),
+            expected_bias.to_array().map(f64::to_bits)
+        );
+        assert_eq!(budget.work(), 5);
+    }
+
+    #[test]
+    fn rotated_receiver_maps_local_samples_and_uses_flat_world_bias() {
+        let control = Control::default();
+        let mut budget = Budget::new(&control);
+        let mut plan = plane_plan();
+        plan.apply_pose(pitch_quarter_turn(plan.pose.offset), &mut budget)
+            .unwrap();
+        assert_eq!(budget.work(), 5);
+        let (point, normal) = plan.sample(1, 1, &mut budget).unwrap();
+        assert_eq!(point, DVec3::new(14.5, -19.25, 29.125));
+        assert_eq!(normal, DVec3::X);
+        assert_eq!(
+            plan.origin(point, DVec3::Y),
+            DVec3::new(15.0, -19.25, 29.125)
+        );
+        assert_eq!(
+            plan.shading_normals(normal, &mut budget).unwrap(),
+            [DVec3::X; super::super::bump::MAPS]
+        );
+        assert_eq!(budget.work(), 12);
+    }
+
+    #[test]
+    fn rotated_receiver_checks_emitted_points_and_additional_sampling_work() {
+        let control = Control::default();
+        let mut budget = Budget::new(&control);
+        let mut plan = plane_plan();
+        let outside = pitch_quarter_turn(DVec3::new(MAX_COMPILE_COORD - 3.0, 0.0, 0.0));
+        assert!(
+            plan.apply_pose(outside, &mut budget)
+                .unwrap_err()
+                .contains("Source bounds")
+        );
+        assert!(plan.pose.rotation.is_none());
+        plan.apply_pose(pitch_quarter_turn(plan.pose.offset), &mut budget)
+            .unwrap();
+        budget.work = MAX_LIGHTING_WORK - 5;
+        assert!(
+            plan.sample(1, 1, &mut budget)
+                .unwrap_err()
+                .contains("work-unit limit")
+        );
+        let mut budget = Budget::new(&control);
+        control.cancel().unwrap();
+        assert!(
+            plane_plan()
+                .apply_pose(pitch_quarter_turn(DVec3::ZERO), &mut budget)
+                .unwrap_err()
+                .contains("cancelled")
+        );
+        assert_eq!(budget.work(), 0);
+    }
+
+    #[test]
+    fn posed_own_hulls_rotate_planes_and_use_all_bounds_corners() {
+        let game = crate::test_common::empty_game();
+        let map = Map::load(&crate::test_common::room(), &game, &mut Report::default()).unwrap();
+        let control = Control::default();
+        let mut budget = Budget::new(&control);
+        let mut report = Report::default();
+        let original = occluders(&map, 0, &mut report, &mut budget).unwrap();
+        let c = std::f64::consts::FRAC_1_SQRT_2;
+        let offset = DVec3::new(10.5, -20.25, 30.125);
+        let pose = Pose {
+            offset,
+            rotation: Some(glam::DMat3::from_cols(
+                DVec3::new(c, c, 0.0),
+                DVec3::new(-c, c, 0.0),
+                DVec3::Z,
+            )),
+        };
+        let rotated = posed_occluders(&map, 0, pose, &mut report, &mut budget).unwrap();
+        assert!(!original.is_empty());
+        assert_eq!(original.len(), rotated.len());
+        for (local, world) in original.iter().zip(&rotated) {
+            let expected_min = DVec3::new(
+                c * (local.mins.x - local.maxs.y),
+                c * (local.mins.x + local.mins.y),
+                local.mins.z,
+            ) + offset;
+            let expected_max = DVec3::new(
+                c * (local.maxs.x - local.mins.y),
+                c * (local.maxs.x + local.maxs.y),
+                local.maxs.z,
+            ) + offset;
+            assert!(world.mins.distance(expected_min) < 1e-10);
+            assert!(world.maxs.distance(expected_max) < 1e-10);
+            assert_eq!(local.planes.len(), world.planes.len());
+            for (local, world) in local.planes.iter().zip(&world.planes) {
+                let normal = DVec3::new(
+                    c * (local.normal.x - local.normal.y),
+                    c * (local.normal.x + local.normal.y),
+                    local.normal.z,
+                );
+                assert!(world.normal.distance(normal) < 1e-12);
+                assert!((world.dist - (local.dist + normal.dot(offset))).abs() < 1e-10);
+            }
+        }
+    }
 
     #[test]
     fn rejected_work_and_cancellation_stop_before_sampling() {

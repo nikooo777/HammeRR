@@ -4,6 +4,7 @@ use compiler::{LightingMode, Options};
 use glam::DVec3;
 use map_core::{Document, ObjectId, Plane, edit};
 use source_formats::bsp::{self, Bsp, Face, LightingKind, Model, TexInfo};
+use source_formats::gamefs::{Mount, MountedPath};
 use source_formats::vmf::Vmf;
 
 fn fixture(pivot: Option<DVec3>) -> Vmf {
@@ -386,5 +387,219 @@ fn model_scopes_keep_coincident_local_vertices_separate_and_respect_hard_and_ang
                 .all(|normal| normal.distance(DVec3::ONE.normalize()) < 2e-7),
             smooth
         );
+    }
+}
+
+fn posed_fixture(properties: &[(&str, &str)]) -> Vmf {
+    let mut source = fixture(Some(DVec3::new(101.5, -67.25, 32.125)));
+    let model = source
+        .entities
+        .iter_mut()
+        .find(|entity| !entity.solids.is_empty())
+        .unwrap();
+    model.properties.0.extend(
+        properties
+            .iter()
+            .map(|(key, value)| ((*key).into(), (*value).into())),
+    );
+    source
+}
+
+#[test]
+fn unsupported_initial_model_poses_reject_only_actual_lighting_receivers() {
+    let other_class_poses: &[&[(&str, &str)]] = &[
+        &[("angles", "1 0 0")],
+        &[("angles", "0 -90 0")],
+        &[("angles", "0 0 45")],
+        &[("angles", "20 35 10")],
+        &[("angles", "0 360 0")],
+    ];
+    let cases: &[&[(&str, &str)]] = &[
+        &[("angles", "361 0 0")],
+        &[("angles", "0 -361 0")],
+        &[("angles", "0 0 361")],
+        &[("angles", "360.000001 0 0")],
+        &[("angles", "20 35 10"), ("parentname", "parent")],
+        &[("angles", "20 35 10"), ("PaReNtNaMe#1", "parent")],
+        &[("angle", "45")],
+        &[("angle", "-1")],
+        &[("angle", "-2")],
+        &[("angles", "0 0")],
+        &[("angles", "0 0 0 trailing")],
+        &[("angle", "0 0")],
+        &[("angles", "[0 0 0]")],
+        &[("angles", "NaN 0 0")],
+        &[("angles", "0 inf 0")],
+        &[("angles", "0 0 1e400")],
+        &[("angles", "3.5e38 0 0")],
+        &[("angles", "1e-4000 0 0")],
+        &[("angle", "1e-50")],
+        &[("angles", "0 0 ０")],
+        &[("angles", "0 0 0"), ("angles", "0 0 0")],
+        &[("angles", "0 0 0"), ("angles", "0 90 0")],
+        &[("AnGlEs", "0 0 0"), ("ANGLES", "bad")],
+        &[("angles", "0 0 0"), ("angle", "0")],
+        &[("angle", "0"), ("ANGLE", "0")],
+        &[("angles#1", "0 0 0")],
+        &[("ANGLE#later", "90")],
+    ];
+    for (classname, properties) in cases
+        .iter()
+        .map(|properties| ("func_brush", *properties))
+        .chain(
+            other_class_poses
+                .iter()
+                .map(|properties| ("func_wall", *properties)),
+        )
+    {
+        let mut source = posed_fixture(properties);
+        source
+            .entities
+            .iter_mut()
+            .find(|entity| !entity.solids.is_empty())
+            .unwrap()
+            .properties
+            .set("classname", classname);
+        let before = source.clone();
+        let entity = source
+            .entities
+            .iter()
+            .find(|entity| !entity.solids.is_empty())
+            .unwrap();
+        let object = format!("entity:{}", entity.id);
+        for lighting in [LightingMode::DirectLdr, LightingMode::DirectLdrHdr] {
+            for bounces in [0, 4] {
+                let output = compiler::compile_with_options(
+                    &source,
+                    &common::empty_game(),
+                    Options {
+                        lighting,
+                        bounces,
+                        ..Default::default()
+                    },
+                );
+                assert!(output.bsp.is_none(), "{properties:?}");
+                assert!(
+                    output.report.diagnostics.iter().any(|diagnostic| {
+                        diagnostic.level == compiler::Level::Error
+                            && diagnostic
+                                .message
+                                .contains("Unsupported authored initial brush-model lighting pose")
+                            && diagnostic.object.as_deref() == Some(object.as_str())
+                    }),
+                    "{properties:?}: {:?}",
+                    output.report
+                );
+            }
+        }
+        assert_eq!(source, before);
+    }
+    let oversized = format!("{}0 0 0", " ".repeat(128));
+    let output = compiler::compile_with_options(
+        &posed_fixture(&[("angles", &oversized)]),
+        &common::empty_game(),
+        Options {
+            lighting: LightingMode::DirectLdr,
+            ..Default::default()
+        },
+    );
+    assert!(output.bsp.is_none() && output.report.has_errors());
+}
+
+#[test]
+fn absent_and_exact_zero_initial_poses_preserve_all_baked_payloads() {
+    let baseline = posed_fixture(&[]);
+    for lighting in [LightingMode::DirectLdr, LightingMode::DirectLdrHdr] {
+        let options = Options {
+            lighting,
+            bounces: 1,
+            ..Default::default()
+        };
+        let expected = compiler::compile_with_options(&baseline, &common::empty_game(), options);
+        assert!(!expected.report.has_errors(), "{:?}", expected.report);
+        let expected = expected.bsp.unwrap();
+        for properties in [
+            vec![("angles", "0 0 0")],
+            vec![("AnGlEs", "-0 +0.0 0e-300")],
+            vec![("angle", "-0.000")],
+        ] {
+            let source = posed_fixture(&properties);
+            let before = source.clone();
+            let output = compiler::compile_with_options(&source, &common::empty_game(), options);
+            assert!(!output.report.has_errors(), "{:?}", output.report);
+            assert_eq!(output.stats.lit_brush_models, 1);
+            assert_eq!(output.stats.model_lighting_faces, 6);
+            let actual = output.bsp.unwrap();
+            for (index, (actual, expected)) in actual.lumps.iter().zip(&expected.lumps).enumerate()
+            {
+                if index != bsp::lump::ENTITIES {
+                    assert_eq!(actual, expected, "{properties:?}: lump {index}");
+                }
+            }
+            assert_eq!(source, before);
+        }
+    }
+}
+
+#[test]
+fn initial_pose_admission_does_not_reject_fullbright_hidden_or_tool_models() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(directory.path().join("materials/tools")).unwrap();
+    for (name, flag) in [
+        ("toolsnodraw", "%compilenodraw"),
+        ("toolstrigger", "%compiletrigger"),
+    ] {
+        std::fs::write(
+            directory.path().join(format!("materials/tools/{name}.vmt")),
+            format!("UnlitGeneric {{ {flag} 1 }}"),
+        )
+        .unwrap();
+    }
+    let mut game = common::empty_game();
+    game.mounts.push(MountedPath {
+        ids: vec!["game".into()],
+        mount: Mount::Directory(directory.path().to_owned()),
+    });
+    let source = posed_fixture(&[("angles", "20 35 10")]);
+    let fullbright = compiler::compile(&source, &game);
+    assert!(!fullbright.report.has_errors(), "{:?}", fullbright.report);
+    assert!(fullbright.bsp.is_some());
+    for mode in ["hidden", "nodraw", "trigger"] {
+        let mut source = posed_fixture(&[("angles", "invalid")]);
+        let model = source
+            .entities
+            .iter_mut()
+            .find(|entity| !entity.solids.is_empty())
+            .unwrap();
+        if mode == "hidden" {
+            model.hidden = true;
+        } else {
+            if mode == "trigger" {
+                model.properties.set("classname", "trigger_multiple");
+            }
+            for side in model.solids.iter_mut().flat_map(|solid| &mut solid.sides) {
+                side.material = if mode == "trigger" {
+                    "tools/toolstrigger"
+                } else {
+                    "tools/toolsnodraw"
+                }
+                .into();
+            }
+        }
+        let before = source.clone();
+        let output = compiler::compile_with_options(
+            &source,
+            &game,
+            Options {
+                lighting: LightingMode::DirectLdrHdr,
+                bounces: 1,
+                ..Default::default()
+            },
+        );
+        assert!(!output.report.has_errors(), "{mode}: {:?}", output.report);
+        assert!(output.bsp.is_some());
+        assert_eq!(output.stats.lit_brush_models, 0, "{mode}");
+        assert_eq!(output.stats.model_lighting_faces, 0, "{mode}");
+        assert_eq!(source, before);
     }
 }

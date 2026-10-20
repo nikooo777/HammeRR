@@ -374,6 +374,193 @@ fn model_pivot_assignment_uses_world_winding_center() {
     );
 }
 
+fn model_source() -> (Vmf, [u32; 2], u32) {
+    let (vmf, helpers) = source();
+    let mut document = Document::new(vmf);
+    let model = document
+        .edit("reflection model", |tx| {
+            let ObjectId::Solid(solid) = edit::create_block(
+                tx,
+                DVec3::new(128.0, -32.0, 16.0),
+                DVec3::new(192.0, 32.0, 48.0),
+                "dev/dev_measuregeneric01",
+            )?
+            else {
+                unreachable!()
+            };
+            let ObjectId::Entity(model) = edit::tie_to_entity(
+                tx,
+                &[solid],
+                "func_brush",
+                &[("origin".into(), "160 0 32".into())],
+            )?
+            else {
+                unreachable!()
+            };
+            Ok(model)
+        })
+        .unwrap();
+    (document.vmf().clone(), helpers, model)
+}
+
+#[test]
+fn automatic_rotated_model_assignments_fail_in_compile_and_inspection() {
+    for dependency_only in [false, true] {
+        let (directory, game) = game();
+        if dependency_only {
+            std::fs::write(
+                directory
+                    .path()
+                    .join("materials/dev/dev_measuregeneric01.vmt"),
+                "LightmappedGeneric { $fallbackmaterial dev/reflection_dependency }",
+            )
+            .unwrap();
+            std::fs::write(
+                directory
+                    .path()
+                    .join("materials/dev/reflection_dependency.vmt"),
+                "LightmappedGeneric { $envmap env_cubemap }",
+            )
+            .unwrap();
+        }
+        for fields in [
+            vec![("angles", "0 90 0")],
+            vec![("angles", "bad")],
+            vec![("angles", "0 0 0"), ("AnGlEs", "0 90 0")],
+        ] {
+            let (mut vmf, _, model) = model_source();
+            let owner = vmf
+                .entities
+                .iter_mut()
+                .find(|entity| entity.id == model)
+                .unwrap();
+            owner.properties.0.extend(
+                fields
+                    .iter()
+                    .map(|&(key, value)| (key.into(), value.into())),
+            );
+            let sides: Vec<_> = owner.solids[0].sides.iter().map(|side| side.id).collect();
+            let original = vmf.clone();
+            let error =
+                inspect_cubemap_bindings(&vmf, &game, &Default::default(), &Control::default())
+                    .unwrap_err();
+            assert!(error.contains("automatic cubemap assignment"), "{error}");
+            assert!(error.contains(&format!("entity:{model}")), "{error}");
+            assert!(
+                sides
+                    .iter()
+                    .any(|side| error.contains(&format!("side:{side}"))),
+                "{error}"
+            );
+            for lighting in [LightingMode::DirectLdr, LightingMode::DirectLdrHdr] {
+                let output = compile_with_context_controlled(
+                    &vmf,
+                    &game,
+                    Options {
+                        lighting,
+                        generate_reflections: true,
+                        ..Default::default()
+                    },
+                    Some(&CompileContext::new("reflections").unwrap()),
+                    &Control::default(),
+                );
+                assert!(output.bsp.is_none());
+                assert!(
+                    output.report.diagnostics.iter().any(|diagnostic| {
+                        diagnostic.level == crate::Level::Error
+                            && diagnostic.message.contains("automatic cubemap assignment")
+                            && diagnostic.message.contains(&format!("entity:{model}"))
+                            && sides
+                                .iter()
+                                .any(|side| diagnostic.message.contains(&format!("side:{side}")))
+                    }),
+                    "{lighting:?} {fields:?}: {:?}",
+                    output.report
+                );
+            }
+            assert_eq!(vmf, original);
+        }
+    }
+}
+
+#[test]
+fn rotated_models_keep_manual_and_nonreflective_binding_semantics() {
+    for manual in [false, true] {
+        let (directory, game) = game();
+        let (mut vmf, helpers, model) = model_source();
+        let owner = vmf
+            .entities
+            .iter_mut()
+            .find(|entity| entity.id == model)
+            .unwrap();
+        owner.properties.set("angles", "20 35 10");
+        let sides: Vec<_> = owner.solids[0].sides.iter().map(|side| side.id).collect();
+        if !manual {
+            std::fs::write(
+                directory.path().join("materials/dev/nonreflective.vmt"),
+                "LightmappedGeneric { $surfaceprop concrete }",
+            )
+            .unwrap();
+            for side in &mut owner.solids[0].sides {
+                side.material = "dev/nonreflective".into();
+            }
+        }
+        if manual {
+            vmf.entities
+                .iter_mut()
+                .find(|entity| entity.id == helpers[0])
+                .unwrap()
+                .properties
+                .set(
+                    "sides",
+                    sides
+                        .iter()
+                        .map(u32::to_string)
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                );
+        }
+        let original = vmf.clone();
+        let report = inspect_cubemap_bindings(
+            &vmf,
+            &game,
+            &CubemapBindingQuery {
+                limit: 1024,
+                ..Default::default()
+            },
+            &Control::default(),
+        )
+        .unwrap();
+        for side in &sides {
+            let assignment = report
+                .assignments
+                .iter()
+                .find(|assignment| assignment.face_id == *side);
+            if manual {
+                let assignment = assignment.unwrap();
+                assert!(assignment.manual);
+                assert_eq!(assignment.helper_id, helpers[0]);
+            } else {
+                assert!(assignment.is_none());
+            }
+        }
+        let output = compile_with_context_controlled(
+            &vmf,
+            &game,
+            Options {
+                lighting: LightingMode::DirectLdr,
+                generate_reflections: true,
+                ..Default::default()
+            },
+            Some(&CompileContext::new("reflections").unwrap()),
+            &Control::default(),
+        );
+        assert!(!output.report.has_errors(), "{:?}", output.report);
+        assert!(output.bsp.is_some());
+        assert_eq!(vmf, original);
+    }
+}
+
 #[test]
 fn verified_black_captures_merge_only_pak_and_rebase_only_registered_paths() {
     let (_directory, game) = game();

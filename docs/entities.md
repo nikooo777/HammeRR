@@ -478,7 +478,7 @@ shadows, targets, parent movement or runtime enabled state.
 
 Select world brushes and click **Tie to entity…** to turn them into a brush entity, such as a door. **Move to world** turns a brush entity back into world brushes.
 
-To set a brush entity's pivot (for doors and rotating brushes), see [brush entity pivots](compile-and-play.md#brush-entities-and-pivots).
+To set a brush entity's pivot (for doors and rotating brushes), see [brush entity pivots](compile-and-play.md#brush-entities-and-pivots). For baked initial `func_brush` orientation, see [Initial brush-model rotation](compile-and-play.md#initial-brush-model-rotation).
 
 ## Connections (inputs and outputs)
 

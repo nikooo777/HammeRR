@@ -542,11 +542,27 @@ python3 -B scripts/validate_light_styles.py --output /tmp/hammerr-styles-check
 python3 -B scripts/validate_model_smoothing.py --output /tmp/hammerr-model-smoothing-check
 python3 -B scripts/validate_light_culling.py --output /tmp/hammerr-light-culling-check
 python3 -B scripts/validate_bump_lighting.py --output /tmp/hammerr-bump-check
+python3 -B scripts/validate_bump_suppression.py --output target/validation/bump-suppression
+python3 -B scripts/validate_brush_model_poses.py --output target/validation/brush-model-poses
+python3 -B scripts/validate_brush_model_rotations.py --binary target/debug/hammerr-headless --output target/validation/brush-model-rotations
 python3 -B scripts/validate_physics_surfaces.py --output /tmp/hammerr-physics-surfaces-check
 python3 -B scripts/validate_terrain_creation.py --output /tmp/hammerr-terrain-creation-check
 ```
 
 `direct_lighting` covers legacy and percentage-distance point and spotlight falloff, including hard fades. `direct_sky` covers sun and ambient visibility, opaque occlusion, shared sampling settings and compiled ambient-cube records and counters. `terrain` covers power-2/3/4 lightmaps and matching full-edge neighbors. `terrain_seams` checks rotated curved seams, hidden-neighbor exclusion, exact foreground/background output and unchanged native geometry/physics. `terrain_normals` checks that baking and viewport shading use the same smooth patch normals while preserving collision geometry.
+
+`bump_suppression` checks the three canonical shader families across ordinary, bumped, explicit-zero and suppressed material profiles through both compile paths. It decodes LDR/HDR styles, base samples, averages, map counts and counters on world/detail/model/curved-terrain receivers, compares ordinary/suppressed and absent/zero whole BSPs, and preserves source/history. Unsupported provided suppression values exercise paired atomic refusals. It does not test installed shader appearance or general integer coercion.
+
+`brush_model_poses` checks actual receiver-only pose admission through foreground/background compilation in both lit modes, exact-zero non-entity payloads, entity diagnostics and prior-output/source/selection/history preservation. It includes actual mounted trigger materials and paired Fullbright controls. Compiler regressions cover hidden/nodraw models, malformed fields, finite bounds, underflow and ambiguous aliases. It runs headlessly without native game validation.
+
+`brush_model_rotations` requires installed CS:S for private engine-physics compilation; `--game-dir` overrides the default Steam path. It launches no game. It freezes independent literal matrices, raw LDR/HDR sample predictions and wrong-pose counterexamples before compilation, checks all directional maps, shared baked inspection, local geometry/PHY and unrelated world samples, both compile paths and atomic refusals. Repeat with `--binary target/debug/editor` and a fresh output directory for desktop entry-point coverage. Compiler-only tests need no installed game:
+
+```sh
+cargo test -j 8 -p compiler --test brush_model_rotations --test brush_model_lighting
+cargo test -j 8 -p compiler --lib brush_model_pose
+```
+
+The compiler tests cover literal cardinal/mixed rotations, native key/payload bounds, emitted-origin precision, smoothing, directional handedness, geometric ray bias, compound self shadows, independent pretransformed bounce references, both channels, styles and unculled output parity. These checks do not establish arbitrary parent graphs or native float-boundary parity.
 
 `light_culling` checks shared counts and exact foreground/background builds in connected/disconnected rooms with finite-range named lights and fractional brush-model pivots. Compiler reference regressions compare complete BSP bytes with culling disabled, including terrain, styles and both visibility modes.
 

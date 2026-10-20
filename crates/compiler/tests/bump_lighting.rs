@@ -351,3 +351,362 @@ fn sky_directional_maps_keep_the_same_base_and_bake_sun_and_ambient() {
         assert!(color.x > 0.0 && color.z > 0.0 && color.y == 0.0, "{color}");
     }
 }
+
+fn suppression_scene() -> Document {
+    let mut source = common::room();
+    for side in source
+        .world
+        .solids
+        .iter_mut()
+        .flat_map(|solid| &mut solid.sides)
+    {
+        side.lightmap_scale = 64;
+    }
+    let mut document = Document::new(source);
+    document
+        .edit("normal-map suppression receivers", |tx| {
+            for (mins, maxs, classname, origin) in [
+                (
+                    [-192.0, -128.0, 8.0],
+                    [-160.0, -96.0, 24.0],
+                    "func_detail",
+                    None,
+                ),
+                (
+                    [-32.0, -32.0, 8.0],
+                    [32.0, 32.0, 24.0],
+                    "func_brush",
+                    Some("101.5 -67.25 32.125"),
+                ),
+            ] {
+                let ObjectId::Solid(id) = edit::create_block(
+                    tx,
+                    DVec3::from_array(mins),
+                    DVec3::from_array(maxs),
+                    "dev/dev_measuregeneric01",
+                )?
+                else {
+                    unreachable!()
+                };
+                for side in &mut tx.solid_mut(id)?.sides {
+                    side.lightmap_scale = 64;
+                }
+                let properties =
+                    origin.map_or_else(Vec::new, |value| vec![("origin".into(), value.into())]);
+                edit::tie_to_entity(tx, &[id], classname, &properties)?;
+            }
+            let ObjectId::Solid(id) = edit::create_block(
+                tx,
+                DVec3::new(64.0, 64.0, 0.0),
+                DVec3::new(192.0, 192.0, 16.0),
+                "dev/dev_measuregeneric01",
+            )?
+            else {
+                unreachable!()
+            };
+            let solid = tx.solid_mut(id)?;
+            for side in &mut solid.sides {
+                side.lightmap_scale = 64;
+            }
+            let geometry = BrushGeometry::from_solid(solid).unwrap();
+            let top = geometry
+                .faces
+                .iter()
+                .find(|face| face.plane.normal.z > 0.99)
+                .unwrap();
+            solid.sides[top.side].displacement = Some(DispInfo {
+                power: 2,
+                start_position: top.vertices[0],
+                flags: Some(0),
+                elevation: 0.0,
+                subdivided: false,
+                normals: Some(vec![vec![DVec3::Z; 5]; 5]),
+                distances: Some(
+                    (0..5)
+                        .map(|row| {
+                            (0..5)
+                                .map(|column| {
+                                    ((row - 2_i32).pow(2) + (column - 2_i32).pow(2)) as f64
+                                })
+                                .collect()
+                        })
+                        .collect(),
+                ),
+                offsets: None,
+                offset_normals: None,
+                alphas: None,
+                triangle_tags: None,
+                allowed_verts: None,
+                extra_properties: Default::default(),
+                extra: Vec::new(),
+            });
+            edit::create_block(
+                tx,
+                DVec3::new(128.0, -128.0, 0.0),
+                DVec3::new(160.0, -96.0, 16.0),
+                "dev/control",
+            )?;
+            for (classname, origin, properties) in [
+                (
+                    "light",
+                    [-96.0, 0.0, 180.0],
+                    vec![
+                        ("_light", "255 0 0 100"),
+                        ("_lightHDR", "0 0 255 200"),
+                        ("_constant_attn", "1"),
+                        ("_quadratic_attn", "0"),
+                    ],
+                ),
+                (
+                    "light_spot",
+                    [96.0, 0.0, 180.0],
+                    vec![
+                        ("targetname", "suppression_style"),
+                        ("angles", "-90 0 0"),
+                        ("_cone", "60"),
+                        ("_cone2", "85"),
+                        ("_light", "0 255 0 60"),
+                        ("_lightHDR", "255 0 0 120"),
+                        ("_constant_attn", "1"),
+                        ("_quadratic_attn", "0"),
+                    ],
+                ),
+            ] {
+                let properties = properties
+                    .into_iter()
+                    .map(|(key, value)| (key.into(), value.into()))
+                    .collect::<Vec<_>>();
+                edit::create_entity(
+                    tx,
+                    classname,
+                    Some(DVec3::from_array(origin)),
+                    &properties,
+                    Vec::new(),
+                )?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    document
+}
+
+fn suppression_build(
+    document: &Document,
+    shader: &str,
+    profile: &str,
+    bounces: u8,
+) -> compiler::Output {
+    let (directory, game) = game(false);
+    let normal = if profile == "ordinary" {
+        ""
+    } else {
+        "$bumpmap keep/primary $bumpmap2 keep/secondary"
+    };
+    let suppression = match profile {
+        "zero" => "$nodiffusebumplighting 0",
+        "suppressed" => "$nodiffusebumplighting 1",
+        _ => "",
+    };
+    std::fs::write(
+        directory
+            .path()
+            .join("materials/dev/dev_measuregeneric01.vmt"),
+        format!("{shader} {{ {normal} {suppression} }}"),
+    )
+    .unwrap();
+    std::fs::write(
+        directory.path().join("materials/dev/control.vmt"),
+        "LightmappedGeneric {}",
+    )
+    .unwrap();
+    let output = compiler::compile_with_options(
+        document.vmf(),
+        &game,
+        Options {
+            lighting: LightingMode::DirectLdrHdr,
+            bounces,
+            sky_quality: SkyQuality::Fast,
+            ..Default::default()
+        },
+    );
+    assert!(
+        !output.report.has_errors(),
+        "{shader}/{profile}: {:?}",
+        output.report
+    );
+    output
+}
+
+#[test]
+fn canonical_suppression_shares_world_detail_model_terrain_styles_and_hdr_plans() {
+    let document = suppression_scene();
+    let original = document.vmf().clone();
+    for shader in [
+        "LightmappedGeneric",
+        "WorldVertexTransition",
+        "WorldTwoTextureBlend",
+    ] {
+        for bounces in [0, 1] {
+            let ordinary = suppression_build(&document, shader, "ordinary", bounces);
+            let enabled = suppression_build(&document, shader, "enabled", bounces);
+            let zero = suppression_build(&document, shader, "zero", bounces);
+            let suppressed = suppression_build(&document, shader, "suppressed", bounces);
+            let plain = ordinary.bsp.as_ref().unwrap();
+            let bumped = enabled.bsp.as_ref().unwrap();
+            let disabled = suppressed.bsp.as_ref().unwrap();
+            assert_eq!(disabled.to_bytes(), plain.to_bytes(), "{shader}/{bounces}");
+            assert_eq!(bumped.to_bytes(), zero.bsp.as_ref().unwrap().to_bytes());
+            assert_eq!(suppressed.stats.bump_faces, 0);
+            assert_eq!(suppressed.stats.bump_lightmaps, 0);
+            assert!(enabled.stats.bump_faces > 0 && enabled.stats.bump_lightmaps > 0);
+            assert_eq!(
+                suppressed.stats.lightmap_samples,
+                ordinary.stats.lightmap_samples
+            );
+            assert_eq!(suppressed.stats.lighting_work, ordinary.stats.lighting_work);
+            assert!(suppressed.stats.lighting_work < enabled.stats.lighting_work);
+            assert_eq!(enabled.stats.lighting_work, zero.stats.lighting_work);
+            assert_eq!(suppressed.stats.lit_brush_models, 1);
+            assert_eq!(suppressed.stats.displacements, 1);
+            assert!(suppressed.stats.styled_faces > 0);
+            for (kind, stats) in [
+                (LightingKind::Ldr, None),
+                (LightingKind::Hdr, suppressed.stats.hdr.as_ref()),
+            ] {
+                if let Some(stats) = stats {
+                    assert_eq!(stats.bump_faces, 0);
+                    assert_eq!(stats.bump_lightmaps, 0);
+                    assert!(stats.styled_faces > 0);
+                }
+                let infos = disabled.records::<TexInfo>().unwrap();
+                let bumped_infos = bumped.records::<TexInfo>().unwrap();
+                let faces = disabled.lighting_faces(kind).unwrap();
+                let bumped_faces = bumped.lighting_faces(kind).unwrap();
+                assert_eq!(faces.len(), bumped_faces.len());
+                let world = disabled.records::<Model>().unwrap()[0];
+                let world_faces =
+                    world.first_face as usize..(world.first_face + world.face_count) as usize;
+                let lighting = disabled.lighting(kind).unwrap().unwrap();
+                let bumped_lighting = bumped.lighting(kind).unwrap().unwrap();
+                let mut style_maps = 0;
+                let mut directional = false;
+                let mut terrain = false;
+                let mut detail = false;
+                for (index, (face, bumped_face)) in faces.iter().zip(&bumped_faces).enumerate() {
+                    let info = infos[face.texinfo as usize];
+                    let Some(view) = lighting.face(face, &info).unwrap() else {
+                        continue;
+                    };
+                    let bumped_view = bumped_lighting
+                        .face(bumped_face, &bumped_infos[bumped_face.texinfo as usize])
+                        .unwrap()
+                        .unwrap();
+                    assert_eq!(info.flags & surf::BUMPLIGHT, 0);
+                    assert_eq!(view.maps(), 1);
+                    assert_eq!(view.styles(), bumped_view.styles());
+                    terrain |= face.dispinfo >= 0;
+                    detail |=
+                        world_faces.contains(&index) && face.on_node == 0 && face.dispinfo < 0;
+                    style_maps += view.styles().len();
+                    for style in 0..view.styles().len() {
+                        assert_eq!(view.samples(style, 0), bumped_view.samples(style, 0));
+                        assert_eq!(view.average(style), bumped_view.average(style));
+                        if bumped_view.maps() == 4 {
+                            directional |=
+                                bumped_view.samples(style, 1) != bumped_view.samples(style, 0);
+                        }
+                    }
+                }
+                assert!(terrain && detail && directional);
+                let expected_maps = stats.map_or(suppressed.stats.light_style_maps, |stats| {
+                    stats.light_style_maps
+                });
+                assert_eq!(style_maps, expected_maps);
+            }
+            assert_eq!(document.vmf(), &original);
+        }
+    }
+}
+
+#[test]
+fn unsupported_primary_normal_suppression_fails_atomically_with_material_context() {
+    let (directory, game) = game(true);
+    let mut document = Document::new(common::room());
+    light(&mut document, false);
+    let original = document.vmf().clone();
+    let destination = directory.path().join("retained.bsp");
+    built(&document, &game, 0).write(&destination).unwrap();
+    let retained = std::fs::read(&destination).unwrap();
+    let material = directory
+        .path()
+        .join("materials/dev/dev_measuregeneric01.vmt");
+    for shader in [
+        "LightmappedGeneric",
+        "WorldVertexTransition",
+        "WorldTwoTextureBlend",
+    ] {
+        for value in ["2", "true", "1.0", "", "01", "+1", "-1", "NaN"] {
+            std::fs::write(
+                &material,
+                format!("{shader} {{ $bumpmap keep/primary $nodiffusebumplighting \"{value}\" }}"),
+            )
+            .unwrap();
+            for lighting in [LightingMode::DirectLdr, LightingMode::DirectLdrHdr] {
+                let failed = compiler::compile_with_options(
+                    document.vmf(),
+                    &game,
+                    Options {
+                        lighting,
+                        ..Default::default()
+                    },
+                );
+                assert!(failed.bsp.is_none());
+                assert!(
+                    failed
+                        .report
+                        .diagnostics
+                        .iter()
+                        .any(|diagnostic| diagnostic.level == compiler::Level::Error
+                            && diagnostic
+                                .message
+                                .contains("materials/dev/dev_measuregeneric01.vmt")
+                            && diagnostic.message.contains("$nodiffusebumplighting")
+                            && diagnostic.message.contains("literal 0 or 1")),
+                    "{:?}",
+                    failed.report
+                );
+                assert!(!failed.write(&destination).unwrap());
+                assert_eq!(std::fs::read(&destination).unwrap(), retained);
+                assert_eq!(document.vmf(), &original);
+            }
+        }
+    }
+    std::fs::write(
+        directory.path().join("materials/dev/base.vmt"),
+        "WorldVertexTransition { $bumpmap keep/primary $nodiffusebumplighting 0 }",
+    )
+    .unwrap();
+    std::fs::write(
+        &material,
+        "Patch { include materials/dev/base.vmt replace { $nodiffusebumplighting 2 } }",
+    )
+    .unwrap();
+    let failed = compiler::compile_with_options(
+        document.vmf(),
+        &game,
+        Options {
+            lighting: LightingMode::DirectLdrHdr,
+            ..Default::default()
+        },
+    );
+    assert!(failed.bsp.is_none());
+    assert!(failed.report.diagnostics.iter().any(|diagnostic| {
+        diagnostic
+            .message
+            .contains("materials/dev/dev_measuregeneric01.vmt")
+            && diagnostic.message.contains("literal 0 or 1")
+    }));
+    assert!(!failed.write(&destination).unwrap());
+    assert_eq!(std::fs::read(&destination).unwrap(), retained);
+    assert_eq!(document.vmf(), &original);
+}

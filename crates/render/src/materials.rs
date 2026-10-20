@@ -80,12 +80,20 @@ impl MaterialInfo {
         let mut base = None;
         let mut display_texture = None;
         if let Some(material) = &material {
-            for path in material.editor_textures() {
+            for path in material
+                .editor_textures()
+                .map_err(|error| format!("Material {name}: {error}"))?
+            {
                 if let Some(texture) = read_vtf(fs, &path, limits.map(|limits| limits[1]))? {
                     base = Some(texture);
                     display_texture = Some(path);
                     break;
                 }
+            }
+            if base.is_none() && material.primary_base_texture_key()? == Some("$albedo") {
+                return Err(format!(
+                    "Material {name}: selected $albedo display texture was not found"
+                ));
             }
         }
         let blend = material
@@ -610,3 +618,7 @@ impl MaterialLibrary {
         self.materials.is_empty()
     }
 }
+
+#[cfg(test)]
+#[path = "materials/tests.rs"]
+mod tests;

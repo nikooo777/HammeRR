@@ -1195,6 +1195,22 @@ same decoded preview image. Metadata includes `channel`, original decoded
 frame and face. Missing assets stay unavailable; errors return no replacement
 image. The current-source inspector is separate from cached preview provenance.
 
+The resolved source report includes `$albedo`. Shared diffuse selection chooses
+it on LightmappedGeneric, WorldVertexTransition and WorldTwoTextureBlend when
+primary bump/base/albedo are declared and suppression is absent or literal `0`;
+literal `1` retains the base. `preview_material`, viewport materials and atlas
+inspection share the selected image/path/dimensions; `%tooltexture` retains
+intentional editor priority, and atlas fitting rejects a differing display image.
+Missing/corrupt selected albedo never yields the unused base as a successful
+preview. Use `reload_material_assets` after external file changes.
+
+`compile_map` / `start_compile` measure the selected albedo header without
+reading the normal texture. Active albedo rejects `%tooltexture`,
+`%notooltexture` and `$reflectivity` declarations until their separate metric
+rules are supported. Blank active inputs, noncanonical suppression and missing/
+invalid selected assets return explicit material diagnostics and preserve the
+previous BSP. These changes add no tool or compiler setting.
+
 `get_entity_definitions` reports loaded classes, sources, load error and optional
 `map_size: {authored:[first,second], bounds:[minimum,maximum], source, line}`.
 Load/search responses and `get_map_info.definitions` include the same metadata.

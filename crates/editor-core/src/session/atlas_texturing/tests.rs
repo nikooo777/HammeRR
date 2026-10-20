@@ -489,3 +489,152 @@ fn atlas_thumbnail_bounds_nomip_textures_without_changing_original_uv_dimensions
         &[254, 254, 80, 255]
     );
 }
+
+fn effective_atlas_assets(directory: &std::path::Path, extra: &str) {
+    let mut bytes = std::fs::read(directory.join("materials/test/checker.vtf")).unwrap();
+    bytes.truncate(80);
+    bytes[16..18].copy_from_slice(&128u16.to_le_bytes());
+    bytes[18..20].copy_from_slice(&64u16.to_le_bytes());
+    for y in 0..64 {
+        for x in 0..128 {
+            bytes.extend_from_slice(&[x as u8, y as u8, 177, 255]);
+        }
+    }
+    std::fs::write(directory.join("materials/test/albedo.vtf"), bytes).unwrap();
+    std::fs::write(directory.join("materials/test/effective.vmt"), format!("LightmappedGeneric {{ $basetexture test/checker $bumpmap test/missing_normal $albedo test/albedo {extra} }}")).unwrap();
+}
+
+#[test]
+fn atlas_names_and_fits_effective_albedo_then_rejects_stale_selection_after_reload() {
+    let (directory, mut session, face) = fixture(Actor::Agent);
+    effective_atlas_assets(directory.path(), "");
+    let original = session.document().vmf().clone();
+    let history = session.history_snapshot();
+    let atlas = session.inspect_material_atlas("test/effective").unwrap();
+    assert_eq!(atlas.report["texture"], "materials/test/albedo.vtf");
+    assert_eq!((atlas.image.width, atlas.image.height), (128, 64));
+    assert_eq!(&atlas.image.pixels[..4], &[0, 0, 177, 255]);
+    assert_eq!(
+        &atlas.image.pixels[atlas.image.pixels.len() - 4..],
+        &[127, 63, 177, 255]
+    );
+    let snapshot = atlas.report["snapshot"].as_str().unwrap().to_owned();
+    let rectangle = Rectangle {
+        x: 80,
+        y: 40,
+        width: 32,
+        height: 16,
+    };
+    session
+        .preview_atlas_fit(
+            Actor::Agent,
+            &[face],
+            "test/effective",
+            rectangle,
+            &snapshot,
+            None,
+        )
+        .unwrap();
+    let (low, high) = bounds(&session, face, true);
+    assert!(low.abs_diff_eq(DVec2::new(80.0, 40.0), 1e-8));
+    assert!(high.abs_diff_eq(DVec2::new(112.0, 56.0), 1e-8));
+    assert_eq!(
+        session
+            .preview_side(face)
+            .unwrap()
+            .material
+            .to_ascii_lowercase(),
+        "test/effective"
+    );
+    assert_eq!(session.document().vmf(), &original);
+    assert_eq!(session.history_snapshot(), history);
+    let token = session.face_preview_token();
+    let preview = session.render_document().vmf().clone();
+    effective_atlas_assets(directory.path(), "$nodiffusebumplighting 1");
+    assert!(
+        session
+            .inspect_material_atlas("test/effective")
+            .unwrap_err()
+            .contains("Reload material assets")
+    );
+    assert!(session.commit_face_preview(Actor::Agent).is_err());
+    assert_eq!(session.render_document().vmf(), &preview);
+    session
+        .cancel_owned_face_preview(Actor::Agent, token)
+        .unwrap();
+    assert_eq!(session.reload_material_assets(Actor::Agent).failed, 0);
+    let suppressed = session.inspect_material_atlas("test/effective").unwrap();
+    assert_eq!(suppressed.report["texture"], "materials/test/checker.vtf");
+    assert_eq!((suppressed.image.width, suppressed.image.height), (64, 32));
+    assert_ne!(suppressed.report["snapshot"], snapshot);
+    assert!(
+        session
+            .preview_atlas_fit(
+                Actor::Agent,
+                &[face],
+                "test/effective",
+                rectangle,
+                &snapshot,
+                None
+            )
+            .is_err()
+    );
+    assert!(!session.has_face_preview());
+    assert_eq!(session.document().vmf(), &original);
+    assert_eq!(session.history_snapshot(), history);
+}
+
+#[test]
+fn atlas_effective_selection_keeps_tool_identity_and_rejects_missing_or_bad_albedo_atomically() {
+    let (directory, mut session, face) = fixture(Actor::Agent);
+    effective_atlas_assets(directory.path(), "%tooltexture test/checker");
+    assert!(
+        session
+            .inspect_material_atlas("test/effective")
+            .unwrap_err()
+            .contains("%tooltexture differs")
+    );
+    effective_atlas_assets(directory.path(), "%tooltexture test/albedo");
+    let accepted = session.inspect_material_atlas("test/effective").unwrap();
+    assert_eq!(accepted.report["texture"], "materials/test/albedo.vtf");
+    let snapshot = accepted.report["snapshot"].as_str().unwrap().to_owned();
+    session
+        .preview_atlas_fit(
+            Actor::Agent,
+            &[face],
+            "test/effective",
+            region(),
+            &snapshot,
+            None,
+        )
+        .unwrap();
+    let original = session.document().vmf().clone();
+    let preview = session.render_document().vmf().clone();
+    let history = session.history_snapshot();
+    let token = session.face_preview_token();
+    std::fs::write(
+        directory.path().join("materials/test/corrupt.vtf"),
+        b"malformed VTF",
+    )
+    .unwrap();
+    for (name, albedo) in [
+        ("missing", "test/missing_albedo"),
+        ("corrupt", "test/corrupt"),
+        ("blank", " "),
+    ] {
+        std::fs::write(directory.path().join(format!("materials/test/{name}.vmt")), format!("LightmappedGeneric {{ $basetexture test/checker $bumpmap test/missing_normal $albedo \"{albedo}\" }}")).unwrap();
+        assert!(
+            session
+                .inspect_material_atlas(&format!("test/{name}"))
+                .is_err()
+        );
+        assert!(session.materials.find(&format!("test/{name}")).is_none());
+        assert_eq!(session.face_preview_token(), token);
+        assert_eq!(session.render_document().vmf(), &preview);
+        assert_eq!(session.document().vmf(), &original);
+        assert_eq!(session.history_snapshot(), history);
+    }
+    session.commit_face_preview(Actor::Agent).unwrap();
+    assert_eq!(session.document().vmf(), &preview);
+    assert!(directory.path().join("materials/test/checker.vtf").exists());
+}

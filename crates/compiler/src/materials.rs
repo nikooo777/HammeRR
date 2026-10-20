@@ -286,9 +286,25 @@ impl<'a> Materials<'a> {
     }
 
     fn measure(&mut self, material: &Material, info: &mut MaterialInfo) -> Result<(), String> {
-        let Some(texture) = material.get("$basetexture") else {
+        let material_path = vmt::material_path(&info.name);
+        let Some(key) = material
+            .primary_base_texture_key()
+            .map_err(|error| format!("Material {material_path}: {error}"))?
+        else {
             return Ok(());
         };
+        if key == "$albedo"
+            && let Some(parameter) = ["%tooltexture", "%notooltexture", "$reflectivity"]
+                .into_iter()
+                .find(|parameter| material.get(parameter).is_some())
+        {
+            return Err(format!(
+                "Material {material_path}: active $albedo metrics do not support {parameter}"
+            ));
+        }
+        let texture = material
+            .get(key)
+            .ok_or_else(|| format!("Material {material_path}: selected {key} is unavailable"))?;
         let path = vmt::texture_path(texture);
         let bytes = match &mut self.prop_lighting_sources {
             Some((PropSourceMode::WithReflectivity, sources)) => {
@@ -298,6 +314,11 @@ impl<'a> Materials<'a> {
         }
         .map_err(|error| format!("{path}: {error}"))?;
         let Some(bytes) = bytes else {
+            if key == "$albedo" {
+                return Err(format!(
+                    "Selected $albedo texture {path} was not found; dimensions and reflectivity cannot be measured"
+                ));
+            }
             info.warnings.push(format!("Base texture {path} was not found; dimensions and reflectivity could not be measured"));
             return Ok(());
         };

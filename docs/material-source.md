@@ -38,7 +38,7 @@ present. Insert runs before replace regardless of section order in the file.
 
 Shader and texture names are declarations. Inspection does not establish that a
 shader is implemented, that its referenced textures exist, or that the material
-renders correctly. Twelve common texture parameters are recognized; arbitrary
+renders correctly. Thirteen common texture parameters, including `$albedo`, are recognized; arbitrary
 shader parameters and conditional fallback blocks are not interpreted. Source
 inspection reads current files directly; cached previews retain their existing
 behavior and update through **Reload material assets**.

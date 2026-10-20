@@ -63,16 +63,16 @@ fn atlas_texture(material: &Material) -> Result<String, String> {
         return Err("Atlas fit requires an identity base texture transform".into());
     }
     let base = material
-        .get("$basetexture")
+        .primary_base_texture()?
         .filter(|value| !value.trim().is_empty())
-        .ok_or("Atlas fit needs the material's actual $basetexture")?;
+        .ok_or("Atlas fit needs the material's effective primary base texture")?;
     let base = texture_reference(base)?;
     if let Some(display) = material
         .get("%tooltexture")
         .filter(|value| !value.trim().is_empty())
         && texture_reference(display)? != base
     {
-        return Err("The material's %tooltexture differs from $basetexture; atlas fit cannot use that substituted editor image".into());
+        return Err("The material's %tooltexture differs from its effective primary base; atlas fit cannot use that substituted editor image".into());
     }
     Ok(base)
 }
@@ -139,6 +139,9 @@ impl Session {
         }
         if let Some(error) = &cached.error {
             return Err(error.clone());
+        }
+        if cached.display_texture.as_deref() != Some(texture.as_str()) {
+            return Err("The cached editor image differs from the effective atlas texture. Reload material assets, then inspect the atlas again.".into());
         }
         let base = cached
             .base

@@ -32,6 +32,27 @@ to retry. A failed scan is not saved as an empty catalog.
 
 ![Material thumbnails, categories and favorites](images/material-browser.png)
 
+### Effective diffuse image
+
+Preview and fit the diffuse image selected by the material's resolved declaration.
+
+1. In **Browse materials…**, select the material and click **Source…**. Read
+   `$basetexture`, `$albedo` and `$bumpmap` under **Resolved shader declaration**.
+2. Click **Close** and review the image, then **Use material**. On
+   LightmappedGeneric, WorldVertexTransition and WorldTwoTextureBlend, a primary
+   bump/base/albedo declaration with absent or literal `0`
+   `$nodiffusebumplighting` uses the albedo image. Literal `1` keeps the base.
+3. After changing these files, use **Reload material assets** before fitting
+   faces or inspecting an atlas. The displayed source, dimensions and fitted
+   pixels follow the same selection.
+
+Limits: a valid `%tooltexture` remains an intentional editor display override.
+Missing or corrupt selected albedo never substitutes the unused base image.
+Blank active declarations and unsupported suppression spellings report errors.
+This selects an image; it does not simulate the complete native shader.
+[Compiled albedo metrics](compile-and-play.md#normal-map-lighting)
+have separate limits for tool overrides and explicit reflectivity.
+
 ### Keep favorites in sync
 
 1. Select a material and click **Add favorite** or **Remove favorite**.

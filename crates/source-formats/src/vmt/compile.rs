@@ -2,11 +2,15 @@ use crate::bsp::{contents, surf};
 
 use super::Material;
 
-fn diffuse_bump_parameter(material: &Material) -> Option<&str> {
-    if matches!(
-        material.shader.as_str(),
+pub(super) fn is_lightmapped_shader(shader: &str) -> bool {
+    matches!(
+        shader,
         "lightmappedgeneric" | "worldvertextransition" | "worldtwotextureblend"
-    ) {
+    )
+}
+
+fn diffuse_bump_parameter(material: &Material) -> Option<&str> {
+    if is_lightmapped_shader(&material.shader) {
         material.get("$nodiffusebumplighting").map(str::trim)
     } else {
         None

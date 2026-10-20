@@ -236,7 +236,13 @@ fn materials_resolve_to_decodable_textures() {
                 continue;
             }
         };
-        let candidates = material.editor_textures();
+        let candidates = match material.editor_textures() {
+            Ok(candidates) => candidates,
+            Err(error) => {
+                problem(format!("texture selection: {error}"));
+                continue;
+            }
+        };
         if candidates.is_empty() {
             continue;
         }

@@ -301,3 +301,184 @@ fn malformed_nonfinite_and_aggregate_overbudget_textures_fail_without_default_fa
     assert!(error.contains("byte read limit"), "{error}");
     assert_eq!(materials.iter().count(), 0);
 }
+
+fn albedo_fixture() -> (tempfile::TempDir, GameFs) {
+    let (directory, game) = fixture();
+    for name in ["albedo", "albedo_second"] {
+        std::fs::write(
+            directory
+                .path()
+                .join(format!("materials/reflectivity/{name}.vmt")),
+            "LightmappedGeneric { $basetexture reflectivity/unused $bumpmap reflectivity/missing_normal $albedo reflectivity/chosen }",
+        )
+        .unwrap();
+    }
+    (directory, game)
+}
+
+#[test]
+fn active_albedo_tracks_original_selected_bytes_and_ignores_unused_base_and_normal() {
+    for change_header in [false, true] {
+        let (directory, game) = albedo_fixture();
+        let mut materials = Materials::new(&game);
+        materials
+            .track_prop_lighting_sources(PropSourceMode::WithReflectivity)
+            .unwrap();
+        let index = materials.load("reflectivity/albedo").unwrap();
+        assert_eq!(
+            materials.get(index).texture_metrics().unwrap().reflectivity,
+            [0.125, 0.25, 0.75]
+        );
+        materials.load("reflectivity/albedo_second").unwrap();
+        let (sources, missing) = materials.take_prop_lighting_sources().unwrap().into_parts();
+        let selected = sources
+            .iter()
+            .find(|source| source.path == "materials/reflectivity/chosen.vtf")
+            .unwrap();
+        let original = texture([0.125, 0.25, 0.75]);
+        assert_eq!(selected.bytes, original.len());
+        assert_eq!(selected.sha256, crate::asset_sources::hash(&original));
+        assert_eq!(
+            sources
+                .iter()
+                .filter(|source| source.path.ends_with(".vtf"))
+                .count(),
+            1
+        );
+        assert!(missing.is_empty());
+        let captured = guard(&sources, &missing, &game).unwrap();
+        overwrite(
+            &directory.path().join("materials/reflectivity/unused.vtf"),
+            &texture([0.875; 3]),
+        );
+        captured.verify_metadata().unwrap();
+        guard(&sources, &missing, &game).unwrap();
+
+        let mut replacement = original;
+        if change_header {
+            replacement[32..36].copy_from_slice(&0.875_f32.to_le_bytes());
+        } else {
+            replacement[83] ^= 0xff;
+        }
+        overwrite(
+            &directory.path().join("materials/reflectivity/chosen.vtf"),
+            &replacement,
+        );
+        assert!(captured.verify_metadata().is_err());
+        assert!(guard(&sources, &missing, &game).is_err());
+    }
+}
+
+#[test]
+fn active_albedo_change_during_baking_is_rejected_without_replacing_metrics() {
+    let (directory, game) = albedo_fixture();
+    let mut materials = Materials::new(&game);
+    materials
+        .track_prop_lighting_sources(PropSourceMode::WithReflectivity)
+        .unwrap();
+    let index = materials.load("reflectivity/albedo").unwrap();
+    let mut changed = texture([0.125, 0.25, 0.75]);
+    changed[83] ^= 0xff;
+    overwrite(
+        &directory.path().join("materials/reflectivity/chosen.vtf"),
+        &changed,
+    );
+    let error = materials.load("reflectivity/albedo_second").unwrap_err();
+    assert!(
+        error.contains("chosen.vtf changed during baking"),
+        "{error}"
+    );
+    assert_eq!(materials.iter().count(), 1);
+    assert_eq!(
+        materials.get(index).texture_metrics().unwrap().reflectivity,
+        [0.125, 0.25, 0.75]
+    );
+}
+
+#[test]
+fn missing_active_albedo_fails_and_retains_its_negative_source_observation() {
+    let (directory, game) = albedo_fixture();
+    std::fs::write(
+        directory.path().join("materials/reflectivity/albedo.vmt"),
+        "LightmappedGeneric { $basetexture reflectivity/chosen $bumpmap reflectivity/missing_normal $albedo reflectivity/chosen }",
+    )
+    .unwrap();
+    let path = directory.path().join("materials/reflectivity/chosen.vtf");
+    std::fs::remove_file(&path).unwrap();
+    let mut materials = Materials::new(&game);
+    materials
+        .track_prop_lighting_sources(PropSourceMode::WithReflectivity)
+        .unwrap();
+    let error = materials.load("reflectivity/albedo").unwrap_err();
+    assert!(
+        error.contains("$albedo") && error.contains("chosen.vtf was not found"),
+        "{error}"
+    );
+    assert_eq!(materials.iter().count(), 0);
+    let (sources, missing) = materials.take_prop_lighting_sources().unwrap().into_parts();
+    assert_eq!(missing, ["materials/reflectivity/chosen.vtf"]);
+    assert!(sources.iter().all(|source| source.path.ends_with(".vmt")));
+    let captured = guard(&sources, &missing, &game).unwrap();
+    let mut direct = Materials::new(&game);
+    direct
+        .track_prop_lighting_sources(PropSourceMode::Direct)
+        .unwrap();
+    assert!(direct.load("reflectivity/albedo").is_err());
+    let (direct_sources, direct_missing) =
+        direct.take_prop_lighting_sources().unwrap().into_parts();
+    assert!(
+        direct_sources
+            .iter()
+            .all(|source| source.path.ends_with(".vmt"))
+    );
+    assert!(direct_missing.is_empty());
+    std::fs::write(&path, texture([0.125, 0.25, 0.75])).unwrap();
+    assert!(captured.verify_metadata().is_err());
+    assert!(guard(&sources, &missing, &game).is_err());
+}
+
+#[test]
+fn active_albedo_direct_mode_measures_without_tracking_texture_bytes() {
+    let (directory, game) = albedo_fixture();
+    let mut ordinary = Materials::new(&game);
+    let expected = ordinary.load("reflectivity/albedo").unwrap();
+    let mut direct = Materials::new(&game);
+    direct
+        .track_prop_lighting_sources(PropSourceMode::Direct)
+        .unwrap();
+    let actual = direct.load("reflectivity/albedo").unwrap();
+    assert_eq!(direct.get(actual), ordinary.get(expected));
+    let (sources, missing) = direct.take_prop_lighting_sources().unwrap().into_parts();
+    assert!(sources.iter().all(|source| source.path.ends_with(".vmt")));
+    assert!(missing.is_empty());
+    let captured = guard(&sources, &missing, &game).unwrap();
+    overwrite(
+        &directory.path().join("materials/reflectivity/chosen.vtf"),
+        &texture([0.875; 3]),
+    );
+    captured.verify_metadata().unwrap();
+    guard(&sources, &missing, &game).unwrap();
+}
+
+#[test]
+fn active_albedo_failures_never_publish_metrics_but_geometry_remains_deferred() {
+    for bad in [
+        None,
+        Some(b"malformed".to_vec()),
+        Some(texture([f32::INFINITY, 0.5, 0.5])),
+    ] {
+        let (directory, game) = albedo_fixture();
+        let path = directory.path().join("materials/reflectivity/chosen.vtf");
+        match bad {
+            Some(bytes) => std::fs::write(&path, bytes).unwrap(),
+            None => std::fs::remove_file(&path).unwrap(),
+        }
+        let mut materials = Materials::new(&game);
+        assert!(materials.load("reflectivity/albedo").is_err());
+        assert_eq!(materials.iter().count(), 0);
+        let mut geometry = Materials::with_requirements(&game, Requirements::GeometrySemantics);
+        let index = geometry.load("reflectivity/albedo").unwrap();
+        assert_eq!(geometry.get(index).metrics, MetricState::Deferred);
+        assert!(geometry.get(index).texture_metrics().is_err());
+    }
+}

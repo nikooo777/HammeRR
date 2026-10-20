@@ -300,7 +300,7 @@ and release builds retain full UI optimization.
 The optional `test-support` feature exposes shared fixtures for desktop tests. It is not needed to run either program. `editor --headless` remains compatible with the standalone target.
 
 On the development desktop, use eight Cargo jobs and one pipeline. Keep total
-HammeRR-related RAM within 16 GiB, including tools and RAM-backed artifacts.
+HammeRR-related RAM within 24 GiB, including tools and RAM-backed artifacts.
 `/tmp` is tmpfs here; retain completed evidence under `target/validation-archive`
 on disk. Original `/tmp` paths can remain symlinks to verified archived copies.
 
@@ -813,7 +813,7 @@ python3 -B scripts/validate_tonemap_controller.py \
 
 Use fresh absent output directories under `target/`; `/tmp` is RAM-backed on this desktop. The two production MCP paths author a single controller and delayed float connections, check Cancel and protected state, compare foreground/background BSP bytes and verify exact save/reopen restoration. Only two parameter strings may differ between low and high builds; all other compiled bytes must match.
 
-`--runtime` requires the pinned playable engine/client/server, running Steam, Cage, grim and the existing [HDR observer library](#independent-ldr-and-hdr-lighting). It uses three fresh private compositor/game processes with `-insecure`, post-map `sv_lan 1`, no desktop input, and audited configuration/Cloud preservation and owned process cleanup. Keep aggregate project RAM within 16 GiB; a 4 GiB cap is sufficient for this check when the measured baseline leaves room.
+`--runtime` requires the pinned playable engine/client/server, running Steam, Cage, grim and the existing [HDR observer library](#independent-ldr-and-hdr-lighting). It uses three fresh private compositor/game processes with `-insecure`, post-map `sv_lan 1`, no desktop input, and audited configuration/Cloud preservation and owned process cleanup. Keep aggregate project RAM within 24 GiB; a 4 GiB cap is sufficient for this check when the measured baseline leaves room.
 
 The observer establishes property existence/types before reading controller flags and floats. It records initial disabled flags, delayed authored values, fixed camera, queried client controls and hardware HDR separately. Forced scale stays zero; global min/max stay at the same sentinel in every case. Paired image/noise and low/high/restored gates are declared before execution and retained on failure. Client console scale is not a direct render-context measurement. This covers fixed exposure, not arbitrary adaptation, multiple controllers, bloom or VRAD appearance parity.
 
@@ -1164,7 +1164,7 @@ synthetic source-derived traces; they provide no native capture evidence.
 These scripts compile fixtures through MCP and run Counter-Strike: Source with `-insecure` on a private headless display. They need [Cage](https://github.com/cage-kiosk/cage) and [grim](https://sr.ht/~emersion/grim/). Generated maps, config, scripts and logs use private folders; the shared launch guard audits installed settings and Cloud state after exit. No mouse or keyboard input reaches your desktop.
 
 ```sh
-systemd-run --user --scope -p MemoryMax=24G -p MemorySwapMax=0 \
+systemd-run --user --scope -p MemoryMax=16G -p MemorySwapMax=0 \
   python3 -B scripts/validate_native_runtime.py
 ```
 
@@ -2869,7 +2869,7 @@ The ordinary software UI suite drives the production desktop scene refresh,
 including dedicated reference revisions and unchanged root editing tokens.
 
 The real UI ownership regression uses a software window with an offscreen GPU
-adapter. Run it explicitly under the same eight-job build wrapper, sized within the current 16 GiB aggregate budget:
+adapter. Run it explicitly under the same eight-job build wrapper, sized within the current 24 GiB aggregate budget:
 
 ```sh
 cargo test -j8 -p editor --bin editor ui::ownership_tests::child_callbacks_work_then_release_ui_session_and_cached_resources -- --exact --ignored --test-threads=1
@@ -3623,3 +3623,24 @@ The software UI callback writes `water-pressure-world-settings.png` when
 FGD read-only/default distinctions, atomic late-invalid batches and persistence;
 public MCP itself uses Actor::Agent. These checks open no desktop window or game
 and establish source/native-format behavior, not a terminal body speed.
+
+## Effective diffuse material checks
+
+Check shared albedo selection, selected VTF dimensions/reflectivity, source guards,
+editor display and atlas identity without graphics or game launches:
+
+```sh
+cargo test -j 8 -p source-formats
+cargo test -j 8 -p compiler --test primary_diffuse_metrics
+cargo test -j 8 -p render --lib materials::
+cargo test -j 8 -p editor-core --features mcp,test-support --lib atlas
+cargo test -j 8 -p editor-core --features mcp,test-support --lib material_source
+python3 -B scripts/validate_material_albedo.py --binary target/debug/hammerr-headless --output target/validation/material-albedo-headless
+python3 -B scripts/validate_material_albedo.py --binary target/debug/editor --output target/validation/material-albedo-editor
+```
+
+Use fresh output directories on disk. The MCP runner compares complete BSPs
+against independently mounted effective-base references, checks a contrasting
+one-bounce control and verifies foreground/background refusal preservation,
+saved source/history/settings/recipes/assets, clean EOF and uninitialized graphics.
+Selected missing/corrupt assets and unsupported metric overrides must fail.

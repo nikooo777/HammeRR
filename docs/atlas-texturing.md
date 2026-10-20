@@ -33,6 +33,10 @@ Limits:
   or `UnlitGeneric` and an identity base transform. Tool/sky materials,
   proxies, fallback blocks, extra/detail layers, editor-image substitutions
   and animated/volume/cubemap/procedural/render-target textures are unsupported.
+- A supported primary bump/base/albedo `LightmappedGeneric` declaration uses
+  the effective albedo image and its pixel dimensions. Suppression literal `1`
+  keeps the original base. A differing `%tooltexture` still rejects; the named
+  atlas source must match the cached image used for face UVs.
 - The image is cached until **Reload material assets**. A changed material
   declaration requires reload before inspection; a reload requires another
   review before Apply. Unrelated preview image uploads do not invalidate a fit.

@@ -322,6 +322,18 @@ Limits: up to four diffuse bounces from world/detail/terrain lightmaps, preservi
 
 Each lit face requesting diffuse normal-map lighting gets its base map and three directional maps per light style. On LightmappedGeneric, WorldVertexTransition and WorldTwoTextureBlend, `$nodiffusebumplighting 1` selects ordinary diffuse lightmaps while retaining the normal texture for other shader effects. Texture axes, mirrored mappings and world/model smooth normals orient those directions; terrain uses its shared smooth surface normals. Native style averages keep the base lighting. Brush models keep their own coordinate scope and self shadows.
 
+On those three shader families, a primary bump/base/albedo declaration with
+absent or literal `0` suppression measures the effective `$albedo` VTF for
+compiled dimensions and diffuse reflectivity. Literal `1` keeps `$basetexture`.
+The original VMT declaration stays unchanged. A missing, corrupt or unreadable
+selected albedo stops the build; the unused base is never substituted.
+
+Active albedo with `%tooltexture`, `%notooltexture` or `$reflectivity` is
+unavailable for compilation. Those declarations require separate native preview
+or reflectivity rules; even blank/zero declarations stop the build. Remove the
+unsupported declaration or use a material inside the supported scope. Editor
+preview and atlas inspection retain their own display-override rules.
+
 Limits: a lit primary-normal material on those three shader families accepts an absent suppression key or trimmed literal `0`/`1`. Other provided spellings fail compilation; use the supported literal rather than relying on native integer coercion. The engine can clamp bright ordinary and bumped LDR lighting differently; compare modest brightness when tuning normal details. This changes compiled game lighting; the editor's material thumbnails and viewport use diffuse previews. WorldVertexTransition secondary normal mapping requires a primary `$bumpmap`; `$bumpmap2` alone does not activate the checked shader path. Initial rotations on parented models or other brush classes, world/terrain opacity and colored/refraction transmission, and per-texel prop lightmaps remain unfinished. Auxiliary directions share the 16 MiB lightmap limit per channel and 100-million work limit per build; larger scales or lower sampling can reduce work.
 
 #### Falloff

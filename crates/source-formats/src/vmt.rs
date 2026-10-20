@@ -10,7 +10,7 @@ pub use compile::CompileSemantics;
 
 use std::io;
 
-use crate::gamefs::{GameFs, normalize};
+use crate::gamefs::{GameFs, asset_relative, normalize};
 use crate::keyvalues::{self, Node, Value};
 
 /// How many `patch` includes to follow before assuming a cycle.
@@ -165,16 +165,56 @@ impl Material {
         CompileSemantics::from_material(self)
     }
 
-    /// Textures the editor could show, best first, as `.vtf` game paths:
-    /// `%tooltexture` (tool, water and blend materials), then `$basetexture`.
-    /// Shipped games often omit tool textures, so use the first that exists.
-    pub fn editor_textures(&self) -> Vec<String> {
-        ["%tooltexture", "$basetexture"]
+    pub fn primary_base_texture_key(&self) -> Result<Option<&'static str>, String> {
+        let base = self.get("$basetexture");
+        if !compile::is_lightmapped_shader(&self.shader) {
+            return Ok(base.map(|_| "$basetexture"));
+        }
+        let (Some(base), Some(bump), Some(albedo)) =
+            (base, self.get("$bumpmap"), self.get("$albedo"))
+        else {
+            return Ok(base.map(|_| "$basetexture"));
+        };
+        match self.get("$nodiffusebumplighting").map(str::trim) {
+            Some("1") => return Ok(Some("$basetexture")),
+            None | Some("0") => {}
+            Some(_) => {
+                return Err(
+                    "Active $albedo selection requires $nodiffusebumplighting literal 0 or 1"
+                        .into(),
+                );
+            }
+        }
+        for (key, value) in [
+            ("$basetexture", base),
+            ("$bumpmap", bump),
+            ("$albedo", albedo),
+        ] {
+            if value.trim().is_empty() {
+                return Err(format!(
+                    "Active $albedo selection requires a nonblank {key} declaration"
+                ));
+            }
+        }
+        asset_relative(albedo.trim())
+            .map_err(|error| format!("Selected $albedo texture path: {error}"))?;
+        Ok(Some("$albedo"))
+    }
+
+    pub fn primary_base_texture(&self) -> Result<Option<&str>, String> {
+        Ok(self
+            .primary_base_texture_key()?
+            .and_then(|key| self.get(key)))
+    }
+
+    /// Editor display candidates: intentional tool override, then effective base.
+    pub fn editor_textures(&self) -> Result<Vec<String>, String> {
+        Ok([self.get("%tooltexture"), self.primary_base_texture()?]
             .into_iter()
-            .filter_map(|key| self.get(key))
+            .flatten()
             .filter(|v| !v.trim().is_empty())
             .map(texture_path)
-            .collect()
+            .collect())
     }
 
     pub fn translucent(&self) -> bool {
@@ -466,7 +506,10 @@ mod tests {
         assert!(m.is_tool());
         let water = Material::parse("Water\n{\n\t%compilewater 1\n}\n").unwrap();
         assert!(!water.is_tool());
-        assert_eq!(m.editor_textures(), ["materials/tools/toolsnodraw.vtf"]);
+        assert_eq!(
+            m.editor_textures().unwrap(),
+            ["materials/tools/toolsnodraw.vtf"]
+        );
     }
 
     #[test]
@@ -476,7 +519,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            m.editor_textures(),
+            m.editor_textures().unwrap(),
             ["materials/dev/water_tool.vtf", "materials/water/base.vtf"]
         );
         assert!(m.translucent());
@@ -492,3 +535,7 @@ mod tests {
         assert_eq!(texture_path("materials\\x\\y.vtf"), "materials/x/y.vtf");
     }
 }
+
+#[cfg(test)]
+#[path = "vmt/primary_texture_tests.rs"]
+mod primary_texture_tests;

@@ -22,6 +22,7 @@ fn main() {
         .expect("material exists");
     let (texture, bytes) = material
         .editor_textures()
+        .expect("select editor texture")
         .into_iter()
         .find_map(|t| Some((t.clone(), fs.read(&t).unwrap()?)))
         .expect("material has an existing texture");

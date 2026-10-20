@@ -28,11 +28,11 @@ fn material_source_preserves_winning_paths_raw_text_patch_declarations_and_sessi
     let (root, mut session) = fixture();
     let selected = root.path().join("first/materials/test/selected.vmt");
     let base = root.path().join("second/materials/test/base.vmt");
-    let text = "Patch { include materials/test/base.vmt replace { $basetexture test/replacement } insert { $detail test/detail } }";
+    let text = "Patch { include materials/test/base.vmt replace { $basetexture test/replacement $albedo test/replacement_albedo } insert { $detail test/detail } }";
     std::fs::write(&selected, text).unwrap();
     std::fs::write(
         &base,
-        "UnlitGeneric { $basetexture test/original $bumpmap test/normal }",
+        "LightmappedGeneric { $basetexture test/original $albedo test/original_albedo $bumpmap test/normal }",
     )
     .unwrap();
     let id = session
@@ -82,7 +82,7 @@ fn material_source_preserves_winning_paths_raw_text_patch_declarations_and_sessi
         base.to_str()
     );
     let resolved = report.resolved.unwrap();
-    assert_eq!(resolved.shader, "unlitgeneric");
+    assert_eq!(resolved.shader, "lightmappedgeneric");
     let textures = resolved
         .texture_parameters
         .iter()
@@ -92,6 +92,7 @@ fn material_source_preserves_winning_paths_raw_text_patch_declarations_and_sessi
         textures,
         [
             ("$basetexture", "test/replacement"),
+            ("$albedo", "test/replacement_albedo"),
             ("$bumpmap", "test/normal"),
             ("$detail", "test/detail")
         ]

@@ -17,9 +17,10 @@ const MAX_ORIGIN_CHARS: usize = 4096;
 const MAX_ERROR_CHARS: usize = 2048;
 const MAX_SHADER_CHARS: usize = 128;
 const MAX_TEXTURE_CHARS: usize = 512;
-const TEXTURE_PARAMETERS: [&str; 12] = [
+const TEXTURE_PARAMETERS: [&str; 13] = [
     "%tooltexture",
     "$basetexture",
+    "$albedo",
     "$basetexture2",
     "$bumpmap",
     "$normalmap",

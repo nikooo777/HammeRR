@@ -6,6 +6,7 @@ fn fluid(current_hu: Option<[f32; 3]>) -> Body {
         shapes: Vec::new(),
         surface: Some(64.0),
         current_hu,
+        damping: None,
         surface_property: None,
         mass_area: None,
         mesh: None,
@@ -25,6 +26,19 @@ fn default_fluid_text_is_unchanged_and_current_only_changes_its_native_vector() 
             "\"currentvelocity\" \"1.6256 -0.8128 0.4064\""
         )
     );
+}
+
+#[test]
+fn authored_damping_changes_only_the_scalar_and_explicit_default_preserves_text() {
+    let mut body = fluid(Some([64.0, -32.0, 16.0]));
+    let baseline = fluid_keys(2, &body, 64.0).unwrap();
+    for (value, text) in [(0.0, "0"), (-0.0, "0"), (0.005, "0.005"), (0.01, "0.01")] {
+        body.damping = Some(value);
+        assert_eq!(
+            fluid_keys(2, &body, 64.0).unwrap(),
+            baseline.replace("\"damping\" \"0.01\"", &format!("\"damping\" \"{text}\""))
+        );
+    }
 }
 
 #[test]

@@ -352,10 +352,10 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 
 [Baked prop vertices →](docs/baked-prop-vertices.md)
 
-| Physical water currents |
+| Physical water controls |
 | --- |
-| ![World-axis water velocity in World settings](docs/images/water-current-world-settings.png) |
-| Give supported water volumes a steady world-axis velocity for floating physics objects. |
+| ![Water current and pressure damping in World settings](docs/images/water-pressure-world-settings.png) |
+| Set a world-axis current and native pressure coefficient for floating physics objects. |
 
 [Water →](docs/water.md)
 
@@ -504,7 +504,7 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | Static-prop texture shadows |
 | --- |
 | ![Baked light passing through a fence model's cutout texture](docs/images/prop-shadow-cutouts.png) |
-| Bake binary cutout or fractional translucent texture shadows on supported static props. |
+| Bake cutout or translucent prop shadows with centered texture scale, rotation and translation. |
 
 | Hint planes |
 | --- |

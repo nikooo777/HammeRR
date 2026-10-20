@@ -1,7 +1,9 @@
 //! Valve Material Type (VMT) files: a shader name plus parameters.
 
 mod texture_transform;
-pub use texture_transform::{DuplicateOperations, TransformError, texture_transform};
+pub use texture_transform::{
+    DuplicateOperations, TransformError, texture_transform, texture_transform_matrix,
+};
 
 mod compile;
 pub use compile::CompileSemantics;

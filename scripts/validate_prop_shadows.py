@@ -160,7 +160,7 @@ def validate(client, output, game):
           "Fractional texture-shadow baking preserves authored props, history and VMF bytes")
     previous = bsp.read_bytes()
     for material, expected in [
-        ('VertexLitGeneric { $alphatest 1 $basetexture test $basetexturetransform "rotate 15" }', "rotated"),
+        ('VertexLitGeneric { $alphatest 1 $basetexture test $basetexturetransform "rotate invalid" }', "invalid $basetexturetransform"),
         ('VertexLitGeneric { $translucent 1 $alphatest 1 $basetexture test }', "$translucent"),
         ('VertexLitGeneric { $translucent 1 $alpha 0.5 $basetexture test }', "$alpha modulation"),
         ('Refract { $alphatest 1 $basetexture test }', "unsupported texture-shadow shader"),

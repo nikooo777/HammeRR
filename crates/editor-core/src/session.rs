@@ -1111,6 +1111,11 @@ impl Session {
         {
             compiler::validate_water_current_velocity(value)?;
         }
+        let water_damping = classname.eq_ignore_ascii_case("worldspawn")
+            && key.eq_ignore_ascii_case(compiler::WATER_DAMPING_KEY);
+        if water_damping {
+            compiler::validate_water_damping(value)?;
+        }
         if let Some(property) = self
             .definitions
             .class(classname)
@@ -1119,7 +1124,9 @@ impl Session {
             if property.read_only {
                 return Err(format!("{key} is read-only"));
             }
-            if let Some(value) = value {
+            if let Some(value) = value
+                && !water_damping
+            {
                 property.validate(value)?;
             }
         }

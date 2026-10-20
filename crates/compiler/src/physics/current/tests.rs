@@ -1,5 +1,6 @@
 use super::*;
 use crate::physics::{Body, Model, Request, Shape, default_materials};
+use source_formats::bsp::contents;
 
 fn fluid(current_hu: Option<[f32; 3]>) -> Body {
     Body {
@@ -27,6 +28,7 @@ fn fluid(current_hu: Option<[f32; 3]>) -> Body {
         }],
         surface: Some(32.0),
         current_hu,
+        damping: None,
         surface_property: None,
         mass_area: None,
         mesh: None,

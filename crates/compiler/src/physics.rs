@@ -16,6 +16,7 @@ use crate::map::{MAX_COMPILE_COORD, Map};
 use crate::{Control, Diagnostic, Report};
 
 pub(crate) mod current;
+pub(crate) mod damping;
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 mod native;
 mod surface_data;
@@ -34,6 +35,50 @@ const POLL_INTERVAL: Duration = Duration::from_millis(20);
 const MASK_SOLID: i32 =
     contents::SOLID | contents::WINDOW | contents::GRATE | contents::MOVEABLE | contents::MONSTER;
 const WORLD_MASKS: [i32; 3] = [MASK_SOLID, contents::PLAYERCLIP, contents::MONSTERCLIP];
+
+fn finite_decimal(word: &str) -> Option<f64> {
+    let value = word.parse::<f64>().ok()?;
+    let significand = word.split(['e', 'E']).next().unwrap_or(word);
+    if !value.is_finite()
+        || (value == 0.0 && significand.bytes().any(|byte| matches!(byte, b'1'..=b'9')))
+    {
+        return None;
+    }
+    Some(value)
+}
+
+fn admit_authored_water(map: &Map, control: &Control, key: &str) -> Result<(), String> {
+    let property = if key == current::WATER_CURRENT_VELOCITY_KEY {
+        "Water current"
+    } else {
+        "Water damping"
+    };
+    let world = map
+        .entities
+        .first()
+        .ok_or_else(|| format!("{property} requires a world entity"))?
+        .id;
+    let mut eligible = false;
+    for brush in &map.brushes {
+        control.checkpoint()?;
+        if brush.contents & (contents::WATER | contents::SLIME) == 0 {
+            continue;
+        }
+        if !crate::water::has_horizontal_surface(map, brush) {
+            return Err(format!(
+                "World {world} {key} requires only structural world WATER with visible horizontal tops; solid {} is unsupported",
+                brush.id
+            ));
+        }
+        eligible = true;
+    }
+    if !eligible {
+        return Err(format!(
+            "World {world} {key} requires retained structural world WATER"
+        ));
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -54,6 +99,8 @@ struct Body {
     surface: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     current_hu: Option<[f32; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    damping: Option<f32>,
     #[serde(default)]
     surface_property: Option<String>,
     #[serde(default)]
@@ -305,6 +352,7 @@ fn plan(
                     shapes,
                     surface: None,
                     current_hu: None,
+                    damping: None,
                     surface_property: mass.as_ref().map(|(name, _)| name.clone()),
                     mass_area: mass.as_ref().map(|(_, area)| *area),
                     mesh: None,
@@ -377,6 +425,7 @@ fn plan(
                     shapes: Vec::new(),
                     surface: None,
                     current_hu: None,
+                    damping: None,
                     surface_property: None,
                     mass_area: None,
                     mesh: Some(mesh),
@@ -411,6 +460,7 @@ fn plan(
                     shapes,
                     surface: Some(record.surface_z),
                     current_hu: map.water_current,
+                    damping: map.water_damping,
                     surface_property: None,
                     mass_area: None,
                     mesh: None,
@@ -438,6 +488,19 @@ fn plan(
             "World {} {} requires emitted structural world WATER fluid bodies",
             map.entities[0].id,
             current::WATER_CURRENT_VELOCITY_KEY
+        ));
+    }
+    if map.water_damping.is_some()
+        && !request
+            .models
+            .iter()
+            .flat_map(|model| &model.bodies)
+            .any(|body| body.damping.is_some())
+    {
+        return Err(format!(
+            "World {} {} requires emitted structural world WATER fluid bodies",
+            map.entities[0].id,
+            damping::WATER_DAMPING_KEY
         ));
     }
     validate(&request)?;
@@ -517,6 +580,8 @@ fn validate(request: &Request) -> Result<(), String> {
     let mut mesh_triangles = 0;
     let mut uniform_current = None;
     let mut controlled_fluids = 0_usize;
+    let mut uniform_damping = None;
+    let mut damped_fluids = 0_usize;
     let mut fluids = 0_usize;
     for model in &request.models {
         if model.index >= request.model_count
@@ -552,6 +617,27 @@ fn validate(request: &Request) -> Result<(), String> {
                 }
                 uniform_current = Some(value);
                 controlled_fluids += 1;
+            }
+            if let Some(value) = body.damping {
+                if model.index != 0
+                    || body.surface.is_none()
+                    || body.mesh.is_some()
+                    || body.contents != contents::WATER
+                {
+                    return Err(
+                        "Authored water damping requires a structural world WATER fluid body"
+                            .into(),
+                    );
+                }
+                damping::validate(value)?;
+                if uniform_damping.is_some_and(|previous| previous != value) {
+                    return Err(
+                        "Authored water damping must be uniform across all world WATER fluids"
+                            .into(),
+                    );
+                }
+                uniform_damping = Some(value);
+                damped_fluids += 1;
             }
             if let Some(name) = &body.surface_property
                 && (model.index == 0
@@ -728,6 +814,11 @@ fn validate(request: &Request) -> Result<(), String> {
     if uniform_current.is_some() && controlled_fluids != fluids {
         return Err(
             "Authored water current must cover every fluid body without unsupported liquids".into(),
+        );
+    }
+    if uniform_damping.is_some() && damped_fluids != fluids {
+        return Err(
+            "Authored water damping must cover every fluid body without unsupported liquids".into(),
         );
     }
     Ok(())
@@ -1023,6 +1114,7 @@ mod tests {
                     shapes: Vec::new(),
                     surface: None,
                     current_hu: None,
+                    damping: None,
                     surface_property: None,
                     mass_area: None,
                     mesh: Some(mesh),
@@ -1101,6 +1193,7 @@ mod tests {
                     shapes: vec![shape],
                     surface: None,
                     current_hu: None,
+                    damping: None,
                     surface_property: Some("ice".into()),
                     mass_area: Some(6145.0),
                     mesh: None,

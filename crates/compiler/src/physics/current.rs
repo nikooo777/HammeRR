@@ -1,4 +1,3 @@
-use source_formats::bsp::contents;
 use source_formats::vmf::Vmf;
 
 use crate::{Control, PhysicsMode, map::Map};
@@ -31,13 +30,7 @@ fn parse(raw: &str) -> Result<[f32; 3], String> {
     let mut values = [0.0; WATER_CURRENT_COMPONENTS];
     for value in &mut values {
         let word = words.next().ok_or_else(invalid)?;
-        *value = word.parse::<f64>().map_err(|_| invalid())?;
-        let significand = word.split(['e', 'E']).next().unwrap_or(word);
-        if !value.is_finite()
-            || (*value == 0.0 && significand.bytes().any(|byte| matches!(byte, b'1'..=b'9')))
-        {
-            return Err(invalid());
-        }
+        *value = super::finite_decimal(word).ok_or_else(invalid)?;
     }
     if words.next().is_some() || magnitude(values) > MAX_WATER_CURRENT_SPEED {
         return Err(invalid());
@@ -101,31 +94,7 @@ pub(crate) fn admit_map(map: &Map, control: &Control) -> Result<(), String> {
     if map.water_current.is_none() {
         return Ok(());
     }
-    let world = map
-        .entities
-        .first()
-        .ok_or("Water current requires a world entity")?
-        .id;
-    let mut eligible = false;
-    for brush in &map.brushes {
-        control.checkpoint()?;
-        if brush.contents & (contents::WATER | contents::SLIME) == 0 {
-            continue;
-        }
-        if !crate::water::has_horizontal_surface(map, brush) {
-            return Err(format!(
-                "World {world} {WATER_CURRENT_VELOCITY_KEY} requires only structural world WATER with visible horizontal tops; solid {} is unsupported",
-                brush.id
-            ));
-        }
-        eligible = true;
-    }
-    if !eligible {
-        return Err(format!(
-            "World {world} {WATER_CURRENT_VELOCITY_KEY} requires retained structural world WATER"
-        ));
-    }
-    Ok(())
+    super::admit_authored_water(map, control, WATER_CURRENT_VELOCITY_KEY)
 }
 
 #[cfg(test)]

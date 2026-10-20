@@ -3,7 +3,7 @@ use super::super::*;
 #[tool_router(router = entities_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
-        description = "Inspect world settings or common entity properties with typed controls, mixed values, individual stored values, FGD defaults and mixed flags. Absent values are reported separately from explicit overrides. World settings include the synthetic Water current · world units/s XYZ vector (_hammerr_water_current_velocity), even before authoring: absent means zero without writing an override. A stored value requires engine physics and emitted structural-world WATER; finite vector length is at most 128 units/s, with fixed damping 0.01 and no player/NPC current. Use the shared property draft to stage, commit or remove the override.",
+        description = "Inspect world settings or common entity properties with typed controls, mixed values, individual stored values, FGD defaults and mixed flags. Absent values are reported separately from explicit overrides. World settings include Water current · world units/s (_hammerr_water_current_velocity), an XYZ vector of at most 128 units/s defaulting to zero, and Water pressure damping (_hammerr_water_damping), a dimensionless number from 0 to 0.01 defaulting to 0.01. These intrinsic defaults do not write overrides or invent FGD defaults. Damping affects the native projected-pressure term; zero retains the fixed pressure term. Stored controls require engine physics and emitted structural-world WATER and do not drive player/NPC movement. Use the shared property draft to stage, commit or remove overrides.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_property_inspector(
@@ -590,3 +590,6 @@ mod tests;
 
 #[cfg(test)]
 mod water_current_tests;
+
+#[cfg(test)]
+mod water_damping_tests;

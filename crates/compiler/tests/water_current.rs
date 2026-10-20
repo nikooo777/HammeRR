@@ -2,7 +2,7 @@ mod common;
 
 use std::path::{Path, PathBuf};
 
-use compiler::{Options, PhysicsMode, WATER_CURRENT_VELOCITY_KEY};
+use compiler::{Options, PhysicsMode, WATER_CURRENT_VELOCITY_KEY, WATER_DAMPING_KEY};
 use glam::DVec3;
 use map_core::{Document, ObjectId, Plane, edit};
 use source_formats::gamefs::{GameFs, Mount, MountedPath};
@@ -15,10 +15,16 @@ struct Fixture {
 }
 
 fn fixture() -> Fixture {
-    let retained = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/validation/637");
+    fixture_at("637", "current-")
+}
+
+fn fixture_at(batch: &str, prefix: &str) -> Fixture {
+    let retained = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/validation")
+        .join(batch);
     std::fs::create_dir_all(&retained).unwrap();
     let directory = tempfile::Builder::new()
-        .prefix("current-")
+        .prefix(prefix)
         .tempdir_in(retained)
         .unwrap()
         .keep();
@@ -228,6 +234,100 @@ fn retained_water_without_a_wet_leaf_cannot_claim_an_applied_current() {
     rejected(&vmf, &fixture, PhysicsMode::Engine, "requires emitted");
 }
 
+fn rejected_damping(vmf: &Vmf, fixture: &Fixture, physics: PhysicsMode, fragment: &str) {
+    let source = vmf.write(&Default::default());
+    let result = compiler::compile_with_options(vmf, &fixture.game, options(physics));
+    assert!(result.report.has_errors(), "{:?}", result.report);
+    assert!(result.bsp.is_none());
+    assert!(
+        result
+            .report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains(WATER_DAMPING_KEY)
+                && diagnostic.message.contains(fragment)),
+        "{:?}",
+        result.report
+    );
+    assert_eq!(vmf.write(&Default::default()), source);
+    let previous = fixture.directory.join("previous.bsp");
+    std::fs::write(&previous, b"previous checked output").unwrap();
+    assert!(!result.write(&previous).unwrap());
+    assert_eq!(std::fs::read(previous).unwrap(), b"previous checked output");
+}
+
+#[test]
+fn authored_damping_rejects_invalid_duplicate_and_disabled_controls_before_cordon() {
+    let fixture = fixture_at("674", "damping-");
+    let mut vmf = common::room();
+    vmf.cordon = Some(source_formats::keyvalues::Node::block(
+        "cordon",
+        vec![source_formats::keyvalues::Node::string("active", "1")],
+    ));
+    vmf.world.properties.set(WATER_DAMPING_KEY, "0.0100000001");
+    rejected_damping(&vmf, &fixture, PhysicsMode::Engine, "needs one finite");
+    for raw in ["0", "0.01"] {
+        vmf.world.properties.set(WATER_DAMPING_KEY, raw);
+        rejected_damping(&vmf, &fixture, PhysicsMode::None, "engine physics");
+    }
+    vmf.world
+        .properties
+        .0
+        .push((WATER_DAMPING_KEY.to_ascii_uppercase(), "0.01".into()));
+    rejected_damping(&vmf, &fixture, PhysicsMode::Engine, "repeats");
+}
+
+#[test]
+fn authored_damping_requires_retained_supported_world_water_without_current() {
+    let fixture = fixture_at("674", "damping-");
+    for (material, role, hidden, keep_water, fragment) in [
+        ("water", None, true, false, "retained structural"),
+        ("slime", None, false, true, "unsupported"),
+        ("water", Some("func_detail"), false, true, "unsupported"),
+        ("water", Some("func_brush"), false, true, "unsupported"),
+    ] {
+        let base = if keep_water {
+            pool(common::room(), "water", None, false)
+        } else {
+            common::room()
+        };
+        let mut vmf = pool(base, material, role, hidden);
+        vmf.world.properties.set(WATER_DAMPING_KEY, "0.005");
+        rejected_damping(&vmf, &fixture, PhysicsMode::Engine, fragment);
+    }
+    for raw in ["0", "0.01"] {
+        let mut vmf = common::room();
+        vmf.world.properties.set(WATER_DAMPING_KEY, raw);
+        rejected_damping(&vmf, &fixture, PhysicsMode::Engine, "retained structural");
+    }
+}
+
+#[test]
+fn explicit_zero_and_default_damping_require_an_actual_emitted_water_body() {
+    let fixture = fixture_at("674", "damping-");
+    let mut vmf = pool(common::room(), "water", None, false);
+    for entity in &mut vmf.entities {
+        entity.properties.set("origin", "200 -200 8");
+    }
+    let mut document = Document::new(vmf);
+    document
+        .edit("cover complete pool", |tx| {
+            edit::create_block(
+                tx,
+                DVec3::new(-160.0, -160.0, 0.0),
+                DVec3::new(160.0, 160.0, 96.0),
+                "dev/dev_measuregeneric01",
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    let mut vmf = document.vmf().clone();
+    for raw in ["0", "0.01"] {
+        vmf.world.properties.set(WATER_DAMPING_KEY, raw);
+        rejected_damping(&vmf, &fixture, PhysicsMode::Engine, "requires emitted");
+    }
+}
+
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 mod native {
     use super::*;
@@ -253,6 +353,10 @@ receipt.mkdir()
 (receipt/'before.bin').write_bytes(original)
 if os.environ['HAMMERR_CURRENT_MODE'] == 'raw_hu':
     keys, changed = re.subn(rb'"currentvelocity" "[^"]*"', b'"currentvelocity" "64 -32 16"', keys)
+    assert changed == 1
+if os.environ['HAMMERR_CURRENT_MODE'].startswith('damping_'):
+    replacement = os.environ['HAMMERR_CURRENT_MODE'].removeprefix('damping_').encode()
+    keys, changed = re.subn(rb'"damping" "[^"]*"', b'"damping" "' + replacement + b'"', keys)
     assert changed == 1
 changed = struct.pack('<4i', index, body_bytes, len(keys), count) + original[16:key_start] + keys + original[-16:]
 assert changed[16:key_start] == original[16:key_start]
@@ -437,6 +541,191 @@ output.write_bytes(changed)
         );
         eprintln!(
             "Water-current control artifacts: {}",
+            fixture.directory.display()
+        );
+    }
+
+    fn assert_damping_only_change(baseline: &[u8], changed: &[u8], expected: f32) {
+        let baseline = Bsp::parse(baseline).unwrap();
+        let changed = Bsp::parse(changed).unwrap();
+        assert_eq!(baseline.version, changed.version);
+        assert_eq!(baseline.map_revision, changed.map_revision);
+        for index in 0..source_formats::bsp::LUMP_COUNT {
+            if index != lump::PHYSCOLLIDE {
+                assert_eq!(baseline.lump(index), changed.lump(index), "lump {index}");
+            }
+        }
+        assert_eq!(baseline.game_lumps, changed.game_lumps);
+        let before = baseline.physics().unwrap().unwrap();
+        let after = changed.physics().unwrap().unwrap();
+        assert_eq!(before.models.len(), after.models.len());
+        for (before, after) in before.models.iter().zip(&after.models) {
+            assert_eq!(before.index, after.index);
+            assert_eq!(before.solids, after.solids);
+            let previous = std::str::from_utf8(before.key_data).unwrap();
+            let actual = std::str::from_utf8(after.key_data).unwrap();
+            assert_eq!(
+                actual,
+                previous.replace(
+                    "\"damping\" \"0.01\"",
+                    &format!("\"damping\" \"{expected}\"")
+                )
+            );
+            let nodes =
+                source_formats::keyvalues::parse_bounded(actual.trim_end_matches('\0'), 1, 64)
+                    .unwrap();
+            let fluids: Vec<_> = nodes.iter().filter(|node| node.key == "fluid").collect();
+            assert_eq!(fluids.len(), 1);
+            for node in fluids {
+                let fields = node.children().unwrap();
+                let value = fields
+                    .iter()
+                    .find(|field| field.key == "damping")
+                    .unwrap()
+                    .as_str()
+                    .unwrap()
+                    .parse::<f32>()
+                    .unwrap();
+                assert_eq!(value.to_bits(), expected.to_bits());
+            }
+        }
+        assert!(
+            !changed
+                .entities()
+                .unwrap()
+                .to_ascii_lowercase()
+                .contains(WATER_DAMPING_KEY)
+        );
+    }
+
+    #[test]
+    fn real_cli_damping_preserves_default_bytes_and_rejects_allowed_worker_substitutions_atomically()
+     {
+        let Some(installed) = installed_game() else {
+            eprintln!("CS:S not installed; skipping native water-damping control");
+            return;
+        };
+        let fixture = fixture_at("674", "damping-");
+        symlink(installed.join("bin"), fixture.directory.join("bin")).unwrap();
+        let proxy = fixture.directory.join("worker.py");
+        std::fs::write(&proxy, PROXY).unwrap();
+        std::fs::set_permissions(&proxy, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let destination = fixture.directory.join("damping.bsp");
+        let mut vmf = pool(common::room(), "water", None, false);
+        let absent = compile(&vmf, &fixture, &destination, &proxy, "absent", "pass");
+        assert!(
+            absent.status.success(),
+            "{}",
+            String::from_utf8_lossy(&absent.stderr)
+        );
+        let baseline = std::fs::read(&destination).unwrap();
+        vmf.world
+            .properties
+            .set(WATER_DAMPING_KEY.to_ascii_uppercase(), "1e-2");
+        let default = compile(&vmf, &fixture, &destination, &proxy, "default", "pass");
+        assert!(
+            default.status.success(),
+            "{}",
+            String::from_utf8_lossy(&default.stderr)
+        );
+        assert_eq!(std::fs::read(&destination).unwrap(), baseline);
+        for (raw, value, name) in [("-0", 0.0_f32, "zero"), (" 5e-3 ", 0.005, "midpoint")] {
+            vmf.world.properties.set(WATER_DAMPING_KEY, raw);
+            let result = compile(&vmf, &fixture, &destination, &proxy, name, "pass");
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            assert_damping_only_change(&baseline, &std::fs::read(&destination).unwrap(), value);
+            let request: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(fixture.directory.join(name).join("request.json")).unwrap(),
+            )
+            .unwrap();
+            for body in request["models"][0]["bodies"].as_array().unwrap() {
+                if body["surface"].is_number() {
+                    assert_eq!(body["damping"].as_f64().unwrap() as f32, value);
+                    assert!(body.get("current_hu").is_none());
+                } else {
+                    assert!(body.get("damping").is_none());
+                }
+            }
+        }
+        vmf.world
+            .properties
+            .set(WATER_CURRENT_VELOCITY_KEY, "64 -32 16");
+        vmf.world.properties.set(WATER_DAMPING_KEY, "0.01");
+        let flow_default = compile(&vmf, &fixture, &destination, &proxy, "flow-default", "pass");
+        assert!(
+            flow_default.status.success(),
+            "{}",
+            String::from_utf8_lossy(&flow_default.stderr)
+        );
+        let flow_baseline = std::fs::read(&destination).unwrap();
+        let flow_bsp = Bsp::parse(&flow_baseline).unwrap();
+        assert_eq!(
+            native_vector(&flow_bsp.lump(lump::PHYSCOLLIDE).data),
+            [1.6256, -0.8128, 0.4064]
+        );
+        vmf.world.properties.set(WATER_DAMPING_KEY, "0.005");
+        let flow_midpoint = compile(
+            &vmf,
+            &fixture,
+            &destination,
+            &proxy,
+            "flow-midpoint",
+            "pass",
+        );
+        assert!(
+            flow_midpoint.status.success(),
+            "{}",
+            String::from_utf8_lossy(&flow_midpoint.stderr)
+        );
+        assert_damping_only_change(&flow_baseline, &std::fs::read(&destination).unwrap(), 0.005);
+        let accepted = std::fs::read(&destination).unwrap();
+        for (name, mode) in [
+            ("wrong-default", "damping_0.01"),
+            ("wrong-zero", "damping_0"),
+        ] {
+            let rejected = compile(&vmf, &fixture, &destination, &proxy, name, mode);
+            assert!(!rejected.status.success());
+            assert!(
+                String::from_utf8_lossy(&rejected.stderr).contains("Physics worker world keys")
+            );
+            assert_eq!(std::fs::read(&destination).unwrap(), accepted);
+            let before = std::fs::read(fixture.directory.join(name).join("before.bin")).unwrap();
+            let after = std::fs::read(fixture.directory.join(name).join("after.bin")).unwrap();
+            assert_eq!(
+                PhysicsCollision::parse(&before, 1).unwrap().models[0].solids,
+                PhysicsCollision::parse(&after, 1).unwrap().models[0].solids
+            );
+        }
+        vmf.world.properties.set(WATER_DAMPING_KEY, "0.01");
+        let rejected = compile(
+            &vmf,
+            &fixture,
+            &destination,
+            &proxy,
+            "wrong-midpoint",
+            "damping_0.005",
+        );
+        assert!(!rejected.status.success());
+        assert!(String::from_utf8_lossy(&rejected.stderr).contains("Physics worker world keys"));
+        assert_eq!(std::fs::read(&destination).unwrap(), accepted);
+        vmf.world.properties.set(WATER_DAMPING_KEY, "0.0100000001");
+        let rejected = compile(
+            &vmf,
+            &fixture,
+            &destination,
+            &proxy,
+            "invalid-source",
+            "pass",
+        );
+        assert!(!rejected.status.success());
+        assert!(String::from_utf8_lossy(&rejected.stderr).contains(WATER_DAMPING_KEY));
+        assert_eq!(std::fs::read(&destination).unwrap(), accepted);
+        eprintln!(
+            "Water-damping control artifacts: {}",
             fixture.directory.display()
         );
     }

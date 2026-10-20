@@ -645,7 +645,7 @@ work, compressed size or native float parity. See [Visibility clusters](visclust
 - `edit_faces` and object material edits select VMT `$surfaceprop` values for world, terrain and brush-model collision. Terrain chooses `$surfaceprop2` when the three emitted collision-triangle `f32` alpha values sum strictly above `382.5`; equality or a missing secondary property keeps the primary. Existing terrain blend tools supply these weights. With `physics: engine`, native triangle mappings use a shared table of at most 127 names including default; a material without `$surfaceprop` uses default. `compile_map` and background results expose `physics_surface_properties`, shown as **Surface properties** in **Build details…**; it counts distinct shared names. Names use 1–127 ASCII letters, digits, underscores, dots or dashes. Uniform models additionally record the body property; mixed models keep per-face contact properties. Brush-model base mass uses the property with the greatest emitted face area: solid materials use collision volume and density, while shells use emitted area, thickness and density, capped at 50,000 kg. Surface definitions load through the existing game mounts; invalid or missing definitions, native property indices or mappings fail before publication. Entity diagnostics report the base mass and selected property. Existing `set_entity_properties` calls retain runtime `func_physbox` mass-scale/override and `phys_convert` mass-override fields. Custom density controls and broader moving-body behavior remain unfinished. See [Physics and brush-model mass](physics.md).
 - `create_entity` and `set_entity_properties` author point/spot `style` (Appearance `0`–`31`), `targetname`, `pattern` (up to 64 lowercase letters), and `spawnflags` bit `1` (Initially dark). Named groups get compiler-only IDs `32`–`63`; authored nonzero appearances become `defaultstyle`, and matching names share an initial pattern/state. `begin_connection_edit`, `update_connection_draft` and `commit_connection_edit` author relay outputs targeting `TurnOn`, `TurnOff`, `Toggle` or `SetPattern`. Both compile paths emit up to four face channels including Normal, with actual `switchable_light_groups`, `light_styles`, `styled_faces` and `light_style_maps` stats. Compilation keeps VMF/history fixed. Invalid fields, conflicting groups and exceeded limits preserve previous output. With `bounces: 1`–`4`, reflected light follows the same styles and can add a channel beyond direct reach; the four-style face limit still applies. Switching model-ambient cubes remain unfinished.
 - `tie_to_entity` and `set_entity_properties` author rendered brush models and pivots. Both lit modes compile model-local faces with world-space lighting positions, isolated self shadows, and the same point/spot style channels and sky sampling. Stats expose `lit_brush_models`, `model_lighting_faces`, `model_bounce_faces` (processed receiver faces) and `model_bounce_samples` (samples with positive reflected energy). Local geometry, UVs and collision stay fixed; direct and bounced lightmaps remain attached in game. Models do not cast permanent world shadows or supply reflected light. They can receive world bounce; dynamic relighting and independently rotated initial poses remain unfinished. Both compile paths share the checked emitted model-to-entity bindings and common budgets.
-- `edit_faces` material/projection edits feed automatic directional lightmaps for lit VMTs declaring `$bumpmap`. Both lit modes emit base plus three direction maps per style on world/detail/model/terrain receivers, including the optional world-source bounce. Stats expose `bump_faces` and `bump_lightmaps` (auxiliary directional maps); `light_style_maps` includes base and directional maps. `lightmap_samples` counts receiver positions, while bytes/work include every map. Base averages, style IDs, geometric shadow bias and source/history remain shared. Material-only second normal maps, transparent shadows and baked prop maps remain unfinished; viewport previews stay diffuse.
+- `edit_faces` material/projection edits feed automatic directional lightmaps for lit VMTs declaring `$bumpmap`. Both lit modes emit base plus three direction maps per style on world/detail/model/terrain receivers, including the optional world-source bounce. Stats expose `bump_faces` and `bump_lightmaps` (auxiliary directional maps); `light_style_maps` includes base and directional maps. `lightmap_samples` counts receiver positions, while bytes/work include every map. Base averages, style IDs, geometric shadow bias and source/history remain shared. WorldVertexTransition secondary normal mapping requires a primary `$bumpmap`. Brush/terrain or colored transmission and baked prop maps remain unfinished; viewport previews stay diffuse.
 - Settings cannot change while a build runs. Each job reports its captured `settings`; changing settings after a build makes that output out of date for launching.
 - Both lit modes automatically cull point/spot candidates using each source's PVS and exact falloff endpoints, across world, terrain and pivot-aware model samples. Unknown/boundary clusters and cache overflow retain candidates; sky lighting stays eligible. Results expose `light_evaluations`, `light_pvs_skipped`, `light_range_skipped` and `light_culling_work` (row/cache/cluster lookup work within `lighting_work`). Both compile paths preserve emitter order and share the same bounded implementation; no extra setting is required.
 - Create and edit baked lights with `create_entity` and `set_entity_properties`. For `light_environment`, `_light` is sunlight and `_ambient` is sky ambient; color values use `R G B brightness`. Set ambient brightness to zero with a value such as `255 255 255 0`. Set `SunSpreadAngle` from 0 to 90 degrees: zero keeps hard shadows, positive values soften them using the selected sky quality.
@@ -1898,18 +1898,47 @@ Compilation requires `set_compile_settings {"physics":"engine"}` and actual
 emitted structural-world WATER with a visible horizontal top. Any stored value,
 including zero, rejects with no engine physics, no eligible bodies or retained
 slime/detail/model liquids. Hidden/region-omitted liquids do not provide eligible
-bodies. All supported pools receive the same steady VPhysics current with fixed
-fluid damping `0.01`. This adds no player/NPC current contents, per-pool control,
-custom damping, water-material setting or visual preview. The compiler consumes
+bodies. All supported pools receive the same steady VPhysics provider current.
+Fluid pressure damping defaults to `0.01` and can be authored separately. This adds no player/NPC current contents, per-pool control,
+water-material setting or visual preview. The separate pressure coefficient is described below. The compiler consumes
 the source-only world key rather than emitting it at runtime. Existing
 `compile_map`, `start_compile` and `run_map` publication guards preserve previous
 output on refusal. See [Water](water.md#steady-physical-current).
+
+### Water pressure damping
+
+`get_property_inspector {"world":true}` exposes **Water pressure damping** even
+when absent: key `_hammerr_water_damping`, kind `float`, control `number`, range
+`[0,0.01]`, intrinsic effective `"0.01"` without a stored override or invented FGD
+default. Existing World property drafts stage/commit/remove it:
+
+```json
+{"token": 1, "changes": [{"action": "set", "key": "_hammerr_water_damping", "value": "0.005"}]}
+```
+
+Use the token returned by `begin_property_edit {"world":true}` with
+`update_property_edit`, then `commit_property_edit` or `cancel_property_edit`.
+Valid raw text is preserved through Undo/Redo and save/reopen; Remove restores
+absence. The compiler-owned validator is shared with the UI and respects FGD
+read-only. Invalid imported text remains visible as Text with a diagnostic.
+
+Input is one finite ASCII decimal/scientific word in at most 32 bytes, within
+0–0.01 before native rounding; nonzero input must survive native float conversion.
+Zero removes only native projected pressure, retaining the fixed pressure term.
+This is map-wide and independent of authored current. Explicit zero/default
+still require engine physics and actual emitted supported structural-world WATER;
+retained slime/detail/model liquids reject. Hidden or region-omitted water cannot
+satisfy eligibility. Both compile paths validate the exact returned coefficient
+before publishing and preserve the prior BSP on failure. The VMF retains the key;
+the runtime World entity does not. There is no new compile setting or MCP tool.
+Native provider velocity does not promise a body's terminal speed or settling
+time. See [Water](water.md#water-pressure-damping).
 
 ### Water material binding
 
 Use `create_block`, `select_faces` and `edit_faces` to author horizontal structural-world water whose horizontal top and exposed vertical water sides use VMTs declaring their own `$bottommaterial`. Existing `compile_map`, `start_compile` and `run_map` calls resolve material patches and bind each resolved bottom material to the corresponding clipped inward faces. Each generated inward face keeps its authored face's texture/lightmap vectors and surface flags, belongs to submerged leaves and receives no overlays attached to its authored face. The top material remains the water-fog reference; connected lowest-depth metadata and fluid physics retain their existing behavior. `$bottommaterial` names the surface viewed from below, rather than the pool-floor material; `$underwateroverlay` remains a runtime setting of the top material.
 
-A missing `$bottommaterial` leaves a one-sided surface with a warning. An explicitly named missing or malformed target fails without replacing prior output. No new tool or setting is required. Depth-specific material packing, sloped/detail/model liquids, per-pool/player currents, custom damping and broader native rendering validation remain unfinished. See [Water](water.md).
+A missing `$bottommaterial` leaves a one-sided surface with a warning. An explicitly named missing or malformed target fails without replacing prior output. No new tool or setting is required. Depth-specific material packing, sloped/detail/model liquids, per-pool/player currents, per-pool damping and broader native rendering validation remain unfinished. See [Water](water.md).
 
 ### Terrain triangle classifications
 
@@ -2561,7 +2590,7 @@ Models compiled with `$casttextureshadows` request supported texture-alpha mater
 
 Cutouts retain barycentric UVs, nearest mip-0 alpha, VTF wrap/clamp and their inclusive `$alphatestreference` threshold. Plain selected VertexLitGeneric/UnlitGeneric with `$translucent 1`, no alpha test and `$alpha` absent or exactly `1` uses raw alpha bytes: `visibility = (255 − min(255, sum(hit_alpha)))/255`. Distinct admitted triangle hits count separately, including two-sided entry/exit and shared-edge hits; this is additive saturating coverage, not per-sheet multiplication. Direct/directional maps, weighted sun/sky, base/extra reflected styles, ambient cubes, details and normal/IgnoreNormals baked prop receivers share the scalar transfer without changing source-boundary or owner-skip rules.
 
-Textures retain axis-aligned transforms, one frame/face/depth, at most 4096 pixels per axis and 64 MiB total decoded alpha. Mixed translucent+alpha-test, `$alphatestreference` in fractional mode, scalar alpha modulation, additive/vertex/distance alpha, unsupported shaders/effects, rotated transforms, animation/conditional blocks and missing/corrupt required assets fail without replacing prior BSP. World/terrain translucency, tint/refraction, filtered edges, physical-sheet deduplication, animated props and per-texel baking remain unavailable. Translucent materials still cannot receive optional prop vertex lighting; use the existing `disablevertexlighting: "1"` property on such casters when that option is enabled. See [Static-prop shadows](prop-shadows.md).
+Textures support finite center, scale, rotation in degrees and translation (each authored value within ±1024), applied as scale about center, rotation, then translation. Negative scale mirrors; nearest-texel clamp/repeat rules follow the transformed coordinates. They retain one frame/face/depth, at most 4096 pixels per axis and 64 MiB total decoded alpha. Mixed translucent+alpha-test, `$alphatestreference` in fractional mode, scalar alpha modulation, additive/vertex/distance alpha, unsupported shaders/effects, malformed or duplicated transforms, animation/conditional blocks and missing/corrupt required assets fail without replacing prior BSP. World/terrain translucency, tint/refraction, filtered edges, physical-sheet deduplication, animated props and per-texel baking remain unavailable. Translucent materials still cannot receive optional prop vertex lighting; use the existing `disablevertexlighting: "1"` property on such casters when that option is enabled. See [Static-prop shadows](prop-shadows.md).
 
 Create `func_occluder` through the existing brush-entity operations, set `StartActive`, and author its Activate/Deactivate/Toggle connections through the existing entity tools. Compiles report `occluders`, `occluder_polygons` and `occluder_vertex_refs` with the same entity-linked diagnostics as the human build panel. Each helper supports 1–16 visible convex brushes in one unambiguous visibility area. Separated brushes, exact face contacts and overlapping volumes produce a bounded union boundary; gaps and concave outlines remain. Edge-only/point-only contacts, thin or ambiguous contacts and collapsed fragments reject with diagnostics. Combined inputs are bounded to 256 sides and 4096 polygon vertices; boundary output and total union work have separate limits. Native records, activation indices and Activate/Deactivate/Toggle control runtime culling. See [Occluders](occluders.md).
 

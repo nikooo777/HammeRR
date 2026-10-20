@@ -60,6 +60,10 @@ pub use physics::current::{
     MAX_WATER_CURRENT_SPEED, MAX_WATER_CURRENT_VALUE_BYTES, WATER_CURRENT_COMPONENTS,
     WATER_CURRENT_VELOCITY_KEY, validate_water_current_velocity,
 };
+pub use physics::damping::{
+    DEFAULT_WATER_DAMPING, MAX_WATER_DAMPING, MAX_WATER_DAMPING_VALUE_BYTES, WATER_DAMPING_KEY,
+    validate_water_damping,
+};
 pub use portals::Leak;
 pub use publication::{FileIdentity, FileStamp, OutputLease};
 pub use sky_assets::{SkyAssetManifest, SkyAssetPlan, read_packed_sky, verify_packed_sky};
@@ -837,6 +841,7 @@ fn build(
 ) -> Result<(), String> {
     options.validate()?;
     let water_current = physics::current::from_world(vmf, options.physics)?;
+    let water_damping = physics::damping::from_world(vmf, options.physics)?;
     control.advance(Stage::Loading)?;
     for entity in &vmf.entities {
         control.checkpoint()?;
@@ -876,6 +881,7 @@ fn build(
         map::Map::load_controlled(vmf, fs, &mut output.report, control)?
     };
     map.water_current = water_current;
+    map.water_damping = water_damping;
     let reflection_plan = if options.generate_reflections && !output.report.has_errors() {
         control.advance(Stage::PrepareReflections)?;
         output.report.diagnostics.retain(|item| {
@@ -936,6 +942,7 @@ fn build(
         output.stats.switchable_light_groups = lighting::styles::prepare(&mut map, control)?;
     }
     physics::current::admit_map(&map, control)?;
+    physics::damping::admit_map(&map, control)?;
     let neighbors = map.connect_terrain(&mut output.report, control)?;
     output.stats.displacement_neighbor_pairs = neighbors.pairs;
     output.stats.displacement_corner_neighbor_pairs = neighbors.corner_pairs;

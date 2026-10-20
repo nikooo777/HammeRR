@@ -3558,3 +3558,52 @@ partial named/unnamed saves, pending-review preservation, two-file success,
 clean-source verification without rewriting and externally changed source
 failures. Each binary runs with private content/settings; repository demo maps
 are fingerprinted and preserved.
+
+
+### Rotated prop texture shadows
+
+```bash
+python3 -B scripts/validate_prop_shadow_transforms.py \
+  --binary target/debug/hammerr-headless \
+  --output target/validation/prop-shadow-transforms-headless
+python3 -B scripts/validate_prop_shadow_transforms.py \
+  --binary target/debug/editor \
+  --output target/validation/prop-shadow-transforms-editor
+```
+
+Use fresh output directories. The headless fixtures freeze asymmetric texel and
+encoded LDR/HDR answers before compiling. Positive, negative, noncardinal and
+composed rotations distinguish transform order, center, scale sign and
+clamp/repeat through foreground and background MCP builds. Invalid transforms
+must preserve the prior BSP and document state. Retain the existing
+`validate_prop_shadows.py` and transmission checks for their separate coverage.
+These checks do not launch the desktop or establish native image parity.
+
+
+### Water pressure damping
+
+```sh
+cargo test -p compiler --test water_current
+cargo test -p editor-core --features mcp,test-support --lib water_damping
+cargo test -p editor --bin editor water_damping
+python3 -B scripts/validate_water_damping.py \
+  --binary target/debug/hammerr-headless \
+  --output target/validation/water-damping-headless
+python3 -B scripts/validate_water_damping.py \
+  --binary target/debug/editor \
+  --output target/validation/water-damping-editor
+```
+
+Use fresh disk-backed output directories. `--game-dir` selects installed CS:S.
+The public MCP check verifies shared World drafts, exact raw text, invalid import
+diagnostics, absent/explicit-default whole-BSP equality and damping-only changes
+to native keys. Collision bodies, current units and unrelated BSP/game-lump data
+must remain exact. Both build paths preserve prior output and Session state on
+refusal. The compiler's native CLI regression runs the real worker before
+substituting an allowed but incorrect scalar; the parent must reject it.
+
+The software UI callback writes `water-pressure-world-settings.png` when
+`HAMMERR_UI_SNAPSHOTS` names an existing directory. Core tests cover both actors,
+FGD read-only/default distinctions, atomic late-invalid batches and persistence;
+public MCP itself uses Actor::Agent. These checks open no desktop window or game
+and establish source/native-format behavior, not a terminal body speed.

@@ -15,6 +15,7 @@ fn body(contents: i32, surface: Option<f32>) -> Body {
         shapes: Vec::new(),
         surface,
         current_hu: None,
+        damping: None,
         surface_property: None,
         mass_area: None,
         mesh: None,
@@ -46,6 +47,65 @@ fn materials() -> Vec<String> {
 
 fn keys() -> String {
     format!("{SOLID}\n{CLIP}\n{TERRAIN}\n{WATER}\n{SLIME}\n{MATERIALS}\n\0")
+}
+
+#[test]
+fn authored_damping_requires_the_exact_requested_scalar_independently_of_current() {
+    for current in [None, Some([64.0, -32.0, 16.0])] {
+        for (requested, text) in [(0.0, "-0"), (0.005, "5e-3"), (0.01, "1e-2")] {
+            let mut expected = model();
+            expected.bodies[4].contents = source_formats::bsp::contents::WATER;
+            for body in &mut expected.bodies[3..] {
+                body.damping = Some(requested);
+                body.current_hu = current;
+            }
+            let original = keys()
+                .replace("\"slime\"", "\"water\"")
+                .replace("\"contents\" \"16\"", "\"contents\" \"32\"")
+                .replace("\"damping\" \"0.01\"", &format!("\"damping\" \"{text}\""));
+            let original = if current.is_some() {
+                original.replace("\"0 0 0\"", "\"1.6256 -0.8128 0.4064\"")
+            } else {
+                original
+            };
+            validate(
+                original.as_bytes(),
+                &expected,
+                &materials(),
+                &Control::default(),
+            )
+            .unwrap();
+            for substitute in ["0", "0.005", "0.01"] {
+                if substitute.parse::<f32>().unwrap() == requested {
+                    continue;
+                }
+                let changed = original.replacen(
+                    &format!("\"damping\" \"{text}\""),
+                    &format!("\"damping\" \"{substitute}\""),
+                    1,
+                );
+                assert!(
+                    validate(
+                        changed.as_bytes(),
+                        &expected,
+                        &materials(),
+                        &Control::default()
+                    )
+                    .is_err()
+                );
+            }
+        }
+    }
+    let changed = keys().replace("\"damping\" \"0.01\"", "\"damping\" \"0.005\"");
+    assert!(
+        validate(
+            changed.as_bytes(),
+            &model(),
+            &materials(),
+            &Control::default()
+        )
+        .is_err()
+    );
 }
 
 #[test]

@@ -322,7 +322,7 @@ Limits: up to four diffuse bounces from world/detail/terrain lightmaps, preservi
 
 Each lit face gets its base map and three directional maps per light style. Texture axes, mirrored mappings and world/model smooth normals orient those directions; terrain uses its shared smooth surface normals. Native style averages keep the base lighting. Brush models keep their own coordinate scope and self shadows.
 
-Limits: the engine can clamp bright ordinary and bumped LDR lighting differently; compare modest brightness when tuning normal details. This changes compiled game lighting; the editor's material thumbnails and viewport use diffuse previews. Materials that only declare `$bumpmap2`, independently rotated initial model poses, world/terrain opacity and colored/refraction transmission, and per-texel prop lightmaps remain unfinished. Auxiliary directions share the 16 MiB lightmap limit per channel and 100-million work limit per build; larger scales or lower sampling can reduce work.
+Limits: the engine can clamp bright ordinary and bumped LDR lighting differently; compare modest brightness when tuning normal details. This changes compiled game lighting; the editor's material thumbnails and viewport use diffuse previews. WorldVertexTransition secondary normal mapping requires a primary `$bumpmap`; `$bumpmap2` alone does not activate the checked shader path. Independently rotated initial model poses, world/terrain opacity and colored/refraction transmission, and per-texel prop lightmaps remain unfinished. Auxiliary directions share the 16 MiB lightmap limit per channel and 100-million work limit per build; larger scales or lower sampling can reduce work.
 
 #### Falloff
 
@@ -487,7 +487,12 @@ pivot and compiler physics limits apply.
 Horizontal world-water pools compile exposed top undersides and vertical side
 faces using each face material's `$bottommaterial`. See [Water](water.md) for
 material setup and limits.
-Depth-specific material packing, currents and custom damping remain unfinished.
+**World settings…** supplies map-wide **Water current · world units/s** and
+**Water pressure damping** through shared staging and MCP. The coefficient accepts
+0–0.01, defaulting to 0.01; zero retains the native fixed pressure term. Both
+stored controls require engine physics and eligible emitted water. See
+[Water](water.md). Depth-specific material packing and per-pool/player controls
+remain unfinished.
 
 ### Cubemaps
 
@@ -513,7 +518,7 @@ the compiler retains the legacy sample-only limit of 1,024 and sizes up to
 - **Direct LDR** and **Direct LDR + HDR** trace actual LOD0 model triangles for direct, sun/sky, bounced-light and model-ambient shadows. Shadow casting is independent of collision mode; native `disableshadows` turns it off, and hidden props are omitted. See [Static-prop mesh shadows](prop-shadows.md).
 - Shadow meshes need the model's matching `.vvd` and `.dx90.vtx` companions. Missing or malformed geometry fails with a prop-specific diagnostic and preserves the previous BSP; bounds are never substituted for the mesh. Fullbright and disabled-shadow props do not load these companions.
 - Shadows are two-sided. Models with the native `$casttextureshadows` flag support selected-skin `$alphatest` materials using **VertexLitGeneric** or **UnlitGeneric**. Each ray interpolates triangle UVs and samples the base texture's mip 0 with nearest texels, honoring VTF clamp S/T or repeat. `$alphatestreference` accepts 0–1; absent values use 0.5 for VertexLitGeneric and 0.7 for UnlitGeneric, while explicit zero uses 0.5. Alpha equal to the reference blocks light. Binary cutouts keep their threshold behavior. Plain requested `$translucent 1` materials use saturating alpha-byte coverage across intersected triangles; see [Translucent texture shadows](prop-shadows.md#translucent-texture-shadows). Neither mode filters edges.
-- Supported `$basetexturetransform` operations are finite **center**, **scale**, **translate** and **rotate 0**, with each value within ±1024. Requested texture shadows reject rotated transforms, unsupported shaders, mixed translucent/alpha-test modes, fractional `$alphatestreference`, additive or alpha modulation, material animation/conditional blocks, additional opacity effects, nonzero frames, animated/cubemap/volume textures and missing or corrupt assets. The entity diagnostic explains the failure, and the previous BSP is preserved.
+- Supported `$basetexturetransform` operations are finite **center**, **scale**, **rotate** in degrees and **translate**, with each authored value within ±1024. Scale about the center applies before rotation, followed by translation; negative scale mirrors. Both cutout and translucent shadows honor the transformed nearest texel and VTF clamp/repeat flags. Requested texture shadows reject malformed or duplicated transforms, unsupported shaders, mixed translucent/alpha-test modes, fractional `$alphatestreference`, additive or alpha modulation, material animation/conditional blocks, additional opacity effects, nonzero frames, animated/cubemap/volume textures and missing or corrupt assets. The entity diagnostic explains the failure, and the previous BSP is preserved.
 - Models without `$casttextureshadows` keep opaque shadows and existing approximation warnings for alpha/translucent/additive materials, nonstandard shaders, animation/conditional blocks and missing materials. Fullbright and `disableshadows` skip texture-shadow decoding.
 - Texture dimensions are limited to 4096 pixels per axis and decoded alpha to 64 MiB per build. Texture input shares the 256 MiB shadow-asset budget; each asset file is limited to 64 MiB. Invalid assets, scaling, lightmap requests and ambiguous lighting origins fail with a diagnostic. **Build details…** reports participating props, triangles, disabled props, alpha-texture triangles and alpha textures under **Prop mesh shadows**.
 

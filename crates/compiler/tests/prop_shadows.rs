@@ -568,8 +568,20 @@ fn requested_alpha_assets_and_effects_fail_on_the_prop_and_preserve_the_build() 
             "was not found",
         ),
         (
-            "VertexLitGeneric { $alphatest 1 $basetexture test $basetexturetransform \"rotate 30\" }",
-            "rotated",
+            "VertexLitGeneric { $alphatest 1 $basetexture test $basetexturetransform \"rotate invalid\" }",
+            "invalid $basetexturetransform",
+        ),
+        (
+            "VertexLitGeneric { $alphatest 1 $basetexture test $basetexturetransform \"rotate NaN\" }",
+            "finite and within",
+        ),
+        (
+            "VertexLitGeneric { $alphatest 1 $basetexture test $basetexturetransform \"rotate 1025\" }",
+            "finite and within",
+        ),
+        (
+            "VertexLitGeneric { $alphatest 1 $basetexture test $basetexturetransform \"rotate 30 rotate -30\" }",
+            "duplicate $basetexturetransform",
         ),
         (
             "VertexLitGeneric { $translucent 1 $alphatest 1 $basetexture test }",
@@ -640,6 +652,102 @@ fn requested_alpha_assets_and_effects_fail_on_the_prop_and_preserve_the_build() 
     }));
     assert!(!failed.write(&destination).unwrap());
     assert_eq!(std::fs::read(&destination).unwrap(), old);
+}
+
+#[test]
+fn requested_rotated_alpha_textures_follow_literal_matrix_texels_in_both_channels() {
+    let (directory, game) = alpha_game();
+    let path = directory.path().join("models/props/test.vvd");
+    let mut vvd = std::fs::read(&path).unwrap();
+    for index in 0..4 {
+        put_float(&mut vvd, 64 + index * 48 + 40, 0.1875);
+        put_float(&mut vvd, 64 + index * 48 + 44, 0.625);
+    }
+    std::fs::write(path, vvd).unwrap();
+    let mut vmf = scene();
+    let prop = vmf.entities.len() - 1;
+    let light = prop - 1;
+    vmf.entities[prop].properties.set("skin", "1");
+    for (key, value) in [
+        ("_light", "255 0 0 255"),
+        ("_lightHDR", "0 0 255 510"),
+        ("_constant_attn", "1"),
+        ("_quadratic_attn", "0"),
+    ] {
+        vmf.entities[light].properties.set(key, value);
+    }
+    let before = vmf.clone();
+    for (transform, flags, alpha) in [
+        (
+            "center 0.25 0.75 scale 2 3 rotate 90 translate 0.5 -0.25",
+            0,
+            64,
+        ),
+        (
+            "center 0.25 0.75 scale 2 3 rotate 90 translate 0.5 -0.25",
+            4,
+            112,
+        ),
+        (
+            "center 0.25 0.75 scale 2 3 rotate -90 translate 0.5 -0.25",
+            0,
+            144,
+        ),
+        ("center 0 0 scale -2 3 rotate 90 translate 0.25 0.5", 0, 16),
+        ("rotate 30", 0, 64),
+        ("rotate -30", 0, 208),
+    ] {
+        let mut texture = alpha_texture();
+        put_int(&mut texture, 20, 0x1000 | flags);
+        for (index, pixel) in texture[80..].as_chunks_mut::<4>().0.iter_mut().enumerate() {
+            pixel[3] = index as u8 * 16;
+        }
+        std::fs::write(directory.path().join("materials/test.vtf"), texture).unwrap();
+        for fractional in [false, true] {
+            let mode = if fractional {
+                "$translucent 1"
+            } else {
+                "$alphatest 1"
+            };
+            let material = format!(
+                "VertexLitGeneric {{ {mode} $basetexture test $basetexturetransform \"{transform}\" }}"
+            );
+            std::fs::write(
+                directory.path().join("materials/models/test/two.vmt"),
+                material,
+            )
+            .unwrap();
+            let output = compiler::compile_with_options(
+                &vmf,
+                &game,
+                Options {
+                    lighting: LightingMode::DirectLdrHdr,
+                    ..options()
+                },
+            );
+            assert!(!output.report.has_errors(), "{:?}", output.report);
+            assert_eq!(output.stats.prop_shadow_alpha_triangles, 1);
+            let expected = if fractional {
+                255 - alpha
+            } else if alpha >= 128 {
+                0
+            } else {
+                255
+            };
+            let bsp = output.bsp.unwrap();
+            assert_eq!(
+                floor_sample_layer(&bsp, DVec3::ZERO, LightingKind::Ldr, 0, 0),
+                DVec3::new(f64::from(expected), 0.0, 0.0),
+                "{transform}; fractional={fractional}; flags={flags}"
+            );
+            assert_eq!(
+                floor_sample_layer(&bsp, DVec3::ZERO, LightingKind::Hdr, 0, 0),
+                DVec3::new(0.0, 0.0, f64::from(expected * 2)),
+                "{transform}; fractional={fractional}; flags={flags}"
+            );
+            assert_eq!(vmf, before);
+        }
+    }
 }
 
 #[test]

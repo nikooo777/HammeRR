@@ -84,6 +84,10 @@ Absence intentionally means zero velocity without a stored override. A stored
 value, including explicit zero, requires eligible emitted structural-world WATER.
 The finite vector's length is at most 128 world units/s and its source text is at
 most 128 UTF-8 bytes. The compiler converts authored units once for the checked
-native fluid controller; no normalization or clamping is applied. Damping remains
-`0.01`; per-pool/custom damping, player/NPC currents and slime/detail/model liquid
-currents remain unavailable. Rejected values/builds preserve previous output.
+native fluid controller; no normalization or clamping is applied. **Water pressure
+damping** selects a separate dimensionless coefficient from 0 to 0.01, defaulting
+to 0.01 when absent. Zero retains the native fixed pressure term. Either stored
+control requires engine physics and supported emitted water. Native provider
+velocity does not promise a terminal body speed or settling time. Per-pool
+controls, player/NPC currents and slime/detail/model liquid currents remain
+unavailable. See [Water pressure damping](water.md#water-pressure-damping). Rejected values/builds preserve previous output.

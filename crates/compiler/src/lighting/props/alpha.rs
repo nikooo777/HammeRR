@@ -18,7 +18,7 @@ pub(super) struct Texture {
 
 pub(super) struct Material {
     texture: Arc<Texture>,
-    transform: [f64; 4],
+    transform: [[f64; 3]; 2],
     reference: f64,
     fractional: bool,
 }
@@ -33,8 +33,15 @@ impl Material {
     }
 
     pub(super) fn coverage(&self, uv: DVec2) -> Result<u8, String> {
-        let uv = uv * DVec2::new(self.transform[0], self.transform[1])
-            + DVec2::new(self.transform[2], self.transform[3]);
+        let [s, t] = self.transform;
+        let uv = if s[1] == 0.0 && t[0] == 0.0 {
+            uv * DVec2::new(s[0], t[1]) + DVec2::new(s[2], t[2])
+        } else {
+            DVec2::new(
+                uv.x * s[0] + uv.y * s[1] + s[2],
+                uv.x * t[0] + uv.y * t[1] + t[2],
+            )
+        };
         if !uv.is_finite() {
             return Err("Static-prop texture-shadow coordinates must be finite".into());
         }
@@ -72,26 +79,29 @@ fn scalar(material: &vmt::Material, key: &str, default: f64) -> Result<f64, Stri
     Ok(value)
 }
 
-fn transform(value: Option<&str>) -> Result<[f64; 4], String> {
-    source_formats::vmt::texture_transform(value, source_formats::vmt::DuplicateOperations::Reject)
-        .map_err(|error| match error {
-            source_formats::vmt::TransformError::Syntax => {
-                "unsupported $basetexturetransform syntax".into()
-            }
-            source_formats::vmt::TransformError::Duplicate => {
-                "duplicate $basetexturetransform operation".into()
-            }
-            source_formats::vmt::TransformError::Incomplete => {
-                "incomplete $basetexturetransform".into()
-            }
-            source_formats::vmt::TransformError::Invalid => "invalid $basetexturetransform".into(),
-            source_formats::vmt::TransformError::Bounds => {
-                "$basetexturetransform values must be finite and within ±1024".into()
-            }
-            source_formats::vmt::TransformError::Rotation => {
-                "rotated $basetexturetransform is unsupported for texture shadows".into()
-            }
-        })
+fn transform(value: Option<&str>) -> Result<[[f64; 3]; 2], String> {
+    source_formats::vmt::texture_transform_matrix(
+        value,
+        source_formats::vmt::DuplicateOperations::Reject,
+    )
+    .map_err(|error| match error {
+        source_formats::vmt::TransformError::Syntax => {
+            "unsupported $basetexturetransform syntax".into()
+        }
+        source_formats::vmt::TransformError::Duplicate => {
+            "duplicate $basetexturetransform operation".into()
+        }
+        source_formats::vmt::TransformError::Incomplete => {
+            "incomplete $basetexturetransform".into()
+        }
+        source_formats::vmt::TransformError::Invalid => "invalid $basetexturetransform".into(),
+        source_formats::vmt::TransformError::Bounds => {
+            "$basetexturetransform values must be finite and within ±1024".into()
+        }
+        source_formats::vmt::TransformError::Rotation => {
+            "invalid $basetexturetransform rotation".into()
+        }
+    })
 }
 
 fn texture_allocations(
@@ -319,7 +329,7 @@ pub(in crate::lighting) fn fractional_triangle(
                 clamp: [false; 2],
                 alpha: vec![alpha],
             }),
-            transform: [1.0, 1.0, 0.0, 0.0],
+            transform: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
             reference: 0.5,
             fractional: true,
         }),
@@ -348,7 +358,10 @@ mod tests {
                     clamp,
                     alpha: vec![0, 255, 128, 64],
                 }),
-                transform,
+                transform: [
+                    [transform[0], 0.0, transform[2]],
+                    [0.0, transform[1], transform[3]],
+                ],
                 reference,
                 fractional: false,
             }),
@@ -395,6 +408,10 @@ mod tests {
                 .unwrap_err()
                 .contains("1024")
         );
+        assert_eq!(
+            transform(Some("center 0 0 scale -1 1 translate 1 0 rotate 0")).unwrap(),
+            [[-1.0, 0.0, 1.0], [0.0, 1.0, 0.0]]
+        );
 
         let identity = [1.0, 1.0, 0.0, 0.0];
         for (clamp, mapping, reference, point, expected) in [
@@ -408,13 +425,7 @@ mod tests {
             ([false, true], identity, 0.5, [1.0, 5.0], true),
             ([false; 2], [1.0, 1.0, -0.5, 0.0], 0.5, [1.0, 1.0], true),
             ([true, false], [1.0, 1.0, -0.5, 0.0], 0.5, [1.0, 1.0], false),
-            (
-                [false; 2],
-                transform(Some("center 0 0 scale -1 1 translate 1 0 rotate 0")).unwrap(),
-                0.5,
-                [1.0, 1.0],
-                true,
-            ),
+            ([false; 2], [-1.0, 1.0, 1.0, 0.0], 0.5, [1.0, 1.0], true),
         ] {
             let triangle = triangle(clamp, mapping, reference);
             let point = DVec3::new(point[0], point[1], 0.0);
@@ -426,6 +437,61 @@ mod tests {
             }
             assert!(!triangle.intersects(point, point + DVec3::Z).unwrap());
             assert!(!triangle.intersects(point - DVec3::Z, point).unwrap());
+        }
+    }
+
+    #[test]
+    fn rotated_uv_rays_keep_literal_cutout_and_fractional_texels() {
+        for (value, clamp, uv, alpha) in [
+            ("rotate 90", [false; 2], [0.125, 0.125], 255),
+            ("rotate -90", [false; 2], [0.125, 0.125], 128),
+            ("rotate 30", [false; 2], [0.625, 0.125], 255),
+            ("rotate -30", [false; 2], [0.625, 0.125], 0),
+            (
+                "center 0.25 0.75 scale 2 3 rotate 90 translate 0.5 -0.25",
+                [false; 2],
+                [0.125, 0.625],
+                0,
+            ),
+            (
+                "center 0.25 0.75 scale 2 3 rotate 90 translate 0.5 -0.25",
+                [true, false],
+                [0.125, 0.625],
+                255,
+            ),
+            (
+                "center 0 0 scale -2 3 rotate 90 translate 0.25 0.5",
+                [false; 2],
+                [0.125, 0.125],
+                255,
+            ),
+            (
+                "center 0 0 scale -2 3 rotate 90 translate 0.25 0.5",
+                [true, false],
+                [0.125, 0.125],
+                0,
+            ),
+        ] {
+            for fractional in [false, true] {
+                let mut triangle = triangle(clamp, [1.0, 1.0, 0.0, 0.0], 0.5);
+                let material = Arc::get_mut(&mut triangle.alpha.as_mut().unwrap().0).unwrap();
+                material.transform = transform(Some(value)).unwrap();
+                material.fractional = fractional;
+                let expected = if fractional {
+                    alpha
+                } else if alpha >= 128 {
+                    255
+                } else {
+                    0
+                };
+                let point = DVec3::new(uv[0] * 4.0, uv[1] * 4.0, 0.0);
+                for (start, end) in [
+                    (point - DVec3::Z, point + DVec3::Z),
+                    (point + DVec3::Z, point - DVec3::Z),
+                ] {
+                    assert_eq!(triangle.coverage(start, end).unwrap(), expected, "{value}");
+                }
+            }
         }
     }
 

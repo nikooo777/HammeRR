@@ -172,6 +172,7 @@ pub struct Map<'a> {
     pub texdata: Vec<usize>,
     pub(crate) water_bottom_texinfos: HashMap<usize, usize>,
     pub(crate) water_current: Option<[f32; 3]>,
+    pub(crate) water_damping: Option<f32>,
     pub brushes: Vec<MapBrush>,
     /// Entity 0 is worldspawn.
     pub entities: Vec<MapEntity>,
@@ -219,6 +220,7 @@ impl<'a> Map<'a> {
             texdata: Vec::new(),
             water_bottom_texinfos: HashMap::new(),
             water_current: None,
+            water_damping: None,
             brushes: Vec::new(),
             entities: Vec::new(),
             cubemaps: Vec::new(),
@@ -243,6 +245,7 @@ impl<'a> Map<'a> {
             .filter(|(key, _)| {
                 !key.eq_ignore_ascii_case(crate::GENERATED_DETAIL_LIGHTING_TINT_KEY)
                     && !key.eq_ignore_ascii_case(crate::WATER_CURRENT_VELOCITY_KEY)
+                    && !key.eq_ignore_ascii_case(crate::WATER_DAMPING_KEY)
             })
             .map(|(key, value)| (key.to_owned(), value.to_owned()))
             .collect();

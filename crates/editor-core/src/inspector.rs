@@ -138,8 +138,14 @@ fn field(entity: &Entity, class: Option<&Class>, key: String) -> Field {
         && entity
             .classname()
             .is_some_and(|class| class.eq_ignore_ascii_case("worldspawn"));
+    let water_damping = lower == compiler::WATER_DAMPING_KEY
+        && entity
+            .classname()
+            .is_some_and(|class| class.eq_ignore_ascii_case("worldspawn"));
     let kind = if water_current {
         "vector"
+    } else if water_damping {
+        "float"
     } else if detail_tint || generated_detail_tint {
         "string"
     } else {
@@ -158,6 +164,7 @@ fn field(entity: &Entity, class: Option<&Class>, key: String) -> Field {
         .get(&key)
         .map(str::to_owned)
         .or_else(|| water_current.then(|| WATER_CURRENT_DEFAULT.into()))
+        .or_else(|| water_damping.then(|| compiler::DEFAULT_WATER_DAMPING.to_string()))
         .or_else(|| property.and_then(Property::default_value))
         .unwrap_or_default();
     let mut result = Field {
@@ -201,11 +208,23 @@ fn field(entity: &Entity, class: Option<&Class>, key: String) -> Field {
     if water_current {
         result.label = "Water current · world units/s".into();
         result.description = format!(
-            "Map-wide steady physical water velocity in world X/Y/Z units per second. Absent means 0 0 0 without a stored override. Exactly three finite components, at most {} input bytes and vector length at most {} units/s; no clamping or normalization. A stored value, including zero, requires CS:S engine physics and emitted structural-world WATER with a visible horizontal top; retained slime/detail/model liquids reject. Fixed fluid damping is 0.01. This does not drive player/NPC movement or edit water materials.",
+            "Map-wide steady physical water velocity in world X/Y/Z units per second. Absent means 0 0 0 without a stored override. Exactly three finite components, at most {} input bytes and vector length at most {} units/s; no clamping or normalization. A stored value, including zero, requires CS:S engine physics and emitted structural-world WATER with a visible horizontal top; retained slime/detail/model liquids reject. Water pressure damping is a separate World setting, defaulting to {}. This does not drive player/NPC movement or edit water materials.",
             compiler::MAX_WATER_CURRENT_VALUE_BYTES,
-            compiler::MAX_WATER_CURRENT_SPEED
+            compiler::MAX_WATER_CURRENT_SPEED,
+            compiler::DEFAULT_WATER_DAMPING
         );
         result.advanced = false;
+    }
+    if water_damping {
+        result.label = "Water pressure damping".into();
+        result.description = format!(
+            "Map-wide dimensionless coefficient for native water's projected-pressure term. Absent means {} without a stored override. Zero removes only the projected-pressure term; the native fixed pressure term remains. Enter one finite decimal from 0 to {}, at most {} input bytes; no clamping. A stored value, including zero or the default, requires CS:S engine physics and emitted structural-world WATER with a visible horizontal top; retained slime/detail/model liquids reject. This does not drive player/NPC movement or edit water materials.",
+            compiler::DEFAULT_WATER_DAMPING,
+            compiler::MAX_WATER_DAMPING,
+            compiler::MAX_WATER_DAMPING_VALUE_BYTES
+        );
+        result.advanced = false;
+        result.range = Some([0.0, compiler::MAX_WATER_DAMPING]);
     }
     match kind {
         "choices" => {
@@ -282,7 +301,8 @@ fn field(entity: &Entity, class: Option<&Class>, key: String) -> Field {
             }
         }
         "integer" | "float" | "angle" => {
-            if let Ok(value) = result.value.parse::<f64>()
+            if !water_damping
+                && let Ok(value) = result.value.parse::<f64>()
                 && value.is_finite()
             {
                 result.control = Control::Number;
@@ -402,6 +422,25 @@ fn field(entity: &Entity, class: Option<&Class>, key: String) -> Field {
             .description
             .push_str(&format!(" Stored current is invalid: {error}"));
     }
+    if water_damping {
+        match compiler::validate_water_damping(Some(&result.value)) {
+            Ok(()) => result.control = Control::Number,
+            Err(error) => result
+                .description
+                .push_str(&format!(" Stored damping is invalid: {error}")),
+        }
+        if entity
+            .properties
+            .get_all(compiler::WATER_DAMPING_KEY)
+            .count()
+            > 1
+        {
+            result.control = Control::Text;
+            result
+                .description
+                .push_str(" World has duplicate damping keys; resolve them before editing.");
+        }
+    }
     result
 }
 
@@ -432,11 +471,15 @@ pub fn inspect(entity: &Entity, class: Option<&Class>) -> Inspector {
     if entity
         .classname()
         .is_some_and(|class| class.eq_ignore_ascii_case("worldspawn"))
-        && !names
-            .iter()
-            .any(|name| name.eq_ignore_ascii_case(compiler::WATER_CURRENT_VELOCITY_KEY))
     {
-        names.push(compiler::WATER_CURRENT_VELOCITY_KEY.into());
+        for key in [
+            compiler::WATER_CURRENT_VELOCITY_KEY,
+            compiler::WATER_DAMPING_KEY,
+        ] {
+            if !names.iter().any(|name| name.eq_ignore_ascii_case(key)) {
+                names.push(key.into());
+            }
+        }
     }
     let mut properties: Vec<Field> = names
         .into_iter()

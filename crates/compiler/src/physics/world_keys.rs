@@ -6,7 +6,6 @@ use source_formats::{
 use super::{MAX_PHYSICS_SOLIDS, MAX_SURFACE_PROPERTIES, Model};
 use crate::Control;
 
-pub(super) const FLUID_DAMPING: f32 = 0.01;
 pub(super) const FLUID_NORMAL: [f32; 3] = [0.0, 0.0, 1.0];
 
 const STATIC_FIELDS: [&str; 2] = ["index", "contents"];
@@ -184,7 +183,10 @@ pub(super) fn validate(
                 || plane[3] != height
                 || !field(values, "surfaceprop")?
                     .eq_ignore_ascii_case(fluid_property(body.contents)?)
-                || number(field(values, "damping")?)? != FLUID_DAMPING
+                || number(field(values, "damping")?)?
+                    != body
+                        .damping
+                        .unwrap_or(super::damping::DEFAULT_WATER_DAMPING)
                 || vector::<3>(field(values, "currentvelocity")?)?
                     != super::current::native(body.current_hu)
             {

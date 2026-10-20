@@ -546,7 +546,10 @@ pub(super) fn write(request: &Request, directory: &Path, output: &Path) -> Resul
 
 fn fluid_keys(index: usize, body: &Body, surface: f32) -> Result<String, String> {
     let property = super::world_keys::fluid_property(body.contents)?;
-    let damping = super::world_keys::FLUID_DAMPING;
+    let damping = body
+        .damping
+        .unwrap_or(super::damping::DEFAULT_WATER_DAMPING);
+    let damping = if damping == 0.0 { 0.0 } else { damping };
     let [nx, ny, nz] = super::world_keys::FLUID_NORMAL;
     let [x, y, z] = super::current::native(body.current_hu);
     Ok(format!(

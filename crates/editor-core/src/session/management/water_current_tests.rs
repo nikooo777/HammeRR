@@ -50,7 +50,7 @@ fn water_current_world_field_is_discoverable_without_source_mutation_and_respect
             property
                 .field
                 .description
-                .contains("Fixed fluid damping is 0.01")
+                .contains("Water pressure damping is a separate World setting")
         );
         if property.field.read_only {
             let token = begin(&mut session);

@@ -784,3 +784,6 @@ mod entity_report_admission_tests;
 
 #[cfg(test)]
 mod water_current_tests;
+
+#[cfg(test)]
+mod water_damping_tests;

@@ -39,9 +39,35 @@ Create a horizontal world-water volume with connected depth metadata, inward-fac
 
 The current affects VPhysics bodies in all supported world-water volumes; it
 does not add player/NPC movement-current contents or change water rendering.
-Fluid damping stays fixed at `0.01`. The compiler consumes the source-only
-`_hammerr_water_current_velocity` world property and preserves it in the VMF;
-it is not a material parameter or runtime worldspawn key.
+The current is a native fluid-provider velocity, not a promised terminal body
+speed or settling time. Water pressure damping is a separate control below.
+The compiler consumes the source-only `_hammerr_water_current_velocity` world
+property and preserves it in the VMF; it is not a material parameter or runtime
+worldspawn key.
+
+## Water pressure damping
+
+Choose one pressure coefficient for every supported world-water volume.
+
+1. Open **World settings…** and enter `Water` in **Find a property…**.
+   **Water pressure damping** initially shows `0.01` with **No stored override**.
+2. Enter a number from `0` to `0.01`, such as `0.005`, and press Enter.
+   This stages a dimensionless coefficient for the native projected-pressure
+   term. Zero removes that term; the native fixed pressure term remains.
+3. Click **Apply properties**, or **Cancel** to discard the draft.
+   Use **Build settings… → Physics bodies → CS:S engine physics**, then compile.
+   An explicit coefficient, including zero or `0.01`, requires eligible emitted
+   structural-world WATER even when no current is authored.
+4. To restore the unchanged native default, click **Remove override**, then
+   **Apply properties**. Undo and Redo retain the exact authored value.
+
+![Staged water current and pressure coefficient](images/water-pressure-world-settings.png)
+
+The compiler preserves `_hammerr_water_damping` in the VMF and removes it from
+runtime worldspawn keys. It sets the native fluid coefficient directly; it is
+separate from a physics object's linear/angular damping. The accepted interval
+is a product limit, not a universal stability guarantee. It adds no per-pool
+control or player/NPC current.
 
 Connected water with the same height, material and contents shares its lowest connected depth. Different heights or top materials keep separate regions. The compiler adds one `water_lod_control` with distances of 1,000 and 2,000 if the map has none; authored controls are preserved. Hidden water is omitted.
 
@@ -49,6 +75,6 @@ Each generated inward face keeps its authored face's texture placement and nativ
 
 VMFs with explicit `info_overlay_transition` projections can use [Build imported water transitions](overlays.md#build-imported-water-transitions). Their authored world, detail and terrain bindings follow compiled surface splits. Keep every target visible; when using a compile region, include every target surface. Transition authoring is not available in **Overlay…**.
 
-Agents use the same material and compile operations: `create_block`, `select_faces`, `edit_faces`, `set_compile_settings`, `compile_map` and `start_compile`. Inspect the current field with `get_property_inspector {"world":true}` and stage it through `begin_property_edit`, `update_property_edit` and `commit_property_edit`; `cancel_property_edit` discards it. See [MCP](mcp.md#steady-physical-water-current).
+Agents use the same material and compile operations: `create_block`, `select_faces`, `edit_faces`, `set_compile_settings`, `compile_map` and `start_compile`. Inspect either water field with `get_property_inspector {"world":true}` and stage it through `begin_property_edit`, `update_property_edit` and `commit_property_edit`; `cancel_property_edit` discards it. See [MCP](mcp.md#steady-physical-water-current).
 
-Limits: structural-world water with a visible horizontal top; inward faces cover the top and exposed vertical sides. HammeRR caps their combined generation at four million work units, 65,536 prospective fragments and one million cumulative winding point allocations. Conservative reservations include clipping and merging; exceeding a budget fails the build and preserves previous output. Current input must contain exactly three ASCII-whitespace-separated finite decimal/scientific components in at most 128 UTF-8 bytes, with finite representable native velocity and vector length at most 128 units/s; invalid values or duplicate keys reject atomically. A requested current rejects without engine physics, without emitted eligible water, or when retained slime/detail/model liquids are present. Hidden or region-omitted liquids do not supply eligible bodies. Sloped sides, negative-Z bottom faces, depth-specific material packing, custom damping, per-pool currents, player/NPC currents, sloped or enclosed tops and detail/model liquids remain unfinished. Conflicting overlapping liquids fail with a diagnostic. Editor previews use the material's editor texture; they do not render the game's water reflection, refraction or underwater view. In-game appearance depends on the water materials and renderer settings. Material assets must remain available in the game's mounted content. Compile regions must contain the complete water volume.
+Limits: structural-world water with a visible horizontal top; inward faces cover the top and exposed vertical sides. HammeRR caps their combined generation at four million work units, 65,536 prospective fragments and one million cumulative winding point allocations. Conservative reservations include clipping and merging; exceeding a budget fails the build and preserves previous output. Current input must contain exactly three ASCII-whitespace-separated finite decimal/scientific components in at most 128 UTF-8 bytes, with finite representable native velocity and vector length at most 128 units/s; invalid values or duplicate keys reject atomically. Damping input is one finite ASCII decimal/scientific coefficient in at most 32 bytes, within 0–0.01 before native conversion; a nonzero value must remain nonzero after conversion. Invalid, duplicate or unsupported controls fail explicitly. Either stored control rejects without engine physics, without emitted eligible water, or when retained slime/detail/model liquids are present. Hidden or region-omitted liquids do not supply eligible bodies. Sloped sides, negative-Z bottom faces, depth-specific material packing, per-pool current/damping, player/NPC currents, sloped or enclosed tops and detail/model liquids remain unfinished. Conflicting overlapping liquids fail with a diagnostic. Editor previews use the material's editor texture; they do not render the game's water reflection, refraction or underwater view. In-game appearance depends on the water materials and renderer settings. Material assets must remain available in the game's mounted content. Compile regions must contain the complete water volume.

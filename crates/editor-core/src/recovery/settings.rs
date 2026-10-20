@@ -204,10 +204,14 @@ impl Authority {
 
     pub(crate) fn configure(&self, directory: Result<PathBuf, String>) -> Result<(), String> {
         let mut state = self.lock();
-        let directory = match directory {
+        let directory = match directory.and_then(super::admit_directory) {
             Ok(directory) => directory,
             Err(error) => {
+                state.store = None;
+                state.source = None;
+                state.reload_required = true;
                 state.error = Some(error.clone());
+                state.advance();
                 return Err(error);
             }
         };

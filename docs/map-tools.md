@@ -91,6 +91,14 @@ To recover, select a snapshot and click **Open recovered copy**. It opens as an 
 
 Recovery files live in `$XDG_STATE_HOME/hammerr/recovery`, or `~/.local/state/hammerr/recovery` if that variable isn't set. Set `HAMMERR_RECOVERY_DIR` to an absolute path to use another folder. Turning autosave off keeps manual snapshots and save backups. Failed snapshots are reported in Recovery and in Activity.
 
+The requested storage path must be valid UTF-8. Invalid configuration leaves
+recovery unavailable with a visible error; correct the path and restart.
+A UTF-8 folder alias may point to a Linux directory whose physical name contains
+non-UTF-8 bytes. Maps opened through a UTF-8 filename alias also retain manual,
+automatic, exit and previous-save snapshots when the physical filename contains
+such bytes. If neither source name can be represented, Open or Save reports an
+error before replacing the map or publishing a file; use a UTF-8 alias.
+
 To retry after a snapshot failure, repair the reported storage problem and click
 **Save snapshot now** again. Each admitted request attempts its write once; a
 retry captures a fresh request.

@@ -14,6 +14,10 @@ names on save. Literal quotes cannot be applied to raw VMF fields;
 save/recovery serialization errors remain explicit. Material reload retires
 captured selection gestures while retaining standalone geometry drafts.
 
+Recovery rejects unrepresentable storage configuration with explicit unavailable
+status. UTF-8 map and storage aliases can target Linux filenames with raw bytes;
+snapshots, save backups and recovery remain available through those aliases.
+
 | Area | State |
 | --- | --- |
 | AI access | Shared Session operations serve desktop HTTP MCP and private stdio MCP. Root and child UI actions that access the Session, and new document tool calls, reject during shutdown; admitted requests and queued workers drain against their original Session. Local dialog dismissal preserves pending edits when admission is closed. Desktop exit stops and joins its HTTP service; stalled network shutdown remains an exit error. MCP selects a fixed document with an opaque `document_id`; omission works only with one live document. `close_document` shares reviewed cleanup, keeps a live peer and transport available, and quits after exact response output when the final document closes. `hammerr-headless` builds independently of the Slint UI; editing and compilation leave graphics uninitialized until rendering is requested. |
@@ -79,6 +83,8 @@ captured selection gestures while retaining standalone geometry drafts.
 ## Compiler
 
 Builds reject projections outside finite float or signed lightmap bounds.
+Flat lit faces also require successful subdivision within the 32-luxel extent;
+failed splits preserve prior output in every lighting mode.
 Alpha-tested materials use non-solid window contents and do not seal the world.
 
 | Feature | Works | Not yet |

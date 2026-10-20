@@ -144,6 +144,7 @@ impl Application {
         content: crate::session::SessionContent,
         definitions: Result<Catalog, String>,
     ) -> Result<Self, String> {
+        let directory = directory.and_then(recovery::admit_directory);
         let saved_defaults = crate::saved_defaults::SavedDefaults::configured(directory.clone());
         let path_claims = crate::path_claims::Authority::default();
         let material_favorites = material_favorites::Authority::configured(directory.clone());

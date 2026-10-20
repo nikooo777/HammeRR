@@ -271,26 +271,41 @@ impl Store {
     }
 }
 
+pub(crate) fn admit_directory(directory: PathBuf) -> Result<PathBuf, String> {
+    if !directory.is_absolute() {
+        return Err("Recovery directory must be an absolute path".into());
+    }
+    if directory.to_str().is_none() {
+        return Err("Recovery directory must be valid UTF-8".into());
+    }
+    Ok(directory)
+}
+
+fn select_directory(
+    override_directory: Option<std::ffi::OsString>,
+    state_home: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+) -> Result<PathBuf, String> {
+    let requested = if let Some(directory) = override_directory {
+        PathBuf::from(directory)
+    } else if let Some(directory) =
+        state_home.filter(|directory| Path::new(directory).is_absolute())
+    {
+        PathBuf::from(directory).join("hammerr/recovery")
+    } else if let Some(home) = home {
+        PathBuf::from(home).join(".local/state/hammerr/recovery")
+    } else {
+        return Err("Set XDG_STATE_HOME or HAMMERR_RECOVERY_DIR to enable recovery storage".into());
+    };
+    admit_directory(requested)
+}
+
 pub fn default_directory() -> Result<PathBuf, String> {
-    if let Some(directory) = std::env::var_os("HAMMERR_RECOVERY_DIR") {
-        let path = PathBuf::from(directory);
-        return if path.is_absolute() {
-            Ok(path)
-        } else {
-            Err("HAMMERR_RECOVERY_DIR must be an absolute path".into())
-        };
-    }
-    if let Some(directory) = std::env::var_os("XDG_STATE_HOME") {
-        let path = PathBuf::from(directory);
-        if path.is_absolute() {
-            return Ok(path.join("hammerr/recovery"));
-        }
-    }
-    std::env::var_os("HOME")
-        .map(|home| PathBuf::from(home).join(".local/state/hammerr/recovery"))
-        .ok_or_else(|| {
-            "Set XDG_STATE_HOME or HAMMERR_RECOVERY_DIR to enable recovery storage".into()
-        })
+    select_directory(
+        std::env::var_os("HAMMERR_RECOVERY_DIR"),
+        std::env::var_os("XDG_STATE_HOME"),
+        std::env::var_os("HOME"),
+    )
 }
 
 pub fn capture(
@@ -561,6 +576,9 @@ mod tests {
 
 #[cfg(test)]
 mod worker_tests;
+
+#[cfg(test)]
+mod directory_tests;
 
 #[cfg(test)]
 mod settings_reload_tests {

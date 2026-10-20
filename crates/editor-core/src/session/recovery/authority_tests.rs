@@ -233,12 +233,13 @@ fn autosave_exit_and_backup_capture_one_policy_before_shared_settings_changes() 
         source_formats::file_publication::Policy::FollowSource,
     )
     .unwrap();
+    let metadata = PathMetadata::from_destination(&destination).unwrap();
     for _ in 0..2 {
-        let backup = first.backup_before_save(&map, &destination).unwrap();
+        let backup = first.backup_before_save(&destination, &metadata).unwrap();
         first.finish_save_backup(backup.as_ref(), true).unwrap();
     }
     let backup = first
-        .backup_before_save(&map, &destination)
+        .backup_before_save(&destination, &metadata)
         .unwrap()
         .unwrap();
     second

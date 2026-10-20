@@ -18,6 +18,99 @@ fn fixture() -> (tempfile::TempDir, Application, PathBuf) {
     (directory, application, path)
 }
 
+#[cfg(unix)]
+#[test]
+fn application_rejects_raw_recovery_configuration_before_sharing_preferences() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory
+        .path()
+        .join(std::ffi::OsString::from_vec(b"state-\xff".to_vec()));
+    let mut application =
+        Application::isolated(Err("No content required".into()), path.clone()).unwrap();
+    let shared = application.document().session().clone();
+    let session = lock(&shared);
+    let status = session.recovery_status_snapshot().1;
+    assert_eq!(status["available"], false);
+    assert!(status["directory"].is_null());
+    assert_eq!(
+        status["storage_error"],
+        "Recovery directory must be valid UTF-8"
+    );
+    assert_eq!(
+        status["settings_error"],
+        "Recovery directory must be valid UTF-8"
+    );
+    for report in [
+        session.grid_preferences_state(),
+        session.preview_preferences_state(),
+        session.navigation_preferences_state(),
+        session.keyboard_shortcuts_state(),
+    ] {
+        assert_eq!(report["ready"], false);
+        assert!(report["path"].is_null());
+        assert!(report["error"].as_str().unwrap().contains("valid UTF-8"));
+        serde_json::to_vec(&report).unwrap();
+    }
+    let favorites = serde_json::to_value(session.material_favorite_status()).unwrap();
+    assert_eq!(favorites["persistence"], "blocked");
+    assert!(favorites["directory"].is_null());
+    serde_json::to_vec(&session.recent_maps()).unwrap();
+    drop(session);
+    application.shutdown().unwrap();
+    assert!(!path.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn application_preserves_utf8_recovery_alias_to_raw_storage() {
+    use std::os::unix::{ffi::OsStringExt, fs::symlink};
+
+    let directory = tempfile::tempdir().unwrap();
+    let physical = directory
+        .path()
+        .join(std::ffi::OsString::from_vec(b"state-\xff".to_vec()));
+    std::fs::create_dir(&physical).unwrap();
+    let alias = directory.path().join("state-alias");
+    symlink(&physical, &alias).unwrap();
+    let mut application =
+        Application::isolated(Err("No content required".into()), alias.clone()).unwrap();
+    let shared = application.document().session().clone();
+    let mut session = lock(&shared);
+    assert_eq!(
+        session.recovery_status()["directory"],
+        alias.to_str().unwrap()
+    );
+    let stamp = session.grid_preferences_stamp();
+    session
+        .change_grid_preferences(Actor::User, "save", &stamp)
+        .unwrap();
+    session
+        .set_recovery_settings(Actor::User, recovery::Settings::default(), None)
+        .unwrap();
+    for report in [
+        session.grid_preferences_state(),
+        session.preview_preferences_state(),
+        session.navigation_preferences_state(),
+        session.keyboard_shortcuts_state(),
+    ] {
+        assert_eq!(report["ready"], true);
+        assert!(report["error"].is_null());
+        assert!(
+            report["path"]
+                .as_str()
+                .unwrap()
+                .starts_with(alias.to_str().unwrap())
+        );
+    }
+    drop(session);
+    application.shutdown().unwrap();
+    assert!(physical.join("settings.json").is_file());
+    assert!(physical.join(crate::grid_preferences::FILE_NAME).is_file());
+    assert!(std::fs::symlink_metadata(&alias).unwrap().is_symlink());
+}
+
 #[test]
 fn application_shutdown_drains_once_with_retained_session_and_drop_fallback() {
     for explicit in [false, true] {

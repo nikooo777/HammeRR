@@ -3087,6 +3087,15 @@ imported data and history.
 
 ### Recovery settings and errors
 
+The final requested recovery-directory path must be absolute and valid UTF-8.
+Invalid configuration leaves `get_recovery.status.available:false`,
+`directory:null` and an explicit `storage_error`; map and preference inspection
+remain available. Correct the configuration and restart. UTF-8 storage aliases
+may target non-UTF-8 physical directory names. Named map aliases retain their
+usable source path in recovery entries and share the physical target's opaque
+`document_key`; treat that key as an identifier rather than a filename to parse.
+An unrepresentable source path requires a UTF-8 alias before Open or Save.
+
 Retry a failed snapshot with a new `create_recovery_snapshot` call. Each call
 admits a fresh request; internal repeated or concurrent execution of that same
 request cannot write another snapshot, including after a failed write.

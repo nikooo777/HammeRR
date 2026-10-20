@@ -254,6 +254,22 @@ cargo test -p editor-core --features mcp --lib production_workspace_http_closes
 Bundle these under the resource-capped pipeline below. Broader package runs
 already include them; avoid repeating individual filters after that gate passes.
 
+Lightmap subdivision and recovery path checks through both production MCP
+entry points:
+
+```sh
+python3 -B scripts/validate_audit707_fixes.py --binary target/debug/hammerr-headless --output target/validation/audit707-headless
+python3 -B scripts/validate_audit707_fixes.py --binary target/debug/editor --output target/validation/audit707-editor
+python3 -B -m unittest discover -s scripts -p test_hdr_observer.py
+```
+
+Use fresh disk-backed output directories. The MCP checks use small synthetic
+content, a bounded thin-room projection, unavailable-storage reporting and
+UTF-8 aliases to raw Linux filenames. They check foreground/background refusal,
+prior BSP/pointfile preservation, recovery round trips and clean EOF without
+graphics, desktop input or game launches. The HDR protocol tests use independent
+receipt identities and a transition between individually valid HDR types.
+
 ```sh
 cargo build --release -p editor -p editor-core -p compiler -p native-runtime
 cargo test --workspace

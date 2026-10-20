@@ -287,24 +287,49 @@ impl Drop for RecoveryRequest {
     }
 }
 
-fn absolute_path(path: &Path) -> PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| {
-        if path.is_absolute() {
-            path.to_owned()
-        } else {
-            std::env::current_dir()
-                .unwrap_or_else(|_| PathBuf::from("."))
-                .join(path)
-        }
-    })
+fn path_key(path: &Path) -> String {
+    if let Some(path) = path.to_str() {
+        return format!("map:{path}");
+    }
+    use std::fmt::Write;
+    let mut key = String::from("map-bytes:");
+    for byte in path.as_os_str().as_encoded_bytes() {
+        write!(key, "{byte:02x}").expect("Writing to a String cannot fail");
+    }
+    key
 }
 
-fn path_key(path: &Path) -> String {
-    format!("map:{}", absolute_path(path).display())
+pub(super) struct PathMetadata {
+    document_key: String,
+    source_path: PathBuf,
+    title: String,
+}
+
+impl PathMetadata {
+    pub(super) fn from_destination(
+        destination: &source_formats::file_publication::BoundDestination,
+    ) -> Result<Self, String> {
+        let source_path = [destination.physical_path(), destination.authored_path()]
+            .into_iter()
+            .find(|path| path.to_str().is_some())
+            .ok_or("Recovery source path must be valid UTF-8; use a UTF-8 alias to open or save this map")?
+            .to_owned();
+        Ok(Self {
+            document_key: path_key(destination.physical_path()),
+            source_path,
+            title: destination
+                .authored_path()
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into(),
+        })
+    }
 }
 
 impl Session {
     pub fn configure_recovery(&mut self, directory: Result<PathBuf, String>) {
+        let directory = directory.and_then(crate::recovery::admit_directory);
         self.configure_prefabs(directory.clone());
         self.configure_build_recipes(directory.clone());
         self.configure_material_favorites(directory.clone());
@@ -327,10 +352,10 @@ impl Session {
                 self.recovery.store = Some(Store { directory });
                 self.recovery.storage_error = None;
             }
-            Err(error) if matches!(self.recovery.settings, Binding::Application(_)) => {
+            Err(error) => {
+                self.recovery.store = None;
                 self.recovery.storage_error = Some(error);
             }
-            Err(_) => {}
         }
         self.recovery.changed();
     }
@@ -703,26 +728,19 @@ impl Session {
         self.recovery.captured = None;
         self.recovery.last_entry = None;
         self.recovery.changed();
-        self.update_recovery_path();
     }
 
-    pub(super) fn update_recovery_path(&mut self) {
-        if let Some(path) = &self.path {
-            self.recovery.source_path = Some(absolute_path(path));
-            self.recovery.document_key = path_key(path);
-            self.recovery.title = path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .into();
-            self.recovery.changed();
-        }
+    pub(super) fn update_recovery_path(&mut self, metadata: PathMetadata) {
+        self.recovery.source_path = Some(metadata.source_path);
+        self.recovery.document_key = metadata.document_key;
+        self.recovery.title = metadata.title;
+        self.recovery.changed();
     }
 
     pub(super) fn backup_before_save(
         &mut self,
-        path: &Path,
         destination: &source_formats::file_publication::BoundDestination,
+        metadata: &PathMetadata,
     ) -> Result<Option<RecoveryBackup>, String> {
         let Some(store) = self.recovery.store.clone() else {
             return Ok(None);
@@ -733,11 +751,14 @@ impl Session {
             Ok(None) => return Ok(None),
             Err(error) => return Err(format!("Could not read previous save: {error}")),
         };
-        let source = absolute_path(path);
-        let key = path_key(path);
-        let title = path.file_name().unwrap_or_default().to_string_lossy();
         let result = store
-            .write(&key, Some(&source), &title, Kind::BeforeSave, &data)
+            .write(
+                &metadata.document_key,
+                Some(&metadata.source_path),
+                &metadata.title,
+                Kind::BeforeSave,
+                &data,
+            )
             .map(|entry| Some(RecoveryBackup { entry, store, keep }));
         self.recovery.changed();
         if let Err(error) = &result {
@@ -787,6 +808,9 @@ mod authority_tests;
 
 #[cfg(test)]
 mod ownership_tests;
+
+#[cfg(all(test, unix))]
+mod path_tests;
 
 #[cfg(test)]
 mod tests {

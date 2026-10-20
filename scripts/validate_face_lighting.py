@@ -13,7 +13,7 @@ DEFAULT_BINARY = ROOT / "target/debug/hammerr-headless"
 
 
 class Client:
-    def __init__(self, url, binary, output, gameinfo=None):
+    def __init__(self, url, binary, output, gameinfo=None, *, environment=None):
         self.url = url
         self.sequence = 0
         self.session = None
@@ -28,7 +28,8 @@ class Client:
                     *(["--game", str(gameinfo)] if gameinfo else []),
                 ],
                 cwd=ROOT,
-                env={**os.environ, "HAMMERR_RECOVERY_DIR": str(output / "recovery")},
+                env={**os.environ, "HAMMERR_RECOVERY_DIR": str(output / "recovery"),
+                     **(environment or {})},
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=self.log,

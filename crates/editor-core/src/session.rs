@@ -1420,6 +1420,7 @@ impl Session {
             source_formats::file_publication::Policy::FollowSource,
         )
         .map_err(|error| format!("{}: {error}", path.display()))?;
+        let recovery_path = recovery::PathMetadata::from_destination(&destination)?;
         let claim = self.file_claims.source(destination.clone())?;
         let bytes = destination
             .read_existing()
@@ -1444,6 +1445,7 @@ impl Session {
             start.elapsed()
         );
         self.replace_document(document, Some(path.to_owned()));
+        self.update_recovery_path(recovery_path);
         self.file_claims.source = Some(claim);
         self.restore_recent_map_context(path, remember);
         if remember {
@@ -1488,8 +1490,9 @@ impl Session {
         destination
             .verify()
             .map_err(|error| format!("{}: {error}", path.display()))?;
+        let recovery_path = recovery::PathMetadata::from_destination(&destination)?;
         let claim = self.file_claims.source(destination.clone())?;
-        let backup = self.backup_before_save(&path, &destination);
+        let backup = self.backup_before_save(&destination, &recovery_path);
         let publication = (|| {
             use std::io::Write;
             let mut stage = destination.stage()?;
@@ -1515,7 +1518,7 @@ impl Session {
         self.document.mark_saved();
         self.history_save_serial += 1;
         self.path = Some(path.clone());
-        self.update_recovery_path();
+        self.update_recovery_path(recovery_path);
         self.remember_saved_map(&path);
         self.changed();
         self.log(

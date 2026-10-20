@@ -667,7 +667,7 @@ pub struct ReloadBuildRecipesArgs {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CompileSettingsArgs {
-    /// Bake static-prop vertex lighting; default false. Requires direct_ldr or direct_ldr_hdr and bounces:0 or 1. One bounce requires measured TextureHeader reflectivity for every lit world/terrain source; depths 2–4 reject atomically. Unsupported receivers fail the requested build; disablevertexlighting:1 opts out one prop.
+    /// Bake static-prop vertex lighting; default false. Requires direct_ldr or direct_ldr_hdr and bounces:0 through 4. Indirect reception uses the preceding world/terrain lighting pass and measured TextureHeader reflectivity for every lit source; invalid depths reject atomically. Unsupported receivers fail the requested build; disablevertexlighting:1 opts out one prop.
     pub bake_static_prop_vertices: Option<bool>,
     /// Pack the exact complete authored sky family and supported LDR/HDR dependencies; default false. Incomplete or unsupported families fail during compilation without automatic family fallback.
     pub pack_sky_assets: Option<bool>,
@@ -675,7 +675,7 @@ pub struct CompileSettingsArgs {
     pub generate_reflections: Option<bool>,
     /// Whole degrees 0–90; zero disables automatic smoothing on unassigned world/model faces.
     pub smoothing_angle: Option<u8>,
-    /// 0 (direct only, default) through 4 diffuse world/terrain-source bounces into world/model receivers; both lit modes.
+    /// 0 (direct only, default) through 4 diffuse world/terrain-source bounces into world/model and opted-in prop receivers; both lit modes.
     pub bounces: Option<u8>,
     /// fast (default conservative flood) or detailed (bounded portal separator clipping).
     pub visibility: Option<String>,

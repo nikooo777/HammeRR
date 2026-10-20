@@ -30,7 +30,7 @@ const MAX_MODELS: usize = 128;
 const MAX_VERTICES: usize = 4_000_000;
 const MAX_GENERATED_BYTES: usize = 64 * 1024 * 1024;
 const DISABLED: u32 = 0x40;
-const UNSUPPORTED_FLAGS: u32 = 0x02 | 0x08;
+const UNSUPPORTED_FLAGS: u32 = 0x08;
 const NO_SELF_SHADOW: u32 = 0x80;
 
 struct ModelData {
@@ -136,7 +136,7 @@ fn admit_model(data: &ModelData) -> Result<(), String> {
 
 fn admit_prop(entity: &Entity, prop: &StaticProp, model: &str) -> Result<(), String> {
     if prop.flags & UNSUPPORTED_FLAGS != 0 {
-        return Err("Baked prop vertices do not yet support lightingorigin or ignorenormals; remove those settings or explicitly disablevertexlighting".into());
+        return Err("Baked prop vertices do not yet support ignorenormals; remove that setting or explicitly disablevertexlighting".into());
     }
     if prop.dx_levels != [0; 2] {
         return Err("Baked prop vertices currently require unrestricted prop DX levels and the DX90 companion".into());

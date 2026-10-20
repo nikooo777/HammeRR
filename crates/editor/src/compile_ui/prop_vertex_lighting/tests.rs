@@ -57,9 +57,24 @@ fn prop_vertex_lighting_controls_share_real_callbacks_recipes_recent_maps_and_ac
     .invoke_accessible_default_action();
     assert!(lock(&shared).compile_options().bake_static_prop_vertices);
     assert!(controller.window.get_bake_static_prop_vertices());
-    controller.window.invoke_change_bounces(2);
-    assert_eq!(lock(&shared).compile_options().bounces, 0);
-    assert_eq!(controller.window.get_selected_bounces(), "Direct only");
+    for depth in 2..=compiler::MAX_LIGHT_BOUNCES {
+        controller.window.invoke_change_bounces(i32::from(depth));
+        assert_eq!(lock(&shared).compile_options().bounces, depth);
+        assert_eq!(
+            controller.window.get_selected_bounces(),
+            compiler::bounce_label(depth)
+        );
+        assert!(controller.window.get_prop_vertex_lighting_enabled());
+    }
+    let maximum = lock(&shared).compile_settings();
+    controller
+        .window
+        .invoke_change_bounces(i32::from(compiler::MAX_LIGHT_BOUNCES) + 1);
+    assert_eq!(lock(&shared).compile_settings(), maximum);
+    assert_eq!(
+        controller.window.get_selected_bounces(),
+        "Four diffuse bounces"
+    );
     controller.window.invoke_change_bounces(1);
     assert_eq!(lock(&shared).compile_options().bounces, 1);
     assert_eq!(
@@ -68,16 +83,27 @@ fn prop_vertex_lighting_controls_share_real_callbacks_recipes_recent_maps_and_ac
     );
     assert!(controller.window.get_prop_vertex_lighting_enabled());
     controller.window.invoke_change_bounces(0);
+    assert_eq!(controller.window.get_selected_bounces(), "Direct only");
     controller.window.invoke_change_lighting(0);
     assert_eq!(controller.window.get_selected_lighting(), "Direct LDR");
     assert!(controller.window.get_bake_static_prop_vertices());
-    controller.window.set_recipe_name("Direct prop bake".into());
+    controller
+        .window
+        .invoke_change_bounces(i32::from(compiler::MAX_LIGHT_BOUNCES));
+    controller
+        .window
+        .set_recipe_name("Four-bounce prop bake".into());
     controller.window.invoke_save_recipe();
     controller
         .window
         .invoke_change_bake_static_prop_vertices(false);
+    controller.window.invoke_change_bounces(0);
     controller.window.invoke_apply_recipe();
     assert!(controller.window.get_bake_static_prop_vertices());
+    assert_eq!(
+        lock(&shared).compile_options().bounces,
+        compiler::MAX_LIGHT_BOUNCES
+    );
     controller.window.invoke_change_lighting(2);
     assert_eq!(
         lock(&shared).compile_options().lighting,
@@ -97,6 +123,10 @@ fn prop_vertex_lighting_controls_share_real_callbacks_recipes_recent_maps_and_ac
         lock(&shared).compile_status()["job"]["settings"]["bake_static_prop_vertices"],
         true
     );
+    assert_eq!(
+        lock(&shared).compile_status()["job"]["settings"]["bounces"],
+        compiler::MAX_LIGHT_BOUNCES
+    );
     assert!(
         !controller
             .window
@@ -113,11 +143,16 @@ fn prop_vertex_lighting_controls_share_real_callbacks_recipes_recent_maps_and_ac
     controller
         .window
         .invoke_change_bake_static_prop_vertices(false);
+    controller.window.invoke_change_bounces(0);
     lock(&shared)
         .open_recent_map(Actor::User, &path, false)
         .unwrap();
     controller.refresh(&lock(&shared));
     assert!(controller.window.get_bake_static_prop_vertices());
+    assert_eq!(
+        controller.window.get_selected_bounces(),
+        "Four diffuse bounces"
+    );
     assert_eq!(
         controller.window.get_selected_lighting(),
         "Direct LDR + HDR"

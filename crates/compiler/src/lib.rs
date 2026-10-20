@@ -187,16 +187,11 @@ impl Options {
     }
 
     pub fn validate(self) -> Result<Self, String> {
-        if self.bake_static_prop_vertices {
-            if !self.lighting.performs_lighting() {
-                return Err("Bake static-prop vertex lighting requires Direct LDR or Direct LDR + HDR lighting".into());
-            }
-            if self.bounces > 1 {
-                return Err(
-                    "Bake static-prop vertex lighting supports Direct only or One diffuse bounce"
-                        .into(),
-                );
-            }
+        if self.bake_static_prop_vertices && !self.lighting.performs_lighting() {
+            return Err(
+                "Bake static-prop vertex lighting requires Direct LDR or Direct LDR + HDR lighting"
+                    .into(),
+            );
         }
         if self.generate_reflections && !self.lighting.performs_lighting() {
             return Err(

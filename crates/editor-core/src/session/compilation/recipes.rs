@@ -756,7 +756,7 @@ mod tests {
                 BuildSettingsUpdate {
                     lighting: Some("direct_ldr_hdr"),
                     bake_static_prop_vertices: Some(true),
-                    bounces: Some(1),
+                    bounces: Some(compiler::MAX_LIGHT_BOUNCES),
                     ..Default::default()
                 },
             )
@@ -783,7 +783,7 @@ mod tests {
             assert!(!restarted.compile_options().bake_static_prop_vertices);
         }
         let mut invalid: Value = serde_json::from_slice(&bytes).unwrap();
-        invalid["recipes"][0]["settings"]["bounces"] = 2.into();
+        invalid["recipes"][0]["settings"]["bounces"] = (compiler::MAX_LIGHT_BOUNCES + 1).into();
         let invalid = serde_json::to_vec(&invalid).unwrap();
         fs::write(&path, &invalid).unwrap();
         let before = restarted.build_recipes()["recipes"].clone();

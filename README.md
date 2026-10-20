@@ -341,7 +341,7 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | Baked lightmaps | Static-prop vertex lighting |
 | --- | --- |
 | ![Baked face lightmap inspection](docs/images/baked-lightmaps.png) | ![Static-prop vertex lighting in Build settings](docs/images/build-prop-vertex-lighting.png) |
-| Inspect baked samples and trace compiled fragments to their retained authored contributors. | Bake direct and one-bounce LDR/HDR colors into supported static models across every draw LOD. |
+| Inspect baked samples and trace compiled fragments to their retained authored contributors. | Bake LDR/HDR colors with up to four diffuse bounces across every supported model LOD. |
 
 [Baked lightmaps →](docs/baked-lightmaps.md)
 

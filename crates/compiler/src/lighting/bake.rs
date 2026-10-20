@@ -699,7 +699,7 @@ pub(crate) fn bake(
     control: &Control,
     settings: Settings<'_>,
 ) -> Result<BakeStats, String> {
-    let options = settings.options;
+    let options = settings.options.validate()?;
     let dual = options.lighting == crate::LightingMode::DirectLdrHdr;
     let mut budget = Budget::new(control);
     let _shared_geometry_allocation = shared_geometry_allocation(
@@ -816,9 +816,6 @@ pub(crate) fn bake(
         &mut budget,
     )?;
     let mut prop_vertices = if options.bake_static_prop_vertices {
-        if options.bounces > 1 {
-            return Err("Baked prop vertices support zero or one lighting bounce".into());
-        }
         super::prop_vertices::prepare(
             map,
             settings.vmf,
@@ -1293,7 +1290,7 @@ fn bake_channel(
             model_samples: 0,
         };
         let mut rays = 0;
-        for _ in 0..options.bounces {
+        for index in 0..options.bounces {
             budget.consume(0)?;
             let (stats, surfaces) = super::bounce::bake(
                 &mut super::bounce::Context {
@@ -1315,7 +1312,7 @@ fn bake_channel(
                 budget,
             )?;
             final_stats = stats;
-            if prop_vertices.is_some() {
+            if prop_vertices.is_some() && index + 1 == options.bounces {
                 prop_source = Some(surfaces);
             } else {
                 drop(surfaces);
@@ -1352,12 +1349,12 @@ fn bake_channel(
         }
     };
     let bounce_work = budget.work - bounce_start;
-    if options.bounces == 1
+    if options.bounces > 0
         && let Some(prepared) = prop_vertices
     {
         let surfaces = prop_source
             .as_ref()
-            .ok_or("One-bounce prop source lighting is missing")?;
+            .ok_or("Bounced prop source lighting is missing")?;
         super::prop_vertices::bake_channel(
             prepared,
             &prop_context,

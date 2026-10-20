@@ -26,7 +26,7 @@ fn prop_vertex_lighting_mcp_schema_forwarding_and_atomic_validation_use_shared_s
     assert_eq!(initial["bake_static_prop_vertices"], false);
     for update in [
         json!({"bake_static_prop_vertices":true}),
-        json!({"bake_static_prop_vertices":true,"lighting":"direct_ldr","bounces":2}),
+        json!({"bake_static_prop_vertices":true,"lighting":"direct_ldr","bounces":compiler::MAX_LIGHT_BOUNCES + 1}),
     ] {
         let failed = server
             .set_compile_settings(Parameters(serde_json::from_value(update).unwrap()))
@@ -46,7 +46,7 @@ fn prop_vertex_lighting_mcp_schema_forwarding_and_atomic_validation_use_shared_s
     assert_eq!(enabled["prop_vertex_lighting"]["available"], true);
     assert_eq!(
         enabled["prop_vertex_lighting"]["limits"]["bounces"],
-        json!({"min":0,"max":1})
+        json!({"min":0,"max":compiler::MAX_LIGHT_BOUNCES})
     );
     assert_eq!(
         enabled["prop_vertex_lighting"]["limits"]["receiver"]["root_lod"],
@@ -61,14 +61,21 @@ fn prop_vertex_lighting_mcp_schema_forwarding_and_atomic_validation_use_shared_s
         json!({"min":1,"max":8,"all_required":true})
     );
     assert_eq!(enabled, lock(&shared).compile_settings());
-    let bounced = value(server.set_compile_settings(Parameters(
-        serde_json::from_value(json!({"bounces":1})).unwrap(),
-    )));
+    for bounces in 1..=compiler::MAX_LIGHT_BOUNCES {
+        let bounced = value(server.set_compile_settings(Parameters(
+            serde_json::from_value(json!({"bounces":bounces})).unwrap(),
+        )));
+        assert_eq!(bounced["bounces"], bounces);
+        assert_eq!(bounced["prop_vertex_lighting"]["available"], true);
+    }
+    let bounced = value(server.get_compile_settings());
     assert_eq!(bounced["bake_static_prop_vertices"], true);
-    assert_eq!(bounced["bounces"], 1);
     let failed = server
         .set_compile_settings(Parameters(
-            serde_json::from_value(json!({"bounces":2,"physics":"engine"})).unwrap(),
+            serde_json::from_value(
+                json!({"bounces":compiler::MAX_LIGHT_BOUNCES + 1,"physics":"engine"}),
+            )
+            .unwrap(),
         ))
         .unwrap();
     assert!(failed.is_error.unwrap_or(false));
@@ -82,7 +89,7 @@ fn prop_vertex_lighting_mcp_schema_forwarding_and_atomic_validation_use_shared_s
         )),
     );
     assert_eq!(retained["bake_static_prop_vertices"], true);
-    assert_eq!(retained["bounces"], 1);
+    assert_eq!(retained["bounces"], compiler::MAX_LIGHT_BOUNCES);
     let failed = server
         .set_compile_settings(Parameters(
             serde_json::from_value(json!({"lighting":"fullbright"})).unwrap(),

@@ -22,13 +22,14 @@ Agents use the same `create_entity`, `set_entity_properties`, `compile_map` and 
 
 ## Bake vertex lighting
 
-Bake direct light and optionally one diffuse world/terrain bounce into supported
+Bake direct light and up to four diffuse world/terrain bounces into supported
 static models instead of relying on the game's ambient samples. The result is
 stored in the BSP for every declared draw LOD.
 
 1. Open **Build settings…** and choose **Build lighting → Direct LDR** or
    **Direct LDR + HDR**.
-2. Choose **Indirect light → Direct only** or **One diffuse bounce**, then
+2. Choose **Indirect light → Direct only**, **One diffuse bounce**, **Two diffuse bounces**,
+   **Three diffuse bounces** or **Four diffuse bounces**, then
    enable **Bake static-prop vertex lighting**.
 3. Click **Close**. Optional: select a prop and enable **Advanced properties**. Enter
    `disableselfshadowing` in **Property key**, enter `1` in **Value**, then
@@ -42,9 +43,8 @@ stored in the BSP for every declared draw LOD.
 ![Static-prop vertex lighting in Build settings](images/build-prop-vertex-lighting.png)
 
 Limits: this is an experimental, default-off vertex bake for simple opaque
-models. Prop reception supports zero or one diffuse bounce; two to four bounces
-remain available when this bake is disabled. One bounce needs measured
-base-texture reflectivity from every lit world or terrain source material. The
+models. Prop reception supports zero to four diffuse bounces. Indirect light
+needs measured base-texture reflectivity from every lit world or terrain source material. The
 compiler hashes each complete source VTF and fails on missing or unmeasured
 reflectivity instead of using a default. Body 0, root LOD 0, unit scale, one bodypart/model and plain selected
 **VertexLitGeneric** materials are required. LDR and HDR are evaluated
@@ -53,9 +53,36 @@ ambient and reflected receiver rays; other props, world brushes and terrain
 still block light. It does not
 move embedded vertices or admit unsupported support contacts. See [the complete limits](compile-and-play.md#static-prop-vertex-lighting)
 before enabling it on a larger map. Per-texel prop lightmaps and reflected sources from props or brush models
-remain unavailable. The one-bounce
-source is the direct world/terrain lighting, not the already bounced result.
+remain unavailable. Each nonzero depth receives the preceding world/terrain
+lighting pass: one bounce uses direct world lighting, while four use the world
+result after three bounces. Direct prop light is added once.
 
 Agents enable the same setting with `set_compile_settings` and
 `bake_static_prop_vertices: true`. Use `set_entity_properties` with
 `set: {"disableselfshadowing": "1"}` for the same per-prop shadow choice.
+
+## Native lighting origin
+
+Keep a named point for the game's native prop lighting while baking zero to four
+bounces at the model's actual vertices.
+
+1. Click **Entity…**, enter `info_lighting` in **Classname (custom classes are supported)**,
+   set **Position**, then click **Place entity**.
+2. With the helper selected, enable **Advanced properties**. Enter `targetname`
+   in **Property key**, enter a unique name in **Value**, then press Enter.
+3. Select the prop. In **Advanced properties**, enter `lightingorigin` in
+   **Property key**, enter the same name in **Value**, then press Enter.
+4. Choose the vertex-bake settings above, then **Compile**. The helper is
+   consumed during compilation; the final native prop retains its point.
+
+The name is case-sensitive and must resolve to exactly one visible
+`info_lighting` with a finite point within ±16384 units. Missing, hidden-only
+or ambiguous helpers reject publication and preserve the previous BSP. The
+helper may lie inside a world brush: it is native runtime metadata, not the
+baked receiver. Every supported bounce depth still uses each actual vertex,
+its normal and its PVS location. The helper does not recover embedded vertices
+or relax brush, terrain or other-prop contact limits. `ignorenormals` remains
+unsupported by the vertex bake.
+
+Agents create the same helper with `create_entity` and bind it with
+`set_entity_properties`, using `set: {"lightingorigin":"helper_name"}`.

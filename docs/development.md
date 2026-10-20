@@ -110,9 +110,28 @@ python3 -B scripts/validate_prop_indirect_lighting.py \
 `prop_indirect_fixtures.py --output <directory>` prepares the same portable
 fixtures and their literal expected values without running a compiler.
 
+`validate_prop_bounce_depth.py` builds independent world-only source maps at
+depths zero through four, then checks prop depths zero through four in both
+channels. `prop_bounce_reference.py` computes the fixture’s analytic floor
+transfer from those published world lightmaps, without reading prop colors.
+The fixture distinguishes every depth and rejects sampling the final world
+pass instead of the preceding pass. This checks prop transfer and handoff;
+it does not independently validate the world bounce solver.
+
+```bash
+python3 -B scripts/validate_prop_bounce_depth.py \
+  --binary target/debug/hammerr-compile \
+  --output target/validation/prop-bounce-depth
+```
+
 `validate_prop_vertex_lighting.py` exercises either production MCP program.
 Use `--one-bounce-control` to include actual one-bounce publication, source-VTF
-identity, incompatible-depth refusal, recipe restore and restart persistence.
+identity, out-of-range depth refusal, recipe restore and restart persistence.
+Use `--lighting-origin-control` for named-helper movement, native metadata,
+missing-helper refusal and unchanged actual-vertex colors in both channels.
+Use `--bounce-depth-control` for depths two through four, foreground/background
+publication, complete source identity, recipe restore and depth-four restart
+persistence. These options can run together.
 Prepare a standalone game directory containing local MDL/VVD/DX90 companions
 and plain opaque selected model materials. The supported model needs one
 bodypart/model, authored root LOD 0, all 1–8 declared draw LODs and at most

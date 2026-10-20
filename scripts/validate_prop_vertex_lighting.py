@@ -19,6 +19,8 @@ from validate_visibility import ROOM
 MANIFEST = "hammerr/generated-prop-lighting.json"
 VHV_NAME = re.compile(r"sp_(?:hdr_)?[0-9]+\.vhv\Z")
 WALL_MATERIAL = "hammerr_prop_vertex/wall"
+LIGHTING_ORIGIN_NAME = "hammerr_prop_vertex_origin"
+LIGHTING_ORIGIN_POINTS = [("open", (16.125, 64.25, 112.375)), ("solid-floor", (16.125, 64.25, -8.375))]
 SELF_SHADOW_MODEL = "models/props_junk/wood_crate001a.mdl"
 SELF_SHADOW_MATERIAL = "materials/models/props_junk/woodcrates01a.vmt"
 SELF_SHADOW_HEIGHT = 20.01078987121582
@@ -334,13 +336,13 @@ def validate_one_bounce(client, args, game, source, ids, report):
                     "One-bounce publication omitted or changed the original whole source VTF dependency")
             current_settings, current_state = client.call("get_compile_settings"), unchanged(client, source, ids)
             token = client.call("get_compile_status")["job"]["token"]
-            client.call("set_compile_settings", {"bounces": 2, "physics": "engine"}, error=True)
+            client.call("set_compile_settings", {"bounces": 5, "physics": "engine"}, error=True)
             require(client.call("get_compile_settings") == current_settings and unchanged(client, source, ids) == current_state
                     and client.call("get_compile_status")["job"]["token"] == token and path.read_bytes() == baked,
                     "Incompatible depth update changed settings, the current job, source/history/recipe or its published output")
             cleared = client.call("set_compile_settings", {"bake_static_prop_vertices": False, "bounces": 2})
             require(not cleared["bake_static_prop_vertices"] and cleared["bounces"] == 2,
-                    "Clearing prop baking did not restore the ordinary world bounce range")
+                    "Clearing prop baking failed to retain an ordinary world bounce setting")
             _, plain, plain_result = compile_pair(client, args, source, ids, f"one-bounce-{mode}-cleared", False)
             entries, flags = pak_and_flags(plain)
             require(flags & 3 == 0 and MANIFEST not in entries and not any(VHV_NAME.fullmatch(name) for name in entries)
@@ -365,10 +367,184 @@ def validate_one_bounce(client, args, game, source, ids, report):
     report["one_bounce"] = {"cases": cases, "zero_bounce_artifacts_and_assets_preserved": True, "native_exercised": False}
 
 
+def validate_bounce_depths(client, args, game, source, ids, report):
+    original_settings = client.call("get_compile_settings")
+    original_state = protected_state(client), detail(client, ids), source.read_bytes()
+    preserved = {path: probe.read_bounded(path, probe.MAX_BSP_BYTES) for path in args.output.glob("*.bsp")}
+    texture_name = f"materials/{WALL_MATERIAL}.vtf"
+    texture_path = game / texture_name
+    texture_bytes = probe.read_bounded(texture_path, probe.MAX_BSP_BYTES)
+    material_path = texture_path.with_suffix(".vmt")
+    material_bytes = material_path.read_bytes()
+    expected_texture = {"path": texture_name, "sha256": probe.digest(texture_bytes), "bytes": len(texture_bytes)}
+    cases = {}
+    try:
+        for bounces in (2, 3, 4):
+            updated = client.call("set_compile_settings", {"lighting": "direct_ldr_hdr", "bounces": bounces, "bake_static_prop_vertices": True})
+            require(updated["bounces"] == bounces and updated["bake_static_prop_vertices"] and updated["prop_vertex_lighting"]["available"],
+                    f"Prop depth {bounces} is unavailable through shared settings")
+            recipe = client.call("save_build_recipe", {"name": f"Prop bounce depth {bounces}"})
+            path, baked, result = compile_pair(client, args, source, ids, f"bounce-depth-{bounces}-direct_ldr_hdr", True)
+            verified = verify_output(args, game, baked, result["stats"], ["ldr", "hdr"])
+            require(result["stats"]["bounces"] == result["stats"]["hdr"]["bounces"] == bounces,
+                    "Prop depth build did not execute the requested LDR/HDR world passes")
+            require(next((row for row in verified["manifest"]["sources"] if row["path"] == texture_name), None) == expected_texture,
+                    "Prop depth publication omitted or changed the complete measured world VTF dependency")
+            settings, state = client.call("get_compile_settings"), unchanged(client, source, ids)
+            token = client.call("get_compile_status")["job"]["token"]
+            client.call("set_compile_settings", {"bounces": 5, "physics": "engine"}, error=True)
+            require(client.call("get_compile_settings") == settings and unchanged(client, source, ids) == state
+                    and client.call("get_compile_status")["job"]["token"] == token and path.read_bytes() == baked,
+                    "Invalid global depth changed settings, the published job, source/history or the active recipe")
+            client.call("set_compile_settings", {"bounces": 0, "bake_static_prop_vertices": False})
+            client.call("apply_build_recipe", {"id": recipe["active"]["id"]})
+            require(client.call("get_compile_settings") == settings,
+                    "Saved prop depth recipe did not restore all shared settings")
+            _, restored, _ = compile_pair(client, args, source, ids, f"bounce-depth-{bounces}-restored", True)
+            require(restored == baked, "Restored prop depth recipe did not reproduce exact complete BSP bytes")
+            cases[str(bounces)] = {"artifact": str(path), "bsp_sha256": verified["bsp_sha256"], "stats": verified["stats"],
+                                   "recipe_id": recipe["active"]["id"], "source_vtf": expected_texture,
+                                   "invalid_depth_preserved_settings_and_output": True, "recipe_restored_exactly": True}
+    finally:
+        client.call("apply_build_recipe", {"id": original_settings["recipe"]["id"]})
+    require(client.call("get_compile_settings") == original_settings
+            and (protected_state(client), detail(client, ids), source.read_bytes()) == original_state,
+            "Prop depth controls failed to restore settings or changed source/history/selection")
+    require(all(path.read_bytes() == raw for path, raw in preserved.items())
+            and texture_path.read_bytes() == texture_bytes and material_path.read_bytes() == material_bytes,
+            "Prop depth controls overwrote prior N0/N1/origin artifacts or private source assets")
+    report["bounce_depths"] = {"cases": cases, "prior_artifacts_and_assets_preserved": True,
+                              "source_history_and_original_settings_restored": True, "native_exercised": False}
+
+
+def compare_lighting_origin(before, after, point):
+    left_lumps, right_lumps = probe.bsp_lumps(before), probe.bsp_lumps(after)
+    require(all(left == right for index, (left, right) in enumerate(zip(left_lumps, right_lumps, strict=True)) if index not in (35, 40)),
+            "Lighting-origin authoring changed world, terrain, ambient or other non-prop BSP lumps")
+    require(b'"info_lighting"' not in right_lumps[0][2] and LIGHTING_ORIGIN_NAME.encode() not in right_lumps[0][2],
+            "Consumed lighting-origin helper leaked into runtime entities")
+    left_props, right_props = static_records(before), static_records(after)
+    expected = {**left_props, "props": list(left_props["props"])}
+    target = list(expected["props"][1])
+    require(target[10] & 0x02 == 0, "Unbound receiver already carries the native lighting-origin flag")
+    target[10] |= 0x02
+    target[14:17] = point
+    expected["props"][1] = tuple(target)
+    require(right_props == expected, "Lighting-origin control changed another prop, ordinal, placement, normal flag or native field")
+    left_records, right_records = probe.game_lump_records(before)[1], probe.game_lump_records(after)[1]
+    require(len(left_records) == len(right_records), "Lighting-origin control changed game-lump membership")
+    sprp_digests = None
+    for left, right in zip(left_records, right_records, strict=True):
+        require(left[:4] == right[:4], "Lighting-origin control changed game-lump identity/layout")
+        if left[0] == int.from_bytes(b"sprp", "big"):
+            expected_payload = bytearray(left[4])
+            prop_offset = 4 + len(left_props["models"]) * 128 + 4 + len(left_props["leaves"]) * 2 + 4 + 64
+            expected_payload[prop_offset + 31] |= 0x02
+            struct.pack_into("<3f", expected_payload, prop_offset + 44, *point)
+            require(right[4] == bytes(expected_payload), "Lighting-origin control changed sprp bytes beyond ordinal one's flag and native point")
+            sprp_digests = probe.digest(left[4]), probe.digest(right[4])
+        else:
+            require(left == right, "Lighting-origin control changed a non-static-prop game lump")
+    left_entries, left_flags = pak_and_flags(before)
+    right_entries, right_flags = pak_and_flags(after)
+    require(left_flags == right_flags and left_entries.keys() == right_entries.keys(), "Lighting-origin control changed map bits or PAK membership")
+    require(all(left_entries[name] == right_entries[name] for name in left_entries if name != MANIFEST),
+            "Lighting-origin helper changed a VHV row/channel/ordinal or an unrelated packed asset")
+    left_manifest, right_manifest = json.loads(left_entries[MANIFEST]), json.loads(right_entries[MANIFEST])
+    require(sprp_digests is not None and sprp_digests[0] != sprp_digests[1]
+            and (left_manifest["static_props_sha256"], right_manifest["static_props_sha256"]) == sprp_digests,
+            "Lighting-origin manifests do not identify the changed final native table")
+    require({key: value for key, value in left_manifest.items() if key != "static_props_sha256"} ==
+            {key: value for key, value in right_manifest.items() if key != "static_props_sha256"},
+            "Lighting-origin control changed source closure, receiver identities, hardware layouts or packed VHV hashes")
+    return {"ordinal": 1, "native_flag": 0x02, "native_point": point,
+            "sprp_before_sha256": sprp_digests[0], "sprp_after_sha256": sprp_digests[1],
+            "vhv_sha256": {name: probe.digest(raw) for name, raw in right_entries.items() if VHV_NAME.fullmatch(name)},
+            "world_other_props_and_source_closure_unchanged": True}
+
+
+def validate_lighting_origin(client, args, game, source, ids, props, report):
+    original_settings = client.call("get_compile_settings")
+    policy = original_settings["prop_vertex_lighting"]["limits"]["receiver"]["lighting_origin"]
+    require(policy == {"property": "lightingorigin", "baked_samples": "actual_vertices", "embedded_recovery": False},
+            "Shared settings do not expose native-only lighting-origin metadata")
+    original_state, original_props, original_source = protected_state(client), detail(client, ids), source.read_bytes()
+    original_recipes = client.call("get_build_recipes")
+    recipe_path = Path(original_recipes["path"])
+    recipe_bytes = recipe_path.read_bytes()
+    original_value = dict(detail(client, [props[1]])[0]["properties"]).get("lightingorigin")
+    restore = {"remove": ["lightingorigin"]} if original_value is None else {"set": {"lightingorigin": original_value}}
+    require(original_value in (None, ""), "Lighting-origin control requires an initially unbound receiver")
+    preserved = {path: probe.read_bounded(path, probe.MAX_BSP_BYTES) for path in args.output.glob("*.bsp")}
+    for name, point in LIGHTING_ORIGIN_POINTS:
+        in_brush = any(all(low < value < high for low, value, high in zip(mins, point, maxs, strict=True)) for mins, maxs in ROOM)
+        require(in_brush == (name == "solid-floor"), f"Lighting-origin control point lost its authored room classification: {name}")
+    helper, cases, missing = None, {}, None
+    try:
+        helper = client.call("create_entity", {"classname": "info_lighting", "origin": LIGHTING_ORIGIN_POINTS[0][1],
+                                               "properties": {"targetname": LIGHTING_ORIGIN_NAME}})["id"]
+        scoped_ids = [*ids, helper]
+        for bounces in (0, 1):
+            client.call("set_compile_settings", {"lighting": "direct_ldr_hdr", "bounces": bounces, "bake_static_prop_vertices": True})
+            _, unbound, result = compile_pair(client, args, source, scoped_ids, f"lighting-origin-n{bounces}-unbound", True)
+            verified_unbound = verify_output(args, game, unbound, result["stats"], ["ldr", "hdr"])
+            require(result["stats"]["bounces"] == bounces, "Lighting-origin baseline did not execute its requested bounce depth")
+            if bounces == 1:
+                texture_name = f"materials/{WALL_MATERIAL}.vtf"
+                texture_bytes = probe.read_bounded(game / texture_name, probe.MAX_BSP_BYTES)
+                expected_texture = {"path": texture_name, "sha256": probe.digest(texture_bytes), "bytes": len(texture_bytes)}
+                require(next((row for row in verified_unbound["manifest"]["sources"] if row["path"] == texture_name), None) == expected_texture,
+                        "Lighting-origin N1 baseline omitted the complete measured world VTF dependency")
+            canonical = args.output / ("direct_ldr_hdr.bsp" if bounces == 0 else "one-bounce-direct_ldr_hdr.bsp")
+            if canonical in preserved:
+                require(unbound == preserved[canonical], "Lighting-origin control's unbound build differs from the same-bounce baseline")
+            client.call("set_entity_properties", {"id": props[1], "set": {"lightingorigin": LIGHTING_ORIGIN_NAME}})
+            points = {}
+            for name, point in LIGHTING_ORIGIN_POINTS:
+                client.call("set_entity_properties", {"id": helper, "set": {"origin": " ".join(map(str, point))}})
+                path, bound, result = compile_pair(client, args, source, scoped_ids, f"lighting-origin-n{bounces}-{name}", True)
+                verified = verify_output(args, game, bound, result["stats"], ["ldr", "hdr"])
+                points[name] = {"artifact": str(path), "bsp_sha256": verified["bsp_sha256"],
+                                **compare_lighting_origin(unbound, bound, point)}
+            if bounces == 1:
+                client.call("set_entity_properties", {"id": props[1], "set": {"lightingorigin": f"{LIGHTING_ORIGIN_NAME}_missing"}})
+                missing = rejected_compile(client, path, source, scoped_ids, props[1], "one visible info_lighting")
+            client.call("set_entity_properties", {"id": props[1], **restore})
+            _, restored, _ = compile_pair(client, args, source, scoped_ids, f"lighting-origin-n{bounces}-restored", True)
+            require(restored == unbound, "Removing the lighting-origin binding failed to restore exact same-bounce BSP bytes")
+            cases[f"n{bounces}"] = {"unbound_sha256": probe.digest(unbound), "points": points, "restored_exactly": True}
+    finally:
+        client.call("set_entity_properties", {"id": props[1], **restore})
+        if helper is not None:
+            deleted = client.call("delete_objects", {"ids": [helper]})
+            require(deleted["deleted"] == [helper], "Lighting-origin control failed to delete its owned helper")
+        client.call("select", {"ids": original_state["selection"], "mode": "replace"})
+        client.call("apply_build_recipe", {"id": original_settings["recipe"]["id"]})
+    restored_state = protected_state(client)
+    require(detail(client, ids) == original_props and source.read_bytes() == original_source,
+            "Lighting-origin control failed to restore exact authored properties or changed the saved VMF")
+    require(all(restored_state[key] == original_state[key] for key in ["path", "selection", "face_selection", "camera", "view", "world_brushes", "worldspawn", "generation"]),
+            "Lighting-origin authoring changed unrelated document state")
+    restored_recipes = client.call("get_build_recipes")
+    require(client.call("get_compile_settings") == original_settings
+            and {key: value for key, value in restored_recipes.items() if key != "revision"} ==
+            {key: value for key, value in original_recipes.items() if key != "revision"}
+            and recipe_path.read_bytes() == recipe_bytes,
+            "Lighting-origin control failed to restore the exact settings and recipe registry")
+    require(all(path.read_bytes() == raw for path, raw in preserved.items()), "Lighting-origin controls overwrote existing N0/N1/native-evidence artifacts")
+    report["lighting_origin"] = {"policy": policy, "cases": cases, "rejected_missing": missing,
+                                 "helper_deleted": True, "authored_properties_and_saved_source_restored": True,
+                                 "prior_artifacts_and_recipes_preserved": True,
+                                 "recipe_revision_before": original_recipes["revision"], "recipe_revision_after": restored_recipes["revision"],
+                                 "authoring_history_before": original_state["undo"], "authoring_history_after": restored_state["undo"],
+                                 "compiler_preserves_source_history_recipe_each_compile": True, "native_exercised": False}
+
+
 def validate(client, args, game, report):
     initial = client.call("get_compile_settings")
     require(initial["bake_static_prop_vertices"] is False, "Prop vertex lighting is not default-off")
     require(initial["prop_vertex_lighting"]["limits"]["receiver"]["hardware_meshes_max"] == 256, "Shared settings do not expose the native per-receiver hardware-section bound")
+    require(initial["prop_vertex_lighting"]["limits"]["bounces"] == {"min": 0, "max": 4}, "Shared prop depth limit differs from the compiler's 0–4 range")
     client.call("set_compile_settings", {"bake_static_prop_vertices": True}, error=True)
     require(client.call("get_compile_settings") == initial, "Fullbright refusal changed settings")
     ids = [client.call("create_block", {"mins": low, "maxs": high, "material": WALL_MATERIAL})["id"] for low, high in ROOM]
@@ -398,7 +574,7 @@ def validate(client, args, game, report):
     runtime = client.call("get_native_capture_runtime")
     client.call("set_compile_settings", {"bake_static_prop_vertices": True})
     settings = client.call("get_compile_settings")
-    client.call("set_compile_settings", {"bounces": 2}, error=True)
+    client.call("set_compile_settings", {"bounces": 5}, error=True)
     require(client.call("get_compile_settings") == settings, "Bounce refusal silently changed a setting")
     require(client.call("get_compile_status")["job"]["stale"], "Changed bake setting did not stale previous output")
     for mode, channels in [("direct_ldr", ["ldr"]), ("direct_ldr_hdr", ["ldr", "hdr"])]:
@@ -410,6 +586,10 @@ def validate(client, args, game, report):
         validate_self_shadow(client, args, game, source, ids, props, report)
     if args.one_bounce_control:
         validate_one_bounce(client, args, game, source, ids, report)
+    if args.lighting_origin_control:
+        validate_lighting_origin(client, args, game, source, ids, props, report)
+    if args.bounce_depth_control:
+        validate_bounce_depths(client, args, game, source, ids, report)
     manifest = report["channels"]["direct_ldr_hdr"]["manifest"]
     material_paths = [row["path"] for row in manifest["sources"] if row["path"].endswith(".vmt")]
     material = args.material or (material_paths[0] if len(material_paths) == 1 else None)
@@ -436,7 +616,9 @@ def validate(client, args, game, report):
     client.call("set_entity_properties", {"id": props[1], "set": {"model": args.model, "disablevertexlighting": "0"}})
     client.call("set_entity_properties", {"id": props[2], "set": {"disablevertexlighting": "0"}})
     client.call("save_map", {"path": str(source)})
-    if args.one_bounce_control:
+    if args.bounce_depth_control:
+        client.call("set_compile_settings", {"bounces": 4})
+    elif args.one_bounce_control:
         client.call("set_compile_settings", {"bounces": 1})
     saved = client.call("save_build_recipe", {"name": "Persisted prop vertex bake"})
     require(saved["settings"]["bake_static_prop_vertices"] is True, "Recipe lost enabled bake setting")
@@ -462,6 +644,8 @@ def main():
     parser.add_argument("--origin-z", type=float, default=48.0, help="Receiver origin height; use the fixture's exact minimum-Z offset to check floor contact")
     parser.add_argument("--self-shadow-control", action="store_true", help="Check positive own-occlusion using the exact grounded wood_crate001a companions; requires --origin-z 20.01078987121582")
     parser.add_argument("--one-bounce-control", action="store_true", help="Build, reject incompatible depths, clear and restore one-bounce prop lighting in both channels using the private measured wall VTF")
+    parser.add_argument("--lighting-origin-control", action="store_true", help="Author a native info_lighting point through MCP; require unchanged N0/N1 dual-channel VHV at open and solid-floor points, exact native metadata, missing-helper refusal and restoration")
+    parser.add_argument("--bounce-depth-control", action="store_true", help="Publish depths 2/3/4 in both channels through foreground/background MCP, verify complete assets, invalid-depth preservation and exact recipe restoration, then persist/restart depth 4")
     args = parser.parse_args()
     args.binary, args.fixture_game, args.output = args.binary.resolve(strict=True), args.fixture_game.resolve(strict=True), args.output.resolve()
     require(args.output.is_relative_to(ROOT / "target" / "validation"), "Keep acceptance artifacts on disk below target/validation")

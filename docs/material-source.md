@@ -34,8 +34,13 @@ parameter values also have bounded reports and explicit truncation flags.
 
 The first mounted file wins. A malformed, unreadable or dangling higher-priority
 source reports an error; the inspector does not substitute lower-priority source.
-Patch includes use the same mounted content lookup. Changed VPK indexes require
-remounting the game content before provenance can be trusted.
+Patch includes use the same mounted content lookup. A lookup that reaches a
+changed mounted VPK index reports an error until the game content is remounted.
+This applies to new asset reads, uncached catalogs and compilation. **Refresh source** rereads files within the existing mounts;
+restart the editor to remount a replaced index. Cached browser entries and
+previews are not watched; **Reload material assets** retries their reads but does
+not remount content. This index check does not freeze numbered VPK payload
+archives or provide a whole-build asset snapshot.
 
 Search-path priority follows the declarations for each path ID, even when the
 same directory appears under several IDs. For scalar Patch parameters in the

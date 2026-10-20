@@ -509,7 +509,12 @@ impl GameFs {
             .filter(|mount| mount.ids.iter().any(|id| id == "game"))
         {
             let found = match &mounted.mount {
-                Mount::Pak(pak) => pak.contains(&path),
+                Mount::Pak(pak) => {
+                    pak.verify_index()?;
+                    let found = pak.contains(&path);
+                    pak.verify_index()?;
+                    found
+                }
                 Mount::Directory(root) => match find_case_insensitive(root, &path)? {
                     Some(file) => fs::metadata(file)?.is_file(),
                     None => false,
@@ -668,11 +673,15 @@ impl GameFs {
             .filter(|m| m.ids.iter().any(|id| id == "game"))
         {
             match &mounted.mount {
-                Mount::Pak(vpk) => files.extend(
-                    vpk.paths()
-                        .filter(|p| p.starts_with(&prefix) && p.ends_with(&extension))
-                        .map(str::to_owned),
-                ),
+                Mount::Pak(vpk) => {
+                    vpk.verify_index()?;
+                    files.extend(
+                        vpk.paths()
+                            .filter(|p| p.starts_with(&prefix) && p.ends_with(&extension))
+                            .map(str::to_owned),
+                    );
+                    vpk.verify_index()?;
+                }
                 Mount::Directory(root) => {
                     let Some(start) = find_case_insensitive(root, &dir)? else {
                         continue;
@@ -1173,7 +1182,27 @@ mod tests {
         bytes.extend(tree);
         bytes.extend(payload);
         fs::write(&index, bytes).unwrap();
-        let game = provenance_game(root.path(), vec![Mount::Pak(Vpk::open(&index).unwrap())]);
+        let fallback = root.path().join("fallback");
+        fs::create_dir_all(fallback.join("materials")).unwrap();
+        fs::write(fallback.join("materials/later.vmt"), b"fallback").unwrap();
+        let game = provenance_game(
+            root.path(),
+            vec![
+                Mount::Pak(Vpk::open(&index).unwrap()),
+                Mount::Directory(fallback),
+            ],
+        );
+        assert_eq!(
+            game.read_limited("materials/later.vmt", 8)
+                .unwrap()
+                .unwrap(),
+            b"fallback"
+        );
+        assert!(game.contains("materials/test.vmt").unwrap());
+        assert_eq!(
+            game.list("materials", ".vmt").unwrap(),
+            ["materials/later.vmt", "materials/test.vmt"]
+        );
         let source = game
             .read_asset_limited("materials/test.vmt", payload.len())
             .unwrap()
@@ -1193,6 +1222,30 @@ mod tests {
                 .is_err()
         );
         fs::write(&index, b"changed index").unwrap();
+        for path in [
+            "materials/test.vmt",
+            "materials/later.vmt",
+            "materials/missing.vmt",
+        ] {
+            assert!(
+                game.read_limited(path, 64)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("reload mounted content")
+            );
+            assert!(
+                game.contains(path)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("reload mounted content")
+            );
+        }
+        assert!(
+            game.list("materials", ".vmt")
+                .unwrap_err()
+                .to_string()
+                .contains("reload mounted content")
+        );
         assert!(
             game.read_asset_limited("materials/test.vmt", payload.len())
                 .unwrap_err()

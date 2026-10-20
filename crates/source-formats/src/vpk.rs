@@ -244,6 +244,7 @@ impl Vpk {
     }
 
     pub fn read_limited(&self, path: &str, maximum: usize) -> io::Result<Option<Vec<u8>>> {
+        self.verify_index()?;
         let Some(entry) = self.entries.get(path) else {
             return Ok(None);
         };
@@ -259,7 +260,11 @@ impl Vpk {
         if entry.length > 0 {
             let (archive_path, start) = self.data_location(entry);
             let mut file = File::open(&archive_path)?;
-            let file_length = file.metadata()?.len();
+            let metadata = file.metadata()?;
+            if entry.archive == DIR_ARCHIVE {
+                self.verify_index_metadata(&metadata)?;
+            }
+            let file_length = metadata.len();
             if start
                 .checked_add(u64::from(entry.length))
                 .is_none_or(|end| end > file_length)
@@ -272,8 +277,12 @@ impl Vpk {
             data.try_reserve_exact(entry.length as usize)
                 .map_err(|error| invalid(format!("cannot allocate VPK entry {path}: {error}")))?;
             file.seek(SeekFrom::Start(start))?;
-            let mut chunk = file.take(u64::from(entry.length));
-            chunk.read_to_end(&mut data)?;
+            (&mut file)
+                .take(u64::from(entry.length))
+                .read_to_end(&mut data)?;
+            if entry.archive == DIR_ARCHIVE {
+                self.verify_index_metadata(&file.metadata()?)?;
+            }
             if data.len() != total {
                 return Err(invalid(format!(
                     "{} is truncated reading {path}",
@@ -281,17 +290,27 @@ impl Vpk {
                 )));
             }
         }
+        self.verify_index()?;
         Ok(Some(data))
+    }
+
+    pub(crate) fn verify_index(&self) -> io::Result<()> {
+        self.verify_index_metadata(&fs::metadata(&self.dir_path)?)
+    }
+
+    fn verify_index_metadata(&self, metadata: &Metadata) -> io::Result<()> {
+        if index_identity(metadata) != self.index_identity {
+            return Err(invalid(
+                "VPK index changed since mounting; reload mounted content",
+            ));
+        }
+        Ok(())
     }
 
     /// Physical files used by the same cached entry mapping as [`Self::read_limited`].
     /// A changed index requires reloading the mount before provenance can be trusted.
     pub fn asset_source_paths(&self, path: &str) -> io::Result<Option<Vec<PathBuf>>> {
-        if index_identity(&fs::metadata(&self.dir_path)?) != self.index_identity {
-            return Err(invalid(
-                "VPK index changed since mounting; reload mounted content",
-            ));
-        }
+        self.verify_index()?;
         let Some(entry) = self.entries.get(path) else {
             return Ok(None);
         };
@@ -405,6 +424,87 @@ mod tests {
         }
     }
 
+    #[test]
+    fn changed_index_rejects_plain_reads_for_inline_numbered_and_preload_entries() {
+        for archive in [DIR_ARCHIVE, 42, 9] {
+            let root = tempfile::tempdir().unwrap();
+            let replacement_root = tempfile::tempdir().unwrap();
+            let old_body = if archive == 9 {
+                b"".as_slice()
+            } else {
+                b"old0"
+            };
+            let new_body = if archive == 9 {
+                b"".as_slice()
+            } else {
+                b"new0"
+            };
+            let index = fixture(root.path(), archive, old_body);
+            let pak = Vpk::open(&index).unwrap();
+            assert_eq!(
+                pak.read_limited("materials/asset.txt", 7).unwrap().unwrap(),
+                [b"pre".as_slice(), old_body].concat()
+            );
+            assert!(
+                pak.read_limited("materials/absent.txt", 7)
+                    .unwrap()
+                    .is_none()
+            );
+            let replacement = fixture(replacement_root.path(), archive, new_body);
+            let mut bytes = fs::read(&replacement).unwrap();
+            let preload = bytes.windows(3).position(|part| part == b"pre").unwrap();
+            bytes[preload..preload + 3].copy_from_slice(b"new");
+            fs::write(&replacement, bytes).unwrap();
+            if archive == 42 {
+                fs::copy(
+                    replacement_root.path().join("test_042.vpk"),
+                    root.path().join("test_042.vpk"),
+                )
+                .unwrap();
+            }
+            fs::rename(&replacement, &index).unwrap();
+            let reloaded = Vpk::open(&index).unwrap();
+            assert_eq!(
+                reloaded
+                    .read_limited("materials/asset.txt", 7)
+                    .unwrap()
+                    .unwrap(),
+                [b"new".as_slice(), new_body].concat()
+            );
+            for asset in ["materials/asset.txt", "materials/absent.txt"] {
+                let error = pak.read_limited(asset, 7).unwrap_err();
+                assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+                assert!(error.to_string().contains("reload mounted content"));
+            }
+        }
+    }
+
+    #[test]
+    fn changed_index_rejects_a_new_entry_missing_from_the_cached_tree() {
+        let root = tempfile::tempdir().unwrap();
+        let replacement_root = tempfile::tempdir().unwrap();
+        let index = fixture(root.path(), DIR_ARCHIVE, b"old0");
+        let pak = Vpk::open(&index).unwrap();
+        assert!(pak.read("materials/fresh.txt").unwrap().is_none());
+        let replacement = fixture(replacement_root.path(), DIR_ARCHIVE, b"new0");
+        let mut bytes = fs::read(&replacement).unwrap();
+        let name = bytes.windows(5).position(|part| part == b"asset").unwrap();
+        bytes[name..name + 5].copy_from_slice(b"fresh");
+        fs::write(&replacement, bytes).unwrap();
+        fs::rename(&replacement, &index).unwrap();
+        assert_eq!(
+            Vpk::open(&index)
+                .unwrap()
+                .read("materials/fresh.txt")
+                .unwrap()
+                .unwrap(),
+            b"prenew0"
+        );
+        let error = pak.read("materials/fresh.txt").unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("reload mounted content"));
+    }
+
     #[cfg(unix)]
     #[test]
     fn asset_sources_keep_vpk_aliases_and_their_physical_targets() {
@@ -432,12 +532,12 @@ mod tests {
 
     #[test]
     fn bounded_reads_reject_declared_sizes_before_opening_an_archive() {
-        let file = tempfile::tempfile().unwrap();
+        let file = tempfile::NamedTempFile::new().unwrap();
         let pak = Vpk {
-            dir_path: "missing_dir.vpk".into(),
-            archive_stem: "missing".into(),
+            dir_path: file.path().to_owned(),
+            archive_stem: file.path().with_extension("absent-archive"),
             dir_data_start: 0,
-            index_identity: index_identity(&file.metadata().unwrap()),
+            index_identity: index_identity(&file.as_file().metadata().unwrap()),
             entries: HashMap::from([(
                 "models/large.mdl".into(),
                 Entry {

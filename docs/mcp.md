@@ -1313,6 +1313,15 @@ or source freshness guarantee. `get_material_source` and its Water inventory
 retain their separate inspection limits above. See
 [Material source-read limits](compile-and-play.md#material-source-read-limits).
 
+A lookup reaching a changed mounted VPK index propagates an explicit error through
+the shared asset readers, uncached catalogs and compiler operations, including
+Fullbright.
+Existing browser/preview caches are not watched. A
+failed `compile_map` or `start_compile` result keeps the previous BSP/pointfile.
+Restart the owning process to remount the replacement index; refreshing a source
+report does not remount content. No new tool or setting is required. This check
+provides neither numbered-payload immutability nor a whole-build snapshot.
+
 `get_entity_definitions` reports loaded classes, sources, load error and optional
 `map_size: {authored:[first,second], bounds:[minimum,maximum], source, line}`.
 Load/search responses and `get_map_info.definitions` include the same metadata.

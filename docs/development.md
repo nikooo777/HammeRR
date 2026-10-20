@@ -3988,3 +3988,24 @@ target without a lossy substitute. Each additional process must drain cleanly;
 configuration checks must not panic or initialize graphics. The unit test covers
 both override and fallback path selection without changing global environment
 variables in parallel tests.
+
+
+### Mounted VPK index changes
+
+```sh
+cargo test -p source-formats --lib vpk
+cargo test -p source-formats --lib source_reads_report_vpk_storage_and_reject_changed_indexes
+python3 -B scripts/validate_vpk_mount_changes.py --binary target/debug/hammerr-headless --output target/validation/vpk-mount-headless
+python3 -B scripts/validate_vpk_mount_changes.py --binary target/debug/editor --output target/validation/vpk-mount-editor --reference-output target/validation/vpk-mount-headless
+```
+
+The public validator mounts a private VPK-only material, verifies its exact
+source and compiles a saved sealed room through foreground and background MCP.
+It replaces the index with identical bytes on a different inode, requires both
+build paths to reject the stale mount and preserve prior BSP/pointfile bytes,
+then opens the original VMF in a fresh process and requires identical successful
+outputs. Map/history/settings/recipes and owned property drafts are retained;
+the ordinary compile refresh cancels the staged face preview. Both processes
+must drain on EOF without initializing graphics. The optional reference compares
+all six valid/preserved BSPs between production programs. Output directories
+must not already exist. No desktop input, native worker or game is required.

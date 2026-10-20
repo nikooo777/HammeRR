@@ -365,6 +365,13 @@ source-verification rules remain unchanged; bounded reads do not make file I/O
 interruptible. The [Source inspector](material-source.md) has separate read-only
 inspection limits.
 
+If a build lookup reaches a changed mounted VPK index, compilation reports an
+explicit index-change error and keeps the previous BSP and pointfile. Restart
+the editor to remount the replacement, then **Compile** again. New asset reads and uncached
+material catalog queries use the same index check; they do not silently skip the
+changed mount. Existing cached browser entries and previews are not watched.
+This does not freeze numbered VPK payload files or the complete build inputs.
+
 #### Tool preview dimensions
 
 Use a material's tool preview for compiled dimensions while keeping its diffuse

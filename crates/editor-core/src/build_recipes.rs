@@ -1,6 +1,5 @@
 use std::collections::HashSet;
-use std::fs;
-use std::io::Read;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -8,7 +7,10 @@ use serde_json::{Value, json};
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use crate::preference_file::{CoordinatedFile, ObservedSource, Source};
+
 pub(crate) const FILE_NAME: &str = "build-recipes.json";
+pub(crate) const LOCK_FILE_NAME: &str = ".build-recipes.lock";
 pub(crate) const VERSION: u32 = 1;
 pub(crate) const MAX_RECIPES: usize = 32;
 pub(crate) const MAX_NAME_BYTES: usize = 80;
@@ -90,7 +92,7 @@ struct Registry {
     file: File,
     revision: u64,
     path: Option<PathBuf>,
-    disk: Option<Vec<u8>>,
+    disk: Option<ObservedSource>,
     load_failed: bool,
     error: Option<String>,
 }
@@ -171,27 +173,33 @@ pub(crate) fn validate(file: &File) -> Result<(), String> {
     Ok(())
 }
 
-fn read(path: &Path) -> Result<Option<Vec<u8>>, String> {
-    let file = match fs::File::open(path) {
-        Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(format!("{}: {error}", path.display())),
-    };
-    let mut bytes = Vec::new();
-    file.take(MAX_FILE_BYTES as u64 + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|error| format!("{}: {error}", path.display()))?;
-    if bytes.len() > MAX_FILE_BYTES {
-        return Err(format!("Build recipe file exceeds {MAX_FILE_BYTES} bytes"));
-    }
-    Ok(Some(bytes))
+fn target(path: &Path) -> Result<CoordinatedFile<'_, &OsStr>, String> {
+    Ok(CoordinatedFile {
+        directory: path
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or(Path::new(".")),
+        file_name: path
+            .file_name()
+            .ok_or("Build recipe storage must have a file name")?,
+        lock_name: LOCK_FILE_NAME,
+        label: "Build recipes",
+        reload: "Reload recipes",
+        saved_description: "saved recipes",
+        max_bytes: MAX_FILE_BYTES as u64,
+    })
 }
 
-fn load(path: &Path) -> Result<(File, Option<Vec<u8>>), String> {
-    let disk = read(path)?;
-    let file = match &disk {
-        Some(bytes) => serde_json::from_slice(bytes).map_err(|error| error.to_string())?,
-        None => File::default(),
+fn load(path: &Path) -> Result<(File, ObservedSource), String> {
+    let disk = target(path)?.observe_following()?;
+    let file = match &disk.source {
+        Source::File { bytes, length, .. } => {
+            if *length > MAX_FILE_BYTES as u64 {
+                return Err(format!("Build recipe file exceeds {MAX_FILE_BYTES} bytes"));
+            }
+            serde_json::from_slice(bytes).map_err(|error| error.to_string())?
+        }
+        Source::Missing => File::default(),
     };
     validate(&file)?;
     Ok((file, disk))
@@ -282,7 +290,7 @@ impl Authority {
         match loaded {
             Ok((file, disk)) => {
                 state.file = file;
-                state.disk = disk;
+                state.disk = Some(disk);
                 state.load_failed = false;
                 state.error = None;
                 Ok(())
@@ -321,7 +329,7 @@ impl Authority {
         match loaded {
             Ok((file, disk)) => {
                 state.file = file;
-                state.disk = disk;
+                state.disk = Some(disk);
                 state.load_failed = false;
                 state.error = None;
                 Ok(state.snapshot())
@@ -430,6 +438,7 @@ impl Registry {
     fn publish(&mut self, file: File) -> Result<(), String> {
         validate(&file)?;
         let state = self;
+        let mut write_committed = false;
         let result: Result<(), String> = (|| {
             if state.load_failed {
                 return Err("Build recipes did not load; fix storage and Reload recipes before editing custom recipes".into());
@@ -439,23 +448,41 @@ impl Registry {
                 return Err("Build recipes exceed the storage limit".into());
             }
             if let Some(path) = &state.path {
-                if read(path)? != state.disk {
-                    return Err(
-                        "Build recipes changed on disk; Reload recipes before editing".into(),
-                    );
+                let expected = state
+                    .disk
+                    .as_ref()
+                    .ok_or("Reload recipes before writing saved recipes")?;
+                let publication = target(path)?.publish_following(&bytes, expected).map_err(
+                    |error| {
+                        if error.conflict {
+                            format!(
+                                "Build recipes changed on disk; Reload recipes before editing: {}",
+                                error.message
+                            )
+                        } else {
+                            error.message
+                        }
+                    },
+                )?;
+                write_committed = true;
+                match publication.source {
+                    Ok(source) => state.disk = Some(source),
+                    Err(error) => {
+                        state.load_failed = true;
+                        return Err(format!(
+                            "The recipe file was written but verification failed; Reload recipes before editing: {error}"
+                        ));
+                    }
                 }
-                let directory = path
-                    .parent()
-                    .filter(|path| !path.as_os_str().is_empty())
-                    .unwrap_or(Path::new("."));
-                fs::create_dir_all(directory).map_err(|error| error.to_string())?;
-                crate::recovery::atomic_write(path, &bytes)?;
-                state.disk = Some(bytes);
             }
             Ok(())
         })();
         if let Err(error) = result {
-            let error = format!("Build recipes could not save: {error}");
+            let error = if write_committed {
+                error
+            } else {
+                format!("Build recipes could not save: {error}")
+            };
             state.error = Some(error.clone());
             return Err(error);
         }
@@ -465,6 +492,10 @@ impl Registry {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "build_recipes/coordination_tests.rs"]
+mod coordination_tests;
 
 #[cfg(test)]
 mod tests {

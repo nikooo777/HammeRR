@@ -1,4 +1,5 @@
 use std::{
+    ffi::{OsStr, OsString},
     fs::{self, File},
     io::Read,
     path::{Path, PathBuf},
@@ -85,7 +86,7 @@ pub(crate) fn read_source(path: &Path, max_file_bytes: u64, label: &str) -> Resu
 #[derive(Clone, Debug)]
 pub(crate) struct ObservedSource {
     pub source: Source,
-    file_name: &'static str,
+    file_name: OsString,
     directory: DirectoryBinding,
     following: Option<BoundDestination>,
 }
@@ -225,9 +226,9 @@ impl Drop for WriteLock {
     }
 }
 
-pub(crate) struct CoordinatedFile<'a> {
+pub(crate) struct CoordinatedFile<'a, N: AsRef<OsStr> = &'static str> {
     pub directory: &'a Path,
-    pub file_name: &'static str,
+    pub file_name: N,
     pub lock_name: &'static str,
     pub label: &'static str,
     pub reload: &'static str,
@@ -235,9 +236,9 @@ pub(crate) struct CoordinatedFile<'a> {
     pub max_bytes: u64,
 }
 
-impl CoordinatedFile<'_> {
+impl<N: AsRef<OsStr>> CoordinatedFile<'_, N> {
     fn path(&self) -> PathBuf {
-        self.directory.join(self.file_name)
+        self.directory.join(self.file_name.as_ref())
     }
 
     pub fn observe(&self) -> Result<ObservedSource, String> {
@@ -247,7 +248,7 @@ impl CoordinatedFile<'_> {
         Ok(ObservedSource {
             source,
             directory,
-            file_name: self.file_name,
+            file_name: self.file_name.as_ref().to_owned(),
             following: None,
         })
     }
@@ -265,7 +266,7 @@ impl CoordinatedFile<'_> {
         Ok(ObservedSource {
             source,
             directory,
-            file_name: self.file_name,
+            file_name: self.file_name.as_ref().to_owned(),
             following: Some(destination),
         })
     }
@@ -285,7 +286,7 @@ impl CoordinatedFile<'_> {
         Ok(ObservedSource {
             source,
             directory,
-            file_name: self.file_name,
+            file_name: self.file_name.as_ref().to_owned(),
             following: None,
         })
     }
@@ -293,7 +294,7 @@ impl CoordinatedFile<'_> {
     fn verify_expected(&self, expected: &ObservedSource) -> Result<(), SaveError> {
         let label = self.label;
         let reload = self.reload;
-        if expected.file_name != self.file_name {
+        if expected.file_name.as_os_str() != self.file_name.as_ref() {
             return Err(SaveError {
                 conflict: true,
                 message: format!("{label} source belongs to a different file; {reload}"),

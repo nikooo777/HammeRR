@@ -3958,3 +3958,24 @@ selection/camera/settings, recipes/assets and clean EOF without graphics or a
 game. Existing window area/fade/reference and unrelated rotated-model tests
 remain separate coverage; these checks do not establish rotated-window runtime
 support.
+
+
+### Coordinated build-recipe writes
+
+```sh
+cargo test -p editor-core --features mcp build_recipes::coordination_tests
+cargo test -p editor-core --features mcp preference_file
+python3 -B scripts/validate_recipe_coordination.py --binary target/debug/hammerr-headless --output target/validation/recipe-coordination-headless
+python3 -B scripts/validate_recipe_coordination.py --binary target/debug/editor --output target/validation/recipe-coordination-editor
+```
+
+The Linux regression launches a real child writer with explicit barriers. It
+checks the physical target lock through a file symlink, a non-UTF8 custom basename
+at the storage-authority boundary, busy and stale refusal, retained IDs and
+compiler settings, and Reload/retry without lost updates. The ignored child
+fixture runs only through its parent regression. The public validator uses two
+independent stdio MCP processes sharing private recipe storage. It checks busy
+and stale save/replace/rename/delete requests, Reload/retry, distinct saved
+settings and unchanged owned map reviews. Both programs must drain cleanly on
+EOF and leave graphics uninitialized. Output directories must not already exist.
+No desktop input or game is required.

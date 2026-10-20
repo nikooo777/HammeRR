@@ -566,11 +566,12 @@ mod tests {
                 .unwrap()
                 .contains("Direct LDR + HDR")
         );
-        let before = restarted.build_recipes();
         let permissions = fs::metadata(&path).unwrap().permissions();
         let mut readonly = permissions.clone();
         readonly.set_readonly(true);
         fs::set_permissions(&path, readonly).unwrap();
+        restarted.reload_build_recipes(Actor::Agent, None).unwrap();
+        let before = restarted.build_recipes();
         assert!(
             restarted
                 .rename_build_recipe(Actor::Agent, &id, "Renamed", None)
@@ -583,6 +584,7 @@ mod tests {
         assert!(restarted.build_recipes()["error"].is_string());
         assert_eq!(fs::read(&path).unwrap(), original);
         fs::set_permissions(&path, permissions).unwrap();
+        restarted.reload_build_recipes(Actor::Agent, None).unwrap();
         restarted
             .rename_build_recipe(Actor::Agent, &id, "Renamed", None)
             .unwrap();
@@ -602,7 +604,17 @@ mod tests {
                 .contains("changed on disk")
         );
         assert_eq!(session.build_recipes()["recipes"][2]["name"], "Geometry");
-        assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
+        let entries = fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            entries,
+            [FILE_NAME, build_recipes::LOCK_FILE_NAME]
+                .into_iter()
+                .map(std::ffi::OsString::from)
+                .collect()
+        );
     }
 
     #[test]

@@ -65,6 +65,11 @@ pub(super) struct Context<'a> {
     pub direct: receivers::Context<'a>,
 }
 
+pub(super) struct Indirect<'a> {
+    pub surfaces: &'a super::radiance::SurfaceIndex,
+    pub quality: crate::SkyQuality,
+}
+
 fn source(vmf: &Vmf, id: usize) -> Result<&Entity, String> {
     let mut matches = vmf
         .entities
@@ -445,12 +450,29 @@ fn validate_point(
 pub(super) fn bake_channel(
     prepared: &mut Prepared,
     ctx: &Context<'_>,
+    indirect: Option<Indirect<'_>>,
     kind: LightingKind,
     candidates: &mut Candidates,
     report: &mut Report,
     budget: &mut Budget<'_>,
 ) -> Result<(), String> {
     let start = budget.work();
+    let _directions = budget.reserve::<DVec3>(
+        indirect
+            .as_ref()
+            .map_or(0, |indirect| indirect.quality.directions()),
+    )?;
+    let directions = if let Some(indirect) = &indirect {
+        budget.consume(indirect.quality.directions())?;
+        super::bounce::directions(indirect.quality.directions())
+    } else {
+        Vec::new()
+    };
+    let cone = if directions.is_empty() {
+        0.0
+    } else {
+        (1.0 - 1.0 / directions.len() as f64).acos().tan()
+    };
     for receiver in &prepared.receivers {
         budget.consume(1)?;
         let data = &prepared.models[receiver.model];
@@ -472,6 +494,7 @@ pub(super) fn bake_channel(
                             budget.consume(receivers::STYLE_COUNT + 4)?;
                             let sample = sample(&data.model.vertices[index], &placement)?;
                             let point = sample.point;
+                            let normal = sample.normal;
                             let colors = (|| {
                                 validate_point(
                                     &ctx.direct,
@@ -486,16 +509,39 @@ pub(super) fn bake_channel(
                                     ctx.visibility,
                                     budget,
                                 )?;
-                                receivers::direct_skipping_owner(
+                                let skipped_owner = (receiver.prop.flags & NO_SELF_SHADOW != 0)
+                                    .then_some(receiver.metadata.ordinal);
+                                let mut colors = receivers::direct_skipping_owner(
                                     &ctx.direct,
                                     candidates,
                                     cluster,
                                     sample,
                                     true,
-                                    (receiver.prop.flags & NO_SELF_SHADOW != 0)
-                                        .then_some(receiver.metadata.ordinal),
+                                    skipped_owner,
                                     budget,
-                                )
+                                )?;
+                                if let Some(indirect) = &indirect {
+                                    colors[0] += super::bounce::gather(
+                                        normal,
+                                        &directions,
+                                        &mut |direction| {
+                                            let hit = indirect
+                                                .surfaces
+                                                .trace_skipping_owner(
+                                                    point,
+                                                    direction,
+                                                    cone,
+                                                    ctx.direct.shadows,
+                                                    ctx.direct.props,
+                                                    skipped_owner,
+                                                    budget,
+                                                )?
+                                                .filter(|hit| !hit.sky && hit.front);
+                                            Ok(hit.map_or(DVec3::ZERO, |hit| hit.color * 255.0))
+                                        },
+                                    )?;
+                                }
+                                Ok::<_, String>(colors)
                             })()
                             .map_err(|error| {
                                 format!(

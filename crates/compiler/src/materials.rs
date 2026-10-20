@@ -19,6 +19,12 @@ pub enum Requirements {
     GeometrySemantics,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PropSourceMode {
+    Direct,
+    WithReflectivity,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TextureMetrics {
     pub source: MetricSource,
@@ -133,7 +139,7 @@ pub struct Materials<'a> {
     geometry_reads: GeometryReads,
     infos: Vec<MaterialInfo>,
     by_name: HashMap<String, usize>,
-    prop_lighting_sources: Option<crate::lighting::asset_tracking::SourceReads>,
+    prop_lighting_sources: Option<(PropSourceMode, crate::lighting::asset_tracking::SourceReads)>,
 }
 
 #[derive(Default)]
@@ -185,20 +191,33 @@ impl<'a> Materials<'a> {
         &self.infos[index]
     }
 
-    pub(crate) fn track_prop_lighting_sources(&mut self) {
-        self.prop_lighting_sources = Some(Default::default());
+    pub(crate) fn track_prop_lighting_sources(
+        &mut self,
+        mode: PropSourceMode,
+    ) -> Result<(), String> {
+        if !self.infos.is_empty() || self.prop_lighting_sources.is_some() {
+            return Err(
+                "Prop lighting source mode must be selected before loading materials".into(),
+            );
+        }
+        self.prop_lighting_sources = Some((mode, Default::default()));
+        Ok(())
     }
 
     pub(crate) fn take_prop_lighting_sources(
         &mut self,
     ) -> Option<crate::lighting::asset_tracking::SourceReads> {
-        self.prop_lighting_sources.take()
+        self.prop_lighting_sources
+            .take()
+            .map(|(_, sources)| sources)
     }
 
     pub(crate) fn prop_lighting_sources_mut(
         &mut self,
     ) -> Option<&mut crate::lighting::asset_tracking::SourceReads> {
-        self.prop_lighting_sources.as_mut()
+        self.prop_lighting_sources
+            .as_mut()
+            .map(|(_, sources)| sources)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &MaterialInfo> {
@@ -227,12 +246,9 @@ impl<'a> Materials<'a> {
         }
         let material = match self.requirements {
             Requirements::Compile => {
-                if let Some(sources) = &mut self.prop_lighting_sources {
+                if let Some((_, sources)) = &mut self.prop_lighting_sources {
                     Material::load_with_reader(&vmt::material_path(&key), &mut |path| {
-                        let limit = sources.read_limit(path, MAX_GEOMETRY_MATERIAL_BYTES)?;
-                        let bytes = self.fs.read_limited(path, limit)?;
-                        sources.record(path, bytes.as_deref())?;
-                        Ok(bytes)
+                        sources.read(self.fs, path, MAX_GEOMETRY_MATERIAL_BYTES)
                     })
                 } else {
                     Material::load(self.fs, &key)
@@ -268,16 +284,19 @@ impl<'a> Materials<'a> {
         Ok(index)
     }
 
-    fn measure(&self, material: &Material, info: &mut MaterialInfo) -> Result<(), String> {
+    fn measure(&mut self, material: &Material, info: &mut MaterialInfo) -> Result<(), String> {
         let Some(texture) = material.get("$basetexture") else {
             return Ok(());
         };
         let path = vmt::texture_path(texture);
-        let Some(bytes) = self
-            .fs
-            .read(&path)
-            .map_err(|error| format!("{path}: {error}"))?
-        else {
+        let bytes = match &mut self.prop_lighting_sources {
+            Some((PropSourceMode::WithReflectivity, sources)) => {
+                sources.read(self.fs, &path, usize::MAX)
+            }
+            _ => self.fs.read(&path),
+        }
+        .map_err(|error| format!("{path}: {error}"))?;
+        let Some(bytes) = bytes else {
             info.warnings.push(format!("Base texture {path} was not found; dimensions and reflectivity could not be measured"));
             return Ok(());
         };
@@ -294,6 +313,10 @@ impl<'a> Materials<'a> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "materials/prop_sources_tests.rs"]
+mod prop_sources_tests;
 
 #[cfg(test)]
 mod tests {

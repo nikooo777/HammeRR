@@ -22,13 +22,14 @@ Agents use the same `create_entity`, `set_entity_properties`, `compile_map` and 
 
 ## Bake vertex lighting
 
-Bake direct light into supported static models instead of relying on the game's
-ambient samples. The result is stored in the BSP for every declared draw LOD.
+Bake direct light and optionally one diffuse world/terrain bounce into supported
+static models instead of relying on the game's ambient samples. The result is
+stored in the BSP for every declared draw LOD.
 
 1. Open **Build settings…** and choose **Build lighting → Direct LDR** or
    **Direct LDR + HDR**.
-2. Choose **Indirect light → Direct only**, then enable
-   **Bake static-prop vertex lighting**.
+2. Choose **Indirect light → Direct only** or **One diffuse bounce**, then
+   enable **Bake static-prop vertex lighting**.
 3. Click **Close**. Optional: select a prop and enable **Advanced properties**. Enter
    `disableselfshadowing` in **Property key**, enter `1` in **Value**, then
    press Enter. This removes only that prop's own geometry from its lighting
@@ -40,14 +41,20 @@ ambient samples. The result is stored in the BSP for every declared draw LOD.
 
 ![Static-prop vertex lighting in Build settings](images/build-prop-vertex-lighting.png)
 
-Limits: this is an experimental, default-off direct-light bake for simple opaque
-models. Body 0, root LOD 0, unit scale, one bodypart/model and plain selected
+Limits: this is an experimental, default-off vertex bake for simple opaque
+models. Prop reception supports zero or one diffuse bounce; two to four bounces
+remain available when this bake is disabled. One bounce needs measured
+base-texture reflectivity from every lit world or terrain source material. The
+compiler hashes each complete source VTF and fails on missing or unmeasured
+reflectivity instead of using a default. Body 0, root LOD 0, unit scale, one bodypart/model and plain selected
 **VertexLitGeneric** materials are required. LDR and HDR are evaluated
 independently. Self-shadow control applies to point/spot lights, sun and sky
-ambient; other props, world brushes and terrain still block light. It does not
+ambient and reflected receiver rays; other props, world brushes and terrain
+still block light. It does not
 move embedded vertices or admit unsupported support contacts. See [the complete limits](compile-and-play.md#static-prop-vertex-lighting)
-before enabling it on a larger map. Per-texel prop lightmaps and reflected prop
-sources remain unavailable.
+before enabling it on a larger map. Per-texel prop lightmaps and reflected sources from props or brush models
+remain unavailable. The one-bounce
+source is the direct world/terrain lighting, not the already bounced result.
 
 Agents enable the same setting with `set_compile_settings` and
 `bake_static_prop_vertices: true`. Use `set_entity_properties` with

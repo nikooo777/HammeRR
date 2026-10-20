@@ -94,7 +94,25 @@ cargo test -p compiler --lib prop_vertices
 cargo test -p compiler --lib prop_lighting_assets
 ```
 
+`validate_prop_indirect_lighting.py` generates sealed maps and literal model/VTF
+inputs, then checks both lighting channels against independent one-bounce
+energy values. It covers all three sampling qualities, world/terrain/prop
+blockers, nearby sources, height and normal controls, sky accounting and the
+world-source handoff before its first bounce. It needs no game or desktop.
+The output directory must be new and remain on disk under `target/`.
+
+```bash
+python3 -B scripts/validate_prop_indirect_lighting.py \
+  --binary target/debug/hammerr-compile \
+  --output target/validation/prop-indirect
+```
+
+`prop_indirect_fixtures.py --output <directory>` prepares the same portable
+fixtures and their literal expected values without running a compiler.
+
 `validate_prop_vertex_lighting.py` exercises either production MCP program.
+Use `--one-bounce-control` to include actual one-bounce publication, source-VTF
+identity, incompatible-depth refusal, recipe restore and restart persistence.
 Prepare a standalone game directory containing local MDL/VVD/DX90 companions
 and plain opaque selected model materials. The supported model needs one
 bodypart/model, authored root LOD 0, all 1–8 declared draw LODs and at most

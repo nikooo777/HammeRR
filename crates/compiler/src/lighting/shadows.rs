@@ -124,6 +124,23 @@ impl Triangle {
         start: DVec3,
         end: DVec3,
     ) -> Result<Option<(f64, [f64; 3])>, String> {
+        self.intersection_with_endpoints(start, end, TRIANGLE_EPSILON)
+    }
+
+    pub(super) fn source_intersection(
+        &self,
+        start: DVec3,
+        end: DVec3,
+    ) -> Result<Option<(f64, [f64; 3])>, String> {
+        self.intersection_with_endpoints(start, end, 0.0)
+    }
+
+    fn intersection_with_endpoints(
+        &self,
+        start: DVec3,
+        end: DVec3,
+        endpoint: f64,
+    ) -> Result<Option<(f64, [f64; 3])>, String> {
         let [a, b, c] = self.points;
         let delta = end - start;
         let edges = [b - a, c - a];
@@ -144,8 +161,8 @@ impl Triangle {
         Ok((u >= -TRIANGLE_EPSILON
             && v >= -TRIANGLE_EPSILON
             && u + v <= 1.0 + TRIANGLE_EPSILON
-            && t > TRIANGLE_EPSILON
-            && t < 1.0 - TRIANGLE_EPSILON)
+            && t > endpoint
+            && t < 1.0 - endpoint)
             .then_some((t, [1.0 - u - v, u, v])))
     }
 }

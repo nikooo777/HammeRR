@@ -668,9 +668,9 @@ impl Session {
             Some(
                 "Choose Direct LDR or Direct LDR + HDR before enabling static-prop vertex lighting.",
             )
-        } else if self.compilation.options.bounces != 0 {
+        } else if self.compilation.options.bounces > 1 {
             Some(
-                "Choose Direct only under Indirect light before enabling static-prop vertex lighting.",
+                "Choose Direct only or One diffuse bounce under Indirect light before enabling static-prop vertex lighting.",
             )
         } else {
             None
@@ -680,10 +680,10 @@ impl Session {
         settings["prop_vertex_lighting"] = json!({
             "available":unavailable_reason.is_none(),
             "unavailable_reason":unavailable_reason,
-            "description":"Bake direct lighting on unit-scale static props with one bodypart/model, body0/root0, all 1–8 draw LODs and plain opaque VertexLitGeneric materials, up to 256 hardware sections total. Direct LDR + HDR evaluates both channels independently. Requires Direct only. disableselfshadowing=1 omits only the receiving prop’s own shadow triangles. Original vertices may touch opaque world brushes; buried vertices and terrain/other-prop contacts reject. Model/material compatibility is checked during compilation. Unsupported requested receivers stop the build; disablevertexlighting=1 explicitly opts out one prop. No native capture runtime is required.",
+            "description":"Bake direct lighting and optionally one diffuse world/terrain bounce on unit-scale static props with one bodypart/model, body0/root0, all 1–8 draw LODs and plain opaque VertexLitGeneric materials, up to 256 hardware sections total. Direct LDR + HDR evaluates both channels independently. Requires Direct only or One diffuse bounce. One bounce requires measured base-texture reflectivity for every lit world/terrain source and retains each complete VTF as a checked dependency. disableselfshadowing=1 omits only the receiving prop’s own shadow triangles. Original vertices may touch opaque world brushes; buried vertices and terrain/other-prop contacts reject. Model/material compatibility is checked during compilation. Unsupported requested receivers stop the build; disablevertexlighting=1 explicitly opts out one prop. No native capture runtime is required.",
             "limits":{
                 "lighting_modes":["direct_ldr","direct_ldr_hdr"],
-                "bounces":0,"receiver":{"body":0,"root_lod":0,"bodyparts":1,"models":1,"lods":{"min":1,"max":8,"all_required":true},"hardware_meshes_max":compiler::prop_lighting_assets::MAX_RECEIVER_MESHES,"scale":1,"sample_origin":"original_vertex","support_contacts":"opaque_world_brush","self_shadowing":{"default":true,"disable_property":"disableselfshadowing","disable_value":1,"disabled_scope":"receiver_owned_triangles","retained_blockers":["other_props","world","terrain"]}},
+                "bounces":{"min":0,"max":1},"indirect_sources":["world","terrain"],"indirect_reflectivity":"measured_texture_header","receiver":{"body":0,"root_lod":0,"bodyparts":1,"models":1,"lods":{"min":1,"max":8,"all_required":true},"hardware_meshes_max":compiler::prop_lighting_assets::MAX_RECEIVER_MESHES,"scale":1,"sample_origin":"original_vertex","support_contacts":"opaque_world_brush","self_shadowing":{"default":true,"disable_property":"disableselfshadowing","disable_value":1,"disabled_scope":"receiver_owned_triangles","retained_blockers":["other_props","world","terrain"]}},
                 "material":"plain opaque selected VertexLitGeneric",
                 "light_styles":[0],
                 "unsupported":["buried vertices","terrain/other-prop support contacts","ignore normals","lighting origins","specialized materials","per-texel prop lightmaps","reflected prop sources"]

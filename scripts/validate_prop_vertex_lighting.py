@@ -160,6 +160,7 @@ def unchanged(client, source, ids):
 
 def compile_pair(client, args, source, ids, name, enabled):
     before = unchanged(client, source, ids)
+    bounces = client.call("get_compile_settings")["bounces"]
     path = args.output / f"{name}.bsp"
     result = client.call("compile_map", {"path": str(path)})
     require(result["success"] and result["bsp"] == str(path) and result["leak"] is None, result)
@@ -169,6 +170,7 @@ def compile_pair(client, args, source, ids, name, enabled):
     background = args.output / f"{name}-background.bsp"
     started = client.call("start_compile", {"path": str(background)})["job"]
     require(started["settings"]["bake_static_prop_vertices"] is enabled, "Submitted job did not capture the requested flag")
+    require(started["settings"]["bounces"] == bounces, "Submitted job did not capture the requested bounce depth")
     job = wait_job(client)
     require(job["token"] == started["token"] and job["status"] == "completed" and job["result"]["published"] and not job["stale"], job)
     require(background.read_bytes() == data and job["result"]["stats"].get("prop_vertex_lighting") == result["stats"].get("prop_vertex_lighting"), "Foreground/background publication differs")
@@ -305,6 +307,64 @@ def validate_self_shadow(client, args, game, source, ids, props, report):
                                "compiler_preserves_source_history_recipe_each_compile": True, "native_exercised": False}
 
 
+def validate_one_bounce(client, args, game, source, ids, report):
+    original_recipe = client.call("get_compile_settings")["recipe"]
+    original_state = protected_state(client), detail(client, ids), source.read_bytes()
+    baseline = {args.output / f"{mode}{suffix}.bsp": (args.output / f"{mode}{suffix}.bsp").read_bytes()
+                for mode in ("direct_ldr", "direct_ldr_hdr") for suffix in ("", "-background")}
+    saved_recipes = {row["name"]: row["id"] for row in client.call("get_build_recipes")["recipes"]}
+    texture_name = f"materials/{WALL_MATERIAL}.vtf"
+    texture_path = game / texture_name
+    texture_bytes = probe.read_bounded(texture_path, probe.MAX_BSP_BYTES)
+    material_path = texture_path.with_suffix(".vmt")
+    material_bytes = material_path.read_bytes()
+    expected_texture = {"path": texture_name, "sha256": probe.digest(texture_bytes), "bytes": len(texture_bytes)}
+    cases = {}
+    try:
+        for mode, channels in [("direct_ldr", ["ldr"]), ("direct_ldr_hdr", ["ldr", "hdr"])]:
+            client.call("apply_build_recipe", {"id": saved_recipes[f"Prop vertex {mode}"]})
+            updated = client.call("set_compile_settings", {"bounces": 1})
+            require(updated["bake_static_prop_vertices"] and updated["bounces"] == 1 and updated["prop_vertex_lighting"]["available"],
+                    "One bounce is not available through the shared enabled-bake settings")
+            recipe = client.call("save_build_recipe", {"name": f"One-bounce prop {mode}"})
+            path, baked, result = compile_pair(client, args, source, ids, f"one-bounce-{mode}", True)
+            verified = verify_output(args, game, baked, result["stats"], channels)
+            require(result["stats"]["bounces"] == 1, "Published one-bounce job did not execute the requested world pass")
+            require(next((row for row in verified["manifest"]["sources"] if row["path"] == texture_name), None) == expected_texture,
+                    "One-bounce publication omitted or changed the original whole source VTF dependency")
+            current_settings, current_state = client.call("get_compile_settings"), unchanged(client, source, ids)
+            token = client.call("get_compile_status")["job"]["token"]
+            client.call("set_compile_settings", {"bounces": 2, "physics": "engine"}, error=True)
+            require(client.call("get_compile_settings") == current_settings and unchanged(client, source, ids) == current_state
+                    and client.call("get_compile_status")["job"]["token"] == token and path.read_bytes() == baked,
+                    "Incompatible depth update changed settings, the current job, source/history/recipe or its published output")
+            cleared = client.call("set_compile_settings", {"bake_static_prop_vertices": False, "bounces": 2})
+            require(not cleared["bake_static_prop_vertices"] and cleared["bounces"] == 2,
+                    "Clearing prop baking did not restore the ordinary world bounce range")
+            _, plain, plain_result = compile_pair(client, args, source, ids, f"one-bounce-{mode}-cleared", False)
+            entries, flags = pak_and_flags(plain)
+            require(flags & 3 == 0 and MANIFEST not in entries and not any(VHV_NAME.fullmatch(name) for name in entries)
+                    and "prop_vertex_lighting" not in plain_result["stats"], "Cleared prop baking retained generated prop output")
+            client.call("apply_build_recipe", {"id": recipe["active"]["id"]})
+            restored_settings = client.call("get_compile_settings")
+            require(restored_settings["bake_static_prop_vertices"] and restored_settings["bounces"] == 1,
+                    "Saved one-bounce recipe failed to restore shared settings")
+            _, restored, _ = compile_pair(client, args, source, ids, f"one-bounce-{mode}-restored", True)
+            require(restored == baked, "Restored one-bounce settings did not reproduce exact published BSP bytes")
+            cases[mode] = {"artifact": str(path), "bsp_sha256": verified["bsp_sha256"], "stats": verified["stats"],
+                           "recipe_id": recipe["active"]["id"], "source_vtf": expected_texture,
+                           "invalid_depth_preserved_settings_and_output": True, "clear_and_recipe_restore_exact": True}
+    finally:
+        client.call("apply_build_recipe", {"id": original_recipe["id"]})
+    require((protected_state(client), detail(client, ids), source.read_bytes()) == original_state,
+            "One-bounce controls changed the source, history, selection or document revision")
+    require(client.call("get_compile_settings")["recipe"] == original_recipe
+            and all(path.read_bytes() == raw for path, raw in baseline.items())
+            and texture_path.read_bytes() == texture_bytes and material_path.read_bytes() == material_bytes,
+            "One-bounce controls changed the original recipe, N0 artifacts or private source assets")
+    report["one_bounce"] = {"cases": cases, "zero_bounce_artifacts_and_assets_preserved": True, "native_exercised": False}
+
+
 def validate(client, args, game, report):
     initial = client.call("get_compile_settings")
     require(initial["bake_static_prop_vertices"] is False, "Prop vertex lighting is not default-off")
@@ -338,7 +398,7 @@ def validate(client, args, game, report):
     runtime = client.call("get_native_capture_runtime")
     client.call("set_compile_settings", {"bake_static_prop_vertices": True})
     settings = client.call("get_compile_settings")
-    client.call("set_compile_settings", {"bounces": 1}, error=True)
+    client.call("set_compile_settings", {"bounces": 2}, error=True)
     require(client.call("get_compile_settings") == settings, "Bounce refusal silently changed a setting")
     require(client.call("get_compile_status")["job"]["stale"], "Changed bake setting did not stale previous output")
     for mode, channels in [("direct_ldr", ["ldr"]), ("direct_ldr_hdr", ["ldr", "hdr"])]:
@@ -348,6 +408,8 @@ def validate(client, args, game, report):
         report["channels"][mode] = verify_output(args, game, data, result["stats"], channels)
     if args.self_shadow_control:
         validate_self_shadow(client, args, game, source, ids, props, report)
+    if args.one_bounce_control:
+        validate_one_bounce(client, args, game, source, ids, report)
     manifest = report["channels"]["direct_ldr_hdr"]["manifest"]
     material_paths = [row["path"] for row in manifest["sources"] if row["path"].endswith(".vmt")]
     material = args.material or (material_paths[0] if len(material_paths) == 1 else None)
@@ -374,6 +436,8 @@ def validate(client, args, game, report):
     client.call("set_entity_properties", {"id": props[1], "set": {"model": args.model, "disablevertexlighting": "0"}})
     client.call("set_entity_properties", {"id": props[2], "set": {"disablevertexlighting": "0"}})
     client.call("save_map", {"path": str(source)})
+    if args.one_bounce_control:
+        client.call("set_compile_settings", {"bounces": 1})
     saved = client.call("save_build_recipe", {"name": "Persisted prop vertex bake"})
     require(saved["settings"]["bake_static_prop_vertices"] is True, "Recipe lost enabled bake setting")
     after_runtime = client.call("get_native_capture_runtime")
@@ -383,6 +447,7 @@ def validate(client, args, game, report):
     require(not client.call("get_map_info")["rendering"]["initialized"], "CPU compilation initialized graphics")
     report["native_runtime_before"], report["native_runtime_after"] = runtime, after_runtime
     report["recipe_id"], report["source"] = saved["active"]["id"], str(source)
+    report["persisted_bounces"] = saved["settings"]["bounces"]
 
 
 def main():
@@ -396,6 +461,7 @@ def main():
     parser.add_argument("--material", help="Optional selected receiver materials/...vmt to shadow for rejection; auto-detected only when unambiguous")
     parser.add_argument("--origin-z", type=float, default=48.0, help="Receiver origin height; use the fixture's exact minimum-Z offset to check floor contact")
     parser.add_argument("--self-shadow-control", action="store_true", help="Check positive own-occlusion using the exact grounded wood_crate001a companions; requires --origin-z 20.01078987121582")
+    parser.add_argument("--one-bounce-control", action="store_true", help="Build, reject incompatible depths, clear and restore one-bounce prop lighting in both channels using the private measured wall VTF")
     args = parser.parse_args()
     args.binary, args.fixture_game, args.output = args.binary.resolve(strict=True), args.fixture_game.resolve(strict=True), args.output.resolve()
     require(args.output.is_relative_to(ROOT / "target" / "validation"), "Keep acceptance artifacts on disk below target/validation")
@@ -422,10 +488,12 @@ def main():
             client.call("open_recent_map", {"path": report["source"]})
             settings = client.call("get_compile_settings")
             require(settings["bake_static_prop_vertices"] is True and settings["lighting"] == "direct_ldr_hdr", "Compatible recent context failed to restore the persisted bake")
+            require(settings["bounces"] == report["persisted_bounces"], "Recent context failed to restore the persisted bounce depth")
             client.call("apply_build_recipe", {"id": "fast"})
             require(client.call("get_compile_settings")["bake_static_prop_vertices"] is False, "Built-in recipe did not disable the bake")
             client.call("apply_build_recipe", {"id": report["recipe_id"]})
             require(client.call("get_compile_settings")["bake_static_prop_vertices"] is True, "Restarted saved recipe failed to restore the bake")
+            require(client.call("get_compile_settings")["bounces"] == report["persisted_bounces"], "Restarted saved recipe failed to restore the bounce depth")
             require(not client.call("get_map_info")["rendering"]["initialized"], "Persistence checks initialized graphics")
         report["restart_exit_code"] = require_clean_eof(client)
         report["status"] = "passed"

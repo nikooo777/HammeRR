@@ -57,9 +57,17 @@ fn prop_vertex_lighting_controls_share_real_callbacks_recipes_recent_maps_and_ac
     .invoke_accessible_default_action();
     assert!(lock(&shared).compile_options().bake_static_prop_vertices);
     assert!(controller.window.get_bake_static_prop_vertices());
-    controller.window.invoke_change_bounces(1);
+    controller.window.invoke_change_bounces(2);
     assert_eq!(lock(&shared).compile_options().bounces, 0);
     assert_eq!(controller.window.get_selected_bounces(), "Direct only");
+    controller.window.invoke_change_bounces(1);
+    assert_eq!(lock(&shared).compile_options().bounces, 1);
+    assert_eq!(
+        controller.window.get_selected_bounces(),
+        "One diffuse bounce"
+    );
+    assert!(controller.window.get_prop_vertex_lighting_enabled());
+    controller.window.invoke_change_bounces(0);
     controller.window.invoke_change_lighting(0);
     assert_eq!(controller.window.get_selected_lighting(), "Direct LDR");
     assert!(controller.window.get_bake_static_prop_vertices());

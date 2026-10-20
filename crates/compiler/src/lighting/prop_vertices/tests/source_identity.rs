@@ -9,8 +9,14 @@ fn replacing_a_valid_model_after_leaf_emission_rejects_the_old_receiver_snapshot
         .unwrap();
     let control = Control::default();
     let mut report = Report::default();
-    let mut map =
-        Map::load_with_prop_sources_controlled(&vmf, &game, &mut report, &control).unwrap();
+    let mut map = Map::load_with_prop_sources_controlled(
+        &vmf,
+        &game,
+        crate::materials::PropSourceMode::Direct,
+        &mut report,
+        &control,
+    )
+    .unwrap();
     let props = crate::static_props::bake(
         &vmf,
         &game,

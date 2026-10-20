@@ -16,6 +16,10 @@ const SOURCE_ROUNDING_OPERATIONS: f64 = 64.0;
 #[path = "radiance/source_boundary_tests.rs"]
 mod source_boundary_tests;
 
+#[cfg(test)]
+#[path = "radiance/receiver_tests.rs"]
+mod receiver_tests;
+
 struct Surface {
     triangle: Triangle,
     normal: DVec3,
@@ -546,6 +550,20 @@ impl SurfaceIndex {
         props: &ShadowIndex<super::props::PropTriangle>,
         budget: &mut Budget<'_>,
     ) -> Result<Option<Hit>, String> {
+        self.trace_skipping_owner(point, direction, cone, shadows, props, None, budget)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn trace_skipping_owner(
+        &self,
+        point: DVec3,
+        direction: DVec3,
+        cone: f64,
+        shadows: &ShadowIndex<Occluder>,
+        props: &ShadowIndex<super::props::PropTriangle>,
+        skipped_owner: Option<u32>,
+        budget: &mut Budget<'_>,
+    ) -> Result<Option<Hit>, String> {
         budget.consume(11)?;
         let end = point + direction * super::sky::TRACE_LENGTH;
         let hit = self.geometry.nearest(
@@ -555,7 +573,7 @@ impl SurfaceIndex {
             &mut |surface| {
                 Ok(surface
                     .triangle
-                    .intersection(point, end)?
+                    .source_intersection(point, end)?
                     .map(|(fraction, weights)| {
                         let uv = surface.coordinates.map(|coordinates| {
                             coordinates
@@ -624,7 +642,9 @@ impl SurfaceIndex {
             return Ok(None);
         }
         let distance = fraction * super::sky::TRACE_LENGTH;
-        if props.blocked(point, position, &mut |amount| budget.consume(amount))? {
+        if props.blocked_skipping_owner(point, position, skipped_owner, &mut |amount| {
+            budget.consume(amount)
+        })? {
             return Ok(None);
         }
         Ok(Some(Hit {

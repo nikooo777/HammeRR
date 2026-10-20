@@ -9,7 +9,7 @@ use source_formats::bsp::{self, contents};
 use source_formats::gamefs::GameFs;
 use source_formats::vmf::{Entity, Side, Solid, Vmf};
 
-use crate::materials::{Materials, Requirements};
+use crate::materials::{Materials, PropSourceMode, Requirements};
 use crate::planes::PlaneSet;
 use crate::winding::Winding;
 use crate::{Control, Diagnostic, Report};
@@ -334,16 +334,17 @@ impl<'a> Map<'a> {
         report: &mut Report,
         control: &Control,
     ) -> Result<Self, String> {
-        Self::load_inner(vmf, fs, report, control, false)
+        Self::load_inner(vmf, fs, report, control, None)
     }
 
     pub(crate) fn load_with_prop_sources_controlled(
         vmf: &Vmf,
         fs: &'a GameFs,
+        mode: PropSourceMode,
         report: &mut Report,
         control: &Control,
     ) -> Result<Self, String> {
-        Self::load_inner(vmf, fs, report, control, true)
+        Self::load_inner(vmf, fs, report, control, Some(mode))
     }
 
     fn load_inner(
@@ -351,12 +352,12 @@ impl<'a> Map<'a> {
         fs: &'a GameFs,
         report: &mut Report,
         control: &Control,
-        prop_sources: bool,
+        prop_sources: Option<PropSourceMode>,
     ) -> Result<Self, String> {
         control.checkpoint()?;
         let mut map = Self::empty(fs, Requirements::Compile);
-        if prop_sources {
-            map.materials.track_prop_lighting_sources();
+        if let Some(mode) = prop_sources {
+            map.materials.track_prop_lighting_sources(mode)?;
         }
         if let Err(error) = vmf.validate_ids() {
             report

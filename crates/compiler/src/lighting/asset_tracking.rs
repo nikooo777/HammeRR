@@ -59,6 +59,18 @@ impl SourceReads {
         ))
     }
 
+    pub(crate) fn read(
+        &mut self,
+        fs: &GameFs,
+        path: &str,
+        maximum: usize,
+    ) -> io::Result<Option<Vec<u8>>> {
+        let limit = self.read_limit(path, maximum)?;
+        let data = fs.read_limited(path, limit)?;
+        self.record(path, data.as_deref())?;
+        Ok(data)
+    }
+
     pub(crate) fn record(&mut self, path: &str, data: Option<&[u8]>) -> io::Result<()> {
         self.read_limit(path, usize::MAX)?;
         let path = bounded_path(path)?;
@@ -281,5 +293,53 @@ mod tests {
         reads.lookups = MAX_LOOKUPS;
         assert!(reads.read_limit("materials/0.vmt", usize::MAX).is_err());
         assert!(reads.record("materials/0.vmt", Some(b"a")).is_err());
+    }
+
+    #[test]
+    fn exact_early_reads_enforce_io_limits_and_charge_imported_hash_work() {
+        use crate::Control;
+        use source_formats::gamefs::{Mount, MountedPath};
+
+        let root =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/validation/620");
+        std::fs::create_dir_all(&root).unwrap();
+        let directory = tempfile::tempdir_in(root).unwrap();
+        let data = vec![0x5a; 84];
+        std::fs::write(directory.path().join("texture.vtf"), &data).unwrap();
+        let mut game = crate::test_common::empty_game();
+        game.mounts.push(MountedPath {
+            ids: vec!["game".into()],
+            mount: Mount::Directory(directory.path().to_owned()),
+        });
+        let mut reads = SourceReads::default();
+        assert!(reads.read(&game, "texture.vtf", data.len() - 1).is_err());
+        assert!(reads.sources.is_empty() && reads.missing.is_empty());
+        assert_eq!(
+            reads
+                .read(&game, "texture.vtf", data.len())
+                .unwrap()
+                .unwrap(),
+            data
+        );
+        assert_eq!(
+            reads.sources["texture.vtf"].sha256,
+            crate::asset_sources::hash(&data)
+        );
+        assert_eq!(reads.work, 3);
+        reads.lookups = MAX_LOOKUPS;
+        assert!(
+            reads
+                .read(&game, "missing.vtf", usize::MAX)
+                .unwrap_err()
+                .to_string()
+                .contains("lookup limit")
+        );
+        assert!(reads.missing.is_empty());
+        reads.lookups = 1;
+        let control = Control::default();
+        let mut budget = Budget::new(&control);
+        budget.consume(100_000_000 - 2).unwrap();
+        assert!(Tracker::new(&game, reads, &mut budget).is_err());
+        assert_eq!(budget.live_bytes(), 0);
     }
 }

@@ -816,8 +816,8 @@ pub(crate) fn bake(
         &mut budget,
     )?;
     let mut prop_vertices = if options.bake_static_prop_vertices {
-        if options.bounces != 0 {
-            return Err("Baked prop vertices currently require zero lighting bounces".into());
+        if options.bounces > 1 {
+            return Err("Baked prop vertices support zero or one lighting bounce".into());
         }
         super::prop_vertices::prepare(
             map,
@@ -1079,22 +1079,26 @@ fn bake_channel(
     if sun_directions.len() > 1 {
         budget.consume(sun_directions.len())?;
     }
-    if let Some(prepared) = prop_vertices {
+    let prop_context = super::prop_vertices::Context {
+        map,
+        tree,
+        visibility,
+        direct: super::receivers::Context {
+            lights: &lights,
+            shadows,
+            terrain: terrain_shadows,
+            props: prop_shadows,
+            sun_directions: &sun_directions,
+            ambient_directions: &ambient_directions,
+        },
+    };
+    if options.bounces == 0
+        && let Some(prepared) = prop_vertices
+    {
         super::prop_vertices::bake_channel(
             prepared,
-            &super::prop_vertices::Context {
-                map,
-                tree,
-                visibility,
-                direct: super::receivers::Context {
-                    lights: &lights,
-                    shadows,
-                    terrain: terrain_shadows,
-                    props: prop_shadows,
-                    sun_directions: &sun_directions,
-                    ambient_directions: &ambient_directions,
-                },
-            },
+            &prop_context,
+            None,
             kind,
             &mut candidates,
             report,
@@ -1275,6 +1279,7 @@ fn bake_channel(
     bsp.set_lighting_faces(kind, &faces)
         .map_err(|error| error.to_string())?;
     let bounce_start = budget.work;
+    let mut prop_source = None;
     let bounce = if options.bounces > 0 {
         let direct = if options.bounces > 1 {
             Some(super::bounce::Direct::new(&faces, &colors, budget)?)
@@ -1290,7 +1295,7 @@ fn bake_channel(
         let mut rays = 0;
         for _ in 0..options.bounces {
             budget.consume(0)?;
-            final_stats = super::bounce::bake(
+            let (stats, surfaces) = super::bounce::bake(
                 &mut super::bounce::Context {
                     face_sources,
                     map,
@@ -1302,12 +1307,19 @@ fn bake_channel(
                     model_shadows,
                     prop_shadows,
                     quality: sky_quality,
+                    measured_sources: options.bake_static_prop_vertices,
                 },
                 bsp,
                 direct.as_ref(),
                 &mut colors,
                 budget,
             )?;
+            final_stats = stats;
+            if prop_vertices.is_some() {
+                prop_source = Some(surfaces);
+            } else {
+                drop(surfaces);
+            }
             rays += final_stats.rays;
             bsp.set_lighting(kind, &colors)
                 .map_err(|error| error.to_string())?;
@@ -1340,6 +1352,26 @@ fn bake_channel(
         }
     };
     let bounce_work = budget.work - bounce_start;
+    if options.bounces == 1
+        && let Some(prepared) = prop_vertices
+    {
+        let surfaces = prop_source
+            .as_ref()
+            .ok_or("One-bounce prop source lighting is missing")?;
+        super::prop_vertices::bake_channel(
+            prepared,
+            &prop_context,
+            Some(super::prop_vertices::Indirect {
+                surfaces,
+                quality: sky_quality,
+            }),
+            kind,
+            &mut candidates,
+            report,
+            budget,
+        )?;
+    }
+    drop(prop_source);
     let sky_radiance = lights
         .iter()
         .find_map(|light| match light {

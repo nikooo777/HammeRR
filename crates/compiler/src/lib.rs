@@ -191,9 +191,9 @@ impl Options {
             if !self.lighting.performs_lighting() {
                 return Err("Bake static-prop vertex lighting requires Direct LDR or Direct LDR + HDR lighting".into());
             }
-            if self.bounces != 0 {
+            if self.bounces > 1 {
                 return Err(
-                    "Bake static-prop vertex lighting currently requires Direct only light bounces"
+                    "Bake static-prop vertex lighting supports Direct only or One diffuse bounce"
                         .into(),
                 );
             }
@@ -861,7 +861,17 @@ fn build(
     output.stats.compile_region = prepared.region;
     let vmf = prepared.vmf.as_ref();
     let mut map = if options.bake_static_prop_vertices {
-        map::Map::load_with_prop_sources_controlled(vmf, fs, &mut output.report, control)?
+        map::Map::load_with_prop_sources_controlled(
+            vmf,
+            fs,
+            if options.bounces == 0 {
+                materials::PropSourceMode::Direct
+            } else {
+                materials::PropSourceMode::WithReflectivity
+            },
+            &mut output.report,
+            control,
+        )?
     } else {
         map::Map::load_controlled(vmf, fs, &mut output.report, control)?
     };

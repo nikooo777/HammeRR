@@ -21,6 +21,7 @@ pub(super) struct Context<'a> {
     pub shadows: &'a ShadowIndex<Occluder>,
     pub model_shadows: &'a [Option<ShadowIndex<Occluder>>],
     pub quality: SkyQuality,
+    pub measured_sources: bool,
 }
 
 pub(super) struct Stats {
@@ -30,7 +31,7 @@ pub(super) struct Stats {
     pub model_samples: usize,
 }
 
-fn directions(count: usize) -> Vec<DVec3> {
+pub(super) fn directions(count: usize) -> Vec<DVec3> {
     (0..count)
         .map(|index| {
             let fraction = (index as f64 + 0.5) / count as f64;
@@ -45,7 +46,7 @@ fn directions(count: usize) -> Vec<DVec3> {
         .collect()
 }
 
-fn gather(
+pub(super) fn gather(
     normal: DVec3,
     directions: &[DVec3],
     sample: &mut impl FnMut(DVec3) -> Result<DVec3, String>,
@@ -102,7 +103,7 @@ pub(super) fn bake(
     direct: Option<&Direct>,
     colors: &mut Vec<RgbExp32>,
     budget: &mut Budget<'_>,
-) -> Result<Stats, String> {
+) -> Result<(Stats, super::radiance::SurfaceIndex), String> {
     for plan in ctx.plans.iter().filter(|plan| plan.model == 0) {
         budget.consume(1)?;
         let info = ctx.infos[ctx.faces[plan.face].texinfo as usize];
@@ -110,8 +111,14 @@ pub(super) fn bake(
             .map
             .materials
             .get(ctx.map.texdata[info.texdata as usize]);
-        if material
-            .texture_metrics()?
+        let metrics = material.texture_metrics()?;
+        if ctx.measured_sources && metrics.source != crate::materials::MetricSource::TextureHeader {
+            return Err(format!(
+                "One-bounce prop lighting needs measured VTF reflectivity for material {}; provide its base texture or use Direct only",
+                material.name
+            ));
+        }
+        if metrics
             .reflectivity
             .iter()
             .any(|value| !value.is_finite() || !(0.0..=1.0).contains(value))
@@ -123,6 +130,8 @@ pub(super) fn bake(
         }
     }
     let surfaces = super::radiance::build_styled(ctx.map, bsp, ctx.kind, ctx.face_sources, budget)?;
+    let _directions = budget.reserve::<DVec3>(ctx.quality.directions())?;
+    budget.consume(ctx.quality.directions())?;
     let directions = directions(ctx.quality.directions());
     let cone = (1.0 - 1.0 / directions.len() as f64).acos().tan();
     let mut stats = Stats {
@@ -219,7 +228,7 @@ pub(super) fn bake(
         ctx.faces[plan.face].light_offset = offset;
     }
     *colors = emitted;
-    Ok(stats)
+    Ok((stats, surfaces))
 }
 
 #[cfg(test)]

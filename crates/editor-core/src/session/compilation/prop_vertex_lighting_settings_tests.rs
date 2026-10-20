@@ -23,6 +23,10 @@ fn prop_vertex_lighting_settings_validate_atomically_without_assets_or_document_
         assert_eq!(initial["bake_static_prop_vertices"], false);
         assert_eq!(initial["prop_vertex_lighting"]["available"], false);
         assert_eq!(
+            initial["prop_vertex_lighting"]["limits"]["bounces"],
+            json!({"min":0,"max":1})
+        );
+        assert_eq!(
             initial["prop_vertex_lighting"]["limits"]["receiver"]["self_shadowing"],
             json!({"default":true,"disable_property":"disableselfshadowing","disable_value":1,"disabled_scope":"receiver_owned_triangles","retained_blockers":["other_props","world","terrain"]})
         );
@@ -50,7 +54,7 @@ fn prop_vertex_lighting_settings_validate_atomically_without_assets_or_document_
                 actor,
                 BuildSettingsUpdate {
                     lighting: Some("direct_ldr"),
-                    bounces: Some(1),
+                    bounces: Some(2),
                     ..Default::default()
                 },
             )
@@ -81,26 +85,38 @@ fn prop_vertex_lighting_settings_validate_atomically_without_assets_or_document_
             .unwrap();
         for lighting in ["direct_ldr", "direct_ldr_hdr"] {
             session.set_compile_settings(actor, lighting).unwrap();
-            let enabled = session.compile_settings();
-            assert_eq!(enabled["bake_static_prop_vertices"], true);
-            assert_eq!(enabled["prop_vertex_lighting"]["available"], true);
-            for update in [
-                BuildSettingsUpdate {
-                    lighting: Some("fullbright"),
-                    ..Default::default()
-                },
-                BuildSettingsUpdate {
-                    bounces: Some(1),
-                    ..Default::default()
-                },
-            ] {
-                assert!(session.update_build_settings(actor, update).is_err());
+            for bounces in [0, 1] {
+                session
+                    .update_build_settings(
+                        actor,
+                        BuildSettingsUpdate {
+                            bounces: Some(bounces),
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap();
+                let enabled = session.compile_settings();
+                assert_eq!(enabled["bake_static_prop_vertices"], true);
+                assert_eq!(enabled["prop_vertex_lighting"]["available"], true);
+                for update in [
+                    BuildSettingsUpdate {
+                        lighting: Some("fullbright"),
+                        ..Default::default()
+                    },
+                    BuildSettingsUpdate {
+                        bounces: Some(2),
+                        physics: Some("engine"),
+                        ..Default::default()
+                    },
+                ] {
+                    assert!(session.update_build_settings(actor, update).is_err());
+                    assert_eq!(session.compile_settings(), enabled);
+                }
+                session
+                    .update_build_settings(actor, BuildSettingsUpdate::default())
+                    .unwrap();
                 assert_eq!(session.compile_settings(), enabled);
             }
-            session
-                .update_build_settings(actor, BuildSettingsUpdate::default())
-                .unwrap();
-            assert_eq!(session.compile_settings(), enabled);
         }
         session.closing = true;
         assert!(
@@ -171,6 +187,7 @@ fn prop_vertex_lighting_jobs_freeze_cpu_settings_and_setting_changes_stale_publi
             BuildSettingsUpdate {
                 bake_static_prop_vertices: Some(true),
                 lighting: Some("direct_ldr_hdr"),
+                bounces: Some(1),
                 ..Default::default()
             },
         )
@@ -181,6 +198,7 @@ fn prop_vertex_lighting_jobs_freeze_cpu_settings_and_setting_changes_stale_publi
     assert!(request.native_plan.is_none());
     let captured = session.compile_status()["job"]["settings"].clone();
     assert_eq!(captured["bake_static_prop_vertices"], true);
+    assert_eq!(captured["bounces"], 1);
     assert_eq!(
         session.compile_status()["job"]["native_runtime"],
         Value::Null

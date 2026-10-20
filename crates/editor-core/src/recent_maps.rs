@@ -387,13 +387,14 @@ mod tests {
             saved.build_settings = BuildSettings::from_options(compiler::Options {
                 lighting: compiler::LightingMode::parse(lighting).unwrap(),
                 bake_static_prop_vertices: true,
+                bounces: 1,
                 ..Default::default()
             });
             store.save(std::slice::from_ref(&saved)).unwrap();
             assert_eq!(store.load().unwrap(), [saved.clone()]);
         }
         let bytes = fs::read(&path).unwrap();
-        saved.build_settings.bounces = 1;
+        saved.build_settings.bounces = 2;
         assert!(store.save(std::slice::from_ref(&saved)).is_err());
         assert_eq!(fs::read(&path).unwrap(), bytes);
         let mut invalid: serde_json::Value = serde_json::from_slice(&bytes).unwrap();

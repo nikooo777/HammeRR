@@ -3680,3 +3680,22 @@ reads. Source tests retain missing-file appearance guards, alias availability,
 selected-albedo refusals and deferred geometry semantics. Public MCP checks both
 compile paths, real prior BSP preservation, header/default controls, protected
 source/history/settings/recipes/assets and clean EOF without graphics or a game.
+
+
+## Authored material reflectivity checks
+
+```sh
+cargo test -j 8 -p compiler --test material_reflectivity
+cargo test -j 8 -p compiler materials::prop_sources_tests
+cargo test -j 8 -p compiler lighting::prop_vertices::tests::indirect_sources
+python3 -B scripts/validate_material_reflectivity.py --binary target/debug/hammerr-headless --output target/validation/material-reflectivity-headless
+python3 -B scripts/validate_material_reflectivity.py --binary target/debug/editor --output target/validation/material-reflectivity-editor
+```
+
+Use fresh disk-backed output directories. Verify literal emitted dimensions/rho,
+equivalent-header references, actual bounced LDR/HDR color differences, measured
+prop acceptance, parser/demand refusals, selected albedo, unused nonfinite header
+rho, alias provenance and original source guards. Both MCP compile paths retain
+prior BSP/source/history/settings/assets and exit without graphics or a game.
+Retain the albedo and required-metric scripts for their distinct selection and
+availability contracts. These checks do not establish native image parity.

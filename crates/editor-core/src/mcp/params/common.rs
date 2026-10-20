@@ -667,7 +667,7 @@ pub struct ReloadBuildRecipesArgs {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CompileSettingsArgs {
-    /// Bake static-prop vertex lighting; default false. Requires direct_ldr or direct_ldr_hdr and bounces:0 through 4. Indirect reception uses the preceding world/terrain lighting pass and measured TextureHeader reflectivity for every lit source; invalid depths reject atomically. Unsupported receivers fail the requested build; disablevertexlighting:1 opts out one prop.
+    /// Bake static-prop vertex lighting; default false. Requires direct_ldr or direct_ldr_hdr and bounces:0 through 4. Indirect reception uses the preceding world/terrain lighting pass and texture-header or authored material reflectivity with selected VTF dimensions for every lit source; invalid depths reject atomically. Unsupported receivers fail the requested build; disablevertexlighting:1 opts out one prop.
     pub bake_static_prop_vertices: Option<bool>,
     /// Pack the exact complete authored sky family and supported LDR/HDR dependencies; default false. Incomplete or unsupported families fail during compilation without automatic family fallback.
     pub pack_sky_assets: Option<bool>,

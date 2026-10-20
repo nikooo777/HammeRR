@@ -44,9 +44,9 @@ stored in the BSP for every declared draw LOD.
 
 Limits: this is an experimental, default-off vertex bake for simple opaque
 models. Prop reception supports zero to four diffuse bounces. Indirect light
-needs measured base-texture reflectivity from every lit world or terrain source material. The
-compiler hashes each complete source VTF and fails on missing or unmeasured
-reflectivity instead of using a default. Body 0, root LOD 0, unit scale, one bodypart/model and plain selected
+needs texture-header or [authored material reflectivity](compile-and-play.md#authored-material-reflectivity) from every lit world or terrain source, with selected VTF dimensions. The
+compiler hashes each complete selected VTF and fails on unavailable dimensions
+or unsupported reflectivity instead of using a default. Body 0, root LOD 0, unit scale, one bodypart/model and plain selected
 **VertexLitGeneric** materials are required. LDR and HDR are evaluated
 independently. Self-shadow control applies to point/spot lights, sun and sky
 ambient and reflected receiver rays; other props, world brushes and terrain

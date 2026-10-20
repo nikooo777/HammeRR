@@ -53,7 +53,7 @@ NEGATIVE = [
     {"name": "notooltexture-presence", "shader": "WorldTwoTextureBlend", "extra": {"%notooltexture": "0"}, "error": "%notooltexture", "mode": FULL},
     {"name": "blank-required-bump", "bump": "", "error": "$bumpmap", "mode": FULL},
     {"name": "blank-required-base", "base": "", "error": "$basetexture", "mode": FULL},
-    {"name": "reflectivity-presence", "extra": {"$reflectivity": "[0.1 0.2 0.3]"}, "error": "$reflectivity", "mode": FULL},
+    {"name": "noncanonical-reflectivity", "extra": {"$reflectivity": "0.1 0.2 0.3"}, "error": "$reflectivity", "mode": FULL},
 ]
 
 

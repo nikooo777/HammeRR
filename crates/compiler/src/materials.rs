@@ -12,6 +12,7 @@ pub const MAX_GEOMETRY_MATERIAL_BYTES: usize = 256 * 1024;
 pub const MAX_GEOMETRY_MATERIAL_TOTAL_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_GEOMETRY_MATERIAL_READS: usize = 128;
 pub const MAX_GEOMETRY_MATERIAL_ALLOCATION_BYTES: usize = MAX_GEOMETRY_MATERIAL_TOTAL_BYTES * 128;
+const MAX_REFLECTIVITY_VALUE_BYTES: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Requirements {
@@ -37,6 +38,16 @@ pub struct TextureMetrics {
 pub enum MetricSource {
     CompileDefault,
     TextureHeader,
+    TextureHeaderWithAuthoredReflectivity,
+}
+
+impl MetricSource {
+    pub(crate) fn has_reflectivity_source(self) -> bool {
+        matches!(
+            self,
+            Self::TextureHeader | Self::TextureHeaderWithAuthoredReflectivity
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -289,35 +300,45 @@ impl<'a> Materials<'a> {
 
     fn measure(&mut self, material: &Material, info: &mut MaterialInfo) -> Result<(), String> {
         let material_path = vmt::material_path(&info.name);
-        let Some(key) = material
+        let key = material
             .primary_base_texture_key()
-            .map_err(|error| format!("Material {material_path}: {error}"))?
-        else {
-            return Ok(());
-        };
-        if key == "$basetexture" && (!info.draws || info.surface & (surf::SKY | surf::SKY2D) != 0) {
+            .map_err(|error| format!("Material {material_path}: {error}"))?;
+        if key != Some("$albedo") && (!info.draws || info.surface & (surf::SKY | surf::SKY2D) != 0)
+        {
             return Ok(());
         }
-        if key == "$albedo"
-            && let Some(parameter) = ["%tooltexture", "%notooltexture", "$reflectivity"]
+        let authored_reflectivity = material
+            .get("$reflectivity")
+            .map(parse_reflectivity)
+            .transpose()
+            .map_err(|error| format!("Material {material_path}: {error}"))?;
+        let Some(key) = key else {
+            if authored_reflectivity.is_some() {
+                info.metrics = MetricState::Unavailable(format!(
+                    "Material {material_path}: metrics are unavailable: authored $reflectivity requires selected texture dimensions; no eligible base texture is declared"
+                ));
+            }
+            return Ok(());
+        };
+        if (key == "$albedo" || authored_reflectivity.is_some())
+            && let Some(parameter) = ["%tooltexture", "%notooltexture"]
                 .into_iter()
                 .find(|parameter| material.get(parameter).is_some())
         {
             return Err(format!(
-                "Material {material_path}: active $albedo metrics do not support {parameter}"
+                "Material {material_path}: selected {key} metrics with authored $reflectivity or active $albedo are unsupported with {parameter}"
             ));
         }
         let texture = material
             .get(key)
             .ok_or_else(|| format!("Material {material_path}: selected {key} is unavailable"))?;
         let path = vmt::texture_path(texture);
-        if key == "$basetexture"
-            && path
-                .strip_prefix("materials/")
-                .is_some_and(|name| name.starts_with("_rt_") && !name.contains('/'))
+        if path
+            .strip_prefix("materials/")
+            .is_some_and(|name| name.starts_with("_rt_") && !name.contains('/'))
         {
             info.metrics = MetricState::Unavailable(format!(
-                "Material {material_path}: selected $basetexture {path} uses a runtime-generated texture; its dimensions and reflectivity metrics are unsupported"
+                "Material {material_path}: selected {key} {path} uses a runtime-generated texture; its dimensions and reflectivity metrics are unsupported"
             ));
             return Ok(());
         }
@@ -334,12 +355,15 @@ impl<'a> Materials<'a> {
                     "Selected $albedo texture {path} was not found; dimensions and reflectivity cannot be measured"
                 ));
             }
-            let reason = match ["%tooltexture", "%notooltexture", "$reflectivity"]
+            let reason = match ["%tooltexture", "%notooltexture"]
                 .into_iter()
                 .find(|parameter| material.get(parameter).is_some())
             {
                 Some(parameter) => format!(
                     "Material {material_path}: selected $basetexture {path} has unavailable metrics; missing-base metric rules with {parameter} are unsupported"
+                ),
+                None if authored_reflectivity.is_some() => format!(
+                    "Material {material_path}: selected $basetexture texture {path} was not found; required texture dimensions are unavailable despite authored $reflectivity"
                 ),
                 None => format!(
                     "Material {material_path}: selected $basetexture texture {path} was not found; required dimensions and reflectivity are unavailable"
@@ -349,17 +373,46 @@ impl<'a> Materials<'a> {
             return Ok(());
         };
         let vtf = Vtf::parse(bytes).map_err(|error| format!("{path}: {error}"))?;
-        if vtf.reflectivity.iter().any(|value| !value.is_finite()) {
+        let reflectivity = authored_reflectivity.unwrap_or(vtf.reflectivity);
+        if reflectivity.iter().any(|value| !value.is_finite()) {
             return Err(format!("{path}: texture reflectivity must be finite"));
         }
         info.metrics = MetricState::Resolved(TextureMetrics {
-            source: MetricSource::TextureHeader,
+            source: if authored_reflectivity.is_some() {
+                MetricSource::TextureHeaderWithAuthoredReflectivity
+            } else {
+                MetricSource::TextureHeader
+            },
             width: vtf.width as i32,
             height: vtf.height as i32,
-            reflectivity: vtf.reflectivity,
+            reflectivity,
         });
         Ok(())
     }
+}
+
+fn parse_reflectivity(raw: &str) -> Result<[f32; 3], String> {
+    let invalid = || {
+        format!(
+            "$reflectivity requires an ASCII square-bracket triple of finite linear components from 0 to 1, at most {MAX_REFLECTIVITY_VALUE_BYTES} bytes"
+        )
+    };
+    if raw.len() > MAX_REFLECTIVITY_VALUE_BYTES || !raw.is_ascii() {
+        return Err(invalid());
+    }
+    let inner = raw
+        .trim_ascii()
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .ok_or_else(invalid)?;
+    if inner.split_ascii_whitespace().take(4).count() != 3 {
+        return Err(invalid());
+    }
+    let values = source_formats::fgd::vector(inner, 3).ok_or_else(invalid)?;
+    if values.iter().any(|value| !(0.0..=1.0).contains(value)) {
+        return Err(invalid());
+    }
+    Ok([values[0] as f32, values[1] as f32, values[2] as f32])
 }
 
 #[cfg(test)]

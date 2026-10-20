@@ -234,6 +234,75 @@ fn one_bounce_rejects_absent_optional_source_metrics_while_direct_keeps_its_scop
 }
 
 #[test]
+fn authored_reflectivity_drives_measured_one_bounce_prop_lighting() {
+    let (directory, game, vmf, original_texture) = world_fixture(true);
+    let options = Options {
+        bounces: 1,
+        ..options(false)
+    };
+    let baseline = crate::compile_with_options(&vmf, &game, options);
+    assert!(!baseline.report.has_errors(), "{:?}", baseline.report);
+    assert!(baseline.stats.bounce_samples > 0);
+    let baseline_bsp = baseline.bsp.as_ref().unwrap();
+    assert_eq!(source_metrics(baseline_bsp).reflectivity, REFLECTIVITY);
+    let baseline_color = file(baseline_bsp, "sp_0.vhv").meshes[0].colors[1];
+    drop(baseline);
+    let patch = "Patch { include materials/indirect_sources/base.vmt replace { $basetexture indirect_textures/source } insert { $reflectivity \"[0 0 0]\" } }";
+    std::fs::write(
+        directory
+            .path()
+            .join("materials/indirect_sources/surface.vmt"),
+        patch,
+    )
+    .unwrap();
+    let output = crate::compile_with_options(&vmf, &game, options);
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    assert_eq!(output.stats.bounces, 1);
+    assert!(output.stats.bounce_work > 0);
+    assert_eq!(output.stats.prop_vertex_lighting.as_ref().unwrap().props, 1);
+    let bsp = output.bsp.as_ref().unwrap();
+    assert_eq!(source_metrics(bsp).reflectivity, [0.0; 3]);
+    let received = file(bsp, "sp_0.vhv").meshes[0].colors[1];
+    assert!(
+        received.red < baseline_color.red,
+        "baseline={baseline_color:?}, authored={received:?}"
+    );
+    assert_eq!((received.green, received.blue), (0, 0));
+    let manifest =
+        crate::prop_lighting_assets::read_generated_prop_lighting(bsp, &Control::default())
+            .unwrap()
+            .unwrap();
+    let texture = manifest
+        .sources
+        .iter()
+        .find(|source| source.path == SOURCE_TEXTURE)
+        .unwrap();
+    assert_eq!(texture.bytes, original_texture.len());
+    assert_eq!(
+        texture.sha256,
+        crate::asset_sources::hash(&original_texture)
+    );
+    let source = manifest
+        .sources
+        .iter()
+        .find(|source| source.path == "materials/indirect_sources/surface.vmt")
+        .unwrap();
+    assert_eq!(source.sha256, crate::asset_sources::hash(patch.as_bytes()));
+    assert!(
+        manifest
+            .sources
+            .iter()
+            .any(|source| source.path == "materials/indirect_sources/base.vmt")
+    );
+    assert!(
+        !manifest
+            .sources
+            .iter()
+            .any(|source| source.path == UNUSED_TEXTURE)
+    );
+}
+
+#[test]
 fn required_missing_world_texture_refuses_direct_and_bounced_prop_output() {
     let (directory, game, vmf, _) = world_fixture(true);
     let before = vmf.clone();

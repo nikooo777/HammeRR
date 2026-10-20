@@ -258,7 +258,7 @@ fn suppression_one_preserves_original_base_bytes_with_missing_unused_albedo() {
     let (_active_directory, active) = game(
         "LightmappedGeneric",
         "base",
-        "$albedo dev/not_present $nodiffusebumplighting 1 %tooltexture dev/not_present %notooltexture 0 $reflectivity \"0 0 1\"",
+        "$albedo dev/not_present $nodiffusebumplighting 1 %tooltexture dev/not_present %notooltexture 0",
     );
     let (_reference_directory, reference) =
         game("LightmappedGeneric", "base", "$nodiffusebumplighting 1");

@@ -112,9 +112,9 @@ pub(super) fn bake(
             .materials
             .get(ctx.map.texdata[info.texdata as usize]);
         let metrics = material.texture_metrics()?;
-        if ctx.measured_sources && metrics.source != crate::materials::MetricSource::TextureHeader {
+        if ctx.measured_sources && !metrics.source.has_reflectivity_source() {
             return Err(format!(
-                "One-bounce prop lighting needs measured VTF reflectivity for material {}; provide its base texture or use Direct only",
+                "One-bounce prop lighting needs measured VTF or authored material reflectivity for material {}; provide its selected texture and reflectivity source or use Direct only",
                 material.name
             ));
         }

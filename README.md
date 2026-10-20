@@ -487,7 +487,7 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | Bounced light |
 | --- |
 | ![Four diffuse bounces beneath a shelf in Counter-Strike: Source](docs/images/four-bounce-on.png) |
-| Add up to four diffuse light bounces from world surfaces and terrain. |
+| Add up to four diffuse bounces with authored material reflectivity. |
 
 | LDR and HDR lighting |
 | --- |

@@ -331,10 +331,11 @@ keeps the stricter rules below. Root runtime-generated `_rt_` textures cannot be
 measured from an on-disk VTF and are explicitly unsupported for required metrics,
 even if a file with that name exists. Missing-base combinations with
 `%tooltexture`, `%notooltexture` or `$reflectivity` report an unsupported metric
-rule. Present ordinary files retain VTF-header measurement; complete native
-preview-override and explicit-reflectivity parity remains unfinished.
+rule. Present ordinary files supply VTF dimensions and, without an authored
+override, header reflectivity. Complete native preview-override and broader
+reflectivity coercion rules remain unfinished.
 
-### Normal-map lighting
+#### Normal-map lighting
 
 1. Set **Selection** to **Faces · materials & textures** and select the target faces.
 2. Click **Browse materials…**, choose a lit material whose VMT declares `$bumpmap`, then **Use material** and **Apply**. Its normal texture must be available to the game.
@@ -351,13 +352,42 @@ compiled dimensions and diffuse reflectivity. Literal `1` keeps `$basetexture`.
 The original VMT declaration stays unchanged. A missing, corrupt or unreadable
 selected albedo stops the build; the unused base is never substituted.
 
-Active albedo with `%tooltexture`, `%notooltexture` or `$reflectivity` is
-unavailable for compilation. Those declarations require separate native preview
-or reflectivity rules; even blank/zero declarations stop the build. Remove the
-unsupported declaration or use a material inside the supported scope. Editor
-preview and atlas inspection retain their own display-override rules.
+Active albedo with `%tooltexture` or `%notooltexture` is unavailable for
+compilation; even blank/zero declarations require unsupported native preview
+rules. A supported `$reflectivity` override is admitted as described below.
+Editor preview and atlas inspection retain their own display-override rules.
 
 Limits: a lit primary-normal material on those three shader families accepts an absent suppression key or trimmed literal `0`/`1`. Other provided spellings fail compilation; use the supported literal rather than relying on native integer coercion. The engine can clamp bright ordinary and bumped LDR lighting differently; compare modest brightness when tuning normal details. This changes compiled game lighting; the editor's material thumbnails and viewport use diffuse previews. WorldVertexTransition secondary normal mapping requires a primary `$bumpmap`; `$bumpmap2` alone does not activate the checked shader path. Initial rotations on parented models or other brush classes, world/terrain opacity and colored/refraction transmission, and per-texel prop lightmaps remain unfinished. Auxiliary directions share the 16 MiB lightmap limit per channel and 100-million work limit per build; larger scales or lower sampling can reduce work.
+
+#### Authored material reflectivity
+
+Use a mounted material's `$reflectivity` declaration to control its compiled
+diffuse reflectivity independently of texture dimensions. It affects reflected
+light received by world, terrain, brush models, ambient probes and supported
+baked static props; it does not tint the editor's diffuse image.
+
+1. Open **Browse materials…**, select the material, then **Source…**. Check
+   **Selected VMT source** and its mounted location.
+2. In the source VMT or resolved Patch, author a linear RGB triple such as
+   `$reflectivity "[0.75 0.125 0.0625]"`. Each component must be between zero
+   and one. Source editing uses your external file editor.
+3. Apply that material to the intended faces. Open **Build settings…**, choose
+   **Build lighting → Direct LDR** or **Direct LDR + HDR**, and choose an
+   **Indirect light** bounce count to see reflected color.
+4. Click **Compile**, then review **Build details…**. Repair reported material
+   errors before compiling again; rejected builds preserve the prior BSP.
+
+Limits: one ASCII square-bracket triple, at most 128 bytes, with exactly three
+finite components in `[0,1]`, rounded to native floats. Scalars, bare triples,
+brace colors, malformed syntax and values outside the range fail explicitly;
+no scaling, gamma conversion or clamping is applied. Dimensions still require
+an available valid selected base/albedo VTF. A valid override supplies reflectivity even
+when the unused header reflectivity is nonfinite; malformed VTF structure still fails.
+Overrides without a selected texture, runtime-generated textures and overrides
+combined with `%tooltexture` or `%notooltexture` remain unsupported. Raw nondrawn
+and sky surfaces retain unused neutral metadata. Geometry-only preparation does
+not evaluate these metrics. Native scalar/brace coercions and broader tool
+preview rules remain outside this compiler scope.
 
 #### Falloff
 

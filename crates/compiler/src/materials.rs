@@ -39,10 +39,11 @@ pub enum MetricSource {
     TextureHeader,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum MetricState {
     Deferred,
     Resolved(TextureMetrics),
+    Unavailable(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -68,8 +69,9 @@ pub struct MaterialInfo {
 
 impl MaterialInfo {
     pub fn texture_metrics(&self) -> Result<TextureMetrics, String> {
-        match self.metrics {
-            MetricState::Resolved(metrics) => Ok(metrics),
+        match &self.metrics {
+            MetricState::Resolved(metrics) => Ok(*metrics),
+            MetricState::Unavailable(reason) => Err(reason.clone()),
             MetricState::Deferred => Err(format!(
                 "Material {} has deferred texture metrics",
                 self.name
@@ -293,6 +295,9 @@ impl<'a> Materials<'a> {
         else {
             return Ok(());
         };
+        if key == "$basetexture" && (!info.draws || info.surface & (surf::SKY | surf::SKY2D) != 0) {
+            return Ok(());
+        }
         if key == "$albedo"
             && let Some(parameter) = ["%tooltexture", "%notooltexture", "$reflectivity"]
                 .into_iter()
@@ -306,6 +311,16 @@ impl<'a> Materials<'a> {
             .get(key)
             .ok_or_else(|| format!("Material {material_path}: selected {key} is unavailable"))?;
         let path = vmt::texture_path(texture);
+        if key == "$basetexture"
+            && path
+                .strip_prefix("materials/")
+                .is_some_and(|name| name.starts_with("_rt_") && !name.contains('/'))
+        {
+            info.metrics = MetricState::Unavailable(format!(
+                "Material {material_path}: selected $basetexture {path} uses a runtime-generated texture; its dimensions and reflectivity metrics are unsupported"
+            ));
+            return Ok(());
+        }
         let bytes = match &mut self.prop_lighting_sources {
             Some((PropSourceMode::WithReflectivity, sources)) => {
                 sources.read(self.fs, &path, usize::MAX)
@@ -319,7 +334,18 @@ impl<'a> Materials<'a> {
                     "Selected $albedo texture {path} was not found; dimensions and reflectivity cannot be measured"
                 ));
             }
-            info.warnings.push(format!("Base texture {path} was not found; dimensions and reflectivity could not be measured"));
+            let reason = match ["%tooltexture", "%notooltexture", "$reflectivity"]
+                .into_iter()
+                .find(|parameter| material.get(parameter).is_some())
+            {
+                Some(parameter) => format!(
+                    "Material {material_path}: selected $basetexture {path} has unavailable metrics; missing-base metric rules with {parameter} are unsupported"
+                ),
+                None => format!(
+                    "Material {material_path}: selected $basetexture texture {path} was not found; required dimensions and reflectivity are unavailable"
+                ),
+            };
+            info.metrics = MetricState::Unavailable(reason);
             return Ok(());
         };
         let vtf = Vtf::parse(bytes).map_err(|error| format!("{path}: {error}"))?;
@@ -430,6 +456,11 @@ mod tests {
         )
         .unwrap();
         std::fs::write(
+            directory.path().join("materials/required.vmt"),
+            "UnlitGeneric { $basetexture broken }",
+        )
+        .unwrap();
+        std::fs::write(
             directory.path().join("materials/broken.vtf"),
             b"malformed texture",
         )
@@ -446,7 +477,14 @@ mod tests {
         assert!(info.texture_metrics().is_err());
         assert_ne!(info.surface & surf::SKY2D, 0);
         let surface = info.surface;
-        assert!(Materials::new(&game).load("test").is_err());
+        let mut compile = Materials::new(&game);
+        let sky = compile.load("test").unwrap();
+        assert_eq!(compile.get(sky).surface, surface);
+        assert_eq!(
+            compile.get(sky).texture_metrics().unwrap().source,
+            MetricSource::CompileDefault
+        );
+        assert!(compile.load("required").is_err());
         assert!(geometry.load("missing").is_err());
         let mut compile = Materials::new(&game);
         let missing = compile.load("missing").unwrap();
@@ -464,7 +502,13 @@ mod tests {
             compile.get(index).texture_metrics().unwrap().source,
             MetricSource::CompileDefault
         );
-        assert!(!compile.get(index).warnings.is_empty());
+        assert!(compile.get(index).warnings.is_empty());
+        let required = compile.load("required").unwrap();
+        assert_ne!(compile.get(required).surface & surf::NOLIGHT, 0);
+        let error = compile.get(required).texture_metrics().unwrap_err();
+        assert!(error.contains("required.vmt"), "{error}");
+        assert!(error.contains("broken.vtf"), "{error}");
+        assert!(error.contains("unavailable"), "{error}");
     }
 
     #[test]

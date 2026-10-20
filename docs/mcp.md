@@ -1211,6 +1211,16 @@ rules are supported. Blank active inputs, noncanonical suppression and missing/
 invalid selected assets return explicit material diagnostics and preserve the
 previous BSP. These changes add no tool or compiler setting.
 
+`compile_map` and `start_compile` also reject unavailable required ordinary
+`$basetexture` metrics, including Fullbright, with the material/key/path diagnostic
+and previous BSP preserved. Missing authored VTFs never succeed with fabricated
+metrics. Root runtime-generated `_rt_` inputs are unsupported even when a VTF
+exists. Missing-base `%tooltexture`, `%notooltexture` and `$reflectivity` rules
+remain explicitly unsupported. Absent optional VMT/base declarations retain
+compile defaults; raw nondrawn/sky metadata skips unused diffuse reads. Selected
+albedo admission remains unchanged. Existing Session build operations carry
+these errors; no new setting or tool is added.
+
 `get_entity_definitions` reports loaded classes, sources, load error and optional
 `map_size: {authored:[first,second], bounds:[minimum,maximum], source, line}`.
 Load/search responses and `get_map_info.definitions` include the same metadata.

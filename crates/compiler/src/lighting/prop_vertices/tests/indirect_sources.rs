@@ -161,8 +161,15 @@ fn one_bounce_publication_retains_original_selected_vtf_after_output_drop() {
 }
 
 #[test]
-fn one_bounce_rejects_missing_source_metrics_while_direct_keeps_its_existing_scope() {
+fn one_bounce_rejects_absent_optional_source_metrics_while_direct_keeps_its_scope() {
     let (directory, game, vmf, _) = world_fixture(false);
+    std::fs::write(
+        directory
+            .path()
+            .join("materials/indirect_sources/surface.vmt"),
+        "LightmappedGeneric { }",
+    )
+    .unwrap();
     let output_directory = tempfile::tempdir_in(directory.path().parent().unwrap()).unwrap();
     let destination = output_directory.path().join("previous.bsp");
     std::fs::write(&destination, b"previous complete output").unwrap();
@@ -224,4 +231,42 @@ fn one_bounce_rejects_missing_source_metrics_while_direct_keeps_its_existing_sco
     );
     assert!(!failed.write_controlled(&destination, &control).unwrap());
     assert_eq!(std::fs::read(&destination).unwrap(), previous);
+}
+
+#[test]
+fn required_missing_world_texture_refuses_direct_and_bounced_prop_output() {
+    let (directory, game, vmf, _) = world_fixture(true);
+    let before = vmf.clone();
+    let output_directory = tempfile::tempdir_in(directory.path().parent().unwrap()).unwrap();
+    let destination = output_directory.path().join("previous.bsp");
+    let direct = compile(&vmf, &game, false);
+    let previous = direct.bsp.as_ref().unwrap().to_bytes();
+    assert!(direct.write(&destination).unwrap());
+    drop(direct);
+    std::fs::remove_file(directory.path().join(SOURCE_TEXTURE)).unwrap();
+    for bounces in [0, 1] {
+        let failed = crate::compile_with_options(
+            &vmf,
+            &game,
+            Options {
+                bounces,
+                ..options(false)
+            },
+        );
+        assert!(failed.report.has_errors());
+        assert!(failed.bsp.is_none() && failed.prop_lighting_assets.is_none());
+        assert!(
+            failed.report.diagnostics.iter().any(|item| {
+                item.level == crate::Level::Error
+                    && item.message.contains(SOURCE_MATERIAL)
+                    && item.message.contains(SOURCE_TEXTURE)
+                    && item.message.contains("unavailable")
+            }),
+            "{:?}",
+            failed.report
+        );
+        assert!(!failed.write(&destination).unwrap());
+        assert_eq!(std::fs::read(&destination).unwrap(), previous);
+        assert_eq!(vmf, before);
+    }
 }

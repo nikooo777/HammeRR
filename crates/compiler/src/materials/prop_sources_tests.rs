@@ -177,11 +177,23 @@ fn missing_texture_is_not_measured_and_its_later_appearance_invalidates_the_guar
         .unwrap();
     let index = materials.load("reflectivity/missing").unwrap();
     let info = materials.get(index);
-    assert_eq!(
-        info.texture_metrics().unwrap().source,
-        MetricSource::CompileDefault
+    let error = info.texture_metrics().unwrap_err();
+    assert!(
+        error.contains("materials/reflectivity/missing.vmt"),
+        "{error}"
     );
-    assert!(!info.warnings.is_empty());
+    assert!(error.contains("$basetexture"), "{error}");
+    assert!(
+        error.contains("materials/texture_dependency/missing.vtf"),
+        "{error}"
+    );
+    assert!(error.contains("unavailable"), "{error}");
+    assert!(info.warnings.is_empty());
+    let alias = materials
+        .add_alias(index, "maps/reflectivity/missing_alias")
+        .unwrap();
+    assert_eq!(materials.get(alias).texture_metrics().unwrap_err(), error);
+    assert_eq!(materials.get(alias).metrics, materials.get(index).metrics);
     let (sources, missing) = materials.take_prop_lighting_sources().unwrap().into_parts();
     assert_eq!(missing, ["materials/texture_dependency/missing.vtf"]);
     let captured = guard(&sources, &missing, &game).unwrap();
@@ -300,6 +312,173 @@ fn malformed_nonfinite_and_aggregate_overbudget_textures_fail_without_default_fa
     let error = materials.load("reflectivity/patch").unwrap_err();
     assert!(error.contains("byte read limit"), "{error}");
     assert_eq!(materials.iter().count(), 0);
+}
+
+#[test]
+fn optional_inputs_and_non_diffuse_surfaces_keep_metadata_without_texture_reads() {
+    let (directory, game) = fixture();
+    std::fs::write(
+        directory.path().join("materials/reflectivity/baseless.vmt"),
+        "LightmappedGeneric { $surfaceprop concrete }",
+    )
+    .unwrap();
+    std::fs::write(
+        directory.path().join("materials/reflectivity/chosen.vtf"),
+        b"unused malformed texture",
+    )
+    .unwrap();
+    let mut materials = Materials::new(&game);
+    materials
+        .track_prop_lighting_sources(PropSourceMode::WithReflectivity)
+        .unwrap();
+    for (name, found) in [("absent", false), ("baseless", true)] {
+        let index = materials.load(&format!("reflectivity/{name}")).unwrap();
+        assert_eq!(materials.get(index).found, found);
+        assert_eq!(
+            materials.get(index).texture_metrics().unwrap(),
+            TextureMetrics {
+                source: MetricSource::CompileDefault,
+                width: 64,
+                height: 64,
+                reflectivity: [0.5; 3],
+            }
+        );
+    }
+    for (name, flag, expected_surface, expected_contents) in [
+        ("nodraw", "%compilenodraw", surf::NODRAW, contents::SOLID),
+        ("origin", "%compileorigin", surf::NODRAW, contents::ORIGIN),
+        ("sky", "%compilesky", surf::SKY, contents::SOLID),
+        ("sky2d", "%compile2dsky", surf::SKY2D, contents::SOLID),
+    ] {
+        std::fs::write(
+            directory
+                .path()
+                .join(format!("materials/reflectivity/{name}.vmt")),
+            format!("LightmappedGeneric {{ {flag} 1 $basetexture reflectivity/chosen }}"),
+        )
+        .unwrap();
+        let index = materials.load(&format!("reflectivity/{name}")).unwrap();
+        let info = materials.get(index);
+        assert_ne!(info.surface & expected_surface, 0);
+        assert_eq!(info.contents, expected_contents);
+        assert_eq!(
+            info.texture_metrics().unwrap().source,
+            MetricSource::CompileDefault
+        );
+        assert_eq!(info.texture_metrics().unwrap().reflectivity, [0.5; 3]);
+        assert!(info.warnings.is_empty());
+    }
+    std::fs::write(
+        directory
+            .path()
+            .join("materials/reflectivity/runtime_sky.vmt"),
+        "UnlitGeneric { %compile2dsky 1 $basetexture _rt_SmallFB0 }",
+    )
+    .unwrap();
+    let index = materials.load("reflectivity/runtime_sky").unwrap();
+    assert_eq!(
+        materials.get(index).texture_metrics().unwrap().source,
+        MetricSource::CompileDefault
+    );
+    let (sources, missing) = materials.take_prop_lighting_sources().unwrap().into_parts();
+    assert!(sources.iter().all(|source| source.path.ends_with(".vmt")));
+    assert_eq!(missing, ["materials/reflectivity/absent.vmt"]);
+}
+
+#[test]
+fn runtime_texture_roots_are_unavailable_without_file_dependencies() {
+    let (directory, game) = fixture();
+    for value in ["_rt_SmallFB0", " materials\\_RT_SmallFB0.VTF "] {
+        std::fs::write(
+            directory.path().join("materials/reflectivity/runtime.vmt"),
+            format!("UnlitGeneric {{ $basetexture \"{value}\" }}"),
+        )
+        .unwrap();
+        let mut materials = Materials::new(&game);
+        materials
+            .track_prop_lighting_sources(PropSourceMode::WithReflectivity)
+            .unwrap();
+        let index = materials.load("reflectivity/runtime").unwrap();
+        let error = materials.get(index).texture_metrics().unwrap_err();
+        assert!(error.contains("runtime.vmt"), "{error}");
+        assert!(error.contains("materials/_rt_smallfb0.vtf"), "{error}");
+        assert!(error.contains("unsupported"), "{error}");
+        let (sources, missing) = materials.take_prop_lighting_sources().unwrap().into_parts();
+        assert!(sources.iter().all(|source| source.path.ends_with(".vmt")));
+        assert!(missing.is_empty());
+        let captured = guard(&sources, &missing, &game).unwrap();
+        let unrelated = directory.path().join("materials/_rt_smallfb0.vtf");
+        if unrelated.exists() {
+            overwrite(&unrelated, &texture([0.875; 3]));
+        }
+        captured.verify_metadata().unwrap();
+        guard(&sources, &missing, &game).unwrap();
+        std::fs::write(unrelated, texture([0.125; 3])).unwrap();
+    }
+    std::fs::write(
+        directory.path().join("materials/reflectivity/nested.vmt"),
+        "LightmappedGeneric { $basetexture effects/_rt_ordinary }",
+    )
+    .unwrap();
+    let mut materials = Materials::new(&game);
+    materials
+        .track_prop_lighting_sources(PropSourceMode::WithReflectivity)
+        .unwrap();
+    let index = materials.load("reflectivity/nested").unwrap();
+    let error = materials.get(index).texture_metrics().unwrap_err();
+    assert!(error.contains("was not found"), "{error}");
+    assert!(!error.contains("runtime-generated"), "{error}");
+    let (_, missing) = materials.take_prop_lighting_sources().unwrap().into_parts();
+    assert_eq!(missing, ["materials/effects/_rt_ordinary.vtf"]);
+}
+
+#[test]
+fn missing_base_overrides_are_unavailable_but_present_headers_keep_their_scope() {
+    for (parameter, value) in [
+        ("%tooltexture", "reflectivity/chosen"),
+        ("%notooltexture", "0"),
+        ("$reflectivity", "[0.9 0.8 0.7]"),
+    ] {
+        let (directory, game) = fixture();
+        std::fs::write(
+            directory.path().join("materials/reflectivity/override.vmt"),
+            format!("LightmappedGeneric {{ $basetexture texture_dependency/missing {parameter} \"{value}\" }}"),
+        )
+        .unwrap();
+        let mut materials = Materials::new(&game);
+        materials
+            .track_prop_lighting_sources(PropSourceMode::WithReflectivity)
+            .unwrap();
+        let index = materials.load("reflectivity/override").unwrap();
+        let error = materials.get(index).texture_metrics().unwrap_err();
+        assert!(error.contains("override.vmt"), "{error}");
+        assert!(error.contains("$basetexture"), "{error}");
+        assert!(
+            error.contains("materials/texture_dependency/missing.vtf"),
+            "{error}"
+        );
+        assert!(
+            error.contains(parameter) && error.contains("unsupported"),
+            "{error}"
+        );
+        let (sources, missing) = materials.take_prop_lighting_sources().unwrap().into_parts();
+        assert!(sources.iter().all(|source| source.path.ends_with(".vmt")));
+        assert_eq!(missing, ["materials/texture_dependency/missing.vtf"]);
+        let captured = guard(&sources, &missing, &game).unwrap();
+        std::fs::write(
+            directory
+                .path()
+                .join("materials/texture_dependency/missing.vtf"),
+            texture([0.125, 0.25, 0.75]),
+        )
+        .unwrap();
+        assert!(captured.verify_metadata().is_err());
+        let mut present = Materials::new(&game);
+        let index = present.load("reflectivity/override").unwrap();
+        let metrics = present.get(index).texture_metrics().unwrap();
+        assert_eq!(metrics.source, MetricSource::TextureHeader);
+        assert_eq!(metrics.reflectivity, [0.125, 0.25, 0.75]);
+    }
 }
 
 fn albedo_fixture() -> (tempfile::TempDir, GameFs) {
@@ -480,5 +659,25 @@ fn active_albedo_failures_never_publish_metrics_but_geometry_remains_deferred() 
         let index = geometry.load("reflectivity/albedo").unwrap();
         assert_eq!(geometry.get(index).metrics, MetricState::Deferred);
         assert!(geometry.get(index).texture_metrics().is_err());
+    }
+}
+
+#[test]
+fn non_diffuse_flags_do_not_relax_active_albedo_admission() {
+    for flag in ["%compilenodraw", "%compilesky", "%compile2dsky"] {
+        let (directory, game) = albedo_fixture();
+        std::fs::write(
+            directory.path().join("materials/reflectivity/albedo.vmt"),
+            format!("LightmappedGeneric {{ {flag} 1 $basetexture reflectivity/unused $bumpmap reflectivity/missing_normal $albedo reflectivity/chosen }}"),
+        )
+        .unwrap();
+        std::fs::remove_file(directory.path().join("materials/reflectivity/chosen.vtf")).unwrap();
+        let mut materials = Materials::new(&game);
+        let error = materials.load("reflectivity/albedo").unwrap_err();
+        assert!(
+            error.contains("$albedo") && error.contains("chosen.vtf"),
+            "{error}"
+        );
+        assert_eq!(materials.iter().count(), 0);
     }
 }

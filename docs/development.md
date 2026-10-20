@@ -3662,3 +3662,21 @@ plans and unsupported-pose refusals. The public MCP check inspects assignments a
 reviews manual binding replacement/removal/Undo through shared Session operations,
 retaining source, settings, history and uninitialized graphics. It performs no
 compile, native capture or desktop interaction and does not establish image parity.
+
+
+## Required texture metric checks
+
+```sh
+cargo test -j 8 -p compiler --test material_failures
+cargo test -j 8 -p compiler materials::
+python3 -B scripts/validate_required_texture_metrics.py --binary target/debug/hammerr-headless --output target/validation/required-texture-metrics-headless
+python3 -B scripts/validate_required_texture_metrics.py --binary target/debug/editor --output target/validation/required-texture-metrics-editor
+```
+
+Use fresh disk-backed output directories. The compiler checks required missing
+assets, runtime-generated names, missing-base overrides, malformed/nonfinite/I/O
+failures, actual emitted TexData, prior output preservation and unused semantic
+reads. Source tests retain missing-file appearance guards, alias availability,
+selected-albedo refusals and deferred geometry semantics. Public MCP checks both
+compile paths, real prior BSP preservation, header/default controls, protected
+source/history/settings/recipes/assets and clean EOF without graphics or a game.

@@ -311,7 +311,30 @@ Limits: at most 32 named light groups and four contributing styles per face, inc
 
 Limits: up to four diffuse bounces from world/detail/terrain lightmaps, preserving each static, switchable or animated light style, using average base-texture reflectivity. Source reflectivity must be between zero and one. Sky is handled by direct sky lighting and is excluded from the bounce gather. Translucent world surfaces cast opaque shadows. Opaque nodraw brushes also block reflected paths, including when they sit close to a lit surface. Brush entities receive world bounce and block it with their own geometry; separate brush models do not cast permanent bounce shadows or supply reflected light. Static-prop meshes apply the same opaque, alpha-test or requested translucent coverage to reflected rays but do not supply reflected light. More than four bounces, emissive materials and per-texel prop lightmaps remain unfinished. Baked model lighting moves with the model and does not relight as it moves. Unparented `func_brush` models can bake bounded initial rotations; see [Initial brush-model rotation](#initial-brush-model-rotation). Other classes still require absent or exact-zero initial angles. Malformed or ambiguous pose fields stop lit builds with an entity diagnostic. Hidden models and models without lightmap receivers are unaffected. The shared 100-million lighting work budget and 16 MiB lightmap budget per channel apply; exceeded limits keep the previous BSP. Use fewer bounces, lower sampling, larger lightmap scales or **Direct only** to reduce work. **Fullbright** retains this setting but performs no lighting work.
 
-#### Normal-map lighting
+#### Required material texture metrics
+
+Drawn faces need dimensions and diffuse reflectivity for the BSP, including
+**Fullbright** builds. An authored ordinary `$basetexture` whose VTF is missing
+reports unavailable metrics and stops the build; it does not publish invented
+64×64 dimensions or neutral reflectivity.
+
+1. Click **Compile**, then open **Build details…** for the material diagnostic.
+2. Check the named material, selected texture key and exact mounted texture path.
+   Use **Browse materials…** and the material source inspector to inspect the
+   declaration, then repair the asset or select an available material.
+3. Compile again. A failed build keeps the previously published BSP.
+
+Limits: genuinely absent optional material/base declarations retain the existing
+64×64, neutral-reflectivity compile defaults. Raw-base nondrawn and sky surfaces
+use neutral metadata without reading an unused diffuse texture. Selected albedo
+keeps the stricter rules below. Root runtime-generated `_rt_` textures cannot be
+measured from an on-disk VTF and are explicitly unsupported for required metrics,
+even if a file with that name exists. Missing-base combinations with
+`%tooltexture`, `%notooltexture` or `$reflectivity` report an unsupported metric
+rule. Present ordinary files retain VTF-header measurement; complete native
+preview-override and explicit-reflectivity parity remains unfinished.
+
+### Normal-map lighting
 
 1. Set **Selection** to **Faces · materials & textures** and select the target faces.
 2. Click **Browse materials…**, choose a lit material whose VMT declares `$bumpmap`, then **Use material** and **Apply**. Its normal texture must be available to the game.

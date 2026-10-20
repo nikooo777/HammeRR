@@ -3722,3 +3722,23 @@ EOF. Preserve prior BSP/source/history/settings/recipes/assets on refusal. The
 no-preview INFO diagnostic names a convention, not a measured texture. Retain
 the separate albedo, required-metric and authored-reflectivity scripts for their
 remaining contracts. These checks do not establish native image parity.
+
+
+## Window initial-pose admission checks
+
+```sh
+cargo test -j 8 -p compiler --test areas
+python3 -B scripts/validate_window_pose_admission.py --binary target/debug/hammerr-headless --output target/validation/window-pose-headless
+python3 -B scripts/validate_window_pose_admission.py --binary target/debug/editor --output target/validation/window-pose-editor
+```
+
+Use fresh disk-backed output directories. Check the controller and both rendered
+referents across Fullbright, Direct LDR and dual modes, including nonreceiving
+materials and other brush classes. Unsupported nonzero, malformed and aliased
+fields must refuse before lighting without rewriting source or previous BSP.
+Exact-zero controls compare nonentity payloads and independently checked literal
+entity-key changes. Both shared MCP compile paths preserve source/history,
+selection/camera/settings, recipes/assets and clean EOF without graphics or a
+game. Existing window area/fade/reference and unrelated rotated-model tests
+remain separate coverage; these checks do not establish rotated-window runtime
+support.

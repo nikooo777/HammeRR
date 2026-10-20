@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use glam::DVec3;
 
-use crate::map::Map;
+use crate::map::{Map, MapEntity};
 use crate::{Control, Diagnostic, Report};
 
 const FADE_FIELDS: [(&str, f32); 3] = [
@@ -17,6 +17,15 @@ fn value<'a>(properties: &'a [(String, String)], name: &str) -> Option<&'a str> 
         .iter()
         .rev()
         .find_map(|(key, value)| key.eq_ignore_ascii_case(name).then_some(value.as_str()))
+}
+
+fn unrotated_initial_pose(entity: &MapEntity) -> Result<(), String> {
+    let rotation =
+        crate::brush_model_pose::initial_rotation(&entity.classname, &entity.properties)?;
+    if rotation.is_some() {
+        return Err("rotated func_brush targets are not supported".into());
+    }
+    Ok(())
 }
 
 pub(crate) fn normalize(properties: &mut Vec<(String, String)>, id: u32, report: &mut Report) {
@@ -76,6 +85,14 @@ pub(crate) fn validate(
         }
         let mut targets = [None; 2];
         let mut unsupported_pose = false;
+        if let Err(error) = unrotated_initial_pose(entity) {
+            report.diagnostics.push(Diagnostic::error(
+                format!("Unsupported initial pose for window portal entity:{} controller angle/angles fields: {error}; use absent or exact-zero initial angles", entity.id),
+                Some(format!("entity:{}", entity.id)),
+                entity.origin,
+            ));
+            unsupported_pose = true;
+        }
         for (slot, (field, label)) in [
             ("target", "Rendered Window"),
             ("BackgroundBModel", "Foreground bmodel"),
@@ -105,28 +122,16 @@ pub(crate) fn validate(
             if let Some(index) = index {
                 targets[slot] = Some(index);
                 let target = &map.entities[index];
-                if target.classname.eq_ignore_ascii_case("func_brush") {
-                    let pose = poses.entry(index).or_insert_with(|| {
-                        crate::brush_model_pose::initial_rotation(
-                            &target.classname,
-                            &target.properties,
-                        )
-                        .and_then(|rotation| {
-                            if rotation.is_some() {
-                                Err("rotated func_brush targets are not supported".into())
-                            } else {
-                                Ok(())
-                            }
-                        })
-                    });
-                    if let Err(error) = pose {
-                        report.diagnostics.push(Diagnostic::error(
-                            format!("Unsupported initial pose for window portal entity:{} {label} target entity:{}: {error}", entity.id, target.id),
-                            Some(format!("entity:{}", target.id)),
-                            target.origin,
-                        ));
-                        unsupported_pose = true;
-                    }
+                let pose = poses
+                    .entry(index)
+                    .or_insert_with(|| unrotated_initial_pose(target));
+                if let Err(error) = pose {
+                    report.diagnostics.push(Diagnostic::error(
+                        format!("Unsupported initial pose for window portal entity:{} {label} ({field}) target entity:{} angle/angles fields: {error}", entity.id, target.id),
+                        Some(format!("entity:{}", target.id)),
+                        target.origin,
+                    ));
+                    unsupported_pose = true;
                 }
             } else {
                 report.diagnostics.push(Diagnostic::error(format!("Window portal {label} must name exactly one visible rendered brush model; {name:?} does not"), Some(format!("entity:{}", entity.id)), None));

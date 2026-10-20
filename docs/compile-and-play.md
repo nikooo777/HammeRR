@@ -215,7 +215,7 @@ A window portal fades a brush model to opaque as the player moves away, then hid
 
 ![Opaque distance-fading window](images/areaportal-window-closed.png)
 
-Limits: the same area-boundary limits as plain areaportals apply. Model references must name one visible rendered brush entity each; the rendered model's bounds must enclose the portal. Use fixed models with aligned pivots. Distances must be finite and satisfy `0 ≤ start ≤ end`; equal distances give a hard cutoff. **Translucency limit** must be between `0` and `1`. The foreground needs alpha in its material; an opaque foreground covers the view at every distance. Moving or independently rotated render targets have not been verified.
+Limits: the same area-boundary limits as plain areaportals apply. Model references must name one visible rendered brush entity each; the rendered model's bounds must enclose the portal. Use fixed models with aligned pivots. Distances must be finite and satisfy `0 ≤ start ≤ end`; equal distances give a hard cutoff. **Translucency limit** must be between `0` and `1`. The foreground needs alpha in its material; an opaque foreground covers the view at every distance. The window controller and both referenced models require absent or exact-zero initial `angle`/`angles` fields. Nonzero, malformed, duplicate or aliased angle fields fail before publication in every lighting mode, including **Fullbright** and unlit models. Edit imported raw keys through **Advanced properties**; do not use an entity-angle override to orient this fixed window setup. Moving targets and rotated-window rendering/fade behavior remain unavailable.
 
 ### Sky
 
@@ -531,7 +531,7 @@ Limits: this supports initial `func_brush` orientation with one unambiguous `ang
 
 Imported nonzero pose and origin text must contain plain finite numeric components in at most 127 ASCII bytes; absent or exact-zero angle fields retain the 128-byte limit. Duplicate, suffixed or space-padded angle keys fail explicitly; nonzero rotations also reject ambiguous origin, class and parent fields. Keys on a receiving model are limited to 2047 bytes. The complete rotated model must fit ±16,384 units. Fix the reported field or use **Fullbright** when the lighting pose is unsupported.
 
-Rotated `func_brush` targets for areaportal windows are unavailable, including with **Fullbright**. Automatic [Cubemap faces](cubemap-faces.md) assignment uses the same checked initial pose, transforming both face centers and normals; explicit manual bindings remain available. Failed builds preserve the previous BSP. Compile regions retain whole brush entities selected by their pivot; rotation does not clip a model to the region.
+Areaportal-window controllers and both render-model references require absent or exact-zero initial angles, across brush classes and including **Fullbright** or unlit models. Malformed or ambiguous fields also fail; standalone `func_brush` lighting rotation does not enable rotated windows. Automatic [Cubemap faces](cubemap-faces.md) assignment uses the same checked initial pose, transforming both face centers and normals; explicit manual bindings remain available. Failed builds preserve the previous BSP. Compile regions retain whole brush entities selected by their pivot; rotation does not clip a model to the region.
 
 ### Rotating doors and removable restraints
 

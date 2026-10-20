@@ -6,6 +6,7 @@ use fixtures::{room, window_room};
 use glam::DVec3;
 use map_core::{Document, ObjectId, edit};
 use source_formats::bsp::{Bsp, Leaf, Model, Node, Plane, contents};
+use source_formats::gamefs::{Mount, MountedPath};
 
 #[test]
 fn authored_portal_splits_two_areas_and_emits_reciprocal_runtime_bindings() {
@@ -320,10 +321,16 @@ fn hidden_window_portals_leave_their_render_models_and_equal_fades_are_valid() {
 #[test]
 fn window_targets_reject_rotated_and_ambiguous_poses_before_bounds_validation() {
     for (background, missing_rendered) in [(false, false), (true, false), (true, true)] {
-        for fields in [
-            vec![("angles", "0 90 0")],
-            vec![("angles", "bad")],
-            vec![("angles", "0 0 0"), ("AnGlEs", "0 90 0")],
+        for (classname, fields) in [
+            ("func_brush", vec![("angles", "0 90 0")]),
+            ("func_brush", vec![("angles", "bad")]),
+            (
+                "func_brush",
+                vec![("angles", "0 0 0"), ("AnGlEs", "0 90 0")],
+            ),
+            ("func_door", vec![("angles", "0 90 0")]),
+            ("func_door", vec![("angles", "bad")]),
+            ("func_door", vec![("angles#1", "0 0 0")]),
         ] {
             let (mut vmf, portal, rendered, foreground) = window_room(true);
             if missing_rendered {
@@ -344,6 +351,7 @@ fn window_targets_reject_rotated_and_ambiguous_poses_before_bounds_validation() 
                 .iter_mut()
                 .find(|entity| entity.id == owner)
                 .unwrap();
+            target.properties.set("classname", classname);
             target.properties.0.extend(
                 fields
                     .iter()
@@ -358,6 +366,7 @@ fn window_targets_reject_rotated_and_ambiguous_poses_before_bounds_validation() 
             for lighting in [
                 compiler::LightingMode::Fullbright,
                 compiler::LightingMode::DirectLdr,
+                compiler::LightingMode::DirectLdrHdr,
             ] {
                 let output = compiler::compile_with_options(
                     &vmf,
@@ -380,6 +389,11 @@ fn window_targets_reject_rotated_and_ambiguous_poses_before_bounds_validation() 
                             && diagnostic.message.contains(&format!("entity:{portal}"))
                             && diagnostic.message.contains(label)
                             && diagnostic.message.contains("initial pose")
+                            && diagnostic.message.contains(if background {
+                                "BackgroundBModel"
+                            } else {
+                                "(target)"
+                            })
                     }),
                     "{lighting:?} {fields:?}: {:?}",
                     output.report
@@ -396,6 +410,162 @@ fn window_targets_reject_rotated_and_ambiguous_poses_before_bounds_validation() 
                 );
             }
             assert_eq!(vmf, original);
+        }
+    }
+}
+
+#[test]
+fn window_initial_pose_checks_cover_controllers_and_nonreceiving_models_in_all_modes() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/validation/688");
+    std::fs::create_dir_all(&root).unwrap();
+    let directory = tempfile::tempdir_in(root).unwrap();
+    let materials = directory.path().join("materials/test");
+    std::fs::create_dir_all(&materials).unwrap();
+    std::fs::write(materials.join("unlit.vmt"), "UnlitGeneric { }").unwrap();
+    let mut game = common::empty_game();
+    game.mounts.push(MountedPath {
+        ids: vec!["game".into()],
+        mount: Mount::Directory(directory.path().to_owned()),
+    });
+    let (mut baseline, portal, rendered, foreground) = window_room(true);
+    for entity in &mut baseline.entities {
+        if entity.id == rendered || Some(entity.id) == foreground {
+            for side in &mut entity.solids[0].sides {
+                side.material = "test/unlit".into();
+            }
+        }
+    }
+    let output = compiler::compile_with_options(
+        &baseline,
+        &game,
+        compiler::Options {
+            lighting: compiler::LightingMode::DirectLdr,
+            ..Default::default()
+        },
+    );
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    assert_eq!(output.stats.lit_brush_models, 0);
+    assert_eq!(output.stats.model_lighting_faces, 0);
+    let previous = output.bsp.unwrap().to_bytes();
+    let path = directory.path().join("previous.bsp");
+    std::fs::write(&path, &previous).unwrap();
+    for role in ["controller", "Rendered Window", "Foreground bmodel"] {
+        let cases = if role == "controller" {
+            vec![
+                vec![("angles", "0 90 0")],
+                vec![("angles", "bad")],
+                vec![("angle", "90")],
+                vec![("angles#1", "0 0 0")],
+                vec![("angles", "0 0 0"), ("AnGlEs", "0 0 0")],
+            ]
+        } else {
+            vec![vec![("angles", "0 90 0")]]
+        };
+        for fields in cases {
+            let mut vmf = baseline.clone();
+            let owner = match role {
+                "controller" => portal,
+                "Rendered Window" => rendered,
+                _ => foreground.unwrap(),
+            };
+            for entity in &mut vmf.entities {
+                if entity.id == owner {
+                    if role != "controller" {
+                        entity.properties.set("classname", "func_door");
+                    }
+                    entity.properties.0.extend(
+                        fields
+                            .iter()
+                            .map(|&(key, value)| (key.into(), value.into())),
+                    );
+                }
+            }
+            let original = vmf.clone();
+            for lighting in [
+                compiler::LightingMode::Fullbright,
+                compiler::LightingMode::DirectLdr,
+                compiler::LightingMode::DirectLdrHdr,
+            ] {
+                let output = compiler::compile_with_options(
+                    &vmf,
+                    &game,
+                    compiler::Options {
+                        lighting,
+                        ..Default::default()
+                    },
+                );
+                assert!(output.bsp.is_none());
+                assert!(
+                    output.report.diagnostics.iter().any(|diagnostic| {
+                        diagnostic.level == compiler::Level::Error
+                            && diagnostic.object.as_deref() == Some(&format!("entity:{owner}"))
+                            && diagnostic.message.contains(&format!("entity:{portal}"))
+                            && diagnostic.message.contains(role)
+                            && diagnostic.message.contains("angle/angles fields")
+                    }),
+                    "{role} {lighting:?} {fields:?}: {:?}",
+                    output.report
+                );
+                assert!(!output.write(&path).unwrap());
+                assert_eq!(std::fs::read(&path).unwrap(), previous);
+                assert_eq!(vmf, original);
+            }
+        }
+    }
+}
+
+#[test]
+fn exact_zero_window_poses_preserve_all_bsp_bytes_except_authored_entity_fields() {
+    for classname in ["func_brush", "func_door"] {
+        let (mut baseline, portal, rendered, foreground) = window_room(true);
+        let owners = [portal, rendered, foreground.unwrap()];
+        for entity in &mut baseline.entities {
+            if entity.id == rendered || Some(entity.id) == foreground {
+                entity.properties.set("classname", classname);
+            }
+        }
+        for lighting in [
+            compiler::LightingMode::Fullbright,
+            compiler::LightingMode::DirectLdr,
+            compiler::LightingMode::DirectLdrHdr,
+        ] {
+            let options = compiler::Options {
+                lighting,
+                ..Default::default()
+            };
+            let output = compiler::compile_with_options(&baseline, &common::empty_game(), options);
+            assert!(!output.report.has_errors(), "{:?}", output.report);
+            let baseline_bsp = output.bsp.unwrap();
+            for (key, value) in [
+                ("angles", "-0 +0.0 0e-300"),
+                ("angle", "-0.000"),
+                ("AnGlEs", "0 0 0"),
+            ] {
+                let mut source = baseline.clone();
+                let mut entities = baseline_bsp.entities().unwrap().to_owned();
+                for entity in &mut source.entities {
+                    if owners.contains(&entity.id) {
+                        entity.properties.set(key, value);
+                        let marker = format!("\"hammerid\" \"{}\"", entity.id);
+                        assert_eq!(entities.matches(&marker).count(), 1);
+                        entities =
+                            entities.replace(&marker, &format!("\"{key}\" \"{value}\"\n{marker}"));
+                    }
+                }
+                let original = source.clone();
+                let mut expected = baseline_bsp.clone();
+                expected.set_entities(&entities);
+                let output =
+                    compiler::compile_with_options(&source, &common::empty_game(), options);
+                assert!(!output.report.has_errors(), "{:?}", output.report);
+                assert_eq!(output.stats.areaportal_windows, 1);
+                assert_eq!(
+                    output.bsp.unwrap().to_bytes(),
+                    expected.to_bytes(),
+                    "{classname} {lighting:?} {key}={value}"
+                );
+                assert_eq!(source, original);
+            }
         }
     }
 }

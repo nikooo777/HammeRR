@@ -3,14 +3,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from hdr_observer import HARDWARE_VERSION, read_probe, verify_hardware
+from hdr_observer import read_probe, verify_hardware
 
 
 class HdrObserverProtocol(unittest.TestCase):
     def records(self, level):
         return [
             {"event": "start", "pid": 1234},
-            {"event": "hardware_factory", "present": True, "code": 0, "version": HARDWARE_VERSION},
+            {"event": "hardware_factory", "present": True, "code": 0, "version": "MaterialSystemHardwareConfig012"},
             *[{"event": "sample", "dx_support_level": 95, "hardware_hdr_type": 2,
                "hdr_type": 2 if level == 2 else 0, "hdr_enabled": level == 2} for _ in range(8)],
             {"event": "complete"},
@@ -31,6 +31,10 @@ class HdrObserverProtocol(unittest.TestCase):
                         verify_hardware(invalid, level)
             with self.assertRaises(RuntimeError):
                 verify_hardware([rows[0], *rows], level)
+        rows = self.records(2)
+        rows[3] = {**rows[3], "hdr_type": 1, "hdr_enabled": True}
+        with self.assertRaisesRegex(RuntimeError, "Native HDR state changed during sampling"):
+            verify_hardware(rows, 2)
 
     def test_incomplete_stream_remains_pending_and_failures_reject_immediately(self):
         self.assertIsNone(verify_hardware([], 2))

@@ -433,6 +433,51 @@ emission and lighting require resolved metrics. This is a compiler seam, not a
 3D skybox preview. The region resolver must still classify omitted source
 geometry and unknown displacement bounds from the original VMF before admission.
 
+### Compiler material source-read limits
+
+```sh
+cargo test -j8 -p compiler --lib materials::read_budget::tests
+cargo test -j8 -p source-formats --lib keyvalues::static_material_tests
+cargo test -j8 -p compiler --lib water_dependencies::tests
+python3 -B scripts/validate_material_read_limits.py \
+  --binary target/debug/hammerr-headless \
+  --old-controls target/validation/693/old-controls-v2/results.json \
+  --output target/validation/693/material-read-limits-headless-1
+python3 -B scripts/validate_material_read_limits.py \
+  --binary target/debug/editor \
+  --old-controls target/validation/693/old-controls-v2/results.json \
+  --output target/validation/693/material-read-limits-editor-1
+```
+
+Run one build/test pipeline at a time within the 24 GiB aggregate budget. Each
+script output directory must be new. `--old-controls` requires the local receipt
+captured before the source-read bounds, its exact VMF, mounted fixture assets and
+old BSP/control files. The receipt is captured separately with the trusted
+retained old binary and the same frozen oracle source. These are local validation artifacts, not
+fixtures supplied by a clean checkout; the tested binary never regenerates its
+own old expectations.
+
+The public MCP fixture checks both compile paths, exact old BSP parity, ordinary
+diffuse/tool/no-preview providers and defaults for absent optional inputs.
+Oversized root VMTs, Patch includes, selected base/tool VTFs and the existing
+stricter tracked-prop VMT bound must fail with contextual diagnostics while
+preserving prior BSP/LIN,
+source, history, the active property draft, selection, camera, settings, recipes
+and assets. Each compile also checks the normal completion cancellation of its
+face preview without committing preview geometry.
+The large VTF is sparse on disk; fixture and binary fingerprints stream in
+64 KiB chunks instead of loading the complete files into Python memory. It
+requires no GPU, installed content, native physics or game process.
+
+Compiler regressions cover actual directory/VPK paths, exact and injected
+file/aggregate/lookup boundaries, refusal before another read, repeated reads
+versus name-cache hits, deferred geometry metrics and the stricter tracked-source
+contract. Shared parser regressions retain Water's strict static admission and
+its inventory states while checking unchanged strict/lenient KeyValues,
+ordinary VMT and flat-entity behavior. These source budgets are per material
+collection; the checks do not establish a global compile snapshot, interruptible
+I/O or a measured peak-memory bound.
+
 ### Compiler face provenance
 
 ```sh

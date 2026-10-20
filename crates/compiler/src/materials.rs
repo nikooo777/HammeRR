@@ -9,10 +9,18 @@ use source_formats::vmt::{self, Material};
 use source_formats::vtf::Vtf;
 
 mod metrics;
+mod read_budget;
 use metrics::{
     DimensionProvider, MetricPlan, NATIVE_NO_PREVIEW_DIMENSION, ReflectivityProvider, TextureHeader,
 };
+use read_budget::{ReadBudget, ReadLimits};
 
+pub const MAX_COMPILE_MATERIAL_BYTES: usize = 1024 * 1024;
+pub const MAX_COMPILE_MATERIAL_TOTAL_BYTES: usize = 16 * 1024 * 1024;
+pub const MAX_COMPILE_MATERIAL_READS: usize = 4096;
+pub const MAX_METRIC_TEXTURE_BYTES: usize = 256 * 1024 * 1024;
+pub const MAX_METRIC_TEXTURE_TOTAL_BYTES: usize = 512 * 1024 * 1024;
+pub const MAX_METRIC_TEXTURE_READS: usize = 4096;
 pub const MAX_GEOMETRY_MATERIAL_BYTES: usize = 256 * 1024;
 pub const MAX_GEOMETRY_MATERIAL_TOTAL_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_GEOMETRY_MATERIAL_READS: usize = 128;
@@ -161,39 +169,12 @@ impl MaterialInfo {
 pub struct Materials<'a> {
     fs: &'a GameFs,
     requirements: Requirements,
-    geometry_reads: GeometryReads,
+    geometry_reads: ReadBudget,
+    compile_reads: ReadBudget,
+    texture_reads: ReadBudget,
     infos: Vec<MaterialInfo>,
     by_name: HashMap<String, usize>,
     prop_lighting_sources: Option<(PropSourceMode, crate::lighting::asset_tracking::SourceReads)>,
-}
-
-#[derive(Default)]
-struct GeometryReads {
-    operations: usize,
-    bytes: usize,
-}
-
-impl GeometryReads {
-    fn read(&mut self, fs: &GameFs, path: &str) -> std::io::Result<Option<Vec<u8>>> {
-        if self.operations >= MAX_GEOMETRY_MATERIAL_READS {
-            return Err(std::io::Error::other(format!(
-                "Geometry material semantics exceed {MAX_GEOMETRY_MATERIAL_READS} source reads"
-            )));
-        }
-        self.operations += 1;
-        let remaining = MAX_GEOMETRY_MATERIAL_TOTAL_BYTES
-            .checked_sub(self.bytes)
-            .ok_or_else(|| std::io::Error::other("Geometry material byte accounting overflow"))?;
-        let limit = MAX_GEOMETRY_MATERIAL_BYTES.min(remaining);
-        let bytes = fs.read_limited(path, limit).map_err(|error| {
-            std::io::Error::new(
-                error.kind(),
-                format!("Geometry material {path} (read limit {limit} bytes): {error}"),
-            )
-        })?;
-        self.bytes += bytes.as_ref().map_or(0, Vec::len);
-        Ok(bytes)
-    }
 }
 
 impl<'a> Materials<'a> {
@@ -205,7 +186,24 @@ impl<'a> Materials<'a> {
         Self {
             fs,
             requirements,
-            geometry_reads: GeometryReads::default(),
+            geometry_reads: ReadBudget::new(ReadLimits {
+                label: "Geometry material semantics",
+                file_bytes: MAX_GEOMETRY_MATERIAL_BYTES,
+                total_bytes: MAX_GEOMETRY_MATERIAL_TOTAL_BYTES,
+                operations: MAX_GEOMETRY_MATERIAL_READS,
+            }),
+            compile_reads: ReadBudget::new(ReadLimits {
+                label: "Compile material",
+                file_bytes: MAX_COMPILE_MATERIAL_BYTES,
+                total_bytes: MAX_COMPILE_MATERIAL_TOTAL_BYTES,
+                operations: MAX_COMPILE_MATERIAL_READS,
+            }),
+            texture_reads: ReadBudget::new(ReadLimits {
+                label: "Metric texture",
+                file_bytes: MAX_METRIC_TEXTURE_BYTES,
+                total_bytes: MAX_METRIC_TEXTURE_TOTAL_BYTES,
+                operations: MAX_METRIC_TEXTURE_READS,
+            }),
             infos: Vec::new(),
             by_name: HashMap::new(),
             prop_lighting_sources: None,
@@ -271,17 +269,26 @@ impl<'a> Materials<'a> {
         }
         let material = match self.requirements {
             Requirements::Compile => {
-                if let Some((_, sources)) = &mut self.prop_lighting_sources {
-                    Material::load_with_reader(&vmt::material_path(&key), &mut |path| {
-                        sources.read(self.fs, path, MAX_GEOMETRY_MATERIAL_BYTES)
-                    })
-                } else {
-                    Material::load(self.fs, &key)
-                }
+                Material::load_with_reader(&vmt::material_path(&key), &mut |path| {
+                    let maximum = if self.prop_lighting_sources.is_some() {
+                        MAX_GEOMETRY_MATERIAL_BYTES
+                    } else {
+                        MAX_COMPILE_MATERIAL_BYTES
+                    };
+                    self.compile_reads.read(
+                        self.fs,
+                        path,
+                        maximum,
+                        self.prop_lighting_sources
+                            .as_mut()
+                            .map(|(_, sources)| sources),
+                    )
+                })
             }
             Requirements::GeometrySemantics => {
                 Material::load_with_reader(&vmt::material_path(&key), &mut |path| {
-                    self.geometry_reads.read(self.fs, path)
+                    self.geometry_reads
+                        .read(self.fs, path, MAX_GEOMETRY_MATERIAL_BYTES, None)
                 })
             }
         }
@@ -330,18 +337,21 @@ impl<'a> Materials<'a> {
             if headers.iter().any(|(path, _)| *path == provider.path) {
                 continue;
             }
-            let bytes = match &mut self.prop_lighting_sources {
-                Some((PropSourceMode::WithReflectivity, sources)) => {
-                    sources.read(self.fs, &provider.path, usize::MAX)
-                }
-                _ => self.fs.read(&provider.path),
-            }
-            .map_err(|error| {
-                format!(
-                    "Material {material_path}: selected {} texture {}: {error}",
-                    provider.key, provider.path,
-                )
-            })?;
+            let sources = self
+                .prop_lighting_sources
+                .as_mut()
+                .and_then(|(mode, sources)| {
+                    (*mode == PropSourceMode::WithReflectivity).then_some(sources)
+                });
+            let bytes = self
+                .texture_reads
+                .read(self.fs, &provider.path, MAX_METRIC_TEXTURE_BYTES, sources)
+                .map_err(|error| {
+                    format!(
+                        "Material {material_path}: selected {} texture {}: {error}",
+                        provider.key, provider.path,
+                    )
+                })?;
             let Some(bytes) = bytes else {
                 let mut reason = format!(
                     "Material {material_path}: selected {} texture {} was not found; required {} are unavailable",

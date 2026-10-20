@@ -1,6 +1,6 @@
 use std::io;
 
-use super::{Lexer, ParseError, ParseErrorKind, Token};
+use super::{Lexer, ParseError, ParseErrorKind, ParseMode, Token};
 
 /// An anonymous block's string pairs, preserving source order and duplicate keys.
 pub type FlatBlock = Vec<(String, String)>;
@@ -54,7 +54,7 @@ fn parse_impl<E>(
     let mut lexer = Lexer {
         src,
         pos: 0,
-        lenient: false,
+        mode: ParseMode::Strict,
     };
     let mut blocks = Vec::new();
     let mut pairs = 0;

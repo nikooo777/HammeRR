@@ -72,6 +72,9 @@ pub enum ParseErrorKind {
     ExpectedOpenBrace,
     NestedBlock,
     UnsupportedBareToken,
+    UnterminatedComment,
+    ConditionalToken,
+    EmbeddedCommentMarker,
 }
 
 impl fmt::Display for ParseErrorKind {
@@ -92,6 +95,13 @@ impl fmt::Display for ParseErrorKind {
             Self::NestedBlock => "nested blocks are not accepted in flat entity text",
             Self::UnsupportedBareToken => {
                 "unquoted tokens cannot contain parentheses, apostrophes, non-ASCII bytes or control separators, or abut a double quote"
+            }
+            Self::UnterminatedComment => "unterminated block comment",
+            Self::ConditionalToken => {
+                "unquoted conditional selectors are unsupported in static material syntax"
+            }
+            Self::EmbeddedCommentMarker => {
+                "comment markers inside unquoted tokens are unsupported in static material syntax"
             }
         })
     }
@@ -123,10 +133,17 @@ enum Token<'a> {
     Eof,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ParseMode {
+    Strict,
+    Lenient,
+    StaticMaterial,
+}
+
 struct Lexer<'a> {
     src: &'a str,
     pos: usize,
-    lenient: bool,
+    mode: ParseMode,
 }
 
 impl<'a> Lexer<'a> {
@@ -141,8 +158,23 @@ impl<'a> Lexer<'a> {
                 self.pos = rest.find('\n').map_or(bytes.len(), |i| self.pos + i + 1);
                 continue;
             }
-            if self.lenient && rest.starts_with("/*") {
-                self.pos = rest.find("*/").map_or(bytes.len(), |i| self.pos + i + 2);
+            if self.mode != ParseMode::Strict && rest.starts_with("/*") {
+                let closing = if self.mode == ParseMode::StaticMaterial {
+                    rest[2..].find("*/").map(|index| index + 2)
+                } else {
+                    rest.find("*/")
+                };
+                self.pos = match closing {
+                    Some(index) => self.pos + index + 2,
+                    None if self.mode == ParseMode::StaticMaterial => {
+                        return Err(ParseError::at(
+                            self.src,
+                            self.pos,
+                            ParseErrorKind::UnterminatedComment,
+                        ));
+                    }
+                    None => bytes.len(),
+                };
                 continue;
             }
             break;
@@ -179,7 +211,24 @@ impl<'a> Lexer<'a> {
                     .position(|&c| c.is_ascii_whitespace() || matches!(c, b'"' | b'{' | b'}'))
                     .unwrap_or(bytes.len() - start);
                 self.pos = start + len;
-                Token::Str(&self.src[start..start + len])
+                let token = &self.src[start..self.pos];
+                if self.mode == ParseMode::StaticMaterial {
+                    for (index, byte) in token.bytes().enumerate() {
+                        let rest = &token.as_bytes()[index..];
+                        let kind = if rest.starts_with(b"/*")
+                            || rest.starts_with(b"*/")
+                            || rest.starts_with(b"//")
+                        {
+                            ParseErrorKind::EmbeddedCommentMarker
+                        } else if byte == b'[' {
+                            ParseErrorKind::ConditionalToken
+                        } else {
+                            continue;
+                        };
+                        return Err(ParseError::at(self.src, start + index, kind));
+                    }
+                }
+                Token::Str(token)
             }
         };
         Ok((token, start))
@@ -189,13 +238,13 @@ impl<'a> Lexer<'a> {
 /// Parses strictly: unclosed blocks are errors. Use for files we write back,
 /// where silently accepting a truncated file would lose data on save.
 pub fn parse(src: &str) -> Result<Vec<Node>, ParseError> {
-    parse_impl(src, false, Some((MAX_NESTING, usize::MAX)))
+    parse_impl(src, ParseMode::Strict, Some((MAX_NESTING, usize::MAX)))
 }
 
 /// Parses the way the engine reads game files: blocks left open at the end
 /// of the file are closed, and `/* */` comments are skipped.
 pub fn parse_lenient(src: &str) -> Result<Vec<Node>, ParseError> {
-    parse_impl(src, true, Some((MAX_NESTING, usize::MAX)))
+    parse_impl(src, ParseMode::Lenient, Some((MAX_NESTING, usize::MAX)))
 }
 
 pub fn parse_bounded(
@@ -206,7 +255,11 @@ pub fn parse_bounded(
     if let Some(offset) = src.find('\0') {
         return Err(ParseError::at(src, offset, ParseErrorKind::NulByte));
     }
-    parse_impl(src, false, Some((max_depth.min(MAX_NESTING), max_nodes)))
+    parse_impl(
+        src,
+        ParseMode::Strict,
+        Some((max_depth.min(MAX_NESTING), max_nodes)),
+    )
 }
 
 pub fn parse_lenient_bounded(
@@ -217,20 +270,37 @@ pub fn parse_lenient_bounded(
     if let Some(offset) = src.find('\0') {
         return Err(ParseError::at(src, offset, ParseErrorKind::NulByte));
     }
-    parse_impl(src, true, Some((max_depth.min(MAX_NESTING), max_nodes)))
+    parse_impl(
+        src,
+        ParseMode::Lenient,
+        Some((max_depth.min(MAX_NESTING), max_nodes)),
+    )
+}
+
+/// Parses complete material syntax with token-boundary block comments.
+/// Unquoted selectors and embedded comment markers reject; quoted text is verbatim.
+pub fn parse_static_material_bounded(
+    src: &str,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<Vec<Node>, ParseError> {
+    if let Some(offset) = src.find('\0') {
+        return Err(ParseError::at(src, offset, ParseErrorKind::NulByte));
+    }
+    parse_impl(
+        src,
+        ParseMode::StaticMaterial,
+        Some((max_depth.min(MAX_NESTING), max_nodes)),
+    )
 }
 
 fn parse_impl(
     src: &str,
-    lenient: bool,
+    mode: ParseMode,
     limits: Option<(usize, usize)>,
 ) -> Result<Vec<Node>, ParseError> {
     let mut count = 0_usize;
-    let mut lexer = Lexer {
-        src,
-        pos: 0,
-        lenient,
-    };
+    let mut lexer = Lexer { src, pos: 0, mode };
     let mut current: Vec<Node> = Vec::new();
     // Enclosing blocks: (key, siblings collected so far, offset of the '{').
     let mut stack: Vec<(String, Vec<Node>, usize)> = Vec::new();
@@ -240,7 +310,7 @@ fn parse_impl(
         match token {
             Token::Eof => {
                 if let Some(&(_, _, open)) = stack.last()
-                    && !lenient
+                    && mode != ParseMode::Lenient
                 {
                     return Err(ParseError::at(src, open, ParseErrorKind::UnclosedBlock));
                 }
@@ -289,6 +359,9 @@ fn parse_impl(
         }
     }
 }
+
+#[cfg(test)]
+mod static_material_tests;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LineEnding {

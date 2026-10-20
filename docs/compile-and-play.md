@@ -334,6 +334,37 @@ is required, even if a file with that name exists. An unused runtime texture
 is not read when independent providers supply both metrics. Broader native
 reflectivity coercions remain unavailable.
 
+#### Material source-read limits
+
+Compiler material collections use the following HammeRR resource bounds in
+every lighting mode, including **Fullbright**:
+
+| Source | Per file | Successful payload per collection | Actual lookup attempts per collection |
+| --- | --- | --- | --- |
+| VMT material and Patch sources | 1 MiB | 16 MiB | 4,096 |
+| Metric VTFs supplying dimensions or reflectivity | 256 MiB | 512 MiB | 4,096 |
+
+Successful reads charge their complete payload, including the whole metric VTF
+file. Repeated actual reads count again. A cached material-name hit performs no
+read and spends no read budget. Failed or missing lookup attempts count toward
+the lookup limit; only returned payload bytes count toward the byte limit.
+
+Geometry-only preparation retains its stricter VMT bounds: 256 KiB per file,
+2 MiB total and 128 lookups, with texture metrics deferred. Static-prop source
+tracking retains 256 KiB per VMT and the existing 64 MiB distinct-source
+bound in addition to the collection limits. The strictest applicable read bound
+is used. Region preparation and later compiler collections have separate
+counters; these totals are not a whole-build memory or work limit.
+
+An exceeded bound stops the build with a contextual material/source diagnostic,
+including the selected key for a metric texture. Open **Build details…** and
+review **Diagnostics**, reduce or repair the named input, then **Compile**
+again. Limit failures never select substitute files or default metrics, and
+preserve the prior BSP and pointfile. Existing cancellation checkpoints and
+source-verification rules remain unchanged; bounded reads do not make file I/O
+interruptible. The [Source inspector](material-source.md) has separate read-only
+inspection limits.
+
 #### Tool preview dimensions
 
 Use a material's tool preview for compiled dimensions while keeping its diffuse

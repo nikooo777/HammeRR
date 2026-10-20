@@ -21,73 +21,6 @@ fn unsupported(code: &'static str, message: impl Into<String>) -> Failure {
     Failure::new(WaterDependencyState::Unsupported, code, message)
 }
 
-fn text_without_comments(text: &str) -> Result<String, Failure> {
-    let mut bytes = text.as_bytes().to_vec();
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index].is_ascii_whitespace() || matches!(bytes[index], b'{' | b'}') {
-            index += 1;
-        } else if bytes[index] == b'"' {
-            index += 1;
-            while index < bytes.len() && bytes[index] != b'"' {
-                index += 1;
-            }
-            index = (index + 1).min(bytes.len());
-        } else if bytes[index..].starts_with(b"//") {
-            while index < bytes.len() && bytes[index] != b'\n' {
-                index += 1;
-            }
-        } else if bytes[index..].starts_with(b"/*") {
-            bytes[index..index + 2].fill(b' ');
-            index += 2;
-            while index + 1 < bytes.len() && !bytes[index..].starts_with(b"*/") {
-                if bytes[index] != b'\n' {
-                    bytes[index] = b' ';
-                }
-                index += 1;
-            }
-            if index + 1 >= bytes.len() {
-                return Err(Failure::new(
-                    WaterDependencyState::UnavailableSource,
-                    "raw_syntax",
-                    "Unterminated material comment",
-                ));
-            }
-            bytes[index..index + 2].fill(b' ');
-            index += 2;
-        } else {
-            while index < bytes.len()
-                && !bytes[index].is_ascii_whitespace()
-                && !matches!(bytes[index], b'"' | b'{' | b'}')
-            {
-                if bytes[index..].starts_with(b"/*")
-                    || bytes[index..].starts_with(b"*/")
-                    || bytes[index..].starts_with(b"//")
-                {
-                    return Err(unsupported(
-                        "embedded_comment_marker",
-                        "Comment markers inside an unquoted material token are outside the static inventory",
-                    ));
-                }
-                if bytes[index] == b'[' {
-                    return Err(unsupported(
-                        "conditional",
-                        "Unquoted conditional or bracket selectors are outside the static inventory",
-                    ));
-                }
-                index += 1;
-            }
-        }
-    }
-    String::from_utf8(bytes).map_err(|error| {
-        Failure::new(
-            WaterDependencyState::UnavailableSource,
-            "utf8",
-            error.to_string(),
-        )
-    })
-}
-
 fn parameters(nodes: &[Node]) -> Result<BTreeMap<String, Parameter>, Failure> {
     let mut values = BTreeMap::new();
     for node in nodes {
@@ -149,18 +82,23 @@ pub(super) fn parse(bytes: &[u8]) -> Result<RawMaterial, Failure> {
             error.to_string(),
         )
     })?;
-    let text = text_without_comments(text.trim_start_matches('\u{feff}'))?;
-    let nodes = keyvalues::parse_bounded(&text, 64, 4096).map_err(|error| {
-        let state = if matches!(
-            error.kind,
-            ParseErrorKind::NestingLimit | ParseErrorKind::NodeLimit
-        ) {
-            WaterDependencyState::Limited
-        } else {
-            WaterDependencyState::UnavailableSource
-        };
-        Failure::new(state, "raw_syntax", error.to_string())
-    })?;
+    let nodes =
+        keyvalues::parse_static_material_bounded(text.trim_start_matches('\u{feff}'), 64, 4096)
+            .map_err(|error| {
+                let (state, code) = match error.kind {
+                    ParseErrorKind::ConditionalToken => {
+                        (WaterDependencyState::Unsupported, "conditional")
+                    }
+                    ParseErrorKind::EmbeddedCommentMarker => {
+                        (WaterDependencyState::Unsupported, "embedded_comment_marker")
+                    }
+                    ParseErrorKind::NestingLimit | ParseErrorKind::NodeLimit => {
+                        (WaterDependencyState::Limited, "raw_syntax")
+                    }
+                    _ => (WaterDependencyState::UnavailableSource, "raw_syntax"),
+                };
+                Failure::new(state, code, error.to_string())
+            })?;
     if nodes.len() != 1 {
         return Err(unsupported(
             "material_roots",

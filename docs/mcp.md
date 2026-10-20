@@ -1288,6 +1288,31 @@ nondrawn/sky metadata skips unused diffuse reads. Geometry-only preparation
 defers metrics. Editor preview/atlas rules above remain separate. Existing
 Session build operations carry these results; source inspection is read-only.
 
+The shared `compile_map`, `start_compile` and `run_map` path enforces source-read
+bounds per compiler material collection:
+
+| Source | Per file | Successful payload per collection | Actual lookup attempts per collection |
+| --- | --- | --- | --- |
+| VMT, including Patch sources | 1 MiB | 16 MiB | 4,096 |
+| Metric VTF, for dimensions or reflectivity | 256 MiB | 512 MiB | 4,096 |
+
+Successful reads charge complete payloads, including the whole metric VTF file.
+Repeated actual reads count again; cached material-name hits spend nothing.
+Failed and missing actual lookups consume the lookup budget; only returned
+payload bytes consume the byte budget. Geometry-only preparation keeps 128 VMT
+lookups, 256 KiB per file and 2 MiB total, without measuring textures. Static-prop
+source tracking retains 256 KiB per VMT and the existing 64 MiB
+distinct-source bound; all applicable maxima intersect before the actual read.
+Region preparation and later collections account independently, so these are
+HammeRR collection limits, not whole-build work or memory bounds.
+
+Limit failures retain contextual material/key/path diagnostics and the prior
+BSP/pointfile; they never become successful empty reads or substitute metrics.
+Settings and tool arguments are unchanged. The bounds add no interruptible I/O
+or source freshness guarantee. `get_material_source` and its Water inventory
+retain their separate inspection limits above. See
+[Material source-read limits](compile-and-play.md#material-source-read-limits).
+
 `get_entity_definitions` reports loaded classes, sources, load error and optional
 `map_size: {authored:[first,second], bounds:[minimum,maximum], source, line}`.
 Load/search responses and `get_map_info.definitions` include the same metadata.

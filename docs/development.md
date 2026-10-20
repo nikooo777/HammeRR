@@ -745,7 +745,7 @@ cargo test -p compiler --lib lighting::sky::tests
 cargo test -p compiler --test hdr_lighting --test lighting_reference
 cargo test -p editor-core --features mcp --lib build_lighting_settings_are_shared
 cargo test -p editor --bin editor hdr_results_keep_channels
-python3 -B scripts/validate_hdr_lighting.py --binary target/debug/hammerr-headless --output /tmp/hammerr-hdr-lighting-check
+python3 -B scripts/validate_hdr_lighting.py --binary target/debug/hammerr-headless --output target/validation/hdr-lighting-check
 ```
 
 Checks selected HDR tuples, overrides, sentinels and scales; independent face
@@ -761,10 +761,10 @@ establish the runtime's selected channel.
 Build the private read-only native observer before adding `--runtime`:
 
 ```sh
-systemd-run --user --scope -p MemoryMax=24G -p MemorySwapMax=0 \
+systemd-run --user --scope -p MemoryMax=4G -p MemorySwapMax=0 \
   cc -std=c11 -O2 -Wall -Wextra -Werror -fPIC -shared scripts/hdr_runtime_probe.c \
   -o target/debug/hammerr_hdr_probe.so -ldl -pthread
-python3 -B scripts/validate_hdr_lighting.py --binary target/debug/hammerr-headless --runtime --output /tmp/hammerr-hdr-lighting-client
+python3 -B scripts/validate_hdr_lighting.py --binary target/debug/hammerr-headless --runtime --output target/validation/hdr-lighting-client
 ```
 
 Use `--probe-library /path/to/hammerr_hdr_probe.so` for another observer build
@@ -780,6 +780,26 @@ and frames; this check uses no desktop input or focus changes. Use a fresh
 output directory per run. `--runtime-bsp /path/to/hdr.bsp` with
 `--fixture-game /path/to/source-game/cstrike --runtime` repeats native checks
 against an existing fixture without recompiling it.
+
+### Native HDR exposure controllers
+
+```sh
+python3 -B scripts/validate_tonemap_controller.py \
+  --binary target/debug/hammerr-headless \
+  --output target/validation/tonemap-headless
+python3 -B scripts/validate_tonemap_controller.py \
+  --binary target/debug/editor \
+  --output target/validation/tonemap-editor
+python3 -B scripts/validate_tonemap_controller.py \
+  --binary target/debug/hammerr-headless --runtime \
+  --output target/validation/tonemap-native
+```
+
+Use fresh absent output directories under `target/`; `/tmp` is RAM-backed on this desktop. The two production MCP paths author a single controller and delayed float connections, check Cancel and protected state, compare foreground/background BSP bytes and verify exact save/reopen restoration. Only two parameter strings may differ between low and high builds; all other compiled bytes must match.
+
+`--runtime` requires the pinned playable engine/client/server, running Steam, Cage, grim and the existing [HDR observer library](#independent-ldr-and-hdr-lighting). It uses three fresh private compositor/game processes with `-insecure`, post-map `sv_lan 1`, no desktop input, and audited configuration/Cloud preservation and owned process cleanup. Keep aggregate project RAM within 16 GiB; a 4 GiB cap is sufficient for this check when the measured baseline leaves room.
+
+The observer establishes property existence/types before reading controller flags and floats. It records initial disabled flags, delayed authored values, fixed camera, queried client controls and hardware HDR separately. Forced scale stays zero; global min/max stay at the same sentinel in every case. Paired image/noise and low/high/restored gates are declared before execution and retained on failure. Client console scale is not a direct render-context measurement. This covers fixed exposure, not arbitrary adaptation, multiple controllers, bloom or VRAD appearance parity.
 
 ### Rotated static-prop leaves and model mass
 

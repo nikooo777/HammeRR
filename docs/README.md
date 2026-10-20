@@ -51,6 +51,7 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | [Linked paths](path-authoring.md) | Ordered open or closed path_corner/path_track chains with preview and Undo |
 | [Organizing and checking maps](map-tools.md) | Finding objects, visibility, statistics, map checks, design notes, autosave and recovery |
 | [Compile and play](compile-and-play.md) | Building BSPs, portable sky assets, lighting, physics, leaks and launching Counter-Strike: Source |
+| [HDR exposure controllers](hdr-exposure.md) | Fixed game exposure through ordinary entities and connections |
 | [Baked lightmaps](baked-lightmaps.md) | Actual compiled LDR/HDR face samples, style and directional-map inspection |
 | [Baked prop vertices](baked-prop-vertices.md) | Native prop ordinals, LOD hardware sections and exact packed LDR/HDR color bytes |
 | [Water](water.md) | Flat world pools, underwater materials, fog and floating objects |

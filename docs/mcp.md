@@ -1749,6 +1749,17 @@ For point/spot/sun lights, HDR selects `_lightHDR`, then `_light`; eight-number 
 
 HammeRR limits are 16 MiB of samples, 8,192 world lights and 65,536 probes per channel, 32 MiB total samples and one cancellable 100-million-work budget covering preparation and both passes. A shared 512 MiB live channel-allocation budget also applies; source assets retain their separate reader limits. Authored HDR sky families retain the native material path; `pack_sky_assets` admits and embeds supported complete material/VTF dependencies. Native sky shader/exposure parity and baked prop lightmaps remain unavailable; explicit editor HDR sky preview uses the separate preview policy below. Paired cubemap capture uses **Generate reflections** and the guarded workflow above. See [Compile and play](compile-and-play.md#hdr-channels).
 
+### Fixed HDR exposure authoring
+
+Use existing shared entity and connection operations; no separate compiler option or controller tool is required. See [HDR exposure controllers](hdr-exposure.md) for the human workflow.
+
+1. `create_entity` one `env_tonemap_controller` with `properties: {"targetname":"map_exposure"}`, and one `logic_auto`.
+2. Use `get_connection_choices` for the logic_auto ID and target `map_exposure`; check the loaded `OnMapSpawn` output and float `SetAutoExposureMin` / `SetAutoExposureMax` inputs.
+3. For each input, call `begin_connection_edit`, then `update_connection_draft` with `output:"OnMapSpawn"`, `target:"map_exposure"`, the input name, `parameter:"0.375"`, `delay:"1"` and `times:"1"`. Apply through `commit_connection_edit`, or discard through `cancel_connection_edit`. Both parameters must match for this fixed-exposure recipe.
+4. Select `lighting:"direct_ldr_hdr"` through `set_compile_settings`, save and compile through the ordinary build operations. Full native HDR must be enabled before map load.
+
+This workflow covers one controller and equal positive bounds. It does not add editor adaptation, multiple-controller arbitration, bloom or blending. A stale FGD input signature is not an engine guarantee; this recipe avoids its incorrectly parameterless `SetTonemapScale` declaration.
+
 ### Baked lightmap inspection
 
 `inspect_baked_lightmaps` reads this Session's last successful owned BSP without

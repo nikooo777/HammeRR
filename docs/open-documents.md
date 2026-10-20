@@ -21,7 +21,7 @@ Desktop MCP-created documents start with an actual hidden window. Use **Show doc
 or MCP `show_document` to present them. Show a hidden peer before closing the
 last visible map window; Close otherwise refuses and leaves the map open.
 
-The first release allows two documents using one mounted content environment.
+Two documents use one mounted content environment.
 An already claimed source or conflicting output is rejected. Successfully
 closing a document releases its source/output claims so it can be opened again,
 even if an external client retains its closed handle. A failed cleanup stays in
@@ -30,7 +30,7 @@ Final process shutdown reports retained cleanup errors.
 
 Shared saved settings and catalogs remain shared. Current editor state and
 render caches belong to their fixed documents. Two documents are an admission
-limit, not a promise about total memory use. This release has separate windows;
+limit, not a promise about total memory use. Maps have separate windows;
 there are no tabs, bulk Quit, workspace restore, or different mounted
 content profiles in the same process.
 

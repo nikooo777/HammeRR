@@ -2,12 +2,9 @@
 
 # AI agents and MCP
 
-HammeRR is built so that an AI agent can do anything a person can. Every editor feature has a matching [MCP](https://modelcontextprotocol.io) tool, and both run the same internal operations. So:
-
-- the agent edits the map you have open, and you see each change live;
-- agent edits go into the same undo history as yours;
-- previews are shared: an agent can set one up for you to apply, or the other way around;
-- the agent can render any view of the map to check its own work.
+[MCP](https://modelcontextprotocol.io) tools share the editor's operations,
+previews and Undo history. Agents can edit the open map, show changes live and
+render views to inspect their work.
 
 | Courtyard built by an agent | Agent close-up with one face selected |
 | --- | --- |
@@ -471,8 +468,6 @@ The shared desktop and private stdio server expose workspace and document tools.
 | Build recipes | `get_build_recipes`, `save_build_recipe`, `rename_build_recipe`, `delete_build_recipe`, `apply_build_recipe`, `reload_build_recipes` |
 
 ## Good to know
-
-These details aren't obvious from the tool list.
 
 **Extended entity definitions**
 

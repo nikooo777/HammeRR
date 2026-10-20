@@ -367,9 +367,8 @@ An exceeded bound stops the build with a contextual material/source diagnostic,
 including the selected key for a metric texture. Open **Build details…** and
 review **Diagnostics**, reduce or repair the named input, then **Compile**
 again. Limit failures never select substitute files or default metrics, and
-preserve the prior BSP and pointfile. Existing cancellation checkpoints and
-source-verification rules remain unchanged; bounded reads do not make file I/O
-interruptible. The [Source inspector](material-source.md) has separate read-only
+preserve the prior BSP and pointfile. File I/O is not interruptible.
+The [Source inspector](material-source.md) has separate read-only
 inspection limits.
 
 If a build lookup reaches a changed mounted VPK index, compilation reports an
@@ -685,16 +684,9 @@ the compiler retains the legacy sample-only limit of 1,024 and sizes up to
 
 ### Static props
 
-- `prop_static` compiles its model, position and rotation (fractional values included), collision setting, skin, fading and lighting origin. Rotated props use conservative clipping of the transformed render/hull header box to determine open-leaf membership; unrotated membership is unchanged. Inspect **Static props**, **Model assets** and **Leaf references** in **Build details…**. See [Static props](static-props.md) for clipping budgets and limits.
-- Models must be MDL version 44 or 48 and marked `$staticprop`. **Use VPhysics** also needs the model's matching `.phy` file. The selected `.phy` is limited to 64 MiB; directory and VPK readers enforce this existing parser maximum before allocating its payload. Missing, unreadable, oversized or malformed selected files stop compilation with a prop/source diagnostic and preserve the previous BSP and pointfile. This check also applies with **Fullbright** and **No physics bodies**. Non-solid and bounding-box props do not load an unused `.phy`.
-- **Direct LDR** and **Direct LDR + HDR** trace actual LOD0 model triangles for direct, sun/sky, bounced-light and model-ambient shadows. Shadow casting is independent of collision mode; native `disableshadows` turns it off, and hidden props are omitted. See [Static-prop mesh shadows](prop-shadows.md).
-- Shadow meshes need the model's matching `.vvd` and `.dx90.vtx` companions. Missing or malformed geometry fails with a prop-specific diagnostic and preserves the previous BSP; bounds are never substituted for the mesh. Fullbright and disabled-shadow props do not load these companions.
-- Shadows are two-sided. Models with the native `$casttextureshadows` flag support selected-skin `$alphatest` materials using **VertexLitGeneric** or **UnlitGeneric**. Each ray interpolates triangle UVs and samples the base texture's mip 0 with nearest texels, honoring VTF clamp S/T or repeat. `$alphatestreference` accepts 0–1; absent values use 0.5 for VertexLitGeneric and 0.7 for UnlitGeneric, while explicit zero uses 0.5. Alpha equal to the reference blocks light. Binary cutouts keep their threshold behavior. Plain requested `$translucent 1` materials use saturating alpha-byte coverage across intersected triangles; see [Translucent texture shadows](prop-shadows.md#translucent-texture-shadows). Neither mode filters edges.
-- Supported `$basetexturetransform` operations are finite **center**, **scale**, **rotate** in degrees and **translate**, with each authored value within ±1024. Scale about the center applies before rotation, followed by translation; negative scale mirrors. Both cutout and translucent shadows honor the transformed nearest texel and VTF clamp/repeat flags. Requested texture shadows reject malformed or duplicated transforms, unsupported shaders, mixed translucent/alpha-test modes, fractional `$alphatestreference`, additive or alpha modulation, material animation/conditional blocks, additional opacity effects, nonzero frames, animated/cubemap/volume textures and missing or corrupt assets. The entity diagnostic explains the failure, and the previous BSP is preserved.
-- Models without `$casttextureshadows` keep opaque shadows and existing approximation warnings for alpha/translucent/additive materials, nonstandard shaders, animation/conditional blocks and missing materials. Fullbright and `disableshadows` skip texture-shadow decoding.
-- Texture dimensions are limited to 4096 pixels per axis and decoded alpha to 64 MiB per build. Texture input shares the 256 MiB shadow-asset budget; each asset file is limited to 64 MiB. Invalid assets, scaling, lightmap requests and ambiguous lighting origins fail with a diagnostic. **Build details…** reports participating props, triangles, disabled props, alpha-texture triangles and alpha textures under **Prop mesh shadows**.
-
-Not yet: brush/terrain or colored/refraction transmission, filtered texture edges, per-texel prop lightmaps, reflected prop sources, animated-prop shadows and exact mesh/hull leaf placement. Mesh preparation, alpha decoding and ray traversal share the bounded, cancellable lighting work budget; the [mesh-shadow limits](prop-shadows.md#limits) also bound geometry and asset reads. Binary cutouts do not reproduce native VRAD's fractional texture coverage.
+- `prop_static` compiles model, transform, collision, skin, fading and lighting origin. Inspect **Static props**, **Model assets** and **Leaf references** in **Build details…**. See [Static props](static-props.md) for placement, asset requirements and visibility limits.
+- Models must be MDL version 44 or 48 and compiled with `$staticprop`. **Use VPhysics** needs a matching `.phy`; lit mesh shadows need matching `.vvd` and `.dx90.vtx` files. Missing or unsupported requested assets stop publication and preserve the previous output.
+- **Direct LDR** and **Direct LDR + HDR** trace LOD0 mesh shadows independently of collision. `disableshadows` disables them; `$casttextureshadows` enables supported cutout or translucent textures. See [Static-prop mesh shadows](prop-shadows.md) for material rules, controls and [limits](prop-shadows.md#limits).
 
 ### Static-prop vertex lighting
 

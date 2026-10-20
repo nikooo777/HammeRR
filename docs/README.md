@@ -1,8 +1,6 @@
 # HammeRR manual
 
-This manual covers every HammeRR feature: what it's for, how to use it, and where its limits are.
-
-New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](basics.md) first. The other pages stand on their own.
+Start with [Getting started](getting-started.md) and [Editor basics](basics.md).
 
 ## Using the editor
 
@@ -81,4 +79,3 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | Page | What it covers |
 | --- | --- |
 | [Status and roadmap](status.md) | What works, what's partial, what's next |
-| [Development](development.md) | Project layout, tests, validation scripts, in-game checks |

@@ -1,5 +1,153 @@
 use super::*;
 
+fn nested_opened(actor: Actor) -> (tempfile::TempDir, Session, PathBuf, PathBuf, PathBuf) {
+    let (directory, session, source, middle) = opened(actor, false);
+    let leaf = directory.path().join("leaf.vmf");
+    std::fs::copy(&middle, &leaf).unwrap();
+    let mut child = Document::empty();
+    child
+        .edit("grandchild reference", |tx| {
+            map_core::edit::create_entity(
+                tx,
+                "func_instance",
+                Some(DVec3::ZERO),
+                &[
+                    ("file".into(), "leaf.vmf".into()),
+                    ("angles".into(), "0 0 0".into()),
+                ],
+                Vec::new(),
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    std::fs::write(&middle, child.vmf().write(&Default::default())).unwrap();
+    (directory, session, source, middle, leaf)
+}
+
+#[test]
+fn staged_nested_builds_refuse_changed_grandchildren_and_missing_intermediates_atomically() {
+    for actor in [Actor::User, Actor::Agent] {
+        for change in ["same_size_leaf", "replaced_leaf", "missing_middle"] {
+            let (directory, mut session, source, middle, leaf) = nested_opened(actor);
+            session
+                .create_block(
+                    actor,
+                    DVec3::new(64.0, 64.0, 32.0),
+                    DVec3::new(80.0, 80.0, 48.0),
+                    "dev/dev_measuregeneric01",
+                    false,
+                )
+                .unwrap();
+            let memory = session.document().vmf().clone();
+            let disk = std::fs::read(&source).unwrap();
+            let history = session.history_snapshot();
+            let selection = session.selected_ids();
+            let camera = session.camera();
+            let settings = session.compile_settings();
+            let result = session.begin_compile(actor, None).unwrap().run().unwrap();
+            assert!(result.output.bsp.is_some(), "{:?}", result.output.report);
+            assert!(!result.published());
+            let stats = result.output.stats.instances.as_ref().unwrap();
+            assert_eq!(
+                (stats.instances, stats.files, stats.max_expansion_depth),
+                (2, 2, 2)
+            );
+            assert_eq!(
+                result.output.stats.brushes,
+                session.document().vmf().world.solids.len() + 2
+            );
+            assert!(result.output.instance_dependencies.is_some());
+            match change {
+                "same_size_leaf" => change_child(&leaf),
+                "replaced_leaf" => {
+                    let replacement = directory.path().join("identical-replacement.vmf");
+                    std::fs::copy(&leaf, &replacement).unwrap();
+                    std::fs::rename(replacement, &leaf).unwrap();
+                }
+                "missing_middle" => std::fs::remove_file(&middle).unwrap(),
+                _ => unreachable!(),
+            }
+            let result = Ok(result);
+            session.finish_compile(actor, &result);
+            assert!(!result.as_ref().unwrap().published(), "{change}");
+            assert!(
+                result.as_ref().unwrap().publication_error().is_some(),
+                "{change}"
+            );
+            assert_ne!(session.compile_status()["job"]["status"], "completed");
+            assert!(session.launch_readiness().is_err());
+            assert_eq!(
+                std::fs::read(source.with_extension("bsp")).unwrap(),
+                b"previous BSP"
+            );
+            assert_eq!(
+                std::fs::read(source.with_extension("lin")).unwrap(),
+                b"previous pointfile"
+            );
+            assert_eq!(session.document().vmf(), &memory);
+            assert_eq!(std::fs::read(&source).unwrap(), disk);
+            assert_eq!(session.history_snapshot(), history);
+            assert_eq!(session.selected_ids(), selection);
+            assert_eq!(session.camera(), camera);
+            assert_eq!(session.compile_settings(), settings);
+        }
+    }
+}
+
+#[test]
+fn published_nested_builds_stale_and_refuse_a_prepared_launch_after_grandchild_changes() {
+    for actor in [Actor::User, Actor::Agent] {
+        let (_directory, mut session, source, _middle, leaf) = nested_opened(actor);
+        let memory = session.document().vmf().clone();
+        let disk = std::fs::read(&source).unwrap();
+        let history = session.history_snapshot();
+        let selection = session.selected_ids();
+        let camera = session.camera();
+        let result = session.begin_compile(actor, None).unwrap().run();
+        session.finish_compile(actor, &result);
+        assert!(result.as_ref().unwrap().published());
+        assert_eq!(session.compile_status()["job"]["status"], "completed");
+        assert_eq!(session.compile_status()["job"]["stale"], false);
+        assert_eq!(session.baked_lightmap_build_state()["status"], "current");
+        assert!(session.launch_readiness().is_ok());
+        let output = std::fs::read(source.with_extension("bsp")).unwrap();
+        let request = session.begin_launch(actor).unwrap();
+        let origin = request.origin();
+        request.verify_instance_dependencies().unwrap();
+        change_child(&leaf);
+        assert!(request.verify_instance_dependencies().is_err());
+        let launch = request.run();
+        assert!(launch.is_err());
+        assert!(
+            session
+                .finish_launch(actor, &origin, launch)
+                .err()
+                .unwrap()
+                .contains("Instance source/dependencies changed")
+        );
+        let status = session.compile_status();
+        assert_eq!(status["job"]["status"], "completed");
+        assert_eq!(status["job"]["stale"], true);
+        assert_eq!(status["job"]["instance_dependencies"]["current"], false);
+        assert_eq!(status["launch"]["ready"], false);
+        assert_eq!(session.baked_lightmap_build_state()["status"], "stale");
+        let inspection = session
+            .inspect_baked_lightmaps(&baked_lightmaps::Query::default())
+            .unwrap();
+        assert_eq!(inspection.report["build"]["status"], "stale");
+        assert_eq!(std::fs::read(source.with_extension("bsp")).unwrap(), output);
+        assert_eq!(
+            std::fs::read(source.with_extension("lin")).unwrap(),
+            b"previous pointfile"
+        );
+        assert_eq!(session.document().vmf(), &memory);
+        assert_eq!(std::fs::read(&source).unwrap(), disk);
+        assert_eq!(session.history_snapshot(), history);
+        assert_eq!(session.selected_ids(), selection);
+        assert_eq!(session.camera(), camera);
+    }
+}
+
 fn opened(actor: Actor, leak: bool) -> (tempfile::TempDir, Session, PathBuf, PathBuf) {
     let (directory, game, source, child) = crate::test_assets::instance_map(leak);
     let mut session = Session::new(Ok(game));

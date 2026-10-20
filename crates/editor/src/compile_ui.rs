@@ -799,11 +799,15 @@ impl Controller {
             .map(|_| {
                 let stats = &result["stats"]["instances"];
                 let mut summary = format!(
-                    "\nInstances: {} · Files: {} · World brushes: {} · Detail brushes: {}",
+                    "\nInstances: {} · Files: {} · World brushes: {} · Detail brushes: {} · Nesting depth: {}",
                     stats["instances"].as_u64().unwrap_or_default(),
                     stats["files"].as_u64().unwrap_or_default(),
                     stats["world_brushes"].as_u64().unwrap_or_default(),
-                    stats["detail_brushes"].as_u64().unwrap_or_default()
+                    stats["detail_brushes"].as_u64().unwrap_or_default(),
+                    stats["max_expansion_depth"]
+                        .as_u64()
+                        .map(|depth| depth.to_string())
+                        .unwrap_or_else(|| "unavailable".into())
                 );
                 for dependency in stats["dependencies"]
                     .as_array()

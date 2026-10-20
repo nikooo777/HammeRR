@@ -56,7 +56,7 @@ export component InstanceContentsWindow inherits Window {
             Text { text: root.page-summary; color: #94a6ba; vertical-alignment: center; horizontal-stretch: 1; }
             Button { text: "Next"; enabled: root.has-next; clicked => { root.next(); } }
         }
-        Text { text: "Flat reference geometry · root owner selection only\nNo child edits, material preview, nested instances or surface placement. Refresh after source changes."; color: #94a6ba; font-size: 12px; wrap: word-wrap; }
+        Text { text: "Four helper levels · root-relative VMF paths · root owner selection\nNo child edits, material preview or surface placement. Refresh after source changes."; color: #94a6ba; font-size: 12px; wrap: word-wrap; }
         if root.message != "": Text { text: root.message; color: #f0b377; wrap: word-wrap; }
         Button { text: "Close"; clicked => { root.close-dialog(); } }
     }

@@ -281,23 +281,34 @@ exact build token to cancel capture. There is no peer stop, native retry or new
 manual-game discovery. Lower capture preflight retains its existing
 same-installation running-client rejection.
 
-A saved parent can compile bounded single-level world/detail brush instances;
-see [Referenced brush assemblies](instances.md). `create_entity` uses
+A saved parent can compile nested world/detail brush instances through four
+helper levels, counting a root helper as level one; see
+[Referenced brush assemblies](instances.md). `create_entity` uses
 `classname: "func_instance"`, an origin and string properties `file` (relative
 `.vmf`) and optional `angles` (Source pitch/yaw/roll). The current in-memory parent
 is authoritative. Unsaved untitled parents, unsupported contents and visible
 `func_instance_parms` reject; hidden helpers are excluded.
 
+Every filename, including a nested reference, is relative to the saved root
+parent's referring directory, not the containing child's directory. The global
+limits are 256 visible helper occurrences and 32 distinct normalized requested
+paths, with 4 MiB per file and 32 MiB total source bytes plus bounded parsing
+and geometry work. Ancestor physical-identity cycles reject; repeated siblings
+and shared descendants are allowed within those limits. Root settings remain
+authoritative.
+
 `compile_map`, `start_compile` and `run_map` use the same automatic expansion
 before region selection. Optional `stats.instances` contains occurrence/file/
-world/detail counts and dependency paths, bytes and SHA256. Completed instance
-jobs report `instance_dependencies.current/error`; `stale`, launch readiness
-and baked inspection include the retained build's dependencies. Launch verifies
-exact contents in its worker. Source/settings changes, dependency failures and
-cancellation preserve previous BSP/pointfile bytes. **Generate reflections**
-with instances rejects; nested/runtime-name expansion remains unavailable. The
-explicitly refreshed flat reference layer is separate from compilation. `run_map_checks` performs only pure helper-field/path-state
-admission, leaving child reads and complete validation to compilation.
+world/detail counts, `max_expansion_depth` and dependency paths, bytes and SHA256.
+Completed instance jobs report `instance_dependencies.current/error`; `stale`,
+launch readiness and baked inspection include the retained build's dependencies.
+Launch verifies exact contents in its worker. Source/settings changes, dependency failures and
+cancellation preserve previous BSP/pointfile bytes. Every transitive dependency
+participates in these checks. **Generate reflections** with instances rejects;
+runtime entities, child terrain, replacements and scoped names remain unsupported.
+The explicitly refreshed flat reference layer is separate from compilation.
+`run_map_checks` performs only pure helper-field/path-state admission, leaving
+child reads and complete validation to explicit Refresh or compilation.
 
 ## Extract a brush assembly
 
@@ -338,7 +349,9 @@ path admission; it does not copy or search. `review` transfers the form with a n
 token. Create/Edit applies one Undo step and preserves untouched imported data.
 Source/save/revision/definition changes and competing drafts reject stale work.
 `contents_validation:"not_checked"` means path/presence only; explicit Refresh or
-Compile performs child-content admission. See [Instance authoring](instance-authoring.md).
+Compile performs child-content admission, including all nested descendants.
+Opening a child as a standalone map makes its referring directory the new root
+for relative references. See [Instance authoring](instance-authoring.md).
 
 `inspect_instance_contents` reads the default-off reference layer's state,
 source/dependency identities, transforms, bounds, counts and diagnostics without
@@ -346,7 +359,14 @@ loading child bytes or initializing graphics. `offset` and `limit` page at most
 64 owners. `set_instance_contents` accepts `action:"refresh"` and optional
 `background:true`; poll inspection for completion. Refresh resolves the current
 immutable parent outside the Session lock and evicts any earlier effective layer.
-One missing or unsupported visible child fails the complete layer.
+One missing or unsupported visible descendant fails the complete layer. A stale
+grandchild makes the whole layer unavailable.
+
+`owners[].file` retains the normalized root reference; `brushes[].file` and
+`face_provenance[].file` name the true leaf beside its original solid/side IDs.
+Repeated placements can share those leaf identities. Picking and framing retain
+the root helper owner.
+
 Inspection's `worker_active` remains true until the owned request/result retires;
 `loading` retains its existing pending-request meaning. Cancellation and buffer
 replacement do not permit a second worker while physical cleanup is active.
@@ -1818,6 +1838,10 @@ source matches are paginated with `offset`/`limit`. `contributor_offset` pages
 contributors of the inspected compiled face. Choosing inspection rows leaves
 editor selection/camera and owned drafts unchanged. Instance filenames only
 match retained origins and authorize no file lookup.
+
+For nested instances, `instance` is the root helper and `file` is the true leaf.
+Repeated placements can share the same root-helper/leaf/solid/side tuple and
+return multiple matches; that tuple is not a unique placement identifier.
 
 The JSON report contains build provenance/status, both channel availabilities,
 paginated compiled-face summaries, selected dimensions/styles/sample byte ranges,

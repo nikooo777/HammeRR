@@ -179,3 +179,122 @@ fn unavailable_inspection_metadata_preserves_successful_bsp_publication() {
     assert_eq!(std::fs::read(path).unwrap(), bytes);
     assert!(!output.report.has_errors());
 }
+
+#[test]
+fn nested_same_id_leaves_keep_file_scopes_and_repeated_authored_sources() {
+    use glam::DVec3;
+    use map_core::{Document, edit};
+    use source_formats::vmf::Entity;
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let directory = tempfile::tempdir().unwrap();
+    let mut leaf = Document::empty();
+    leaf.edit("leaf box", |tx| {
+        edit::create_block(
+            tx,
+            DVec3::new(-8.0, -8.0, 16.0),
+            DVec3::new(8.0, 8.0, 32.0),
+            "dev/instance_first",
+        )?;
+        Ok(())
+    })
+    .unwrap();
+    let first = leaf.into_vmf();
+    let mut second = first.clone();
+    for side in &mut second.world.solids[0].sides {
+        side.material = "dev/instance_second".into();
+    }
+    let mut middle = Document::empty().into_vmf();
+    for (id, file, origin) in [
+        (100, "first.vmf", "-48 0 0"),
+        (101, "second.vmf", "0 0 0"),
+        (102, "first.vmf", "48 0 0"),
+    ] {
+        let mut helper = Entity::new(id, "func_instance");
+        helper.properties.set("file", file);
+        helper.properties.set("origin", origin);
+        middle.entities.push(helper);
+    }
+    let mut parent = test_common::room();
+    let owner = parent.object_ids().max().unwrap() + 1;
+    let mut helper = Entity::new(owner, "func_instance");
+    helper.properties.set("file", "middle.vmf");
+    parent.entities.push(helper);
+    for (file, vmf) in [
+        ("first.vmf", &first),
+        ("second.vmf", &second),
+        ("middle.vmf", &middle),
+        ("parent.vmf", &parent),
+    ] {
+        std::fs::write(directory.path().join(file), vmf.write(&Default::default())).unwrap();
+    }
+    let control = Control::default();
+    let context =
+        instances::SourceContext::capture(&directory.path().join("parent.vmf"), &control).unwrap();
+    let output = crate::compile_with_source_controlled(
+        &parent,
+        &test_common::empty_game(),
+        crate::Options::default(),
+        None,
+        Some(&context),
+        &control,
+    );
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    let stats = output.stats.instances.as_ref().unwrap();
+    assert_eq!(
+        (stats.instances, stats.files, stats.max_expansion_depth),
+        (4, 3, 2)
+    );
+    let origins = output.face_origins.as_ref().unwrap();
+    let bsp = output.bsp.as_ref().unwrap();
+    origins.validate_channel(bsp, LightingKind::Ldr).unwrap();
+    let original_solid = first.world.solids[0].id;
+    let original_sides = first.world.solids[0]
+        .sides
+        .iter()
+        .map(|side| side.id)
+        .collect::<BTreeSet<_>>();
+    let mut references = BTreeMap::<(String, u32), usize>::new();
+    for face in 0..origins.len() {
+        for origin in origins.contributors(face).unwrap() {
+            if let Origin::Instance {
+                instance,
+                file,
+                solid,
+                side,
+            } = origin
+            {
+                assert_eq!(*instance, owner);
+                assert!(
+                    matches!(file.as_str(), "first.vmf" | "second.vmf"),
+                    "{origin:?}"
+                );
+                assert_eq!(*solid, original_solid);
+                assert!(original_sides.contains(side), "{origin:?}");
+                *references.entry((file.clone(), *side)).or_default() += 1;
+            }
+        }
+    }
+    for side in original_sides {
+        assert!(
+            references
+                .get(&("first.vmf".into(), side))
+                .copied()
+                .unwrap_or(0)
+                >= 2
+        );
+        assert!(
+            references
+                .get(&("second.vmf".into(), side))
+                .copied()
+                .unwrap_or(0)
+                >= 1
+        );
+    }
+    output
+        .instance_dependencies
+        .as_ref()
+        .unwrap()
+        .verify(&control)
+        .unwrap();
+}

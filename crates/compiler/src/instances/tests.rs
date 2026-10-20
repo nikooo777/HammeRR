@@ -1,11 +1,859 @@
 use super::*;
 use crate::{Options, compile_with_source_controlled, test_common};
 use glam::DMat3;
+use map_core::edit;
 use source_formats::{
     gamefs::{GameFs, Mount, MountedPath},
     keyvalues::Node,
     vmf::format_vec3,
 };
+
+fn nested_helper(id: u32, file: &str, origin: &str, angles: &str) -> Entity {
+    let mut helper = Entity::new(id, "func_instance");
+    helper.properties.set("file", file);
+    helper.properties.set("origin", origin);
+    helper.properties.set("angles", angles);
+    helper
+}
+
+fn helper_file(entities: Vec<Entity>) -> Vmf {
+    let mut vmf = Document::empty().into_vmf();
+    vmf.entities = entities;
+    vmf
+}
+
+fn write_child(directory: &Path, name: &str, child: &Vmf) {
+    std::fs::write(directory.join(name), child.write(&Default::default())).unwrap();
+}
+
+fn manual_flat_brushes(parent: &Vmf, brushes: &[(&Solid, bool, DVec3)]) -> Vmf {
+    let mut document = Document::new(parent.clone());
+    document
+        .edit("literal flat control", |tx| {
+            for (original, detail, translation) in brushes {
+                let mut solid = manual_solid(original, *translation, DVec3::ZERO);
+                solid.id = tx.new_object_id()?;
+                for side in &mut solid.sides {
+                    side.id = tx.new_side_id()?;
+                }
+                if *detail {
+                    let mut entity = Entity::new(tx.new_object_id()?, "func_detail");
+                    entity.solids.push(solid);
+                    tx.add_entity(entity)?;
+                } else {
+                    tx.add_solid(solid)?;
+                }
+            }
+            for helper in parent.entities.iter().filter(|entity| {
+                entity
+                    .classname()
+                    .is_some_and(|class| class.eq_ignore_ascii_case("func_instance"))
+            }) {
+                tx.remove(ObjectId::Entity(helper.id))?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    document.into_vmf()
+}
+
+#[test]
+fn nested_noncommuting_transforms_preserve_literal_points_normals_and_attached_uvs() {
+    for (angles, outer_matrix) in [
+        ("0 90 0", DMat3::from_cols(DVec3::Y, -DVec3::X, DVec3::Z)),
+        (
+            "20 35 10",
+            DMat3::from_cols(
+                DVec3::new(0.7697511313200572, 0.5389855446957562, -0.3420201433256687),
+                DVec3::new(-0.5162121193659357, 0.8407726623973337, 0.16317591116653482),
+                DVec3::new(
+                    0.37551064385876115,
+                    0.050_950_100_827_363_06,
+                    0.9254165783983234,
+                ),
+            ),
+        ),
+    ] {
+        let (directory, mut parent, child, _) = fixture();
+        let root = parent.entities.last_mut().unwrap();
+        root.properties.set("file", "middle.vmf");
+        root.properties.set("origin", "80.125 16.375 8.0625");
+        root.properties.set("angles", angles);
+        let owner = root.id;
+        write_child(
+            directory.path(),
+            "middle.vmf",
+            &helper_file(vec![nested_helper(
+                100,
+                "child.vmf",
+                "4.5 -6.25 12.125",
+                "90 0 0",
+            )]),
+        );
+        let before = parent.clone();
+        let child_bytes = std::fs::read(directory.path().join("child.vmf")).unwrap();
+        let parent_bytes = std::fs::read(directory.path().join("parent.vmf")).unwrap();
+        let context = source(directory.path());
+        let mut report = Report::default();
+        let prepared = prepare(&parent, Some(&context), &Control::default(), &mut report).unwrap();
+        let stats = prepared.stats().unwrap();
+        assert_eq!(
+            (stats.instances, stats.files, stats.max_expansion_depth),
+            (2, 2, 2)
+        );
+        assert_eq!((stats.world_brushes, stats.detail_brushes), (1, 1));
+        let generated = prepared.generated_brushes().collect::<Vec<_>>();
+        assert_eq!(generated.len(), 2);
+        for (actual, original) in generated.iter().zip(child.solids()) {
+            assert_eq!(
+                (actual.owner, actual.file, actual.original),
+                (owner, "child.vmf", original.id)
+            );
+            for (side, original_side) in actual.solid.sides.iter().zip(&original.sides) {
+                for (point, original_point) in side.plane.0.iter().zip(original_side.plane.0) {
+                    let inner = DVec3::new(
+                        original_point.z + 4.5,
+                        original_point.y - 6.25,
+                        -original_point.x + 12.125,
+                    );
+                    let expected = outer_matrix * inner + DVec3::new(80.125, 16.375, 8.0625);
+                    assert!(
+                        point.abs_diff_eq(expected, 1e-8),
+                        "{angles}: {point:?} != {expected:?}"
+                    );
+                    assert!(
+                        map_core::texel_uv(side, expected)
+                            .abs_diff_eq(map_core::texel_uv(original_side, original_point), 1e-8)
+                    );
+                }
+                let normal = map_core::Plane::from_points(original_side.plane.0)
+                    .unwrap()
+                    .normal;
+                let expected = outer_matrix * DVec3::new(normal.z, normal.y, -normal.x);
+                let actual = map_core::Plane::from_points(side.plane.0).unwrap().normal;
+                assert!(
+                    actual.abs_diff_eq(expected, 1e-8),
+                    "{angles}: {actual:?} != {expected:?}"
+                );
+                assert_eq!(
+                    prepared.face_origin(side.id).unwrap(),
+                    (owner, "child.vmf", original.id, original_side.id),
+                );
+            }
+        }
+        prepared.vmf.validate_ids().unwrap();
+        assert_eq!(parent, before);
+        assert_eq!(
+            std::fs::read(directory.path().join("parent.vmf")).unwrap(),
+            parent_bytes
+        );
+        assert_eq!(
+            std::fs::read(directory.path().join("child.vmf")).unwrap(),
+            child_bytes
+        );
+    }
+}
+
+#[test]
+fn nested_authored_order_and_outside_markers_match_a_literal_flat_region_control() {
+    let (directory, mut parent, mut leaf, game) = fixture();
+    for solid in leaf.world.solids.iter_mut().chain(
+        leaf.entities
+            .iter_mut()
+            .flat_map(|entity| &mut entity.solids),
+    ) {
+        for side in &mut solid.sides {
+            for point in &mut side.plane.0 {
+                point.x -= 512.0;
+            }
+        }
+    }
+    write_child(directory.path(), "child.vmf", &leaf);
+    let mut middle = leaf.clone();
+    middle
+        .entities
+        .insert(0, nested_helper(10_000, "child.vmf", "0 64 0", "0 0 0"));
+    write_child(directory.path(), "middle.vmf", &middle);
+    let root = parent.entities.last_mut().unwrap();
+    root.properties.set("file", "middle.vmf");
+    root.properties.set("origin", "512 0 0");
+    parent.cordon = Some(Node::block(
+        "cordon",
+        vec![
+            Node::string("active", "1"),
+            Node::string("mins", "-128 -128 0"),
+            Node::string("maxs", "128 128 256"),
+        ],
+    ));
+    let expected = manual_flat_brushes(
+        &parent,
+        &[
+            (&middle.world.solids[0], false, DVec3::new(512.0, 0.0, 0.0)),
+            (&leaf.world.solids[0], false, DVec3::new(512.0, 64.0, 0.0)),
+            (
+                &leaf.entities[0].solids[0],
+                true,
+                DVec3::new(512.0, 64.0, 0.0),
+            ),
+            (
+                &middle.entities[1].solids[0],
+                true,
+                DVec3::new(512.0, 0.0, 0.0),
+            ),
+        ],
+    );
+    let context = source(directory.path());
+    let actual = compiled(&parent, &game, &context);
+    let control = crate::compile(&expected, &game);
+    assert!(!actual.report.has_errors(), "{:?}", actual.report);
+    assert!(!control.report.has_errors(), "{:?}", control.report);
+    assert_eq!(
+        actual.bsp.as_ref().unwrap().to_bytes(),
+        control.bsp.as_ref().unwrap().to_bytes()
+    );
+    assert!(actual.stats.compile_region.is_some());
+    let stats = actual.stats.instances.as_ref().unwrap();
+    assert_eq!(
+        (stats.instances, stats.files, stats.max_expansion_depth),
+        (2, 2, 2)
+    );
+    assert_eq!((stats.world_brushes, stats.detail_brushes), (2, 2));
+}
+
+#[test]
+fn cached_shared_leaves_and_repeated_siblings_keep_root_owners_and_unique_generated_ids() {
+    let (directory, mut parent, child, _) = fixture();
+    write_child(
+        directory.path(),
+        "a.vmf",
+        &helper_file(vec![
+            nested_helper(100, "child.vmf", "-64 0 0", "0 0 0"),
+            nested_helper(101, "child.vmf", "0 0 0", "0 0 0"),
+        ]),
+    );
+    write_child(
+        directory.path(),
+        "b.vmf",
+        &helper_file(vec![nested_helper(100, "child.vmf", "0 0 0", "0 0 0")]),
+    );
+    let first = parent.entities.last_mut().unwrap();
+    first.properties.set("file", "a.vmf");
+    first.properties.set("origin", "0 0 0");
+    let first_owner = first.id;
+    let second_owner = first_owner + 1;
+    parent
+        .entities
+        .push(nested_helper(second_owner, "b.vmf", "64 0 0", "0 0 0"));
+    let context = source(directory.path());
+    let mut report = Report::default();
+    let prepared = prepare(&parent, Some(&context), &Control::default(), &mut report).unwrap();
+    prepared.vmf.validate_ids().unwrap();
+    let stats = prepared.stats().unwrap();
+    assert_eq!(
+        (stats.instances, stats.files, stats.max_expansion_depth),
+        (5, 3, 2)
+    );
+    assert_eq!((stats.world_brushes, stats.detail_brushes), (3, 3));
+    assert_eq!(
+        stats
+            .dependencies
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect::<Vec<_>>(),
+        ["a.vmf", "b.vmf", "child.vmf"],
+    );
+    let brushes = prepared.generated_brushes().collect::<Vec<_>>();
+    assert_eq!(
+        brushes
+            .iter()
+            .filter(|brush| brush.owner == first_owner)
+            .count(),
+        4
+    );
+    assert_eq!(
+        brushes
+            .iter()
+            .filter(|brush| brush.owner == second_owner)
+            .count(),
+        2
+    );
+    assert!(brushes.iter().all(|brush| brush.file == "child.vmf"));
+    let original = child.world.solids[0].id;
+    let first_origins = brushes
+        .iter()
+        .filter(|brush| brush.owner == first_owner && !brush.detail)
+        .map(|brush| prepared.face_origin(brush.solid.sides[0].id).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        first_origins,
+        vec![
+            (
+                first_owner,
+                "child.vmf",
+                original,
+                child.world.solids[0].sides[0].id
+            );
+            2
+        ]
+    );
+    let control = Control::default();
+    prepared.dependencies().unwrap().verify(&control).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn nested_paths_stay_root_relative_through_a_saved_root_alias() {
+    use std::os::unix::fs::symlink;
+    let (directory, mut parent, child, _) = fixture();
+    let modules = directory.path().join("modules");
+    let physical = directory.path().join("physical");
+    std::fs::create_dir(&modules).unwrap();
+    std::fs::create_dir(&physical).unwrap();
+    write_child(directory.path(), "leaf.vmf", &child);
+    let mut wrong_leaf = child.clone();
+    for solid in &mut wrong_leaf.world.solids {
+        for side in &mut solid.sides {
+            for point in &mut side.plane.0 {
+                point.x += 64.0;
+            }
+        }
+    }
+    write_child(&modules, "leaf.vmf", &wrong_leaf);
+    write_child(
+        &modules,
+        "middle.vmf",
+        &helper_file(vec![nested_helper(100, "leaf.vmf", "0 0 0", "0 0 0")]),
+    );
+    let root = parent.entities.last_mut().unwrap();
+    root.properties.set("file", r".\modules\middle.vmf");
+    root.properties.set("origin", "0 0 0");
+    assert_eq!(
+        filename(r".\modules\middle.vmf").unwrap(),
+        "modules/middle.vmf"
+    );
+    write_child(&physical, "root.vmf", &parent);
+    let alias = directory.path().join("root-alias.vmf");
+    symlink(physical.join("root.vmf"), &alias).unwrap();
+    let context = SourceContext::capture(&alias, &Control::default()).unwrap();
+    let prepared = resolve(
+        &parent,
+        Some(&context),
+        &Control::default(),
+        &mut Report::default(),
+    )
+    .unwrap();
+    let brushes = prepared.generated_brushes().collect::<Vec<_>>();
+    assert_eq!(brushes.len(), 2);
+    assert!(brushes.iter().all(|brush| brush.file == "leaf.vmf"));
+    assert_eq!(
+        brushes[0].solid.sides[0].plane.0,
+        child.world.solids[0].sides[0].plane.0
+    );
+    assert_eq!(
+        prepared
+            .stats()
+            .unwrap()
+            .dependencies
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect::<Vec<_>>(),
+        ["leaf.vmf", "modules/middle.vmf"],
+    );
+    std::fs::write(
+        modules.join("leaf.vmf"),
+        b"unused child-relative decoy changed",
+    )
+    .unwrap();
+    prepared
+        .dependencies()
+        .unwrap()
+        .verify(&Control::default())
+        .unwrap();
+    let used = directory.path().join("leaf.vmf");
+    let mut changed = std::fs::read(&used).unwrap();
+    changed.extend_from_slice(b"\n// changed used root leaf\n");
+    std::fs::write(used, changed).unwrap();
+    assert!(
+        prepared
+            .dependencies()
+            .unwrap()
+            .verify(&Control::default())
+            .is_err()
+    );
+}
+
+#[test]
+fn four_helper_levels_and_global_nested_occurrence_limits_are_independent() {
+    let (directory, mut parent, _, _) = fixture();
+    let names = ["one.vmf", "two.vmf", "three.vmf", "four.vmf"];
+    for (index, name) in names.iter().enumerate() {
+        let children = names
+            .get(index + 1)
+            .map(|next| vec![nested_helper(100, next, "0 0 0", "0 0 0")])
+            .unwrap_or_default();
+        write_child(directory.path(), name, &helper_file(children));
+    }
+    let root = parent.entities.last_mut().unwrap();
+    root.properties.set("file", "one.vmf");
+    root.properties.set("origin", "0 0 0");
+    let context = source(directory.path());
+    let prepared = prepare(
+        &parent,
+        Some(&context),
+        &Control::default(),
+        &mut Report::default(),
+    )
+    .unwrap();
+    let stats = prepared.stats().unwrap();
+    assert_eq!(
+        (stats.instances, stats.files, stats.max_expansion_depth),
+        (4, 4, 4)
+    );
+    write_child(
+        directory.path(),
+        "four.vmf",
+        &helper_file(vec![nested_helper(
+            100,
+            "unread-fifth.vmf",
+            "0 0 0",
+            "0 0 0",
+        )]),
+    );
+    let error = prepare(
+        &parent,
+        Some(&context),
+        &Control::default(),
+        &mut Report::default(),
+    )
+    .err()
+    .unwrap();
+    assert!(error.message.contains("4 helper levels"), "{error:?}");
+    assert!(!error.message.contains("No such file"), "{error:?}");
+
+    let mut middle = helper_file(
+        (0..255)
+            .map(|index| nested_helper(index + 2, "empty.vmf", "0 0 0", "0 0 0"))
+            .collect(),
+    );
+    write_child(directory.path(), "empty.vmf", &helper_file(Vec::new()));
+    write_child(directory.path(), "one.vmf", &middle);
+    let prepared = prepare(
+        &parent,
+        Some(&context),
+        &Control::default(),
+        &mut Report::default(),
+    )
+    .unwrap();
+    let stats = prepared.stats().unwrap();
+    assert_eq!(
+        (stats.instances, stats.files, stats.max_expansion_depth),
+        (256, 2, 2)
+    );
+    assert_eq!((stats.world_brushes, stats.detail_brushes), (0, 0));
+    middle
+        .entities
+        .push(nested_helper(257, "empty.vmf", "0 0 0", "0 0 0"));
+    write_child(directory.path(), "one.vmf", &middle);
+    let error = prepare(
+        &parent,
+        Some(&context),
+        &Control::default(),
+        &mut Report::default(),
+    )
+    .err()
+    .unwrap();
+    assert!(
+        error.message.contains("256 total helper occurrences"),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn nested_file_limit_is_global_and_checked_before_reading_an_extra_path() {
+    let (directory, mut parent, _, _) = fixture();
+    let mut middle = helper_file(Vec::new());
+    for index in 0..31 {
+        let file = format!("leaf{index}.vmf");
+        write_child(directory.path(), &file, &helper_file(Vec::new()));
+        middle
+            .entities
+            .push(nested_helper(index + 100, &file, "0 0 0", "0 0 0"));
+    }
+    write_child(directory.path(), "middle.vmf", &middle);
+    parent
+        .entities
+        .last_mut()
+        .unwrap()
+        .properties
+        .set("file", "middle.vmf");
+    let context = source(directory.path());
+    let prepared = prepare(
+        &parent,
+        Some(&context),
+        &Control::default(),
+        &mut Report::default(),
+    )
+    .unwrap();
+    let stats = prepared.stats().unwrap();
+    assert_eq!(
+        (stats.instances, stats.files, stats.max_expansion_depth),
+        (32, 32, 2)
+    );
+    middle
+        .entities
+        .push(nested_helper(999, "unread-extra.vmf", "0 0 0", "0 0 0"));
+    write_child(directory.path(), "middle.vmf", &middle);
+    let error = prepare(
+        &parent,
+        Some(&context),
+        &Control::default(),
+        &mut Report::default(),
+    )
+    .err()
+    .unwrap();
+    assert!(error.message.contains("32 unique files"), "{error:?}");
+}
+
+#[test]
+fn active_cached_ancestors_reject_cycles_while_hidden_references_never_resolve() {
+    let (directory, mut parent, _, game) = fixture();
+    write_child(
+        directory.path(),
+        "a.vmf",
+        &helper_file(vec![nested_helper(100, "b.vmf", "0 0 0", "0 0 0")]),
+    );
+    write_child(
+        directory.path(),
+        "b.vmf",
+        &helper_file(vec![nested_helper(100, "a.vmf", "0 0 0", "0 0 0")]),
+    );
+    let root = parent.entities.last_mut().unwrap();
+    root.properties.set("file", "a.vmf");
+    let owner = root.id;
+    let before = parent.clone();
+    let context = source(directory.path());
+    let output = compiled(&parent, &game, &context);
+    assert!(output.bsp.is_none());
+    let error = output.report.diagnostics.last().unwrap();
+    assert_eq!(error.object, Some(format!("entity:{owner}")));
+    assert!(
+        error.message.contains("cycle") && error.message.contains("a.vmf"),
+        "{error:?}"
+    );
+    assert_eq!(parent, before);
+
+    let mut hidden = nested_helper(100, "../unread.vmf", "bad", "bad");
+    hidden.hidden = true;
+    write_child(
+        directory.path(),
+        "a.vmf",
+        &helper_file(vec![hidden.clone()]),
+    );
+    let prepared = prepare(
+        &parent,
+        Some(&context),
+        &Control::default(),
+        &mut Report::default(),
+    )
+    .unwrap();
+    let stats = prepared.stats().unwrap();
+    assert_eq!(
+        (stats.instances, stats.files, stats.max_expansion_depth),
+        (1, 1, 1)
+    );
+    assert_eq!(stats.dependencies[0].path, "a.vmf");
+    hidden.hidden = false;
+    hidden.properties.set("file", "child.vmf");
+    hidden.properties.set("origin", "0 0 0");
+    hidden.properties.set("angles", "0 0 0");
+    hidden.properties.set("parentname", "unsupported");
+    write_child(directory.path(), "a.vmf", &helper_file(vec![hidden]));
+    let error = prepare(
+        &parent,
+        Some(&context),
+        &Control::default(),
+        &mut Report::default(),
+    )
+    .err()
+    .unwrap();
+    assert!(
+        error.message.contains("a.vmf") && error.message.contains("Child instance 100"),
+        "{error:?}"
+    );
+    assert!(error.message.contains("parentname"), "{error:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn nested_hard_link_cycles_reject_physical_ancestors_and_the_saved_root() {
+    for root_alias in [false, true] {
+        let (directory, mut parent, _, _) = fixture();
+        let alias = if root_alias {
+            "root-alias.vmf"
+        } else {
+            "a-alias.vmf"
+        };
+        write_child(
+            directory.path(),
+            "a.vmf",
+            &helper_file(vec![nested_helper(100, alias, "0 0 0", "0 0 0")]),
+        );
+        std::fs::hard_link(
+            directory
+                .path()
+                .join(if root_alias { "parent.vmf" } else { "a.vmf" }),
+            directory.path().join(alias),
+        )
+        .unwrap();
+        parent
+            .entities
+            .last_mut()
+            .unwrap()
+            .properties
+            .set("file", "a.vmf");
+        let context = source(directory.path());
+        let error = prepare(
+            &parent,
+            Some(&context),
+            &Control::default(),
+            &mut Report::default(),
+        )
+        .err()
+        .unwrap();
+        assert!(
+            error.message.contains("ancestor reference cycle"),
+            "{error:?}"
+        );
+        assert!(error.message.contains(alias), "{error:?}");
+        assert!(!error.message.contains("helper levels"), "{error:?}");
+    }
+}
+
+#[test]
+fn an_out_of_bounds_intermediate_rejects_even_when_the_final_translation_would_fit() {
+    let (directory, mut parent, child, _) = fixture();
+    write_child(
+        directory.path(),
+        "middle.vmf",
+        &helper_file(vec![nested_helper(100, "child.vmf", "16360 0 0", "0 0 0")]),
+    );
+    let root = parent.entities.last_mut().unwrap();
+    root.properties.set("file", "middle.vmf");
+    root.properties.set("origin", "-16360 0 0");
+    let before = parent.clone();
+    let context = source(directory.path());
+    let error = prepare(
+        &parent,
+        Some(&context),
+        &Control::default(),
+        &mut Report::default(),
+    )
+    .err()
+    .unwrap();
+    assert!(error.message.contains("compile bounds"), "{error:?}");
+    let expected = manual_flat_brushes(
+        &parent,
+        &[
+            (&child.world.solids[0], false, DVec3::ZERO),
+            (&child.entities[0].solids[0], true, DVec3::ZERO),
+        ],
+    );
+    for solid in expected.solids() {
+        assert!(checked_solid(solid).is_ok());
+    }
+    assert_eq!(parent, before);
+}
+
+#[test]
+fn transitive_dependency_changes_after_staging_preserve_bsp_and_leak_outputs() {
+    for leaking in [false, true] {
+        for mutation in [
+            "leaf_bytes",
+            "leaf_inode",
+            "middle_missing",
+            "directory_rebind",
+        ] {
+            let (directory, mut parent, child, game) = fixture();
+            let modules = directory.path().join("modules");
+            std::fs::create_dir(&modules).unwrap();
+            write_child(&modules, "leaf.vmf", &child);
+            write_child(
+                &modules,
+                "middle.vmf",
+                &helper_file(vec![nested_helper(
+                    100,
+                    "modules/leaf.vmf",
+                    "0 0 0",
+                    "0 0 0",
+                )]),
+            );
+            let root = parent.entities.last_mut().unwrap();
+            root.properties.set("file", "modules/middle.vmf");
+            root.properties.set("origin", "0 0 0");
+            if leaking {
+                parent.world.solids.remove(0);
+            }
+            let before = parent.clone();
+            let source_bytes = std::fs::read(directory.path().join("parent.vmf")).unwrap();
+            let output = compiled(&parent, &game, &source(directory.path()));
+            assert_eq!(output.bsp.is_some(), !leaking, "{:?}", output.report);
+            assert_eq!(output.leak.is_some(), leaking, "{:?}", output.report);
+            let guard = output.instance_dependencies.as_ref().unwrap();
+            guard.verify(&Control::default()).unwrap();
+            assert_eq!(
+                output
+                    .stats
+                    .instances
+                    .as_ref()
+                    .unwrap()
+                    .dependencies
+                    .iter()
+                    .map(|file| file.path.as_str())
+                    .collect::<Vec<_>>(),
+                ["modules/leaf.vmf", "modules/middle.vmf"],
+            );
+            let destination = directory.path().join("previous.bsp");
+            let lin = destination.with_extension("lin");
+            std::fs::write(&destination, b"previous complete BSP").unwrap();
+            std::fs::write(&lin, b"previous complete LIN").unwrap();
+            let control = Control::default();
+            let lease_path = if leaking { &lin } else { &destination };
+            let lease = crate::OutputLease::acquire(lease_path, &control).unwrap();
+            let staged = output
+                .prepare_write_controlled(&destination, &control)
+                .unwrap()
+                .unwrap();
+            match mutation {
+                "leaf_bytes" => {
+                    let text = std::fs::read_to_string(modules.join("leaf.vmf")).unwrap();
+                    let changed = text.replace("INSTANCE_WORLD", "INSTANCE_OTHER");
+                    assert_eq!(changed.len(), text.len());
+                    assert_ne!(changed, text);
+                    std::fs::write(modules.join("leaf.vmf"), changed).unwrap();
+                }
+                "leaf_inode" => {
+                    let bytes = std::fs::read(modules.join("leaf.vmf")).unwrap();
+                    std::fs::write(modules.join("replacement.vmf"), bytes).unwrap();
+                    std::fs::rename(modules.join("replacement.vmf"), modules.join("leaf.vmf"))
+                        .unwrap();
+                }
+                "middle_missing" => std::fs::remove_file(modules.join("middle.vmf")).unwrap(),
+                "directory_rebind" => {
+                    let old = directory.path().join("old-modules");
+                    std::fs::rename(&modules, &old).unwrap();
+                    std::fs::create_dir(&modules).unwrap();
+                    for name in ["leaf.vmf", "middle.vmf"] {
+                        std::fs::copy(old.join(name), modules.join(name)).unwrap();
+                    }
+                }
+                _ => unreachable!(),
+            }
+            assert!(
+                guard.verify_metadata().is_err(),
+                "{mutation}, leak={leaking}"
+            );
+            assert!(
+                guard.verify(&Control::default()).is_err(),
+                "{mutation}, leak={leaking}"
+            );
+            assert!(
+                staged.commit_checked(&lease, &control).is_err(),
+                "{mutation}, leak={leaking}"
+            );
+            assert_eq!(
+                std::fs::read(&destination).unwrap(),
+                b"previous complete BSP"
+            );
+            assert_eq!(std::fs::read(&lin).unwrap(), b"previous complete LIN");
+            assert_eq!(
+                std::fs::read(directory.path().join("parent.vmf")).unwrap(),
+                source_bytes
+            );
+            assert_eq!(parent, before);
+        }
+    }
+}
+
+#[test]
+fn accepted_cancellation_after_a_real_nested_branch_rolls_back_the_detached_transaction() {
+    let (directory, mut parent, _, game) = fixture();
+    write_child(
+        directory.path(),
+        "middle.vmf",
+        &helper_file(vec![nested_helper(100, "child.vmf", "0 0 0", "0 0 0")]),
+    );
+    let first = parent.entities.last_mut().unwrap();
+    first.properties.set("file", "middle.vmf");
+    first.properties.set("origin", "0 0 0");
+    let second = nested_helper(first.id + 1, "middle.vmf", "64 0 0", "0 0 0");
+    parent.entities.push(second);
+    let before = parent.clone();
+    let old_solids = parent.solids().count();
+    let source_bytes = std::fs::read(directory.path().join("parent.vmf")).unwrap();
+    let child_bytes = std::fs::read(directory.path().join("child.vmf")).unwrap();
+    let destination = directory.path().join("previous.bsp");
+    std::fs::write(&destination, b"previous complete BSP").unwrap();
+    let context = source(directory.path());
+    let control = Control::default();
+    let output = compiled(&parent, &game, &context);
+    assert!(output.bsp.is_some(), "{:?}", output.report);
+    let lease = crate::OutputLease::acquire(&destination, &control).unwrap();
+    let staged = output
+        .prepare_write_controlled(&destination, &control)
+        .unwrap()
+        .unwrap();
+    let mut report = Report::default();
+    let mut expansion = expand::Expansion::new(&parent, &context, &control, &mut report);
+    let mut document = Document::new(parent.clone());
+    let helpers = &parent.entities[parent.entities.len() - 2..];
+    let result = document.edit("cancel real nested expansion", |tx| {
+        expansion.helper(
+            tx,
+            &helpers[0],
+            &helpers[0],
+            &mut Vec::with_capacity(MAX_EXPANSION_DEPTH),
+            &mut vec![context.root.clone()],
+        )?;
+        assert_eq!(tx.vmf().solids().count(), old_solids + 2);
+        control.cancel().unwrap();
+        expansion.helper(
+            tx,
+            &helpers[1],
+            &helpers[1],
+            &mut Vec::with_capacity(MAX_EXPANSION_DEPTH),
+            &mut vec![context.root.clone()],
+        )
+    });
+    assert!(result.unwrap_err().to_string().contains("cancelled"));
+    let progress = expansion.finish();
+    assert_eq!(
+        (
+            progress.stats.instances,
+            progress.stats.files,
+            progress.stats.max_expansion_depth
+        ),
+        (2, 2, 2)
+    );
+    assert_eq!(
+        (progress.stats.world_brushes, progress.stats.detail_brushes),
+        (1, 1)
+    );
+    assert_eq!(document.vmf(), &before);
+    assert_eq!(parent, before);
+    assert_eq!(
+        std::fs::read(directory.path().join("parent.vmf")).unwrap(),
+        source_bytes
+    );
+    assert_eq!(
+        std::fs::read(directory.path().join("child.vmf")).unwrap(),
+        child_bytes
+    );
+    assert!(staged.commit_checked(&lease, &control).is_err());
+    assert_eq!(
+        std::fs::read(destination).unwrap(),
+        b"previous complete BSP"
+    );
+}
 
 fn fixture() -> (tempfile::TempDir, Vmf, Vmf, GameFs) {
     let directory = tempfile::tempdir().unwrap();

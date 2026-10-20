@@ -4,15 +4,15 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 
 use glam::DVec3;
-use map_core::{BrushGeometry, Document, ObjectId, edit};
-use source_formats::{
-    keyvalues,
-    vmf::{Entity, Solid, Vmf, parse_vec3},
-};
+use map_core::{BrushGeometry, Document, ObjectId};
+use source_formats::vmf::{Entity, Solid, Vmf, parse_vec3};
 
 use crate::{Control, Diagnostic, FileIdentity, FileStamp, Report};
 
+mod expand;
+
 pub const MAX_INSTANCES: usize = 256;
+pub const MAX_EXPANSION_DEPTH: usize = 4;
 pub const MAX_FILES: usize = 32;
 pub const MAX_FILE_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_TOTAL_BYTES: usize = 32 * 1024 * 1024;
@@ -329,6 +329,7 @@ pub struct DependencyInfo {
 #[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct InstanceStats {
     pub instances: usize,
+    pub max_expansion_depth: usize,
     pub files: usize,
     pub world_brushes: usize,
     pub detail_brushes: usize,
@@ -363,7 +364,7 @@ fn vector(entity: &Entity, key: &str) -> Result<DVec3, String> {
         .ok_or_else(|| format!("Instance {key} requires three finite coordinates"))
 }
 
-fn filename(value: &str) -> Result<String, String> {
+pub fn filename(value: &str) -> Result<String, String> {
     field(value)?;
     let relative = value.replace('\\', "/");
     if relative.is_empty()
@@ -568,6 +569,14 @@ fn child_admission(child: &Vmf) -> Result<(), String> {
         return Err("Active child compile regions are unsupported".into());
     }
     for entity in child.entities.iter().filter(|entity| !entity.hidden) {
+        if entity
+            .classname()
+            .is_some_and(|class| class.eq_ignore_ascii_case("func_instance"))
+        {
+            helper_admission(entity)
+                .map_err(|error| format!("Child instance {}: {error}", entity.id))?;
+            continue;
+        }
         for (key, value) in entity.properties.iter() {
             field(key)?;
             field(value)?;
@@ -577,7 +586,7 @@ fn child_admission(child: &Vmf) -> Result<(), String> {
             .is_some_and(|class| class.eq_ignore_ascii_case("func_detail"))
         {
             return Err(format!(
-                "Child entity {} ({}) is unsupported; only world/func_detail brushes and one instance level are supported",
+                "Child entity {} ({}) is unsupported; only world/func_detail brushes and bounded func_instance helpers are supported",
                 entity.id,
                 entity.classname().unwrap_or("missing class")
             ));
@@ -606,17 +615,13 @@ fn child_admission(child: &Vmf) -> Result<(), String> {
     Ok(())
 }
 
-struct Child {
-    vmf: Vmf,
-    identity: FileIdentity,
-    bytes: usize,
-}
+type Provenance = BTreeMap<String, (u32, String, u32, Option<u32>)>;
 
 pub struct PreparedInstances<'a> {
     pub(crate) vmf: Cow<'a, Vmf>,
     pub(crate) dependencies: Option<DependencyGuard>,
     pub(crate) stats: Option<InstanceStats>,
-    provenance: BTreeMap<String, (u32, String, u32, Option<u32>)>,
+    provenance: Provenance,
 }
 
 pub(crate) type Prepared<'a> = PreparedInstances<'a>;
@@ -779,163 +784,21 @@ pub(crate) fn prepare<'a>(
     for helper in &helpers {
         helper_admission(helper).map_err(|error| failure(helper, error))?;
     }
-    let mut files = BTreeMap::<String, Child>::new();
-    let mut bytes = 0usize;
-    let mut nodes = 0usize;
-    let mut work = 0usize;
-    let mut objects = vmf.object_ids().count();
-    let mut sides = vmf.side_ids().count();
-    let mut stats = InstanceStats::default();
     let mut document =
         Document::try_new(vmf.clone()).map_err(|error| failure(first, error.to_string()))?;
+    let mut expansion = expand::Expansion::new(vmf, source, control, report);
     for helper in &helpers {
-        let result: Result<(), String> = (|| {
-            control.checkpoint()?;
-            let relative = filename(helper.properties.get("file").unwrap())?;
-            let file_count = files.len();
-            if let std::collections::btree_map::Entry::Vacant(slot) = files.entry(relative.clone())
-            {
-                if file_count >= MAX_FILES {
-                    return Err(format!("Instances exceed {MAX_FILES} unique files"));
-                }
-                let path = resolve_path(source, &relative)
-                    .map_err(|error| format!("Instance {relative}: {error}"))?;
-                let limit = MAX_FILE_BYTES.min(MAX_TOTAL_BYTES.saturating_sub(bytes));
-                let (identity, input) = FileIdentity::read_bounded(&path, limit as u64, control)
-                    .map_err(|error| format!("Instance {relative}: {error}"))?;
-                if identity.same_file(&source.root) {
-                    return Err(format!("Instance {relative} forms a self-reference cycle"));
-                }
-                bytes = bytes.saturating_add(input.len());
-                if bytes > MAX_TOTAL_BYTES {
-                    return Err(format!("Instance sources exceed {MAX_TOTAL_BYTES} bytes"));
-                }
-                let text = std::str::from_utf8(&input).map_err(|error| error.to_string())?;
-                let parsed = keyvalues::parse_bounded(
-                    text,
-                    MAX_DEPTH,
-                    MAX_FILE_NODES.min(MAX_TOTAL_NODES.saturating_sub(nodes)),
+        document
+            .edit("expand brush instance", |tx| {
+                expansion.helper(
+                    tx,
+                    helper,
+                    helper,
+                    &mut Vec::with_capacity(MAX_EXPANSION_DEPTH),
+                    &mut vec![source.root.clone()],
                 )
-                .map_err(|error| error.to_string())?;
-                let mut stack = parsed.iter().collect::<Vec<_>>();
-                while let Some(node) = stack.pop() {
-                    nodes += 1;
-                    if let Some(children) = node.children() {
-                        stack.extend(children);
-                    }
-                }
-                if nodes > MAX_TOTAL_NODES {
-                    return Err(format!("Instance sources exceed {MAX_TOTAL_NODES} nodes"));
-                }
-                let child = Vmf::from_nodes(&parsed).map_err(|error| error.to_string())?;
-                child_admission(&child)?;
-                let ignored = child
-                    .world
-                    .properties
-                    .iter()
-                    .filter(|(key, _)| {
-                        !key.eq_ignore_ascii_case("classname")
-                            && !key.eq_ignore_ascii_case("mapversion")
-                    })
-                    .map(|(key, _)| key)
-                    .collect::<Vec<_>>();
-                if !ignored.is_empty() {
-                    let keys = ignored
-                        .iter()
-                        .take(16)
-                        .map(|key| map_core::entity_helpers::bounded_preview(key, 64))
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    report.diagnostics.push(Diagnostic::warning(format!("Instance {relative}: {} child world settings are ignored ({keys}; showing at most 16 keys); root world settings remain authoritative", ignored.len()), Some(format!("entity:{}", helper.id)), helper.origin()));
-                }
-                slot.insert(Child {
-                    vmf: child,
-                    identity,
-                    bytes: input.len(),
-                });
-            }
-            let child = &files[&relative].vmf;
-            let world = child.world.solids.iter().filter(|solid| !solid.hidden);
-            let detail = child
-                .entities
-                .iter()
-                .filter(|entity| !entity.hidden)
-                .flat_map(|entity| entity.solids.iter().filter(|solid| !solid.hidden));
-            let mut additions = Vec::new();
-            for (solid, is_detail) in world
-                .map(|solid| (solid, false))
-                .chain(detail.map(|solid| (solid, true)))
-            {
-                control.checkpoint()?;
-                objects = objects.saturating_add(1 + usize::from(is_detail));
-                sides = sides.saturating_add(solid.sides.len());
-                work = work.saturating_add(solid.sides.len().saturating_pow(3));
-                if objects > MAX_OBJECTS || sides > MAX_SIDES || work > MAX_GEOMETRY_WORK {
-                    return Err("Instance expansion exceeds combined objects, sides or geometry-work limits".into());
-                }
-                checked_solid(solid)?;
-                additions.push((solid, is_detail));
-            }
-            let angles = vector(helper, "angles")?;
-            let transform = edit::Transform {
-                translation: vector(helper, "origin")?,
-                rotation: DVec3::new(angles.z, angles.x, angles.y),
-                texture_lock: true,
-                texture_scale_lock: Some(true),
-                ..Default::default()
-            };
-            document
-                .edit("expand brush instance", |tx| {
-                    for (original, is_detail) in &additions {
-                        control.checkpoint().map_err(map_core::EditError::Invalid)?;
-                        let mut solid = (**original).clone();
-                        solid.id = tx.new_object_id()?;
-                        solid.editor = None;
-                        prepared.provenance.insert(
-                            format!("solid:{}", solid.id),
-                            (helper.id, relative.clone(), original.id, None),
-                        );
-                        for side in &mut solid.sides {
-                            let original_side = side.id;
-                            side.id = tx.new_side_id()?;
-                            prepared.provenance.insert(
-                                format!("side:{}", side.id),
-                                (
-                                    helper.id,
-                                    relative.clone(),
-                                    original_side,
-                                    Some(original.id),
-                                ),
-                            );
-                        }
-                        let id = if *is_detail {
-                            let id = tx.new_object_id()?;
-                            let mut detail = Entity::new(id, "func_detail");
-                            detail.solids.push(solid);
-                            prepared.provenance.insert(
-                                format!("entity:{id}"),
-                                (helper.id, relative.clone(), original.id, None),
-                            );
-                            stats.detail_brushes += 1;
-                            tx.add_entity(detail)?
-                        } else {
-                            stats.world_brushes += 1;
-                            tx.add_solid(solid)?
-                        };
-                        edit::transform(tx, &[id], transform)?;
-                        match id {
-                            ObjectId::Solid(id) => checked_solid(tx.solid_mut(id)?),
-                            ObjectId::Entity(id) => checked_solid(&tx.entity_mut(id)?.solids[0]),
-                        }
-                        .map_err(map_core::EditError::Invalid)?;
-                    }
-                    Ok(())
-                })
-                .map_err(|error| error.to_string())?;
-            stats.instances += 1;
-            Ok(())
-        })();
-        result.map_err(|error| failure(helper, error))?;
+            })
+            .map_err(|error| failure(helper, error.to_string()))?;
     }
     document
         .edit("consume instance helpers", |tx| {
@@ -947,15 +810,9 @@ pub(crate) fn prepare<'a>(
         .map_err(|error| failure(first, error.to_string()))?;
     let expanded = document.into_vmf();
     check(expanded.validate_ids().map_err(|error| error.to_string()))?;
-    stats.files = files.len();
-    stats.dependencies = files
-        .iter()
-        .map(|(path, child)| DependencyInfo {
-            path: path.clone(),
-            bytes: child.bytes,
-            sha256: child.identity.sha256().unwrap().to_owned(),
-        })
-        .collect();
+    let expanded_sources = expansion.finish();
+    let stats = expanded_sources.stats;
+    prepared.provenance = expanded_sources.provenance;
     report.diagnostics.push(Diagnostic::info(
         format!(
             "Expanded {} brush instances from {} files: {} world brushes, {} detail brushes",
@@ -966,10 +823,7 @@ pub(crate) fn prepare<'a>(
     ));
     prepared.dependencies = Some(DependencyGuard {
         source: source.clone(),
-        files: files
-            .into_iter()
-            .map(|(path, child)| (path, child.identity))
-            .collect(),
+        files: expanded_sources.files,
     });
     prepared.stats = Some(stats);
     prepared.vmf = Cow::Owned(expanded);

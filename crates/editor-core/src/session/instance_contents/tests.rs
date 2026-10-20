@@ -2,6 +2,299 @@ use super::*;
 use crate::session::{SelectMode, working_region};
 use map_core::edit;
 
+fn nested_opened(
+    actor: Actor,
+) -> (
+    tempfile::TempDir,
+    Session,
+    PathBuf,
+    PathBuf,
+    [PathBuf; 2],
+    ObjectId,
+) {
+    let (directory, mut session, source, child, owner) = opened(actor);
+    let leaves = [
+        directory.path().join("leaf-a.vmf"),
+        directory.path().join("leaf-b.vmf"),
+    ];
+    for leaf in &leaves {
+        std::fs::copy(&child, leaf).unwrap();
+    }
+    let modules = directory.path().join("modules");
+    std::fs::create_dir(&modules).unwrap();
+    let middle = modules.join("middle.vmf");
+    let mut document = Document::empty();
+    document
+        .edit("nested references", |tx| {
+            for (file, origin) in [
+                ("leaf-a.vmf", DVec3::ZERO),
+                ("leaf-b.vmf", DVec3::new(64.0, 0.0, 0.0)),
+            ] {
+                edit::create_entity(
+                    tx,
+                    "func_instance",
+                    Some(origin),
+                    &[
+                        ("file".into(), file.into()),
+                        ("angles".into(), "0 0 0".into()),
+                    ],
+                    Vec::new(),
+                )?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    std::fs::write(&middle, document.vmf().write(&Default::default())).unwrap();
+    let ObjectId::Entity(id) = owner else {
+        unreachable!()
+    };
+    session
+        .edit(actor, "nested root reference", |tx| {
+            tx.entity_mut(id)?
+                .properties
+                .set("file", r".\modules\middle.vmf");
+            Ok(())
+        })
+        .unwrap();
+    (directory, session, source, middle, leaves, owner)
+}
+
+#[test]
+fn nested_contents_keep_root_file_leaf_ids_and_root_only_geometry_targets() {
+    for actor in [Actor::User, Actor::Agent] {
+        let (_directory, mut session, source, middle, leaves, owner) = nested_opened(actor);
+        session.select(&[owner], SelectMode::Replace).unwrap();
+        let memory = session.document.vmf().clone();
+        let source_bytes = std::fs::read(&source).unwrap();
+        let middle_bytes = std::fs::read(&middle).unwrap();
+        let leaf_bytes = leaves.each_ref().map(|path| std::fs::read(path).unwrap());
+        let history = session.history_snapshot();
+        let camera = session.camera();
+        let settings = session.compile_settings();
+        let report = refresh(&mut session, actor);
+        assert_eq!(report["state"], "ready", "{report}");
+        assert_eq!(report["stats"]["instances"], 3);
+        assert_eq!(report["stats"]["files"], 3);
+        assert_eq!(report["stats"]["max_expansion_depth"], 2);
+        assert_eq!(report["limits"]["depth"], instances::MAX_DEPTH);
+        assert_eq!(report["limits"]["expansion_depth"], 4);
+        assert_eq!(report["owners"][0]["file"], "modules/middle.vmf");
+        assert_eq!(
+            report["owners"][0]["bounds"],
+            json!([[0.0, 0.0, 32.0], [104.0, 16.0, 48.0]])
+        );
+        assert_eq!(report["owners"][0]["world_brushes"], 2);
+        assert_eq!(report["owners"][0]["detail_brushes"], 2);
+        let rows = report["brushes"].as_array().unwrap();
+        assert_eq!(rows.len(), 4);
+        assert_eq!(
+            rows.iter()
+                .map(|row| row["file"].as_str().unwrap())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(["leaf-a.vmf", "leaf-b.vmf"])
+        );
+        for file in ["leaf-a.vmf", "leaf-b.vmf"] {
+            let leaf = Vmf::parse(&String::from_utf8(leaf_bytes[0].clone()).unwrap()).unwrap();
+            let source_solids = leaf
+                .world
+                .solids
+                .iter()
+                .chain(leaf.entities.iter().flat_map(|entity| &entity.solids))
+                .map(|solid| solid.id)
+                .collect::<BTreeSet<_>>();
+            let actual_solids = rows
+                .iter()
+                .filter(|row| row["file"] == file)
+                .map(|row| row["child_brush"].as_u64().unwrap() as u32)
+                .collect::<BTreeSet<_>>();
+            assert_eq!(actual_solids, source_solids);
+            let actual_sides = report["face_provenance"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|row| row["file"] == file)
+                .map(|row| row["child_side"].as_u64().unwrap() as u32)
+                .collect::<BTreeSet<_>>();
+            assert_eq!(actual_sides, leaf.side_ids().collect());
+        }
+        assert_eq!(report["face_provenance_total"], 24);
+        assert_eq!(report["face_provenance_truncated"], false);
+        assert!(rows.iter().all(|row| row["owner"]
+            == format!(
+                "entity:{}",
+                match owner {
+                    ObjectId::Entity(id) => id,
+                    _ => unreachable!(),
+                }
+            )));
+        for x in [8.0, 72.0] {
+            let hits = session.instance_contents_hits(
+                &Ray {
+                    origin: DVec3::new(x, 8.0, 100.0),
+                    direction: DVec3::NEG_Z,
+                },
+                Some(true),
+            );
+            assert_eq!(hits.len(), 1);
+            assert_eq!(hits[0].object, owner);
+            assert_eq!((hits[0].solid, hits[0].side), (None, None));
+            assert_eq!(hits[0].point, DVec3::new(x, 8.0, 48.0));
+        }
+        let frame = session
+            .framing_bounds_in(session.document(), &[owner], None)
+            .unwrap();
+        assert!(frame.1.x >= 104.0 && frame.1.z >= 48.0);
+        assert_eq!(session.document.vmf(), &memory);
+        assert_eq!(std::fs::read(&source).unwrap(), source_bytes);
+        assert_eq!(std::fs::read(&middle).unwrap(), middle_bytes);
+        assert_eq!(
+            leaves.each_ref().map(|path| std::fs::read(path).unwrap()),
+            leaf_bytes
+        );
+        assert_eq!(session.history_snapshot(), history);
+        assert_eq!(session.camera(), camera);
+        assert_eq!(session.selected_ids(), vec![owner]);
+        assert_eq!(session.compile_settings(), settings);
+        assert_eq!(
+            std::fs::read(source.with_extension("bsp")).unwrap(),
+            b"previous BSP"
+        );
+        assert_eq!(
+            std::fs::read(source.with_extension("lin")).unwrap(),
+            b"previous pointfile"
+        );
+    }
+}
+
+#[test]
+fn changed_or_failed_grandchildren_remove_the_whole_contents_layer_and_preserve_a_form() {
+    for actor in [Actor::User, Actor::Agent] {
+        for change in [
+            "before_finish",
+            "after_finish",
+            "failed_refresh",
+            "missing_middle",
+        ] {
+            let (_directory, mut session, source, middle, leaves, owner) = nested_opened(actor);
+            session.select(&[owner], SelectMode::Replace).unwrap();
+            let ready = refresh(&mut session, actor);
+            assert_eq!(ready["state"], "ready");
+            let ObjectId::Entity(id) = owner else {
+                unreachable!()
+            };
+            let form = session.begin_instance_reference(actor, Some(id)).unwrap();
+            let form = session
+                .update_instance_reference(
+                    actor,
+                    form["token"].as_u64().unwrap(),
+                    crate::session::instance_reference::Changes {
+                        origin: Some("21.5 -7.25 3.125".into()),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            let memory = session.document.vmf().clone();
+            let history = session.history_snapshot();
+            let camera = session.camera();
+            let settings = session.compile_settings();
+            let source_bytes = std::fs::read(&source).unwrap();
+            let token;
+            if change == "before_finish" {
+                let request = session.begin_instance_contents_refresh(actor).unwrap();
+                token = request.token();
+                let result = request.run();
+                std::fs::write(&leaves[0], b"changed grandchild").unwrap();
+                let report = session
+                    .finish_instance_contents_refresh(actor, result)
+                    .unwrap();
+                assert_eq!(report["state"], "failed");
+            } else if change == "failed_refresh" {
+                std::fs::write(
+                    &leaves[0],
+                    b"world { id 1 classname worldspawn } entity { id 2 classname info_target }",
+                )
+                .unwrap();
+                let report = refresh(&mut session, actor);
+                token = report["token"].as_u64().unwrap();
+                assert_eq!(report["state"], "failed");
+                assert!(report["error"].as_str().unwrap().contains("unsupported"));
+            } else {
+                token = ready["token"].as_u64().unwrap();
+                if change == "missing_middle" {
+                    std::fs::remove_file(&middle).unwrap();
+                } else {
+                    let mut bytes = std::fs::read(&leaves[1]).unwrap();
+                    let newline = bytes.iter().position(|byte| *byte == b'\n').unwrap();
+                    bytes[newline] = b' ';
+                    std::fs::write(&leaves[1], bytes).unwrap();
+                }
+                assert!(session.preflight_instance_contents());
+                assert_eq!(
+                    session.inspect_instance_contents(0, 64).unwrap()["state"],
+                    "stale"
+                );
+            }
+            let report = session.inspect_instance_contents(0, 64).unwrap();
+            assert_eq!(report["available"], false, "{change}");
+            assert!(report["owners"].as_array().unwrap().is_empty());
+            assert!(report["brushes"].as_array().unwrap().is_empty());
+            assert!(report["face_provenance"].as_array().unwrap().is_empty());
+            assert!(session.instance_contents.ready.is_none());
+            assert!(session.instance_contents_preview(true).mesh.is_none());
+            assert!(
+                session
+                    .instance_contents_hits(
+                        &Ray {
+                            origin: DVec3::new(8.0, 8.0, 100.0),
+                            direction: DVec3::NEG_Z
+                        },
+                        Some(true)
+                    )
+                    .is_empty()
+            );
+            assert!(
+                session
+                    .frame_instance_contents(actor, token, &[owner], 1.0)
+                    .is_err()
+            );
+            assert_eq!(session.get_instance_reference(), form);
+            assert_eq!(session.document.vmf(), &memory);
+            assert_eq!(session.history_snapshot(), history);
+            assert_eq!(session.camera(), camera);
+            assert_eq!(session.selected_ids(), vec![owner]);
+            assert_eq!(session.compile_settings(), settings);
+            assert_eq!(std::fs::read(&source).unwrap(), source_bytes);
+            assert_eq!(
+                std::fs::read(source.with_extension("bsp")).unwrap(),
+                b"previous BSP"
+            );
+            assert_eq!(
+                std::fs::read(source.with_extension("lin")).unwrap(),
+                b"previous pointfile"
+            );
+        }
+    }
+}
+
+#[test]
+fn retained_leaf_filename_budget_counts_capacity_instead_of_length() {
+    let mut record = BrushRecord {
+        bounds: [DVec3::ZERO; 2],
+        file: String::with_capacity(8192),
+        child: 7,
+        detail: false,
+        faces: Vec::new(),
+    };
+    record.file.push_str("leaf.vmf");
+    let mesh = Mesh::default();
+    let with_file = allocation(&mesh, std::slice::from_ref(&record), 1, &[], 0).unwrap();
+    let capacity = record.file.capacity();
+    record.file = String::new();
+    let without_file = allocation(&mesh, std::slice::from_ref(&record), 1, &[], 0).unwrap();
+    assert_eq!(with_file - without_file, capacity);
+    assert!(capacity > "leaf.vmf".len());
+}
+
 #[test]
 fn cancelled_contents_keep_one_worker_across_replacement_until_owned_result_retires() {
     let (_directory, mut session, _source, _child, _owner) = opened(Actor::Agent);

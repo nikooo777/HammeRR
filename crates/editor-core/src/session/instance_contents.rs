@@ -104,6 +104,7 @@ impl Owner {
 
 struct BrushRecord {
     bounds: [DVec3; 2],
+    file: String,
     child: u32,
     detail: bool,
     faces: Vec<FaceRecord>,
@@ -138,7 +139,7 @@ fn bounded(value: &str) -> String {
 }
 
 fn limits() -> Value {
-    json!({"instances":instances::MAX_INSTANCES,"files":instances::MAX_FILES,"file_bytes":instances::MAX_FILE_BYTES,"total_bytes":instances::MAX_TOTAL_BYTES,"file_nodes":instances::MAX_FILE_NODES,"total_nodes":instances::MAX_TOTAL_NODES,"depth":instances::MAX_DEPTH,"objects":instances::MAX_OBJECTS,"sides":instances::MAX_SIDES,"sides_per_brush":instances::MAX_BRUSH_SIDES,"geometry_work":instances::MAX_GEOMETRY_WORK,"field_bytes":instances::MAX_FIELD_BYTES,"parent_bytes":instances::MAX_PARENT_BYTES,"vertices":references::MAX_VERTICES,"indices":references::MAX_INDICES,"line_vertices":references::MAX_LINES,"pick_triangles":references::MAX_TRIANGLES,"cpu_bytes":references::MAX_CPU_BYTES,"gpu_bytes":references::MAX_GPU_BYTES,"rows":MAX_ROWS,"diagnostics":MAX_DIAGNOSTICS,"active_workers":1,"cached_snapshots":1})
+    json!({"instances":instances::MAX_INSTANCES,"files":instances::MAX_FILES,"file_bytes":instances::MAX_FILE_BYTES,"total_bytes":instances::MAX_TOTAL_BYTES,"file_nodes":instances::MAX_FILE_NODES,"total_nodes":instances::MAX_TOTAL_NODES,"depth":instances::MAX_DEPTH,"expansion_depth":instances::MAX_EXPANSION_DEPTH,"objects":instances::MAX_OBJECTS,"sides":instances::MAX_SIDES,"sides_per_brush":instances::MAX_BRUSH_SIDES,"geometry_work":instances::MAX_GEOMETRY_WORK,"field_bytes":instances::MAX_FIELD_BYTES,"parent_bytes":instances::MAX_PARENT_BYTES,"vertices":references::MAX_VERTICES,"indices":references::MAX_INDICES,"line_vertices":references::MAX_LINES,"pick_triangles":references::MAX_TRIANGLES,"cpu_bytes":references::MAX_CPU_BYTES,"gpu_bytes":references::MAX_GPU_BYTES,"rows":MAX_ROWS,"diagnostics":MAX_DIAGNOSTICS,"active_workers":1,"cached_snapshots":1})
 }
 
 fn intersects(a: [DVec3; 2], b: [DVec3; 2]) -> bool {
@@ -189,12 +190,16 @@ fn allocation(
     )?
     .checked_add(mesh.brushes.capacity().checked_mul(size_of::<Brush>())?)?
     .checked_add(records_capacity.checked_mul(size_of::<BrushRecord>())?)?
-    .checked_add(
-        records
-            .iter()
-            .map(|record| record.faces.capacity() * size_of::<FaceRecord>())
-            .sum::<usize>(),
-    )?
+    .checked_add(records.iter().try_fold(0usize, |bytes, record| {
+        bytes
+            .checked_add(
+                record
+                    .faces
+                    .capacity()
+                    .checked_mul(size_of::<FaceRecord>())?,
+            )?
+            .checked_add(record.file.capacity())
+    })?)?
     .checked_add(owners_capacity.checked_mul(size_of::<Owner>())?)?
     .checked_add(
         owners
@@ -261,24 +266,38 @@ impl Request {
                         .classname()
                         .is_some_and(|class| class.eq_ignore_ascii_case("func_instance"))
             })
-            .map(|entity| Owner {
-                id: entity.id,
-                file: bounded(entity.properties.get("file").unwrap_or_default()),
-                origin: entity.origin().unwrap_or(DVec3::ZERO),
-                angles: entity
-                    .properties
-                    .get("angles")
-                    .and_then(parse_vec3)
-                    .unwrap_or(DVec3::ZERO),
-                bounds: None,
-                world_brushes: 0,
-                detail_brushes: 0,
+            .map(|entity| {
+                Ok(Owner {
+                    id: entity.id,
+                    file: instances::filename(entity.properties.get("file").unwrap_or_default())?,
+                    origin: entity.origin().unwrap_or(DVec3::ZERO),
+                    angles: entity
+                        .properties
+                        .get("angles")
+                        .and_then(parse_vec3)
+                        .unwrap_or(DVec3::ZERO),
+                    bounds: None,
+                    world_brushes: 0,
+                    detail_brushes: 0,
+                })
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, String>>()?;
+        let owner_bytes = owners
+            .capacity()
+            .checked_mul(size_of::<Owner>())
+            .and_then(|bytes| {
+                owners.iter().try_fold(bytes, |bytes, owner| {
+                    bytes.checked_add(owner.file.capacity())
+                })
+            })
+            .ok_or("Instance owner CPU size overflow")?;
         let mut mesh = Mesh::default();
         let mut records = Vec::<BrushRecord>::new();
         for brush in prepared.generated_brushes() {
             self.control.checkpoint()?;
+            if brush.file.len() > instances::MAX_FIELD_BYTES {
+                return Err("Instance leaf filename exceeds its field limit".into());
+            }
             let geometry = BrushGeometry::from_solid(brush.solid)
                 .map_err(|error| bounded(&error.to_string()))?;
             let vertex_count = geometry
@@ -323,12 +342,7 @@ impl Request {
                 .checked_add(
                     (mesh.brushes.len() + 1) * (size_of::<Brush>() + size_of::<BrushRecord>()),
                 )
-                .and_then(|bytes| {
-                    bytes.checked_add(
-                        AUXILIARY_BYTES
-                            + owners.len() * (size_of::<Owner>() + instances::MAX_FIELD_BYTES),
-                    )
-                })
+                .and_then(|bytes| bytes.checked_add(AUXILIARY_BYTES)?.checked_add(owner_bytes))
                 .and_then(|bytes| {
                     bytes.checked_add(
                         records
@@ -337,6 +351,14 @@ impl Request {
                             .sum::<usize>()
                             + geometry.faces.len() * size_of::<FaceRecord>(),
                     )
+                })
+                .and_then(|bytes| {
+                    records
+                        .iter()
+                        .try_fold(bytes, |bytes, record| {
+                            bytes.checked_add(record.file.capacity())
+                        })?
+                        .checked_add(brush.file.len())
                 })
                 .ok_or("Instance CPU size overflow")?;
             if cpu_bytes > references::MAX_CPU_BYTES {
@@ -420,6 +442,7 @@ impl Request {
             });
             records.push(BrushRecord {
                 bounds,
+                file: brush.file.to_owned(),
                 child: brush.original,
                 detail: brush.detail,
                 faces,
@@ -428,7 +451,6 @@ impl Request {
                 .iter_mut()
                 .find(|owner| owner.id == brush.owner)
                 .ok_or("Instance owner missing")?;
-            owner.file = brush.file.to_owned();
             owner.bounds = Some(
                 owner
                     .bounds
@@ -922,8 +944,8 @@ impl Session {
                 )
             },
         );
-        let brushes=ready.map(|ready|ready.mesh.brushes.iter().zip(&ready.brushes).take(MAX_ROWS).map(|(brush,record)|json!({"owner":format!("entity:{}",brush.owner),"child_brush":record.child,"detail":record.detail,"bounds":record.bounds.map(|point|point.to_array())})).collect::<Vec<_>>()).unwrap_or_default();
-        let faces=ready.map(|ready|ready.mesh.brushes.iter().zip(&ready.brushes).flat_map(|(brush,record)|record.faces.iter().map(move |face|json!({"owner":format!("entity:{}",brush.owner),"child_brush":record.child,"child_side":face.side,"triangles":(face.indices.end-face.indices.start)/3}))).take(MAX_ROWS).collect::<Vec<_>>()).unwrap_or_default();
+        let brushes=ready.map(|ready|ready.mesh.brushes.iter().zip(&ready.brushes).take(MAX_ROWS).map(|(brush,record)|json!({"owner":format!("entity:{}",brush.owner),"file":record.file,"child_brush":record.child,"detail":record.detail,"bounds":record.bounds.map(|point|point.to_array())})).collect::<Vec<_>>()).unwrap_or_default();
+        let faces=ready.map(|ready|ready.mesh.brushes.iter().zip(&ready.brushes).flat_map(|(brush,record)|record.faces.iter().map(move |face|json!({"owner":format!("entity:{}",brush.owner),"file":record.file,"child_brush":record.child,"child_side":face.side,"triangles":(face.indices.end-face.indices.start)/3}))).take(MAX_ROWS).collect::<Vec<_>>()).unwrap_or_default();
         let face_count = ready.map_or(0, |ready| {
             ready
                 .brushes

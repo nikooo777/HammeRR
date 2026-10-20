@@ -297,7 +297,7 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | Prefab library | Referenced brush assemblies |
 | --- | --- |
 | ![Textured prefab gallery with placement controls](docs/images/prefab-gallery.png) | ![Resolved brush instance geometry](docs/images/instance-reference-contents.png) |
-| Browse flat or textured assembly galleries, then place rotated or brush-scaled copies. | Extract, place, preview and compile reusable world/detail VMFs with guarded dependencies. |
+| Browse flat or textured assembly galleries, then place rotated or brush-scaled copies. | Extract brush assemblies; place, preview and compile nested world/detail VMFs with guarded dependencies. |
 
 | Open documents and Save all |
 | --- |

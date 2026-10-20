@@ -43,19 +43,26 @@ Limits:
 - Paths explicitly end in `.vmf` and stay inside the saved referring parent's
   tree. Child symlinks, traversal, absolute paths and self-reference aliases
   reject. No extension inference, search fallback, automatic copy or substitution
-  occurs. A symlink parent retains the compiler's referring-directory semantics.
+  occurs. Every nested reference also resolves from this saved root directory,
+  not from its containing child's directory. A symlink parent retains the
+  compiler's referring-directory semantics. Opening a child as a standalone map
+  makes that child's referring directory the new root for its references.
 - File checks read metadata only and admit regular files up to 4 MiB. Malformed
   child VMFs and unsupported child contents can pass presence checks, then fail
-  Refresh or Compile. The existing one-level world/`func_detail` contract and its
-  aggregate/geometry/dependency budgets still govern those full operations.
+  Refresh or Compile. Those full operations support world/ordinary `func_detail`
+  brushes through four helper levels, counting a root helper as level one,
+  with global limits of 256 occurrences and 32 normalized requested paths plus
+  aggregate source, geometry and dependency budgets. See [Referenced brush
+  assemblies](instances.md) for the full admission limits.
 - Position uses finite native-representable coordinates within ±16384. Rotation
   requires finite native-representable Pitch/Yaw/Roll. Invalid imported raw values
   remain visible for correction; values are never clamped or replaced with zero.
 - Unsupported imported replacements, connections or opaque fields are preserved
   and block Apply. This form edits file/origin/angles only. Child editing,
-  nested/runtime entities and name fixups remain unavailable. A separate
+  runtime entities and name fixups remain unavailable. A separate
   [Extract selection to instance…](instance-extraction.md) workflow exports
-  supported world/detail selections into a new child.
+  supported root world/detail selections into a new child; it does not extract
+  a nested hierarchy.
 - Metadata guards detect replacement and common external changes; they do not
   lock files. Refresh and Compile perform their normal full validation.
 

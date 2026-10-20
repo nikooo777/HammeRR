@@ -2813,7 +2813,7 @@ MCP paths. Software UI tests cover their controls without desktop input.
 ### Referenced brush assemblies
 
 ```sh
-python3 -B scripts/validate_brush_instances.py --binary target/debug/hammerr-headless --output /tmp/hammerr-brush-instances-check
+python3 -B scripts/validate_brush_instances.py --binary target/debug/hammerr-headless --output target/validation/brush-instances-check
 ```
 
 Use a fresh private directory. This checks actual blocking/background BSP
@@ -2823,6 +2823,32 @@ preservation. Its Play request is made only after verified dependency staleness;
 the private game placeholder cannot run Steam or the game. Compiler tests also
 cover Source transforms/UVs, region ordering, budgets, source/output aliases and
 cancellation; Session tests cover dependency guards for both actors.
+
+The nested-instance oracle requires an independent pre-nesting control receipt
+and the unchanged source/leaf files named by that receipt. These are retained
+local validation artifacts, not shipped fixtures. The command below uses the
+local controls at `target/validation/690/old-controls-v1/results.json`; without
+that receipt and its files, this comparison cannot run. The controls are frozen
+centrally with the retained pre-nesting binary using the public oracle's
+fixtures. The private control runner stays with the retained validation evidence;
+the binary under test never regenerates its own expected BSP bytes.
+
+```sh
+python3 -B scripts/validate_nested_brush_instances.py --binary target/debug/hammerr-headless --output target/validation/nested-brush-instances-check --controls target/validation/690/old-controls-v1/results.json --physics-gameinfo "$HOME/.local/share/Steam/steamapps/common/Counter-Strike Source/cstrike/gameinfo.txt"
+```
+
+Use a fresh output directory under `target/validation`. Set `--physics-gameinfo`
+to the installed `cstrike/gameinfo.txt` to locate and pin its Linux64 physics
+libraries. The Engine pair mounts a separate fully hashed private fixture game,
+not installed stock materials; omitting the option skips that comparison. The script checks byte-exact no-instance/one-level controls, both
+compile paths, independently flattened noncommuting transforms and UVs, detail
+ownership, four-level and global limits, root-relative paths, repeated/diamond
+graphs, physical cycles, leaf provenance and transitive stale/launch guards.
+It also exercises explicit reference Refresh, failure eviction and framing,
+and a lit geometry comparison. The physics option compares the actual emitted
+PHY lump with a flat control and preserves the named native libraries, helper,
+source gameinfo and private fixture inputs. It starts no
+graphics or game process and sends no desktop input.
 
 ### Authored terrain lighting preview
 
@@ -2865,8 +2891,8 @@ textures overrides; hidden tool terrain must report zero drawn triangles.
 ### Instance authoring and reference contents
 
 ```sh
-python3 -B scripts/validate_instance_authoring.py --binary target/debug/hammerr-headless --output /tmp/hammerr-instance-authoring-check
-python3 -B scripts/validate_instance_contents.py --binary target/debug/hammerr-headless --output /tmp/hammerr-instance-contents-check
+python3 -B scripts/validate_instance_authoring.py --binary target/debug/hammerr-headless --output target/validation/instance-authoring-check
+python3 -B scripts/validate_instance_contents.py --binary target/debug/hammerr-headless --output target/validation/instance-contents-check
 ```
 
 Use fresh private directories. Authoring covers shared form ownership, exact
@@ -2913,7 +2939,7 @@ without a desktop window, game or input.
 ### Extract brush assemblies
 
 ```sh
-python3 -B scripts/validate_instance_extraction.py --binary target/debug/hammerr-headless --output /tmp/hammerr-instance-extraction-check
+python3 -B scripts/validate_instance_extraction.py --binary target/debug/hammerr-headless --output target/validation/instance-extraction-check
 cargo test -p editor-core --features mcp instance_extraction
 cargo test -p editor software_instance_extraction -- --test-threads=1
 ```

@@ -2,6 +2,120 @@ use super::*;
 use crate::session::{Actor, CompiledMap, Snapshot};
 use source_formats::bsp::surf;
 
+#[test]
+fn repeated_grandchild_origins_remain_grouped_and_stale_after_same_byte_replacement() {
+    for actor in [Actor::User, Actor::Agent] {
+        let (directory, game, source, middle) = crate::test_assets::instance_map(false);
+        let leaf = directory.path().join("leaf.vmf");
+        std::fs::copy(&middle, &leaf).unwrap();
+        let mut document = map_core::Document::empty();
+        document
+            .edit("repeated grandchild", |tx| {
+                for x in [0.0, 64.0] {
+                    map_core::edit::create_entity(
+                        tx,
+                        "func_instance",
+                        Some(glam::DVec3::new(x, 0.0, 0.0)),
+                        &[
+                            ("file".into(), "leaf.vmf".into()),
+                            ("angles".into(), "0 0 0".into()),
+                        ],
+                        Vec::new(),
+                    )?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        std::fs::write(&middle, document.vmf().write(&Default::default())).unwrap();
+        let mut session = Session::new(Ok(game));
+        session.open(actor, &source, true).unwrap();
+        let root_owner = session.document().vmf().entities.last().unwrap().id;
+        let memory = session.document().vmf().clone();
+        let history = session.history_snapshot();
+        let camera = session.camera();
+        let disk = std::fs::read(&source).unwrap();
+        let result = session.begin_compile(actor, None).unwrap().run();
+        session.finish_compile(actor, &result);
+        assert!(result.as_ref().unwrap().published());
+        let origins = session
+            .compiled
+            .as_ref()
+            .unwrap()
+            .face_origins
+            .as_ref()
+            .unwrap();
+        let source_ref = (0..origins.len())
+            .find_map(|face| {
+                origins
+                    .contributors(face)
+                    .unwrap()
+                    .find_map(|origin| match origin {
+                        compiler::face_origins::Origin::Instance {
+                            instance,
+                            file,
+                            solid,
+                            side,
+                        } if *instance == root_owner && file == "leaf.vmf" => {
+                            Some(SourceReference::Instance {
+                                instance: *instance,
+                                file: file.clone(),
+                                solid: *solid,
+                                side: *side,
+                            })
+                        }
+                        _ => None,
+                    })
+            })
+            .unwrap();
+        let query = Query {
+            source: Some(source_ref),
+            ..Default::default()
+        };
+        let before = session.inspect_baked_lightmaps(&query).unwrap();
+        assert_eq!(before.report["build"]["status"], "current");
+        assert!(
+            before.report["mapping"]["match_page"]["total"]
+                .as_u64()
+                .unwrap()
+                >= 2
+        );
+        let output = std::fs::read(source.with_extension("bsp")).unwrap();
+        let replacement = directory.path().join("same-byte-leaf.vmf");
+        std::fs::copy(&leaf, &replacement).unwrap();
+        std::fs::rename(replacement, &leaf).unwrap();
+        assert_eq!(session.compile_status()["job"]["stale"], true);
+        let after = session.inspect_baked_lightmaps(&query).unwrap();
+        assert_eq!(after.report["build"]["status"], "stale");
+        assert_eq!(
+            after.report["mapping"]["matches"],
+            before.report["mapping"]["matches"]
+        );
+        assert_eq!(
+            after.report["mapping"]["contributors"],
+            before.report["mapping"]["contributors"]
+        );
+        assert!(
+            after.report["build"]["diagnostics"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|value| value
+                    .as_str()
+                    .unwrap()
+                    .contains("Instance source/dependencies changed"))
+        );
+        assert_eq!(session.document().vmf(), &memory);
+        assert_eq!(session.history_snapshot(), history);
+        assert_eq!(session.camera(), camera);
+        assert_eq!(std::fs::read(&source).unwrap(), disk);
+        assert_eq!(std::fs::read(source.with_extension("bsp")).unwrap(), output);
+        assert_eq!(
+            std::fs::read(source.with_extension("lin")).unwrap(),
+            b"previous pointfile"
+        );
+    }
+}
+
 fn color(rgb: [u8; 3], exponent: i8) -> RgbExp32 {
     RgbExp32 { rgb, exponent }
 }

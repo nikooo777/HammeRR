@@ -97,7 +97,7 @@ export component InstanceReferenceWindow inherits Window {
             Button { text: "Refresh instance contents"; clicked => { root.refresh-contents(); } }
             Text { text: root.contents; color: #a9bed5; wrap: word-wrap; }
             Rectangle { vertical-stretch: 1; }
-            Text { text: "File checks confirm path and presence only. Refresh or Compile validates committed child contents.\nOne level · world and func_detail brushes · no child editing, replacements or search fallback."; color: #9eafc5; wrap: word-wrap; font-size: 12px; }
+            Text { text: "File checks confirm path and presence only. Refresh or Compile validates committed child contents.\nFour helper levels · root-relative paths · world and func_detail brushes\nNo child editing, replacements or search fallback."; color: #9eafc5; wrap: word-wrap; font-size: 12px; }
             if root.message != "": Text { text: root.message; color: #f0b377; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 8px;

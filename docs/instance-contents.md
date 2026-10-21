@@ -9,7 +9,8 @@ helpers' Source transforms from the innermost reference outward. Selection,
 content bounds and camera framing use the displayed geometry. Child files and
 parent map objects remain unchanged; no terrain switch is required. Supported
 unnamed static child point/spot lights are counted for compilation, with no
-child-light display or illumination preview.
+child-light display or illumination preview. Supported non-solid child static
+props are also counted for compilation, with model preview explicitly unavailable.
 
 1. Save the parent VMF. Use **Instance reference…** to create an explicit relative
    `.vmf` reference inside its directory tree; see [Instance authoring](instance-authoring.md).
@@ -17,7 +18,9 @@ child-light display or illumination preview.
 3. Click **Refresh instance contents**. The inspector reports loading, ready,
    empty or failed state, owner references, transforms, world/detail counts,
    content bounds and checked dependency identities. **Expanded static lights:**
-   reports point/spot counts before compile-region filtering. **Cancel refresh**
+   reports point/spot counts before compile-region filtering. **Expanded static
+   props:** reports child props before that filtering and explains the unavailable
+   model preview. **Cancel refresh**
    cancels the current request; **Clear** frees the resolved layer.
 4. Click a displayed reference surface to select its root instance helper.
    Terrain picking follows the displaced triangles. Overlapping object cycling
@@ -70,6 +73,13 @@ its owner/dependency identities and counts, with no reference geometry to
 display, pick or frame. **Frame instance contents** is unavailable for that
 snapshot. Mixed assemblies retain their ordinary brush/terrain preview.
 
+Supported [child static props](instances.md) also resolve and count without
+loading model assets. A model-only assembly can be ready with checked VMF
+identities and counts; the inspector reports that its model display, bounds,
+picking and framing are unavailable. A missing or invalid MDL can leave reference
+resolution ready and still fail compilation. Mixed assemblies retain their
+actual brush/terrain surfaces and bounds; props do not add placeholder geometry.
+
 **Tool textures** does not classify this flat reference layer. Child editing,
 parameter replacements and automatic live refresh remain unsupported.
 [Instance authoring](instance-authoring.md) edits the root reference.
@@ -111,7 +121,8 @@ density adjustments. Repeated placements may share those leaf identities;
 picks and framing still use the root helper.
 Inspection's `stats.point_lights` and `stats.spot_lights` are omitted individually
 when zero. Like compiler counts, they describe expansion before compile-region
-filtering. A light-only ready report has `available:false`, zero geometry
+filtering. `stats.static_props` follows the same count and omit-zero convention.
+A light-only or model-only ready report has `available:false`, zero geometry
 counts, no face provenance and null owner content bounds.
 
 MCP uses `inspect_instance_contents` and `set_instance_contents` with

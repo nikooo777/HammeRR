@@ -3,7 +3,6 @@ import hashlib
 import json
 import os
 import re
-import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
@@ -25,18 +24,7 @@ def digest(path):
 
 
 def close_with_status(client):
-    process = client.process
-    process.stdin.close()
-    try:
-        code = process.wait(timeout=15)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait(timeout=5)
-        raise TimeoutError("Headless EOF failed to drain within 15 seconds")
-    finally:
-        client.log.close()
-        client.process = None
-    return code, process.stdout.read()
+    return client.close_with_status()
 
 
 def require_clean_eof(client):

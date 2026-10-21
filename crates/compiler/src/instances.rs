@@ -11,6 +11,7 @@ use crate::{Control, Diagnostic, FileIdentity, FileStamp, Report};
 
 mod entities;
 mod expand;
+mod props;
 mod terrain;
 
 pub const MAX_INSTANCES: usize = 256;
@@ -346,6 +347,8 @@ pub struct InstanceStats {
     pub point_lights: usize,
     #[serde(skip_serializing_if = "is_zero")]
     pub spot_lights: usize,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub static_props: usize,
     pub dependencies: Vec<DependencyInfo>,
 }
 
@@ -597,7 +600,7 @@ fn child_admission(child: &Vmf, control: &Control) -> Result<(), String> {
         }
         if let Some(kind) = entities::kind(entity) {
             entities::admit(entity, kind)
-                .map_err(|error| format!("Child light {}: {error}", entity.id))?;
+                .map_err(|error| format!("Child {} {}: {error}", kind.label(), entity.id))?;
             continue;
         }
         for (key, value) in entity.properties.iter() {
@@ -609,7 +612,7 @@ fn child_admission(child: &Vmf, control: &Control) -> Result<(), String> {
             .is_some_and(|class| class.eq_ignore_ascii_case("func_detail"))
         {
             return Err(format!(
-                "Child entity {} ({}) is unsupported; only world/func_detail brushes, unnamed static lights and bounded func_instance helpers are supported",
+                "Child entity {} ({}) is unsupported; only world/func_detail brushes, unnamed static lights, solid-0 static props and bounded func_instance helpers are supported",
                 entity.id,
                 entity.classname().unwrap_or("missing class")
             ));
@@ -640,10 +643,19 @@ fn child_admission(child: &Vmf, control: &Control) -> Result<(), String> {
 
 type Provenance = BTreeMap<String, (u32, String, u32, Option<u32>)>;
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct StaticPropPose {
+    pub origin: DVec3,
+    pub angles: DVec3,
+}
+
+pub(crate) type StaticPropPoses = BTreeMap<u32, Vec<StaticPropPose>>;
+
 pub struct PreparedInstances<'a> {
     pub(crate) vmf: Cow<'a, Vmf>,
     pub(crate) dependencies: Option<DependencyGuard>,
     pub(crate) stats: Option<InstanceStats>,
+    pub(crate) static_prop_poses: StaticPropPoses,
     provenance: Provenance,
 }
 
@@ -761,6 +773,7 @@ pub(crate) fn prepare<'a>(
         vmf: Cow::Borrowed(vmf),
         dependencies: None,
         stats: None,
+        static_prop_poses: BTreeMap::new(),
         provenance: BTreeMap::new(),
     };
     if !requires_source(vmf) {
@@ -846,6 +859,7 @@ pub(crate) fn prepare<'a>(
     let expanded_sources = expansion.finish();
     let stats = expanded_sources.stats;
     prepared.provenance = expanded_sources.provenance;
+    prepared.static_prop_poses = expanded_sources.static_prop_poses;
     report.diagnostics.push(Diagnostic::info(
         format!(
             "Expanded {} brush instances from {} files: {} world brushes, {} detail brushes",

@@ -5,6 +5,7 @@ import json
 import os
 import select
 import subprocess
+import threading
 import urllib.request
 from pathlib import Path
 
@@ -19,32 +20,41 @@ class Client:
         self.session = None
         self.process = None
         self.log = None
-        if not url:
-            self.log = (output / "editor.log").open("w")
-            self.process = subprocess.Popen(
-                [
-                    str(binary),
-                    "--headless",
-                    *(["--game", str(gameinfo)] if gameinfo else []),
-                ],
-                cwd=ROOT,
-                env={**os.environ, "HAMMERR_RECOVERY_DIR": str(output / "recovery"),
-                     **(environment or {})},
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=self.log,
-                text=True,
-                bufsize=1,
+        try:
+            if not url:
+                self.log = (output / "editor.log").open("w")
+                self.process = subprocess.Popen(
+                    [
+                        str(binary),
+                        "--headless",
+                        *(["--game", str(gameinfo)] if gameinfo else []),
+                    ],
+                    cwd=ROOT,
+                    env={**os.environ, "HAMMERR_RECOVERY_DIR": str(output / "recovery"),
+                         **(environment or {})},
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=self.log,
+                    text=True,
+                    bufsize=1,
+                )
+            self.rpc(
+                "initialize",
+                {
+                    "protocolVersion": "2025-03-26",
+                    "capabilities": {},
+                    "clientInfo": {"name": "lighting-validation", "version": "1"},
+                },
             )
-        self.rpc(
-            "initialize",
-            {
-                "protocolVersion": "2025-03-26",
-                "capabilities": {},
-                "clientInfo": {"name": "lighting-validation", "version": "1"},
-            },
-        )
-        self.rpc("notifications/initialized", {}, notification=True)
+            self.rpc("notifications/initialized", {}, notification=True)
+        except BaseException as error:
+            try:
+                code, trailing = self.close_with_status(timeout=10)
+                if code not in (None, 0) or trailing.strip():
+                    raise RuntimeError(f"Client initialization EOF failed: exit={code}, trailing={trailing[:512]!r}")
+            except BaseException as cleanup:
+                raise BaseExceptionGroup("Client initialization and cleanup failed", [error, cleanup]) from None
+            raise
 
     def rpc(self, method, params, notification=False):
         self.sequence += 1
@@ -124,14 +134,88 @@ class Client:
         return hashlib.sha256(data).hexdigest()
 
     def close(self):
-        if self.process:
-            self.process.stdin.close()
+        self.close_with_status(timeout=10)
+
+    def close_with_status(self, timeout=15):
+        process = self.process
+        if process is None:
+            if self.log is not None:
+                self.log.close()
+                self.log = None
+            return None, ""
+        errors, trailing, read_errors = [], [], []
+
+        def drain_stdout():
             try:
-                self.process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                self.process.terminate()
-                self.process.wait(timeout=10)
-            self.log.close()
+                trailing.append(process.stdout.read())
+            except BaseException as error:
+                read_errors.append(error)
+            finally:
+                try:
+                    process.stdout.close()
+                except BaseException as error:
+                    read_errors.append(error)
+
+        reader = threading.Thread(target=drain_stdout, daemon=True)
+        started = False
+        try:
+            try:
+                reader.start()
+                started = True
+            except BaseException as error:
+                errors.append(error)
+            try:
+                process.stdin.close()
+            except BaseException as error:
+                errors.append(error)
+            try:
+                process.wait(timeout=timeout)
+            except BaseException as error:
+                errors.append(TimeoutError(f"Headless EOF failed to drain within {timeout} seconds")
+                              if isinstance(error, subprocess.TimeoutExpired) else error)
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+                except BaseException as error:
+                    errors.append(error)
+                try:
+                    process.wait(timeout=5)
+                except BaseException as error:
+                    errors.append(error)
+        finally:
+            if not process.stdin.closed:
+                try:
+                    process.stdin.close()
+                except BaseException as error:
+                    errors.append(error)
+            if started:
+                try:
+                    reader.join(timeout=5)
+                    if reader.is_alive():
+                        errors.append(TimeoutError("Headless stdout remained open after child cleanup"))
+                    else:
+                        errors.extend(read_errors)
+                except BaseException as error:
+                    errors.append(error)
+            else:
+                try:
+                    process.stdout.close()
+                except BaseException as error:
+                    errors.append(error)
+            if process.returncode is not None:
+                self.process = None
+            if self.log is not None:
+                try:
+                    self.log.close()
+                except BaseException as error:
+                    errors.append(error)
+                finally:
+                    self.log = None
+        output = "".join(trailing)
+        if errors:
+            raise BaseExceptionGroup(f"Client cleanup failed: exit={process.returncode}, trailing={output[:512]!r}", errors)
+        return process.returncode, output
 
 
 def detail(client, ids):

@@ -14,6 +14,9 @@ mod terrain_tests;
 #[path = "entities_tests.rs"]
 mod entities_tests;
 
+#[path = "props_tests.rs"]
+mod props_tests;
+
 fn nested_helper(id: u32, file: &str, origin: &str, angles: &str) -> Entity {
     let mut helper = Entity::new(id, "func_instance");
     helper.properties.set("file", file);

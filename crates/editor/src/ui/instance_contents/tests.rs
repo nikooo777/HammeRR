@@ -100,6 +100,12 @@ fn software_controls_share_visibility_reports_frame_clear_and_preserve_parent() 
             .get_summary()
             .contains("Expanded static lights:")
     );
+    assert!(
+        !controller
+            .window
+            .get_summary()
+            .contains("Expanded static props:")
+    );
     assert!(controller.window.get_can_frame());
     controller.window.show().unwrap();
     controller
@@ -117,6 +123,142 @@ fn software_controls_share_visibility_reports_frame_clear_and_preserve_parent() 
     assert_eq!(session.document().vmf(), &source);
     assert_eq!(session.document().undo_labels().count(), history);
     assert_eq!(session.camera(), camera);
+}
+
+#[test]
+fn software_fgd_child_static_props_share_counts_and_explicit_unavailable_preview() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: false,
+        },
+    )))
+    .unwrap();
+    let (directory, game, parent, child) = crate::test_assets::instance_static_props::fixture();
+    let mut session = Session::new(Ok(game));
+    session.set_definitions(
+        Actor::User,
+        source_formats::fgd::Catalog::parse(
+            r#"
+        @PointClass = prop_static [
+            angles(angle) : "Angles" : "0 0 0"
+            model(studio) : "World Model" : ""
+            solid(choices) : "Collisions" : 6 = [ 0 : "None" 6 : "VPhysics" ]
+            skin(integer) : "Skin" : 0
+            body(integer) : "Body" : 0
+            modelscale(float) : "Scale" : "1"
+            rendercolor(color255) : "Color" : "255 255 255"
+            renderamt(integer) : "Opacity" : 255
+            rendermode(integer) : "Render mode" : 0
+            renderfx(integer) : "Render effect" : 0
+            fademindist(float) : "Start fade" : "-1"
+            fademaxdist(float) : "End fade" : "0"
+            fadescale(float) : "Fade scale" : "1"
+            targetname(string) : "Name" : ""
+            lightingorigin(string) : "Lighting origin" : ""
+            spawnflags(flags) = [ 1 : "Unused" : 0 ]
+        ]
+    "#,
+        )
+        .unwrap(),
+    );
+    session.open(Actor::User, &child, true).unwrap();
+    let prop = session
+        .create_entity(
+            Actor::User,
+            "prop_static",
+            Some(DVec3::new(96.0, 32.0, 8.0)),
+            BTreeMap::from([
+                (
+                    "model".into(),
+                    crate::test_assets::instance_static_props::MODEL.into(),
+                ),
+                ("solid".into(), "0".into()),
+            ]),
+        )
+        .unwrap();
+    session.save(Actor::User, None).unwrap();
+    session.open(Actor::User, &child, false).unwrap();
+    let ObjectId::Entity(prop) = prop else {
+        unreachable!()
+    };
+    let entity = session.document().entity(prop).unwrap();
+    for (key, expected) in [
+        ("solid", "0"),
+        ("body", "0"),
+        ("skin", "0"),
+        ("rendercolor", "255 255 255"),
+        ("targetname", ""),
+    ] {
+        assert_eq!(entity.properties.get(key), Some(expected));
+    }
+    session.open(Actor::User, &parent, false).unwrap();
+    session
+        .begin_property_edit(session::PropertyTarget::World)
+        .unwrap();
+    let token = session.property_draft().unwrap().token;
+    session
+        .append_property_change(
+            token,
+            session::PropertyChange::Set {
+                key: "message".into(),
+                value: "Retain the child-model review".into(),
+            },
+        )
+        .unwrap();
+    let source = session.document().vmf().clone();
+    let history = session.history_snapshot();
+    let camera = session.camera();
+    let settings = session.compile_settings();
+    let draft = serde_json::json!(session.property_draft());
+    let parent_bytes = std::fs::read(&parent).unwrap();
+    let child_bytes = std::fs::read(&child).unwrap();
+    let output = directory.path().join("outputs/instance-props.bsp");
+    let result = session
+        .begin_compile(Actor::User, Some(&output))
+        .unwrap()
+        .run();
+    assert!(
+        result.as_ref().unwrap().output.bsp.is_some(),
+        "{:?}",
+        result.as_ref().unwrap().output.report
+    );
+    session.finish_compile(Actor::User, &result);
+    assert_eq!(session.compile_status()["job"]["result"]["published"], true);
+    let request = session
+        .begin_instance_contents_refresh(Actor::User)
+        .unwrap();
+    session
+        .finish_instance_contents_refresh(Actor::User, request.run())
+        .unwrap();
+    let report = session.inspect_instance_contents(0, 64).unwrap();
+    assert_eq!(report["stats"]["static_props"], 2);
+    assert_eq!(report["static_prop_preview"]["available"], false);
+    assert_eq!(report["available"], false);
+    assert_eq!(report["geometry"]["vertices"], 0);
+    assert!(report["owners"][0]["bounds"].is_null());
+    let shared = Arc::new(Mutex::new(session));
+    let contents = Controller::new(shared.clone()).unwrap();
+    let build = crate::compile_ui::Controller::new(&shared).unwrap();
+    build.refresh(&lock(&shared));
+    let counts = "Expanded static props: 2 · before compile-region filtering";
+    let reason = editor_core::session::instance_contents::STATIC_PROP_PREVIEW_REASON;
+    assert!(contents.window.get_summary().contains(counts));
+    assert!(contents.window.get_summary().contains(reason));
+    assert!(build.window.get_details().contains(counts));
+    assert!(build.window.get_details().contains(reason));
+    assert!(!contents.window.get_can_frame());
+    assert!(contents.window.get_owners().contains("child.vmf"));
+    assert!(!contents.window.get_owners().contains("Content bounds"));
+    let session = lock(&shared);
+    assert_eq!(session.document().vmf(), &source);
+    assert_eq!(session.history_snapshot(), history);
+    assert_eq!(session.camera(), camera);
+    assert_eq!(session.compile_settings(), settings);
+    assert_eq!(serde_json::json!(session.property_draft()), draft);
+    assert_eq!(std::fs::read(&parent).unwrap(), parent_bytes);
+    assert_eq!(std::fs::read(&child).unwrap(), child_bytes);
 }
 
 #[test]

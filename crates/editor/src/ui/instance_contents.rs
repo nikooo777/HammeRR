@@ -126,6 +126,18 @@ impl Controller {
             summary.push('\n');
             summary.push_str(reason);
         }
+        if let Some(props) = state["stats"]["static_props"]
+            .as_u64()
+            .filter(|&count| count > 0)
+        {
+            summary.push_str(&format!(
+                "\nExpanded static props: {props} · before compile-region filtering"
+            ));
+        }
+        if let Some(reason) = state["static_prop_preview"]["reason"].as_str() {
+            summary.push('\n');
+            summary.push_str(reason);
+        }
         self.window.set_summary(summary.into());
         self.window
             .set_loading(state["loading"].as_bool().unwrap_or(false));

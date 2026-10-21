@@ -286,8 +286,8 @@ manual-game discovery. Lower capture preflight retains its existing
 same-installation running-client rejection.
 
 A saved parent can compile nested world/detail brush instances, including power
-2–4 terrain and strictly admitted unnamed static point/spot lights, through four
-helper levels, counting a root helper as level one; see
+2–4 terrain, strictly admitted unnamed static point/spot lights and non-solid
+static props, through four helper levels, counting a root helper as level one; see
 [Referenced brush assemblies](instances.md). `create_entity` uses
 `classname: "func_instance"`, an origin and string properties `file` (relative
 `.vmf`) and optional `angles` (Source pitch/yaw/roll). The current in-memory parent
@@ -328,6 +328,21 @@ leave root-map spotlight precedence unchanged. Use existing `create_entity`,
 `set_entity_properties` and `save_map` in the child, then the ordinary instance
 reference and compile operations; no new tool or setting is required.
 
+Child `prop_static` supports unnamed, unit-scale/body 0/skin 0 scenery with
+explicit `solid:"0"`, canonical lowercase properties and finite `origin`.
+Absent `angles` means zero. Supplied render settings must stay normal-white:
+`rendercolor:"255 255 255"`, `renderamt:"255"`, `rendermode:"0"` and
+`renderfx:"0"`. Names, targets, parents and `lightingorigin` must be absent or
+empty. Neutral FGD scale/fade/flag/DX/lighting defaults are admitted; custom
+fades, scaling, body/skin selections, collision, unknown properties, duplicate
+case aliases, brushes, I/O and opaque blocks reject. See the exact
+[child prop limits](instances.md). Use `create_entity` and `set_entity_properties`
+in the child, `save_map`, then the existing reference and compile operations.
+No new tool or setting is required. Reference resolution does not load MDL
+headers. The ordinary compiler consumer reads retained props after origin-based
+region selection, checks model boxes at source and intermediate poses, and
+retains the original model-source guard through publication and launch.
+
 `compile_map`, `start_compile` and `run_map` use the same automatic expansion
 before region selection; no new compile switch is required. Optional
 `stats.instances` contains occurrence/file/world/detail counts,
@@ -342,6 +357,13 @@ zero. They count expanded static lights before compile-region filtering;
 enabled regions select emitted child lights by transformed origin. **Build
 details…** shows **Expanded static lights:** with point/spot counts and
 **before compile-region filtering**.
+
+`stats.instances.static_props` is likewise omitted when zero and counts expanded
+child props before region filtering. **Build details…** shows **Expanded static
+props:** with **before compile-region filtering**; top-level `stats.static_props`
+counts emitted props. Region-omitted child props leave model assets unread.
+Nested child props use the same first-read source ownership and completed-build/
+launch checks as ordinary [static props](static-props.md).
 
 Completed instance jobs report `instance_dependencies.current/error`; `stale`,
 launch readiness and baked inspection include the retained build's dependencies.
@@ -427,6 +449,15 @@ A light-only assembly can report `state:"ready"` with its owner/dependency
 identities and light counts, `available:false`, zero geometry counts and null
 owner bounds. **Frame instance contents** has no geometry to frame in that
 snapshot. Mixed assemblies retain the supported brush/terrain preview.
+The inspection's optional `stats.static_props` counts expanded child props before
+region filtering and is omitted when zero. **Instance contents…** shows
+**Expanded static props:**. When nonzero, `static_prop_preview` returns
+`available:false` and the same explanatory `reason` shown in the inspector.
+Child models contribute no model display, bounds, picking, framing or placeholder
+geometry. Model-only references can be `state:"ready"` with VMF identities and
+counts while `available:false`, with zero geometry and null owner bounds.
+Missing or malformed models can leave that reference report ready and still
+fail compilation. Mixed references retain their real brush/terrain preview.
 Repeated placements can share those leaf identities. Picking and framing retain
 the root helper owner.
 

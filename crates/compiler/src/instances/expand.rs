@@ -14,6 +14,7 @@ struct Child {
 pub(super) struct ExpandedSources {
     pub stats: InstanceStats,
     pub provenance: Provenance,
+    pub static_prop_poses: StaticPropPoses,
     pub files: Vec<(String, FileIdentity)>,
 }
 
@@ -30,6 +31,7 @@ pub(super) struct Expansion<'a> {
     terrain: terrain::Budget,
     stats: InstanceStats,
     provenance: Provenance,
+    static_prop_poses: StaticPropPoses,
 }
 
 impl<'a> Expansion<'a> {
@@ -52,6 +54,7 @@ impl<'a> Expansion<'a> {
             terrain: terrain::Budget::default(),
             stats: InstanceStats::default(),
             provenance: BTreeMap::new(),
+            static_prop_poses: BTreeMap::new(),
         }
     }
 
@@ -193,7 +196,11 @@ impl<'a> Expansion<'a> {
                 } else if let Some(kind) = entities::kind(entity) {
                     self.entity(tx, entity, kind, owner.id, &relative, transforms)
                         .map_err(|error| {
-                            EditError::Invalid(format!("Child light {}: {error}", entity.id))
+                            EditError::Invalid(format!(
+                                "Child {} {}: {error}",
+                                kind.label(),
+                                entity.id
+                            ))
                         })?;
                 } else {
                     for solid in entity.solids.iter().filter(|solid| !solid.hidden) {
@@ -229,7 +236,7 @@ impl<'a> Expansion<'a> {
             .and_then(|bytes| bytes.checked_mul(transforms.len() + 1))
             .and_then(|work| self.work.checked_add(work));
         let Some(work) = work else {
-            return Err(EditError::Invalid("Instance light-work overflow".into()));
+            return Err(EditError::Invalid("Instance entity-work overflow".into()));
         };
         if self.objects > MAX_OBJECTS || work > MAX_GEOMETRY_WORK {
             return Err(EditError::Invalid(
@@ -237,7 +244,13 @@ impl<'a> Expansion<'a> {
             ));
         }
         self.work = work;
-        entities::check_pose(original, kind).map_err(EditError::Invalid)?;
+        let mut poses = Vec::new();
+        if matches!(kind, entities::Kind::StaticProp) {
+            poses.reserve(transforms.len() + 1);
+            poses.push(props::check_pose(original).map_err(EditError::Invalid)?);
+        } else {
+            entities::check_pose(original, kind).map_err(EditError::Invalid)?;
+        }
         let mut entity = original.clone();
         entity.id = tx.new_object_id()?;
         entity.editor = None;
@@ -252,11 +265,22 @@ impl<'a> Expansion<'a> {
             let ObjectId::Entity(entity) = id else {
                 unreachable!()
             };
-            entities::check_pose(tx.entity_mut(entity)?, kind).map_err(EditError::Invalid)?;
+            if matches!(kind, entities::Kind::StaticProp) {
+                poses.push(props::check_pose(tx.entity_mut(entity)?).map_err(EditError::Invalid)?);
+            } else {
+                entities::check_pose(tx.entity_mut(entity)?, kind).map_err(EditError::Invalid)?;
+            }
         }
         match kind {
             entities::Kind::Point => self.stats.point_lights += 1,
             entities::Kind::Spot => self.stats.spot_lights += 1,
+            entities::Kind::StaticProp => {
+                self.stats.static_props += 1;
+                let ObjectId::Entity(entity) = id else {
+                    unreachable!()
+                };
+                self.static_prop_poses.insert(entity, poses);
+            }
         }
         Ok(())
     }
@@ -353,6 +377,7 @@ impl<'a> Expansion<'a> {
         ExpandedSources {
             stats: self.stats,
             provenance: self.provenance,
+            static_prop_poses: self.static_prop_poses,
             files: self
                 .files
                 .into_iter()

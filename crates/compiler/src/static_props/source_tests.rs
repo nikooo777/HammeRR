@@ -75,6 +75,7 @@ impl Fixture {
             &mut report,
             &Control::default(),
             None,
+            &Default::default(),
         )
         .unwrap();
         assert!(!report.has_errors(), "{report:?}");
@@ -316,6 +317,7 @@ fn optional_prop_lighting_keeps_its_original_model_read_receipt() {
         &mut report,
         &Control::default(),
         Some(&mut reads),
+        &Default::default(),
     )
     .unwrap();
     assert!(!report.has_errors(), "{report:?}");
@@ -343,6 +345,7 @@ fn optional_prop_lighting_keeps_its_original_model_read_receipt() {
         &mut report,
         &Control::default(),
         Some(&mut reads),
+        &Default::default(),
     )
     .unwrap();
     assert!(report.has_errors());

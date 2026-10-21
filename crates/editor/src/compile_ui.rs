@@ -826,6 +826,12 @@ impl Controller {
                         "\nExpanded static lights: {points} point · {spots} spot · before compile-region filtering\nChild lights, illumination and icons are not shown in the reference or authored-lighting preview."
                     ));
                 }
+                if let Some(props) = stats["static_props"].as_u64().filter(|&count| count > 0) {
+                    summary.push_str(&format!(
+                        "\nExpanded static props: {props} · before compile-region filtering\n{}",
+                        editor_core::session::instance_contents::STATIC_PROP_PREVIEW_REASON
+                    ));
+                }
                 for dependency in stats["dependencies"]
                     .as_array()
                     .into_iter()

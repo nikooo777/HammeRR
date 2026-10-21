@@ -37,6 +37,10 @@ pub mod winding;
 #[path = "../tests/common/mod.rs"]
 mod test_common;
 
+#[cfg(test)]
+#[path = "../tests/common/static_prop_model.rs"]
+mod test_static_prop_model;
+
 #[cfg(all(test, target_os = "linux"))]
 mod write_reservation_tests;
 
@@ -914,7 +918,7 @@ impl Output {
 }
 
 fn build(
-    vmf: &Vmf,
+    prepared_instances: &instances::Prepared<'_>,
     fs: &GameFs,
     output: &mut Output,
     options: Options,
@@ -922,6 +926,7 @@ fn build(
     control: &Control,
     mut face_origins: Result<face_origins::FaceOrigins, String>,
 ) -> Result<(), String> {
+    let vmf = prepared_instances.vmf.as_ref();
     options.validate()?;
     let water_current = physics::current::from_world(vmf, options.physics)?;
     let water_damping = physics::damping::from_world(vmf, options.physics)?;
@@ -1342,6 +1347,7 @@ fn build(
         &mut output.report,
         control,
         map.materials.prop_lighting_sources_mut(),
+        &prepared_instances.static_prop_poses,
     )?;
     output.static_prop_sources = prop_stats.source_guard;
     if output.report.has_errors() {
@@ -1618,7 +1624,7 @@ pub fn compile_with_source_controlled(
             output.instance_dependencies = prepared.dependencies.clone();
             output.stats.instances = prepared.stats.clone();
             if let Err(message) = build(
-                prepared.vmf.as_ref(),
+                &prepared,
                 fs,
                 &mut output,
                 options,

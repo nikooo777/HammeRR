@@ -10,6 +10,7 @@ use source_formats::{
 mod fixtures;
 mod ignore_normals;
 mod indirect_sources;
+mod instances;
 mod lighting_origins;
 mod source_identity;
 mod spherical_indirect;

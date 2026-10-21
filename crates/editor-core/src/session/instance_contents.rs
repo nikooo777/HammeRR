@@ -18,6 +18,8 @@ use super::{Actor, Session};
 
 mod terrain;
 
+pub const STATIC_PROP_PREVIEW_REASON: &str = "Child static-prop models are compiled but not shown in the reference preview; model bounds, picking and framing are unavailable.";
+
 const MAX_DIAGNOSTICS: usize = 64;
 const MAX_ROWS: usize = 64;
 // Includes bounded dependency paths, source stamps and retained reports.
@@ -1124,6 +1126,12 @@ impl Session {
             report["static_light_preview"] = json!({
                 "available":false,
                 "reason":"Child lights, illumination and icons are not shown in the reference or authored-lighting preview."
+            });
+        }
+        if ready.is_some_and(|ready| ready.stats.static_props > 0) {
+            report["static_prop_preview"] = json!({
+                "available":false,
+                "reason":STATIC_PROP_PREVIEW_REASON
             });
         }
         report

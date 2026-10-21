@@ -268,6 +268,7 @@ pub(crate) fn bake(
     report: &mut Report,
     control: &Control,
     mut source_reads: Option<&mut crate::lighting::asset_tracking::SourceReads>,
+    instance_poses: &crate::instances::StaticPropPoses,
 ) -> Result<Stats, String> {
     let mut props = StaticProps {
         version: 6,
@@ -352,6 +353,21 @@ pub(crate) fn bake(
                 );
             }
             let asset = models.get_mut(&path).unwrap();
+            if let Some(poses) = instance_poses.get(&entity.id) {
+                for (index, pose) in poses.iter().enumerate() {
+                    control.checkpoint()?;
+                    let angles = pose.angles.map(f64::to_radians);
+                    let rotation = DQuat::from_euler(EulerRot::ZYX, angles.y, angles.x, angles.z);
+                    bounds(asset.header, pose.origin, rotation).map_err(|error| {
+                        let stage = if index == 0 {
+                            "source pose".to_owned()
+                        } else {
+                            format!("intermediate pose {index}")
+                        };
+                        format!("Static child prop {stage}: {error}")
+                    })?;
+                }
+            }
             let mut prop = record(entity, asset.header, &lighting)?;
             if prop.solid == 6 {
                 if asset.collision.is_none() {

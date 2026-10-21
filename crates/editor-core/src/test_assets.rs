@@ -1,3 +1,4 @@
+pub mod instance_static_props;
 pub mod model_lighting;
 
 use source_formats::bsp::Bsp;

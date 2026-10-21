@@ -23,6 +23,13 @@ Builds retain the first consumed MDL and required PHY source identities, includi
 
 HammeRR bounds static-prop leaf traversal and clipping to 16 million work units and four million cumulative reserved polygon points per build. A clipped fragment reserves at most 4,096 points and 256 faces. Exceeding these budgets, an invalid asset or a prop with no open leaf fails before publication. Existing native prop/model/leaf-table limits also apply. The source map and Undo history stay unchanged during compilation.
 
+Saved [referenced assemblies](instances.md) can contain the strict unnamed,
+unit-scale/body 0/skin 0, normal-white `solid:0` subset. Nested transforms compile
+through this same model consumer and retain its original source guards. Child
+props have expanded counts in **Build details…** and **Instance contents…**;
+their models, bounds, picking and framing are unavailable in the reference layer.
+The ordinary root-map prop options described here remain available separately.
+
 Agents use the same `create_entity`, `set_entity_properties`, `compile_map` and `start_compile` operations.
 
 ## Bake vertex lighting

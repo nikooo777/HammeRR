@@ -1,9 +1,10 @@
 [← Manual](README.md)
 
-# Compile referenced brush assemblies
+# Compile referenced assemblies
 
 Reuse saved VMFs' world and detail brushes, power 2–4 terrain, unnamed static
-point/spot lights and nested references at several positions and rotations.
+point/spot lights, non-solid static props and nested references at several
+positions and rotations.
 Compilation expands the supported contents without an extra switch. The editor
 can resolve a separate, explicitly refreshed
 [reference preview](instance-contents.md) with actual displaced terrain surfaces
@@ -13,7 +14,7 @@ from supported brushes already in the parent.
 
 1. Save the parent map. Save a child VMF inside the same directory tree, such as
    `parts/arch.vmf`. Keep the child's visible contents to world brushes,
-   ordinary `func_detail` brushes, supported static lights and nested
+   ordinary `func_detail` brushes, supported static lights/props and nested
    `func_instance` references.
    World and detail brushes may carry supported power 2, 3 or 4 terrain. The
    child's world settings do not replace the parent's.
@@ -22,30 +23,40 @@ from supported brushes already in the parent.
    below. A spotlight needs an explicit `pitch`, such as `-90` for downward or
    `0` with the first `angles` component zero for horizontal. Save the child
    before returning to the parent. Loaded FGD defaults do not bypass these checks.
-3. Click **Instance reference…**. Set **VMF reference** to `parts/arch.vmf`,
+3. To add child scenery, choose `prop_static` in **Entity…** and set **World Model**
+   to a supported static model. In **Advanced properties**, choose
+   **Collisions → Not Solid**.
+   Keep scale 1, body/skin 0, normal white rendering and names empty. Save the
+   child. Collision and non-neutral prop settings are outside this child subset.
+4. Click **Instance reference…**. Set **VMF reference** to `parts/arch.vmf`,
    choose **Position** and **Rotation**, then click **Create**. **Cancel** leaves
    the map unchanged. See [Instance authoring](instance-authoring.md) for browsing,
    editing and file-check controls.
-4. To inspect child shapes, enable **Instance contents**, open **Instance contents…**
+5. To inspect child shapes, enable **Instance contents**, open **Instance contents…**
    and click **Refresh instance contents**. Terrain uses its displaced surface
    for the flat-color view, content bounds and picking. Clicking it selects the
    root helper; the child remains read-only. **Expanded static lights:** reports
    point/spot counts, but child lights and their illumination/icons are not
-   shown in this layer or the authored-lighting preview.
-5. Move or rotate the helper with the ordinary transform controls. Its origin
+   shown in this layer or the authored-lighting preview. **Expanded static props:**
+   reports child prop counts. Child models are compiled but have no reference
+   display, model bounds, picking or framing.
+6. Move or rotate the helper with the ordinary transform controls. Its origin
    places the child's origin. The `angles` property uses Source pitch, yaw, roll;
-   brushes, terrain, light positions/spot directions and attached texture
-   coordinates rotate together. Keep replacement fields empty; named runtime
+   brushes, terrain, static props, light positions/spot directions and attached
+   texture coordinates rotate together. Keep replacement fields empty; named runtime
    entities are unsupported.
-6. Click **Compile**. Unsaved parent edits are included. Open **Build details…**
+7. Click **Compile**. Unsaved parent edits are included. Open **Build details…**
    in the bar below the toolbar to inspect **Instances**, **Files**, **Nesting
    depth**, world/detail brush counts and each relative dependency's byte count
    and **SHA256**. **Expanded static lights:** counts all expanded point/spot
    lights before compile-region filtering, including lights outside the region.
-7. Recompile after changing any child or descendant. Changed, missing or
+   **Expanded static props:** uses the same expansion count before filtering;
+   **Static props** counts props emitted by the selected build region.
+8. Recompile after changing any child or descendant. Changed, missing or
    retargeted dependencies make the completed build stale and disable **Play
    built map**. Launch also verifies exact dependency contents before starting
-   the game.
+   the game. Consumed model sources also retain the original
+   [static-prop source checks](static-props.md).
 
 ![Instance counts, dependency identity and build diagnostics](images/build-instance-terrain.png)
 
@@ -89,6 +100,22 @@ Limits:
   `angles` component zero to avoid legacy fallback. Missing `angles` means zero
   angles. Targets and legacy `angle:-1`/`-2` shortcuts are unsupported for child lights.
   These restrictions do not change root-map spotlight behavior.
+- Child `prop_static` supports unnamed, unit-scale, body 0/skin 0 scenery with
+  explicit `solid:0`. Use canonical lowercase keys and finite `origin`;
+  absent `angles` means zero, and legacy `angle` must be absent or zero.
+  Normal rendering requires white `rendercolor`,
+  `renderamt:255`, and zero `rendermode`/`renderfx` when supplied. Names, targets,
+  parents and `lightingorigin` must be absent or empty. Brushes, connections,
+  duplicate case aliases, unknown properties and opaque blocks reject.
+- Ordinary neutral FGD defaults are admitted: zero `body`, `skin`, `spawnflags`,
+  `mindxlevel`, `maxdxlevel`, `screenspacefade`, `generatelightmaps`, `ignorenormals`,
+  `disableshadows`, `disablevertexlighting` and `disableselfshadowing`; `modelscale`
+  and `fadescale` 1, `fademindist` -1 and `fademaxdist` 0. Custom fades, skin/body
+  selections, scaling, named lighting
+  origins and collision are unsupported for child props. The ordinary compiler
+  reads the retained model's MDL header only after region selection and checks
+  its model boxes at the source pose and every nested transform. Bounds must
+  remain valid at intermediate poses even if the final placement returns inside.
 - Terrain must have an effective quad base face and a valid power 2–4 grid.
   Supported deformation, alpha, smoothing, triangle-tag and native vertex-mask
   data are retained through transforms. Malformed or nonfinite rows, unsupported
@@ -108,10 +135,12 @@ Limits:
   than offering a generated child face as an editable parent face.
 - Expansion happens before parent compile-region selection. Geometry intersecting
   the region remains eligible even when its instance marker is outside. Ordinary
-  region geometry restrictions still apply; child lights are selected by their
-  transformed origins. **Generate reflections** with instances is unavailable.
+  region geometry restrictions still apply; child lights and props are selected
+  by transformed origin. **Generate reflections** with instances is unavailable.
   Keep lights inside sealing boundaries: a retained light on a generated wall
-  can be unavailable for baking, with an explicit diagnostic.
+  can be unavailable for baking, with an explicit diagnostic. Region-omitted
+  child props do not read their model assets. Models remain external game
+  assets; this does not pack them into the BSP.
 - The [reference preview](instance-contents.md) has additional limits. A child
   that would change an existing parent terrain patch's displaced vertices or
   triangle indices makes the preview unavailable; compilation remains available.
@@ -134,8 +163,11 @@ is required. Build reports expose optional `stats.instances`, with nonzero
 counts describe the original power grids before neighbor density adjustments.
 Optional `point_lights` and `spot_lights` count expanded static lights before
 compile-region filtering and are omitted individually when zero. A light-only
-assembly can resolve ready with dependency/count reports but has no reference
-geometry to display, pick or frame.
+or model-only assembly can resolve ready with dependency/count reports but has
+no reference geometry to display, pick or frame. Optional `static_props` counts
+expanded child props before region filtering and is also omitted when zero.
+Reference resolution does not validate model headers; missing or unsupported
+models stop compilation through the ordinary static-prop consumer.
 Completed jobs also report dependency freshness. `get_compile_status.launch` and
 `inspect_baked_lightmaps` respect the retained build's dependencies.
 

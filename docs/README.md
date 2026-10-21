@@ -55,8 +55,8 @@ Start with [Getting started](getting-started.md) and [Editor basics](basics.md).
 | [Water](water.md) | Flat world pools, underwater materials, fog and floating objects |
 | [Instance authoring](instance-authoring.md) | Place and edit saved VMF references with readable path and transform controls |
 | [Extract brush assemblies](instance-extraction.md) | Export selected brushes and replace them with a guarded instance reference |
-| [Instance contents](instance-contents.md) | Resolve, inspect, select and frame brush and terrain references |
-| [Referenced instances](instances.md) | Compile saved world/detail assemblies with terrain and guarded dependencies |
+| [Instance contents](instance-contents.md) | Inspect brush/terrain references and compiled child light/prop counts |
+| [Referenced instances](instances.md) | Compile saved brush/terrain assemblies with static lights/props and guarded sources |
 | [Compile regions](compile-regions.md) | Previewing and saving bounds for sealed partial-map builds |
 | [Physics and mass](physics.md) | Engine collision bodies and material-derived brush-model masses |
 | [Static props](static-props.md) | Model placement, collision choices and rotated visibility bounds |

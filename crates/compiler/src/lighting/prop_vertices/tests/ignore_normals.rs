@@ -466,6 +466,7 @@ fn flagged_dx_admission_precedes_receiver_companion_and_material_reads() {
         &mut report,
         &control,
         map.materials.prop_lighting_sources_mut(),
+        &Default::default(),
     )
     .unwrap();
     let sources = map.materials.take_prop_lighting_sources().unwrap();

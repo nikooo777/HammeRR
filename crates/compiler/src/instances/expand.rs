@@ -27,6 +27,7 @@ pub(super) struct Expansion<'a> {
     work: usize,
     objects: usize,
     sides: usize,
+    terrain: terrain::Budget,
     stats: InstanceStats,
     provenance: Provenance,
 }
@@ -48,6 +49,7 @@ impl<'a> Expansion<'a> {
             work: 0,
             objects: vmf.object_ids().count(),
             sides: vmf.side_ids().count(),
+            terrain: terrain::Budget::default(),
             stats: InstanceStats::default(),
             provenance: BTreeMap::new(),
         }
@@ -83,12 +85,21 @@ impl<'a> Expansion<'a> {
             MAX_FILE_NODES.min(MAX_TOTAL_NODES.saturating_sub(self.nodes)),
         )
         .map_err(|error| error.to_string())?;
-        let mut stack = parsed.iter().collect::<Vec<_>>();
-        while let Some(node) = stack.pop() {
+        let mut stack = parsed.iter().map(|node| (node, false)).collect::<Vec<_>>();
+        while let Some((node, hidden)) = stack.pop() {
             self.control.checkpoint()?;
             self.nodes += 1;
             if let Some(children) = node.children() {
-                stack.extend(children);
+                if node.key == "dispinfo" {
+                    let result = if hidden {
+                        terrain::hidden_source_grid(children, &mut self.terrain, self.control)
+                    } else {
+                        terrain::source_grid(children, &mut self.terrain, self.control)
+                    };
+                    result.map_err(|error| format!("Instance {relative}: {error}"))?;
+                }
+                let hidden = hidden || node.key == "hidden";
+                stack.extend(children.iter().map(|child| (child, hidden)));
             }
         }
         if self.nodes > MAX_TOTAL_NODES {
@@ -220,7 +231,10 @@ impl<'a> Expansion<'a> {
             ));
         }
         self.work = work;
-        checked_solid(original).map_err(EditError::Invalid)?;
+        self.terrain
+            .expanded(original, transforms.len(), self.control)
+            .map_err(EditError::Invalid)?;
+        checked_solid_controlled(original, self.control).map_err(EditError::Invalid)?;
         let mut solid = original.clone();
         solid.id = tx.new_object_id()?;
         solid.editor = None;
@@ -254,8 +268,10 @@ impl<'a> Expansion<'a> {
             self.control.checkpoint().map_err(EditError::Invalid)?;
             edit::transform(tx, &[id], *transform)?;
             match id {
-                ObjectId::Solid(id) => checked_solid(tx.solid_mut(id)?),
-                ObjectId::Entity(id) => checked_solid(&tx.entity_mut(id)?.solids[0]),
+                ObjectId::Solid(id) => checked_solid_controlled(tx.solid_mut(id)?, self.control),
+                ObjectId::Entity(id) => {
+                    checked_solid_controlled(&tx.entity_mut(id)?.solids[0], self.control)
+                }
             }
             .map_err(EditError::Invalid)?;
         }
@@ -263,6 +279,8 @@ impl<'a> Expansion<'a> {
     }
 
     pub fn finish(mut self) -> ExpandedSources {
+        self.stats.terrain_patches = self.terrain.patches;
+        self.stats.terrain_vertices = self.terrain.vertices;
         self.stats.files = self.files.len();
         self.stats.dependencies = self
             .files

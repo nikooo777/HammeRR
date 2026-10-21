@@ -10,6 +10,7 @@ use source_formats::vmf::{Entity, Solid, Vmf, parse_vec3};
 use crate::{Control, Diagnostic, FileIdentity, FileStamp, Report};
 
 mod expand;
+mod terrain;
 
 pub const MAX_INSTANCES: usize = 256;
 pub const MAX_EXPANSION_DEPTH: usize = 4;
@@ -25,6 +26,9 @@ pub const MAX_DEPTH: usize = 32;
 pub const MAX_FIELD_BYTES: usize = 512;
 pub const MAX_GEOMETRY_WORK: usize = 64_000_000;
 pub const MAX_PARENT_BYTES: u64 = 128 * 1024 * 1024;
+pub const MAX_TERRAIN_SOURCE_VERTICES: usize = 65_536;
+pub const MAX_TERRAIN_EXPANDED_VERTICES: usize = 262_144;
+pub const MAX_TERRAIN_GRID_WORK: usize = 2_097_152;
 
 #[derive(Clone, Debug)]
 pub struct SourceLocation {
@@ -333,7 +337,15 @@ pub struct InstanceStats {
     pub files: usize,
     pub world_brushes: usize,
     pub detail_brushes: usize,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub terrain_patches: usize,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub terrain_vertices: usize,
     pub dependencies: Vec<DependencyInfo>,
+}
+
+fn is_zero(value: &usize) -> bool {
+    *value == 0
 }
 
 pub fn requires_source(vmf: &Vmf) -> bool {
@@ -492,7 +504,12 @@ pub fn helper_admission(entity: &Entity) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(test)]
 fn checked_solid(solid: &Solid) -> Result<(), String> {
+    checked_solid_controlled(solid, &Control::default())
+}
+
+fn checked_solid_controlled(solid: &Solid, control: &Control) -> Result<(), String> {
     if solid.sides.len() > MAX_BRUSH_SIDES
         || !solid.extra.is_empty()
         || !solid.extra_properties.0.is_empty()
@@ -510,14 +527,8 @@ fn checked_solid(solid: &Solid) -> Result<(), String> {
                 side.id
             ));
         }
-        if side.displacement.is_some()
-            || !side.extra.is_empty()
-            || !side.extra_properties.0.is_empty()
-        {
-            return Err(format!(
-                "Child side {} has unsupported terrain or opaque metadata",
-                side.id
-            ));
+        if !side.extra.is_empty() || !side.extra_properties.0.is_empty() {
+            return Err(format!("Child side {} has opaque metadata", side.id));
         }
         for axis in [&side.u_axis, &side.v_axis] {
             if !axis.axis.is_finite()
@@ -548,6 +559,7 @@ fn checked_solid(solid: &Solid) -> Result<(), String> {
             solid.id
         ));
     }
+    terrain::check_solid(solid, &geometry, control)?;
     Ok(())
 }
 
@@ -635,6 +647,10 @@ pub struct InstanceBrush<'a> {
 }
 
 impl PreparedInstances<'_> {
+    pub fn vmf(&self) -> &Vmf {
+        self.vmf.as_ref()
+    }
+
     pub fn dependencies(&self) -> Option<&DependencyGuard> {
         self.dependencies.as_ref()
     }

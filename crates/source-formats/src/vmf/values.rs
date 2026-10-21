@@ -33,12 +33,14 @@ fn push_vec3(out: &mut String, v: DVec3) {
     push_number(out, v.z);
 }
 
+pub fn numeric_tokens(s: &str) -> impl Iterator<Item = &str> {
+    s.split(|c: char| c.is_ascii_whitespace() || matches!(c, '(' | ')' | '[' | ']'))
+        .filter(|token| !token.is_empty())
+}
+
 /// Parses whitespace-separated numbers, ignoring `(`, `)`, `[` and `]`.
 pub fn parse_numbers(s: &str) -> Option<Vec<f64>> {
-    s.split(|c: char| c.is_ascii_whitespace() || matches!(c, '(' | ')' | '[' | ']'))
-        .filter(|t| !t.is_empty())
-        .map(|t| t.parse().ok())
-        .collect()
+    numeric_tokens(s).map(|token| token.parse().ok()).collect()
 }
 
 /// Parses `x y z`, optionally wrapped in `()` or `[]`.

@@ -2,6 +2,8 @@ use super::*;
 use crate::session::{SelectMode, working_region};
 use map_core::edit;
 
+mod terrain;
+
 fn nested_opened(
     actor: Actor,
 ) -> (

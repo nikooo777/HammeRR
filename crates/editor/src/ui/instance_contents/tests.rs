@@ -87,6 +87,13 @@ fn software_controls_share_visibility_reports_frame_clear_and_preserve_parent() 
             .contains("1 instance from 1 file")
     );
     assert!(controller.window.get_owners().contains("child.vmf"));
+    assert!(
+        !controller
+            .window
+            .get_summary()
+            .contains("Instance terrain patches:")
+    );
+    assert!(!controller.window.get_owners().contains("Terrain:"));
     assert!(controller.window.get_can_frame());
     controller.window.show().unwrap();
     controller
@@ -104,6 +111,140 @@ fn software_controls_share_visibility_reports_frame_clear_and_preserve_parent() 
     assert_eq!(session.document().vmf(), &source);
     assert_eq!(session.document().undo_labels().count(), history);
     assert_eq!(session.camera(), camera);
+}
+
+#[test]
+fn software_terrain_counts_and_provenance_match_build_details_and_preserve_parent() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: false,
+        },
+    )))
+    .unwrap();
+    let (directory, mut game, parent, child) = crate::test_assets::instance_map(false);
+    let materials = directory.path().join("materials/dev");
+    std::fs::create_dir_all(&materials).unwrap();
+    std::fs::write(
+        materials.join("dev_measuregeneric01.vmt"),
+        "UnlitGeneric { }",
+    )
+    .unwrap();
+    game.mounts.push(source_formats::gamefs::MountedPath {
+        ids: vec!["game".into()],
+        mount: source_formats::gamefs::Mount::Directory(directory.path().to_owned()),
+    });
+    let mut session = Session::new(Ok(game));
+    session.open(Actor::User, &child, true).unwrap();
+    let solid = &session.document().vmf().world.solids[0];
+    let side = solid
+        .sides
+        .iter()
+        .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal == DVec3::Z)
+        .unwrap()
+        .id;
+    let face = map_core::surface::FaceId {
+        solid: solid.id,
+        side,
+    };
+    session.create_terrain(Actor::User, &[face], 2, 0).unwrap();
+    session
+        .preview_terrain_edit(
+            Actor::User,
+            &[face],
+            map_core::displacement::Operation::VertexMove {
+                vertices: vec![12],
+                offset: DVec3::new(0.0, 0.0, 8.0),
+            },
+        )
+        .unwrap();
+    session.commit_face_preview(Actor::User).unwrap();
+    session.save(Actor::User, None).unwrap();
+    let child_bytes = std::fs::read(&child).unwrap();
+    session.open(Actor::User, &parent, true).unwrap();
+    session
+        .update_compile_settings(Actor::User, Some("fullbright"), Some("none"))
+        .unwrap();
+    session
+        .begin_property_edit(session::PropertyTarget::World)
+        .unwrap();
+    let token = session.property_draft().unwrap().token;
+    session
+        .append_property_change(
+            token,
+            session::PropertyChange::Set {
+                key: "message".into(),
+                value: "Retain the terrain review".into(),
+            },
+        )
+        .unwrap();
+    let source = session.document().vmf().clone();
+    let history = session.history_snapshot();
+    let camera = session.camera();
+    let settings = session.compile_settings();
+    let draft = serde_json::json!(session.property_draft());
+    let parent_bytes = std::fs::read(&parent).unwrap();
+    let result = session.begin_compile(Actor::User, None).unwrap().run();
+    assert!(
+        result.as_ref().unwrap().output.bsp.is_some(),
+        "{:?}",
+        result.as_ref().unwrap().output.report
+    );
+    session.finish_compile(Actor::User, &result);
+    assert_eq!(session.compile_status()["job"]["result"]["published"], true);
+    let request = session
+        .begin_instance_contents_refresh(Actor::User)
+        .unwrap();
+    session
+        .finish_instance_contents_refresh(Actor::User, request.run())
+        .unwrap();
+    let report = session.inspect_instance_contents(0, 64).unwrap();
+    assert_eq!(report["stats"]["terrain_patches"], 1);
+    assert_eq!(report["stats"]["terrain_vertices"], 25);
+    assert_eq!(report["geometry"]["triangles"], 44);
+    let shared = Arc::new(Mutex::new(session));
+    let contents = Controller::new(shared.clone()).unwrap();
+    let build = crate::compile_ui::Controller::new(&shared).unwrap();
+    build.refresh(&lock(&shared));
+    let summary = "Instance terrain patches: 1 · Authored grid vertices: 25";
+    assert!(build.window.get_details().contains(summary));
+    assert!(contents.window.get_summary().contains(summary));
+    assert!(contents.window.get_owners().contains(&format!(
+        "child.vmf · brush {} · side {}",
+        face.solid, face.side
+    )));
+    assert!(
+        contents
+            .window
+            .get_owners()
+            .contains("Power 2 · 25 grid vertices · 32 triangles")
+    );
+    build.window.show().unwrap();
+    build.window.window().take_snapshot().unwrap();
+    build
+        .window
+        .window()
+        .dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+            position: slint::LogicalPosition::new(360.0, 450.0),
+            delta_x: 0.0,
+            delta_y: -10_000.0,
+        });
+    crate::ui::tests::save_ui_snapshot(build.window.window(), "build-instance-terrain");
+    contents.window.show().unwrap();
+    contents
+        .window
+        .window()
+        .set_size(slint::PhysicalSize::new(850, 690));
+    crate::ui::tests::save_ui_snapshot(contents.window.window(), "instance-contents-terrain");
+    let session = lock(&shared);
+    assert_eq!(session.document().vmf(), &source);
+    assert_eq!(session.history_snapshot(), history);
+    assert_eq!(session.camera(), camera);
+    assert_eq!(session.compile_settings(), settings);
+    assert_eq!(serde_json::json!(session.property_draft()), draft);
+    assert_eq!(std::fs::read(&parent).unwrap(), parent_bytes);
+    assert_eq!(std::fs::read(&child).unwrap(), child_bytes);
 }
 
 #[test]

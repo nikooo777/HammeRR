@@ -43,6 +43,14 @@ pub(crate) fn checked_mesh(
     {
         return Err("Displacement positions must fit Source compile bounds".into());
     }
+    if mesh.triangles().any(|[a, b, c]| {
+        (mesh.positions[b] - mesh.positions[a])
+            .cross(mesh.positions[c] - mesh.positions[a])
+            .length_squared()
+            < 1e-12
+    }) {
+        return Err("Displacement contains collapsed triangles".into());
+    }
     Ok((base, mesh))
 }
 #[path = "terrain/lod.rs"]
@@ -197,14 +205,6 @@ impl Map<'_> {
                 .into_iter()
                 .map(|tags| DisplacementTriangle { tags })
                 .collect();
-            if indices.iter().any(|&[a, b, c]| {
-                (mesh.positions[b] - mesh.positions[a])
-                    .cross(mesh.positions[c] - mesh.positions[a])
-                    .length_squared()
-                    < 1e-12
-            }) {
-                return Err("Displacement contains collapsed triangles".into());
-            }
             terrains.push(Terrain {
                 solid: solid.id,
                 side: side.id,

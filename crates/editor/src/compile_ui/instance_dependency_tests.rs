@@ -57,6 +57,18 @@ fn instance_dependency_build_details_share_counts_hashes_and_stale_launch_status
     assert!(controller.window.get_details().contains("child.vmf"));
     assert!(controller.window.get_details().contains("leaf.vmf"));
     assert!(controller.window.get_details().contains("SHA256"));
+    assert!(
+        !controller
+            .window
+            .get_details()
+            .contains("Instance terrain patches:")
+    );
+    assert!(
+        !controller
+            .window
+            .get_details()
+            .contains("Authored grid vertices:")
+    );
     controller.window.show().unwrap();
     controller.window.window().take_snapshot().unwrap();
     controller

@@ -6,6 +6,7 @@ use std::sync::Arc;
 use compiler::instances::{self, DependencyGuard, InstanceStats, SourceLocation};
 use glam::DVec3;
 use map_core::query::{Hit, Ray};
+use map_core::surface::FaceId;
 use map_core::{BrushGeometry, Document, ObjectId};
 use render::references::{self, Brush, Mesh};
 use render::scene::{LineVertex, Vertex};
@@ -14,6 +15,8 @@ use source_formats::vmf::{Vmf, parse_vec3};
 
 use super::worker::{Slot, Ticket};
 use super::{Actor, Session};
+
+mod terrain;
 
 const MAX_DIAGNOSTICS: usize = 64;
 const MAX_ROWS: usize = 64;
@@ -113,6 +116,24 @@ struct BrushRecord {
 struct FaceRecord {
     side: u32,
     indices: std::ops::Range<u32>,
+    terrain: Option<TerrainRecord>,
+}
+
+struct TerrainRecord {
+    power: u32,
+    vertices: usize,
+}
+
+impl FaceRecord {
+    fn json(&self, owner: u32, brush: &BrushRecord) -> Value {
+        let mut row = json!({"owner":format!("entity:{owner}"),"file":brush.file,"child_brush":brush.child,"child_side":self.side,"triangles":(self.indices.end-self.indices.start)/3});
+        if let Some(terrain) = &self.terrain {
+            row["terrain"] = true.into();
+            row["power"] = terrain.power.into();
+            row["vertices"] = terrain.vertices.into();
+        }
+        row
+    }
 }
 
 struct Ready {
@@ -139,7 +160,7 @@ fn bounded(value: &str) -> String {
 }
 
 fn limits() -> Value {
-    json!({"instances":instances::MAX_INSTANCES,"files":instances::MAX_FILES,"file_bytes":instances::MAX_FILE_BYTES,"total_bytes":instances::MAX_TOTAL_BYTES,"file_nodes":instances::MAX_FILE_NODES,"total_nodes":instances::MAX_TOTAL_NODES,"depth":instances::MAX_DEPTH,"expansion_depth":instances::MAX_EXPANSION_DEPTH,"objects":instances::MAX_OBJECTS,"sides":instances::MAX_SIDES,"sides_per_brush":instances::MAX_BRUSH_SIDES,"geometry_work":instances::MAX_GEOMETRY_WORK,"field_bytes":instances::MAX_FIELD_BYTES,"parent_bytes":instances::MAX_PARENT_BYTES,"vertices":references::MAX_VERTICES,"indices":references::MAX_INDICES,"line_vertices":references::MAX_LINES,"pick_triangles":references::MAX_TRIANGLES,"cpu_bytes":references::MAX_CPU_BYTES,"gpu_bytes":references::MAX_GPU_BYTES,"rows":MAX_ROWS,"diagnostics":MAX_DIAGNOSTICS,"active_workers":1,"cached_snapshots":1})
+    json!({"instances":instances::MAX_INSTANCES,"files":instances::MAX_FILES,"file_bytes":instances::MAX_FILE_BYTES,"total_bytes":instances::MAX_TOTAL_BYTES,"file_nodes":instances::MAX_FILE_NODES,"total_nodes":instances::MAX_TOTAL_NODES,"depth":instances::MAX_DEPTH,"expansion_depth":instances::MAX_EXPANSION_DEPTH,"objects":instances::MAX_OBJECTS,"sides":instances::MAX_SIDES,"sides_per_brush":instances::MAX_BRUSH_SIDES,"geometry_work":instances::MAX_GEOMETRY_WORK,"terrain_source_vertices":instances::MAX_TERRAIN_SOURCE_VERTICES,"terrain_expanded_vertices":instances::MAX_TERRAIN_EXPANDED_VERTICES,"terrain_grid_work":instances::MAX_TERRAIN_GRID_WORK,"terrain_context_vertices":references::MAX_VERTICES,"terrain_parent_lod":"must_match_ordinary_context","field_bytes":instances::MAX_FIELD_BYTES,"parent_bytes":instances::MAX_PARENT_BYTES,"vertices":references::MAX_VERTICES,"indices":references::MAX_INDICES,"line_vertices":references::MAX_LINES,"pick_triangles":references::MAX_TRIANGLES,"cpu_bytes":references::MAX_CPU_BYTES,"gpu_bytes":references::MAX_GPU_BYTES,"rows":MAX_ROWS,"diagnostics":MAX_DIAGNOSTICS,"active_workers":1,"cached_snapshots":1})
 }
 
 fn intersects(a: [DVec3; 2], b: [DVec3; 2]) -> bool {
@@ -291,6 +312,7 @@ impl Request {
                 })
             })
             .ok_or("Instance owner CPU size overflow")?;
+        let mut terrain = terrain::prepare(&prepared, vmf, &self.control, &mut report)?;
         let mut mesh = Mesh::default();
         let mut records = Vec::<BrushRecord>::new();
         for brush in prepared.generated_brushes() {
@@ -300,19 +322,43 @@ impl Request {
             }
             let geometry = BrushGeometry::from_solid(brush.solid)
                 .map_err(|error| bounded(&error.to_string()))?;
-            let vertex_count = geometry
-                .faces
+            let has_terrain = brush
+                .solid
+                .sides
                 .iter()
-                .map(|face| face.vertices.len())
-                .sum::<usize>();
-            let index_count = geometry
-                .faces
-                .iter()
-                .map(|face| face.vertices.len().saturating_sub(2) * 3)
-                .sum::<usize>();
-            let edge_count = vertex_count
-                .checked_mul(2)
-                .ok_or("Instance edge count overflow")?;
+                .any(|side| side.displacement.is_some());
+            let mut counts = [0usize; 3];
+            for face in &geometry.faces {
+                self.control.checkpoint()?;
+                let side = &brush.solid.sides[face.side];
+                let additional = if side.displacement.is_some() {
+                    let surface = terrain
+                        .get(&FaceId {
+                            solid: brush.solid.id,
+                            side: side.id,
+                        })
+                        .ok_or("Instance terrain surface is missing")?;
+                    [
+                        surface.mesh.positions.len(),
+                        surface.triangles.len() * 3,
+                        surface.edges.len() * 2,
+                    ]
+                } else if has_terrain {
+                    continue;
+                } else {
+                    [
+                        face.vertices.len(),
+                        face.vertices.len().saturating_sub(2) * 3,
+                        face.vertices.len() * 2,
+                    ]
+                };
+                for (count, additional) in counts.iter_mut().zip(additional) {
+                    *count = count
+                        .checked_add(additional)
+                        .ok_or("Instance geometry count overflow")?;
+                }
+            }
+            let [vertex_count, index_count, edge_count] = counts;
             let vertices = mesh
                 .vertices
                 .len()
@@ -336,13 +382,16 @@ impl Request {
                 || indices / 3 > references::MAX_TRIANGLES
                 || gpu_bytes > references::MAX_GPU_BYTES
             {
-                return Err("Instance contents exceed the flat geometry vertex/index/edge/triangle/GPU budget; compilation remains available".into());
+                return Err("Instance contents exceed the geometry vertex/index/edge/triangle/GPU budget; compilation remains available".into());
             }
             let cpu_bytes = gpu_bytes
                 .checked_add(
                     (mesh.brushes.len() + 1) * (size_of::<Brush>() + size_of::<BrushRecord>()),
                 )
                 .and_then(|bytes| bytes.checked_add(AUXILIARY_BYTES)?.checked_add(owner_bytes))
+                .and_then(|bytes| {
+                    bytes.checked_add(terrain.values().map(terrain::Surface::bytes).sum::<usize>())
+                })
                 .and_then(|bytes| {
                     bytes.checked_add(
                         records
@@ -379,8 +428,79 @@ impl Request {
             for face in &geometry.faces {
                 self.control.checkpoint()?;
                 let side = &brush.solid.sides[face.side];
+                if has_terrain && side.displacement.is_none() {
+                    continue;
+                }
                 let first = mesh.vertices.len() as u32;
                 let face_first = mesh.indices.len() as u32;
+                if let Some(info) = &side.displacement {
+                    let surface = terrain
+                        .remove(&FaceId {
+                            solid: brush.solid.id,
+                            side: side.id,
+                        })
+                        .ok_or("Instance terrain surface is missing")?;
+                    if surface.normals.len() != surface.mesh.positions.len()
+                        || surface.mesh.base_positions.len() != surface.mesh.positions.len()
+                    {
+                        return Err(
+                            "Instance terrain preview has incomplete vertices or normals".into(),
+                        );
+                    }
+                    for ((position, base), normal) in surface
+                        .mesh
+                        .positions
+                        .iter()
+                        .zip(&surface.mesh.base_positions)
+                        .zip(&surface.normals)
+                    {
+                        self.control.checkpoint()?;
+                        let position = position.as_vec3();
+                        let normal = DVec3::from_array(*normal).as_vec3();
+                        let uv = map_core::texel_uv(side, *base).as_vec2();
+                        if !position.is_finite() || !normal.is_finite() || !uv.is_finite() {
+                            return Err("Instance terrain contains nonrepresentable preview vertices, normals or UVs".into());
+                        }
+                        mesh.vertices.push(Vertex {
+                            position: position.to_array(),
+                            normal: normal.to_array(),
+                            uv: uv.to_array(),
+                            color: [255, 255, 255, 0],
+                            lightmap: [0.0, 0.0, -1.0],
+                            smoothing: 0,
+                            opacity: 1.0,
+                            texture_alpha: 0,
+                            tangent: [0.0; 4],
+                            lighting_receiver: 0,
+                        });
+                    }
+                    for triangle in &surface.triangles {
+                        self.control.checkpoint()?;
+                        mesh.indices
+                            .extend(triangle.map(|index| first + index as u32));
+                    }
+                    for edge in &surface.edges {
+                        self.control.checkpoint()?;
+                        for &index in edge {
+                            mesh.edges.push(LineVertex {
+                                position: surface.mesh.positions[index].as_vec3().to_array(),
+                                color: [124, 180, 220, 255],
+                            });
+                        }
+                    }
+                    let (_, _, _, original_side) = prepared
+                        .face_origin(side.id)
+                        .ok_or("Instance child face provenance missing")?;
+                    faces.push(FaceRecord {
+                        side: original_side,
+                        indices: face_first..mesh.indices.len() as u32,
+                        terrain: Some(TerrainRecord {
+                            power: info.power,
+                            vertices: mesh.vertices.len() - first as usize,
+                        }),
+                    });
+                    continue;
+                }
                 for &position in &face.vertices {
                     let position = position.as_vec3();
                     let normal = face.plane.normal.as_vec3();
@@ -414,6 +534,7 @@ impl Request {
                 faces.push(FaceRecord {
                     side: original_side,
                     indices: face_first..mesh.indices.len() as u32,
+                    terrain: None,
                 });
                 for index in 0..face.vertices.len() {
                     for position in [
@@ -468,12 +589,18 @@ impl Request {
                 &owners,
                 owners.capacity(),
             )
+            .and_then(|bytes| {
+                bytes.checked_add(terrain.values().map(terrain::Surface::bytes).sum::<usize>())
+            })
             .is_none_or(|bytes| bytes > references::MAX_CPU_BYTES)
             {
                 return Err(
                     "Instance contents exceed the 64 MiB retained CPU capacity budget".into(),
                 );
             }
+        }
+        if !terrain.is_empty() {
+            return Err("Instance terrain has unconsumed prepared surfaces".into());
         }
         let dependencies = prepared.dependencies().cloned();
         if let Some(guard) = &dependencies {
@@ -945,7 +1072,29 @@ impl Session {
             },
         );
         let brushes=ready.map(|ready|ready.mesh.brushes.iter().zip(&ready.brushes).take(MAX_ROWS).map(|(brush,record)|json!({"owner":format!("entity:{}",brush.owner),"file":record.file,"child_brush":record.child,"detail":record.detail,"bounds":record.bounds.map(|point|point.to_array())})).collect::<Vec<_>>()).unwrap_or_default();
-        let faces=ready.map(|ready|ready.mesh.brushes.iter().zip(&ready.brushes).flat_map(|(brush,record)|record.faces.iter().map(move |face|json!({"owner":format!("entity:{}",brush.owner),"file":record.file,"child_brush":record.child,"child_side":face.side,"triangles":(face.indices.end-face.indices.start)/3}))).take(MAX_ROWS).collect::<Vec<_>>()).unwrap_or_default();
+        let faces = ready
+            .map(|ready| {
+                ready
+                    .mesh
+                    .brushes
+                    .iter()
+                    .zip(&ready.brushes)
+                    .flat_map(|(brush, record)| {
+                        record
+                            .faces
+                            .iter()
+                            .map(move |face| face.json(brush.owner, record))
+                    })
+                    .take(MAX_ROWS)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let has_terrain = ready.is_some_and(|ready| {
+            ready
+                .brushes
+                .iter()
+                .any(|brush| brush.faces.iter().any(|face| face.terrain.is_some()))
+        });
         let face_count = ready.map_or(0, |ready| {
             ready
                 .brushes
@@ -968,7 +1117,7 @@ impl Session {
             "face_provenance":faces,"face_provenance_total":face_count,"face_provenance_truncated":face_count>MAX_ROWS,
             "diagnostics":ready.map(|ready|&ready.diagnostics),"diagnostics_truncated":ready.is_some_and(|ready|ready.diagnostics_truncated),
             "geometry":ready.map(|ready|json!({"vertices":ready.mesh.vertices.len(),"indices":ready.mesh.indices.len(),"line_vertices":ready.mesh.edges.len(),"triangles":ready.mesh.indices.len()/3,"cpu_bytes":ready.cpu_bytes,"gpu_bytes":ready.gpu_bytes})),
-            "policy":"flat_read_only_world_detail_root_owner_picking_no_material_loading",
+            "policy":if has_terrain {"read_only_world_detail_terrain_root_owner_picking_no_material_loading"} else {"flat_read_only_world_detail_root_owner_picking_no_material_loading"},
             "authoring_bounds":"ordinary_root_objects_unchanged","limits":limits()
         })
     }

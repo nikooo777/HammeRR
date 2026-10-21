@@ -100,12 +100,22 @@ impl Controller {
             }
         };
         self.token.set(state["token"].as_u64());
-        self.window.set_summary(
-            state["summary"]
-                .as_str()
-                .unwrap_or("Instance contents have not been refreshed")
-                .into(),
-        );
+        let mut summary = state["summary"]
+            .as_str()
+            .unwrap_or("Instance contents have not been refreshed")
+            .to_owned();
+        if let Some(patches) = state["stats"]["terrain_patches"]
+            .as_u64()
+            .filter(|&count| count > 0)
+        {
+            summary.push_str(&format!(
+                "\nInstance terrain patches: {patches} · Authored grid vertices: {}",
+                state["stats"]["terrain_vertices"]
+                    .as_u64()
+                    .unwrap_or_default()
+            ));
+        }
+        self.window.set_summary(summary.into());
         self.window
             .set_loading(state["loading"].as_bool().unwrap_or(false));
         self.window
@@ -167,6 +177,20 @@ impl Controller {
                     ));
                 }
                 owners.push('\n');
+            }
+        }
+        if let Some(rows) = state["face_provenance"].as_array() {
+            for row in rows.iter().filter(|row| row["terrain"] == true) {
+                owners.push_str(&format!(
+                    "Terrain: {} · {} · brush {} · side {}\nPower {} · {} grid vertices · {} triangles\n",
+                    row["owner"].as_str().unwrap_or("Instance"),
+                    row["file"].as_str().unwrap_or("unavailable"),
+                    row["child_brush"],
+                    row["child_side"],
+                    row["power"],
+                    row["vertices"],
+                    row["triangles"]
+                ));
             }
         }
         self.window.set_owners(if owners.is_empty() {

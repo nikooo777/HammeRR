@@ -6,7 +6,9 @@
 
 mod values;
 
-pub use values::{Color, Plane, UvAxis, format_number, format_vec3, parse_numbers, parse_vec3};
+pub use values::{
+    Color, Plane, UvAxis, format_number, format_vec3, numeric_tokens, parse_numbers, parse_vec3,
+};
 
 use glam::DVec3;
 

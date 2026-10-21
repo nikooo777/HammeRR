@@ -8,6 +8,9 @@ use source_formats::{
     vmf::format_vec3,
 };
 
+#[path = "terrain_tests.rs"]
+mod terrain_tests;
+
 fn nested_helper(id: u32, file: &str, origin: &str, angles: &str) -> Entity {
     let mut helper = Entity::new(id, "func_instance");
     helper.properties.set("file", file);

@@ -68,7 +68,7 @@ Limits:
   stale preparation. Active builds, launches and editing drafts block extraction.
   Failure preserves parent/history/camera and existing BSP/LIN files. External
   file races retain the normal identity-guard and no-clobber limits.
-- Child editing and automatic local-pivot conversion are unavailable. The flat
+- Child editing and automatic local-pivot conversion are unavailable. The flat-color
   contents preview remains a reference guide, with its existing material limits.
 
 MCP shares the same operations through `get_instance_extraction` and

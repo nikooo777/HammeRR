@@ -278,8 +278,8 @@ exact build token to cancel capture. There is no peer stop, native retry or new
 manual-game discovery. Lower capture preflight retains its existing
 same-installation running-client rejection.
 
-A saved parent can compile nested world/detail brush instances through four
-helper levels, counting a root helper as level one; see
+A saved parent can compile nested world/detail brush instances, including power
+2–4 terrain, through four helper levels, counting a root helper as level one; see
 [Referenced brush assemblies](instances.md). `create_entity` uses
 `classname: "func_instance"`, an origin and string properties `file` (relative
 `.vmf`) and optional `angles` (Source pitch/yaw/roll). The current in-memory parent
@@ -294,16 +294,29 @@ and geometry work. Ancestor physical-identity cycles reject; repeated siblings
 and shared descendants are allowed within those limits. Root settings remain
 authoritative.
 
+Child terrain uses valid quad grids with supported deformation, alpha, smoothing,
+triangle tags and native vertex-mask data. Malformed grids, unsupported flags,
+holes and opaque metadata reject without substituting a brush cage. Terrain is
+bounded to 65,536 source-grid vertices, 262,144 expanded grid vertices and
+2,097,152 grid-work units. Work counts vertices plus triangles for source
+admission, each visible occurrence and every nested transform. Repeated
+placements spend the expanded and transform budgets separately.
+
 `compile_map`, `start_compile` and `run_map` use the same automatic expansion
-before region selection. Optional `stats.instances` contains occurrence/file/
-world/detail counts, `max_expansion_depth` and dependency paths, bytes and SHA256.
+before region selection; no new compile switch is required. Optional
+`stats.instances` contains occurrence/file/world/detail counts,
+`max_expansion_depth` and dependency paths, bytes and SHA256.
+Its `terrain_patches` and `terrain_vertices` fields appear only when nonzero,
+counting generated terrain patches and authored power-grid vertices before
+neighbor density adjustments. **Build details…** reports these as **Instance
+terrain patches:** and **Authored grid vertices:**.
 Completed instance jobs report `instance_dependencies.current/error`; `stale`,
 launch readiness and baked inspection include the retained build's dependencies.
 Launch verifies exact contents in its worker. Source/settings changes, dependency failures and
 cancellation preserve previous BSP/pointfile bytes. Every transitive dependency
 participates in these checks. **Generate reflections** with instances rejects;
-runtime entities, child terrain, replacements and scoped names remain unsupported.
-The explicitly refreshed flat reference layer is separate from compilation.
+runtime entities, replacements and scoped names remain unsupported.
+The explicitly refreshed flat-color reference layer is separate from compilation.
 `run_map_checks` performs only pure helper-field/path-state admission, leaving
 child reads and complete validation to explicit Refresh or compilation.
 
@@ -361,8 +374,35 @@ grandchild makes the whole layer unavailable.
 
 `owners[].file` retains the normalized root reference; `brushes[].file` and
 `face_provenance[].file` name the true leaf beside its original solid/side IDs.
+Terrain face rows add `terrain:true`, `power`, `vertices` and the displayed
+`triangles` count. `geometry` describes the actual displaced reference mesh,
+including neighbor density adjustments. Inspection's `stats` exposes the same
+omit-zero `terrain_patches` and `terrain_vertices` totals as build reports.
+**Instance contents…** shows **Instance terrain patches:** and **Authored grid
+vertices:**. Its **Terrain:** rows identify the owner, leaf file and original
+brush/side; **Power** lines show the terrain power, grid vertices and displayed
+triangles.
 Repeated placements can share those leaf identities. Picking and framing retain
 the root helper owner.
+
+Supported power 2–4 terrain uses its displaced sheet for flat-color rendering,
+content bounds and picking; its cage faces are omitted. Invalid terrain fails
+the entire refresh without a cage fallback. The layer cannot replace ordinary
+parent terrain: refresh fails if expanded child contents would change a parent
+patch's displaced vertices or triangle indices relative to the parent without
+its instance contents. The error says “Instance contents would require replacing
+ordinary parent terrain LOD; compilation remains available”. Existing density
+transitions between parent patches do not by themselves prevent preview;
+unrelated child terrain remains allowed. Compilation can still expand the
+complete scene under its own limits.
+
+Inspection's `limits` reports `terrain_source_vertices:65536`,
+`terrain_expanded_vertices:262144`, `terrain_grid_work:2097152`,
+`terrain_context_vertices:262144` and
+`terrain_parent_lod:"must_match_ordinary_context"`. The context cap includes both
+ordinary parent and generated child grids. Preparing and comparing the ordinary
+and expanded terrain contexts must fit a combined 64 MiB CPU budget and bounded
+geometry work; the existing retained CPU/GPU limits also apply.
 
 Inspection's `worker_active` remains true until the owned request/result retires;
 `loading` retains its existing pending-request meaning. Cancellation and buffer

@@ -471,6 +471,18 @@ impl<'a> Map<'a> {
                 ));
                 continue;
             }
+            if entity
+                .properties
+                .get_all("classname")
+                .any(|value| value.eq_ignore_ascii_case("func_water_analog"))
+            {
+                report.diagnostics.push(Diagnostic::error(
+                    "Cannot compile func_water_analog: inline water-analog physics and volume contents are unsupported",
+                    Some(object),
+                    entity.origin(),
+                ));
+                continue;
+            }
             let origins = map.prepare_origins(entity, report, control)?;
             let index = map.entities.len();
             let mut properties: Vec<(String, String)> = entity

@@ -48,6 +48,20 @@ fn add_pool(vmf: Vmf, mins: [f64; 3], maxs: [f64; 3], material: &str) -> (Vmf, u
     (document.vmf().clone(), id)
 }
 
+fn add_water_analog(vmf: Vmf, mins: [f64; 3], maxs: [f64; 3], material: &str) -> (Vmf, u32) {
+    let (vmf, solid) = add_pool(vmf, mins, maxs, material);
+    let mut document = Document::new(vmf);
+    let ObjectId::Entity(id) = document
+        .edit("water analog", |tx| {
+            edit::tie_to_entity(tx, &[solid], "FuNc_WaTeR_AnAlOg", &[])
+        })
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    (document.vmf().clone(), id)
+}
+
 fn compiled(vmf: &Vmf, game: &GameFs) -> compiler::Output {
     let output = compiler::compile(vmf, game);
     assert!(!output.report.has_errors(), "{:?}", output.report);
@@ -273,6 +287,157 @@ fn hidden_and_brush_model_liquids_do_not_receive_world_water_regions() {
             );
         }
     }
+}
+
+#[test]
+fn water_analogs_fail_before_emission_and_preserve_previous_output() {
+    let (_directory, game) = game();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("previous.bsp");
+    let pointfile = path.with_extension("lin");
+    std::fs::write(&path, b"previous successful BSP").unwrap();
+    std::fs::write(&pointfile, b"previous pointfile").unwrap();
+    for physics in [compiler::PhysicsMode::None, compiler::PhysicsMode::Engine] {
+        for variant in [
+            "empty",
+            "dry",
+            "liquid",
+            "hidden brushes",
+            "duplicate class",
+        ] {
+            let (mut vmf, id) = add_water_analog(
+                common::room(),
+                [-32.0, -32.0, 16.0],
+                [32.0, 32.0, 64.0],
+                if variant == "liquid" {
+                    "water"
+                } else {
+                    "nodraw"
+                },
+            );
+            let entity = vmf
+                .entities
+                .iter_mut()
+                .find(|entity| entity.id == id)
+                .unwrap();
+            match variant {
+                "empty" => entity.solids.clear(),
+                "hidden brushes" => entity.solids[0].hidden = true,
+                "duplicate class" => {
+                    entity.properties.set("classname", "func_brush");
+                    entity
+                        .properties
+                        .0
+                        .push(("ClassName".into(), "func_water_analog".into()));
+                }
+                _ => {}
+            }
+            let before = vmf.clone();
+            let output = compiler::compile_with_options(
+                &vmf,
+                &game,
+                compiler::Options {
+                    physics,
+                    ..Default::default()
+                },
+            );
+            assert!(
+                output.report.has_errors(),
+                "{physics:?}/{variant}: {:?}",
+                output.report
+            );
+            assert!(output.bsp.is_none());
+            assert!(output.leak.is_none());
+            assert_eq!(output.stats.physics_models, 0);
+            assert!(output.report.diagnostics.iter().any(|diagnostic| {
+                diagnostic.level == compiler::Level::Error
+                    && diagnostic.object.as_deref() == Some(format!("entity:{id}").as_str())
+                    && diagnostic
+                        .message
+                        .contains("Cannot compile func_water_analog")
+            }));
+            assert!(!output.write(&path).unwrap());
+            assert_eq!(std::fs::read(&path).unwrap(), b"previous successful BSP");
+            assert_eq!(std::fs::read(&pointfile).unwrap(), b"previous pointfile");
+            assert_eq!(vmf, before);
+        }
+    }
+}
+
+#[test]
+fn hidden_water_analogs_do_not_block_otherwise_supported_maps() {
+    let (_directory, game) = game();
+    let baseline = compiled(&common::room(), &game).bsp.unwrap().to_bytes();
+    let (mut vmf, id) = add_water_analog(
+        common::room(),
+        [-32.0, -32.0, 16.0],
+        [32.0, 32.0, 64.0],
+        "water",
+    );
+    vmf.entities
+        .iter_mut()
+        .find(|entity| entity.id == id)
+        .unwrap()
+        .hidden = true;
+    assert_eq!(compiled(&vmf, &game).bsp.unwrap().to_bytes(), baseline);
+}
+
+#[test]
+fn region_omitted_water_analogs_do_not_block_compilation() {
+    let (directory, game) = game();
+    std::fs::create_dir(directory.path().join("materials/tools")).unwrap();
+    std::fs::write(
+        directory.path().join("materials/tools/toolsblack.vmt"),
+        "UnlitGeneric {}",
+    )
+    .unwrap();
+    let (mut vmf, id) = add_water_analog(
+        common::room(),
+        [992.0, -32.0, 32.0],
+        [1056.0, 32.0, 96.0],
+        "water",
+    );
+    vmf.entities
+        .iter_mut()
+        .find(|entity| entity.id == id)
+        .unwrap()
+        .properties
+        .set("origin", "1024 0 64");
+    let mut document = Document::new(vmf);
+    document
+        .edit("compile region", |tx| {
+            map_core::compile_region::apply(
+                tx,
+                Some(map_core::compile_region::Definition {
+                    enabled: true,
+                    bounds: map_core::compile_region::Bounds {
+                        mins: DVec3::new(-128.0, -128.0, 0.0),
+                        maxs: DVec3::new(128.0, 128.0, 128.0),
+                    },
+                }),
+            )
+        })
+        .unwrap();
+    let before = document.vmf().clone();
+    let output = compiled(document.vmf(), &game);
+    assert!(
+        output
+            .stats
+            .compile_region
+            .unwrap()
+            .omitted
+            .contains(&format!("entity:{id}"))
+    );
+    assert!(
+        !output
+            .bsp
+            .unwrap()
+            .entities()
+            .unwrap()
+            .to_ascii_lowercase()
+            .contains("func_water_analog")
+    );
+    assert_eq!(document.vmf(), &before);
 }
 
 #[test]

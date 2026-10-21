@@ -82,9 +82,10 @@ pending draft stale. Preview it again before applying.
 
 1. Open a map with [imported overlays](overlays.md),
    [areaportals or windows](compile-and-play.md#areaportals), or
-   [occluders](occluders.md).
+   [occluders](occluders.md), or [visibility clusters](visclusters.md).
 2. Open **Region build…** and include every overlay target surface and the
-   complete brush bounds of each portal or occluder you want to keep. Include
+   complete brush bounds of each portal, occluder or visibility cluster you want
+   to keep. Include
    the rendered models referenced by a window as well.
 3. Click **Preview region**, then **Apply region** and **Compile**. The helper's
    editor origin does not determine its inclusion.
@@ -122,10 +123,12 @@ pending draft stale. Preview it again before applying.
   regardless of the overlay marker's position. Every target must emit a visible
   world, detail or terrain surface. Omitted or buried targets stop the build;
   projections are never shortened to fit.
-- Areaportals, areaportal windows and occluders use their complete visible brush
+- Areaportals, areaportal windows, occluders and visibility clusters use their complete visible brush
   bounds, independently of their editor origins. Fully contained helpers stay
   whole; disjoint helpers are omitted. Boundary crossings stop the build.
-  Portal openings still need two sealed areas. Window render models must remain
+  Visibility clusters apply their normal dry-leaf intersection and ambiguous-membership
+  checks to the sealed regional tree. Portal openings still need two sealed areas.
+  Window render models must remain
   available, and occluders must satisfy their normal area and geometry limits.
 - [Material detail scattering](material-detail-scattering.md) uses the final clipped
   exposed world/detail faces. Generated centers stay inside the region; models
@@ -138,8 +141,8 @@ pending draft stale. Preview it again before applying.
 - Supported [world/detail brush instances](instances.md) expand before region
   selection. Intersecting child geometry remains eligible even when its helper
   origin is outside. Missing/unsupported children and visible parameter helpers
-  reject before publication; hidden helpers are excluded. Visibility clusters,
-  retained slime, detail/model water and boundary-crossing water or terrain remain
+  reject before publication; hidden helpers are excluded. Retained slime,
+  detail/model water and boundary-crossing water or terrain remain
   unsupported in region builds. Failures preserve the previous BSP and pointfile.
 - At most 16,384 source objects, 65,536 source sides and 128 sides per brush.
   Bounds, source IDs and the mounted solid rendering `tools/toolsblack` material

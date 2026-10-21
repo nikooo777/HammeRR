@@ -16,7 +16,6 @@ const MAX_SIDES: usize = 65_536;
 const MAX_SIDES_PER_BRUSH: usize = 128;
 const SHELL_MATERIAL: &str = "tools/toolsblack";
 const BOUNDARY_LIGHTMAP_SCALE: u32 = 256;
-const UNSUPPORTED: &[&str] = &["func_viscluster"];
 
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct RegionSummary {
@@ -234,15 +233,6 @@ pub(super) fn prepare_with_material_sources<'a>(
         if let Some(diagnostic) = crate::map::unresolved_instance_diagnostic(entity) {
             return Err(format!("{} (entity:{})", diagnostic.message, entity.id));
         }
-        if UNSUPPORTED
-            .iter()
-            .any(|name| classname.eq_ignore_ascii_case(name))
-        {
-            return Err(format!(
-                "Compile regions do not support {classname} yet (entity:{}); disable the region for a full-map build",
-                entity.id
-            ));
-        }
         if classname.eq_ignore_ascii_case("info_overlay")
             || classname.eq_ignore_ascii_case("info_overlay_transition")
             || classname.eq_ignore_ascii_case("info_lighting")
@@ -260,9 +250,14 @@ pub(super) fn prepare_with_material_sources<'a>(
             }
             continue;
         }
-        if ["func_occluder", "func_areaportal", "func_areaportalwindow"]
-            .iter()
-            .any(|name| classname.eq_ignore_ascii_case(name))
+        if [
+            "func_occluder",
+            "func_areaportal",
+            "func_areaportalwindow",
+            "func_viscluster",
+        ]
+        .iter()
+        .any(|name| classname.eq_ignore_ascii_case(name))
         {
             if selected_helper(entity, bounds, report, control)? {
                 entities.insert(entity.id, None);

@@ -466,7 +466,7 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | Visibility quality | Authored visibility clusters |
 | --- | --- |
 | ![Detailed portal clipping selected in Build settings](docs/images/build-settings.png) | ![Build details with solved leaf and emitted cluster counts](docs/images/build-visclusters.png) |
-| Build conservative or tighter visibility with parallel portal processing. | Group dry open leaves while retaining conservative visibility and separate ambient samples. |
+| Build conservative or tighter visibility with parallel portal processing. | Group dry open leaves in full-map or region builds, keeping conservative visibility and separate ambient samples. |
 
 | Brush smoothing |
 | --- |

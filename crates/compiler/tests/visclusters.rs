@@ -6,7 +6,33 @@ use map_core::{Document, ObjectId, edit};
 use source_formats::bsp::{
     self, Bsp, Leaf, LeafAmbient, LightingKind, Model, Node, VisibilityKind,
 };
+use source_formats::gamefs::{GameFs, Mount, MountedPath};
+use source_formats::keyvalues::Node as KeyValue;
 use source_formats::vmf::{Entity, Vmf};
+
+fn region_game() -> (tempfile::TempDir, GameFs) {
+    let directory = tempfile::tempdir().unwrap();
+    let materials = directory.path().join("materials/tools");
+    std::fs::create_dir_all(&materials).unwrap();
+    std::fs::write(materials.join("toolsblack.vmt"), "UnlitGeneric { }").unwrap();
+    let mut game = common::empty_game();
+    game.mounts.push(MountedPath {
+        ids: vec!["game".into()],
+        mount: Mount::Directory(directory.path().to_owned()),
+    });
+    (directory, game)
+}
+
+fn enable_region(source: &mut Vmf) {
+    source.cordon = Some(KeyValue::block(
+        "cordon",
+        vec![
+            KeyValue::string("active", "1"),
+            KeyValue::string("mins", "-254 -254 4"),
+            KeyValue::string("maxs", "254 254 252"),
+        ],
+    ));
+}
 
 fn fixture() -> Document {
     let mut source = common::room();
@@ -58,7 +84,11 @@ fn grouped(document: &mut Document) -> u32 {
 }
 
 fn compile(source: &Vmf, options: Options) -> compiler::Output {
-    let output = compiler::compile_with_options(source, &common::empty_game(), options);
+    compile_in(source, &common::empty_game(), options)
+}
+
+fn compile_in(source: &Vmf, game: &GameFs, options: Options) -> compiler::Output {
+    let output = compiler::compile_with_options(source, game, options);
     assert!(!output.report.has_errors(), "{:?}", output.report);
     assert!(output.bsp.is_some());
     output
@@ -84,13 +114,24 @@ fn bit(row: &[u8], index: usize) -> bool {
 
 #[test]
 fn native_bsp_quotient_preserves_geometry_visibility_and_unaffected_occlusion() {
-    for visibility in [VisibilityMode::Fast, VisibilityMode::Detailed] {
+    let (_directory, game) = region_game();
+    for (region, visibility) in [
+        (false, VisibilityMode::Fast),
+        (false, VisibilityMode::Detailed),
+        (true, VisibilityMode::Fast),
+        (true, VisibilityMode::Detailed),
+    ] {
         let mut document = fixture();
+        if region {
+            let mut source = document.into_vmf();
+            enable_region(&mut source);
+            document = Document::new(source);
+        }
         let options = Options {
             visibility,
             ..Default::default()
         };
-        let baseline = compile(document.vmf(), options);
+        let baseline = compile_in(document.vmf(), &game, options);
         let helper_id = grouped(&mut document);
         document
             .edit("irrelevant helper marker", |tx| {
@@ -101,8 +142,19 @@ fn native_bsp_quotient_preserves_geometry_visibility_and_unaffected_occlusion() 
             })
             .unwrap();
         let source = document.vmf().clone();
-        let output = compile(&source, options);
+        let output = compile_in(&source, &game, options);
         assert_eq!(document.vmf(), &source);
+        if region {
+            assert!(
+                output
+                    .stats
+                    .compile_region
+                    .as_ref()
+                    .unwrap()
+                    .included
+                    .contains(&format!("entity:{helper_id}"))
+            );
+        }
         assert_eq!(
             output.stats.visibility_solved_clusters,
             baseline.stats.clusters
@@ -215,79 +267,86 @@ fn hidden_and_no_effect_helpers_preserve_native_bytes() {
 
 #[test]
 fn grouped_ldr_and_hdr_probes_belong_to_each_exact_emitted_leaf() {
-    let mut document = fixture();
-    document
-        .edit("ambient lights", |tx| {
-            for (origin, color) in [
-                (DVec3::new(-180.0, 0.0, 128.0), "255 0 0 200"),
-                (DVec3::new(0.0, 0.0, 128.0), "0 0 255 200"),
-            ] {
-                edit::create_entity(
-                    tx,
-                    "light",
-                    Some(origin),
-                    &[
-                        ("_light".into(), color.into()),
-                        ("_lightHDR".into(), color.into()),
-                        ("_constant_attn".into(), "1".into()),
-                        ("_quadratic_attn".into(), "0".into()),
-                    ],
-                    Vec::new(),
-                )?;
-            }
-            Ok(())
-        })
-        .unwrap();
-    let mut source = document.vmf().clone();
-    for side in source
-        .world
-        .solids
-        .iter_mut()
-        .flat_map(|solid| &mut solid.sides)
-    {
-        side.lightmap_scale = 64;
-    }
-    document = Document::new(source);
-    let options = Options {
-        lighting: LightingMode::DirectLdrHdr,
-        ..Default::default()
-    };
-    let baseline = compile(document.vmf(), options).bsp.unwrap();
-    grouped(&mut document);
-    let result = compile(document.vmf(), options).bsp.unwrap();
-    let leaves = result.records::<Leaf>().unwrap();
-    for kind in [LightingKind::Ldr, LightingKind::Hdr] {
-        let LeafAmbient::Indexed {
-            indices: old_indices,
-            ..
-        } = baseline.leaf_ambient(kind).unwrap().unwrap()
-        else {
-            unreachable!()
-        };
-        let LeafAmbient::Indexed { indices, samples } = result.leaf_ambient(kind).unwrap().unwrap()
-        else {
-            unreachable!()
-        };
-        let mut sampled_by_cluster = std::collections::HashMap::<i16, usize>::new();
-        for (owner, index) in indices.iter().enumerate() {
-            if old_indices[owner].sample_count > 0 {
-                assert!(index.sample_count > 0, "lost ambient leaf {owner}");
-            }
-            for sample in &samples[index.first_sample as usize
-                ..index.first_sample as usize + index.sample_count as usize]
-            {
-                let point = DVec3::from_array(sample.world_position(&leaves[owner]).unwrap());
-                assert_eq!(
-                    leaf_at(&result, point),
-                    owner,
-                    "probe assigned to another leaf"
-                );
-            }
-            if index.sample_count > 0 {
-                *sampled_by_cluster.entry(leaves[owner].cluster).or_default() += 1;
-            }
+    let (_directory, game) = region_game();
+    for region in [false, true] {
+        let mut document = fixture();
+        document
+            .edit("ambient lights", |tx| {
+                for (origin, color) in [
+                    (DVec3::new(-180.0, 0.0, 128.0), "255 0 0 200"),
+                    (DVec3::new(0.0, 0.0, 128.0), "0 0 255 200"),
+                ] {
+                    edit::create_entity(
+                        tx,
+                        "light",
+                        Some(origin),
+                        &[
+                            ("_light".into(), color.into()),
+                            ("_lightHDR".into(), color.into()),
+                            ("_constant_attn".into(), "1".into()),
+                            ("_quadratic_attn".into(), "0".into()),
+                        ],
+                        Vec::new(),
+                    )?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        let mut source = document.vmf().clone();
+        for side in source
+            .world
+            .solids
+            .iter_mut()
+            .flat_map(|solid| &mut solid.sides)
+        {
+            side.lightmap_scale = 64;
         }
-        assert!(sampled_by_cluster.values().any(|&members| members >= 2));
+        if region {
+            enable_region(&mut source);
+        }
+        document = Document::new(source);
+        let options = Options {
+            lighting: LightingMode::DirectLdrHdr,
+            ..Default::default()
+        };
+        let baseline = compile_in(document.vmf(), &game, options).bsp.unwrap();
+        grouped(&mut document);
+        let result = compile_in(document.vmf(), &game, options).bsp.unwrap();
+        let leaves = result.records::<Leaf>().unwrap();
+        for kind in [LightingKind::Ldr, LightingKind::Hdr] {
+            let LeafAmbient::Indexed {
+                indices: old_indices,
+                ..
+            } = baseline.leaf_ambient(kind).unwrap().unwrap()
+            else {
+                unreachable!()
+            };
+            let LeafAmbient::Indexed { indices, samples } =
+                result.leaf_ambient(kind).unwrap().unwrap()
+            else {
+                unreachable!()
+            };
+            let mut sampled_by_cluster = std::collections::HashMap::<i16, usize>::new();
+            for (owner, index) in indices.iter().enumerate() {
+                if old_indices[owner].sample_count > 0 {
+                    assert!(index.sample_count > 0, "lost ambient leaf {owner}");
+                }
+                for sample in &samples[index.first_sample as usize
+                    ..index.first_sample as usize + index.sample_count as usize]
+                {
+                    let point = DVec3::from_array(sample.world_position(&leaves[owner]).unwrap());
+                    assert_eq!(
+                        leaf_at(&result, point),
+                        owner,
+                        "probe assigned to another leaf"
+                    );
+                }
+                if index.sample_count > 0 {
+                    *sampled_by_cluster.entry(leaves[owner].cluster).or_default() += 1;
+                }
+            }
+            assert!(sampled_by_cluster.values().any(|&members| members >= 2));
+        }
     }
 }
 
@@ -378,15 +437,99 @@ fn ambiguity_invalid_geometry_regions_and_cancellation_preserve_publication() {
         ids: vec!["game".into()],
         mount: source_formats::gamefs::Mount::Directory(directory.path().to_owned()),
     });
+    let before = region.clone();
     let output = compiler::compile(&region, &game);
+    assert!(
+        output.report.diagnostics.iter().any(|item| item
+            .message
+            .contains("func_viscluster crosses a compile-region boundary")),
+        "{:?}",
+        output.report
+    );
+    assert!(output.bsp.is_none());
+    let previous = std::fs::read(&path).unwrap();
+    assert!(!output.write(&path).unwrap());
+    assert_eq!(std::fs::read(&path).unwrap(), previous);
+    assert_eq!(std::fs::read(&lin).unwrap(), b"previous pointfile");
+    assert_eq!(region, before);
+}
+
+#[test]
+fn region_omits_exterior_and_hidden_geometry_helpers_independently_of_markers() {
+    let (_directory, game) = region_game();
+    let mut source = fixture().into_vmf();
+    enable_region(&mut source);
+    let baseline = compile_in(&source, &game, Options::default())
+        .bsp
+        .unwrap()
+        .to_bytes();
+    for hidden in [false, true] {
+        let mut document = Document::new(source.clone());
+        let id = if hidden {
+            grouped(&mut document)
+        } else {
+            helper(&mut document, DVec3::splat(1000.0), DVec3::splat(1100.0))
+        };
+        document
+            .edit("helper selection control", |tx| {
+                let entity = tx.entity_mut(id)?;
+                entity.hidden = hidden;
+                entity.properties.set("origin", "0 0 64");
+                Ok(())
+            })
+            .unwrap();
+        let before = document.vmf().clone();
+        let output = compile_in(&before, &game, Options::default());
+        assert_eq!(document.vmf(), &before);
+        assert_eq!(output.stats.viscluster_helpers, 0);
+        assert!(
+            output
+                .stats
+                .compile_region
+                .as_ref()
+                .unwrap()
+                .omitted
+                .contains(&format!("entity:{id}"))
+        );
+        assert_eq!(output.bsp.unwrap().to_bytes(), baseline);
+    }
+}
+
+#[test]
+fn contained_ambiguous_region_helpers_preserve_source_and_existing_outputs() {
+    let (directory, game) = region_game();
+    let path = directory.path().join("visclusters.bsp");
+    let pointfile = path.with_extension("lin");
+    std::fs::write(&path, b"previous BSP").unwrap();
+    std::fs::write(&pointfile, b"previous LIN").unwrap();
+    let mut source = common::room();
+    enable_region(&mut source);
+    let mut document = Document::new(source);
+    for (mins, maxs) in [
+        ([-240.0, -240.0, 8.0], [-128.0, 240.0, 248.0]),
+        ([128.0, -240.0, 8.0], [240.0, 240.0, 248.0]),
+    ] {
+        helper(
+            &mut document,
+            DVec3::from_array(mins),
+            DVec3::from_array(maxs),
+        );
+    }
+    let before = document.vmf().clone();
+    let output = compiler::compile(&before, &game);
+    assert!(output.report.has_errors());
     assert!(
         output
             .report
             .diagnostics
             .iter()
-            .any(|item| item.message.contains("do not support func_viscluster")),
+            .any(|diagnostic| diagnostic.message.contains("both qualify")),
         "{:?}",
         output.report
     );
-    assert!(output.bsp.is_none());
+    assert!(output.bsp.is_none() && output.leak.is_none());
+    assert!(!output.write(&path).unwrap());
+    assert_eq!(std::fs::read(&path).unwrap(), b"previous BSP");
+    assert_eq!(std::fs::read(&pointfile).unwrap(), b"previous LIN");
+    assert_eq!(document.vmf(), &before);
 }

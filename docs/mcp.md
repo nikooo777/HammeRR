@@ -881,7 +881,9 @@ Authored `func_viscluster` uses `create_block` then `tie_to_entity` with that
 classname. Ordinary compile paths group dry open leaves whose exact convex
 intersection exceeds 10% of leaf volume, subject to bounded numerical admission.
 Up to 16 single-convex-brush helpers are supported; ambiguous overlapping claims,
-liquid/portal/area crossings and active compile regions reject. Geometry is not
+liquid/portal/area crossings reject. Active regions retain complete contained
+helpers, omit hidden or disjoint helpers and reject crossing bounds; marker origins
+do not select their geometry. Membership uses the sealed regional leaves. Geometry is not
 merged. The compiler coarsens already solved source/destination PVS groups and
 recomputes PAS, preserving baseline visibility and individual ambient leaves.
 Stats distinguish `visibility_solved_clusters` from emitted `clusters`, plus
@@ -3387,15 +3389,16 @@ clipping or moving them inward. Visible invalid origins reject before selection.
 Outside and hidden sprites are omitted before per-card and atlas validation.
 References remain unchanged. Fully contained structural world water retains the normal
 native water/physics path. World/detail terrain needs its complete cage and grid
-contained; wholly disjoint combined bounds are omitted. Areaportals/windows and
-occluders use complete visible brush bounds rather than editor origins: contained
+contained; wholly disjoint combined bounds are omitted. Areaportals/windows,
+occluders and visclusters use complete visible brush bounds rather than editor origins: contained
 helpers remain whole, disjoint helpers are omitted and crossings reject.
 Imported regular overlays and water transitions retain their complete definitions
 regardless of marker origin; every target must resolve to an emitted
 world/detail/terrain surface. Missing window render targets and ordinary helper
 validation errors retain prior output.
-Crossing terrain/water, detail/model water, slime and visclusters
-reject before publication.
+Crossing terrain/water/helpers, detail/model water and slime reject before
+publication. Retained visclusters keep their normal dry-leaf, area, intersection
+and ambiguous-membership checks against the sealed regional tree.
 Runtime-model terrain remains unsupported by the normal compiler too.
 Sun and water LOD controllers retain original origins/settings even outside
 the region. Their editor positions do not seed region-only exterior leaks.

@@ -10,6 +10,7 @@ from unittest.mock import patch
 STUB = r'''
 import json
 import os
+import select
 import sys
 import time
 from pathlib import Path
@@ -34,6 +35,13 @@ for line in sys.stdin:
             sys.exit(0)
     elif request["method"] == "tools/call":
         name = request["params"]["name"]
+        if mode == "delayed_response":
+            time.sleep(0.25)
+        if mode == "request_timeout":
+            select.select([sys.stdin], [], [], 8)
+            response = {"jsonrpc": "2.0", "id": request["id"], "result": {"content": [{"type": "text", "text": '{"timed_out_request":true}'}]}}
+            print(json.dumps(response), flush=True)
+            continue
         if mode == "operation_error":
             response = {"jsonrpc": "2.0", "id": request["id"], "error": {"code": -32000, "message": "stub refuses " + name}}
         else:
@@ -82,12 +90,12 @@ def main():
     stub.chmod(0o700)
     owned, pids, passed = [], [], []
 
-    def start(name, mode):
+    def start(name, mode, **client_options):
         directory = args.output / name
         directory.mkdir()
         pid_file = directory / "pid"
         try:
-            client = Client(None, stub, directory, environment={"STUB_MODE": mode, "STUB_PID": str(pid_file)})
+            client = Client(None, stub, directory, environment={"STUB_MODE": mode, "STUB_PID": str(pid_file)}, **client_options)
             owned.append(client)
             return client
         finally:
@@ -129,6 +137,34 @@ def main():
         assert client.process is None and process.returncode == -signal.SIGKILL and process.stdout.closed
         reaped(process.pid)
         passed.append("EOF timeout kills and reaps the child without accepting a partial protocol")
+
+        client = start("delayed-response", "delayed_response", request_timeout=5)
+        process = client.process
+        assert client.call("get_compile_status") == {"job": None}
+        require_clean_eof(client)
+        assert client.process is None and process.stdin.closed and process.stdout.closed
+        reaped(process.pid)
+        passed.append("Configured request timeout accepts a delayed stdio response and cleanly reaps the child")
+
+        client = start("request-timeout", "request_timeout", request_timeout=2)
+        process = client.process
+        error = refused(lambda: client.call("get_compile_status"), "TimeoutError: tools/call")
+        assert isinstance(error, TimeoutError)
+        error = refused(lambda: require_clean_eof(client), "timed_out_request")
+        assert f'"id": {client.sequence}' in messages(error)
+        assert client.process is None and process.returncode == 0 and process.stdin.closed and process.stdout.closed
+        reaped(process.pid)
+        passed.append("Configured request timeout refuses a pending call; EOF drains its late response, rejects trailing JSON and reaps the child")
+
+        for options, expected in [({}, 90), ({"request_timeout": 7}, 7)]:
+            with patch("validate_face_lighting.urllib.request.urlopen") as urlopen:
+                response = urlopen.return_value.__enter__.return_value
+                response.headers = {}
+                response.read.return_value = b'{"jsonrpc":"2.0","id":1,"result":{}}'
+                client = Client("http://127.0.0.1/unused", None, args.output, **options)
+                assert len(urlopen.call_args_list) == 2 and all(call.kwargs["timeout"] == expected for call in urlopen.call_args_list)
+                assert client.close_with_status() == (None, "")
+        passed.append("HTTP initialization preserves the default timeout and forwards an explicit timeout without opening a connection")
 
         first, second = start("first-cleanup-error", "operation_error"), start("second-cleanup", "normal")
         processes = [first.process, second.process]

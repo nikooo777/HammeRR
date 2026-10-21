@@ -14,8 +14,9 @@ DEFAULT_BINARY = ROOT / "target/debug/hammerr-headless"
 
 
 class Client:
-    def __init__(self, url, binary, output, gameinfo=None, *, environment=None):
+    def __init__(self, url, binary, output, gameinfo=None, *, environment=None, request_timeout=90):
         self.url = url
+        self.request_timeout = request_timeout
         self.sequence = 0
         self.session = None
         self.process = None
@@ -72,7 +73,7 @@ class Client:
             request = urllib.request.Request(
                 self.url, data=json.dumps(payload).encode(), headers=headers
             )
-            with urllib.request.urlopen(request, timeout=90) as response:
+            with urllib.request.urlopen(request, timeout=self.request_timeout) as response:
                 self.session = response.headers.get("Mcp-Session-Id", self.session)
                 data = response.read().decode()
             if notification:
@@ -91,7 +92,7 @@ class Client:
             if notification:
                 return None
             while True:
-                ready, _, _ = select.select([self.process.stdout], [], [], 90)
+                ready, _, _ = select.select([self.process.stdout], [], [], self.request_timeout)
                 if not ready:
                     raise TimeoutError(method)
                 line = self.process.stdout.readline()

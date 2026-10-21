@@ -30,19 +30,21 @@ pub(super) fn admit(entity: &Entity) -> Result<(), String> {
                     return Err("Static child prop solid must be 0, 2 or 6".into());
                 }
             }
-            "body"
-            | "skin"
-            | "spawnflags"
-            | "generatelightmaps"
-            | "ignorenormals"
+            "skin" => {
+                if !value.parse::<i32>().is_ok_and(|skin| skin >= 0) {
+                    return Err("Static child prop skin must be a nonnegative integer".into());
+                }
+            }
+            "ignorenormals"
             | "disableshadows"
-            | "screenspacefade"
             | "disablevertexlighting"
-            | "disableselfshadowing"
-            | "mindxlevel"
-            | "maxdxlevel"
-            | "rendermode"
-            | "renderfx" => {
+            | "disableselfshadowing" => {
+                if !matches!(value.parse::<i32>(), Ok(0 | 1)) {
+                    return Err(format!("Static child prop requires {key} 0 or 1"));
+                }
+            }
+            "body" | "spawnflags" | "generatelightmaps" | "screenspacefade" | "mindxlevel"
+            | "maxdxlevel" | "rendermode" | "renderfx" => {
                 if value.parse::<i32>().ok() != Some(0) {
                     return Err(format!("Static child prop requires {key} 0"));
                 }

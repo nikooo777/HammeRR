@@ -328,15 +328,15 @@ leave root-map spotlight precedence unchanged. Use existing `create_entity`,
 `set_entity_properties` and `save_map` in the child, then the ordinary instance
 reference and compile operations; no new tool or setting is required.
 
-Child `prop_static` supports unnamed, unit-scale/body 0/skin 0 scenery with
+Child `prop_static` supports unnamed, unit-scale/body 0 scenery with
 `solid:"0"`, `"2"` or `"6"`, canonical lowercase properties and finite `origin`.
 An omitted `solid` remains omitted during expansion and uses ordinary default 6.
 Other values, fractions and malformed integers reject.
 Absent `angles` means zero. Supplied render settings must stay normal-white:
 `rendercolor:"255 255 255"`, `renderamt:"255"`, `rendermode:"0"` and
 `renderfx:"0"`. Names, targets and parents must be absent or
-empty. Neutral FGD scale/fade/flag/DX/lighting defaults are admitted; custom
-fades, scaling, body/skin selections, unknown properties, duplicate
+empty. The lighting exceptions below and neutral FGD scale/fade/flag/DX defaults are admitted; custom
+fades, scaling, body selections, unknown properties, duplicate
 case aliases, brushes, I/O and opaque blocks reject. See the exact
 [child prop limits](instances.md). Use `create_entity` and `set_entity_properties`
 in the child, `save_map`, then the existing reference and compile operations.
@@ -344,6 +344,14 @@ No new tool or setting is required. Reference resolution does not load MDL
 headers. The ordinary compiler consumer reads retained props after origin-based
 region selection, checks model boxes at source and intermediate poses, and
 retains the original model-source guard through publication and launch.
+`skin` accepts a nonnegative integer and defaults to 0 when absent; the retained
+model's header validates its family range. Region-omitted props do not read MDL
+or perform that model-specific check. `ignorenormals`, `disableshadows`,
+`disablevertexlighting` and `disableselfshadowing` accept integer 0/1, defaulting
+to 0. They use the ordinary lighting consumers; vertex-bake opt-out affects only
+that receiver and still requires valid MDL and any required PHY. Set these through
+the same `set_entity_properties` operation before saving the child. A ready
+reference report does not certify model/skin compatibility or preview those flags.
 Mode 6 and omitted/default 6 require the ordinary matching PHY, including in
 Fullbright with `physics:"none"`; missing, unreadable, oversized or malformed
 required assets refuse publication. Modes 0/2 leave unused PHY unread, and

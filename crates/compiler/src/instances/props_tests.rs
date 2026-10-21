@@ -10,6 +10,12 @@ mod collision_tests;
 #[path = "scoped_origin_tests.rs"]
 mod scoped_origin_tests;
 
+#[path = "props_skin_tests.rs"]
+mod skin_tests;
+
+#[path = "props_lighting_tests.rs"]
+mod lighting_tests;
+
 const MODEL: &str = "models/props/instance.mdl";
 const SECOND_MODEL: &str = "models/props/second.mdl";
 
@@ -443,8 +449,12 @@ fn strict_static_prop_envelope_rejects_unsupported_semantics_and_ambiguous_pose_
         ("solid", "6.0"),
         ("solid", ""),
         ("solid", "0.0"),
-        ("skin", "1"),
+        ("skin", "-1"),
         ("body", "1"),
+        ("ignorenormals", "2"),
+        ("disableshadows", "2"),
+        ("disablevertexlighting", "2"),
+        ("disableselfshadowing", "2"),
         ("modelscale", "2"),
         ("rendercolor", "255 128 255"),
         ("rendermode", "2"),

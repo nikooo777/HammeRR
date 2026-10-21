@@ -357,7 +357,7 @@ fn static_props_preserve_real_terrain_preview_and_invalid_or_cancelled_refreshes
         assert!((hits[0].point.z - 60.0).abs() < 1e-6);
         for (key, value) in [
             ("solid", "1"),
-            ("skin", "1"),
+            ("skin", "-1"),
             ("rendercolor", "255 128 255"),
             ("targetname", "named"),
         ] {

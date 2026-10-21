@@ -23,8 +23,10 @@ Builds retain the first consumed MDL and required PHY source identities, includi
 
 HammeRR bounds static-prop leaf traversal and clipping to 16 million work units and four million cumulative reserved polygon points per build. A clipped fragment reserves at most 4,096 points and 256 faces. Exceeding these budgets, an invalid asset or a prop with no open leaf fails before publication. Existing native prop/model/leaf-table limits also apply. The source map and Undo history stay unchanged during compilation.
 
+## Props in referenced assemblies
+
 Saved [referenced assemblies](instances.md) can contain the strict unnamed,
-unit-scale/body 0/skin 0, normal-white subset with **Collisions → Not Solid**,
+unit-scale/body 0, normal-white subset with **Collisions → Not Solid**,
 **Use Bounding Box** or **Use VPhysics**. An omitted collision property uses
 **Use VPhysics**, which requires the same matching PHY even with **No physics
 bodies**. Nested transforms compile
@@ -32,6 +34,25 @@ through this same model consumer and retain its original source guards. Child
 props have expanded counts in **Build details…** and **Instance contents…**;
 their models, bounds, picking and framing are unavailable in the reference layer.
 The ordinary root-map prop options described here remain available separately.
+
+1. Open the child VMF and select its `prop_static`.
+2. Set **Skin** to a nonnegative family number, starting at 0. A build checks
+   that the selected model actually contains that family.
+3. In **Advanced properties**, choose **No** or **Yes** for the lighting choices
+   below, then save the child and compile its parent.
+
+| Advanced property | Effect |
+| --- | --- |
+| **Disable Shadows** | Exclude this prop from compiled prop-mesh shadow rays. |
+| **Disable Vertex lighting** | Opt this receiver out of the requested vertex bake. |
+| **Disable Self-Shadowing with vertex lighting** | Exclude only this receiver's own mesh from its bake's shadow rays. |
+| **Ignore surface normal for computing vertex lighting** | Use the ordinary [ignored-normal reception](#ignore-receiver-normals). |
+
+Limits: these four choices accept only 0/1 and default to **No**. An omitted skin
+uses 0. Opting out of vertex lighting does not bypass required model or collision
+assets. Reference refresh does not inspect skin families or display child models.
+Other non-neutral flags, body selections, fades and scale remain unsupported in
+children; see the [complete child limits](instances.md).
 
 Agents use the same `create_entity`, `set_entity_properties`, `compile_map` and `start_compile` operations.
 

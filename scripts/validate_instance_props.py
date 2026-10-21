@@ -227,24 +227,25 @@ def unread_model(client, args, game, source):
         physics.write_bytes(original_physics)
 
 
-def native(data, placement, models, solids=(0, 0), poses=None):
+def native(data, placement, models, solids=(0, 0), poses=None, skins=None):
     result = static_records(data)
     dictionary = list(dict.fromkeys(models))
+    skins = (0,) * len(models) if skins is None else skins
     require(result["models"] == dictionary and len(result["props"]) == len(models), "Native sprp6 dictionary/ordinal count differs")
-    for ordinal, (row, (origin, angles), model, solid) in enumerate(zip(result["props"], poses or LITERALS[placement], models, solids, strict=True)):
+    for ordinal, (row, (origin, angles), model, solid, skin) in enumerate(zip(result["props"], poses or LITERALS[placement], models, solids, skins, strict=True)):
         require(max(abs(a - b) for a, b in zip(row[:3], origin, strict=True)) <= POSE_ERROR
                 and max(abs((a - b + 180) % 360 - 180) for a, b in zip(row[3:6], angles, strict=True)) <= POSE_ERROR,
                 f"Native prop ordinal{ordinal} differs from independently authored literal origin/angles")
-        require(row[6] == dictionary.index(model) and row[8] > 0 and row[9] == (6 if solid is None else solid) and row[11] == 0
-                and row[7] + row[8] <= len(result["leaves"]), "Native prop model index/leaf span/collision mode/skin0 differs")
+        require(row[6] == dictionary.index(model) and row[8] > 0 and row[9] == (6 if solid is None else solid) and row[11] == skin
+                and row[7] + row[8] <= len(result["leaves"]), "Native prop model index/leaf span/collision mode/skin differs")
     require(not any(row.get("classname") in ("func_instance", "prop_static") for row in entity_rows(data)),
             "Compiler retained a helper or prop_static as a runtime entity")
     return result
 
 
-def compare(actual, literal, placement, models, baked=False, solids=(0, 0), poses=None):
-    first = native(actual, placement, models, solids, poses)
-    second = native(literal, placement, models, solids, poses)
+def compare(actual, literal, placement, models, baked=False, solids=(0, 0), poses=None, skins=None):
+    first = native(actual, placement, models, solids, poses, skins)
+    second = native(literal, placement, models, solids, poses, skins)
     require(first["models"] == second["models"] and first["leaves"] == second["leaves"]
             and all(a[6:] == b[6:] for a, b in zip(first["props"], second["props"], strict=True)),
             "Original sprp6 dictionary, ordinals, leaf lists or non-pose metadata differs from the literal control")

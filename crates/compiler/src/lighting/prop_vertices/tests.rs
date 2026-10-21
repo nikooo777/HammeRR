@@ -10,6 +10,8 @@ use source_formats::{
 mod fixtures;
 mod ignore_normals;
 mod indirect_sources;
+mod instance_lighting;
+mod instance_skins;
 mod instances;
 mod lighting_origins;
 mod scoped_origins;

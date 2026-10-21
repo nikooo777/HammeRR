@@ -27,8 +27,9 @@ from supported brushes already in the parent.
    to a supported static model. In **Advanced properties**, choose
    **Collisions → Not Solid**, **Use Bounding Box** or **Use VPhysics**.
    **Use VPhysics** is the default and requires the model's matching `.phy` asset.
-   Keep scale 1, body/skin 0, normal white rendering and names empty. Save the
-   child. Other non-neutral prop settings remain outside this child subset.
+   Keep scale 1, body 0, normal white rendering and names empty. Choose a valid
+   **Skin**, starting at 0. The ordinary [prop lighting options](static-props.md#props-in-referenced-assemblies)
+   also work in children. Save the child before compiling its parent.
 4. To give a child prop a native lighting origin, add `info_lighting` through
    **Entity…**. Set its **Name**, such as `sample`, and the prop's **Lighting
    Origin** to that same name. Save the child. See
@@ -113,7 +114,7 @@ Limits:
   `angles` component zero to avoid legacy fallback. Missing `angles` means zero
   angles. Targets and legacy `angle:-1`/`-2` shortcuts are unsupported for child lights.
   These restrictions do not change root-map spotlight behavior.
-- Child `prop_static` supports unnamed, unit-scale, body 0/skin 0 scenery with
+- Child `prop_static` supports unnamed, unit-scale, body 0 scenery with
   `solid` 0, 2 or 6; an omitted `solid` uses ordinary default 6. Other values,
   fractions and malformed integers reject. Use canonical lowercase keys and
   finite `origin`;
@@ -123,10 +124,17 @@ Limits:
   and parents must be absent or empty. `lightingorigin` may name a helper in
   the same immediate child-file occurrence. Brushes, connections,
   duplicate case aliases, unknown properties and opaque blocks reject.
-- Ordinary neutral FGD defaults are admitted: zero `body`, `skin`, `spawnflags`,
-  `mindxlevel`, `maxdxlevel`, `screenspacefade`, `generatelightmaps`, `ignorenormals`,
-  `disableshadows`, `disablevertexlighting` and `disableselfshadowing`; `modelscale`
-  and `fadescale` 1, `fademindist` -1 and `fademaxdist` 0. Custom fades, skin/body
+- `skin` must be a nonnegative integer; an omitted value uses 0. The retained
+  model's header must contain that skin family. Reference refresh does not load
+  the model or certify that the selected family exists. Region-omitted props
+  do not trigger model-specific range checks.
+- `ignorenormals`, `disableshadows`, `disablevertexlighting` and
+  `disableselfshadowing` accept integer 0 or 1, with omitted values using 0.
+  They retain ordinary prop lighting behavior. Disabling vertex lighting opts
+  out only that receiver; its MDL and any required PHY must still be valid.
+- Other neutral FGD defaults remain required: zero `body`, `spawnflags`,
+  `mindxlevel`, `maxdxlevel`, `screenspacefade` and `generatelightmaps`; `modelscale`
+  and `fadescale` 1, `fademindist` -1 and `fademaxdist` 0. Custom fades, body
   selections and scaling are unsupported for child props. The ordinary compiler
   reads the retained model's MDL header only after region selection and checks
   its model boxes at the source pose and every nested transform. Bounds must

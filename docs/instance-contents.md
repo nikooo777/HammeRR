@@ -82,6 +82,7 @@ identities and counts; the inspector reports that its model display, bounds,
 picking and framing are unavailable. A missing or invalid MDL can leave reference
 resolution ready and still fail compilation. Mixed assemblies retain their
 actual brush/terrain surfaces and bounds; props do not add placeholder geometry.
+Refresh does not validate a selected skin family or preview child lighting flags.
 
 Supported child lighting-origin helpers likewise retain identities and counts
 without icons, reference bounds, picking or framing. A helper-only assembly can

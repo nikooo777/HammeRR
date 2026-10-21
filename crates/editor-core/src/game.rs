@@ -285,29 +285,42 @@ pub fn stage_map_bytes(bytes: &[u8], map: &str) -> Result<Vec<u8>, String> {
     let original = Bsp::parse(bytes).map_err(|e| e.to_string())?;
     let sky =
         compiler::sky_assets::read_packed_sky(&original, &control).map_err(|e| e.to_string())?;
+    let water = compiler::water_assets::read_packed_water(&original, &control)
+        .map_err(|e| e.to_string())?;
     let bytes =
         compiler::rebase_generated_cubemaps(bytes, map, &control).map_err(|e| e.to_string())?;
     let staged = Bsp::parse(&bytes).map_err(|e| e.to_string())?;
     let staged_sky =
         compiler::sky_assets::read_packed_sky(&staged, &control).map_err(|e| e.to_string())?;
+    let staged_water =
+        compiler::water_assets::read_packed_water(&staged, &control).map_err(|e| e.to_string())?;
     if sky != staged_sky {
         return Err("Packed sky manifest changed during Run staging".into());
     }
-    if let Some(sky) = sky {
+    if water != staged_water {
+        return Err("Packed Water manifest changed during Run staging".into());
+    }
+    if sky.is_some() || water.is_some() {
         let original = original
             .pak_data(PakLimits::default())
             .map_err(|e| e.to_string())?;
         let staged = staged
             .pak_data(PakLimits::default())
             .map_err(|e| e.to_string())?;
-        for path in std::iter::once(compiler::sky_assets::PACKED_SKY_MANIFEST_PATH)
-            .chain(sky.assets.iter().map(|asset| asset.path.as_str()))
-        {
+        let sky_paths = sky.iter().flat_map(|manifest| {
+            std::iter::once(compiler::sky_assets::PACKED_SKY_MANIFEST_PATH)
+                .chain(manifest.assets.iter().map(|asset| asset.path.as_str()))
+        });
+        let water_paths = water.iter().flat_map(|manifest| {
+            std::iter::once(compiler::water_assets::PACKED_WATER_MANIFEST_PATH)
+                .chain(manifest.assets.iter().map(|asset| asset.path.as_str()))
+        });
+        for path in sky_paths.chain(water_paths) {
             let original = original.entries.iter().find(|entry| entry.name == path);
             let staged = staged.entries.iter().find(|entry| entry.name == path);
             if original.is_none() || original != staged {
                 return Err(format!(
-                    "Packed sky bytes changed during Run staging: {path}"
+                    "Packed asset bytes changed during Run staging: {path}"
                 ));
             }
         }

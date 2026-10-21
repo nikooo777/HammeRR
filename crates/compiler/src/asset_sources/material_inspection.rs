@@ -260,6 +260,7 @@ impl<'a> MaterialInspectionCapture<'a> {
     fn verify_snapshot(&self) -> io::Result<()> {
         let guard = AssetSourceGuard {
             stamps: self.stamps.values().cloned().collect(),
+            material_lookups: BTreeMap::new(),
         };
         guard.verify_metadata()?;
         for (path, observation) in &self.observations {

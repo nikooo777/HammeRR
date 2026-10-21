@@ -617,7 +617,7 @@ mod tests {
     }
 
     #[test]
-    fn sky_packing_recent_context_restarts_and_restores_only_for_the_same_game() {
+    fn asset_packing_recent_context_restarts_and_restores_only_for_the_same_game() {
         fn mounted_session(base_directory: &Path, game_directory: &Path) -> Session {
             Session::new(Ok(source_formats::gamefs::GameFs {
                 game_dir: game_directory.to_owned(),
@@ -650,6 +650,7 @@ mod tests {
                         bounces: Some(2),
                         smoothing_angle: Some(35),
                         pack_sky_assets: Some(true),
+                        pack_water_assets: Some(true),
                         ..Default::default()
                     },
                 )
@@ -667,6 +668,7 @@ mod tests {
                     BuildSettingsUpdate {
                         lighting: Some("fullbright"),
                         pack_sky_assets: Some(false),
+                        pack_water_assets: Some(false),
                         ..Default::default()
                     },
                 )
@@ -679,6 +681,7 @@ mod tests {
             restarted.open_recent_map(actor, &first, false).unwrap();
             assert_eq!(restarted.compile_options(), retained);
             assert_eq!(restarted.compile_settings()["pack_sky_assets"], true);
+            assert_eq!(restarted.compile_settings()["pack_water_assets"], true);
             assert_eq!(
                 restarted.recent_maps()["entries"][0]["context_compatible"],
                 true

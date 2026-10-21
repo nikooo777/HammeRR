@@ -16,6 +16,7 @@ HammeRR includes its own native compiler, so it builds Counter-Strike: Source ma
    - **Sampling quality**, for either lit mode’s sky, model ambient and bounced light: **Fast (32 directions)**, **Balanced (128 directions)** or **Detailed (512 directions)**.
    - **Bake static-prop vertex lighting**: opt in to direct vertex lighting and up to four diffuse world/terrain bounces for admitted simple opaque models. Choose a lit **Build lighting** mode and the desired **Indirect light** depth first.
    - **Pack sky assets**: include the applied sky family's supported materials and textures in the BSP. This is off by default and works with every lighting mode.
+   - **Pack water assets**: include original files for supported static Water materials and their dependencies. This is off by default, works with every lighting mode and requires explicit static LDR/HDR cubemap pairs throughout the graph.
 3. Click **Close**, then **Compile** to build with the chosen settings, or **Run Map** to build and launch CS:S. Choose an output file if the map has not been saved.
 4. The progress bar below the toolbar offers **Build details…** to inspect the build. **Play built map** in that window launches the last successful build again without compiling, as long as the map and settings haven't changed.
 
@@ -108,6 +109,17 @@ setting off. See [Generated reflections](reflections.md).
 **Pack sky assets** (all lighting modes)
 
 Off by default. Embed the exact authored sky family's supported material and texture dependencies in the BSP. This works with **Fullbright**, **Direct LDR** and **Direct LDR + HDR**, independently of **Generate reflections**. See [Pack portable sky assets](#pack-portable-sky-assets) for steps and limits.
+
+**Pack water assets** (all lighting modes)
+
+Off by default. Embed original VMT/Patch/VTF files for the supported static Water
+closure. Every reachable effective Water material needs an explicit static
+cubemap with both original LDR and HDR files, including with **Fullbright** or
+**Direct LDR**. Runtime/default `env_cubemap`, missing assets and unsupported
+graphs stop publication. Packing alone needs no native capture or physics.
+**Build details…** shows **Water assets** only for a current, completed,
+published result. See [Pack static Water assets](water.md#pack-static-water-assets)
+for steps and limits.
 
 **Physics bodies**
 
@@ -662,8 +674,9 @@ material setup and limits.
 **Water pressure damping** through shared staging and MCP. The coefficient accepts
 0–0.01, defaulting to 0.01; zero retains the native fixed pressure term. Both
 stored controls require engine physics and eligible emitted water. See
-[Water](water.md). Depth-specific material packing and per-pool/player controls
-remain unfinished.
+[Water](water.md). **Pack water assets** embeds the supported static original
+files. Runtime/default `env_cubemap` remains outside Water packing. Depth-specific
+material aliases and per-pool/player controls remain unfinished.
 
 ### Cubemaps
 
@@ -868,6 +881,7 @@ edits within the same map do not cancel a launch already admitted.
 | `--lighting fullbright\|direct_ldr\|direct_ldr_hdr` | Lighting mode. Defaults to `fullbright`. |
 | `--physics none\|engine` | Physics bodies. Defaults to `none`. Needs `hammerr-physics` next to the compiler. |
 | `--sky-quality fast\|balanced\|detailed` | Sky, model-ambient and bounce sampling for both lit modes. Defaults to `fast`. |
+| `--pack-water-assets` | Pack original files for supported static Water closures with explicit LDR/HDR cubemap pairs. Off by default; all lighting modes. See [Water](water.md#pack-static-water-assets). |
 
 To try it on a generated test room with both teams' spawns:
 

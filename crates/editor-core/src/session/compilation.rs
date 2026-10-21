@@ -37,6 +37,8 @@ mod reflection_transaction_tests;
 mod sky_packing_settings_tests;
 #[cfg(test)]
 mod viscluster_tests;
+#[cfg(test)]
+mod water_packing_settings_tests;
 
 #[derive(Default)]
 pub struct State {
@@ -475,6 +477,9 @@ impl CompileRequest {
         if self.options.pack_sky_assets && output.bsp.is_some() && output.sky_assets.is_none() {
             return Err("Sky packing did not return its retained asset plan".into());
         }
+        if self.options.pack_water_assets && output.bsp.is_some() && output.water_assets.is_none() {
+            return Err("Water packing did not return its retained asset plan".into());
+        }
         let mut sources = None;
         let (pending, published, committed, claims, artifact, warning) = if guarded {
             if output.bsp.is_none() && output.leak.is_some() {
@@ -612,6 +617,7 @@ pub struct BuildSettingsUpdate<'a> {
     pub smoothing_angle: Option<u8>,
     pub generate_reflections: Option<bool>,
     pub pack_sky_assets: Option<bool>,
+    pub pack_water_assets: Option<bool>,
     pub bake_static_prop_vertices: Option<bool>,
 }
 
@@ -682,6 +688,8 @@ impl Session {
         };
         settings["bake_static_prop_vertices"] =
             self.compilation.options.bake_static_prop_vertices.into();
+        settings["pack_water_assets"] = self.compilation.options.pack_water_assets.into();
+        settings["water_packing_description"] = "Pack original files for the complete supported static Water material/Patch/texture closure during Compile or Run Map. Default off. Every reachable Water material requires an explicit static cubemap and its original VTF 7.4 LDR/HDR siblings. Missing or unsupported assets, including runtime/default env_cubemap, stop publication. Available in every lighting mode; no native capture is required.".into();
         settings["prop_vertex_lighting"] = json!({
             "available":unavailable_reason.is_none(),
             "unavailable_reason":unavailable_reason,
@@ -765,6 +773,7 @@ impl Session {
             smoothing_angle,
             generate_reflections,
             pack_sky_assets,
+            pack_water_assets,
             bake_static_prop_vertices,
         } = update;
         let bounces = bounces.unwrap_or(self.compilation.options.bounces);
@@ -772,6 +781,8 @@ impl Session {
             bake_static_prop_vertices: bake_static_prop_vertices
                 .unwrap_or(self.compilation.options.bake_static_prop_vertices),
             pack_sky_assets: pack_sky_assets.unwrap_or(self.compilation.options.pack_sky_assets),
+            pack_water_assets: pack_water_assets
+                .unwrap_or(self.compilation.options.pack_water_assets),
             generate_reflections: generate_reflections
                 .unwrap_or(self.compilation.options.generate_reflections),
             bounces,
@@ -812,7 +823,7 @@ impl Session {
             self.log(
                 actor,
                 format!(
-                    "Build settings: {} · {} · {} visibility · {} diffuse bounces · {}° brush smoothing · static-prop vertex lighting {} · reflections {} · sky packing {}",
+                    "Build settings: {} · {} · {} visibility · {} diffuse bounces · {}° brush smoothing · static-prop vertex lighting {} · reflections {} · sky packing {} · water packing {}",
                     options.lighting.label(),
                     options.physics.label(),
                     options.visibility.label(),
@@ -820,7 +831,8 @@ impl Session {
                     options.smoothing_angle,
                     if options.bake_static_prop_vertices { "on" } else { "off" },
                     if options.generate_reflections { "on" } else { "off" },
-                    if options.pack_sky_assets { "on" } else { "off" }
+                    if options.pack_sky_assets { "on" } else { "off" },
+                    if options.pack_water_assets { "on" } else { "off" }
                 ),
             );
         }
@@ -1025,6 +1037,8 @@ impl Session {
                 "reflection capture"
             } else if result.options.bake_static_prop_vertices {
                 "static-prop vertex lighting"
+            } else if result.options.pack_water_assets {
+                "water asset packing"
             } else if result.output.instance_dependencies.is_some() {
                 "instance compilation"
             } else {
@@ -1035,6 +1049,12 @@ impl Session {
                 && result.output.sky_assets.is_none()
             {
                 return Err("Packed sky output is missing its retained asset plan".into());
+            }
+            if result.options.pack_water_assets
+                && result.output.bsp.is_some()
+                && result.output.water_assets.is_none()
+            {
+                return Err("Packed water output is missing its retained asset plan".into());
             }
             if self.closing
                 || result.generation != self.document_generation
@@ -1321,7 +1341,7 @@ impl Session {
                 "stage":progress.stage.name(),"stage_label":progress.stage.label(),"cancellable":matches!(job.status(), "queued" | "running") && progress.cancellable && !progress.cancel_requested,
                 "elapsed_ms":job.elapsed().as_millis(),
                 "path":job.path.display().to_string(),"generation":job.snapshot.generation,"revision":job.snapshot.revision,
-                "compile_region":job.region,"recipe":job.recipe,"native_runtime":job.native_runtime,"reflections":{"channel":if job.options.lighting==compiler::LightingMode::DirectLdrHdr {"ldr_hdr"} else {"ldr"},"samples_complete":progress.reflection_samples_complete,"samples_total":progress.reflection_samples_total},"settings":{"bake_static_prop_vertices":job.options.bake_static_prop_vertices,"pack_sky_assets":job.options.pack_sky_assets,"generate_reflections":job.options.generate_reflections,"smoothing_angle":job.options.smoothing_angle,"bounces":job.options.bounces,"lighting":job.options.lighting.name(),"physics":job.options.physics.name(),"sky_quality":job.options.sky_quality.name(),"visibility":job.options.visibility.name()},
+                "compile_region":job.region,"recipe":job.recipe,"native_runtime":job.native_runtime,"reflections":{"channel":if job.options.lighting==compiler::LightingMode::DirectLdrHdr {"ldr_hdr"} else {"ldr"},"samples_complete":progress.reflection_samples_complete,"samples_total":progress.reflection_samples_total},"settings":{"bake_static_prop_vertices":job.options.bake_static_prop_vertices,"pack_sky_assets":job.options.pack_sky_assets,"pack_water_assets":job.options.pack_water_assets,"generate_reflections":job.options.generate_reflections,"smoothing_angle":job.options.smoothing_angle,"bounces":job.options.bounces,"lighting":job.options.lighting.name(),"physics":job.options.physics.name(),"sky_quality":job.options.sky_quality.name(),"visibility":job.options.visibility.name()},
                 "stale":!self.current_snapshot(&job.snapshot) || job.options != self.compilation.options || ((job.options.requires_guarded_publication() || job.instance_dependencies.is_some()) && job.content_epoch != self.content_epoch) || dependency_issue.is_some(),"result":job.result()});
             if let Some(queue) = &job.queue { status["queue"] = queue.snapshot(); }
             if job.instance_dependencies.is_some() { status["instance_dependencies"]=json!({"current":dependency_issue.is_none(),"error":dependency_issue}); }

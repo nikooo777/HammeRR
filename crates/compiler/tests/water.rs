@@ -80,18 +80,25 @@ fn pool_emits_native_leaf_surface_and_distance_records_without_changing_source()
     let leaves = bsp.records::<Leaf>().unwrap();
     let distances = bsp.values::<u16>(bsp::lump::LEAFMINDISTTOWATER).unwrap();
     assert_eq!(distances.len(), leaves.len());
+    assert!(
+        leaves
+            .iter()
+            .any(|leaf| leaf.contents & bsp::contents::TESTFOGVOLUME != 0)
+    );
     assert_eq!(
         leaves.iter().filter(|leaf| leaf.water_data >= 0).count(),
         output.stats.water_leaves
     );
     for (leaf, distance) in leaves.iter().zip(distances) {
         if leaf.water_data >= 0 {
+            assert_eq!(leaf.contents & bsp::contents::TESTFOGVOLUME, 0);
             assert_eq!(leaf.water_data, 0);
             assert!(leaf.contents & bsp::contents::WATER != 0);
             assert!(leaf.contents & bsp::contents::SOLID == 0);
             assert_eq!(distance, 0);
         } else if leaf.contents & bsp::contents::SOLID != 0 {
             assert_eq!(leaf.water_data, -1);
+            assert_eq!(leaf.contents & bsp::contents::TESTFOGVOLUME, 0);
         }
     }
     let faces = bsp.records::<bsp::Face>().unwrap();

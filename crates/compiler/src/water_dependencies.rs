@@ -1,6 +1,10 @@
+mod closure;
 mod raw;
 mod report;
 
+pub(crate) use closure::{
+    canonical_material_path, collect_static_water_closure, logical_material_path,
+};
 pub use report::*;
 
 use crate::Control;

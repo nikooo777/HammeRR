@@ -13,8 +13,6 @@ Create a horizontal world-water volume with connected depth metadata, inward-fac
 
 ![Material browser used to choose the water's top material](images/material-browser.png)
 
-![Build settings and diagnostics](images/build-status.png)
-
 ## Inspect water material dependencies
 
 Inspect one mounted material's static declaration graph before resolving missing
@@ -46,6 +44,72 @@ interactive cancellation or a latency guarantee; it returns no durable source
 token or file watcher. See [Material source](material-source.md#water-dependency-inventory)
 for graph, byte and source-tracking limits. MCP `get_material_source` returns
 the same inventory without graphics or a game.
+
+## Pack static Water assets
+
+Embed the supported static Water material and texture files in the BSP with
+their original names, bytes and mip data. **Pack water assets** is off by default
+and works with **Fullbright**, **Direct LDR** and **Direct LDR + HDR** without
+native capture. Read-only dependency inspection does not approve a graph for
+packing; packing applies the stricter rules below.
+
+1. Prepare the original files in mounted content. Every reachable effective
+   Water material must declare a static `$envmap`, for example `custom/water_cube`,
+   with both original VTF 7.4 files, `materials/custom/water_cube.vtf` and
+   `materials/custom/water_cube.hdr.vtf`. An omitted `$envmap` uses the unsupported
+   runtime default `env_cubemap` and stops a requested packing build.
+2. Open **Build settings…** and enable **Pack water assets**. Choose any
+   **Build lighting** mode. **Generate reflections** and **Physics bodies** are
+   separate settings; packing alone needs neither reflection capture nor physics.
+3. Click **Close**, then **Compile** or **Run Map**. Keep the original mounted
+   files available and unchanged until publication finishes. Missing, malformed,
+   unsupported or changed dependencies stop publication and preserve previous
+   output.
+4. Open **Build details…**. A current, completed, published build reports
+   **Water assets** with the root material count, **LDR + HDR**, file count and
+   raw asset bytes. File and byte counts exclude the manifest. Zero materials
+   means the build found no Water roots. Failed, unpublished or stale jobs do
+   not show this summary; read **Diagnostics** for a rejected build.
+
+![Pack water assets enabled before compiling](images/build-pack-water-assets.png)
+
+Only effective `Water`, `Water_DX90` and `Water_DX9_HDR` shaders are admitted
+throughout the graph, including `$bottommaterial` and nonzero
+`$underwateroverlay` targets. Original Patch/include VMTs and effective normal,
+color, cubemap and editor-preview textures are included. Role-specific
+`_rt_WaterReflection` and `_rt_WaterRefraction` remain engine resources;
+`$underwateroverlay "0"` disables that dependency. Runtime/default `env_cubemap`,
+other child shaders, proxies, conditions, cycles, unsupported declarations and
+conflicting Patch edits reject. Generated reflections do not make an unsupported
+Water graph packable. Liquid surfaces using other shaders, including a generic
+material with `%compilewater`, are outside this packing subset.
+
+Dependency references must be canonical lowercase ASCII logical paths with
+forward slashes, no `materials/` prefix and no dot in the final path component.
+Water surface names also use logical names, with ordinary case-insensitive lookup.
+Patch includes instead use full paths such as `materials/custom/water_base.vmt`.
+Spaces, control characters, traversal and leading `_` resource names reject;
+the full resulting asset path must fit within 259 bytes. References are never
+repaired or rewritten.
+
+Textures must have one frame, depth one and at most 4096 pixels per axis.
+2D textures support VTF 7.0–7.4. Cubemaps require VTF 7.4, seven stored square
+faces and first frame zero: six cube directions plus the legacy sphere-map
+image. Six stored faces and VTF 7.5 are unsupported. LDR and RGBA16F HDR siblings
+must have matching dimensions and mip counts, even for **Fullbright** or **Direct LDR**. A missing
+HDR file cannot use an LDR fallback. These file checks do not establish native
+Water appearance or the game's active rendering channel.
+
+Limits: 1024 root materials; each root closure permits 64 assets, 128 dependency
+edges, depth eight, nine material reads, 1 MiB per VMT and 4 MiB of VMTs in total.
+The combined PAK, including sky assets, generated reflections, prop vertex data
+and manifests, allows 4096 entries, 16 MiB per entry and 64 MiB each encoded and
+decoded; encoded overhead counts. The BSP is limited to 512 MiB. Matching Water
+dependencies can be shared within this producer; a case-insensitive collision
+with another packed entry rejects even when its bytes match. This packs only
+the admitted Water closure; other map dependencies still need their normal
+content. See [MCP](mcp.md#static-water-asset-packing) for exact texture and
+manifest limits.
 
 ## Steady physical current
 
@@ -111,9 +175,9 @@ VMFs with explicit `info_overlay_transition` projections can use [Build imported
 
 Agents use the same material and compile operations: `create_block`, `select_faces`, `edit_faces`, `set_compile_settings`, `compile_map` and `start_compile`. Inspect either water field with `get_property_inspector {"world":true}` and stage it through `begin_property_edit`, `update_property_edit` and `commit_property_edit`; `cancel_property_edit` discards it. See [MCP](mcp.md#steady-physical-water-current).
 
-Limits: structural-world water with a visible horizontal top; inward faces cover the top and exposed vertical sides. HammeRR caps their combined generation at four million work units, 65,536 prospective fragments and one million cumulative winding point allocations. Conservative reservations include clipping and merging; exceeding a budget fails the build and preserves previous output. Current input must contain exactly three ASCII-whitespace-separated finite decimal/scientific components in at most 128 UTF-8 bytes, with finite representable native velocity and vector length at most 128 units/s; invalid values or duplicate keys reject atomically. Damping input is one finite ASCII decimal/scientific coefficient in at most 32 bytes, within 0–0.01 before native conversion; a nonzero value must remain nonzero after conversion. Invalid, duplicate or unsupported controls fail explicitly. Either stored control rejects without engine physics, without emitted eligible water, or when retained slime/detail/model liquids are present. Hidden or region-omitted liquids do not supply eligible bodies. Sloped sides, negative-Z bottom faces, portable packing of authored water materials/textures, per-pool current/damping, player/NPC currents, sloped or enclosed tops and detail/model liquids remain unfinished. Conflicting overlapping liquids fail with a diagnostic. Editor previews use the material's editor texture; they do not render the game's water reflection, refraction or underwater view. In-game appearance depends on the water materials and renderer settings. Material assets must remain available in the game's mounted content. Compile regions must contain the complete water volume.
+Limits: structural-world water with a visible horizontal top; inward faces cover the top and exposed vertical sides. HammeRR caps their combined generation at four million work units, 65,536 prospective fragments and one million cumulative winding point allocations. Conservative reservations include clipping and merging; exceeding a budget fails the build and preserves previous output. Current input must contain exactly three ASCII-whitespace-separated finite decimal/scientific components in at most 128 UTF-8 bytes, with finite representable native velocity and vector length at most 128 units/s; invalid values or duplicate keys reject atomically. Damping input is one finite ASCII decimal/scientific coefficient in at most 32 bytes, within 0–0.01 before native conversion; a nonzero value must remain nonzero after conversion. Invalid, duplicate or unsupported controls fail explicitly. Either stored control rejects without engine physics, without emitted eligible water, or when retained slime/detail/model liquids are present. Hidden or region-omitted liquids do not supply eligible bodies. Sloped sides, negative-Z bottom faces, per-pool current/damping, player/NPC currents, sloped or enclosed tops and detail/model liquids remain unfinished. Conflicting overlapping liquids fail with a diagnostic. Editor previews use the material's editor texture; they do not render the game's water reflection, refraction or underwater view. In-game appearance depends on the water materials and renderer settings. Assets outside the admitted packed Water closure must remain available in the game's mounted content. Compile regions must contain the complete water volume.
 
 Historical map-local `$waterdepth` material aliases are not generated; their
-active consumer remains unverified. That is separate from portable asset
+active consumer remains unverified. That is separate from static asset
 packing. Existing connected depth and fog metadata remain supported; this does
 not establish that the engine lacks depth semantics.

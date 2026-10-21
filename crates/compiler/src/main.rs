@@ -8,7 +8,7 @@ use compiler::{
 use source_formats::gamefs::GameFs;
 use source_formats::vmf::Vmf;
 
-const USAGE: &str = "usage: hammerr-compile <map.vmf> --game <gameinfo.txt> [-o <map.bsp>] [--lighting fullbright|direct_ldr|direct_ldr_hdr] [--physics none|engine] [--sky-quality fast|balanced|detailed] [--visibility fast|detailed] [--bounces 0..4] [--smoothing-angle 0..90] [--pack-sky-assets] [--bake-static-prop-vertices] [--generate-reflections] [--reflection-engine-root <directory>] [--reflection-steam-root <directory>]";
+const USAGE: &str = "usage: hammerr-compile <map.vmf> --game <gameinfo.txt> [-o <map.bsp>] [--lighting fullbright|direct_ldr|direct_ldr_hdr] [--physics none|engine] [--sky-quality fast|balanced|detailed] [--visibility fast|detailed] [--bounces 0..4] [--smoothing-angle 0..90] [--pack-sky-assets] [--pack-water-assets] [--bake-static-prop-vertices] [--generate-reflections] [--reflection-engine-root <directory>] [--reflection-steam-root <directory>]";
 
 fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args_os().skip(1);
@@ -22,6 +22,7 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
         match arg.to_str() {
             Some("--generate-reflections") => options.generate_reflections = true,
             Some("--pack-sky-assets") => options.pack_sky_assets = true,
+            Some("--pack-water-assets") => options.pack_water_assets = true,
             Some("--bake-static-prop-vertices") => options.bake_static_prop_vertices = true,
             Some("--reflection-engine-root") => {
                 reflection_engine = Some(PathBuf::from(args.next().ok_or(USAGE)?))
@@ -63,7 +64,9 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
                 options.visibility = compiler::VisibilityMode::parse(name.to_str().ok_or(USAGE)?)?;
             }
             Some("-h" | "--help") => {
-                println!("{USAGE}");
+                println!(
+                    "{USAGE}\n\n--pack-water-assets packs original files for complete supported static Water material/Patch/texture closures. Every reachable Water material requires an explicit static cubemap with original LDR/HDR siblings. Runtime/default env_cubemap and missing or unsupported assets stop publication. Default off; available in every lighting mode without native capture."
+                );
                 return Ok(());
             }
             Some(flag) if flag.starts_with('-') => return Err(USAGE.into()),
@@ -211,6 +214,12 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
         println!(
             "Packed sky {}: {} · {} asset files · {} asset bytes",
             sky.family, sky.channels, sky.files, sky.asset_bytes
+        );
+    }
+    if let Some(water) = &stats.water_assets {
+        println!(
+            "Water assets: {} materials · {} · {} asset files · {} asset bytes",
+            water.roots, water.channels, water.files, water.asset_bytes
         );
     }
     if let Some(props) = &stats.prop_vertex_lighting {

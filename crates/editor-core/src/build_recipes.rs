@@ -47,7 +47,7 @@ impl Recipe {
             .options()
             .expect("recipe settings are validated");
         let description = format!(
-            "{} · {} · {} · {} · {} · {}° brush smoothing · static-prop vertex lighting {} · reflections {} · sky packing {}",
+            "{} · {} · {} · {} · {} · {}° brush smoothing · static-prop vertex lighting {} · reflections {} · sky packing {} · water packing {}",
             options.lighting.label(),
             options.physics.label(),
             options.visibility.label(),
@@ -64,7 +64,12 @@ impl Recipe {
             } else {
                 "off"
             },
-            if options.pack_sky_assets { "on" } else { "off" }
+            if options.pack_sky_assets { "on" } else { "off" },
+            if options.pack_water_assets {
+                "on"
+            } else {
+                "off"
+            }
         );
         json!({"id":self.id,"name":self.name,"builtin":builtin,"settings":self.settings,"description":description})
     }
@@ -129,6 +134,7 @@ pub(crate) fn builtins() -> [Recipe; 2] {
                 smoothing_angle: 45,
                 generate_reflections: false,
                 pack_sky_assets: false,
+                pack_water_assets: false,
                 bake_static_prop_vertices: false,
             }
             .into(),

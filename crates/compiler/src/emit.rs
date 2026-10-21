@@ -365,7 +365,12 @@ pub fn build(
                     };
                 }
                 leaves[leaf] = bsp::Leaf {
-                    contents: node.contents,
+                    contents: node.contents
+                        | if model.entity == 0 && water.fog_tests[node_index] {
+                            contents::TESTFOGVOLUME
+                        } else {
+                            0
+                        },
                     cluster: if model.entity == 0 {
                         visibility.clusters[node_index]
                             .map(|cluster| cluster as i16)

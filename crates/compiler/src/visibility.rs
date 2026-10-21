@@ -14,6 +14,7 @@ mod base;
 mod budget;
 mod flow;
 mod parallel;
+mod water;
 
 const MAX_CLUSTERS: usize = i16::MAX as usize + 1;
 pub(crate) const MAX_VISIBILITY_WORK: usize = 100_000_000;

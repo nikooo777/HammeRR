@@ -342,7 +342,7 @@ impl<'a> Map<'a> {
         report: &mut Report,
         control: &Control,
     ) -> Result<Self, String> {
-        Self::load_inner(vmf, fs, report, control, None)
+        Self::load_inner(vmf, fs, report, control, None, None)
     }
 
     pub(crate) fn load_with_prop_sources_controlled(
@@ -352,7 +352,25 @@ impl<'a> Map<'a> {
         report: &mut Report,
         control: &Control,
     ) -> Result<Self, String> {
-        Self::load_inner(vmf, fs, report, control, Some(mode))
+        Self::load_inner(vmf, fs, report, control, Some(mode), None)
+    }
+
+    pub(crate) fn load_with_material_sources_controlled(
+        vmf: &Vmf,
+        fs: &'a GameFs,
+        report: &mut Report,
+        control: &Control,
+        prop_sources: Option<PropSourceMode>,
+        material_sources: &crate::asset_sources::BuildMaterialSources,
+    ) -> Result<Self, String> {
+        Self::load_inner(
+            vmf,
+            fs,
+            report,
+            control,
+            prop_sources,
+            Some(material_sources),
+        )
     }
 
     fn load_inner(
@@ -361,9 +379,13 @@ impl<'a> Map<'a> {
         report: &mut Report,
         control: &Control,
         prop_sources: Option<PropSourceMode>,
+        material_sources: Option<&crate::asset_sources::BuildMaterialSources>,
     ) -> Result<Self, String> {
         control.checkpoint()?;
         let mut map = Self::empty(fs, Requirements::Compile);
+        if let Some(sources) = material_sources {
+            map.materials = Materials::with_build_sources(fs, Requirements::Compile, sources);
+        }
         if let Some(mode) = prop_sources {
             map.materials.track_prop_lighting_sources(mode)?;
         }

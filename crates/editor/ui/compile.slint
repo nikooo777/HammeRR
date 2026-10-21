@@ -29,6 +29,9 @@ export component CompileWindow inherits Window {
     callback change-bake-static-prop-vertices(bool);
     in property <bool> pack-sky-assets;
     callback change-pack-sky-assets(bool);
+    in property <bool> pack-water-assets;
+    in property <string> water-packing-description;
+    callback change-pack-water-assets(bool);
     in property <bool> generate-reflections;
     in property <string> reflection-description;
     callback change-reflections(bool);
@@ -127,6 +130,8 @@ export component CompileWindow inherits Window {
                 Text { text: root.prop-vertex-lighting-description; wrap: word-wrap; color: #bac2ce; }
                 CheckBox { text: "Pack sky assets"; checked: root.pack-sky-assets; enabled: root.lighting-enabled; toggled => { root.change-pack-sky-assets(self.checked); } }
                 Text { text: "Packs the selected sky family’s supported materials and textures into the BSP. Missing or unsupported assets stop the build."; wrap: word-wrap; color: #bac2ce; }
+                CheckBox { text: "Pack water assets"; checked: root.pack-water-assets; enabled: root.lighting-enabled; toggled => { root.change-pack-water-assets(self.checked); } }
+                Text { text: root.water-packing-description; wrap: word-wrap; color: #bac2ce; }
                 CheckBox { text: "Generate reflections"; checked: root.generate-reflections; enabled: root.lighting-enabled; toggled => { root.change-reflections(self.checked); } }
                 Text { text: root.reflection-description; wrap: word-wrap; color: #bac2ce; }
                 Text { text: root.capture-summary; wrap: word-wrap; color: #bac2ce; }

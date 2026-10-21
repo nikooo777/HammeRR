@@ -2,6 +2,7 @@ use std::io;
 
 use source_formats::gamefs::GameFs;
 
+use crate::asset_sources::BuildMaterialSources;
 use crate::lighting::asset_tracking::SourceReads;
 
 #[derive(Clone, Copy)]
@@ -16,6 +17,7 @@ pub(super) struct ReadBudget {
     limits: ReadLimits,
     pub operations: usize,
     pub bytes: usize,
+    build_sources: Option<BuildMaterialSources>,
 }
 
 impl ReadBudget {
@@ -24,7 +26,12 @@ impl ReadBudget {
             limits,
             operations: 0,
             bytes: 0,
+            build_sources: None,
         }
+    }
+
+    pub fn track_build_sources(&mut self, sources: &BuildMaterialSources) {
+        self.build_sources = Some(sources.clone());
     }
 
     pub fn read(
@@ -69,9 +76,13 @@ impl ReadBudget {
             ))
         })?;
         self.operations = operations;
-        let data = fs
-            .read_limited(path, limit)
-            .map_err(|error| self.context(path, maximum, remaining, limit, error))?;
+        let data = match &self.build_sources {
+            Some(owner) => owner
+                .read_asset(fs, path, limit)
+                .map(|asset| asset.map(|asset| asset.bytes().to_vec())),
+            None => fs.read_limited(path, limit),
+        }
+        .map_err(|error| self.context(path, maximum, remaining, limit, error))?;
         self.bytes = self
             .bytes
             .checked_add(data.as_ref().map_or(0, Vec::len))

@@ -71,6 +71,10 @@ pub fn finalize_reflections_with_capture(
         .as_ref()
         .ok_or_else(|| invalid("Reflection build has no BSP to finalize"))?;
     verify_generated_cubemaps(original, &manifest, control)?;
+    if let Some(plan) = &output.water_assets {
+        crate::water_assets::verify_packed_water(original, &plan.manifest(), control)?;
+        plan.verify_sources(game, control)?;
+    }
     let source_guard = capture_reflection_source_guard(&manifest, game, control)?;
     if manifest.phase == CubemapAssetPhase::Verified {
         return Ok(output);
@@ -263,6 +267,10 @@ pub(super) fn merge_captures(
     let bsp = output.bsp.as_mut().unwrap();
     bsp.set_pak_data_controlled(&archive, PakLimits::default(), &mut check)?;
     verify_generated_cubemaps(bsp, &verified, control)?;
+    if let Some(plan) = &output.water_assets {
+        crate::water_assets::verify_packed_water(bsp, &plan.manifest(), control)?;
+        plan.verify_sources(game, control)?;
+    }
     verify_sources(&verified, game, control)?;
     let channel = if verified.hdr_samples.is_empty() {
         "ldr"

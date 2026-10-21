@@ -671,6 +671,8 @@ pub struct CompileSettingsArgs {
     pub bake_static_prop_vertices: Option<bool>,
     /// Pack the exact complete authored sky family and supported LDR/HDR dependencies; default false. Incomplete or unsupported families fail during compilation without automatic family fallback.
     pub pack_sky_assets: Option<bool>,
+    /// Pack original files for complete supported static Water material/Patch/texture closures; default false. Requires explicit static cubemaps with original LDR/HDR siblings throughout. Runtime/default env_cubemap and incomplete or unsupported graphs fail compilation. Available in every lighting mode without native capture.
+    pub pack_water_assets: Option<bool>,
     /// Generate one native reflection bounce per selected lighting channel; default false. Requires direct_ldr or direct_ldr_hdr; incompatible combinations reject atomically.
     pub generate_reflections: Option<bool>,
     /// Whole degrees 0–90; zero disables automatic smoothing on unassigned world/model faces.

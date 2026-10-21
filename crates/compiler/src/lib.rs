@@ -29,6 +29,7 @@ pub mod tree;
 mod visclusters;
 mod visibility;
 mod water;
+pub mod water_assets;
 pub mod water_dependencies;
 pub mod winding;
 
@@ -172,6 +173,7 @@ pub struct Options {
     pub smoothing_angle: u8,
     pub generate_reflections: bool,
     pub pack_sky_assets: bool,
+    pub pack_water_assets: bool,
     pub bake_static_prop_vertices: bool,
 }
 
@@ -193,7 +195,10 @@ pub fn bounce_label(count: u8) -> &'static str {
 
 impl Options {
     pub const fn requires_guarded_publication(self) -> bool {
-        self.generate_reflections || self.pack_sky_assets || self.bake_static_prop_vertices
+        self.generate_reflections
+            || self.pack_sky_assets
+            || self.pack_water_assets
+            || self.bake_static_prop_vertices
     }
 
     pub fn validate(self) -> Result<Self, String> {
@@ -504,6 +509,8 @@ pub struct Stats {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sky_assets: Option<PackedSkyStats>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub water_assets: Option<PackedWaterStats>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub prop_vertex_lighting: Option<PropVertexLightingStats>,
     #[serde(rename = "elapsed_ms", serialize_with = "serialize_elapsed")]
     pub elapsed: Duration,
@@ -524,6 +531,14 @@ pub struct ReflectionStats {
 #[derive(Debug, serde::Serialize)]
 pub struct PackedSkyStats {
     pub family: String,
+    pub channels: &'static str,
+    pub files: usize,
+    pub asset_bytes: usize,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct PackedWaterStats {
+    pub roots: usize,
     pub channels: &'static str,
     pub files: usize,
     pub asset_bytes: usize,
@@ -558,6 +573,8 @@ pub struct Output {
     pub stats: Stats,
     pub cubemap_assets: Option<CubemapAssetManifest>,
     pub sky_assets: Option<SkyAssetPlan>,
+    pub water_assets: Option<water_assets::WaterAssetPlan>,
+    pub material_sources: Option<asset_sources::AssetSourceGuard>,
     pub prop_lighting_assets: Option<prop_lighting_assets::PropLightingPlan>,
 }
 
@@ -569,6 +586,7 @@ pub struct PreparedWrite {
     instance_dependencies: Option<instances::DependencyGuard>,
     instance_output_stamp: Option<FileStamp>,
     prop_lighting_sources: Option<asset_sources::AssetSourceGuard>,
+    material_sources: Option<asset_sources::AssetSourceGuard>,
 }
 
 #[derive(Debug)]
@@ -636,6 +654,9 @@ impl PreparedWrite {
             if let Some(sources) = &self.prop_lighting_sources {
                 sources.verify_metadata()?;
             }
+            if let Some(sources) = &self.material_sources {
+                sources.verify_metadata()?;
+            }
             self.staged.commit().map(|publication| PublicationReceipt {
                 success: self.success,
                 publication,
@@ -677,6 +698,9 @@ impl PreparedWrite {
             if let Some(sources) = &self.prop_lighting_sources {
                 sources.verify_metadata()?;
             }
+            if let Some(sources) = &self.material_sources {
+                sources.verify_metadata()?;
+            }
             lease.verify_commit(&self.destination)?;
             self.staged.commit().map(|publication| PublicationReceipt {
                 success: self.success,
@@ -708,6 +732,7 @@ impl Output {
             && self.leak.is_none()
             && self.cubemap_assets.is_none()
             && self.sky_assets.is_none()
+            && self.water_assets.is_none()
             && self.prop_lighting_assets.is_none()
         {
             return Ok(None);
@@ -781,6 +806,27 @@ impl Output {
             }
             verify_packed_sky(bsp, &plan.manifest(), control)?;
         }
+        if let Some(plan) = &self.water_assets {
+            if self.material_sources.is_none() {
+                return Err(io::Error::other(
+                    "Packed Water output is missing its original build material guard",
+                ));
+            }
+            let bsp = self
+                .bsp
+                .as_ref()
+                .ok_or_else(|| io::Error::other("Packed Water output has no BSP"))?;
+            if self.report.has_errors() {
+                return Err(io::Error::other(
+                    "Packed Water build diagnostics contain errors",
+                ));
+            }
+            plan.verify_source_metadata()?;
+            water_assets::verify_packed_water(bsp, &plan.manifest(), control)?;
+        }
+        if let Some(sources) = &self.material_sources {
+            sources.verify_metadata()?;
+        }
         let prop_lighting_sources = if let Some(plan) = &self.prop_lighting_assets {
             let bsp = self
                 .bsp
@@ -828,6 +874,7 @@ impl Output {
             instance_dependencies: self.instance_dependencies.clone(),
             instance_output_stamp,
             prop_lighting_sources,
+            material_sources: self.material_sources.clone(),
         }))
     }
 }
@@ -860,30 +907,71 @@ fn build(
     if options.generate_reflections {
         cubemap_assets::binding::capture_preflight(vmf)?;
     }
-    let prepared = cordons::prepare(vmf, fs, &mut output.report, control)?;
+    let material_sources = options
+        .pack_water_assets
+        .then(asset_sources::BuildMaterialSources::default);
+    let prepared = cordons::prepare_with_material_sources(
+        vmf,
+        fs,
+        &mut output.report,
+        control,
+        material_sources.as_ref(),
+    )?;
     face_origins = face_origins.and_then(|mut origins| {
         origins.add_region(prepared.vmf.as_ref(), prepared.region.as_ref())?;
         Ok(origins)
     });
     output.stats.compile_region = prepared.region;
     let vmf = prepared.vmf.as_ref();
-    let mut map = if options.bake_static_prop_vertices {
-        map::Map::load_with_prop_sources_controlled(
+    let prop_sources = options
+        .bake_static_prop_vertices
+        .then_some(if options.bounces == 0 {
+            materials::PropSourceMode::Direct
+        } else {
+            materials::PropSourceMode::WithReflectivity
+        });
+    let mut map = if let Some(sources) = &material_sources {
+        map::Map::load_with_material_sources_controlled(
             vmf,
             fs,
-            if options.bounces == 0 {
-                materials::PropSourceMode::Direct
-            } else {
-                materials::PropSourceMode::WithReflectivity
-            },
             &mut output.report,
             control,
+            prop_sources,
+            sources,
         )?
+    } else if let Some(mode) = prop_sources {
+        map::Map::load_with_prop_sources_controlled(vmf, fs, mode, &mut output.report, control)?
     } else {
         map::Map::load_controlled(vmf, fs, &mut output.report, control)?
     };
     map.water_current = water_current;
     map.water_damping = water_damping;
+    let water_plan = if let Some(sources) = &material_sources
+        && !output.report.has_errors()
+    {
+        let roots = map
+            .materials
+            .iter()
+            .filter(|info| info.water)
+            .map(|info| {
+                water_dependencies::logical_material_path(&info.name.to_ascii_lowercase())
+                    .map_err(|error| format!("Pack water assets: material {}: {error}", info.name))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Some(
+            water_assets::collect_water_asset_plan(
+                roots.iter().map(String::as_str),
+                fs,
+                sources,
+                &bsp::PakArchive::default(),
+                bsp::PakLimits::default(),
+                control,
+            )
+            .map_err(|error| error.to_string())?,
+        )
+    } else {
+        None
+    };
     let reflection_plan = if options.generate_reflections && !output.report.has_errors() {
         control.advance(Stage::PrepareReflections)?;
         output.report.diagnostics.retain(|item| {
@@ -1000,6 +1088,13 @@ fn build(
         control,
     )?;
     if output.report.has_errors() {
+        if let Some(sources) = &material_sources {
+            output.material_sources = Some(
+                sources
+                    .source_guard(fs, control)
+                    .map_err(|error| error.to_string())?,
+            );
+        }
         return Ok(());
     }
     control.advance(Stage::Hints)?;
@@ -1033,11 +1128,25 @@ fn build(
         .count();
     output.stats.areaportal_vertices = areas.data.clip_vertices.len();
     control.advance(Stage::Water)?;
-    let water = water::build(&map, &tree, &portals, &mut output.report, control)?;
+    let mut water = water::build(&map, &tree, &portals, &mut output.report, control)?;
     output.stats.water_regions = water.records.len();
     output.stats.water_leaves = water.leaves.iter().filter(|&&region| region >= 0).count();
     if output.report.has_errors() {
         return Ok(());
+    }
+    if options.pack_water_assets {
+        for record in &water.records {
+            let texinfo = &map.texinfos.infos[record.surface_texinfo as usize];
+            let material = map.materials.get(map.texdata[texinfo.texdata as usize]);
+            if !material.water {
+                return Err(format!(
+                    "Pack water assets requires supported Water-shader liquid surfaces; material {} is outside that subset",
+                    material.name
+                ));
+            }
+        }
+    } else if !water.records.is_empty() {
+        output.report.diagnostics.push(Diagnostic::warning("Water material assets must remain mounted; enable Pack water assets to embed supported static Water files", None, None));
     }
     if !water.records.is_empty()
         && !map
@@ -1070,6 +1179,9 @@ fn build(
         &mut output.report,
         options.visibility,
     )?;
+    if !water.records.is_empty() {
+        water.fog_tests = visibility.water_fog_tests(&tree, &water.leaves, control)?;
+    }
     output.stats.visibility_solved_clusters = visclusters.solved_clusters;
     output.stats.viscluster_helpers = visclusters.helpers;
     output.stats.viscluster_groups = visclusters.groups;
@@ -1362,6 +1474,26 @@ fn build(
         });
         output.sky_assets = Some(plan);
     }
+    if let Some(plan) = water_plan {
+        plan.verify_sources(fs, control)
+            .map_err(|error| error.to_string())?;
+        plan.attach(&mut bsp, control)
+            .map_err(|error| error.to_string())?;
+        output.stats.water_assets = Some(PackedWaterStats {
+            roots: plan.roots().len(),
+            channels: "ldr_hdr",
+            files: plan.entries().len(),
+            asset_bytes: plan.asset_bytes(),
+        });
+        output.water_assets = Some(plan);
+    }
+    if let Some(sources) = &material_sources {
+        output.material_sources = Some(
+            sources
+                .source_guard(fs, control)
+                .map_err(|error| error.to_string())?,
+        );
+    }
     output.stats.nodes = bsp.records::<bsp::Node>().map_err(|e| e.to_string())?.len();
     output.stats.leaves = bsp.records::<bsp::Leaf>().map_err(|e| e.to_string())?.len();
     output.stats.faces = bsp.records::<bsp::Face>().map_err(|e| e.to_string())?.len();
@@ -1423,6 +1555,8 @@ pub fn compile_with_source_controlled(
         stats: Stats::default(),
         cubemap_assets: None,
         sky_assets: None,
+        water_assets: None,
+        material_sources: None,
         prop_lighting_assets: None,
     };
     output.stats.lighting_mode = options.lighting;

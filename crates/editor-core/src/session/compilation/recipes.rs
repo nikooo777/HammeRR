@@ -719,7 +719,7 @@ mod tests {
     }
 
     #[test]
-    fn sky_packing_legacy_recipe_bytes_and_builtin_defaults_stay_compatible() {
+    fn asset_packing_legacy_recipe_bytes_and_builtin_defaults_stay_compatible() {
         let legacy = br#"{"version":1,"next_id":2,"recipes":[{"id":"custom:1","name":"Legacy","settings":{"lighting":"fullbright","physics":"none","sky_quality":"fast","visibility":"fast","bounces":0,"smoothing_angle":0,"generate_reflections":false}}]}"#;
         let file: File = serde_json::from_slice(legacy).unwrap();
         validate(&file).unwrap();
@@ -731,17 +731,25 @@ mod tests {
         let mut current = session();
         for recipe in builtins() {
             assert!(!recipe.settings.pack_sky_assets);
+            assert!(!recipe.settings.pack_water_assets);
             assert!(
                 recipe.json(true)["description"]
                     .as_str()
                     .unwrap()
-                    .ends_with("sky packing off")
+                    .contains("sky packing off")
+            );
+            assert!(
+                recipe.json(true)["description"]
+                    .as_str()
+                    .unwrap()
+                    .ends_with("water packing off")
             );
             current
                 .update_build_settings(
                     Actor::Agent,
                     BuildSettingsUpdate {
                         pack_sky_assets: Some(true),
+                        pack_water_assets: Some(true),
                         ..Default::default()
                     },
                 )
@@ -823,7 +831,7 @@ mod tests {
     }
 
     #[test]
-    fn sky_packing_custom_recipes_restart_restore_replace_and_freeze() {
+    fn asset_packing_custom_recipes_restart_restore_replace_and_freeze() {
         for actor in [Actor::User, Actor::Agent] {
             let directory = tempfile::tempdir().unwrap();
             let path = directory.path().join(FILE_NAME);
@@ -842,10 +850,12 @@ mod tests {
                         smoothing_angle: Some(35),
                         generate_reflections: Some(true),
                         pack_sky_assets: Some(true),
+                        pack_water_assets: Some(true),
                         bake_static_prop_vertices: Some(false),
                     },
                 )
                 .unwrap();
+            assert!(current.compile_options().pack_water_assets);
             let retained = current.compile_options();
             current
                 .save_build_recipe(actor, "Portable", None, None)
@@ -858,13 +868,21 @@ mod tests {
             let mut restarted = session();
             restarted.configure_build_recipes_at(Ok(path.clone()));
             assert!(!restarted.compile_options().pack_sky_assets);
+            assert!(!restarted.compile_options().pack_water_assets);
             let saved = restarted.build_recipes();
             assert_eq!(saved["recipes"][2]["settings"]["pack_sky_assets"], true);
+            assert_eq!(saved["recipes"][2]["settings"]["pack_water_assets"], true);
             assert!(
                 saved["recipes"][2]["description"]
                     .as_str()
                     .unwrap()
-                    .ends_with("sky packing on")
+                    .contains("sky packing on")
+            );
+            assert!(
+                saved["recipes"][2]["description"]
+                    .as_str()
+                    .unwrap()
+                    .ends_with("water packing on")
             );
             restarted
                 .apply_build_recipe(actor, "custom:1", None)
@@ -894,15 +912,13 @@ mod tests {
             restarted.compiling = false;
             restarted.apply_build_recipe(actor, "fast", None).unwrap();
             assert!(!restarted.compile_options().pack_sky_assets);
+            assert!(!restarted.compile_options().pack_water_assets);
             restarted
                 .save_build_recipe(actor, "Portable", Some("custom:1"), None)
                 .unwrap();
-            let replaced = fs::read(&path).unwrap();
-            assert!(
-                !String::from_utf8(replaced)
-                    .unwrap()
-                    .contains("pack_sky_assets")
-            );
+            let replaced = String::from_utf8(fs::read(&path).unwrap()).unwrap();
+            assert!(!replaced.contains("pack_sky_assets"));
+            assert!(!replaced.contains("pack_water_assets"));
             let mut restored = session();
             restored.configure_build_recipes_at(Ok(path));
             restored
@@ -910,6 +926,7 @@ mod tests {
                     actor,
                     BuildSettingsUpdate {
                         pack_sky_assets: Some(true),
+                        pack_water_assets: Some(true),
                         ..Default::default()
                     },
                 )
@@ -925,7 +942,7 @@ mod tests {
     }
 
     #[test]
-    fn invalid_sky_packing_recipe_records_block_writes_and_preserve_state() {
+    fn invalid_asset_packing_recipe_records_block_writes_and_preserve_state() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join(FILE_NAME);
         let mut current = session();
@@ -935,6 +952,7 @@ mod tests {
                 Actor::Agent,
                 BuildSettingsUpdate {
                     pack_sky_assets: Some(true),
+                    pack_water_assets: Some(true),
                     ..Default::default()
                 },
             )
@@ -949,22 +967,22 @@ mod tests {
         let before = map_state(&current);
         let mut invalid = Vec::new();
         for value in [json!(null), json!("true"), json!(1), json!([]), json!({})] {
-            let mut file = valid.clone();
-            file["recipes"][0]["settings"]["pack_sky_assets"] = value;
-            invalid.push(serde_json::to_vec(&file).unwrap());
+            for field in ["pack_sky_assets", "pack_water_assets"] {
+                let mut file = valid.clone();
+                file["recipes"][0]["settings"][field] = value.clone();
+                invalid.push(serde_json::to_vec(&file).unwrap());
+            }
         }
         let mut unknown = valid;
         unknown["recipes"][0]["settings"]["pack_sky_asset"] = json!(true);
         invalid.push(serde_json::to_vec(&unknown).unwrap());
-        invalid.push(
-            String::from_utf8(original)
-                .unwrap()
-                .replace(
-                    "\"pack_sky_assets\": true",
-                    "\"pack_sky_assets\": true, \"pack_sky_assets\": false",
-                )
-                .into_bytes(),
-        );
+        for field in ["pack_sky_assets", "pack_water_assets"] {
+            let duplicate = String::from_utf8(original.clone()).unwrap().replace(
+                &format!("\"{field}\": true"),
+                &format!("\"{field}\": true, \"{field}\": false"),
+            );
+            invalid.push(duplicate.into_bytes());
+        }
         for bytes in invalid {
             fs::write(&path, &bytes).unwrap();
             current.configure_build_recipes_at(Ok(path.clone()));

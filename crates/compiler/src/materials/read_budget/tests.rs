@@ -372,6 +372,126 @@ fn patch_and_repeated_provider_reads_count_again_while_material_cache_hits_spend
 }
 
 #[test]
+fn effective_water_shader_roots_are_distinct_from_nonwater_liquid_contents() {
+    let (directory, game) = fixture();
+    write(directory.path(), "materials/water.vmt", "wAtEr {}");
+    write(
+        directory.path(),
+        "materials/dx90.vmt",
+        "Water_DX90 { %compilewater 1 }",
+    );
+    write(
+        directory.path(),
+        "materials/hdr.vmt",
+        "Water_DX9_HDR { %compilewater 1 }",
+    );
+    write(
+        directory.path(),
+        "materials/liquid.vmt",
+        "LightmappedGeneric { %compilewater 1 }",
+    );
+    write(
+        directory.path(),
+        "materials/patch.vmt",
+        "Patch { include materials/water.vmt }",
+    );
+    let mut materials = Materials::new(&game);
+    for (name, water) in [
+        ("water", true),
+        ("patch", true),
+        ("dx90", true),
+        ("hdr", true),
+        ("liquid", false),
+    ] {
+        let index = materials.load(name).unwrap();
+        let info = materials.get(index);
+        assert_eq!(info.water, water, "{name}");
+        assert_ne!(
+            info.contents & source_formats::bsp::contents::WATER,
+            0,
+            "{name}"
+        );
+    }
+    let missing = materials.load("missing").unwrap();
+    assert!(!materials.get(missing).water);
+}
+
+#[test]
+fn build_ownership_preserves_actual_reads_and_name_caches_in_each_material_collection() {
+    let (directory, game) = fixture();
+    let base = "LightmappedGeneric { $basetexture shared }";
+    let patch = "Patch { include materials/base.vmt }";
+    write(directory.path(), "materials/base.vmt", base);
+    write(directory.path(), "materials/patch.vmt", patch);
+    write(
+        directory.path(),
+        "materials/shared.vtf",
+        texture([0.125, 0.25, 0.75]),
+    );
+    let sources = crate::asset_sources::BuildMaterialSources::default();
+    for _ in 0..2 {
+        let mut materials = Materials::with_build_sources(&game, Requirements::Compile, &sources);
+        materials
+            .track_prop_lighting_sources(PropSourceMode::WithReflectivity)
+            .unwrap();
+        let first = materials.load("patch").unwrap();
+        assert_eq!(materials.load(" PATCH ").unwrap(), first);
+        assert_eq!(
+            (
+                materials.compile_reads.operations,
+                materials.compile_reads.bytes
+            ),
+            (2, patch.len() + base.len()),
+        );
+        assert_eq!(
+            (
+                materials.texture_reads.operations,
+                materials.texture_reads.bytes
+            ),
+            (1, 84),
+        );
+        let second = materials.load("base").unwrap();
+        assert_eq!(materials.load("BASE").unwrap(), second);
+        assert_eq!(
+            (
+                materials.compile_reads.operations,
+                materials.compile_reads.bytes
+            ),
+            (3, patch.len() + base.len() * 2),
+        );
+        assert_eq!(
+            (
+                materials.texture_reads.operations,
+                materials.texture_reads.bytes
+            ),
+            (2, 168),
+        );
+        let (reads, missing) = materials.take_prop_lighting_sources().unwrap().into_parts();
+        assert_eq!(reads.len(), 3);
+        assert!(missing.is_empty());
+    }
+    assert_eq!(
+        sources
+            .retained("materials/patch.vmt")
+            .unwrap()
+            .unwrap()
+            .bytes(),
+        patch.as_bytes()
+    );
+    assert_eq!(
+        sources
+            .retained("materials/base.vmt")
+            .unwrap()
+            .unwrap()
+            .bytes(),
+        base.as_bytes()
+    );
+    sources
+        .source_guard(&game, &crate::Control::default())
+        .unwrap();
+}
+
+#[test]
 fn patch_includes_and_later_names_share_the_vmt_operation_and_aggregate_limits() {
     let (directory, game) = fixture();
     let base = "LightmappedGeneric {}";

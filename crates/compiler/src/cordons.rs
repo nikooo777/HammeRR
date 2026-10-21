@@ -181,6 +181,16 @@ pub(super) fn prepare<'a>(
     report: &mut Report,
     control: &Control,
 ) -> Result<Prepared<'a>, String> {
+    prepare_with_material_sources(source, fs, report, control, None)
+}
+
+pub(super) fn prepare_with_material_sources<'a>(
+    source: &'a Vmf,
+    fs: &GameFs,
+    report: &mut Report,
+    control: &Control,
+    material_sources: Option<&crate::asset_sources::BuildMaterialSources>,
+) -> Result<Prepared<'a>, String> {
     let Some(bounds) = compile_region::active(source).map_err(|error| error.to_string())? else {
         return Ok(Prepared {
             vmf: Cow::Borrowed(source),
@@ -195,7 +205,12 @@ pub(super) fn prepare<'a>(
         ));
     }
     source.validate_ids().map_err(|error| error.to_string())?;
-    let mut materials = Materials::new(fs);
+    let mut materials = match material_sources {
+        Some(sources) => {
+            Materials::with_build_sources(fs, crate::materials::Requirements::Compile, sources)
+        }
+        None => Materials::new(fs),
+    };
     let shell_index = materials.load(SHELL_MATERIAL)?;
     let shell = materials.get(shell_index);
     if !shell.found

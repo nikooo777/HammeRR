@@ -91,6 +91,7 @@ pub struct MaterialInfo {
     pub skip: bool,
     pub metrics: MetricState,
     pub found: bool,
+    pub(crate) water: bool,
     pub unsupported_flags: Vec<String>,
     pub warnings: Vec<String>,
     pub(crate) bottom_material: Option<String>,
@@ -131,6 +132,7 @@ impl MaterialInfo {
                 reflectivity: [0.5; 3],
             }),
             found: material.is_some(),
+            water: false,
             unsupported_flags: Vec::new(),
             warnings: Vec::new(),
             bottom_material: None,
@@ -139,6 +141,7 @@ impl MaterialInfo {
         let Some(m) = material else {
             return Ok(info);
         };
+        info.water = crate::water_dependencies::is_water_shader(&m.shader);
         let semantics = vmt::CompileSemantics::checked_from_material(m)?;
         info.contents = semantics.contents;
         info.surface = semantics.surface;
@@ -208,6 +211,18 @@ impl<'a> Materials<'a> {
             by_name: HashMap::new(),
             prop_lighting_sources: None,
         }
+    }
+
+    pub(crate) fn with_build_sources(
+        fs: &'a GameFs,
+        requirements: Requirements,
+        sources: &crate::asset_sources::BuildMaterialSources,
+    ) -> Self {
+        let mut materials = Self::with_requirements(fs, requirements);
+        materials.geometry_reads.track_build_sources(sources);
+        materials.compile_reads.track_build_sources(sources);
+        materials.texture_reads.track_build_sources(sources);
+        materials
     }
 
     pub fn get(&self, index: usize) -> &MaterialInfo {
@@ -473,6 +488,7 @@ mod tests {
     fn checked_material_admission_preserves_optional_defaults_and_inert_parameters() {
         let missing = MaterialInfo::from_material("missing", None).unwrap();
         assert!(!missing.found && missing.lit());
+        assert!(!missing.water);
         assert_eq!(missing.surface, 0);
         for text in [
             "LightmappedGeneric { %compilenolight 1 $bumpmap primary $nodiffusebumplighting 2 }",

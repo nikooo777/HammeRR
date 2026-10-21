@@ -6,14 +6,21 @@ use source_formats::gamefs::{AssetSourcePaths, GameFs};
 
 use crate::{Control, FileStamp};
 
+mod build_materials;
 mod material_inspection;
 
+pub use build_materials::{
+    BuildMaterialSources, CapturedBuildAsset, MAX_BUILD_MATERIAL_LOGICAL_PATHS,
+    MAX_BUILD_MATERIAL_LOOKUP_ROWS, MAX_BUILD_MATERIAL_PHYSICAL_PATHS,
+    MAX_BUILD_MATERIAL_RETAINED_BYTES,
+};
 pub(crate) use material_inspection::MaterialInspectionIssueKind;
 pub use material_inspection::{CapturedMaterial, MaterialInspectionCapture};
 
 #[derive(Debug, Clone)]
 pub struct AssetSourceGuard {
     stamps: Vec<FileStamp>,
+    material_lookups: BTreeMap<String, build_materials::BuildMaterialLookup>,
 }
 
 impl AssetSourceGuard {
@@ -23,13 +30,26 @@ impl AssetSourceGuard {
         }
         Ok(())
     }
+
+    pub fn verify_sources(&self, game: &GameFs, control: &Control) -> io::Result<()> {
+        control.checkpoint().map_err(io::Error::other)?;
+        self.verify_metadata()?;
+        for (path, lookup) in &self.material_lookups {
+            control.checkpoint().map_err(io::Error::other)?;
+            lookup.verify(game, path)?;
+        }
+        control.checkpoint().map_err(io::Error::other)?;
+        self.verify_metadata()
+    }
 }
 
 #[derive(Debug)]
 pub struct OutputAssetSourceGuard {
     reflections: Option<crate::cubemap_assets::ReflectionSourceGuard>,
     sky: Option<crate::sky_assets::SkyAssetSourceGuard>,
+    water: Option<AssetSourceGuard>,
     prop_lighting: Option<AssetSourceGuard>,
+    material_sources: Option<AssetSourceGuard>,
 }
 
 impl OutputAssetSourceGuard {
@@ -44,8 +64,14 @@ impl OutputAssetSourceGuard {
         if let Some(sky) = &self.sky {
             sky.verify_metadata()?;
         }
+        if let Some(water) = &self.water {
+            water.verify_metadata()?;
+        }
         if let Some(prop_lighting) = &self.prop_lighting {
             prop_lighting.verify_metadata()?;
+        }
+        if let Some(material_sources) = &self.material_sources {
+            material_sources.verify_metadata()?;
         }
         Ok(())
     }
@@ -74,10 +100,21 @@ pub fn capture_output_asset_source_guard(
         .as_ref()
         .map(|plan| plan.capture_source_guard(game, control))
         .transpose()?;
+    let water = output
+        .water_assets
+        .as_ref()
+        .map(|plan| plan.capture_source_guard(game, control))
+        .transpose()?;
+    let material_sources = output.material_sources.clone();
+    if let Some(material_sources) = &material_sources {
+        material_sources.verify_sources(game, control)?;
+    }
     let guard = OutputAssetSourceGuard {
         reflections,
         sky,
+        water,
         prop_lighting,
+        material_sources,
     };
     control.checkpoint().map_err(io::Error::other)?;
     guard.verify_metadata()?;
@@ -147,6 +184,7 @@ pub fn capture_asset_source_guard<'a>(
     }
     let guard = AssetSourceGuard {
         stamps: stamps.into_values().collect(),
+        material_lookups: BTreeMap::new(),
     };
     guard.verify_metadata()?;
     Ok(guard)

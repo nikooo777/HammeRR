@@ -359,6 +359,13 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 
 [Water →](docs/water.md)
 
+| Portable Water assets |
+| --- |
+| ![Water asset packing in Build settings](docs/images/build-pack-water-assets.png) |
+| Pack original static Water materials and LDR/HDR cubemaps into the BSP. |
+
+[Water packing →](docs/water.md#pack-static-water-assets)
+
 | Compile regions |
 | --- |
 | ![Orange compile-region bounds inside the full source map](docs/images/compile-region-preview.png) |

@@ -80,6 +80,8 @@ fn prepared_assets(
             stats: Default::default(),
             cubemap_assets: None,
             sky_assets: None,
+            water_assets: None,
+            material_sources: None,
             prop_lighting_assets: None,
             instance_dependencies: None,
         }

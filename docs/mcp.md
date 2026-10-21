@@ -635,7 +635,7 @@ volume/paint inspection report the active `selection_filters`. Human controls:
 
 **Compiling**
 
-- `set_compile_settings` takes `lighting` (`fullbright`, `direct_ldr` or `direct_ldr_hdr`), `physics` (`none` or `engine`), `visibility` (`fast` or `detailed`), `sky_quality` (`fast`, `balanced` or `detailed`), `bounces` (whole counts `0`–`4`), `smoothing_angle` (whole degrees `0`–`90`), `bake_static_prop_vertices`, `pack_sky_assets` and `generate_reflections` (booleans, all default `false`). Packing works with every lighting mode; reflection generation requires `direct_ldr` or `direct_ldr_hdr`. Omitted/null fields retain their values, unknown arguments reject, and invalid combinations leave every setting unchanged.
+- `set_compile_settings` takes `lighting` (`fullbright`, `direct_ldr` or `direct_ldr_hdr`), `physics` (`none` or `engine`), `visibility` (`fast` or `detailed`), `sky_quality` (`fast`, `balanced` or `detailed`), `bounces` (whole counts `0`–`4`), `smoothing_angle` (whole degrees `0`–`90`), `bake_static_prop_vertices`, `pack_sky_assets`, `pack_water_assets` and `generate_reflections` (booleans, all default `false`). Sky and Water packing work with every lighting mode; reflection generation requires `direct_ldr` or `direct_ldr_hdr`. Omitted/null fields retain their values, unknown arguments reject, and invalid combinations leave every setting unchanged.
 - `bake_static_prop_vertices: true` requests static-prop vertex lighting with `lighting: direct_ldr|direct_ldr_hdr` and `bounces: 0..4`. Fullbright or depths above `4` reject the entire settings update; no lighting or bounce value is changed automatically. `get_compile_settings.prop_vertex_lighting` reports `available`, `unavailable_reason`, `description` and `limits`; availability checks current option compatibility and does not inspect model assets. The CPU bake requires no native capture runtime. `limits.bounces` exposes `{min:0,max:4}`, using the shared compiler maximum. At depth N above zero, prop reception uses world/terrain lightmaps from depth N−1 and adds direct light once; it does not sum separately gathered prop passes. Indirect reception requires texture-header or bounded authored `$reflectivity` for every lit source material. Dimensions independently use the effective diffuse VTF, `%tooltexture` VTF or the deliberate SDK128×128 no-preview convention selected by canonical `%notooltexture` `0`/`1`. Tool-header rho never supplies diffuse reflectivity. Required provider failures remain explicit; no-preview is selected before I/O and is named in an INFO build diagnostic. Empty/other NoTool spellings and numeric tool declarations remain unsupported. The compiler hashes every complete VTF actually consumed for either metric; unused diffuse/tool files are not read. `limits.indirect_reflectivity` is `texture_header_or_authored_material`; `limits.indirect_dimensions` is `header_or_native_no_preview`; `limits.indirect_dimension_sources` lists `diffuse_vtf_header`, `tool_vtf_header` and `native_no_preview_convention`. `limits.indirect_sources` and `indirect_reflectivity` expose this contract. Prop and brush-model reflected sources remain unavailable. Receivers require one static bodypart/model and all 1–8 draw LODs, body 0, root LOD 0, unit scale and plain opaque selected VertexLitGeneric materials. The total hardware-color section count is at most 256 per receiver across all LODs; `limits.receiver.hardware_meshes_max` exposes that shared native bound. `sample_origin: original_vertex` and `support_contacts: opaque_world_brush` describe the receiver contract. Vertices buried more than 0.000001 units in world brushes, or contacting terrain/other-prop triangles within that tolerance, reject with a prop and vertex diagnostic. Styles or specialized materials fail requested compilation unless that prop explicitly has `disablevertexlighting: "1"`. `limits.receiver.self_shadowing` reports the default, property/value and retained blockers. Author `disableselfshadowing: "1"` with `set_entity_properties` to omit only the receiver ordinal from point/spot, sun, sky-ambient and reflected receiver shadow tests. Other props, world and terrain remain blockers; absence or `"0"` retains self shadows. `limits.receiver.lighting_origin` reports `{"property":"lightingorigin","baked_samples":"actual_vertices","embedded_recovery":false}`. Create one visible `info_lighting` with an exact matching `targetname`, then bind a receiver using `set_entity_properties` and `set: {"lightingorigin":"helper_name"}`. Its finite native point is retained for runtime lighting; VHV sampling at all supported depths, normals and PVS still use actual vertices. Moving the helper inside a world brush does not relocate baked samples or recover buried vertices. Missing, hidden-only or ambiguous helpers reject publication. The human path is **Advanced properties → Property key / Value** on the helper (`targetname`) and prop (`lightingorigin`). Both channels are independently evaluated and must be complete before LDR + HDR publication. Per-texel prop lightmaps and reflected prop sources remain unavailable.
 - `ignorenormals: "1"` on a static prop supports `bounces: 0` through `4`. Author it through `set_entity_properties`; absence or `"0"` keeps normal-facing reception. Point/spot/sun use constant angular reception `0.35`, retaining falloff, emitter cones and real shadows; sky ambient averages full-sphere visibility without that factor. `get_compile_settings.prop_vertex_lighting.limits.receiver.ignore_normals` reports this contract. At positive depths, full-sphere reflected reception uses SDK angular normalization on the preceding world/terrain pass and adds direct light once. Missed and blocked rays count in the denominator; this differs from unit sky-ambient averaging. `limits.receiver.ignore_normals.indirect` reports `spherical_sdk_normalization`. Finite nonzero model normals, original vertices/PVS, contact/burial limits and own-only `disableselfshadowing` semantics remain unchanged.
 - Jobs freeze `bake_static_prop_vertices` in their captured `settings`. Recipes and compatible recent maps retain it; omitted fields in older saved settings default to false and disabled values remain omitted. Successful published bakes expose `stats.prop_vertex_lighting` with `props`, `models`, `meshes`, `vertices`, `ldr_bytes`, `hdr_bytes`, `work` and `asset_bytes`. Mesh/vertex counts describe actual hardware-color output, and HDR bytes are zero for LDR-only output. **Build details…** displays these results only for current completed published output. Work/allocation/archive limits, changed sources and cancellation preserve previous output.
@@ -1749,9 +1749,101 @@ The flat reader admits ASCII unquoted tokens without parentheses, single quotes 
 
 Both synchronous and background builds guard original source identities, winning-mount resolution, destination leases and the current map/path/settings/content snapshot before publication. Packing-only builds need no native capture runtime. Failure, staleness or cancellation preserves previous output. After publication, packing-only Run can verify and stage the sky without the original custom mount, including after material reload. Run verifies before and after generated-cubemap rebasing and preserves the sky manifest and registered bytes literally. Combined reflection builds retain their existing native/runtime/content-freshness requirements. The compiler CLI exposes the same default-off choice as `--pack-sky-assets`.
 
+### Static Water asset packing
+
+`set_compile_settings {"pack_water_assets":true}` enables **Pack water assets**
+in **Build settings…** through the shared Session operation. It is off by
+default and supports `fullbright`, `direct_ldr` and `direct_ldr_hdr` without
+native capture or engine physics. Enabling starts no process or asset lookup.
+`get_compile_settings` returns the boolean and `water_packing_description`;
+`get_compile_status.job.settings.pack_water_assets` retains the value captured
+at build start. Active jobs freeze updates; differing later settings stale
+previous output. Updates preserve the VMF, history, camera, selection and drafts.
+Older recipe/recent-map records default the field to false and built-in recipes
+leave it disabled. The CLI flag is `--pack-water-assets`.
+
+1. Use `get_material_source` to inspect a mounted Water material's declarations
+   and missing files. Its inventory is read-only and does not approve packing.
+2. Set `pack_water_assets:true`, then use `compile_map`, `start_compile` or
+   `run_map`. Keep original sources mounted and unchanged until publication
+   finishes. Packing rejects unsupported or incomplete graphs rather than
+   publishing a partial closure.
+3. Read `success` and `stats.water_assets`. `compile_map` returns success after
+   publication; `get_compile_status.job.result.published` is its explicit
+   publication flag. For a background job, also read `job.status` and `stale`.
+   **Build details… → Water assets** shows the summary only for a current,
+   completed, published build. See [Water](water.md#pack-static-water-assets)
+   for the checkbox workflow and screenshots.
+
+The closure contains original root and Patch/include VMTs plus dependencies
+selected by effective parameters after Patch resolution. Every reachable
+material, including `$bottommaterial` and nonzero `$underwateroverlay` targets,
+must resolve to `Water`, `Water_DX90` or `Water_DX9_HDR`. Supported roles include
+normal, base/color, reflection/refraction, cubemap and `%tooltexture` preview
+textures. Omitted normal maps use the required mounted `dev/water_normal`;
+role-specific `_rt_WaterReflection` and `_rt_WaterRefraction` are engine resources
+and `$underwateroverlay "0"` has no file dependency. Every effective Water
+material requires an explicit static `$envmap`; omitted/default or authored
+`env_cubemap` rejects even when generated reflections are enabled. No aliases
+or replacement cubemaps are invented.
+
+Dependency references use canonical lowercase ASCII logical paths, such as
+`custom/water_cube`, without a `materials/` prefix, leading `_` or dot in the
+final path component. Water surface names use logical names with case-insensitive lookup. Patch includes use canonical full paths such as
+`materials/custom/water_base.vmt`. Full resulting VMT/VTF paths must fit within
+259 bytes. Noncanonical separators, whitespace, controls, traversal, brackets,
+quotes and braces reject. The compiler preserves admitted names and bytes;
+it does not repair references. Materials require one bounded UTF-8 root and
+unambiguous supported scalar declarations. Proxies, conditions, unknown keys,
+cycles, duplicate declarations and conflicting Patch edits reject. Patch
+replacement requires an existing key; insertion cannot change an existing value.
+
+All textures require one frame, depth one, and at most 4096 pixels per axis.
+2D roles require one non-cubemap face and VTF 7.0–7.4. A static `$envmap "custom/water_cube"`
+requires both `materials/custom/water_cube.vtf` and
+`materials/custom/water_cube.hdr.vtf`, each in VTF 7.4, flagged as a cubemap with
+seven stored square faces and `first_frame:0`. Six are the cube directions;
+the seventh is the legacy sphere-map image. Their dimensions and mip counts
+must match. Six-face files, other cube versions and all VTF 7.5 textures reject.
+Supported LDR cubemap formats are RGBA8888, BGRA8888, BGRX8888, RGB888, BGR888,
+DXT1, DXT3 and DXT5; HDR cubemaps require RGBA16161616F. Texture reflectivity and
+all RGBA16F components must be finite and nonnegative. Both original siblings
+are required in every lighting mode; missing-HDR LDR fallback is not admitted.
+These checks describe the supported file subset, without establishing native
+Water appearance, HDR radiance or the game's active rendering channel.
+
+Successful preparation includes
+`stats.water_assets:{roots,channels:"ldr_hdr",files,asset_bytes}`. Root counts
+describe selected root materials; files and raw bytes exclude the manifest.
+With neither liquid surfaces nor Water roots, packing succeeds with a manifest and zero counts. Non-Water-shader liquid surfaces, including `%compilewater` on other shaders, reject this packing subset. The
+optional statistics object is omitted when packing is off. A prepared but
+rejected result may retain statistics without replacing the previous BSP;
+check `success` / `published` before treating it as output.
+
+The reserved PAK entry `hammerr/packed-water.json` uses version 1 with sorted
+unique `roots`, `channels:"ldr_hdr"` and `assets:[{path,sha256}]`. It contains
+canonical relative names and lowercase SHA-256 hashes, without machine-specific
+mount paths. Verification reconstructs the complete effective closure from the
+embedded original files, checks hashes and BSP water-surface material references,
+and rejects missing, extra or inconsistent records without a mounted-content
+fallback. The manifest is limited to 2 MiB and 1024 roots. Each root closure is
+bounded to 64 assets, 128 dependency edges, depth eight, nine material reads,
+1 MiB per VMT, 4 MiB total VMT bytes and 64 MiB total source bytes.
+
+Water, sky, generated reflections, prop vertex data and other retained PAK
+entries share the final limits: 4096 entries including manifests, 16 MiB per
+entry, 64 MiB each encoded and decoded, and a 512 MiB BSP. Encoded headers and
+manifest bytes count. Matching original dependencies deduplicate within Water;
+a case-insensitive name collision with another producer or existing entry
+rejects even when bytes match. Detected source or winning-mount changes,
+cancellation or stale publication preserve previous output. Capture
+and Run verify the Water manifest and preserve its original registered entries
+while rebasing generated reflection names. Unrelated assets remain outside this
+packing closure.
+
 ### Generated reflections
 
-`set_compile_settings {"lighting":"direct_ldr","generate_reflections":true}` enables the same **Generate reflections** control as **Build settings…**. Use `lighting:"direct_ldr_hdr"` to request paired LDR and HDR captures. Enabling starts no process. Fullbright with generation rejects atomically; turn generation off before choosing Fullbright, or supply both changes in one update. `pack_sky_assets` is a separate setting; both features share the final PAK budget and guarded publication.
+`set_compile_settings {"lighting":"direct_ldr","generate_reflections":true}` enables the same **Generate reflections** control as **Build settings…**. Use `lighting:"direct_ldr_hdr"` to request paired LDR and HDR captures. Enabling starts no process. Fullbright with generation rejects atomically; turn generation off before choosing Fullbright, or supply both changes in one update. `pack_sky_assets` and `pack_water_assets` are separate settings; all share the final PAK budget and guarded publication.
 
 | Tool | Arguments and behavior |
 | --- | --- |
@@ -2086,7 +2178,7 @@ time. See [Water](water.md#water-pressure-damping).
 
 Use `create_block`, `select_faces` and `edit_faces` to author horizontal structural-world water whose horizontal top and exposed vertical water sides use VMTs declaring their own `$bottommaterial`. Existing `compile_map`, `start_compile` and `run_map` calls resolve material patches and bind each resolved bottom material to the corresponding clipped inward faces. Each generated inward face keeps its authored face's texture/lightmap vectors and surface flags, belongs to submerged leaves and receives no overlays attached to its authored face. The top material remains the water-fog reference; connected lowest-depth metadata and fluid physics retain their existing behavior. `$bottommaterial` names the surface viewed from below, rather than the pool-floor material; `$underwateroverlay` remains a runtime setting of the top material.
 
-A missing `$bottommaterial` leaves a one-sided surface with a warning. An explicitly named missing or malformed target fails without replacing prior output. No new tool or setting is required. Portable packing of authored water materials/textures, sloped/detail/model liquids, per-pool/player currents, per-pool damping and broader native rendering validation remain unfinished. `get_material_source` provides the read-only one-material Water inventory described above; it does not pack assets. Historical map-local `$waterdepth` aliases remain an unverified consumer question separate from supported depth metadata and missing portable asset packing. See [Water](water.md).
+A missing `$bottommaterial` leaves a one-sided surface with a warning. An explicitly named missing or malformed target fails without replacing prior output. Material binding needs no new tool or setting. Opt-in `pack_water_assets` embeds the [supported static original-file closure](#static-water-asset-packing); runtime/default cubemap packing, sloped/detail/model liquids, per-pool/player currents, per-pool damping and broader native rendering remain unfinished. `get_material_source` provides the read-only one-material Water inventory described above; it does not pack assets. Historical map-local `$waterdepth` aliases remain an unverified consumer question separate from supported depth metadata and static asset packing. See [Water](water.md).
 
 ### Terrain triangle classifications
 
@@ -2693,7 +2785,7 @@ this preview. See [Fog preview](fog.md).
 
 ### Recent maps
 
-`get_recent_maps` returns up to 20 entries in most-recent-first order with exact `path`, file availability, retained game directory, eight-field `build_settings` (including `generate_reflections` and `pack_sky_assets`) and `context_compatible`. Missing legacy booleans default to false. It also reports persistence, storage errors and bounds. Pass a listed `path` to `open_recent_map`, optionally with `discard_changes: true` when discarding the current edits is intended. It uses normal map validation and restores retained build values only while idle and with matching mounted game content. Game content and custom FGD files do not switch automatically.
+`get_recent_maps` returns up to 20 entries in most-recent-first order with exact `path`, file availability, retained game directory, a `build_settings` snapshot for all ten options (including `generate_reflections`, `pack_sky_assets`, `pack_water_assets` and `bake_static_prop_vertices`) and `context_compatible`. Missing booleans default to false; disabled opt-in packing/prop fields may be omitted. It also reports persistence, storage errors and bounds. Pass a listed `path` to `open_recent_map`, optionally with `discard_changes: true` when discarding the current edits is intended. It uses normal map validation and restores retained build values only while idle and with matching mounted game content. Game content and custom FGD files do not switch automatically.
 
 `remove_recent_map {path}` and `clear_recent_maps {}` change only the retained list. Successful opens/saves update recency; changing build settings updates an existing entry without reordering it. Missing files remain listed. Failed primary opens/saves preserve the list; an auxiliary history-write failure is reported without failing an otherwise successful map operation.
 
@@ -2701,7 +2793,7 @@ Preferences use `recent-maps.json` in recovery storage. `HAMMERR_RECENT_MAPS_DIR
 
 ### Build recipes
 
-`get_build_recipes` returns built-in and custom recipes with all nine settings and readable descriptions, per-document action `revision`, current `active` identity, editability, persistence, path and errors. Built-in IDs `fast` and `final` are immutable. Fast preview uses Fullbright, no physics, Fast visibility/sampling, no bounces and 0° smoothing. Final lighting uses Direct LDR, engine physics, Detailed visibility/sampling, four bounces and 45° smoothing, retaining the compiler's existing requirements and limits. Both disable static-prop vertex lighting, sky packing and reflection generation. Custom recipes can retain a direct-only or up to four-bounce prop bake in either lit mode, sky packing in every lighting mode and reflection generation in either lit mode. Missing legacy booleans default to false; false packing fields remain omitted from stored version-1 records for byte compatibility.
+`get_build_recipes` returns built-in and custom recipes with all ten settings and readable descriptions, per-document action `revision`, current `active` identity, editability, persistence, path and errors. Built-in IDs `fast` and `final` are immutable. Fast preview uses Fullbright, no physics, Fast visibility/sampling, no bounces and 0° smoothing. Final lighting uses Direct LDR, engine physics, Detailed visibility/sampling, four bounces and 45° smoothing, retaining the compiler's existing requirements and limits. Both disable static-prop vertex lighting, sky/Water packing and reflection generation. Custom recipes can retain a direct-only or up to four-bounce prop bake in either lit mode, sky and Water packing in every lighting mode and reflection generation in either lit mode. Missing legacy booleans default to false; false packing fields remain omitted from stored version-1 records for byte compatibility.
 
 | Tool | Arguments and effect |
 | --- | --- |

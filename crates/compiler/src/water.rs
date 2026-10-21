@@ -111,6 +111,7 @@ pub(crate) fn prepare_materials(
 
 pub(crate) struct Water {
     pub leaves: Vec<i16>,
+    pub fog_tests: Vec<bool>,
     pub records: Vec<bsp::LeafWaterData>,
     surfaces: Vec<(DVec3, DVec3)>,
 }
@@ -141,6 +142,7 @@ pub(crate) fn build(
 ) -> Result<Water, String> {
     let mut water = Water {
         leaves: vec![-1; tree.nodes.len()],
+        fog_tests: vec![false; tree.nodes.len()],
         records: Vec::new(),
         surfaces: Vec::new(),
     };
@@ -303,7 +305,7 @@ pub(crate) fn build(
         }
     }
     if !water.records.is_empty() {
-        report.diagnostics.push(Diagnostic::warning("Native liquid leaf and surface metadata compiled; water material assets must remain mounted, portable water asset packing is unavailable, and sloped below-water faces remain unsupported", None, None));
+        report.diagnostics.push(Diagnostic::warning("Native liquid leaf and surface metadata compiled; sloped below-water faces remain unsupported", None, None));
     }
     Ok(water)
 }

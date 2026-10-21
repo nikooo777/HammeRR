@@ -59,6 +59,7 @@ pub(super) fn admit(entity: &Entity) -> Result<(), String> {
                     return Err("Static child prop requires white rendercolor".into());
                 }
             }
+            "lightingorigin" if !value.is_empty() => names::component(value)?,
             "targetname" | "target" | "parentname" | "name" | "globalname" | "killtarget"
             | "lightingorigin" => {
                 if !value.is_empty() {

@@ -23,7 +23,14 @@ or [compile the assembly](instances.md).
    path or transform, then click **Apply**. Unchanged raw properties, absent
    values, unrelated fields and editor metadata remain intact. **Undo** and
    **Redo** use the same map history as other edits.
-7. Open **Instance contents…** and click **Refresh instance contents** to validate
+7. If the child contains [lighting-origin helpers](instances.md), select the
+   reference and use **Advanced properties → Fix Up Name** for its explicit
+   prefix, then **Entity Name Fix Up → Prefix**. Set these on every enclosing
+   reference in a nested branch. A child helper's **Name** and its prop's
+   **Lighting Origin** refer to the same local name; save the child before
+   refreshing. The reference form preserves these properties but does not edit
+   them.
+8. Open **Instance contents…** and click **Refresh instance contents** to validate
    and resolve committed references. The authoring form offers the same explicit
    refresh action; pending form fields remain unapplied. Enable **Instance
    contents** to display a current resolved preview. A committed edit requires
@@ -50,7 +57,8 @@ Limits:
 - File checks read metadata only and admit regular files up to 4 MiB. Malformed
   child VMFs and unsupported child contents can pass presence checks, then fail
   Refresh or Compile. Those full operations support world/ordinary `func_detail`
-  brushes, terrain and strictly admitted unnamed static lights/props
+  brushes, terrain, strictly admitted unnamed static lights/props and scoped
+  lighting-origin helpers
   through four helper levels, counting a root helper as level one,
   with global limits of 256 occurrences and 32 normalized requested paths plus
   aggregate source, geometry and dependency budgets. See [Referenced brush
@@ -60,7 +68,10 @@ Limits:
   remain visible for correction; values are never clamped or replaced with zero.
 - Unsupported imported replacements, connections or opaque fields are preserved
   and block Apply. This form edits file/origin/angles only. Child editing,
-  runtime entities and name fixups remain unavailable. A separate
+  runtime entities and general name fixups remain unavailable. Lighting-origin
+  branches support only explicit prefixes with nonempty ASCII letter/digit/
+  underscore components and composed names up to 127 bytes. **Postfix**, **None**,
+  automatic names and global escapes reject on those branches. A separate
   [Extract selection to instance…](instance-extraction.md) workflow exports
   supported root world/detail selections into a new child; it does not extract
   a nested hierarchy.

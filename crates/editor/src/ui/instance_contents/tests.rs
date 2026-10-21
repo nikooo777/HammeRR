@@ -106,6 +106,12 @@ fn software_controls_share_visibility_reports_frame_clear_and_preserve_parent() 
             .get_summary()
             .contains("Expanded static props:")
     );
+    assert!(
+        !controller
+            .window
+            .get_summary()
+            .contains("Expanded lighting origins:")
+    );
     assert!(controller.window.get_can_frame());
     controller.window.show().unwrap();
     controller
@@ -259,6 +265,78 @@ fn software_fgd_child_static_props_share_counts_and_explicit_unavailable_preview
     assert_eq!(serde_json::json!(session.property_draft()), draft);
     assert_eq!(std::fs::read(&parent).unwrap(), parent_bytes);
     assert_eq!(std::fs::read(&child).unwrap(), child_bytes);
+}
+
+#[test]
+fn software_lighting_origin_helpers_share_counts_and_unavailable_geometry_with_build_details() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: false,
+        },
+    )))
+    .unwrap();
+    let fixture = crate::test_assets::instance_lighting_origins::fixture(Actor::User);
+    let mut child =
+        source_formats::vmf::Vmf::parse(&std::fs::read_to_string(&fixture.child).unwrap()).unwrap();
+    child
+        .entities
+        .retain(|entity| entity.classname() == Some("info_lighting"));
+    std::fs::write(&fixture.child, child.write(&Default::default())).unwrap();
+    let mut session = fixture.session;
+    let memory = session.document().vmf().clone();
+    let history = session.history_snapshot();
+    let camera = session.camera();
+    let settings = session.compile_settings();
+    let parent_bytes = std::fs::read(&fixture.source).unwrap();
+    let child_bytes = std::fs::read(&fixture.child).unwrap();
+    let output = fixture.directory.path().join("outputs/origins.bsp");
+    let result = session
+        .begin_compile(Actor::User, Some(&output))
+        .unwrap()
+        .run();
+    assert!(
+        result.as_ref().unwrap().output.bsp.is_some(),
+        "{:?}",
+        result.as_ref().unwrap().output.report
+    );
+    session.finish_compile(Actor::User, &result);
+    assert_eq!(session.compile_status()["job"]["result"]["published"], true);
+    let request = session
+        .begin_instance_contents_refresh(Actor::User)
+        .unwrap();
+    session
+        .finish_instance_contents_refresh(Actor::User, request.run())
+        .unwrap();
+    let report = session.inspect_instance_contents(0, 64).unwrap();
+    assert_eq!(report["state"], "ready");
+    assert_eq!(report["stats"]["lighting_origins"], 1);
+    assert_eq!(report["lighting_origin_preview"]["available"], false);
+    assert_eq!(report["available"], false);
+    assert_eq!(report["geometry"]["vertices"], 0);
+    assert!(report["owners"][0]["bounds"].is_null());
+    let shared = Arc::new(Mutex::new(session));
+    let contents = Controller::new(shared.clone()).unwrap();
+    let build = crate::compile_ui::Controller::new(&shared).unwrap();
+    build.refresh(&lock(&shared));
+    let counts = "Expanded lighting origins: 1 · before compile-region filtering";
+    let reason = editor_core::session::instance_contents::LIGHTING_ORIGIN_PREVIEW_REASON;
+    assert_eq!(report["lighting_origin_preview"]["reason"], reason);
+    assert!(contents.window.get_summary().contains(counts));
+    assert!(contents.window.get_summary().contains(reason));
+    assert!(build.window.get_details().contains(counts));
+    assert!(build.window.get_details().contains(reason));
+    assert!(!contents.window.get_can_frame());
+    assert!(contents.window.get_owners().contains("child.vmf"));
+    assert!(!contents.window.get_owners().contains("Content bounds"));
+    let session = lock(&shared);
+    assert_eq!(session.document().vmf(), &memory);
+    assert_eq!(session.history_snapshot(), history);
+    assert_eq!(session.camera(), camera);
+    assert_eq!(session.compile_settings(), settings);
+    assert_eq!(std::fs::read(&fixture.source).unwrap(), parent_bytes);
+    assert_eq!(std::fs::read(&fixture.child).unwrap(), child_bytes);
 }
 
 #[test]

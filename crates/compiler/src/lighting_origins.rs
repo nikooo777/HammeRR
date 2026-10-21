@@ -11,6 +11,20 @@ enum Named<'a> {
     Ambiguous,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Binding {
+    Helper(u32),
+    Missing,
+}
+
+pub(crate) fn point(helper: &Entity) -> Result<DVec3, String> {
+    let point = helper
+        .origin()
+        .filter(|point| point.is_finite() && point.abs().max_element() <= MAX_COMPILE_COORD)
+        .ok_or("lighting origin is invalid")?;
+    Ok(point.as_vec3().as_dvec3())
+}
+
 pub(crate) struct Origins<'a> {
     named: BTreeMap<&'a str, Named<'a>>,
 }
@@ -49,9 +63,20 @@ impl<'a> Origins<'a> {
     }
 
     pub(crate) fn resolve(&self, name: Option<&str>) -> Result<Option<DVec3>, String> {
+        self.resolve_with_binding(name, None)
+    }
+
+    pub(crate) fn resolve_with_binding(
+        &self,
+        name: Option<&str>,
+        binding: Option<&Binding>,
+    ) -> Result<Option<DVec3>, String> {
         let Some(name) = name.filter(|name| !name.is_empty()) else {
             return Ok(None);
         };
+        if matches!(binding, Some(Binding::Missing)) {
+            return Err("lightingorigin must name one visible local info_lighting".into());
+        }
         let helper = match self.named.get(name) {
             Some(Named::Unique(helper)) => helper,
             Some(Named::Ambiguous) => {
@@ -61,10 +86,11 @@ impl<'a> Origins<'a> {
                 return Err("lightingorigin must name one visible info_lighting".into());
             }
         };
-        let point = helper
-            .origin()
-            .filter(|point| point.is_finite() && point.abs().max_element() <= MAX_COMPILE_COORD)
-            .ok_or("lighting origin is invalid")?;
-        Ok(Some(point.as_vec3().as_dvec3()))
+        if let Some(Binding::Helper(expected)) = binding
+            && helper.id != *expected
+        {
+            return Err("lightingorigin does not match its local instance helper".into());
+        }
+        point(helper).map(Some)
     }
 }

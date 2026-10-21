@@ -12,6 +12,7 @@ mod ignore_normals;
 mod indirect_sources;
 mod instances;
 mod lighting_origins;
+mod scoped_origins;
 mod source_identity;
 mod spherical_indirect;
 

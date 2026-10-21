@@ -11,6 +11,8 @@ parent map objects remain unchanged; no terrain switch is required. Supported
 unnamed static child point/spot lights are counted for compilation, with no
 child-light display or illumination preview. Supported child static
 props are also counted for compilation, with model preview explicitly unavailable.
+Scoped child lighting-origin helpers are counted without reference geometry or
+icons.
 
 1. Save the parent VMF. Use **Instance reference…** to create an explicit relative
    `.vmf` reference inside its directory tree; see [Instance authoring](instance-authoring.md).
@@ -20,7 +22,8 @@ props are also counted for compilation, with model preview explicitly unavailabl
    content bounds and checked dependency identities. **Expanded static lights:**
    reports point/spot counts before compile-region filtering. **Expanded static
    props:** reports child props before that filtering and explains the unavailable
-   model preview. **Cancel refresh**
+   model preview. **Expanded lighting origins:** counts visible helpers,
+   including unreferenced helpers, before region filtering. **Cancel refresh**
    cancels the current request; **Clear** frees the resolved layer.
 4. Click a displayed reference surface to select its root instance helper.
    Terrain picking follows the displaced triangles. Overlapping object cycling
@@ -80,6 +83,13 @@ picking and framing are unavailable. A missing or invalid MDL can leave referenc
 resolution ready and still fail compilation. Mixed assemblies retain their
 actual brush/terrain surfaces and bounds; props do not add placeholder geometry.
 
+Supported child lighting-origin helpers likewise retain identities and counts
+without icons, reference bounds, picking or framing. A helper-only assembly can
+be ready while the inspector explains that no reference geometry is available.
+Mixed assemblies retain their actual brush/terrain preview. Local prop bindings
+are checked for retained props during compilation; a ready reference inspection
+does not prove a missing or hidden lighting helper is usable.
+
 **Tool textures** does not classify this flat reference layer. Child editing,
 parameter replacements and automatic live refresh remain unsupported.
 [Instance authoring](instance-authoring.md) edits the root reference.
@@ -122,7 +132,8 @@ picks and framing still use the root helper.
 Inspection's `stats.point_lights` and `stats.spot_lights` are omitted individually
 when zero. Like compiler counts, they describe expansion before compile-region
 filtering. `stats.static_props` follows the same count and omit-zero convention.
-A light-only or model-only ready report has `available:false`, zero geometry
+`stats.lighting_origins` also follows that convention and includes unreferenced
+visible helpers. A light-only, model-only or lighting-helper-only ready report has `available:false`, zero geometry
 counts, no face provenance and null owner content bounds.
 
 MCP uses `inspect_instance_contents` and `set_instance_contents` with

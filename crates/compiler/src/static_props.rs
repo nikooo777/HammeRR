@@ -173,6 +173,7 @@ fn record(
     entity: &Entity,
     header: ModelHeader,
     lighting: &crate::lighting_origins::Origins<'_>,
+    binding: Option<&crate::lighting_origins::Binding>,
 ) -> Result<StaticProp, String> {
     if entity.solids.iter().any(|solid| !solid.hidden) {
         return Err("prop_static is a point entity; remove its brush geometry".into());
@@ -254,7 +255,9 @@ fn record(
     if appearance.mode != source_formats::render_color::NORMAL {
         return Err("Static-prop output does not support authored render modes; use prop_dynamic for model opacity".into());
     }
-    if let Some(point) = lighting.resolve(entity.properties.get("lightingorigin"))? {
+    if let Some(point) =
+        lighting.resolve_with_binding(entity.properties.get("lightingorigin"), binding)?
+    {
         prop.flags |= 2;
         prop.lighting_origin = point.to_array().map(|v| v as f32);
     }
@@ -268,7 +271,7 @@ pub(crate) fn bake(
     report: &mut Report,
     control: &Control,
     mut source_reads: Option<&mut crate::lighting::asset_tracking::SourceReads>,
-    instance_poses: &crate::instances::StaticPropPoses,
+    instance_metadata: &crate::instances::StaticPropMetadata<'_>,
 ) -> Result<Stats, String> {
     let mut props = StaticProps {
         version: 6,
@@ -353,7 +356,10 @@ pub(crate) fn bake(
                 );
             }
             let asset = models.get_mut(&path).unwrap();
-            if let Some(poses) = instance_poses.get(&entity.id) {
+            if let Some(poses) = instance_metadata
+                .poses
+                .and_then(|poses| poses.get(&entity.id))
+            {
                 for (index, pose) in poses.iter().enumerate() {
                     control.checkpoint()?;
                     let angles = pose.angles.map(f64::to_radians);
@@ -368,7 +374,10 @@ pub(crate) fn bake(
                     })?;
                 }
             }
-            let mut prop = record(entity, asset.header, &lighting)?;
+            let binding = instance_metadata
+                .lighting_origins
+                .and_then(|bindings| bindings.get(&entity.id));
+            let mut prop = record(entity, asset.header, &lighting, binding)?;
             if prop.solid == 6 {
                 if asset.collision.is_none() {
                     let phy_path = format!("{}.phy", &path[..path.len() - 4]);

@@ -19,6 +19,7 @@ use super::{Actor, Session};
 mod terrain;
 
 pub const STATIC_PROP_PREVIEW_REASON: &str = "Child static-prop models are compiled but not shown in the reference preview; model bounds, picking and framing are unavailable.";
+pub const LIGHTING_ORIGIN_PREVIEW_REASON: &str = "Child lighting-origin helpers have no reference geometry or icons; helper bounds, picking and framing are unavailable.";
 
 const MAX_DIAGNOSTICS: usize = 64;
 const MAX_ROWS: usize = 64;
@@ -162,7 +163,7 @@ fn bounded(value: &str) -> String {
 }
 
 fn limits() -> Value {
-    json!({"instances":instances::MAX_INSTANCES,"files":instances::MAX_FILES,"file_bytes":instances::MAX_FILE_BYTES,"total_bytes":instances::MAX_TOTAL_BYTES,"file_nodes":instances::MAX_FILE_NODES,"total_nodes":instances::MAX_TOTAL_NODES,"depth":instances::MAX_DEPTH,"expansion_depth":instances::MAX_EXPANSION_DEPTH,"objects":instances::MAX_OBJECTS,"sides":instances::MAX_SIDES,"sides_per_brush":instances::MAX_BRUSH_SIDES,"geometry_work":instances::MAX_GEOMETRY_WORK,"terrain_source_vertices":instances::MAX_TERRAIN_SOURCE_VERTICES,"terrain_expanded_vertices":instances::MAX_TERRAIN_EXPANDED_VERTICES,"terrain_grid_work":instances::MAX_TERRAIN_GRID_WORK,"terrain_context_vertices":references::MAX_VERTICES,"terrain_parent_lod":"must_match_ordinary_context","field_bytes":instances::MAX_FIELD_BYTES,"parent_bytes":instances::MAX_PARENT_BYTES,"vertices":references::MAX_VERTICES,"indices":references::MAX_INDICES,"line_vertices":references::MAX_LINES,"pick_triangles":references::MAX_TRIANGLES,"cpu_bytes":references::MAX_CPU_BYTES,"gpu_bytes":references::MAX_GPU_BYTES,"rows":MAX_ROWS,"diagnostics":MAX_DIAGNOSTICS,"active_workers":1,"cached_snapshots":1})
+    json!({"instances":instances::MAX_INSTANCES,"files":instances::MAX_FILES,"file_bytes":instances::MAX_FILE_BYTES,"total_bytes":instances::MAX_TOTAL_BYTES,"file_nodes":instances::MAX_FILE_NODES,"total_nodes":instances::MAX_TOTAL_NODES,"depth":instances::MAX_DEPTH,"expansion_depth":instances::MAX_EXPANSION_DEPTH,"objects":instances::MAX_OBJECTS,"sides":instances::MAX_SIDES,"sides_per_brush":instances::MAX_BRUSH_SIDES,"geometry_work":instances::MAX_GEOMETRY_WORK,"terrain_source_vertices":instances::MAX_TERRAIN_SOURCE_VERTICES,"terrain_expanded_vertices":instances::MAX_TERRAIN_EXPANDED_VERTICES,"terrain_grid_work":instances::MAX_TERRAIN_GRID_WORK,"terrain_context_vertices":references::MAX_VERTICES,"terrain_parent_lod":"must_match_ordinary_context","lighting_origin_name_bytes":instances::MAX_LIGHTING_ORIGIN_NAME_BYTES,"field_bytes":instances::MAX_FIELD_BYTES,"parent_bytes":instances::MAX_PARENT_BYTES,"vertices":references::MAX_VERTICES,"indices":references::MAX_INDICES,"line_vertices":references::MAX_LINES,"pick_triangles":references::MAX_TRIANGLES,"cpu_bytes":references::MAX_CPU_BYTES,"gpu_bytes":references::MAX_GPU_BYTES,"rows":MAX_ROWS,"diagnostics":MAX_DIAGNOSTICS,"active_workers":1,"cached_snapshots":1})
 }
 
 fn intersects(a: [DVec3; 2], b: [DVec3; 2]) -> bool {
@@ -1132,6 +1133,12 @@ impl Session {
             report["static_prop_preview"] = json!({
                 "available":false,
                 "reason":STATIC_PROP_PREVIEW_REASON
+            });
+        }
+        if ready.is_some_and(|ready| ready.stats.lighting_origins > 0) {
+            report["lighting_origin_preview"] = json!({
+                "available":false,
+                "reason":LIGHTING_ORIGIN_PREVIEW_REASON
             });
         }
         report

@@ -2,7 +2,7 @@ use super::*;
 
 const PHYSICS: &str = "models/props/instance.phy";
 
-fn write_physics(directory: &Path) -> Vec<u8> {
+pub(super) fn write_physics(directory: &Path) -> Vec<u8> {
     let model = std::fs::read(directory.join(MODEL)).unwrap();
     let checksum = i32::from_le_bytes(model[8..12].try_into().unwrap());
     let mut bytes = [16_i32, 0, 1, checksum].map(i32::to_le_bytes).concat();

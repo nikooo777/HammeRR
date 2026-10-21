@@ -7,6 +7,7 @@ pub(super) enum Kind {
     Point,
     Spot,
     StaticProp,
+    LightingOrigin,
 }
 
 impl Kind {
@@ -14,6 +15,7 @@ impl Kind {
         match self {
             Self::Point | Self::Spot => "light",
             Self::StaticProp => "prop",
+            Self::LightingOrigin => "lighting origin",
         }
     }
 }
@@ -23,11 +25,15 @@ pub(super) fn kind(entity: &Entity) -> Option<Kind> {
         "light" => Some(Kind::Point),
         "light_spot" => Some(Kind::Spot),
         "prop_static" => Some(Kind::StaticProp),
+        "info_lighting" => Some(Kind::LightingOrigin),
         _ => None,
     }
 }
 
 pub(super) fn admit(entity: &Entity, kind: Kind) -> Result<(), String> {
+    if matches!(kind, Kind::LightingOrigin) {
+        return names::admit(entity);
+    }
     if matches!(kind, Kind::StaticProp) {
         return props::admit(entity);
     }
@@ -120,6 +126,9 @@ fn scalar(entity: &Entity, key: &str) -> Result<f64, String> {
 }
 
 pub(super) fn check_pose(entity: &Entity, kind: Kind) -> Result<(), String> {
+    if matches!(kind, Kind::LightingOrigin) {
+        return names::check_point(entity);
+    }
     if matches!(kind, Kind::StaticProp) {
         return props::check_pose(entity).map(|_| ());
     }

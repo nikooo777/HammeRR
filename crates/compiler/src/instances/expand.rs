@@ -9,12 +9,20 @@ struct Child {
     vmf: Vmf,
     identity: FileIdentity,
     bytes: usize,
+    names: names::LocalIndex,
+}
+
+struct EntitySpec {
+    kind: entities::Kind,
+    name: Option<(&'static str, String)>,
+    binding: Option<crate::lighting_origins::Binding>,
 }
 
 pub(super) struct ExpandedSources {
     pub stats: InstanceStats,
     pub provenance: Provenance,
     pub static_prop_poses: StaticPropPoses,
+    pub static_prop_bindings: StaticPropBindings,
     pub files: Vec<(String, FileIdentity)>,
 }
 
@@ -32,6 +40,9 @@ pub(super) struct Expansion<'a> {
     stats: InstanceStats,
     provenance: Provenance,
     static_prop_poses: StaticPropPoses,
+    static_prop_bindings: StaticPropBindings,
+    name_scopes: Vec<names::Scope>,
+    name_registry: Option<names::Registry>,
 }
 
 impl<'a> Expansion<'a> {
@@ -55,6 +66,9 @@ impl<'a> Expansion<'a> {
             stats: InstanceStats::default(),
             provenance: BTreeMap::new(),
             static_prop_poses: BTreeMap::new(),
+            static_prop_bindings: BTreeMap::new(),
+            name_scopes: Vec::new(),
+            name_registry: None,
         }
     }
 
@@ -136,7 +150,10 @@ impl<'a> Expansion<'a> {
                 owner.origin(),
             ));
         }
+        let names = names::LocalIndex::new(&child, &mut self.work, self.control)
+            .map_err(|error| format!("Instance {relative}: {error}"))?;
         let child = Arc::new(Child {
+            names,
             vmf: child,
             identity,
             bytes: input.len(),
@@ -172,6 +189,9 @@ impl<'a> Expansion<'a> {
             .child(&relative, owner, ancestors)
             .map_err(EditError::Invalid)?;
         let angles = vector(helper, "angles").map_err(EditError::Invalid)?;
+        let scope = names::Scope::capture(helper, &mut self.work, self.control)
+            .map_err(EditError::Invalid)?;
+        self.name_scopes.push(scope);
         transforms.push(edit::Transform {
             translation: vector(helper, "origin").map_err(EditError::Invalid)?,
             rotation: DVec3::new(angles.z, angles.x, angles.y),
@@ -183,6 +203,51 @@ impl<'a> Expansion<'a> {
         self.stats.instances += 1;
         self.stats.max_expansion_depth = self.stats.max_expansion_depth.max(depth);
         let result: Result<(), EditError> = (|| {
+            let mut local_helpers = BTreeMap::new();
+            for entity in child
+                .vmf
+                .entities
+                .iter()
+                .filter(|entity| !entity.hidden && entity.classname() == Some("info_lighting"))
+            {
+                let result: Result<u32, EditError> = (|| {
+                    let name = names::compose(
+                        &self.name_scopes,
+                        entity.properties.get("targetname").unwrap(),
+                        &mut self.work,
+                        self.control,
+                    )
+                    .map_err(EditError::Invalid)?;
+                    if self.name_registry.is_none() {
+                        self.name_registry = Some(
+                            names::Registry::new(tx.vmf(), &mut self.work, self.control)
+                                .map_err(EditError::Invalid)?,
+                        );
+                    }
+                    self.name_registry
+                        .as_mut()
+                        .unwrap()
+                        .insert(&name, &mut self.work, self.control)
+                        .map_err(EditError::Invalid)?;
+                    self.entity(
+                        tx,
+                        entity,
+                        EntitySpec {
+                            kind: entities::Kind::LightingOrigin,
+                            name: Some(("targetname", name)),
+                            binding: None,
+                        },
+                        owner.id,
+                        &relative,
+                        transforms,
+                    )
+                })();
+                let generated = result.map_err(|error| {
+                    EditError::Invalid(format!("Child lighting origin {}: {error}", entity.id))
+                })?;
+                names::charge(&mut self.work, 1, self.control).map_err(EditError::Invalid)?;
+                local_helpers.insert(entity.id, generated);
+            }
             for solid in child.vmf.world.solids.iter().filter(|solid| !solid.hidden) {
                 self.solid(tx, solid, false, owner.id, &relative, transforms)?;
             }
@@ -194,14 +259,48 @@ impl<'a> Expansion<'a> {
                 {
                     self.helper(tx, entity, owner, transforms, ancestors)?;
                 } else if let Some(kind) = entities::kind(entity) {
-                    self.entity(tx, entity, kind, owner.id, &relative, transforms)
-                        .map_err(|error| {
-                            EditError::Invalid(format!(
-                                "Child {} {}: {error}",
-                                kind.label(),
-                                entity.id
-                            ))
-                        })?;
+                    if matches!(kind, entities::Kind::LightingOrigin) {
+                        continue;
+                    }
+                    let result: Result<(), EditError> = (|| {
+                        let mut spec = EntitySpec {
+                            kind,
+                            name: None,
+                            binding: None,
+                        };
+                        if matches!(kind, entities::Kind::StaticProp)
+                            && let Some(reference) = entity
+                                .properties
+                                .get("lightingorigin")
+                                .filter(|value| !value.is_empty())
+                        {
+                            let name = names::compose(
+                                &self.name_scopes,
+                                reference,
+                                &mut self.work,
+                                self.control,
+                            )
+                            .map_err(EditError::Invalid)?;
+                            spec.name = Some(("lightingorigin", name));
+                            spec.binding = Some(
+                                child
+                                    .names
+                                    .helpers
+                                    .get(reference)
+                                    .and_then(|id| local_helpers.get(id))
+                                    .copied()
+                                    .map_or(
+                                        crate::lighting_origins::Binding::Missing,
+                                        crate::lighting_origins::Binding::Helper,
+                                    ),
+                            );
+                        }
+                        self.entity(tx, entity, spec, owner.id, &relative, transforms)?;
+                        Ok(())
+                    })();
+                    result.map_err(|error| {
+                        EditError::Invalid(format!("Child {} {}: {error}", kind.label(), entity.id))
+                    })?;
                 } else {
                     for solid in entity.solids.iter().filter(|solid| !solid.hidden) {
                         self.solid(tx, solid, true, owner.id, &relative, transforms)?;
@@ -212,6 +311,7 @@ impl<'a> Expansion<'a> {
         })();
         ancestors.pop();
         transforms.pop();
+        self.name_scopes.pop();
         result.map_err(|error| EditError::Invalid(format!("Instance {relative}: {error}")))
     }
 
@@ -219,11 +319,12 @@ impl<'a> Expansion<'a> {
         &mut self,
         tx: &mut Transaction<'_>,
         original: &Entity,
-        kind: entities::Kind,
+        spec: EntitySpec,
         owner: u32,
         relative: &str,
         transforms: &[edit::Transform],
-    ) -> Result<(), EditError> {
+    ) -> Result<u32, EditError> {
+        let kind = spec.kind;
         self.control.checkpoint().map_err(EditError::Invalid)?;
         self.objects = self.objects.saturating_add(1);
         let bytes = original
@@ -244,6 +345,14 @@ impl<'a> Expansion<'a> {
             ));
         }
         self.work = work;
+        if let Some((key, name)) = &spec.name {
+            let work = name
+                .len()
+                .checked_add(key.len())
+                .and_then(|bytes| bytes.checked_mul(transforms.len() + 1))
+                .ok_or_else(|| EditError::Invalid("Instance name-work overflow".into()))?;
+            names::charge(&mut self.work, work, self.control).map_err(EditError::Invalid)?;
+        }
         let mut poses = Vec::new();
         if matches!(kind, entities::Kind::StaticProp) {
             poses.reserve(transforms.len() + 1);
@@ -254,6 +363,14 @@ impl<'a> Expansion<'a> {
         let mut entity = original.clone();
         entity.id = tx.new_object_id()?;
         entity.editor = None;
+        if let Some((key, name)) = spec.name {
+            entity.properties.set(key, name);
+        }
+        if matches!(kind, entities::Kind::LightingOrigin) {
+            entity.properties.remove("angles");
+            entity.properties.remove("angle");
+        }
+        let generated = entity.id;
         self.provenance.insert(
             format!("entity:{}", entity.id),
             (owner, relative.to_owned(), original.id, None),
@@ -274,15 +391,20 @@ impl<'a> Expansion<'a> {
         match kind {
             entities::Kind::Point => self.stats.point_lights += 1,
             entities::Kind::Spot => self.stats.spot_lights += 1,
+            entities::Kind::LightingOrigin => self.stats.lighting_origins += 1,
             entities::Kind::StaticProp => {
                 self.stats.static_props += 1;
                 let ObjectId::Entity(entity) = id else {
                     unreachable!()
                 };
                 self.static_prop_poses.insert(entity, poses);
+                if let Some(binding) = spec.binding {
+                    names::charge(&mut self.work, 1, self.control).map_err(EditError::Invalid)?;
+                    self.static_prop_bindings.insert(entity, binding);
+                }
             }
         }
-        Ok(())
+        Ok(generated)
     }
 
     fn solid(
@@ -378,6 +500,7 @@ impl<'a> Expansion<'a> {
             stats: self.stats,
             provenance: self.provenance,
             static_prop_poses: self.static_prop_poses,
+            static_prop_bindings: self.static_prop_bindings,
             files: self
                 .files
                 .into_iter()

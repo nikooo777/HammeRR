@@ -7,6 +7,9 @@ use crate::test_static_prop_model;
 #[path = "props_collision_tests.rs"]
 mod collision_tests;
 
+#[path = "scoped_origin_tests.rs"]
+mod scoped_origin_tests;
+
 const MODEL: &str = "models/props/instance.mdl";
 const SECOND_MODEL: &str = "models/props/second.mdl";
 
@@ -451,7 +454,7 @@ fn strict_static_prop_envelope_rejects_unsupported_semantics_and_ambiguous_pose_
         ("targetname", "named"),
         ("target", " "),
         ("parentname", "parent"),
-        ("lightingorigin", "external"),
+        ("lightingorigin", "@external"),
         ("name", "named"),
         ("globalname", "shared"),
         ("fademaxdist", "1024"),
@@ -685,7 +688,7 @@ fn four_levels_repeated_props_keep_native_ordinals_and_optional_model_read_linka
         &mut report,
         &Control::default(),
         Some(&mut reads),
-        &prepared.static_prop_poses,
+        &prepared.static_prop_metadata(),
     )
     .unwrap();
     assert!(!report.has_errors(), "{report:?}");

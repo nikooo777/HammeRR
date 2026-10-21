@@ -11,6 +11,7 @@ use crate::{Control, Diagnostic, FileIdentity, FileStamp, Report};
 
 mod entities;
 mod expand;
+mod names;
 mod props;
 mod terrain;
 
@@ -31,6 +32,7 @@ pub const MAX_PARENT_BYTES: u64 = 128 * 1024 * 1024;
 pub const MAX_TERRAIN_SOURCE_VERTICES: usize = 65_536;
 pub const MAX_TERRAIN_EXPANDED_VERTICES: usize = 262_144;
 pub const MAX_TERRAIN_GRID_WORK: usize = 2_097_152;
+pub const MAX_LIGHTING_ORIGIN_NAME_BYTES: usize = 127;
 
 #[derive(Clone, Debug)]
 pub struct SourceLocation {
@@ -349,6 +351,8 @@ pub struct InstanceStats {
     pub spot_lights: usize,
     #[serde(skip_serializing_if = "is_zero")]
     pub static_props: usize,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub lighting_origins: usize,
     pub dependencies: Vec<DependencyInfo>,
 }
 
@@ -612,7 +616,7 @@ fn child_admission(child: &Vmf, control: &Control) -> Result<(), String> {
             .is_some_and(|class| class.eq_ignore_ascii_case("func_detail"))
         {
             return Err(format!(
-                "Child entity {} ({}) is unsupported; only world/func_detail brushes, unnamed static lights, bounded static props and bounded func_instance helpers are supported",
+                "Child entity {} ({}) is unsupported; only world/func_detail brushes, unnamed static lights, bounded static props, scoped info_lighting helpers and bounded func_instance helpers are supported",
                 entity.id,
                 entity.classname().unwrap_or("missing class")
             ));
@@ -651,11 +655,20 @@ pub(crate) struct StaticPropPose {
 
 pub(crate) type StaticPropPoses = BTreeMap<u32, Vec<StaticPropPose>>;
 
+pub(crate) type StaticPropBindings = BTreeMap<u32, crate::lighting_origins::Binding>;
+
+#[derive(Default)]
+pub(crate) struct StaticPropMetadata<'a> {
+    pub poses: Option<&'a StaticPropPoses>,
+    pub lighting_origins: Option<&'a StaticPropBindings>,
+}
+
 pub struct PreparedInstances<'a> {
     pub(crate) vmf: Cow<'a, Vmf>,
     pub(crate) dependencies: Option<DependencyGuard>,
     pub(crate) stats: Option<InstanceStats>,
     pub(crate) static_prop_poses: StaticPropPoses,
+    static_prop_bindings: StaticPropBindings,
     provenance: Provenance,
 }
 
@@ -670,6 +683,12 @@ pub struct InstanceBrush<'a> {
 }
 
 impl PreparedInstances<'_> {
+    pub(crate) fn static_prop_metadata(&self) -> StaticPropMetadata<'_> {
+        StaticPropMetadata {
+            poses: Some(&self.static_prop_poses),
+            lighting_origins: Some(&self.static_prop_bindings),
+        }
+    }
     pub fn vmf(&self) -> &Vmf {
         self.vmf.as_ref()
     }
@@ -774,6 +793,7 @@ pub(crate) fn prepare<'a>(
         dependencies: None,
         stats: None,
         static_prop_poses: BTreeMap::new(),
+        static_prop_bindings: BTreeMap::new(),
         provenance: BTreeMap::new(),
     };
     if !requires_source(vmf) {
@@ -860,6 +880,7 @@ pub(crate) fn prepare<'a>(
     let stats = expanded_sources.stats;
     prepared.provenance = expanded_sources.provenance;
     prepared.static_prop_poses = expanded_sources.static_prop_poses;
+    prepared.static_prop_bindings = expanded_sources.static_prop_bindings;
     report.diagnostics.push(Diagnostic::info(
         format!(
             "Expanded {} brush instances from {} files: {} world brushes, {} detail brushes",

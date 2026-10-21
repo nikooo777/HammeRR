@@ -3,8 +3,8 @@
 # Compile referenced assemblies
 
 Reuse saved VMFs' world and detail brushes, power 2–4 terrain, unnamed static
-point/spot lights, static props and nested references at several
-positions and rotations.
+point/spot lights, static props, scoped lighting-origin helpers and nested
+references at several positions and rotations.
 Compilation expands the supported contents without an extra switch. The editor
 can resolve a separate, explicitly refreshed
 [reference preview](instance-contents.md) with actual displaced terrain surfaces
@@ -14,8 +14,8 @@ from supported brushes already in the parent.
 
 1. Save the parent map. Save a child VMF inside the same directory tree, such as
    `parts/arch.vmf`. Keep the child's visible contents to world brushes,
-   ordinary `func_detail` brushes, supported static lights/props and nested
-   `func_instance` references.
+   ordinary `func_detail` brushes, supported static lights/props, `info_lighting`
+   helpers and nested `func_instance` references.
    World and detail brushes may carry supported power 2, 3 or 4 terrain. The
    child's world settings do not replace the parent's.
 2. To add a child light, open the child and click **Entity…**, then choose `light`
@@ -29,31 +29,43 @@ from supported brushes already in the parent.
    **Use VPhysics** is the default and requires the model's matching `.phy` asset.
    Keep scale 1, body/skin 0, normal white rendering and names empty. Save the
    child. Other non-neutral prop settings remain outside this child subset.
-4. Click **Instance reference…**. Set **VMF reference** to `parts/arch.vmf`,
+4. To give a child prop a native lighting origin, add `info_lighting` through
+   **Entity…**. Set its **Name**, such as `sample`, and the prop's **Lighting
+   Origin** to that same name. Save the child. See
+   [Static props](static-props.md#native-lighting-origin) for the native point's
+   effect on lighting.
+5. Click **Instance reference…**. Set **VMF reference** to `parts/arch.vmf`,
    choose **Position** and **Rotation**, then click **Create**. **Cancel** leaves
-   the map unchanged. See [Instance authoring](instance-authoring.md) for browsing,
-   editing and file-check controls.
-5. To inspect child shapes, enable **Instance contents**, open **Instance contents…**
+   the map unchanged. For a child with lighting-origin helpers, set every
+   containing reference's **Advanced properties → Fix Up Name** to an explicit
+   name, such as `assembly`, and **Entity Name Fix Up → Prefix**. The resulting
+   helper name is `assembly-sample`; nested prefixes join outermost first. See
+   [Instance authoring](instance-authoring.md) for browsing, editing and file-check
+   controls.
+6. To inspect child shapes, enable **Instance contents**, open **Instance contents…**
    and click **Refresh instance contents**. Terrain uses its displaced surface
    for the flat-color view, content bounds and picking. Clicking it selects the
    root helper; the child remains read-only. **Expanded static lights:** reports
    point/spot counts, but child lights and their illumination/icons are not
    shown in this layer or the authored-lighting preview. **Expanded static props:**
    reports child prop counts. Child models are compiled but have no reference
-   display, model bounds, picking or framing.
-6. Move or rotate the helper with the ordinary transform controls. Its origin
+   display, model bounds, picking or framing. **Expanded lighting origins:**
+   reports helper counts; these points have no reference geometry or icons.
+7. Move or rotate the helper with the ordinary transform controls. Its origin
    places the child's origin. The `angles` property uses Source pitch, yaw, roll;
    brushes, terrain, static props, light positions/spot directions and attached
    texture coordinates rotate together. Keep replacement fields empty; named runtime
    entities are unsupported.
-7. Click **Compile**. Unsaved parent edits are included. Open **Build details…**
+8. Click **Compile**. Unsaved parent edits are included. Open **Build details…**
    in the bar below the toolbar to inspect **Instances**, **Files**, **Nesting
    depth**, world/detail brush counts and each relative dependency's byte count
    and **SHA256**. **Expanded static lights:** counts all expanded point/spot
    lights before compile-region filtering, including lights outside the region.
    **Expanded static props:** uses the same expansion count before filtering;
    **Static props** counts props emitted by the selected build region.
-8. Recompile after changing any child or descendant. Changed, missing or
+   **Expanded lighting origins:** counts visible expanded helpers before region
+   filtering, including unreferenced helpers.
+9. Recompile after changing any child or descendant. Changed, missing or
    retargeted dependencies make the completed build stale and disable **Play
    built map**. Launch also verifies exact dependency contents before starting
    the game. Consumed model sources also retain the original
@@ -83,8 +95,8 @@ Limits:
 - Other runtime entities, parameter helpers, replacements, active child compile
   regions and unknown semantic metadata reject. Ordinary hidden child objects
   remain excluded; hidden helpers never load their files.
-  Fix-up settings cannot introduce runtime name rewriting in this supported
-  subset.
+  Name prefixing supports only the lighting-origin subset below; general
+  runtime name rewriting remains unsupported.
 - Child lights support only exact lowercase `light` and `light_spot` classes,
   with an explicit finite `origin` inside Source compile bounds and valid
   brightness/attenuation data. Ordinary color, HDR, falloff and spotlight
@@ -107,15 +119,15 @@ Limits:
   finite `origin`;
   absent `angles` means zero, and legacy `angle` must be absent or zero.
   Normal rendering requires white `rendercolor`,
-  `renderamt:255`, and zero `rendermode`/`renderfx` when supplied. Names, targets,
-  parents and `lightingorigin` must be absent or empty. Brushes, connections,
+  `renderamt:255`, and zero `rendermode`/`renderfx` when supplied. Names, targets
+  and parents must be absent or empty. `lightingorigin` may name a helper in
+  the same immediate child-file occurrence. Brushes, connections,
   duplicate case aliases, unknown properties and opaque blocks reject.
 - Ordinary neutral FGD defaults are admitted: zero `body`, `skin`, `spawnflags`,
   `mindxlevel`, `maxdxlevel`, `screenspacefade`, `generatelightmaps`, `ignorenormals`,
   `disableshadows`, `disablevertexlighting` and `disableselfshadowing`; `modelscale`
   and `fadescale` 1, `fademindist` -1 and `fademaxdist` 0. Custom fades, skin/body
-  selections, scaling, named lighting
-  origins are unsupported for child props. The ordinary compiler
+  selections and scaling are unsupported for child props. The ordinary compiler
   reads the retained model's MDL header only after region selection and checks
   its model boxes at the source pose and every nested transform. Bounds must
   remain valid at intermediate poses even if the final placement returns inside.
@@ -142,6 +154,26 @@ Limits:
   compile bounds, even when a later transform would bring an intermediate back
   into range. Diagnostics identify the root helper and leaf child object rather
   than offering a generated child face as an editable parent face.
+- Child `info_lighting` requires a canonical lowercase `classname`, finite
+  `origin` and nonempty `targetname`. Optional `angles`/`angle` must be finite;
+  orientation has no effect on this point. Optional names, targets, parents,
+  global names and kill targets must be empty. Unknown properties, duplicate
+  case aliases, brushes, connections and opaque blocks reject.
+- Helper names, child lighting-origin references and each ancestor's **Fix Up
+  Name** use nonempty ASCII letters, digits or underscores. The composed
+  outer-inner-local name is capped at 127 bytes for this subset. Every
+  name-bearing ancestor requires an explicit **Fix Up Name** and **Prefix**
+  (the default style). **Postfix**, **None**, automatic names, fallback names
+  and global escapes are unsupported on these branches. Unnamed assemblies
+  retain their existing fix-up-style behavior.
+- Child props bind only to a visible helper in their immediate source-file
+  occurrence; a parent, sibling or repeated occurrence cannot supply it.
+  Missing or hidden local helpers fail only when the prop survives region
+  selection. Helpers outside the compile region remain available. An ordinary
+  root-map prop may explicitly use the complete prefixed helper name.
+  Duplicate or case-ambiguous local names and generated-name collisions,
+  including collisions with visible root helpers, reject. Source and every
+  intermediate helper point must remain within compile bounds.
 - Expansion happens before parent compile-region selection. Geometry intersecting
   the region remains eligible even when its instance marker is outside. Ordinary
   region geometry restrictions still apply; child lights and props are selected
@@ -161,7 +193,7 @@ Limits:
   and pointfile. A successful build retains its dependency identities separately
   from later failed jobs. External mutation after final verification remains a
   filesystem race; the editor does not lock referenced files.
-- In-context editing, automatic search and runtime-name expansion remain
+- In-context editing, automatic search and general runtime-name expansion remain
   unavailable. Compiler calls without a saved source context continue to reject
   unresolved instances.
 
@@ -171,10 +203,13 @@ is required. Build reports expose optional `stats.instances`, with nonzero
 `terrain_patches` and `terrain_vertices` for generated terrain. These vertex
 counts describe the original power grids before neighbor density adjustments.
 Optional `point_lights` and `spot_lights` count expanded static lights before
-compile-region filtering and are omitted individually when zero. A light-only
-or model-only assembly can resolve ready with dependency/count reports but has
+compile-region filtering and are omitted individually when zero. A light-only,
+model-only or lighting-helper-only assembly can resolve ready with dependency/count
+reports but has
 no reference geometry to display, pick or frame. Optional `static_props` counts
 expanded child props before region filtering and is also omitted when zero.
+Optional `lighting_origins` counts expanded visible helpers before filtering,
+including unreferenced helpers, and is omitted when zero.
 Reference resolution does not validate model headers; missing or unsupported
 models stop compilation through the ordinary static-prop consumer.
 Completed jobs also report dependency freshness. `get_compile_status.launch` and

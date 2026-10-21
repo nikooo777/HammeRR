@@ -1347,7 +1347,7 @@ fn build(
         &mut output.report,
         control,
         map.materials.prop_lighting_sources_mut(),
-        &prepared_instances.static_prop_poses,
+        &prepared_instances.static_prop_metadata(),
     )?;
     output.static_prop_sources = prop_stats.source_guard;
     if output.report.has_errors() {

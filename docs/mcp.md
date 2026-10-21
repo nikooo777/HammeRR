@@ -334,7 +334,7 @@ An omitted `solid` remains omitted during expansion and uses ordinary default 6.
 Other values, fractions and malformed integers reject.
 Absent `angles` means zero. Supplied render settings must stay normal-white:
 `rendercolor:"255 255 255"`, `renderamt:"255"`, `rendermode:"0"` and
-`renderfx:"0"`. Names, targets, parents and `lightingorigin` must be absent or
+`renderfx:"0"`. Names, targets and parents must be absent or
 empty. Neutral FGD scale/fade/flag/DX/lighting defaults are admitted; custom
 fades, scaling, body/skin selections, unknown properties, duplicate
 case aliases, brushes, I/O and opaque blocks reject. See the exact
@@ -351,6 +351,35 @@ region-omitted props leave both MDL and PHY unread. Consumed PHY and its origina
 winning lookup share the existing completed-job stale/launch checks and
 `job.static_prop_source_issue`; restoring bytes requires a fresh compile rather
 than replacing the retained source identity.
+
+Child `info_lighting` helpers and nonempty child prop `lightingorigin` use a
+strict local-reference subset. Author the child through `create_entity`,
+`set_entity_properties` and `save_map`: give the helper canonical
+`targetname:"sample"` and the prop `lightingorigin:"sample"`. Every containing
+`func_instance` needs an explicit canonical `targetname`, such as `"assembly"`,
+and `fixup_style:"0"` (Prefix), or absent/default 0. The existing reference form
+preserves these fields; use `set_entity_properties` to author them. Human controls
+are **Name**, **Lighting Origin**, then on each containing reference
+**Advanced properties → Fix Up Name** and **Entity Name Fix Up → Prefix**.
+
+Components use nonempty ASCII letters/digits/underscores. The composed helper
+name, `assembly-sample` or nested `outer-inner-sample`, is limited to 127 bytes
+for this subset. Postfix, None, automatic/fallback names and global escapes
+reject on name-bearing branches; unnamed branches retain their existing style
+behavior. Helpers require exact `info_lighting`, canonical lowercase unique
+`classname`/`origin`/`targetname`, finite source/intermediate points and optional
+finite irrelevant `angles`/`angle`. Optional target/parent/name/globalname/
+killtarget fields must be empty; other properties, connections, brushes and
+opaque blocks reject.
+
+Each child prop can bind only to a visible helper in its immediate source-file
+occurrence. Repeated or nested occurrences do not provide parent/sibling
+fallback. Missing or hidden local helpers fail only when that prop survives
+region selection. Helpers outside the region remain available. Root-map props
+retain ordinary exact lookup and may explicitly name a generated helper such as
+`assembly-sample`. Duplicate/case-ambiguous local helpers and generated exact or
+case-fold collisions, including visible root helpers, reject. This native point
+does not move vertex-bake samples away from their actual model vertices.
 
 `compile_map`, `start_compile` and `run_map` use the same automatic expansion
 before region selection; no new compile switch is required. Optional
@@ -374,12 +403,17 @@ counts emitted props. Region-omitted child props leave model assets unread.
 Nested child props use the same first-read source ownership and completed-build/
 launch checks as ordinary [static props](static-props.md).
 
+`stats.instances.lighting_origins` counts visible expanded helpers, including
+unreferenced helpers, before region filtering and is omitted when zero.
+**Build details…** shows **Expanded lighting origins:** and explains that helper
+reference geometry, icons, bounds, picking and framing are unavailable.
+
 Completed instance jobs report `instance_dependencies.current/error`; `stale`,
 launch readiness and baked inspection include the retained build's dependencies.
 Launch verifies exact contents in its worker. Source/settings changes, dependency failures and
 cancellation preserve previous BSP/pointfile bytes. Every transitive dependency
 participates in these checks. **Generate reflections** with instances rejects;
-other runtime entities, replacements and scoped names remain unsupported.
+other runtime entities, replacements and general runtime naming remain unsupported.
 The explicitly refreshed flat-color reference layer is separate from compilation.
 `run_map_checks` performs only pure helper-field/path-state admission, leaving
 child reads and complete validation to explicit Refresh or compilation.
@@ -467,6 +501,16 @@ geometry. Model-only references can be `state:"ready"` with VMF identities and
 counts while `available:false`, with zero geometry and null owner bounds.
 Missing or malformed models can leave that reference report ready and still
 fail compilation. Mixed references retain their real brush/terrain preview.
+The optional `stats.lighting_origins` follows the same pre-region and omit-zero
+convention, including unreferenced visible helpers. When nonzero,
+`lighting_origin_preview` returns `available:false` and the shared `reason`:
+“Child lighting-origin helpers have no reference geometry or icons; helper
+bounds, picking and framing are unavailable.” The inspector shows **Expanded
+lighting origins:**. Helper-only references can be `state:"ready"` with checked
+VMF identities and counts, `available:false`, zero geometry and null owner
+bounds. Mixed references retain real brush/terrain surfaces. Missing or hidden
+local prop bindings are checked only for retained props during compilation;
+ready reference resolution does not prove those bindings usable.
 Repeated placements can share those leaf identities. Picking and framing retain
 the root helper owner.
 
@@ -488,6 +532,8 @@ Inspection's `limits` reports `terrain_source_vertices:65536`,
 ordinary parent and generated child grids. Preparing and comparing the ordinary
 and expanded terrain contexts must fit a combined 64 MiB CPU budget and bounded
 geometry work; the existing retained CPU/GPU limits also apply.
+`limits.lighting_origin_name_bytes:127` reports the shared composed-name policy
+for child helper definitions and bindings.
 
 Inspection's `worker_active` remains true until the owned request/result retires;
 `loading` retains its existing pending-request meaning. Cancellation and buffer
@@ -761,7 +807,7 @@ volume/paint inspection report the active `selection_filters`. Human controls:
 **Compiling**
 
 - `set_compile_settings` takes `lighting` (`fullbright`, `direct_ldr` or `direct_ldr_hdr`), `physics` (`none` or `engine`), `visibility` (`fast` or `detailed`), `sky_quality` (`fast`, `balanced` or `detailed`), `bounces` (whole counts `0`–`4`), `smoothing_angle` (whole degrees `0`–`90`), `bake_static_prop_vertices`, `pack_sky_assets`, `pack_water_assets` and `generate_reflections` (booleans, all default `false`). Sky and Water packing work with every lighting mode; reflection generation requires `direct_ldr` or `direct_ldr_hdr`. Omitted/null fields retain their values, unknown arguments reject, and invalid combinations leave every setting unchanged.
-- `bake_static_prop_vertices: true` requests static-prop vertex lighting with `lighting: direct_ldr|direct_ldr_hdr` and `bounces: 0..4`. Fullbright or depths above `4` reject the entire settings update; no lighting or bounce value is changed automatically. `get_compile_settings.prop_vertex_lighting` reports `available`, `unavailable_reason`, `description` and `limits`; availability checks current option compatibility and does not inspect model assets. The CPU bake requires no native capture runtime. `limits.bounces` exposes `{min:0,max:4}`, using the shared compiler maximum. At depth N above zero, prop reception uses world/terrain lightmaps from depth N−1 and adds direct light once; it does not sum separately gathered prop passes. Indirect reception requires texture-header or bounded authored `$reflectivity` for every lit source material. Dimensions independently use the effective diffuse VTF, `%tooltexture` VTF or the deliberate SDK128×128 no-preview convention selected by canonical `%notooltexture` `0`/`1`. Tool-header rho never supplies diffuse reflectivity. Required provider failures remain explicit; no-preview is selected before I/O and is named in an INFO build diagnostic. Empty/other NoTool spellings and numeric tool declarations remain unsupported. The compiler hashes every complete VTF actually consumed for either metric; unused diffuse/tool files are not read. `limits.indirect_reflectivity` is `texture_header_or_authored_material`; `limits.indirect_dimensions` is `header_or_native_no_preview`; `limits.indirect_dimension_sources` lists `diffuse_vtf_header`, `tool_vtf_header` and `native_no_preview_convention`. `limits.indirect_sources` and `indirect_reflectivity` expose this contract. Prop and brush-model reflected sources remain unavailable. Receivers require one static bodypart/model and all 1–8 draw LODs, body 0, root LOD 0, unit scale and plain opaque selected VertexLitGeneric materials. The total hardware-color section count is at most 256 per receiver across all LODs; `limits.receiver.hardware_meshes_max` exposes that shared native bound. `sample_origin: original_vertex` and `support_contacts: opaque_world_brush` describe the receiver contract. Vertices buried more than 0.000001 units in world brushes, or contacting terrain/other-prop triangles within that tolerance, reject with a prop and vertex diagnostic. Styles or specialized materials fail requested compilation unless that prop explicitly has `disablevertexlighting: "1"`. `limits.receiver.self_shadowing` reports the default, property/value and retained blockers. Author `disableselfshadowing: "1"` with `set_entity_properties` to omit only the receiver ordinal from point/spot, sun, sky-ambient and reflected receiver shadow tests. Other props, world and terrain remain blockers; absence or `"0"` retains self shadows. `limits.receiver.lighting_origin` reports `{"property":"lightingorigin","baked_samples":"actual_vertices","embedded_recovery":false}`. Create one visible `info_lighting` with an exact matching `targetname`, then bind a receiver using `set_entity_properties` and `set: {"lightingorigin":"helper_name"}`. Its finite native point is retained for runtime lighting; VHV sampling at all supported depths, normals and PVS still use actual vertices. Moving the helper inside a world brush does not relocate baked samples or recover buried vertices. Missing, hidden-only or ambiguous helpers reject publication. The human path is **Advanced properties → Property key / Value** on the helper (`targetname`) and prop (`lightingorigin`). Both channels are independently evaluated and must be complete before LDR + HDR publication. Per-texel prop lightmaps and reflected prop sources remain unavailable.
+- `bake_static_prop_vertices: true` requests static-prop vertex lighting with `lighting: direct_ldr|direct_ldr_hdr` and `bounces: 0..4`. Fullbright or depths above `4` reject the entire settings update; no lighting or bounce value is changed automatically. `get_compile_settings.prop_vertex_lighting` reports `available`, `unavailable_reason`, `description` and `limits`; availability checks current option compatibility and does not inspect model assets. The CPU bake requires no native capture runtime. `limits.bounces` exposes `{min:0,max:4}`, using the shared compiler maximum. At depth N above zero, prop reception uses world/terrain lightmaps from depth N−1 and adds direct light once; it does not sum separately gathered prop passes. Indirect reception requires texture-header or bounded authored `$reflectivity` for every lit source material. Dimensions independently use the effective diffuse VTF, `%tooltexture` VTF or the deliberate SDK128×128 no-preview convention selected by canonical `%notooltexture` `0`/`1`. Tool-header rho never supplies diffuse reflectivity. Required provider failures remain explicit; no-preview is selected before I/O and is named in an INFO build diagnostic. Empty/other NoTool spellings and numeric tool declarations remain unsupported. The compiler hashes every complete VTF actually consumed for either metric; unused diffuse/tool files are not read. `limits.indirect_reflectivity` is `texture_header_or_authored_material`; `limits.indirect_dimensions` is `header_or_native_no_preview`; `limits.indirect_dimension_sources` lists `diffuse_vtf_header`, `tool_vtf_header` and `native_no_preview_convention`. `limits.indirect_sources` and `indirect_reflectivity` expose this contract. Prop and brush-model reflected sources remain unavailable. Receivers require one static bodypart/model and all 1–8 draw LODs, body 0, root LOD 0, unit scale and plain opaque selected VertexLitGeneric materials. The total hardware-color section count is at most 256 per receiver across all LODs; `limits.receiver.hardware_meshes_max` exposes that shared native bound. `sample_origin: original_vertex` and `support_contacts: opaque_world_brush` describe the receiver contract. Vertices buried more than 0.000001 units in world brushes, or contacting terrain/other-prop triangles within that tolerance, reject with a prop and vertex diagnostic. Styles or specialized materials fail requested compilation unless that prop explicitly has `disablevertexlighting: "1"`. `limits.receiver.self_shadowing` reports the default, property/value and retained blockers. Author `disableselfshadowing: "1"` with `set_entity_properties` to omit only the receiver ordinal from point/spot, sun, sky-ambient and reflected receiver shadow tests. Other props, world and terrain remain blockers; absence or `"0"` retains self shadows. `limits.receiver.lighting_origin` reports `{"property":"lightingorigin","baked_samples":"actual_vertices","embedded_recovery":false}`. Create one visible `info_lighting` with an exact matching `targetname`, then bind a receiver using `set_entity_properties` and `set: {"lightingorigin":"helper_name"}`. Its finite native point is retained for runtime lighting; VHV sampling at all supported depths, normals and PVS still use actual vertices. Moving the helper inside a world brush does not relocate baked samples or recover buried vertices. Missing, hidden-only or ambiguous helpers reject publication. The human path uses **Name** on the helper and **Lighting Origin** on the prop. Both channels are independently evaluated and must be complete before LDR + HDR publication. Per-texel prop lightmaps and reflected prop sources remain unavailable.
 - `ignorenormals: "1"` on a static prop supports `bounces: 0` through `4`. Author it through `set_entity_properties`; absence or `"0"` keeps normal-facing reception. Point/spot/sun use constant angular reception `0.35`, retaining falloff, emitter cones and real shadows; sky ambient averages full-sphere visibility without that factor. `get_compile_settings.prop_vertex_lighting.limits.receiver.ignore_normals` reports this contract. At positive depths, full-sphere reflected reception uses SDK angular normalization on the preceding world/terrain pass and adds direct light once. Missed and blocked rays count in the denominator; this differs from unit sky-ambient averaging. `limits.receiver.ignore_normals.indirect` reports `spherical_sdk_normalization`. Finite nonzero model normals, original vertices/PVS, contact/burial limits and own-only `disableselfshadowing` semantics remain unchanged.
 - Jobs freeze `bake_static_prop_vertices` in their captured `settings`. Recipes and compatible recent maps retain it; omitted fields in older saved settings default to false and disabled values remain omitted. Successful published bakes expose `stats.prop_vertex_lighting` with `props`, `models`, `meshes`, `vertices`, `ldr_bytes`, `hdr_bytes`, `work` and `asset_bytes`. Mesh/vertex counts describe actual hardware-color output, and HDR bytes are zero for LDR-only output. **Build details…** displays these results only for current completed published output. Work/allocation/archive limits, changed sources and cancellation preserve previous output.
 - `get_compile_settings.visibility_choices` exposes **Fast (conservative)** and **Detailed (portal clipping)**, shown under **Visibility quality** in Build settings. `visibility` freezes in each job's captured settings and changing it stales prior output. Detailed clips source/pass portal apertures; PAS includes the refined visible rows. Statistics expose `visibility_mode`, `visibility_work`, `visibility_removed_pairs` (directed PVS entries removed from the broad result) and `visibility_workers` for the largest actual worker count across the base and flow stages. Larger jobs parallelize base-facing rows on at most eight available CPUs; Detailed also parallelizes separator flow. Source portals retain their order, and workers share one exact global work budget. Invalid apertures and exceeded work/allocation budgets fail without publishing output. The former `visibility_fallbacks` statistic is removed because clipping is no longer abandoned.

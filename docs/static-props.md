@@ -86,10 +86,8 @@ bounces at the model's actual vertices.
 
 1. Click **Entity…**, enter `info_lighting` in **Classname (custom classes are supported)**,
    set **Position**, then click **Place entity**.
-2. With the helper selected, enable **Advanced properties**. Enter `targetname`
-   in **Property key**, enter a unique name in **Value**, then press Enter.
-3. Select the prop. In **Advanced properties**, enter `lightingorigin` in
-   **Property key**, enter the same name in **Value**, then press Enter.
+2. With the helper selected, set **Name** to a unique name.
+3. Select the prop and set **Lighting Origin** to that same name.
 4. Choose the vertex-bake settings above, then **Compile**. The helper is
    consumed during compilation; the final native prop retains its point.
 
@@ -104,6 +102,17 @@ required, including when the prop ignores their receiver-facing direction.
 
 Agents create the same helper with `create_entity` and bind it with
 `set_entity_properties`, using `set: {"lightingorigin":"helper_name"}`.
+
+In a [referenced assembly](instances.md), create the helper and prop binding
+inside the same child file, then save it. Set every enclosing reference's
+**Advanced properties → Fix Up Name** explicitly and choose **Entity Name Fix
+Up → Prefix**. For example, `assembly` plus local `sample` becomes
+`assembly-sample`; nested names join outermost first. Components use ASCII
+letters, digits and underscores, with a 127-byte composed-name limit. Child
+bindings cannot reach parent or sibling helpers. A root-map prop may explicitly
+use the complete prefixed name. Outside-region helpers remain available;
+missing or hidden local bindings fail only for props retained by the region.
+Reference inspection counts helpers without drawing icons or helper geometry.
 
 
 ## Ignore receiver normals

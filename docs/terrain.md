@@ -272,6 +272,10 @@ Limits: 1–16 faces, angles 0–180 degrees, world/func_detail terrain with sha
 
 ## Preview authored lighting
 
+For a fixed light while sculpting, use **Viewport → Textured → Directional
+surface shading**. This makes relief clearer without changing terrain, light
+entities or compiled lighting; see [Directional surface shading](basics.md#directional-surface-shading).
+
 Inspect point and spot lighting on terrain before a bake.
 
 1. Under **VIEWPORT**, choose **Textured**, then enable **Unshadowed authored lighting**.

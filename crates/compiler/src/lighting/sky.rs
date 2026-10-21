@@ -97,6 +97,7 @@ fn sun_direction(
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct SkyLight {
+    pub(super) source_id: u32,
     pub direction: DVec3,
     pub(super) intensity: DVec3,
     pub(super) ambient: DVec3,
@@ -146,6 +147,7 @@ impl SkyLight {
         };
         let direction = sun_direction(entity, targets, origin)?;
         Ok(Self {
+            source_id: entity.id,
             direction,
             intensity: point.intensity,
             ambient,
@@ -161,6 +163,7 @@ impl SkyLight {
         let (_, point, spread) = sun_source(entity, LightingKind::Ldr)?;
         let origin = point.origin;
         Ok(Self {
+            source_id: entity.id,
             direction: sun_direction(entity, targets, origin)?,
             intensity: point.intensity,
             ambient: DVec3::ZERO,
@@ -378,6 +381,7 @@ mod tests {
     #[test]
     fn fractional_visibility_preserves_sun_ambient_weights_and_rejects_invalid_scalars() {
         let light = SkyLight {
+            source_id: 0,
             direction: -DVec3::Z,
             intensity: DVec3::splat(100.0),
             ambient: DVec3::splat(80.0),
@@ -436,6 +440,7 @@ mod tests {
     #[test]
     fn ignore_normals_sun_uses_constant_reception_and_all_visibility_rays() {
         let light = SkyLight {
+            source_id: 0,
             direction: -DVec3::Z,
             intensity: DVec3::splat(100.0),
             ambient: DVec3::splat(40.0),
@@ -487,6 +492,7 @@ mod tests {
     #[test]
     fn ignore_normals_ambient_is_a_full_sphere_mean_without_direct_scaling() {
         let light = SkyLight {
+            source_id: 0,
             direction: -DVec3::Z,
             intensity: DVec3::splat(100.0),
             ambient: DVec3::splat(40.0),
@@ -697,6 +703,7 @@ mod tests {
         ] {
             for angle in [0.0_f64, 0.001, 5.0, 45.0, 90.0] {
                 let light = SkyLight {
+                    source_id: 0,
                     direction,
                     intensity: DVec3::new(200.0, 100.0, 50.0),
                     ambient: DVec3::ZERO,

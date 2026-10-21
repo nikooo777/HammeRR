@@ -5,10 +5,14 @@ use source_formats::bsp::{
     TexInfo, contents, surf,
 };
 
+use super::progress::Contributor;
 use super::shadows::{ShadowIndex, ShadowObject, Triangle};
 use super::sky::SkyLight;
 use super::terrain::TerrainPlan;
-use super::{LuxelFrame, Occluder, PointLight};
+use super::{
+    LightingChannel, LightingContributor, LightingPhase, LightingProgress, LuxelFrame,
+    MAX_LIGHTING_CONTRIBUTORS, Occluder, PointLight,
+};
 use crate::brush_model_pose::Pose;
 use crate::map::{MAX_COMPILE_COORD, Map};
 use crate::tree::Tree;
@@ -20,7 +24,6 @@ const MAX_TOTAL_LIGHTING_BYTES: usize = 2 * MAX_LIGHTING_BYTES;
 const MAX_CHANNEL_AMBIENT_BYTES: usize =
     65_536 * (size_of::<bsp::LeafAmbientIndex>() + size_of::<bsp::LeafAmbientSample>());
 const MAX_CHANNEL_SAMPLES: usize = MAX_LIGHTING_BYTES / size_of::<RgbExp32>();
-const MAX_LIGHTING_WORK: usize = 100_000_000;
 pub(super) const SAMPLE_BIAS: f64 = 0.5;
 
 #[derive(Debug, Default)]
@@ -206,6 +209,11 @@ fn checked_model_point(point: DVec3) -> Result<(), String> {
 
 pub(super) struct Budget<'a> {
     work: usize,
+    progress: LightingProgress,
+    quality: crate::SkyQuality,
+    dual: bool,
+    contributor: Contributor,
+    source: Option<(u32, &'static str)>,
     control: &'a Control,
     live_bytes: std::rc::Rc<std::cell::Cell<usize>>,
 }
@@ -234,12 +242,160 @@ impl Drop for Allocation {
 }
 
 impl Budget<'_> {
+    #[cfg(test)]
     pub(super) fn new(control: &Control) -> Budget<'_> {
+        Self::with_options(control, crate::Options::default())
+    }
+
+    #[cfg(test)]
+    pub(super) fn with_limit(control: &Control, limit: u64) -> Budget<'_> {
+        Self::with_options(
+            control,
+            crate::Options {
+                lighting_work_limit: limit,
+                ..Default::default()
+            },
+        )
+    }
+
+    fn with_options(control: &Control, options: crate::Options) -> Budget<'_> {
         Budget {
             work: 0,
+            progress: LightingProgress::new(options.lighting_work_limit, options.sky_quality),
+            quality: options.sky_quality,
+            dual: options.lighting == crate::LightingMode::DirectLdrHdr,
+            contributor: Contributor::Unattributed,
+            source: None,
             control,
             live_bytes: Default::default(),
         }
+    }
+
+    fn channel(&mut self, kind: LightingKind) {
+        self.progress.current_channel = match kind {
+            LightingKind::Ldr => LightingChannel::Ldr,
+            LightingKind::Hdr => LightingChannel::Hdr,
+        };
+        self.phase(LightingPhase::Preparation);
+    }
+
+    pub(super) fn phase(&mut self, phase: LightingPhase) {
+        self.progress.current_phase = phase;
+        self.clear_emitter();
+    }
+
+    pub(super) fn context(&self) -> (LightingPhase, Option<(u32, &'static str)>) {
+        (self.progress.current_phase, self.source)
+    }
+
+    pub(super) fn restore(&mut self, context: (LightingPhase, Option<(u32, &'static str)>)) {
+        self.phase(context.0);
+        if let Some((id, classname)) = context.1 {
+            self.source(id, classname);
+        }
+    }
+
+    pub(super) fn emitter(&mut self, emitter: &Emitter) {
+        match emitter {
+            Emitter::Point(light) => self.source(
+                light.source_id,
+                if light.cone.is_some() {
+                    "light_spot"
+                } else {
+                    "light"
+                },
+            ),
+            Emitter::Sky(light) => self.source(light.source_id, "light_environment"),
+        }
+    }
+
+    fn source(&mut self, id: u32, classname: &'static str) {
+        self.source = Some((id, classname));
+        let channel = self.progress.current_channel;
+        let phase = self.progress.current_phase;
+        let index = self.progress.contributors.iter().position(|entry| {
+            entry.entity_id == id && entry.channel == channel && entry.phase == phase
+        });
+        let index = index.or_else(|| {
+            if self.progress.contributors.len() == MAX_LIGHTING_CONTRIBUTORS {
+                self.progress.contributors_truncated = true;
+                return None;
+            }
+            let index = self.progress.contributors.len();
+            self.progress.contributors.push(LightingContributor {
+                entity_id: id,
+                compiled_entity_id: id,
+                instance: None,
+                classname,
+                channel,
+                phase,
+                work: 0,
+            });
+            Some(index)
+        });
+        self.contributor = index.map_or(Contributor::Other, Contributor::Retained);
+    }
+
+    pub(super) fn clear_emitter(&mut self) {
+        self.source = None;
+        self.contributor = Contributor::Unattributed;
+    }
+
+    fn plan_lightmap_samples(&mut self, count: usize) -> Result<(), String> {
+        let count = count as u64;
+        let ldr = self
+            .progress
+            .ldr_lightmap_samples_planned
+            .checked_add(count)
+            .ok_or("Lighting planned sample count overflow")?;
+        let hdr = self
+            .progress
+            .hdr_lightmap_samples_planned
+            .checked_add(if self.dual { count } else { 0 })
+            .ok_or("Lighting planned sample count overflow")?;
+        self.progress.lightmap_samples_planned = ldr
+            .checked_add(hdr)
+            .ok_or("Lighting planned sample count overflow")?;
+        self.progress.ldr_lightmap_samples_planned = ldr;
+        self.progress.hdr_lightmap_samples_planned = hdr;
+        for phase in &mut self.progress.phases {
+            if phase.phase == LightingPhase::Direct {
+                phase.samples_planned = match phase.channel {
+                    LightingChannel::Ldr => ldr,
+                    LightingChannel::Hdr => hdr,
+                    LightingChannel::Preparation => 0,
+                };
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn plan_samples(&mut self, count: usize) -> Result<(), String> {
+        let index = self.progress.phase_index();
+        let entry = &mut self.progress.phases[index];
+        entry.samples_planned = entry
+            .samples_planned
+            .checked_add(count as u64)
+            .ok_or("Lighting planned sample count overflow")?;
+        Ok(())
+    }
+
+    pub(super) fn finish_sample(&mut self) {
+        let index = self.progress.phase_index();
+        self.progress.phases[index].samples_completed += 1;
+        if self.progress.current_phase == LightingPhase::Direct {
+            self.progress.lightmap_samples_completed += 1;
+            match self.progress.current_channel {
+                LightingChannel::Ldr => self.progress.ldr_lightmap_samples_completed += 1,
+                LightingChannel::Hdr => self.progress.hdr_lightmap_samples_completed += 1,
+                LightingChannel::Preparation => {}
+            }
+        }
+    }
+
+    pub(super) fn samples_planned_complete(&mut self) {
+        let index = self.progress.phase_index();
+        self.progress.phases[index].samples_planned_complete = true;
     }
 
     pub(super) fn reserve<T>(&self, count: usize) -> Result<Allocation, String> {
@@ -279,8 +435,31 @@ impl Budget<'_> {
             .work
             .checked_add(amount)
             .ok_or("Direct lighting work count overflow")?;
-        if self.work > MAX_LIGHTING_WORK {
-            return Err("Direct lighting exceeded its shared 100-million work-unit limit; choose Fast sampling, fewer bounces, larger lightmap scales or Fullbright".into());
+        self.progress.record(amount as u64, self.contributor)?;
+        if self.progress.work > self.progress.limit {
+            let sampling = if self.quality == crate::SkyQuality::Fast {
+                ""
+            } else {
+                "choose Fast sampling, "
+            };
+            let allowance = if self.progress.limit < crate::MAX_LIGHTING_WORK_LIMIT {
+                format!(
+                    "increase the lighting work limit (maximum {}), ",
+                    crate::MAX_LIGHTING_WORK_LIMIT
+                )
+            } else {
+                String::new()
+            };
+            return Err(format!(
+                "Lighting exceeded its shared {} work-unit limit after {} attempted units ({:?}/{:?}, {:?} sampling); {}{}use fewer bounces, point-light distance limits, larger lightmap scales or Fullbright",
+                self.progress.limit,
+                self.progress.work,
+                self.progress.current_channel,
+                self.progress.current_phase,
+                self.quality,
+                allowance,
+                sampling,
+            ));
         }
         Ok(())
     }
@@ -547,6 +726,7 @@ fn plans(
                     .checked_add(dimensions[0] * dimensions[1] * maps + 1)
                     .filter(|&count| count <= MAX_LIGHTING_BYTES / size_of::<RgbExp32>())
                     .ok_or("Direct LDR lighting exceeds Source's 16 MiB limit")?;
+                budget.plan_lightmap_samples(dimensions[0] * dimensions[1])?;
                 let terrain = TerrainPlan::new(
                     terrain,
                     &terrain_fields.positions[face.dispinfo as usize],
@@ -606,6 +786,7 @@ fn plans(
                 return Err("Direct lighting face has invalid corners".into());
             }
             let normal = plane.normal.normalize();
+            budget.plan_lightmap_samples(frame.sample_count())?;
             plans.push(Plan {
                 face: index,
                 model,
@@ -705,6 +886,7 @@ fn mapped_colors(
 }
 
 pub(crate) struct Settings<'a> {
+    pub control: &'a Control,
     pub fs: &'a source_formats::gamefs::GameFs,
     pub vmf: &'a source_formats::vmf::Vmf,
     pub options: crate::Options,
@@ -798,25 +980,41 @@ pub(crate) fn bake(
     visibility: &Visibility,
     bsp: &mut Bsp,
     report: &mut Report,
-    control: &Control,
     settings: Settings<'_>,
+    progress: &mut Option<LightingProgress>,
 ) -> Result<BakeStats, String> {
+    let mut budget = Budget::with_options(settings.control, settings.options);
+    let result = bake_inner(map, tree, visibility, bsp, report, settings, &mut budget);
+    budget.progress.completed = result.is_ok() && !report.has_errors();
+    *progress = Some(budget.progress);
+    result
+}
+
+fn bake_inner(
+    map: &Map,
+    tree: &Tree,
+    visibility: &Visibility,
+    bsp: &mut Bsp,
+    report: &mut Report,
+    settings: Settings<'_>,
+    budget: &mut Budget<'_>,
+) -> Result<BakeStats, String> {
+    let control = budget.control;
     let options = settings.options.validate()?;
     let dual = options.lighting == crate::LightingMode::DirectLdrHdr;
-    let mut budget = Budget::new(control);
     let _shared_geometry_allocation = shared_geometry_allocation(
         map,
         bsp,
         settings.smoothing_sources,
         settings.face_sources,
-        &mut budget,
+        budget,
     )?;
     let _detail_centers = budget.reserve::<DVec3>(settings.detail_model_centers.len())?;
     let _detail_origins =
         budget.reserve::<Option<DVec3>>(settings.detail_lighting_origins.len())?;
     let _detail_tints =
         budget.reserve::<crate::detail_props::Tint>(settings.detail_lighting_tints.len())?;
-    let world_hulls = occluders(map, 0, report, &mut budget)?;
+    let world_hulls = occluders(map, 0, report, budget)?;
     let mut faces = bsp
         .lighting_faces(LightingKind::Ldr)
         .map_err(|error| error.to_string())?;
@@ -841,7 +1039,7 @@ pub(crate) fn bake(
         settings.smoothing_sources,
         &scopes,
         options.smoothing_angle,
-        &mut budget,
+        budget,
     )?;
     let normal_work = budget.work - normal_start;
     let terrain_plan_bytes =
@@ -868,22 +1066,28 @@ pub(crate) fn bake(
         &mut infos,
         &mut normals,
         &scopes,
-        &mut budget,
+        budget,
     )?;
+    budget.progress.lightmap_samples_planned_complete = true;
+    for phase in &mut budget.progress.phases {
+        if phase.phase == LightingPhase::Direct && phase.channel != LightingChannel::Preparation {
+            phase.samples_planned_complete = true;
+        }
+    }
     let mut has_receivers = vec![false; scopes.len()];
     let mut model_faces = 0;
     for plan in &plans {
         has_receivers[plan.model] = true;
         model_faces += usize::from(plan.model != 0);
     }
-    super::models::admit_initial_poses(map, &mut scopes, &has_receivers, report, &mut budget)?;
+    super::models::admit_initial_poses(map, &mut scopes, &has_receivers, report, budget)?;
     if report.has_errors() {
         return Ok(BakeStats::default());
     }
     for plan in &mut plans {
         let scope = &scopes[plan.model];
         if scope.pose.rotation.is_some() {
-            plan.apply_pose(scope.pose, &mut budget)
+            plan.apply_pose(scope.pose, budget)
                 .map_err(|error| format!("entity:{}: {error}", map.entities[scope.entity].id))?;
         }
     }
@@ -891,7 +1095,7 @@ pub(crate) fn bake(
     for (model, scope) in scopes.iter().enumerate() {
         let shadows = if model != 0 && has_receivers[model] {
             Some(ShadowIndex::new(
-                posed_occluders(map, scope.entity, scope.pose, report, &mut budget)?,
+                posed_occluders(map, scope.entity, scope.pose, report, budget)?,
                 &mut |amount| budget.consume(amount),
             )?)
         } else {
@@ -905,14 +1109,15 @@ pub(crate) fn bake(
     }
     report.diagnostics.push(Diagnostic::info("Direct LDR bakes native directional normal-map channels and static, switchable and animated point/spot styles, sampled soft sun, sky ambient and model ambient with indexed opaque brush/terrain shadows; up to four style-preserving diffuse world-light bounces are supported; brush entities receive pivot-aware direct and bounced maps with isolated self shadows; reflected model sources and prop lightmaps remain unfinished", None, None));
     let shadows = ShadowIndex::new(world_hulls, &mut |amount| budget.consume(amount))?;
-    let terrain_shadows = terrain_shadows(map, &mut budget)?;
+    let terrain_shadows = terrain_shadows(map, budget)?;
+    budget.phase(LightingPhase::PropShadows);
     let mut prop_assets = if options.bake_static_prop_vertices {
         Some(super::asset_tracking::Tracker::new(
             settings.fs,
             settings.prop_material_sources.ok_or(
                 "Baked prop vertex lighting is missing its original world-material source capture",
             )?,
-            &mut budget,
+            budget,
         )?)
     } else {
         None
@@ -928,8 +1133,9 @@ pub(crate) fn bake(
         settings.fs,
         prop_assets.as_mut(),
         report,
-        &mut budget,
+        budget,
     )?;
+    budget.phase(LightingPhase::PropVertices);
     let mut prop_vertices = if options.bake_static_prop_vertices {
         super::prop_vertices::prepare(
             map,
@@ -942,11 +1148,12 @@ pub(crate) fn bake(
                 .ok_or("Static-prop source tracking is missing")?,
             bsp,
             report,
-            &mut budget,
+            budget,
         )?
     } else {
         None
     };
+    budget.phase(LightingPhase::Preparation);
     if !map.terrains.is_empty() {
         let mut data = bsp
             .displacements()
@@ -1024,7 +1231,7 @@ pub(crate) fn bake(
         LightingKind::Ldr,
         bsp,
         report,
-        &mut budget,
+        budget,
         &mut detail_ldr,
         &mut prop_vertices,
     )?;
@@ -1039,7 +1246,7 @@ pub(crate) fn bake(
             LightingKind::Hdr,
             bsp,
             report,
-            &mut budget,
+            budget,
             &mut detail_hdr,
             &mut prop_vertices,
         )?;
@@ -1078,25 +1285,24 @@ pub(crate) fn bake(
         .checked_add(stats.hdr.as_ref().map_or(0, |hdr| hdr.lighting_bytes))
         .filter(|&bytes| bytes <= MAX_TOTAL_LIGHTING_BYTES)
         .ok_or("Dual-channel lighting exceeds its aggregate 32 MiB sample budget")?;
-    let style_start = budget.work;
-    super::details::finish(bsp, detail_ldr.as_ref(), detail_hdr.as_ref(), &mut budget)?;
-    let style_work = budget.work - style_start;
-    if let Some(hdr) = &mut stats.hdr {
-        hdr.lighting_work += style_work;
-    } else {
-        stats.work += style_work;
-    }
+    budget.progress.current_channel = LightingChannel::Preparation;
+    budget.phase(LightingPhase::Finalization);
+    super::details::finish(bsp, detail_ldr.as_ref(), detail_hdr.as_ref(), budget)?;
     if !report.has_errors()
         && let Some(prepared) = prop_vertices
     {
         let (plan, prop_stats) =
-            super::prop_vertices::finish(prepared, bsp, dual, settings.fs, control, &mut budget)?;
+            super::prop_vertices::finish(prepared, bsp, dual, settings.fs, control, budget)?;
         report.diagnostics.push(Diagnostic::info(format!(
             "Baked static-prop vertex colors for {} props, {} models, {} hardware sections and {} vertices in {} channel(s)",
             prop_stats.props, prop_stats.models, prop_stats.meshes, prop_stats.vertices,
             if dual { 2 } else { 1 }), None, None));
         stats.prop_lighting_assets = Some(plan);
         stats.prop_vertex_lighting = Some(prop_stats);
+    }
+    stats.work = (budget.progress.preparation_work + budget.progress.ldr_work) as usize;
+    if let Some(hdr) = &mut stats.hdr {
+        hdr.lighting_work = budget.progress.hdr_work as usize;
     }
     stats.total_work = budget.work;
     Ok(stats)
@@ -1133,6 +1339,7 @@ fn bake_channel(
     detail_lighting: &mut Option<super::details::Channel>,
     prop_vertices: &mut Option<super::prop_vertices::Prepared>,
 ) -> Result<BakeStats, String> {
+    budget.channel(kind);
     let start_work = budget.work;
     let ChannelContext {
         face_sources,
@@ -1209,6 +1416,7 @@ fn bake_channel(
     if options.bounces == 0
         && let Some(prepared) = prop_vertices
     {
+        budget.phase(LightingPhase::PropVertices);
         super::prop_vertices::bake_channel(
             prepared,
             &prop_context,
@@ -1219,6 +1427,7 @@ fn bake_channel(
             budget,
         )?;
     }
+    budget.phase(LightingPhase::Direct);
     let mut used_styles = std::collections::BTreeSet::new();
     let mut styled_faces = 0;
     let mut style_maps = 0;
@@ -1234,6 +1443,7 @@ fn bake_channel(
         let [width, height] = plan.dimensions();
         for t in 0..height {
             for s in 0..width {
+                budget.phase(LightingPhase::Direct);
                 let (point, normal) = plan.sample(s, t, budget)?;
                 let origin = plan.origin(point, normal);
                 let normals = plan.shading_normals(normal, budget)?;
@@ -1244,6 +1454,11 @@ fn bake_channel(
                 let mut range_skipped = 0;
                 for &index in candidates.for_cluster(cluster, &lights, budget)? {
                     let light = &lights[index];
+                    budget.phase(match light {
+                        Emitter::Point(_) => LightingPhase::PointSpot,
+                        Emitter::Sky(_) => LightingPhase::Sun,
+                    });
+                    budget.emitter(light);
                     budget.consume(1)?;
                     if culling_enabled && super::culling::outside_range(light, point) {
                         range_skipped += 1;
@@ -1253,6 +1468,8 @@ fn bake_channel(
                     if let Emitter::Sky(light) = light
                         && light.has_ambient()
                     {
+                        budget.phase(LightingPhase::SkyAmbient);
+                        budget.emitter(&lights[index]);
                         budget.consume(ambient_directions.len())?;
                         let contribution = light.ambient_contribution_with_visibility(
                             normal,
@@ -1295,6 +1512,11 @@ fn bake_channel(
                         )?;
                         channels.add(0, &contributions, &mut color, budget)?;
                     }
+                    budget.phase(match light {
+                        Emitter::Point(_) => LightingPhase::PointSpot,
+                        Emitter::Sky(_) => LightingPhase::Sun,
+                    });
+                    budget.emitter(light);
                     match light {
                         Emitter::Point(light) => {
                             let contribution = light.contribution(point, normal)?;
@@ -1379,11 +1601,14 @@ fn bake_channel(
                         }
                     }
                 }
+                budget.phase(LightingPhase::Direct);
                 candidates.stats.evaluated += evaluated;
                 candidates.stats.range_skipped += range_skipped;
                 channels.finish_sample(t * width + s, &color, budget)?;
+                budget.finish_sample();
             }
         }
+        budget.phase(LightingPhase::Direct);
         let (styles, offset, channels) = channels
             .emit(&mut colors)
             .map_err(|error| format!("face:{}: {error}", plan.face))?;
@@ -1401,6 +1626,11 @@ fn bake_channel(
         .map_err(|error| error.to_string())?;
     bsp.set_lighting_faces(kind, &faces)
         .map_err(|error| error.to_string())?;
+    budget.phase(LightingPhase::Bounce);
+    budget.plan_samples(
+        plans.iter().map(Plan::sample_count).sum::<usize>() * usize::from(options.bounces),
+    )?;
+    budget.samples_planned_complete();
     let bounce_start = budget.work;
     let mut prop_source = None;
     let bounce = if options.bounces > 0 {
@@ -1481,6 +1711,7 @@ fn bake_channel(
         let surfaces = prop_source
             .as_ref()
             .ok_or("Bounced prop source lighting is missing")?;
+        budget.phase(LightingPhase::PropVertices);
         super::prop_vertices::bake_channel(
             prepared,
             &prop_context,
@@ -1502,6 +1733,7 @@ fn bake_channel(
             Emitter::Point(_) => None,
         })
         .unwrap_or(DVec3::ZERO);
+    budget.phase(LightingPhase::AmbientProbes);
     let ambient = super::probes::bake(
         &super::probes::Context {
             face_sources,
@@ -1521,6 +1753,7 @@ fn bake_channel(
         report,
         budget,
     )?;
+    budget.phase(LightingPhase::DetailProps);
     *detail_lighting = super::details::bake(
         &super::details::Context {
             face_sources,
@@ -1680,7 +1913,9 @@ mod tests {
         assert!(plan.pose.rotation.is_none());
         plan.apply_pose(pitch_quarter_turn(plan.pose.offset), &mut budget)
             .unwrap();
-        budget.work = MAX_LIGHTING_WORK - 5;
+        budget
+            .consume(crate::DEFAULT_LIGHTING_WORK_LIMIT as usize - budget.work() - 5)
+            .unwrap();
         assert!(
             plan.sample(1, 1, &mut budget)
                 .unwrap_err()
@@ -1747,17 +1982,10 @@ mod tests {
     #[test]
     fn rejected_work_and_cancellation_stop_before_sampling() {
         let control = Control::default();
-        let mut budget = Budget {
-            work: MAX_LIGHTING_WORK,
-            control: &control,
-            live_bytes: Default::default(),
-        };
+        let mut budget = Budget::with_limit(&control, 100_000_000);
+        budget.consume(100_000_000).unwrap();
         assert!(budget.consume(1).is_err());
-        let mut budget = Budget {
-            work: 0,
-            control: &control,
-            live_bytes: Default::default(),
-        };
+        let mut budget = Budget::new(&control);
         control.cancel().unwrap();
         assert!(budget.consume(1).is_err());
         assert_eq!(budget.work, 0);
@@ -1766,14 +1994,80 @@ mod tests {
     #[test]
     fn channel_phases_share_work_and_cancellation() {
         let control = Control::default();
-        let mut budget = Budget::new(&control);
-        budget.consume(MAX_LIGHTING_WORK / 2 + 1).unwrap();
-        assert!(budget.consume(MAX_LIGHTING_WORK / 2).is_err());
+        let mut budget = Budget::with_limit(&control, 100_000_000);
+        budget.channel(LightingKind::Ldr);
+        budget.consume(50_000_001).unwrap();
+        budget.channel(LightingKind::Hdr);
+        assert!(budget.consume(50_000_000).is_err());
+        assert_eq!(budget.progress.ldr_work, 50_000_001);
+        assert_eq!(budget.progress.hdr_work, 50_000_000);
+        assert_eq!(budget.progress.work, 100_000_001);
         let mut budget = Budget::new(&control);
         budget.consume(17).unwrap();
         control.cancel().unwrap();
         assert!(budget.consume(1).is_err());
         assert_eq!(budget.work(), 17);
+    }
+
+    #[test]
+    fn contributor_detail_is_bounded_without_losing_charged_work() {
+        let control = Control::default();
+        let mut budget = Budget::with_limit(&control, 1_000);
+        budget.consume(3).unwrap();
+        budget.channel(LightingKind::Ldr);
+        budget.phase(LightingPhase::PointSpot);
+        for id in 0..MAX_LIGHTING_CONTRIBUTORS as u32 + 5 {
+            budget.source(id, "light");
+            budget.consume(2).unwrap();
+        }
+        budget.source(0, "light");
+        budget.consume(7).unwrap();
+        budget.clear_emitter();
+        budget.consume(11).unwrap();
+        let progress = &budget.progress;
+        assert_eq!(progress.contributors.len(), MAX_LIGHTING_CONTRIBUTORS);
+        assert!(progress.contributors_truncated);
+        assert_eq!(progress.other_contributors_work, 10);
+        assert_eq!(progress.unattributed_work, 14);
+        assert_eq!(progress.contributors[0].work, 9);
+        assert_eq!(
+            progress.work,
+            progress
+                .contributors
+                .iter()
+                .map(|entry| entry.work)
+                .sum::<u64>()
+                + progress.other_contributors_work
+                + progress.unattributed_work
+        );
+        assert_eq!(
+            progress.work,
+            progress.preparation_work + progress.ldr_work + progress.hdr_work
+        );
+        assert_eq!(
+            progress.work,
+            progress.phases.iter().map(|phase| phase.work).sum::<u64>()
+        );
+    }
+
+    #[test]
+    fn explicit_work_failure_retains_the_rejected_request_and_active_quality() {
+        let control = Control::default();
+        let mut budget = Budget::with_limit(&control, 19);
+        budget.channel(LightingKind::Hdr);
+        budget.phase(LightingPhase::SkyAmbient);
+        budget.source(42, "light_environment");
+        budget.consume(17).unwrap();
+        let error = budget.consume(5).unwrap_err();
+        assert!(error.contains("19 work-unit limit") && error.contains("Fast sampling"));
+        assert!(!error.contains("choose Fast"));
+        assert_eq!(budget.progress.work, 22);
+        assert_eq!(budget.progress.hdr_work, 22);
+        assert_eq!(budget.progress.contributors[0].work, 22);
+        assert!(!budget.progress.completed);
+        control.cancel().unwrap();
+        assert!(budget.consume(5).unwrap_err().contains("cancelled"));
+        assert_eq!(budget.progress.work, 22);
     }
 
     #[test]

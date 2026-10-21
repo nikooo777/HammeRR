@@ -302,7 +302,7 @@ mod tests {
         reads.record("texture.vtf", Some(&data)).unwrap();
         assert_eq!(reads.work, 3);
         let control = Control::default();
-        let mut budget = Budget::new(&control);
+        let mut budget = Budget::with_limit(&control, 100_000_000);
         budget.consume(100_000_000 - 2).unwrap();
         assert!(Tracker::new(&game, reads, &mut budget).is_err());
         assert_eq!(budget.live_bytes(), 0);

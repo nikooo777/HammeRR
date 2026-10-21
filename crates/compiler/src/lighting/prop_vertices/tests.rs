@@ -681,7 +681,7 @@ fn prepared_write_guards_original_world_patch_and_missing_material_reads() {
 fn work_exhaustion_and_cancellation_precede_source_reads() {
     let (_directory, game) = fixtures::game();
     let control = Control::default();
-    let mut budget = Budget::new(&control);
+    let mut budget = Budget::with_limit(&control, 100_000_000);
     let tracker = super::super::asset_tracking::Tracker::new(
         &game,
         super::super::asset_tracking::SourceReads::default(),
@@ -698,7 +698,7 @@ fn work_exhaustion_and_cancellation_precede_source_reads() {
     let (sources, missing, _) = assets.finish();
     assert!(sources.is_empty() && missing.is_empty());
     let control = Control::default();
-    let mut budget = Budget::new(&control);
+    let mut budget = Budget::with_limit(&control, 100_000_000);
     let tracker = super::super::asset_tracking::Tracker::new(
         &game,
         super::super::asset_tracking::SourceReads::default(),
@@ -845,7 +845,7 @@ fn point_admission_distinguishes_brush_boundary_band_terrain_owners_and_budget()
     };
 
     let control = Control::default();
-    let mut budget = Budget::new(&control);
+    let mut budget = Budget::with_limit(&control, 100_000_000);
     let brushes = ShadowIndex::new(vec![floor()], &mut |_| Ok(())).unwrap();
     let empty_brushes = ShadowIndex::new(Vec::new(), &mut |_| Ok(())).unwrap();
     let empty_terrain = ShadowIndex::new(Vec::<Triangle>::new(), &mut |_| Ok(())).unwrap();
@@ -948,7 +948,7 @@ fn point_admission_distinguishes_brush_boundary_band_terrain_owners_and_budget()
     budget.consume(100_000_000 - budget.work()).unwrap();
     assert!(validate_point(&ctx, 4, DVec3::ZERO, &mut budget).is_err());
     let control = Control::default();
-    let mut budget = Budget::new(&control);
+    let mut budget = Budget::with_limit(&control, 100_000_000);
     control.cancel().unwrap();
     assert!(validate_point(&ctx, 4, DVec3::ZERO, &mut budget).is_err());
 }
@@ -1187,7 +1187,7 @@ fn owner_skips_preserve_coincident_other_props_world_terrain_and_budget_errors()
     .unwrap();
     let terrain = ShadowIndex::new(vec![Triangle::new(points).unwrap()], &mut |_| Ok(())).unwrap();
     let control = Control::default();
-    let mut budget = Budget::new(&control);
+    let mut budget = Budget::with_limit(&control, 100_000_000);
     let start = DVec3::ZERO;
     let end = DVec3::Z * 32.0;
     assert!(
@@ -1272,7 +1272,7 @@ fn owner_skips_preserve_coincident_other_props_world_terrain_and_budget_errors()
     }
     for canceled in [false, true] {
         let control = Control::default();
-        let mut budget = Budget::new(&control);
+        let mut budget = Budget::with_limit(&control, 100_000_000);
         if canceled {
             control.cancel().unwrap();
         } else {

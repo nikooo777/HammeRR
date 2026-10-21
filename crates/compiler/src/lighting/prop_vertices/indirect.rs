@@ -168,7 +168,7 @@ mod tests {
         let sphere = super::super::super::sky::ambient_directions(SkyQuality::Fast);
         for canceled in [false, true] {
             let control = crate::Control::default();
-            let mut budget = super::super::Budget::new(&control);
+            let mut budget = super::super::Budget::with_limit(&control, 100_000_000);
             if !canceled {
                 budget.consume(100_000_000 - 1).unwrap();
             }

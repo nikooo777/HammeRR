@@ -685,6 +685,9 @@ mod lighting_preview_tests;
 mod normal_map_tests;
 
 #[cfg(test)]
+mod surface_shading_tests;
+
+#[cfg(test)]
 mod additive_sprite_tests;
 
 #[cfg(test)]

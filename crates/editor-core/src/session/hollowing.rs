@@ -206,7 +206,22 @@ impl Session {
     }
 
     pub fn hollow_state(&self) -> Value {
-        json!({"preview":self.geometry.hollowing.preview.as_ref().map(|preview|json!({"token":preview.token.to_string(),"generation":preview.generation,"revision":preview.revision,"thickness":preview.spec.thickness,"outward":preview.spec.outward,"open_faces":preview.spec.open_faces.iter().map(|face|json!({"solid":face.solid,"side":face.side})).collect::<Vec<_>>(),"result":result_json(&preview.result)})),"limits":{"brushes":hollow::MAX_BRUSHES,"walls":hollow::MAX_PARTS,"minimum_thickness":0.125,"maximum_thickness":4096},"stamp":self.hollow_stamp()})
+        json!({"handle":self.hollow_handle(),"preview":self.geometry.hollowing.preview.as_ref().map(|preview|json!({"token":preview.token.to_string(),"generation":preview.generation,"revision":preview.revision,"thickness":preview.spec.thickness,"outward":preview.spec.outward,"open_faces":preview.spec.open_faces.iter().map(|face|json!({"solid":face.solid,"side":face.side})).collect::<Vec<_>>(),"result":result_json(&preview.result)})),"limits":{"brushes":hollow::MAX_BRUSHES,"walls":hollow::MAX_PARTS,"minimum_thickness":0.125,"maximum_thickness":4096},"stamp":self.hollow_stamp()})
+    }
+
+    pub(super) fn hollow_handle(&self) -> Value {
+        Self::edit_handle(
+            "hollow",
+            self.geometry
+                .hollowing
+                .preview
+                .as_ref()
+                .and_then(|preview| {
+                    self.checked_hollow(preview.token)
+                        .is_ok()
+                        .then_some(preview.token)
+                }),
+        )
     }
 }
 

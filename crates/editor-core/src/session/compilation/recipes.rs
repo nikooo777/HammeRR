@@ -152,7 +152,7 @@ impl Session {
         json!({"revision":self.compilation.recipes.revision(snapshot.revision),"recipes":recipes,"active":snapshot.identity(self.compilation.recipes.active.as_ref(),self.compilation.options),
             "editable":!self.compiling()&&!self.closing,"custom_editable":!self.compiling()&&!self.closing&&!snapshot.load_failed,
             "persistence":if snapshot.load_failed{"blocked"}else if snapshot.path.is_some(){"persistent"}else{"session"},"path":snapshot.path,"error":snapshot.error,
-            "limits":{"custom_recipes":MAX_RECIPES,"name_bytes":MAX_NAME_BYTES,"file_bytes":MAX_FILE_BYTES},"settings":Settings::from(self.compilation.options),
+            "limits":{"custom_recipes":MAX_RECIPES,"name_bytes":MAX_NAME_BYTES,"file_bytes":MAX_FILE_BYTES},"settings":Settings::from(self.compilation.options).report(),
             "job_rule":"Active builds block settings and recipe actions in their originating document. Peers may edit saved recipes; jobs retain their captured recipe name and options. Applying different settings makes previous output stale; names alone do not."})
     }
     fn check_build_recipe_edit(&self, expected: Option<u64>) -> Result<Option<u64>, String> {
@@ -313,6 +313,8 @@ impl Session {
 
 #[cfg(test)]
 mod authority_tests;
+#[cfg(test)]
+mod lighting_work_tests;
 #[cfg(test)]
 mod reload_tests;
 
@@ -854,6 +856,7 @@ mod tests {
                         physics: Some("engine"),
                         sky_quality: Some("balanced"),
                         visibility: Some("detailed"),
+                        lighting_work_limit: None,
                         bounces: Some(2),
                         smoothing_angle: Some(35),
                         generate_reflections: Some(true),

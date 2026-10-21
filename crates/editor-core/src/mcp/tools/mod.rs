@@ -26,6 +26,8 @@ mod overlay;
 mod particles;
 mod partitions;
 mod placement;
+#[cfg(test)]
+mod preview_handle_tests;
 mod preview_preferences;
 mod recovery;
 mod selection;

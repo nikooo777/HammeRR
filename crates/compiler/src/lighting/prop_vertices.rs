@@ -460,6 +460,16 @@ pub(super) fn bake_channel(
     budget: &mut Budget<'_>,
 ) -> Result<(), String> {
     let start = budget.work();
+    let planned = prepared
+        .receivers
+        .iter()
+        .try_fold(0usize, |count, receiver| {
+            count
+                .checked_add(prepared.models[receiver.model].layout.vertices.len())
+                .ok_or("Prop vertex planned sample count overflow")
+        })?;
+    budget.plan_samples(planned)?;
+    budget.samples_planned_complete();
     let _directions = budget.reserve::<DVec3>(
         indirect
             .as_ref()
@@ -581,6 +591,7 @@ pub(super) fn bake_channel(
                         }
                     };
                     colors.push(color);
+                    budget.finish_sample();
                 }
                 meshes.push(vhv::Mesh {
                     layout: vhv::MeshLayout {

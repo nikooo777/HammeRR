@@ -6,7 +6,7 @@ export component PrimitiveWindow inherits Window {
     in-out property <int> shape;
     in-out property <int> axis: 2;
     in-out property <int> segments: 12;
-    in-out property <int> bands: 6;
+    in-out property <int> bands: 5;
     in-out property <string> min-x: "-64";
     in-out property <string> min-y: "-64";
     in-out property <string> min-z: "0";
@@ -89,6 +89,10 @@ export component PrimitiveWindow inherits Window {
                     SpinBox { minimum: 2; maximum: 32; value <=> root.bands; edited => { root.edited(); } }
                 }
                 if root.shape == 3: Text { text: "At most 256 faces\n(sides × bands)"; color: #9da7b5; }
+            }
+            if (root.shape == 3 && root.segments * root.bands > 64) || (root.shape == 1 && root.segments + 2 > 64) || (root.shape == 2 && root.segments + 1 > 64): Text {
+                text: "This resolution exceeds the 64-face limit for Hollow, Carve and component editing.";
+                color: #efa47c; wrap: word-wrap;
             }
             if root.shape == 4: VerticalLayout {
                 spacing: 6px;

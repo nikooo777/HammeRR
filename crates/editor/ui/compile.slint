@@ -59,6 +59,10 @@ export component CompileWindow inherits Window {
     in property <[string]> bounce-modes;
     in-out property <string> selected-bounces <=> bounce-selector.current-value;
     callback change-bounces(int);
+    in-out property <string> lighting-work-limit-millions;
+    in-out property <bool> lighting-work-limit-editing;
+    in property <string> lighting-work-description;
+    callback change-lighting-work-limit(string);
     in property <[string]> sky-qualities;
     in-out property <string> selected-sky-quality <=> sky-selector.current-value;
     in property <bool> sky-enabled;
@@ -196,6 +200,18 @@ export component CompileWindow inherits Window {
                     sky-selector := ComboBox { model: root.sky-qualities; enabled: root.sky-enabled; selected(value) => { root.change-sky-quality(self.current-index); } }
                 }
                 Text { text: "More directions improve soft sun shadows, sky/model ambient and bounced light, and take longer. Used by Direct LDR and Direct LDR + HDR."; wrap: word-wrap; color: #bac2ce; }
+                HorizontalLayout {
+                    spacing: 12px;
+                    Text { text: "Lighting work limit (millions)"; vertical-alignment: center; }
+                    LineEdit {
+                        text <=> root.lighting-work-limit-millions;
+                        enabled: root.lighting-enabled;
+                        edited => { root.lighting-work-limit-editing = true; }
+                        accepted => { root.change-lighting-work-limit(self.text); }
+                    }
+                    Button { text: "Apply work limit"; enabled: root.lighting-enabled; clicked => { root.change-lighting-work-limit(root.lighting-work-limit-millions); } }
+                }
+                Text { text: "0.000001–10000 million work units; default 1000. Up to six decimal places retain exact work units. " + root.lighting-work-description; wrap: word-wrap; color: #bac2ce; }
                 Text { text: root.summary; font-size: 16px; font-weight: 600; wrap: word-wrap; }
                 Text { text: root.details; wrap: word-wrap; color: #bac2ce; }
                 Text { text: "Diagnostics"; font-weight: 600; }

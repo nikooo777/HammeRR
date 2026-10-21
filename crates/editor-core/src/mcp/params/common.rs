@@ -679,6 +679,9 @@ pub struct CompileSettingsArgs {
     pub generate_reflections: Option<bool>,
     /// Whole degrees 0–90; zero disables automatic smoothing on unassigned world/model faces.
     pub smoothing_angle: Option<u8>,
+    /// Exact integer work units shared by preparation, LDR and HDR lighting. Range 1–10,000,000,000; default 1,000,000,000. Retains sampling quality and independent resource limits; omitted/null retains the current value.
+    #[schemars(range(min = compiler::MIN_LIGHTING_WORK_LIMIT, max = compiler::MAX_LIGHTING_WORK_LIMIT))]
+    pub lighting_work_limit: Option<u64>,
     /// 0 (direct only, default) through 4 diffuse world/terrain-source bounces into world/model and opted-in prop receivers; both lit modes.
     pub bounces: Option<u8>,
     /// fast (default conservative flood) or detailed (bounded portal separator clipping).

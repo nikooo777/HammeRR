@@ -228,14 +228,7 @@ pub(in crate::mcp) fn connection_json(record: ConnectionRecord) -> Value {
 }
 
 pub(in crate::mcp) fn connection_draft_json(session: &Session) -> Value {
-    let (error, warnings) = session.connection_draft_feedback();
-    session.connection_draft().map_or(Value::Null, |draft| {
-        json!({
-            "source": id_string(ObjectId::Entity(draft.source)), "index":draft.index,"token":draft.token,
-            "fields":draft.fields,"generation":draft.generation,"revision":draft.revision,
-            "error":error,"warnings":warnings
-        })
-    })
+    session.connection_draft_report()
 }
 
 pub(in crate::mcp) fn connection_guard(

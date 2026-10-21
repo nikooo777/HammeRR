@@ -23,6 +23,7 @@ PRIVATE_CVARS = frozenset(
         "cl_drawhud",
         "con_logfile",
         "fps_max",
+        "host_framerate",
         "joystick",
         "mat_autoexposure_max",
         "mat_autoexposure_min",
@@ -34,6 +35,7 @@ PRIVATE_CVARS = frozenset(
         "mat_hdr_level",
         "mat_hdr_uncapexposure",
         "mat_queue_mode",
+        "mat_specular",
         "r_debugrandomstaticlighting",
         "r_drawothermodels",
         "r_drawvgui",
@@ -637,6 +639,12 @@ def private_readonly_launch(command, output, environment):
         "--bind", str(output), str(output), "--", *command,
     ]
     return arguments, {**environment, "TMPDIR": str(temporary)}
+
+
+def require_native_running(process, stage):
+    status = process.poll()
+    if status is not None:
+        raise RuntimeError(f"Private CS:S exited with {status} {stage}")
 
 
 @contextmanager

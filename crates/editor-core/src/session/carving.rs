@@ -84,9 +84,20 @@ impl Session {
     }
 
     pub fn carve_state(&self) -> Value {
-        json!({"stamp":self.carve_stamp(),"preview": self.geometry.carving.preview.as_ref().map(|preview| json!({"token":preview.token.to_string(),"generation":preview.generation,"revision":preview.revision,"targets":preview.targets,"result":result_json(&preview.result)})),
+        json!({"handle":self.carve_handle(),"stamp":self.carve_stamp(),"preview": self.geometry.carving.preview.as_ref().map(|preview| json!({"token":preview.token.to_string(),"generation":preview.generation,"revision":preview.revision,"targets":preview.targets,"result":result_json(&preview.result)})),
             "limits":{"cutters":carve::MAX_CUTTERS,"targets":carve::MAX_TARGETS,"fragments":carve::MAX_FRAGMENTS,"sides_per_brush":subobject::MAX_SIDES},
             "full_removal_policy":"World brushes may be removed. Empty brush entities reject; delete those owners explicitly."})
+    }
+
+    pub(super) fn carve_handle(&self) -> Value {
+        Self::edit_handle(
+            "carve",
+            self.geometry.carving.preview.as_ref().and_then(|preview| {
+                self.checked_carve(preview.token)
+                    .is_ok()
+                    .then_some(preview.token)
+            }),
+        )
     }
 
     pub fn carve_report(&self) -> Value {

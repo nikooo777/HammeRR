@@ -67,6 +67,7 @@ impl Session {
             })
         });
         json!({
+            "handle": self.repeat_array_handle(),
             "snapshot": self.repeat_stamp(),
             "preview": preview,
             "limits": {"sources":repeat::MAX_SOURCES,"copies":repeat::MAX_COPIES,"objects_including_owned_brushes":repeat::MAX_OBJECTS,"sides":repeat::MAX_SIDES,"name_bytes":repeat::MAX_NAME_BYTES},
@@ -74,6 +75,17 @@ impl Session {
             "reference_policy":"Unique source targetnames become name_copyN, with a collision suffix when needed. Certain exact internal FGD/I/O/parent references follow that copy; external links and procedural references remain unchanged. Shared names, ambiguous internal matches, wildcard captures of new names, overlay face-ID references and node IDs reject. Named source sets with scripts or dynamic I/O also reject.",
             "metadata_policy":"Object and owned-brush context notes copy with their existing authorship/observations and full map budgets. Saved partitions remain attached to originals. Other opaque custom metadata and embedded text stay verbatim; their semantics are not inferred or remapped.",
         })
+    }
+
+    pub(super) fn repeat_array_handle(&self) -> Value {
+        Self::edit_handle(
+            "repeat_array",
+            self.geometry.repeat.preview.as_ref().and_then(|preview| {
+                self.checked_repeat(preview.token)
+                    .is_ok()
+                    .then_some(preview.token)
+            }),
+        )
     }
 
     pub fn clear_repeat_preview(&mut self) {
@@ -174,7 +186,7 @@ impl Session {
         let copies = result.objects();
         self.select(&copies, SelectMode::Replace)?;
         Ok(
-            json!({"objects":copies.iter().copied().map(id_string).collect::<Vec<_>>(), "count":result.copies.len(),"state":self.repeat_array()}),
+            json!({"handle":self.repeat_array_handle(),"objects":copies.iter().copied().map(id_string).collect::<Vec<_>>(), "count":result.copies.len(),"state":self.repeat_array()}),
         )
     }
 

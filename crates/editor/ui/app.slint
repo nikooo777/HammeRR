@@ -2037,6 +2037,7 @@ export component AppWindow inherits Window {
     in property <string> lighting-status: "Authored lighting preview is off";
     in property <string> lighting-error;
     in-out property <bool> normal-maps: false;
+    in-out property <bool> surface-shading: false;
     in property <string> normal-map-status: "Normal map preview is off";
     in-out property <int> sky-channel: 0;
     in-out property <string> sky-exposure-ev: "0";
@@ -2768,6 +2769,12 @@ export component AppWindow inherits Window {
                         checked <=> root.normal-maps;
                         toggled => { root.options-changed(); }
                     }
+                    CheckBox {
+                        text: "Directional surface shading";
+                        checked <=> root.surface-shading;
+                        toggled => { root.options-changed(); }
+                    }
+                    if root.surface-shading: Text { text: root.surface-view == 0 ? "Stronger fixed editor light · authored lighting takes precedence" : "Directional surface shading requires Textured view"; color: #aeb9c8; wrap: word-wrap; font-size: 12px; }
                     if root.normal-maps: Text { text: root.normal-map-status + (root.lighting-preview ? "\nTextured flat brushes · unshadowed authored lights" : "\nTextured flat brushes · fixed editor light"); color: #aeb9c8; wrap: word-wrap; font-size: 12px; }
                     CheckBox {
                         text: "Unshadowed authored lighting";

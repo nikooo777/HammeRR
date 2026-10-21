@@ -146,6 +146,23 @@ Uncheck **Tool textures** in the toolbar to hide brushes that use tool materials
 | --- | --- |
 | ![Untextured geometry and a light helper](images/flat-view.png) | ![Brush edges and the same light helper](images/wireframe-view.png) |
 
+## Directional surface shading
+
+Make slopes and sculpted terrain easier to read under a fixed editor light.
+
+1. Under **VIEWPORT**, choose **Textured**.
+2. Enable **Directional surface shading**. The stronger directional shading
+   applies to ordinary brush, terrain and model surfaces.
+3. Clear it to restore the ordinary display. The map, current geometry preview
+   and Undo history stay unchanged.
+
+![Directional surface shading on sculpted terrain](images/directional-surface-shading.png)
+
+Limits: this is a visual aid, not baked lighting or a game-lighting preview.
+Authored lighting takes precedence on its admitted receivers. Tools, sky,
+helper icons and diagnostic/Flat/Wireframe views keep their ordinary display.
+It starts off and is not part of saved preview defaults.
+
 ## Selection outlines
 
 Choose whether selected objects and faces show edge lines and model corner brackets.

@@ -9,6 +9,7 @@ pub struct ViewUpdate<'a> {
     pub lighting_quality: Option<&'a str>,
     pub lighting_exposure_ev: Option<f64>,
     pub normal_maps: Option<bool>,
+    pub surface_shading: Option<bool>,
     pub surface: Option<&'a str>,
     pub smoothing_group: Option<u32>,
     pub tool_textures: Option<bool>,
@@ -46,6 +47,9 @@ impl Session {
         }
         if let Some(value) = update.normal_maps {
             view.normal_maps = value;
+        }
+        if let Some(value) = update.surface_shading {
+            view.surface_shading = value;
         }
         if let Some(value) = update.tool_textures {
             view.tool_textures = value;

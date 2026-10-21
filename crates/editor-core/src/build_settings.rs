@@ -9,6 +9,11 @@ pub struct BuildSettings {
     pub visibility: String,
     pub bounces: u8,
     pub smoothing_angle: u8,
+    #[serde(
+        default = "default_lighting_work_limit",
+        skip_serializing_if = "is_default_lighting_work_limit"
+    )]
+    pub lighting_work_limit: u64,
     #[serde(default)]
     pub generate_reflections: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -19,6 +24,14 @@ pub struct BuildSettings {
     pub pack_static_prop_assets: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub bake_static_prop_vertices: bool,
+}
+
+fn default_lighting_work_limit() -> u64 {
+    compiler::DEFAULT_LIGHTING_WORK_LIMIT
+}
+
+fn is_default_lighting_work_limit(value: &u64) -> bool {
+    *value == compiler::DEFAULT_LIGHTING_WORK_LIMIT
 }
 
 impl From<compiler::Options> for BuildSettings {
@@ -36,6 +49,7 @@ impl BuildSettings {
             visibility: options.visibility.name().into(),
             bounces: options.bounces,
             smoothing_angle: options.smoothing_angle,
+            lighting_work_limit: options.lighting_work_limit,
             generate_reflections: options.generate_reflections,
             pack_sky_assets: options.pack_sky_assets,
             pack_water_assets: options.pack_water_assets,
@@ -52,6 +66,7 @@ impl BuildSettings {
             visibility: compiler::VisibilityMode::parse(&self.visibility)?,
             bounces: self.bounces,
             smoothing_angle: self.smoothing_angle,
+            lighting_work_limit: self.lighting_work_limit,
             generate_reflections: self.generate_reflections,
             pack_sky_assets: self.pack_sky_assets,
             pack_water_assets: self.pack_water_assets,
@@ -63,6 +78,12 @@ impl BuildSettings {
 }
 
 impl BuildSettings {
+    pub(crate) fn report(&self) -> serde_json::Value {
+        let mut settings = serde_json::json!(self);
+        settings["lighting_work_limit"] = self.lighting_work_limit.into();
+        settings
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         self.options().map(|_| ())
     }
@@ -75,6 +96,7 @@ impl BuildSettings {
             visibility: Some(&self.visibility),
             bounces: Some(self.bounces),
             smoothing_angle: Some(self.smoothing_angle),
+            lighting_work_limit: Some(self.lighting_work_limit),
             generate_reflections: Some(self.generate_reflections),
             pack_sky_assets: Some(self.pack_sky_assets),
             pack_water_assets: Some(self.pack_water_assets),

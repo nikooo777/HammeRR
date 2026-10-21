@@ -174,7 +174,7 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 | Viewport modes | Saved camera views |
 | --- | --- |
 | ![Wireframe view with a light helper](docs/images/wireframe-view.png) | ![Named camera views](docs/images/saved-views.png) |
-| Choose a viewport mode and show or hide selection outlines in every projection. | Name camera positions and jump back to them. They are saved in the map. |
+| Choose viewport modes, directional surface shading and selection outlines in every projection. | Name camera positions and jump back to them. They are saved in the map. |
 
 | Grid defaults | Preview defaults |
 | --- | --- |

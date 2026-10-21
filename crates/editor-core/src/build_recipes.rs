@@ -47,13 +47,14 @@ impl Recipe {
             .options()
             .expect("recipe settings are validated");
         let description = format!(
-            "{} · {} · {} · {} · {} · {}° brush smoothing · static-prop vertex lighting {} · reflections {} · sky packing {} · water packing {} · static-prop packing {}",
+            "{} · {} · {} · {} · {} · {}° brush smoothing · {} lighting work units · static-prop vertex lighting {} · reflections {} · sky packing {} · water packing {} · static-prop packing {}",
             options.lighting.label(),
             options.physics.label(),
             options.visibility.label(),
             options.sky_quality.label(),
             compiler::bounce_label(options.bounces),
             options.smoothing_angle,
+            options.lighting_work_limit,
             if options.bake_static_prop_vertices {
                 "on"
             } else {
@@ -76,7 +77,7 @@ impl Recipe {
                 "off"
             }
         );
-        json!({"id":self.id,"name":self.name,"builtin":builtin,"settings":self.settings,"description":description})
+        json!({"id":self.id,"name":self.name,"builtin":builtin,"settings":self.settings.report(),"description":description})
     }
 }
 
@@ -137,6 +138,7 @@ pub(crate) fn builtins() -> [Recipe; 2] {
                 visibility: compiler::VisibilityMode::Detailed,
                 bounces: compiler::MAX_LIGHT_BOUNCES,
                 smoothing_angle: 45,
+                lighting_work_limit: compiler::DEFAULT_LIGHTING_WORK_LIMIT,
                 generate_reflections: false,
                 pack_sky_assets: false,
                 pack_water_assets: false,

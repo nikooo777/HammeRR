@@ -253,6 +253,19 @@ impl Session {
         self.connection_draft.as_ref()
     }
 
+    pub fn connection_draft_report(&self) -> serde_json::Value {
+        let (error, warnings) = self.connection_draft_feedback();
+        self.connection_draft().map_or(serde_json::Value::Null, |draft| {
+            serde_json::json!({
+                "handle": Self::edit_handle("connection_edit", self.check_connection_snapshot(draft.generation, draft.revision).is_ok().then_some(draft.token)),
+                "source": crate::identity::id_string(map_core::ObjectId::Entity(draft.source)),
+                "index": draft.index, "token": draft.token,
+                "fields": draft.fields, "generation": draft.generation, "revision": draft.revision,
+                "error": error, "warnings": warnings,
+            })
+        })
+    }
+
     pub fn connection_outputs(&self, source: u32) -> Vec<Io> {
         self.document
             .entity(source)

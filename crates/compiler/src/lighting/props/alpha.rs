@@ -654,7 +654,7 @@ mod tests {
         .unwrap();
         for cancel in [false, true] {
             let control = crate::Control::default();
-            let mut budget = Budget::new(&control);
+            let mut budget = Budget::with_limit(&control, 100_000_000);
             if !cancel {
                 budget.consume(100_000_000 - 2).unwrap();
             }

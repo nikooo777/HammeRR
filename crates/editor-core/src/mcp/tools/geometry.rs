@@ -176,7 +176,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect selected brush candidates and the shared carve preview, source owners/bounds/materials, snapshot stamp, exact token, target brush IDs, resulting fragments, removed/unchanged brushes, per-face inheritance and limits. Up to 8 convex cutters are retained; up to 16 targets and 256 intermediate/final fragments. World brushes may be removed completely; removing every brush from an entity rejects. No map edits.",
+        description = "Inspect selected brush candidates and the shared carve preview, source owners/bounds/materials, snapshot stamp, exact token, target brush IDs, resulting fragments, removed/unchanged brushes, per-face inheritance and limits. Up to 8 convex cutters are retained; up to 16 targets and 256 intermediate/final fragments. World brushes may be removed completely; removing every brush from an entity rejects. No map edits. handle contains the active kind and decimal-string token, or null when closed or stale; stamp remains the source guard.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_carve_preview(&self) -> ToolResult {
@@ -184,7 +184,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Preview subtracting one convex cutter brush from explicit target brush IDs, including children of brush entities. Requires the latest stamp from get_carve_preview. The cutter stays unchanged. Disjoint/tangent targets remain unchanged; an entirely disjoint batch rejects. Generated cut faces inherit the corresponding cutter face's material, world UV projection, lighting and unknown metadata. Surviving original faces retain metadata; original IDs remain on the first surviving fragment and later fragments get unique IDs. Preserves owner entities and unrelated objects. Whole world brushes can be removed; empty brush entities, displacements, invalid/thin geometry, 64-face overflow and budgets reject atomically. render_view uses the draft. Apply/cancel require the exact token."
+        description = "Preview subtracting one convex cutter brush from explicit target brush IDs, including children of brush entities. Requires the latest stamp from get_carve_preview. The cutter stays unchanged. Disjoint/tangent targets remain unchanged; an entirely disjoint batch rejects. Generated cut faces inherit the corresponding cutter face's material, world UV projection, lighting and unknown metadata. Surviving original faces retain metadata; original IDs remain on the first surviving fragment and later fragments get unique IDs. Preserves owner entities and unrelated objects. Whole world brushes can be removed; empty brush entities, displacements, invalid/thin geometry, 64-face overflow and budgets reject atomically. render_view uses the draft. Apply/cancel require the exact token. Returns handle with kind and decimal-string token, separate from the required stamp. Changed selection and competing geometry previews invalidate it; repeating the current object selection preserves it. Closed or stale reports have handle=null."
     )]
     pub(in crate::mcp) fn preview_carve(
         &self,
@@ -198,7 +198,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Preview subtracting the combined volume of 1–8 distinct retained convex cutter brushes from 1–16 target brushes. Cutters and targets must be disjoint roles. Inputs normalize to increasing brush IDs, so caller order cannot change fragments or coincident-face inheritance. Requires the latest get_carve_preview.stamp. All cutters stay unchanged; overlapping cutter volume is removed once. preview.result.cutters lists normalized IDs; each generated face reports its actual source_solid/source_side and inherits that cutter's material, world UVs, lighting and unknown metadata. Original faces and owner entities remain. Intermediate and final fragments are bounded at 256 with 64 sides each. Empty brush entities, invalid/displacement/thin geometry, bounds, all-disjoint inputs and budgets reject atomically while preserving the valid draft. render_view shows the same draft. commit_carve/cancel_carve use its token; Apply verifies allocations and records one undo step."
+        description = "Preview subtracting the combined volume of 1–8 distinct retained convex cutter brushes from 1–16 target brushes. Cutters and targets must be disjoint roles. Inputs normalize to increasing brush IDs, so caller order cannot change fragments or coincident-face inheritance. Requires the latest get_carve_preview.stamp. All cutters stay unchanged; overlapping cutter volume is removed once. preview.result.cutters lists normalized IDs; each generated face reports its actual source_solid/source_side and inherits that cutter's material, world UVs, lighting and unknown metadata. Original faces and owner entities remain. Intermediate and final fragments are bounded at 256 with 64 sides each. Empty brush entities, invalid/displacement/thin geometry, bounds, all-disjoint inputs and budgets reject atomically while preserving the valid draft. render_view shows the same draft. commit_carve/cancel_carve use its token; Apply verifies allocations and records one undo step. Returns handle with kind and decimal-string token, separate from the required stamp. Changed selection and competing geometry previews invalidate it; repeating the current object selection preserves it. Closed or stale reports have handle=null."
     )]
     pub(in crate::mcp) fn preview_carve_many(
         &self,
@@ -223,7 +223,9 @@ impl EditorServer {
                 Actor::Agent,
                 args.token.parse().map_err(|_| "Invalid carve token")?,
             )?;
-            Ok(crate::session::carving::result_json(&result))
+            let mut report = crate::session::carving::result_json(&result);
+            report["handle"] = Value::Null;
+            Ok(report)
         })
     }
 
@@ -242,7 +244,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Preview hollowing selected brushes or brush entities into convex wall pieces. Optional open_faces leaves those source boundaries open and unexpanded; each source must retain at least one wall. Thickness is 0.125–4096 units along face normals. outward=false insets walls inside the source bounds; true expands outside and preserves the original cavity. Requires latest stamp from get_hollow_preview. At most 16 source brushes, 64 sides each and 256 output walls; displacements, ambiguous IDs and invalid/thin inner geometry reject atomically. Existing surfaces retain metadata; generated inner faces inherit their corresponding source face's material, world projection and lighting. render_view uses the draft. Apply/Cancel use its token."
+        description = "Preview hollowing selected brushes or brush entities into convex wall pieces. Optional open_faces leaves those source boundaries open and unexpanded; each source must retain at least one wall. Thickness is 0.125–4096 units along face normals. outward=false insets walls inside the source bounds; true expands outside and preserves the original cavity. Requires latest stamp from get_hollow_preview. At most 16 source brushes, 64 sides each and 256 output walls; displacements, ambiguous IDs and invalid/thin inner geometry reject atomically. Existing surfaces retain metadata; generated inner faces inherit their corresponding source face's material, world projection and lighting. render_view uses the draft. Apply/Cancel use its token. Returns handle with kind and decimal-string token, separate from the required stamp. Changed selection and competing geometry previews invalidate it; repeating the current object selection preserves it. Closed or stale reports have handle=null."
     )]
     pub(in crate::mcp) fn preview_hollow(
         &self,
@@ -265,7 +267,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect selected source faces (solid/side IDs, normals, centers, materials), the shared hollow preview, open_faces, stamp, token, source snapshot, parameters, generated brush IDs, cavity centers/bounds and limits. The cavity center is an interior vertex average, suitable for Look inside. No map edits.",
+        description = "Inspect selected source faces (solid/side IDs, normals, centers, materials), the shared hollow preview, open_faces, stamp, token, source snapshot, parameters, generated brush IDs, cavity centers/bounds and limits. The cavity center is an interior vertex average, suitable for Look inside. No map edits. handle contains the active kind and decimal-string token, or null when closed or stale; stamp remains the source guard.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_hollow_preview(&self) -> ToolResult {
@@ -284,7 +286,9 @@ impl EditorServer {
                 Actor::Agent,
                 args.token.parse().map_err(|_| "Invalid hollow token")?,
             )?;
-            Ok(crate::session::hollowing::result_json(&result))
+            let mut report = crate::session::hollowing::result_json(&result);
+            report["handle"] = Value::Null;
+            Ok(report)
         })
     }
 

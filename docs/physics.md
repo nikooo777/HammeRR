@@ -19,6 +19,15 @@ geometry. Individual collision faces retain their own contact properties.
 
 ![Physics settings](images/build-settings.png)
 
+If native collision fails, **Build details… → Diagnostics** identifies the
+construction or verification stage, VMF solid, owning entity/class/name and
+checked bounds. Instance failures identify the parent instance and original
+child file/object. Generated water hulls are labeled separately with their wet
+leaf and bounds. Repair the named geometry and compile again; a rejected hull
+stops publication and preserves the previous BSP. Very small facets can remain
+valid editable geometry while failing native hull construction; enlarge or
+reshape the named fragment rather than omitting its collision.
+
 For mixed-material models, the property covering the greatest emitted face
 area determines the base mass. Equal areas keep the first emitted property.
 This choice does not replace the per-face contact materials. Solid materials

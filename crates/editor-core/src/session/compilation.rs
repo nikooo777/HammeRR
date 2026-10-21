@@ -29,6 +29,8 @@ mod instance_reflection_tests;
 #[cfg(test)]
 mod instance_rejection_tests;
 #[cfg(test)]
+mod lighting_work_settings_tests;
+#[cfg(test)]
 mod prop_vertex_lighting_settings_tests;
 mod recipes;
 #[cfg(test)]
@@ -82,6 +84,8 @@ pub struct CompileRequest {
     #[cfg(test)]
     before_preparation: Option<Box<dyn FnOnce() + Send>>,
     #[cfg(test)]
+    after_compilation: Option<CompilationObserver>,
+    #[cfg(test)]
     capture: Option<CaptureBackend>,
     native_plan: Option<NativeCapturePlan>,
     output_claims: crate::path_claims::OutputClaims,
@@ -104,6 +108,9 @@ pub struct CompileRequest {
     origin: CompileOrigin,
     ticket: Option<Ticket>,
 }
+
+#[cfg(test)]
+type CompilationObserver = Box<dyn Fn(&compiler::Output) + Send>;
 
 #[cfg(test)]
 pub(crate) type CaptureBackend = Box<
@@ -426,7 +433,13 @@ impl CompileRequest {
                 &self.control,
             )
         };
-        self.control.checkpoint()?;
+        #[cfg(test)]
+        if let Some(hook) = &self.after_compilation {
+            hook(&output);
+        }
+        if let Err(error) = self.control.checkpoint() {
+            return self.cancelled_output(output, path, source, error);
+        }
         if instances
             && (output.bsp.is_some() || output.leak.is_some())
             && output.instance_dependencies.is_none()
@@ -613,6 +626,55 @@ impl CompileRequest {
             }),
         })
     }
+
+    fn cancelled_output(
+        self,
+        mut output: compiler::Output,
+        path: PathBuf,
+        source: Option<compiler::FileIdentity>,
+        error: String,
+    ) -> Result<CompileResult, String> {
+        if output.stats.lighting_progress.is_none() {
+            return Err(error);
+        }
+        output.bsp = None;
+        output.leak = None;
+        output.cubemap_assets = None;
+        output.sky_assets = None;
+        output.water_assets = None;
+        output.static_prop_assets = None;
+        output.prop_lighting_assets = None;
+        Ok(CompileResult {
+            origin: self.origin,
+            token: self.token,
+            output,
+            path,
+            generation: self.generation,
+            revision: self.revision,
+            options: self.options,
+            content_epoch: self.content_epoch,
+            static_prop_sources: None,
+            source,
+            destination_stamp: self.destination_stamp,
+            control: self.control,
+            publication: Mutex::new(Publication {
+                #[cfg(test)]
+                before_cleanup: None,
+                pending: None,
+                claims: None,
+                artifact: None,
+                warning: None,
+                lease: None,
+                pointfile_lease: None,
+                pointfile_stamp: None,
+                sources: None,
+                published: false,
+                committed: false,
+                error: Some(error),
+                ticket: None,
+            }),
+        })
+    }
 }
 
 pub(crate) fn stats_json(stats: &compiler::Stats) -> Value {
@@ -645,6 +707,7 @@ pub struct BuildSettingsUpdate<'a> {
     pub visibility: Option<&'a str>,
     pub bounces: Option<u8>,
     pub smoothing_angle: Option<u8>,
+    pub lighting_work_limit: Option<u64>,
     pub generate_reflections: Option<bool>,
     pub pack_sky_assets: Option<bool>,
     pub pack_water_assets: Option<bool>,
@@ -717,6 +780,14 @@ impl Session {
         } else {
             None
         };
+        settings["lighting_work_limit"] = self.compilation.options.lighting_work_limit.into();
+        settings["lighting_work_limit_range"] = json!({
+            "min":compiler::MIN_LIGHTING_WORK_LIMIT,
+            "max":compiler::MAX_LIGHTING_WORK_LIMIT,
+            "default":compiler::DEFAULT_LIGHTING_WORK_LIMIT,
+            "unit":"work_units"
+        });
+        settings["lighting_work_description"] = "One aggregate allowance for preparation, LDR and HDR lighting. Raising it preserves sampling quality and all independent allocation, sample, light, probe and geometry limits.".into();
         settings["bake_static_prop_vertices"] =
             self.compilation.options.bake_static_prop_vertices.into();
         settings["pack_water_assets"] = self.compilation.options.pack_water_assets.into();
@@ -805,6 +876,7 @@ impl Session {
             visibility,
             bounces,
             smoothing_angle,
+            lighting_work_limit,
             generate_reflections,
             pack_sky_assets,
             pack_water_assets,
@@ -824,6 +896,8 @@ impl Session {
                 .unwrap_or(self.compilation.options.generate_reflections),
             bounces,
             smoothing_angle: smoothing_angle.unwrap_or(self.compilation.options.smoothing_angle),
+            lighting_work_limit: lighting_work_limit
+                .unwrap_or(self.compilation.options.lighting_work_limit),
             visibility: visibility
                 .map(compiler::VisibilityMode::parse)
                 .transpose()?
@@ -860,12 +934,13 @@ impl Session {
             self.log(
                 actor,
                 format!(
-                    "Build settings: {} · {} · {} visibility · {} diffuse bounces · {}° brush smoothing · static-prop vertex lighting {} · reflections {} · sky packing {} · water packing {} · static-prop packing {}",
+                    "Build settings: {} · {} · {} visibility · {} diffuse bounces · {}° brush smoothing · {} lighting work units · static-prop vertex lighting {} · reflections {} · sky packing {} · water packing {} · static-prop packing {}",
                     options.lighting.label(),
                     options.physics.label(),
                     options.visibility.label(),
                     options.bounces,
                     options.smoothing_angle,
+                    options.lighting_work_limit,
                     if options.bake_static_prop_vertices { "on" } else { "off" },
                     if options.generate_reflections { "on" } else { "off" },
                     if options.pack_sky_assets { "on" } else { "off" },
@@ -1038,6 +1113,8 @@ impl Session {
         let request = CompileRequest {
             #[cfg(test)]
             before_preparation: None,
+            #[cfg(test)]
+            after_compilation: None,
             #[cfg(test)]
             capture: None,
             native_plan,
@@ -1315,12 +1392,11 @@ impl Session {
             }
         }
         let message = match result {
-            Err(_)
-                if self
-                    .compilation
-                    .job
-                    .as_ref()
-                    .is_some_and(|job| job.control.cancelled()) =>
+            _ if self
+                .compilation
+                .job
+                .as_ref()
+                .is_some_and(|job| job.control.cancelled()) =>
             {
                 "Compilation cancelled; previous output preserved".into()
             }
@@ -1397,6 +1473,7 @@ impl Session {
                 "path":job.path.display().to_string(),"generation":job.snapshot.generation,"revision":job.snapshot.revision,
                 "compile_region":job.region,"recipe":job.recipe,"native_runtime":job.native_runtime,"reflections":{"channel":if job.options.lighting==compiler::LightingMode::DirectLdrHdr {"ldr_hdr"} else {"ldr"},"samples_complete":progress.reflection_samples_complete,"samples_total":progress.reflection_samples_total},"settings":{"bake_static_prop_vertices":job.options.bake_static_prop_vertices,"pack_sky_assets":job.options.pack_sky_assets,"pack_water_assets":job.options.pack_water_assets,"pack_static_prop_assets":job.options.pack_static_prop_assets,"generate_reflections":job.options.generate_reflections,"smoothing_angle":job.options.smoothing_angle,"bounces":job.options.bounces,"lighting":job.options.lighting.name(),"physics":job.options.physics.name(),"sky_quality":job.options.sky_quality.name(),"visibility":job.options.visibility.name()},
                 "stale":!self.current_snapshot(&job.snapshot) || job.options != self.compilation.options || (job.guarded && job.content_epoch != self.content_epoch) || dependency_issue.is_some() || static_prop_source_issue.is_some(),"static_prop_source_issue":static_prop_source_issue,"result":job.result()});
+            status["settings"]["lighting_work_limit"] = job.options.lighting_work_limit.into();
             if let Some(queue) = &job.queue { status["queue"] = queue.snapshot(); }
             if job.instance_dependencies.is_some() { status["instance_dependencies"]=json!({"current":dependency_issue.is_none(),"error":dependency_issue}); }
             status

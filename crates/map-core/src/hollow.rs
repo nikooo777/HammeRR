@@ -256,7 +256,7 @@ pub fn hollow(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{BrushGeometry, edit, primitive, query};
+    use crate::{BrushGeometry, carve, edit, primitive, query};
     use glam::DVec3;
 
     fn fixture() -> (Document, ObjectId) {
@@ -285,6 +285,247 @@ mod tests {
                     .sum::<f64>()
             })
             .sum()
+    }
+
+    #[test]
+    fn cylindrical_shell_seam_remains_closed_through_carve_and_undo() {
+        for thickness in [8.0, 10.0] {
+            let mut document = Document::empty();
+            let ids = document
+                .edit("cylinder", |tx| {
+                    primitive::create(
+                        tx,
+                        &primitive::Spec {
+                            shape: primitive::Shape::Cylinder,
+                            mins: DVec3::new(266.0, -4.0, 194.0),
+                            maxs: DVec3::new(394.0, 124.0, 298.96),
+                            segments: 12,
+                            ..Default::default()
+                        },
+                    )
+                })
+                .unwrap();
+            let source = document.vmf().clone();
+            let shell = document
+                .edit("hollow cylinder", |tx| {
+                    hollow(
+                        tx,
+                        &ids,
+                        &Spec {
+                            thickness,
+                            outward: false,
+                            open_faces: Default::default(),
+                        },
+                    )
+                })
+                .unwrap();
+            assert_eq!(shell.brushes.len(), 14);
+            let radius = 64.0;
+            let height = 104.96;
+            let area = 6.0 * (std::f64::consts::TAU / 12.0).sin() * radius * radius;
+            let inner_scale = 1.0 - thickness / (radius * (std::f64::consts::PI / 12.0).cos());
+            let expected = area * (height - inner_scale * inner_scale * (height - 2.0 * thickness));
+            let mut actual = 0.0;
+            for id in &shell.brushes {
+                let solid = document.solid(*id).unwrap();
+                subobject::topology(solid).unwrap();
+                assert!(volume(solid) > 0.0);
+                actual += volume(solid);
+            }
+            assert!(
+                (actual - expected).abs() < 1e-5,
+                "{thickness}: {actual} != {expected}"
+            );
+            let shell_document = document.vmf().clone();
+            document.undo().unwrap();
+            assert_eq!(document.vmf(), &source);
+            document.redo().unwrap();
+            assert_eq!(document.vmf(), &shell_document);
+            let ObjectId::Solid(cutter) = document
+                .edit("seam cutter", |tx| {
+                    edit::create_block(
+                        tx,
+                        DVec3::new(378.0, 48.0, 218.0),
+                        DVec3::new(402.0, 72.0, 258.0),
+                        "brick/cut",
+                    )
+                })
+                .unwrap()
+            else {
+                unreachable!()
+            };
+            let before = document.vmf().clone();
+            let revision = document.revision();
+            let history = document.undo_labels().count();
+            assert!(
+                document
+                    .edit("invalid carve batch", |tx| {
+                        carve::carve_many(tx, &[cutter, u32::MAX], &shell.brushes)
+                    })
+                    .is_err()
+            );
+            assert_eq!(document.vmf(), &before);
+            assert_eq!(document.revision(), revision);
+            assert_eq!(document.undo_labels().count(), history);
+            let result = document
+                .edit("carve cylinder seam", |tx| {
+                    carve::carve(tx, cutter, &shell.brushes)
+                })
+                .unwrap();
+            assert!(!result.changes.is_empty());
+            for solid in document.vmf().solids() {
+                subobject::topology(solid).unwrap();
+                assert!(volume(solid) > 0.0);
+            }
+            let remaining: f64 = document
+                .vmf()
+                .solids()
+                .filter(|solid| solid.id != cutter)
+                .map(volume)
+                .sum();
+            assert!(remaining > 0.0 && remaining < actual);
+            let after = document.vmf().clone();
+            let reopened =
+                source_formats::vmf::Vmf::parse(&after.write(&Default::default())).unwrap();
+            for solid in reopened.solids() {
+                subobject::topology(solid).unwrap();
+                assert!(volume(solid) > 0.0);
+            }
+            document.undo().unwrap();
+            assert_eq!(document.vmf(), &before);
+            document.redo().unwrap();
+            assert_eq!(document.vmf(), &after);
+        }
+    }
+
+    #[test]
+    fn trailer_pumpkin_shells_remain_closed_through_face_cutters() {
+        for shape in [primitive::Shape::Cylinder, primitive::Shape::Sphere] {
+            for thickness in [6.0, 8.0, 10.0] {
+                let mut document = Document::empty();
+                let ids = document
+                    .edit("pumpkin", |tx| {
+                        primitive::create(
+                            tx,
+                            &primitive::Spec {
+                                shape,
+                                mins: DVec3::new(266.0, -4.0, 194.0),
+                                maxs: DVec3::new(394.0, 124.0, 298.96),
+                                segments: 12,
+                                bands: 5,
+                                ..Default::default()
+                            },
+                        )
+                    })
+                    .unwrap();
+                let shell = document
+                    .edit("pumpkin shell", |tx| {
+                        hollow(
+                            tx,
+                            &ids,
+                            &Spec {
+                                thickness,
+                                outward: false,
+                                open_faces: Default::default(),
+                            },
+                        )
+                    })
+                    .unwrap();
+                for id in &shell.brushes {
+                    let solid = document.solid(*id).unwrap();
+                    subobject::topology(solid).unwrap();
+                    assert!(volume(solid) > 0.0);
+                }
+                let shell_volume: f64 = document.vmf().solids().map(volume).sum();
+                let cutters = document
+                    .edit("face cutters", |tx| {
+                        let mut cutters = Vec::new();
+                        for (mins, maxs) in [
+                            ([286.0, -14.0, 248.0], [320.0, 34.4, 274.0]),
+                            ([340.0, -14.0, 248.0], [374.0, 34.4, 274.0]),
+                            ([322.0, -14.0, 235.0], [338.0, 34.4, 247.0]),
+                        ] {
+                            cutters.extend(primitive::create(
+                                tx,
+                                &primitive::Spec {
+                                    shape: primitive::Shape::Cone,
+                                    axis: primitive::Axis::Y,
+                                    mins: DVec3::from_array(mins),
+                                    maxs: DVec3::from_array(maxs),
+                                    segments: 3,
+                                    ..Default::default()
+                                },
+                            )?);
+                        }
+                        for (mins, maxs) in [
+                            ([290.0, -14.0, 219.0], [313.0, 34.4, 231.0]),
+                            ([318.0, -14.0, 219.0], [342.0, 34.4, 231.0]),
+                            ([347.0, -14.0, 219.0], [370.0, 34.4, 231.0]),
+                            ([298.0, -14.0, 212.0], [362.0, 34.4, 220.0]),
+                        ] {
+                            cutters.push(edit::create_block(
+                                tx,
+                                DVec3::from_array(mins),
+                                DVec3::from_array(maxs),
+                                "brick/cut",
+                            )?);
+                        }
+                        Ok(cutters)
+                    })
+                    .unwrap()
+                    .into_iter()
+                    .map(|id| {
+                        let ObjectId::Solid(id) = id else {
+                            unreachable!()
+                        };
+                        id
+                    })
+                    .collect::<Vec<_>>();
+                let before = document.vmf().clone();
+                let mut targets = Vec::new();
+                for id in &shell.brushes {
+                    let solid = document.solid(*id).unwrap();
+                    let mut overlaps = false;
+                    for cutter in &cutters {
+                        let overlap = carve::intersects(solid, document.solid(*cutter).unwrap())
+                            .unwrap_or_else(|error| {
+                                panic!(
+                                    "{shape:?}/{thickness}: brush {id}, cutter {cutter}: {error}"
+                                )
+                            });
+                        overlaps |= overlap;
+                    }
+                    if overlaps {
+                        targets.push(*id);
+                    }
+                }
+                assert!(!targets.is_empty());
+                let mut edits = 0;
+                for targets in targets.chunks(carve::MAX_TARGETS) {
+                    document
+                        .edit("carve pumpkin face", |tx| {
+                            carve::carve_many(tx, &cutters, targets)
+                        })
+                        .unwrap_or_else(|error| {
+                            panic!("{shape:?}/{thickness}: targets {targets:?}: {error}")
+                        });
+                    edits += 1;
+                }
+                let mut remaining = 0.0;
+                for solid in document.vmf().solids() {
+                    subobject::topology(solid).unwrap();
+                    assert!(volume(solid) > 0.0);
+                    if !cutters.contains(&solid.id) {
+                        remaining += volume(solid);
+                    }
+                }
+                assert!(remaining > 0.0 && remaining < shell_volume);
+                for _ in 0..edits {
+                    document.undo().unwrap();
+                }
+                assert_eq!(document.vmf(), &before);
+            }
+        }
     }
 
     #[test]

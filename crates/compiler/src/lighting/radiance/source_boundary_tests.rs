@@ -453,7 +453,7 @@ fn sky_keeps_opaque_entry_ties_while_accepting_its_rounded_source() {
 #[test]
 fn source_certificate_queries_preserve_cancellation_and_shared_work_failures() {
     let control = crate::Control::default();
-    let mut budget = Budget::new(&control);
+    let mut budget = Budget::with_limit(&control, 100_000_000);
     let index = surface(64.0, None, false, &mut budget);
     let shadows = ShadowIndex::new(
         vec![ceiling_hull(63.99, SOURCE_OWNER, SOURCE_SIDE)],
@@ -468,7 +468,7 @@ fn source_certificate_queries_preserve_cancellation_and_shared_work_failures() {
             .trace(DVec3::ZERO, DVec3::Z, 0.0, &shadows, &props, &mut budget)
             .is_err()
     );
-    let mut budget = Budget::new(&control);
+    let mut budget = Budget::with_limit(&control, 100_000_000);
     control.cancel().unwrap();
     assert!(
         index

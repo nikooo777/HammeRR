@@ -8,7 +8,9 @@ use compiler::{
 use source_formats::gamefs::GameFs;
 use source_formats::vmf::Vmf;
 
-const USAGE: &str = "usage: hammerr-compile <map.vmf> --game <gameinfo.txt> [-o <map.bsp>] [--lighting fullbright|direct_ldr|direct_ldr_hdr] [--physics none|engine] [--sky-quality fast|balanced|detailed] [--visibility fast|detailed] [--bounces 0..4] [--smoothing-angle 0..90] [--pack-sky-assets] [--pack-water-assets] [--pack-static-prop-assets] [--bake-static-prop-vertices] [--generate-reflections] [--reflection-engine-root <directory>] [--reflection-steam-root <directory>]";
+const MAX_PRINTED_LIGHTING_CONTRIBUTORS: usize = 8;
+
+const USAGE: &str = "usage: hammerr-compile <map.vmf> --game <gameinfo.txt> [-o <map.bsp>] [--lighting fullbright|direct_ldr|direct_ldr_hdr] [--physics none|engine] [--sky-quality fast|balanced|detailed] [--lighting-work-limit <units>] [--visibility fast|detailed] [--bounces 0..4] [--smoothing-angle 0..90] [--pack-sky-assets] [--pack-water-assets] [--pack-static-prop-assets] [--bake-static-prop-vertices] [--generate-reflections] [--reflection-engine-root <directory>] [--reflection-steam-root <directory>]";
 
 fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args_os().skip(1);
@@ -41,6 +43,11 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
                 let name = args.next().ok_or(USAGE)?;
                 options.sky_quality = compiler::SkyQuality::parse(name.to_str().ok_or(USAGE)?)?;
             }
+            Some("--lighting-work-limit") => {
+                let value = args.next().ok_or(USAGE)?;
+                let value = value.to_str().ok_or(USAGE)?.parse::<u64>()?;
+                options.lighting_work_limit = compiler::validate_lighting_work_limit(value)?;
+            }
             Some("--physics") => {
                 let name = args.next().ok_or(USAGE)?;
                 options.physics = PhysicsMode::parse(name.to_str().ok_or(USAGE)?)?;
@@ -66,7 +73,10 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
             }
             Some("-h" | "--help") => {
                 println!(
-                    "{USAGE}\n\n--pack-water-assets packs original files for complete supported static Water material/Patch/texture closures. Every reachable Water material requires an explicit static cubemap with original LDR/HDR siblings. Runtime/default env_cubemap and missing or unsupported assets stop publication. Default off; available in every lighting mode without native capture.\n\n--pack-static-prop-assets packs original MDL, VVD, DX90 VTX, every declared plain opaque VertexLitGeneric material and basetexture VTF, and matching PHY only for emitted VPhysics props. Supports bounded static MDL 44/48, body 0/root LOD 0, trivial local animation and empty or exact Metal.Medium prop metadata. Missing or unsupported inputs stop publication. Default off; independent of vertex lighting and available in every lighting mode. Requires standard CS:S shaders and surface/prop-data definitions with DX90 or newer at runtime."
+                    "{USAGE}\n\n--lighting-work-limit sets one aggregate preparation/LDR/HDR allowance in integer work units. Default {}; range {}..{}. Independent memory, sample and geometry limits still apply.\n\n--pack-water-assets packs original files for complete supported static Water material/Patch/texture closures. Every reachable Water material requires an explicit static cubemap with original LDR/HDR siblings. Runtime/default env_cubemap and missing or unsupported assets stop publication. Default off; available in every lighting mode without native capture.\n\n--pack-static-prop-assets packs original MDL, VVD, DX90 VTX, every declared plain opaque VertexLitGeneric material and basetexture VTF, and matching PHY only for emitted VPhysics props. Supports bounded static MDL 44/48, body 0/root LOD 0, trivial local animation and empty or exact Metal.Medium prop metadata. Missing or unsupported inputs stop publication. Default off; independent of vertex lighting and available in every lighting mode. Requires standard CS:S shaders and surface/prop-data definitions with DX90 or newer at runtime.",
+                    compiler::DEFAULT_LIGHTING_WORK_LIMIT,
+                    compiler::MIN_LIGHTING_WORK_LIMIT,
+                    compiler::MAX_LIGHTING_WORK_LIMIT
                 );
                 return Ok(());
             }
@@ -162,6 +172,9 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
         };
         let object = diagnostic.object.as_deref().unwrap_or("map");
         eprintln!("{level}: {object}: {}", diagnostic.message);
+    }
+    if let Some(progress) = &output.stats.lighting_progress {
+        print_lighting_progress(progress);
     }
     let published = if let Some(lease) = &lease {
         if let Some(identity) = &source_identity {
@@ -353,14 +366,6 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
             }
         );
     }
-    if stats.lighting_mode.performs_lighting() {
-        println!(
-            "Lighting work: LDR {} · HDR {} · shared total {}",
-            stats.lighting_work,
-            stats.hdr.as_ref().map_or(0, |hdr| hdr.lighting_work),
-            stats.lighting_total_work
-        );
-    }
     println!(
         "static props: {}, model assets: {}, leaf references: {}",
         stats.static_props, stats.static_prop_models, stats.static_prop_leaf_refs
@@ -399,6 +404,97 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
         stats.physics_bytes
     );
     Ok(())
+}
+
+fn print_lighting_progress(progress: &compiler::lighting::LightingProgress) {
+    println!(
+        "Lighting attempted work: preparation {} · LDR {} · HDR {} · shared {} / {} · {} sampling · {:?}/{:?} · {}",
+        progress.preparation_work,
+        progress.ldr_work,
+        progress.hdr_work,
+        progress.work,
+        progress.limit,
+        progress.sky_quality,
+        progress.current_channel,
+        progress.current_phase,
+        if progress.completed {
+            "complete"
+        } else {
+            "incomplete"
+        },
+    );
+    println!(
+        "Lightmap samples: {} completed / {} planned{} · LDR {} / {} · HDR {} / {}",
+        progress.lightmap_samples_completed,
+        progress.lightmap_samples_planned,
+        if progress.lightmap_samples_planned_complete {
+            ""
+        } else {
+            " so far"
+        },
+        progress.ldr_lightmap_samples_completed,
+        progress.ldr_lightmap_samples_planned,
+        progress.hdr_lightmap_samples_completed,
+        progress.hdr_lightmap_samples_planned,
+    );
+    for phase in progress.phases.iter().filter(|phase| phase.work != 0) {
+        println!(
+            "Lighting {:?}/{:?}: {} work · {} / {} samples{}",
+            phase.channel,
+            phase.phase,
+            phase.work,
+            phase.samples_completed,
+            phase.samples_planned,
+            if phase.samples_planned_complete {
+                ""
+            } else {
+                " planned so far"
+            },
+        );
+    }
+    let mut contributors = progress.contributors.iter().collect::<Vec<_>>();
+    contributors.sort_by_key(|entry| std::cmp::Reverse(entry.work));
+    let omitted_work = contributors
+        .iter()
+        .skip(MAX_PRINTED_LIGHTING_CONTRIBUTORS)
+        .map(|entry| entry.work)
+        .sum::<u64>();
+    if contributors.len() > MAX_PRINTED_LIGHTING_CONTRIBUTORS {
+        println!(
+            "Lighting contributors: largest {} of {} retained entries; {} work in other retained entries",
+            MAX_PRINTED_LIGHTING_CONTRIBUTORS,
+            contributors.len(),
+            omitted_work,
+        );
+    }
+    for entry in contributors
+        .into_iter()
+        .take(MAX_PRINTED_LIGHTING_CONTRIBUTORS)
+    {
+        println!(
+            "Lighting contributor entity:{} {} {:?}/{:?}: {} work",
+            entry.entity_id, entry.classname, entry.channel, entry.phase, entry.work,
+        );
+        if let Some(instance) = &entry.instance {
+            println!(
+                "  instance {}{} · child entity:{} · compiled entity:{}",
+                instance.file,
+                if instance.file_truncated { "…" } else { "" },
+                instance.original_entity_id,
+                entry.compiled_entity_id,
+            );
+        }
+    }
+    if progress.contributors_truncated {
+        println!(
+            "Lighting contributor detail truncated; {} work from other contributors",
+            progress.other_contributors_work
+        );
+    }
+    println!(
+        "Lighting work without a light contributor: {}",
+        progress.unattributed_work
+    );
 }
 
 fn main() -> ExitCode {

@@ -274,7 +274,7 @@ mod tests {
             stats: Stats::default(),
         };
         let control = Control::default();
-        let mut budget = Budget::new(&control);
+        let mut budget = Budget::with_limit(&control, 100_000_000);
         for x in [-2e-6, -0.5e-6, 0.0, 0.5e-6] {
             let cluster = candidates
                 .cluster(DVec3::X * x, &map, &tree, &visibility, &mut budget)
@@ -302,7 +302,7 @@ mod tests {
                 .is_err()
         );
         let control = Control::default();
-        let mut budget = Budget::new(&control);
+        let mut budget = Budget::with_limit(&control, 100_000_000);
         control.cancel().unwrap();
         assert!(
             candidates

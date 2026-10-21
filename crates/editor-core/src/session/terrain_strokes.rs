@@ -235,11 +235,22 @@ impl Session {
 
     pub fn terrain_stroke_json(&self) -> Value {
         match &self.terrain_strokes.stroke {
-            None => json!({"token":null,"active":false}),
+            None => json!({"handle":null,"token":null,"active":false}),
             Some(stroke) => {
-                json!({"token":stroke.token.to_string(),"active":true,"stale":self.checked_terrain_stroke(stroke.token).is_err(),"mode":stroke.spec.name(),"radius":stroke.spec.brush.radius,"spacing":stroke.spec.spacing(),"sampling_normal":stroke.axis.to_array(),"samples":stroke.path.points.len(),"input_points":stroke.path.input_points,"cursor":stroke.path.cursor.map(|point|point.to_array()),"preview_token":stroke.preview_token.map(|token|token.to_string()),"mask_token":stroke.mask_token.map(|token|token.to_string()),"max_samples":stroke::MAX_DABS,"max_input_points":stroke::MAX_INPUT_POINTS,"max_update_points":stroke::MAX_UPDATE_POINTS,"max_work":stroke::MAX_WORK})
+                json!({"handle":self.terrain_stroke_handle(),"token":stroke.token.to_string(),"active":true,"stale":self.checked_terrain_stroke(stroke.token).is_err(),"mode":stroke.spec.name(),"radius":stroke.spec.brush.radius,"spacing":stroke.spec.spacing(),"sampling_normal":stroke.axis.to_array(),"samples":stroke.path.points.len(),"input_points":stroke.path.input_points,"cursor":stroke.path.cursor.map(|point|point.to_array()),"preview_token":stroke.preview_token.map(|token|token.to_string()),"mask_token":stroke.mask_token.map(|token|token.to_string()),"max_samples":stroke::MAX_DABS,"max_input_points":stroke::MAX_INPUT_POINTS,"max_update_points":stroke::MAX_UPDATE_POINTS,"max_work":stroke::MAX_WORK})
             }
         }
+    }
+
+    pub fn terrain_stroke_handle(&self) -> Value {
+        Self::edit_handle(
+            "terrain_stroke",
+            self.terrain_strokes.stroke.as_ref().and_then(|stroke| {
+                self.checked_terrain_stroke(stroke.token)
+                    .is_ok()
+                    .then_some(stroke.token)
+            }),
+        )
     }
 
     pub(super) fn append_terrain_stroke_guides(&self, mesh: &mut render::SceneMesh) {

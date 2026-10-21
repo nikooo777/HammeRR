@@ -356,7 +356,7 @@ pub(in crate::mcp) fn face_id(face: &FaceRef) -> map_core::surface::FaceId {
 }
 
 pub(in crate::mcp) fn face_state(session: &Session) -> Value {
-    json!({"mode": if session.face_mode() { "faces" } else { "objects" }, "preview": session.has_face_preview(),
+    json!({"handle": session.face_preview_handle(), "mode": if session.face_mode() { "faces" } else { "objects" }, "preview": session.has_face_preview(),
         "preview_token":session.face_preview_token().map(|token|token.to_string()),
         "atlas":session.atlas_fit_state(),
         "sample": surface_sample_state(session),
@@ -572,7 +572,7 @@ pub struct PrimitiveArgs {
     pub axis: Option<String>,
     /// Curved-shape sides/arch pieces, 3..64; default 12.
     pub segments: Option<u32>,
-    /// Sphere latitude bands, 2..32; segments * bands <= 256; default 6.
+    /// Sphere latitude bands, 2..32; segments * bands <= 256; default 5.
     pub bands: Option<u32>,
     /// Arch inset subtracted from both ellipse radii; default 16 units.
     pub inset: Option<f64>,

@@ -170,11 +170,12 @@ impl SkyQuality {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Options {
     pub lighting: LightingMode,
     pub physics: PhysicsMode,
     pub sky_quality: SkyQuality,
+    pub lighting_work_limit: u64,
     pub visibility: VisibilityMode,
     pub bounces: u8,
     pub smoothing_angle: u8,
@@ -183,6 +184,38 @@ pub struct Options {
     pub pack_water_assets: bool,
     pub pack_static_prop_assets: bool,
     pub bake_static_prop_vertices: bool,
+}
+
+pub const MIN_LIGHTING_WORK_LIMIT: u64 = 1;
+pub const DEFAULT_LIGHTING_WORK_LIMIT: u64 = 1_000_000_000;
+pub const MAX_LIGHTING_WORK_LIMIT: u64 = 10_000_000_000;
+
+pub fn validate_lighting_work_limit(value: u64) -> Result<u64, String> {
+    if !(MIN_LIGHTING_WORK_LIMIT..=MAX_LIGHTING_WORK_LIMIT).contains(&value) {
+        return Err(format!(
+            "Lighting work limit must be between {MIN_LIGHTING_WORK_LIMIT} and {MAX_LIGHTING_WORK_LIMIT} work units"
+        ));
+    }
+    Ok(value)
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            lighting: LightingMode::default(),
+            physics: PhysicsMode::default(),
+            sky_quality: SkyQuality::default(),
+            lighting_work_limit: DEFAULT_LIGHTING_WORK_LIMIT,
+            visibility: VisibilityMode::default(),
+            bounces: 0,
+            smoothing_angle: 0,
+            generate_reflections: false,
+            pack_sky_assets: false,
+            pack_water_assets: false,
+            pack_static_prop_assets: false,
+            bake_static_prop_vertices: false,
+        }
+    }
 }
 
 pub const MAX_LIGHT_BOUNCES: u8 = 4;
@@ -222,6 +255,7 @@ impl Options {
     }
 
     pub fn validate(self) -> Result<Self, String> {
+        validate_lighting_work_limit(self.lighting_work_limit)?;
         if self.bake_static_prop_vertices && !self.lighting.performs_lighting() {
             return Err(
                 "Bake static-prop vertex lighting requires Direct LDR or Direct LDR + HDR lighting"
@@ -429,6 +463,7 @@ pub struct Stats {
     pub lighting_mode: LightingMode,
     pub hdr: Option<HdrLightingStats>,
     pub lighting_total_work: usize,
+    pub lighting_progress: Option<lighting::LightingProgress>,
     pub bounces: u8,
     pub bounce_rays: usize,
     pub bounce_samples: usize,
@@ -1452,14 +1487,14 @@ fn build(
     if options.lighting.performs_lighting() {
         control.advance(Stage::Lighting)?;
         let prop_material_sources = map.materials.take_prop_lighting_sources();
-        let stats = lighting::bake(
+        let result = lighting::bake(
             &map,
             &models[0].tree,
             &visibility,
             &mut bsp,
             &mut output.report,
-            control,
             lighting::Settings {
+                control,
                 fs,
                 vmf,
                 options,
@@ -1473,7 +1508,21 @@ fn build(
                 prop_sources: &prop_stats.sources,
                 prop_material_sources,
             },
-        )?;
+            &mut output.stats.lighting_progress,
+        );
+        if let Some(progress) = &output.stats.lighting_progress {
+            output.stats.lighting_work = (progress.preparation_work + progress.ldr_work) as usize;
+            output.stats.lighting_total_work = progress.work as usize;
+            output.stats.lightmap_samples = progress.ldr_lightmap_samples_completed as usize;
+            if options.lighting == LightingMode::DirectLdrHdr {
+                output.stats.hdr = Some(HdrLightingStats {
+                    lighting_work: progress.hdr_work as usize,
+                    lightmap_samples: progress.hdr_lightmap_samples_completed as usize,
+                    ..Default::default()
+                });
+            }
+        }
+        let stats = result?;
         if output.report.has_errors() {
             return Ok(());
         }
@@ -1550,7 +1599,7 @@ fn build(
             &map,
             &models,
             &water,
-            fs,
+            physics::Settings { vmf, fs },
             &mut bsp,
             &mut output.report,
             control,
@@ -1718,6 +1767,7 @@ pub fn compile_with_source_controlled(
         Ok(prepared) => {
             output.instance_dependencies = prepared.dependencies.clone();
             output.stats.instances = prepared.stats.clone();
+            let diagnostics_before_build = output.report.diagnostics.len();
             if let Err(message) = build(
                 &prepared,
                 fs,
@@ -1726,11 +1776,31 @@ pub fn compile_with_source_controlled(
                 context,
                 control,
                 face_origins::FaceOrigins::prepare(prepared.vmf.as_ref(), &prepared),
-            ) {
+            ) && !output.report.diagnostics[diagnostics_before_build..]
+                .iter()
+                .any(|diagnostic| diagnostic.level == Level::Error && diagnostic.message == message)
+            {
                 output
                     .report
                     .diagnostics
                     .push(Diagnostic::error(message, None, None));
+            }
+            if let Some(progress) = &mut output.stats.lighting_progress {
+                for contributor in &mut progress.contributors {
+                    if let Some((owner, file, original_entity_id)) =
+                        prepared.entity_origin(contributor.compiled_entity_id)
+                    {
+                        contributor.entity_id = owner;
+                        contributor.instance = Some(lighting::LightingInstanceSource {
+                            file: map_core::entity_helpers::bounded_preview(
+                                file,
+                                instances::MAX_FIELD_BYTES,
+                            ),
+                            original_entity_id,
+                            file_truncated: file.len() > instances::MAX_FIELD_BYTES,
+                        });
+                    }
+                }
             }
             prepared.annotate(&mut output.report);
             if let Some(leak) = &mut output.leak

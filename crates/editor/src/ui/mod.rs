@@ -299,6 +299,7 @@ fn session_of(ui: &SharedUi) -> SharedSession {
 fn refresh_view_controls(app: &AppWindow, session: &Session) {
     editor_visibility::refresh(app, session);
     app.set_normal_maps(session.view().normal_maps);
+    app.set_surface_shading(session.view().surface_shading);
     app.set_lighting_preview(session.view().lighting_preview);
     app.set_lighting_sky_ambient(session.view().lighting_sky_ambient);
     app.set_lighting_quality(
@@ -418,6 +419,7 @@ fn apply_view_controls(app: AppWindow, shared: &SharedSession) {
         }),
         lighting_exposure_ev: Some(lighting_exposure),
         normal_maps: Some(app.get_normal_maps()),
+        surface_shading: Some(app.get_surface_shading()),
         additive_sprite_guides: Some(app.get_additive_sprite_guides()),
         ..Default::default()
     }) {
@@ -3368,6 +3370,9 @@ fn create_document_window(
 
 #[cfg(test)]
 pub(crate) mod tests;
+
+#[cfg(test)]
+mod surface_shading_tests;
 
 #[cfg(test)]
 mod frustum_tests;

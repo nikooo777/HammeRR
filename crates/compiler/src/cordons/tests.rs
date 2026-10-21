@@ -750,10 +750,13 @@ fn disabled_regions_borrow_input_and_unsupported_scopes_or_id_exhaustion_preserv
         output.report
     );
     source.entities.pop();
-    for classname in [
-        "info_overlay_transition",
-        "func_instance",
-        "func_viscluster",
+    for (classname, expected) in [
+        ("info_overlay_transition", "info_overlay_transition"),
+        ("func_instance", "func_instance"),
+        (
+            "func_viscluster",
+            "Visclusters require one visible convex brush",
+        ),
     ] {
         let mut unsafe_source = source.clone();
         unsafe_source
@@ -770,7 +773,9 @@ fn disabled_regions_borrow_input_and_unsupported_scopes_or_id_exhaustion_preserv
                 .report
                 .diagnostics
                 .iter()
-                .any(|diagnostic| diagnostic.message.contains(classname))
+                .any(|diagnostic| diagnostic.message.contains(expected)),
+            "{classname}: {:?}",
+            output.report,
         );
         assert_eq!(unsafe_source, before);
     }

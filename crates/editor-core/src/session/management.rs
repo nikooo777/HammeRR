@@ -370,6 +370,15 @@ impl Session {
     pub fn property_draft(&self) -> Option<&PropertyDraft> {
         self.property_draft.as_ref()
     }
+
+    pub fn property_edit_report(&self) -> Result<serde_json::Value, String> {
+        let preview = self.preview_property_edit()?;
+        Ok(serde_json::json!({
+            "handle": Self::edit_handle("property_edit", self.property_draft.as_ref().map(|draft| draft.token)),
+            "draft": self.property_draft(),
+            "preview": preview,
+        }))
+    }
     pub fn management_serial(&self) -> u64 {
         self.management_serial
     }

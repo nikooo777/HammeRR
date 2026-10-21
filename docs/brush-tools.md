@@ -21,6 +21,12 @@ Turn solid brushes into rooms with walls.
 
 **Limits:** 16 source brushes, 64 sides per brush, 256 walls, and a thickness from 0.125 to 4096 units. Terrain can't be hollowed.
 
+The default sphere uses 12 sides and 5 latitude bands so it fits the 64-side
+editing limit. More detailed primitives retain the explicitly requested
+resolution; **Brush shapes…** warns when that resolution exceeds the editing
+limit. Thin final pieces can still be refused by geometry or native collision
+checks.
+
 | Hollow controls | Inside the preview |
 | --- | --- |
 | ![Wall thickness, opening faces and cancellable shell preview](images/hollow-brushes.png) | ![Textured interior of a hollowed brush before applying](images/hollow-interior.png) |

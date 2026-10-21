@@ -738,7 +738,7 @@ fn flagged_unknown_cluster_keeps_world_terrain_other_unknown_and_tied_prop_block
             ambient_directions: &[],
         };
         let control = Control::default();
-        let mut budget = Budget::new(&control);
+        let mut budget = Budget::with_limit(&control, 100_000_000);
         let mut candidates = Candidates::new(&lights, &visibility, &mut budget).unwrap();
         let value = receivers::direct_with_reception(
             &ctx,
@@ -760,7 +760,7 @@ fn flagged_unknown_cluster_keeps_world_terrain_other_unknown_and_tied_prop_block
         assert_eq!(value[0], DVec3::splat(expected));
         for canceled in [false, true] {
             let control = Control::default();
-            let mut budget = Budget::new(&control);
+            let mut budget = Budget::with_limit(&control, 100_000_000);
             if canceled {
                 control.cancel().unwrap();
             } else {

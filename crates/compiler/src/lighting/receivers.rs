@@ -101,10 +101,12 @@ pub(super) fn direct_with_reception(
     reception: Reception,
     budget: &mut Budget<'_>,
 ) -> Result<[DVec3; STYLE_COUNT], String> {
+    let context = budget.context();
     let mut colors = [DVec3::ZERO; STYLE_COUNT];
     for &candidate in candidates.for_cluster(cluster, ctx.lights, budget)? {
-        budget.consume(1)?;
         let light = &ctx.lights[candidate];
+        budget.emitter(light);
+        budget.consume(1)?;
         if super::culling::outside_range(light, sample.point) {
             continue;
         }
@@ -174,5 +176,6 @@ pub(super) fn direct_with_reception(
             }
         }
     }
+    budget.restore(context);
     Ok(colors)
 }

@@ -14,6 +14,7 @@ HammeRR includes its own native compiler, so it builds Counter-Strike: Source ma
    - **Indirect light**: **Direct only** (default), or **One diffuse bounce**, **Two diffuse bounces**, **Three diffuse bounces** or **Four diffuse bounces** to reflect light from world brushes and terrain.
    - **Brush smoothing angle**: **0°** keeps unassigned brush faces flat; higher angles blend eligible neighbors. Assigned face groups keep their rules.
    - **Sampling quality**, for either lit mode’s sky, model ambient and bounced light: **Fast (32 directions)**, **Balanced (128 directions)** or **Detailed (512 directions)**.
+   - **Lighting work limit (millions)**: **1000** by default. Enter a different allowance and click **Apply work limit** when a larger bake needs more headroom.
    - **Bake static-prop vertex lighting**: opt in to direct vertex lighting and up to four diffuse world/terrain bounces for admitted simple opaque models. Choose a lit **Build lighting** mode and the desired **Indirect light** depth first.
    - **Pack sky assets**: include the applied sky family's supported materials and textures in the BSP. This is off by default and works with every lighting mode.
    - **Pack water assets**: include original files for supported static Water materials and their dependencies. This is off by default, works with every lighting mode and requires explicit static LDR/HDR cubemap pairs throughout the graph.
@@ -96,6 +97,24 @@ and capture limits.
 Choose these with **Build settings…** in the toolbar, before or after compiling. **Build details…** in the progress bar opens the same window after a build job exists. Agents use `get_compile_settings` and `set_compile_settings` without needing a previous build. Settings apply to every build (Compile, Run Map and agent builds), aren't stored in the VMF, and can't change while a build is running.
 
 ![Lighting and sky settings before the first build](images/build-settings.png)
+
+**Lighting work allowance**
+
+1. Open **Build settings…** and find **Lighting work limit (millions)**.
+2. Enter the allowance: **1000** means one billion work units. Values from
+   **0.000001** to **10000** are supported, with up to six decimal places.
+3. Click **Apply work limit**, then compile. Increasing the allowance keeps the
+   selected sampling quality and all sample, allocation and geometry limits.
+4. In **Build details…**, inspect **Lighting work charged**, completed/planned
+   samples, channel/phase totals and source-linked light contributors. These
+   counters remain available when lighting fails. An incomplete sample plan is
+   labeled; charged work includes a budget request rejected before execution.
+
+The allowance covers shared preparation and both LDR/HDR channels together.
+Work units bound compiler operations; they are not milliseconds. Large outdoor
+maps can spend most work tracing sky ambient. Setting a point or spot light's
+`_distance` reduces work outside its range. Resource failures retain
+the previous BSP; increasing work allowance does not bypass other failures.
 
 **Build lighting**
 
@@ -298,7 +317,11 @@ do not add baked shadows or collision.
 
 ![Independent LDR and HDR build controls](images/build-hdr-controls.png)
 
-Limits: this is an experimental compiler mode. A successful compile or an **HDR data ready** result does not establish that the game selected HDR. Native HDR requires nonempty HDR light samples, world lights and ambient samples, plus game and hardware support. Empty scenes do not receive dummy records. The game’s HDR setting must be selected before a fresh map load; live changes may trigger save/reload. Enable **Generate reflections** to capture paired LDR/HDR cubemaps after baking; complete HDR arrays and a supported capture runtime are required. Mounted HDR sky families use the [authored sky name and native material path](sky.md#compiled-hdr-skies); [Pack sky assets](#pack-portable-sky-assets) admits and embeds the supported complete material/VTF closure. For fixed native exposure, follow [HDR exposure controllers](hdr-exposure.md). Broader HDR sky radiance, adaptation, editor HDR previews and per-texel prop lightmaps remain unfinished. Each channel shares the existing geometry and lighting limits; the 100-million-work cap covers the complete build’s lighting preparation and both passes.
+Reflective prop materials add cubemap reflections to their diffuse lighting.
+Place samples and use [Generate reflections](reflections.md) for map-specific
+reflections; tune [exposure](hdr-exposure.md) separately from light brightness.
+
+Limits: this is an experimental compiler mode. A successful compile or an **HDR data ready** result does not establish that the game selected HDR. Native HDR requires nonempty HDR light samples, world lights and ambient samples, plus game and hardware support. Empty scenes do not receive dummy records. The game’s HDR setting must be selected before a fresh map load; live changes may trigger save/reload. Enable **Generate reflections** to capture paired LDR/HDR cubemaps after baking; complete HDR arrays and a supported capture runtime are required. Mounted HDR sky families use the [authored sky name and native material path](sky.md#compiled-hdr-skies); [Pack sky assets](#pack-portable-sky-assets) admits and embeds the supported complete material/VTF closure. For fixed native exposure, follow [HDR exposure controllers](hdr-exposure.md). Broader HDR sky radiance, adaptation, editor HDR previews and per-texel prop lightmaps remain unfinished. Each channel shares the existing geometry and lighting limits; the configured lighting-work allowance covers shared preparation and both passes.
 
 #### Brush-entity lightmaps
 
@@ -342,7 +365,7 @@ Limits: at most 32 named light groups and four contributing styles per face, inc
 | --- | --- |
 | ![One reflected styled-light pass on the shadowed model](images/styled-bounce-on.png) | ![Four reflected styled-light passes on the same model](images/four-bounce-on.png) |
 
-Limits: up to four diffuse bounces from world/detail/terrain lightmaps, preserving each static, switchable or animated light style, using average base-texture reflectivity. Source reflectivity must be between zero and one. Sky is handled by direct sky lighting and is excluded from the bounce gather. Translucent world surfaces cast opaque shadows. Opaque nodraw brushes also block reflected paths, including when they sit close to a lit surface. Brush entities receive world bounce and block it with their own geometry; separate brush models do not cast permanent bounce shadows or supply reflected light. Static-prop meshes apply the same opaque, alpha-test or requested translucent coverage to reflected rays but do not supply reflected light. More than four bounces, emissive materials and per-texel prop lightmaps remain unfinished. Baked model lighting moves with the model and does not relight as it moves. Unparented `func_brush` models can bake bounded initial rotations; see [Initial brush-model rotation](#initial-brush-model-rotation). Other classes still require absent or exact-zero initial angles. Malformed or ambiguous pose fields stop lit builds with an entity diagnostic. Hidden models and models without lightmap receivers are unaffected. The shared 100-million lighting work budget and 16 MiB lightmap budget per channel apply; exceeded limits keep the previous BSP. Use fewer bounces, lower sampling, larger lightmap scales or **Direct only** to reduce work. **Fullbright** retains this setting but performs no lighting work.
+Limits: up to four diffuse bounces from world/detail/terrain lightmaps, preserving each static, switchable or animated light style, using average base-texture reflectivity. Source reflectivity must be between zero and one. Sky is handled by direct sky lighting and is excluded from the bounce gather. Translucent world surfaces cast opaque shadows. Opaque nodraw brushes also block reflected paths, including when they sit close to a lit surface. Brush entities receive world bounce and block it with their own geometry; separate brush models do not cast permanent bounce shadows or supply reflected light. Static-prop meshes apply the same opaque, alpha-test or requested translucent coverage to reflected rays but do not supply reflected light. More than four bounces, emissive materials and per-texel prop lightmaps remain unfinished. Baked model lighting moves with the model and does not relight as it moves. Unparented `func_brush` models can bake bounded initial rotations; see [Initial brush-model rotation](#initial-brush-model-rotation). Other classes still require absent or exact-zero initial angles. Malformed or ambiguous pose fields stop lit builds with an entity diagnostic. Hidden models and models without lightmap receivers are unaffected. The configured shared lighting-work allowance and 16 MiB lightmap budget per channel apply; exceeded limits keep the previous BSP. Use fewer bounces, lower sampling, larger lightmap scales or **Direct only** to reduce work. **Fullbright** retains this setting but performs no lighting work.
 
 #### Required material texture metrics
 
@@ -470,7 +493,7 @@ above and an authored `$reflectivity` override below. Without an override,
 reflectivity still comes from the albedo header. Editor preview and atlas
 inspection retain their own display-override rules.
 
-Limits: a lit primary-normal material on those three shader families accepts an absent suppression key or trimmed literal `0`/`1`. Other provided spellings fail compilation; use the supported literal rather than relying on native integer coercion. The engine can clamp bright ordinary and bumped LDR lighting differently; compare modest brightness when tuning normal details. This changes compiled game lighting; the editor's material thumbnails and viewport use diffuse previews. WorldVertexTransition secondary normal mapping requires a primary `$bumpmap`; `$bumpmap2` alone does not activate the checked shader path. Initial rotations on parented models or other brush classes, world/terrain opacity and colored/refraction transmission, and per-texel prop lightmaps remain unfinished. Auxiliary directions share the 16 MiB lightmap limit per channel and 100-million work limit per build; larger scales or lower sampling can reduce work.
+Limits: a lit primary-normal material on those three shader families accepts an absent suppression key or trimmed literal `0`/`1`. Other provided spellings fail compilation; use the supported literal rather than relying on native integer coercion. The engine can clamp bright ordinary and bumped LDR lighting differently; compare modest brightness when tuning normal details. This changes compiled game lighting; the editor's material thumbnails and viewport use diffuse previews. WorldVertexTransition secondary normal mapping requires a primary `$bumpmap`; `$bumpmap2` alone does not activate the checked shader path. Initial rotations on parented models or other brush classes, world/terrain opacity and colored/refraction transmission, and per-texel prop lightmaps remain unfinished. Auxiliary directions share the 16 MiB lightmap limit per channel and configured shared work limit per build; larger scales or lower sampling can reduce work.
 
 #### Authored material reflectivity
 
@@ -537,7 +560,7 @@ Sunlight requires sky in the sampled sun directions, while ambient samples all v
 
 #### Limits and errors
 
-- Up to 16 MiB of lighting data and 8,192 baked light records per channel; dual-channel builds allow 32 MiB total lighting data. One cancellable 100-million-work budget covers shared preparation and both channels.
+- Up to 16 MiB of lighting data and 8,192 baked light records per channel; dual-channel builds allow 32 MiB total lighting data. One configurable, cancellable work allowance covers shared preparation and both channels.
 - One visible `light_environment` per map.
 - **SunSpreadAngle** must be finite and between 0 and 90 degrees. Zero uses one sun ray, regardless of sky quality; positive spread uses the chosen 32, 128 or 512 directions per sun sample.
 - Invalid styles, conflicting named-group states, invalid falloff values and invalid sun angles fail with actionable diagnostics.

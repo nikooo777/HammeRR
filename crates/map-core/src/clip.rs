@@ -11,6 +11,23 @@ const PLANE_POINT_SPAN: f64 = 64.0;
 const MAX_COORDINATE: f64 = 65_536.0;
 const MIN_VOLUME: f64 = 1e-6;
 
+#[derive(Debug)]
+pub(crate) enum HalfError {
+    SmallVolume(u32),
+    Invalid(EditError),
+}
+
+impl HalfError {
+    pub(crate) fn into_edit_error(self) -> EditError {
+        match self {
+            Self::SmallVolume(id) => invalid(format!(
+                "Brush {id} has empty, unbounded or invalid geometry"
+            )),
+            Self::Invalid(error) => error,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Keep {
     Front,
@@ -68,18 +85,22 @@ pub fn plane_points(plane: Plane) -> [DVec3; 3] {
 }
 
 fn geometry(solid: &Solid) -> std::result::Result<BrushGeometry, EditError> {
+    checked_geometry(solid).map_err(HalfError::into_edit_error)
+}
+
+fn checked_geometry(solid: &Solid) -> std::result::Result<BrushGeometry, HalfError> {
     if solid
         .sides
         .iter()
         .any(|side| side.plane.0.iter().any(|point| !point.is_finite()))
     {
-        return Err(invalid(format!(
+        return Err(HalfError::Invalid(invalid(format!(
             "Brush {} has nonfinite plane points",
             solid.id
-        )));
+        ))));
     }
     let geometry = BrushGeometry::from_solid(solid)
-        .map_err(|error| invalid(format!("Brush {}: {error}", solid.id)))?;
+        .map_err(|error| HalfError::Invalid(invalid(format!("Brush {}: {error}", solid.id))))?;
     let center = geometry.center();
     let volume: f64 = geometry
         .faces
@@ -93,17 +114,19 @@ fn geometry(solid: &Solid) -> std::result::Result<BrushGeometry, EditError> {
         })
         .sum();
     if !volume.is_finite()
-        || volume.abs() <= MIN_VOLUME
         || geometry
             .faces
             .iter()
             .flat_map(|face| &face.vertices)
             .any(|point| !point.is_finite() || point.abs().max_element() > MAX_COORDINATE)
     {
-        return Err(invalid(format!(
+        return Err(HalfError::Invalid(invalid(format!(
             "Brush {} has empty, unbounded or invalid geometry",
             solid.id
-        )));
+        ))));
+    }
+    if volume.abs() <= MIN_VOLUME {
+        return Err(HalfError::SmallVolume(solid.id));
     }
     Ok(geometry)
 }
@@ -113,6 +136,14 @@ pub(crate) fn half(
     plane: Plane,
     material: &str,
 ) -> std::result::Result<Solid, EditError> {
+    checked_half(solid, plane, material).map_err(HalfError::into_edit_error)
+}
+
+pub(crate) fn checked_half(
+    solid: &Solid,
+    plane: Plane,
+    material: &str,
+) -> std::result::Result<Solid, HalfError> {
     let mut part = solid.clone();
     let (u, v) = world_texture_axes(plane.normal);
     part.sides.push(Side {
@@ -136,7 +167,7 @@ pub(crate) fn half(
         extra_properties: Default::default(),
         extra: Vec::new(),
     });
-    let shape = geometry(&part)?;
+    let shape = checked_geometry(&part)?;
     let active: BTreeSet<_> = shape.faces.iter().map(|face| face.side).collect();
     part.sides = part
         .sides
@@ -147,9 +178,11 @@ pub(crate) fn half(
     if part.sides.last().is_none_or(|side| {
         side.id != 0 || side.plane != source_formats::vmf::Plane(plane_points(plane))
     }) {
-        return Err(invalid("Cut would produce a degenerate cap face"));
+        return Err(HalfError::Invalid(invalid(
+            "Cut would produce a degenerate cap face",
+        )));
     }
-    geometry(&part)?;
+    checked_geometry(&part)?;
     Ok(part)
 }
 

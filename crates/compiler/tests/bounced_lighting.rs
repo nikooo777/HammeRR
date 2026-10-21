@@ -122,7 +122,14 @@ fn first_bounce_lights_a_shadow_with_reflected_color_and_bounded_energy() {
         .unwrap();
     let source = document.vmf().clone();
     let direct = compiler::compile_with_options(document.vmf(), &game, settings(0));
-    let bounced = compiler::compile_with_options(document.vmf(), &game, settings(1));
+    let bounced = compiler::compile_with_options(
+        document.vmf(),
+        &game,
+        Options {
+            lighting_work_limit: 100_000_000,
+            ..settings(1)
+        },
+    );
     assert!(
         !direct.report.has_errors() && !bounced.report.has_errors(),
         "{:?} {:?}",
@@ -675,20 +682,34 @@ fn multiple_bounces_keep_direct_energy_bounded_and_zero_albedo_exact() {
 fn multiple_bounces_share_one_work_budget_and_preserve_previous_output() {
     let (_directory, game) = albedo_game([0.5; 3]);
     let document = model_receiver(DVec3::new(101.5, -67.25, 32.125), false, false);
-    let first = compiler::compile_with_options(document.vmf(), &game, settings(1));
+    let first = compiler::compile_with_options(
+        document.vmf(),
+        &game,
+        Options {
+            lighting_work_limit: 100_000_000,
+            ..settings(1)
+        },
+    );
     assert!(!first.report.has_errors(), "{:?}", first.report);
     assert!(first.stats.lighting_work > 50_000_000);
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("guarded.bsp");
     std::fs::write(&path, b"previous BSP").unwrap();
-    let second = compiler::compile_with_options(document.vmf(), &game, settings(2));
+    let second = compiler::compile_with_options(
+        document.vmf(),
+        &game,
+        Options {
+            lighting_work_limit: 100_000_000,
+            ..settings(2)
+        },
+    );
     assert!(second.report.has_errors());
     assert!(
         second
             .report
             .diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.message.contains("100-million work-unit"))
+            .any(|diagnostic| diagnostic.message.contains("100000000 work-unit"))
     );
     assert!(!second.write(&path).unwrap());
     assert_eq!(std::fs::read(path).unwrap(), b"previous BSP");

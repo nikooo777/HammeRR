@@ -392,7 +392,7 @@ fn source_search_keeps_nearby_positive_hits_and_shadow_endpoint_policy() {
 #[test]
 fn reflected_owner_skip_preserves_other_unknown_and_world_blockers() {
     let control = Control::default();
-    let mut budget = Budget::new(&control);
+    let mut budget = Budget::with_limit(&control, 100_000_000);
     let surfaces = floor(&mut budget);
     let shadows = ShadowIndex::new(Vec::<Occluder>::new(), &mut |_| Ok(())).unwrap();
     let point = DVec3::Z * 16.0;
@@ -468,7 +468,7 @@ fn reflected_owner_skip_preserves_other_unknown_and_world_blockers() {
     );
     for cancelled in [false, true] {
         let control = Control::default();
-        let mut budget = Budget::new(&control);
+        let mut budget = Budget::with_limit(&control, 100_000_000);
         if cancelled {
             control.cancel().unwrap();
         } else {

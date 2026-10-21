@@ -192,6 +192,56 @@ mod tests {
     }
 
     #[test]
+    fn lighting_work_context_roundtrips_and_rejects_malformed_explicit_limits() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = Store {
+            directory: directory.path().to_owned(),
+        };
+        let mut saved = entry(directory.path().join("outdoor.vmf"));
+        saved.build_settings.lighting_work_limit = 1_234_567_890;
+        store.save(std::slice::from_ref(&saved)).unwrap();
+        assert_eq!(store.load().unwrap(), [saved.clone()]);
+        let path = directory.path().join(FILE_NAME);
+        let original = fs::read(&path).unwrap();
+        let valid: serde_json::Value = serde_json::from_slice(&original).unwrap();
+        assert_eq!(
+            valid["entries"][0]["build_settings"]["lighting_work_limit"],
+            1_234_567_890u64
+        );
+        saved.build_settings.lighting_work_limit = 0;
+        assert!(store.save(std::slice::from_ref(&saved)).is_err());
+        assert_eq!(fs::read(&path).unwrap(), original);
+        for value in [
+            serde_json::json!(null),
+            serde_json::json!(0),
+            serde_json::json!(-1),
+            serde_json::json!(1.5),
+            serde_json::json!("1000000000"),
+            serde_json::json!(compiler::MAX_LIGHTING_WORK_LIMIT + 1),
+            serde_json::json!(u64::MAX),
+            serde_json::json!(false),
+        ] {
+            let mut malformed = valid.clone();
+            malformed["entries"][0]["build_settings"]["lighting_work_limit"] = value;
+            let bytes = serde_json::to_vec(&malformed).unwrap();
+            fs::write(&path, &bytes).unwrap();
+            assert!(store.load().is_err());
+            assert_eq!(fs::read(&path).unwrap(), bytes);
+        }
+        let mut legacy = valid;
+        legacy["entries"][0]["build_settings"]
+            .as_object_mut()
+            .unwrap()
+            .remove("lighting_work_limit");
+        fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+        let loaded = store.load().unwrap();
+        assert_eq!(
+            loaded[0].build_settings.lighting_work_limit,
+            compiler::DEFAULT_LIGHTING_WORK_LIMIT
+        );
+    }
+
+    #[test]
     fn storage_roundtrips_order_without_requiring_maps_to_exist() {
         let directory = tempfile::tempdir().unwrap();
         let store = Store {

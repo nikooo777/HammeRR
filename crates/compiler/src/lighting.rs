@@ -16,6 +16,11 @@ mod models;
 mod normals;
 pub mod preview;
 mod probes;
+mod progress;
+pub use progress::{
+    LightingChannel, LightingContributor, LightingInstanceSource, LightingPhase,
+    LightingPhaseProgress, LightingProgress, MAX_LIGHTING_CONTRIBUTORS,
+};
 mod prop_vertices;
 mod props;
 mod radiance;
@@ -133,6 +138,7 @@ impl LuxelFrame {
 
 #[derive(Debug, Clone, Copy)]
 pub struct PointLight {
+    source_id: u32,
     pub origin: DVec3,
     style: u8,
     intensity: DVec3,
@@ -315,6 +321,7 @@ impl PointLight {
         }
         let intensity = checked_intensity(intensity)?;
         Ok(Self {
+            source_id: entity.id,
             origin,
             style: style as u8,
             intensity,

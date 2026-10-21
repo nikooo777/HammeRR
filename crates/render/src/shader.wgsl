@@ -212,7 +212,10 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         let bitangent = cross(n, tangent) * in.tangent.w;
         shading_normal = normalize(tangent * normal.x + bitangent * normal.y + n * normal.z);
     }
-    let shade = 0.55 + 0.45 * clamp(dot(shading_normal, globals.light_dir.xyz) * 0.5 + 0.5, 0.0, 1.0);
+    var shade = 0.55 + 0.45 * clamp(dot(shading_normal, globals.light_dir.xyz) * 0.5 + 0.5, 0.0, 1.0);
+    if globals.surface_view.w != 0u && material.helper.w > 0.5 {
+        shade = 0.3 + 0.7 * max(dot(shading_normal, globals.light_dir.xyz), 0.0);
+    }
     var color = texel.rgb * in.color.rgb * shade;
     if globals.lighting_settings.z > 0.5 && in.lighting_receiver != 0u {
         var irradiance = in.authored_irradiance;

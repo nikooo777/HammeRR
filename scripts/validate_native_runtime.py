@@ -6,6 +6,7 @@ import re
 import resource
 import shutil
 import signal
+import struct
 import subprocess
 import sys
 import time
@@ -16,6 +17,7 @@ from private_runtime_config import (
     private_launch_options,
     private_native_process,
     private_observer,
+    require_native_running,
     validate_private_game_paths,
     verify_private_launch,
 )
@@ -50,6 +52,50 @@ function HammeRRThink() {
     return 1.0;
 }
 """
+
+CAPTURE_WIDTH = 1280
+CAPTURE_HEIGHT = 720
+
+
+def capture_dimensions(width, height):
+    if (
+        type(width) is not int
+        or type(height) is not int
+        or not 320 <= width <= 4096
+        or not 240 <= height <= 2160
+    ):
+        raise ValueError("Capture size requires width 320–4096 and height 240–2160 pixels")
+    return width, height
+
+
+def configure_capture_output(output, width, height):
+    width, height = capture_dimensions(width, height)
+    private_runtime = output.resolve() / "wayland"
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if (
+        os.environ.get("WLR_BACKENDS") != "headless"
+        or not os.environ.get("WAYLAND_DISPLAY")
+        or runtime is None
+        or Path(runtime).resolve() != private_runtime
+    ):
+        raise RuntimeError("Capture output changes require this run's private headless compositor")
+    subprocess.run(
+        ["wlr-randr", "--output", "HEADLESS-1", "--custom-mode", f"{width}x{height}",
+         "--scale", "1", "--transform", "normal"],
+        check=True,
+        timeout=10,
+    )
+
+
+def capture_image_dimensions(path, expected):
+    with path.open("rb") as stream:
+        header = stream.read(24)
+    if len(header) != 24 or header[:16] != b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR":
+        raise ValueError("Capture has no valid PNG dimensions")
+    actual = struct.unpack(">II", header[16:24])
+    if actual != expected:
+        raise ValueError(f"Capture dimensions {actual} do not match requested {expected}")
+    return actual
 
 
 def private_game(root, output, bsp=None, *, engine_physics=False):
@@ -118,6 +164,10 @@ def worker(args, *, launch_adapter=None):
     root = args.game_dir.resolve()
     output = args.output.resolve()
     game = private_game(root, output, args.bsp)
+    dimensions = capture_dimensions(
+        getattr(args, "width", CAPTURE_WIDTH), getattr(args, "height", CAPTURE_HEIGHT)
+    )
+    configure_capture_output(output, *dimensions)
     server_config = "hammerr_private_server.cfg"
     (game / "cfg" / server_config).write_text("toggle sv_lan 1\nhelp sv_lan\n")
     launch_options = private_launch_options(root, game, controls={"servercfgfile": server_config})
@@ -135,9 +185,9 @@ def worker(args, *, launch_adapter=None):
         str(game),
         "-windowed",
         "-w",
-        "1280",
+        str(dimensions[0]),
         "-h",
-        "720",
+        str(dimensions[1]),
         "-novid",
         *launch_options,
         "-nomaster",
@@ -156,13 +206,17 @@ def worker(args, *, launch_adapter=None):
                 if process.poll() is not None:
                     raise RuntimeError(f"CS:S exited early: {process.returncode}")
                 time.sleep(1)
+            require_native_running(process, "before PNG capture")
             subprocess.run(["grim", str(output / "game.png")], check=True, timeout=10)
+            require_native_running(process, "after PNG capture")
+            actual_dimensions = capture_image_dimensions(output / "game.png", dimensions)
             if getattr(args, "capture_ppm", False):
                 subprocess.run(
                     ["grim", "-t", "ppm", str(output / "game.ppm")],
                     check=True,
                     timeout=10,
                 )
+                require_native_running(process, "after PPM capture")
             text = (game / "hammerr-runtime.log").read_text(errors="replace")
             players = [
                 list(map(float, match))
@@ -196,7 +250,9 @@ def worker(args, *, launch_adapter=None):
                 "insecure": True,
                 "ground_z": ground_z,
                 "ground_tolerance": ground_tolerance,
+                "capture": {"requested": dimensions, "actual": actual_dimensions},
             })
+            require_native_running(process, "after final capture validation")
     finally:
         (output / "runtime.json").write_text(json.dumps(report, indent=2) + "\n")
 
@@ -349,7 +405,7 @@ def private_compositor(command, output, timeout=65, extra_environment=None):
     cleanup_failures = []
     result = None
     with (output / "compositor.log").open("w") as stream:
-        process = subprocess.Popen(["cage", "--", *command], cwd=ROOT, env=environment, stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
+        process = subprocess.Popen(["cage", "-d", "--", *command], cwd=ROOT, env=environment, stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
         try:
             result = process.wait(timeout=timeout)
             if result:
@@ -425,7 +481,21 @@ def compare_frames(output, names=("flat", "smooth")):
 
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description="Compile and capture isolated CS:S runtime controls without desktop input.",
+        epilog=(
+            "Requires Cage, grim, wlr-randr, the installed Linux64 CS:S engine and a ready "
+            "Steam session. The private headless output is resized to the requested pixels; "
+            "the PNG dimensions are verified. -default protects the user's configuration "
+            "and must remain enabled. Private Cage captures disable client decorations. "
+            "The engine ignores ordinary host_framerate assignments: "
+            "for fixed-step footage use the private control host_framerate (written as "
+            "toggle host_framerate 0.0166666667 for 60 frames/s). This engine retains its "
+            "roughly 66.7/s server tick cadence; -tickrate 60 does not select 60 ticks/s. "
+            "Fixed frame time and server tick cadence are separate. Every launch uses "
+            "-insecure and sv_lan 1. Retain outputs on disk under target/."
+        ),
+    )
     parser.add_argument(
         "--game-dir",
         type=Path,
@@ -434,8 +504,12 @@ def main():
     )
     parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
     parser.add_argument(
-        "--output", type=Path, default=Path("/tmp/hammerr-native-runtime-check")
+        "--output", type=Path, default=ROOT / "target/native-runtime-check"
     )
+    parser.add_argument("--width", type=int, default=CAPTURE_WIDTH,
+                        help="Private output and game width in pixels, 320–4096 (default: 1280)")
+    parser.add_argument("--height", type=int, default=CAPTURE_HEIGHT,
+                        help="Private output and game height in pixels, 240–2160 (default: 720)")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument(
         "--fluid",
@@ -444,14 +518,21 @@ def main():
     )
     parser.add_argument("--bsp", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    try:
+        capture_dimensions(args.width, args.height)
+    except ValueError as error:
+        parser.error(str(error))
     args.output.mkdir(parents=True, exist_ok=True)
     if args.worker:
         worker(args)
         return
-    assert shutil.which("cage") and shutil.which("grim"), "Cage and grim are required"
+    assert all(shutil.which(name) for name in ("cage", "grim", "wlr-randr")), "Cage, grim and wlr-randr are required"
     results = []
     for mode, bsp, stats in compile_cases(args):
-        output = private_display(Path(__file__), args, bsp, output=args.output / mode)
+        output = private_display(
+            Path(__file__), args, bsp, output=args.output / mode,
+            extra_flags=("--width", str(args.width), "--height", str(args.height)),
+        )
         result = json.loads((output / "runtime.json").read_text())
         result.update({"mode": mode, "stats": stats})
         results.append(result)

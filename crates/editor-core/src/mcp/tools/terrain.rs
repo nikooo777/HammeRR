@@ -3,7 +3,7 @@ use super::super::*;
 #[tool_router(router = terrain_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
-        description = "Preview sewing 2–16 selected/explicit terrain faces along unambiguous full/half base edges or matching base corners, including mixed powers. Shared coarse vertex groups average original world positions once, including junctions; unmatched fine border vertices interpolate the sewn coarse edge. blend=true also sews/interpolates alpha(default false). Interiors/IDs/material/mapping/flags remain. Rejects ambiguous edges and unsupported caches atomically. Returns neighbor pairs, corner_joins (additional corner unions), shared groups, interpolated_vertices and a shared summary. Inspect the draft then commit/cancel_face_preview with state.preview_token. Other fractional spans are not supported. The saved subdivision marker alone does not block sewing. UI: Edit terrain… → Sew borders & corners."
+        description = "Preview sewing 2–16 selected/explicit terrain faces along unambiguous full/half base edges or matching base corners, including mixed powers. Shared coarse vertex groups average original world positions once, including junctions; unmatched fine border vertices interpolate the sewn coarse edge. blend=true also sews/interpolates alpha(default false). Interiors/IDs/material/mapping/flags remain. Rejects ambiguous edges and unsupported caches atomically. Returns neighbor pairs, corner_joins (additional corner unions), shared groups, interpolated_vertices and a shared summary. Inspect the draft then commit/cancel_face_preview with state.preview_token. Other fractional spans are not supported. The saved subdivision marker alone does not block sewing. UI: Edit terrain… → Sew borders & corners. Returns handle and state.handle with kind=face_preview and a decimal-string token, or null when closed. Changed selection and competing geometry previews invalidate the shared face draft."
     )]
     pub(in crate::mcp) fn preview_terrain_sew(
         &self,
@@ -18,13 +18,13 @@ impl EditorServer {
             let result =
                 session.preview_terrain_sew(Actor::Agent, &faces, args.blend.unwrap_or(false))?;
             Ok(
-                json!({"faces_changed":result.changed,"neighbor_pairs":result.pairs,"corner_joins":result.corner_joins,"sewn_vertices":result.vertices,"interpolated_vertices":result.interpolated_vertices,"summary":result.summary(),"state":face_state(&session)}),
+                json!({"faces_changed":result.changed,"neighbor_pairs":result.pairs,"corner_joins":result.corner_joins,"sewn_vertices":result.vertices,"interpolated_vertices":result.interpolated_vertices,"summary":result.summary(),"handle":session.face_preview_handle(),"state":face_state(&session)}),
             )
         })
     }
 
     #[tool(
-        description = "Preview border lighting smoothing on 1–16 selected/explicit terrain faces. Omitted/null angle restores Automatic; angle=0 keeps borders hard; positive finite angles up to180 degrees limit shared border-normal blending using both surfaces' choices. Geometry, alpha, flags, tags and topology remain. Inspect border_smoothing_angle/error with get_terrain_grids, then commit/cancel_face_preview using state.preview_token. The viewport and Direct LDR share the normal decisions. Uses the standard VMF smooth field and repairs malformed/duplicate entries when explicitly changed. UI: Edit terrain… → Border smoothing."
+        description = "Preview border lighting smoothing on 1–16 selected/explicit terrain faces. Omitted/null angle restores Automatic; angle=0 keeps borders hard; positive finite angles up to180 degrees limit shared border-normal blending using both surfaces' choices. Geometry, alpha, flags, tags and topology remain. Inspect border_smoothing_angle/error with get_terrain_grids, then commit/cancel_face_preview using state.preview_token. The viewport and Direct LDR share the normal decisions. Uses the standard VMF smooth field and repairs malformed/duplicate entries when explicitly changed. UI: Edit terrain… → Border smoothing. Returns handle and state.handle with kind=face_preview and a decimal-string token, or null when closed. Changed selection and competing geometry previews invalidate the shared face draft."
     )]
     pub(in crate::mcp) fn preview_terrain_smoothing(
         &self,
@@ -41,12 +41,14 @@ impl EditorServer {
                 &faces,
                 map_core::displacement::Operation::Smoothing(args.angle),
             )?;
-            Ok(json!({"faces_changed":changed,"state":face_state(&session)}))
+            Ok(
+                json!({"faces_changed":changed,"handle":session.face_preview_handle(),"state":face_state(&session)}),
+            )
         })
     }
 
     #[tool(
-        description = "Preview optional positive physics_collision, player_collision and ray_collision booleans on 1–16 selected/explicit terrain faces. Omitted settings preserve each face. Changes only inverted native bits2/4/8, retaining other flags, geometry, alpha, tags and metadata. Unknown native flags still require compiler support. Commit/cancel the shared face preview with its token. UI: Edit terrain… → Collision, with Keep current/Enabled/Disabled choices. Individual triangle removal remainsunsupported."
+        description = "Preview optional positive physics_collision, player_collision and ray_collision booleans on 1–16 selected/explicit terrain faces. Omitted settings preserve each face. Changes only inverted native bits2/4/8, retaining other flags, geometry, alpha, tags and metadata. Unknown native flags still require compiler support. Commit/cancel the shared face preview with its token. UI: Edit terrain… → Collision, with Keep current/Enabled/Disabled choices. Individual triangle removal remainsunsupported. Returns handle and state.handle with kind=face_preview and a decimal-string token, or null when closed. Changed selection and competing geometry previews invalidate the shared face draft."
     )]
     pub(in crate::mcp) fn preview_terrain_collision(
         &self,
@@ -68,12 +70,14 @@ impl EditorServer {
                 &faces,
                 map_core::displacement::Operation::Collision(settings),
             )?;
-            Ok(json!({"faces_changed":changed,"state":face_state(&session)}))
+            Ok(
+                json!({"faces_changed":changed,"handle":session.face_preview_handle(),"state":face_state(&session)}),
+            )
         })
     }
 
     #[tool(
-        description = "Preview a terrain brush on up to 16 selected or explicit faces. mode=raise adds signed amount (default16, ±4096); flatten moves toward the center plane; smooth averages immutable local neighbors; noise uses amount and deterministic seed(default1). center is world coordinates, radius is1–8192(default128), direction=world_z(default) or face_normal. flatten/smooth strength is0–1(default0.5). Smooth radial falloff applies. Source/history remain unchanged; inspect get_terrain_grids(preview=true), then commit/cancel_face_preview with state.preview_token. Bounds ±65536 and malformed/cache data reject atomically. Optional mask_token from get_terrain_vertex_mask confines writes to selected terrain vertices. Replaced/stale tokens reject. No automatic edge sewing. UI: Edit terrain…."
+        description = "Preview a terrain brush on up to 16 selected or explicit faces. mode=raise adds signed amount (default16, ±4096); flatten moves toward the center plane; smooth averages immutable local neighbors; noise uses amount and deterministic seed(default1). center is world coordinates, radius is1–8192(default128), direction=world_z(default) or face_normal. flatten/smooth strength is0–1(default0.5). Smooth radial falloff applies. Source/history remain unchanged; inspect get_terrain_grids(preview=true), then commit/cancel_face_preview with state.preview_token. Bounds ±65536 and malformed/cache data reject atomically. Optional mask_token from get_terrain_vertex_mask confines writes to selected terrain vertices. Replaced/stale tokens reject. No automatic edge sewing. UI: Edit terrain…. Returns handle and state.handle with kind=face_preview and a decimal-string token, or null when closed. Changed selection and competing geometry previews invalidate the shared face draft."
     )]
     pub(in crate::mcp) fn preview_terrain_sculpt(
         &self,
@@ -96,12 +100,14 @@ impl EditorServer {
             } else {
                 session.preview_terrain_edit(Actor::Agent, &faces, operation)?
             };
-            Ok(json!({"faces_changed":count,"state":face_state(&session)}))
+            Ok(
+                json!({"faces_changed":count,"handle":session.face_preview_handle(),"state":face_state(&session)}),
+            )
         })
     }
 
     #[tool(
-        description = "Preview terrain alpha painting, full-face fill or invert on up to16 selected/explicit faces. value is0–255(default128); paint moves toward it with strength0–1(default1), smooth radial falloff and required world center. radius is1–8192(default128), direction=world_z(default) or face_normal. fill/invert affect complete grids and do not use brush coordinates. Optional mask_token from get_terrain_vertex_mask confines paint/fill/invert to selected terrain vertices. Replaced/stale tokens reject. Geometry/material/mapping remain fixed. A two-material shader is needed to display alpha blending. Inspect get_terrain_grids(preview=true), then commit/cancel_face_preview with state.preview_token. UI: Edit terrain…."
+        description = "Preview terrain alpha painting, full-face fill or invert on up to16 selected/explicit faces. value is0–255(default128); paint moves toward it with strength0–1(default1), smooth radial falloff and required world center. radius is1–8192(default128), direction=world_z(default) or face_normal. fill/invert affect complete grids and do not use brush coordinates. Optional mask_token from get_terrain_vertex_mask confines paint/fill/invert to selected terrain vertices. Replaced/stale tokens reject. Geometry/material/mapping remain fixed. A two-material shader is needed to display alpha blending. Inspect get_terrain_grids(preview=true), then commit/cancel_face_preview with state.preview_token. UI: Edit terrain…. Returns handle and state.handle with kind=face_preview and a decimal-string token, or null when closed. Changed selection and competing geometry previews invalidate the shared face draft."
     )]
     pub(in crate::mcp) fn preview_terrain_blend(
         &self,
@@ -124,7 +130,9 @@ impl EditorServer {
             } else {
                 session.preview_terrain_edit(Actor::Agent, &faces, operation)?
             };
-            Ok(json!({"faces_changed":count,"state":face_state(&session)}))
+            Ok(
+                json!({"faces_changed":count,"handle":session.face_preview_handle(),"state":face_state(&session)}),
+            )
         })
     }
 
@@ -278,7 +286,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Generate a rounded terrain preview from up to16 selected/explicit base quad cages. Replaces sculpted positions; retains powers, start corners, blend values, flags/tags, materials and mapping. Uses four Catmull-Clark rounds and fixed base boundary edges. Matching full/whole-to-half edges share samples on a conforming cage with two grid densities. Nested half-edge chains, inconsistent densities, fractional/ambiguous contacts and non-manifold/corner-only networks reject atomically. Saved explicit grids remain editable unless unsupported caches are present. Inspect get_terrain_grids(preview=true), then commit/cancel_face_preview with state.preview_token. UI: Edit terrain… → Subdivide base cage."
+        description = "Generate a rounded terrain preview from up to16 selected/explicit base quad cages. Replaces sculpted positions; retains powers, start corners, blend values, flags/tags, materials and mapping. Uses four Catmull-Clark rounds and fixed base boundary edges. Matching full/whole-to-half edges share samples on a conforming cage with two grid densities. Nested half-edge chains, inconsistent densities, fractional/ambiguous contacts and non-manifold/corner-only networks reject atomically. Saved explicit grids remain editable unless unsupported caches are present. Inspect get_terrain_grids(preview=true), then commit/cancel_face_preview with state.preview_token. UI: Edit terrain… → Subdivide base cage. Returns handle and state.handle with kind=face_preview and a decimal-string token, or null when closed. Changed selection and competing geometry previews invalidate the shared face draft."
     )]
     pub(in crate::mcp) fn preview_terrain_subdivision(
         &self,
@@ -292,13 +300,13 @@ impl EditorServer {
             );
             let result = session.preview_terrain_subdivision(Actor::Agent, &faces)?;
             Ok(
-                json!({"faces_changed":result.changed,"shared_edges":result.shared_edges,"vertices":result.vertices,"state":face_state(&session)}),
+                json!({"faces_changed":result.changed,"shared_edges":result.shared_edges,"vertices":result.vertices,"handle":session.face_preview_handle(),"state":face_state(&session)}),
             )
         })
     }
 
     #[tool(
-        description = "Begin a bounded terrain brush stroke without editing source/history. Supply exactly one sculpt or blend object using the same arguments as preview_terrain_sculpt/blend; blend must be paint. Selected/explicit faces and optional mask_token are captured. An active geometry preview rejects rather than replacing it. Flatten keeps the supplied center plane; other brush centers follow the path. Returns stroke token, spacing and limits. UI: Edit terrain… → Draw stroke in viewport…."
+        description = "Begin a bounded terrain brush stroke without editing source/history. Supply exactly one sculpt or blend object using the same arguments as preview_terrain_sculpt/blend; blend must be paint. Selected/explicit faces and optional mask_token are captured. An active geometry preview rejects rather than replacing it. Flatten keeps the supplied center plane; other brush centers follow the path. Returns stroke token, spacing and limits. UI: Edit terrain… → Draw stroke in viewport…. handle identifies kind=terrain_stroke with a decimal-string token. Changed selection cancels an existing face draft and makes a drawn stroke stale; competing geometry previews can replace its owned face draft. Closed or stale strokes have handle=null."
     )]
     pub(in crate::mcp) fn begin_terrain_stroke(
         &self,
@@ -334,7 +342,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Append terrain stroke input using its token and either points (1–64 finite world positions) or origin+direction (one visible terrain ray hit). Dabs are spaced at radius/4 clamped1–64 brush-plane units, carried across updates; motion along the captured sampling normal adds no dabs. Face-normal spacing follows the first selected base face. Each preview replays ordered dabs from captured source, so inspection does not accumulate edits. A ray miss breaks continuity; next hit starts a new segment. Invalid/stale/replaced updates preserve prior drafts. Bounds ±65536, max512 dabs/4096 input points/two-million vertex-sample work. Masks, radius/falloff and immutable-neighbor smoothing stay shared. Returns stroke plus face preview state. UI: drag on selected terrain."
+        description = "Append terrain stroke input using its token and either points (1–64 finite world positions) or origin+direction (one visible terrain ray hit). Dabs are spaced at radius/4 clamped1–64 brush-plane units, carried across updates; motion along the captured sampling normal adds no dabs. Face-normal spacing follows the first selected base face. Each preview replays ordered dabs from captured source, so inspection does not accumulate edits. A ray miss breaks continuity; next hit starts a new segment. Invalid/stale/replaced updates preserve prior drafts. Bounds ±65536, max512 dabs/4096 input points/two-million vertex-sample work. Masks, radius/falloff and immutable-neighbor smoothing stay shared. Returns stroke plus face preview state. UI: drag on selected terrain. handle and stroke.handle identify the active terrain_stroke; state.handle identifies its face_preview. Tokens are decimal strings. Changed selection or competing geometry previews invalidate its existing face draft; stale strokes have handle=null."
     )]
     pub(in crate::mcp) fn update_terrain_stroke(
         &self,
@@ -360,13 +368,13 @@ impl EditorServer {
                 _ => return Err("Supply points or both origin and direction".into()),
             };
             Ok(
-                json!({"faces_changed":changed,"stroke":session.terrain_stroke_json(),"state":face_state(&session)}),
+                json!({"handle":session.terrain_stroke_handle(),"faces_changed":changed,"stroke":session.terrain_stroke_json(),"state":face_state(&session)}),
             )
         })
     }
 
     #[tool(
-        description = "Inspect the active terrain stroke, token, source/preview/mask stale state, captured mode/radius, sample spacing/counts, cursor and work limits. Does not change source/history or compound the draft.",
+        description = "Inspect the active terrain stroke, token, source/preview/mask stale state, captured mode/radius, sample spacing/counts, cursor and work limits. Does not change source/history or compound the draft. handle contains kind=terrain_stroke and a decimal-string token, or null when closed or stale.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_terrain_stroke(&self) -> ToolResult {
@@ -388,7 +396,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Finish an owned terrain stroke into its existing face preview. Requires at least one dab and current source/mask/preview tokens. Source/history stay fixed; inspect get_terrain_grids(preview=true) or render_view, then commit_face_preview/cancel_face_preview using state.preview_token. One Apply makes one Undo step. UI: release the terrain stroke."
+        description = "Finish an owned terrain stroke into its existing face preview. Requires at least one dab and current source/mask/preview tokens. Source/history stay fixed; inspect get_terrain_grids(preview=true) or render_view, then commit_face_preview/cancel_face_preview using state.preview_token. One Apply makes one Undo step. UI: release the terrain stroke. handle and state.handle identify the remaining face_preview with its own decimal-string token; the closed stroke has stroke.handle=null."
     )]
     pub(in crate::mcp) fn finish_terrain_stroke(
         &self,
@@ -397,12 +405,14 @@ impl EditorServer {
         run(|| {
             let mut session = self.session();
             session.finish_terrain_stroke(Actor::Agent, parse_token(&args.token)?)?;
-            Ok(json!({"stroke":session.terrain_stroke_json(),"state":face_state(&session)}))
+            Ok(
+                json!({"stroke":session.terrain_stroke_json(),"handle":session.face_preview_handle(),"state":face_state(&session)}),
+            )
         })
     }
 
     #[tool(
-        description = "Cancel a terrain stroke by token and discard only its owned face preview. A replaced stroke token rejects; a foreign face preview remains intact. Source/history stay fixed. UI: Escape or Cancel stroke while drawing."
+        description = "Cancel a terrain stroke by token and discard only its owned face preview. A replaced stroke token rejects; a foreign face preview remains intact. Source/history stay fixed. UI: Escape or Cancel stroke while drawing. handle and stroke.handle are null after cancellation; state.handle may identify a preserved foreign face preview."
     )]
     pub(in crate::mcp) fn cancel_terrain_stroke(
         &self,
@@ -411,7 +421,9 @@ impl EditorServer {
         run(|| {
             let mut session = self.session();
             session.cancel_terrain_stroke(parse_token(&args.token)?)?;
-            Ok(json!({"stroke":session.terrain_stroke_json(),"state":face_state(&session)}))
+            Ok(
+                json!({"stroke":session.terrain_stroke_json(),"handle":session.terrain_stroke_handle(),"state":face_state(&session)}),
+            )
         })
     }
 
@@ -521,7 +533,9 @@ impl EditorServer {
                 vec3(args.offset),
                 parse_token(&args.mask_token)?,
             )?;
-            Ok(json!({"faces_changed":changed,"state":face_state(&session)}))
+            Ok(
+                json!({"faces_changed":changed,"handle":session.face_preview_handle(),"state":face_state(&session)}),
+            )
         })
     }
 
@@ -593,7 +607,9 @@ impl EditorServer {
                     buildable: args.buildable.map(terrain_triangle_choice),
                 },
             )?;
-            Ok(json!({"faces_changed":changed,"state":face_state(&session)}))
+            Ok(
+                json!({"faces_changed":changed,"handle":session.face_preview_handle(),"state":face_state(&session)}),
+            )
         })
     }
 
@@ -770,7 +786,9 @@ impl EditorServer {
                 |faces| faces.iter().map(face_id).collect(),
             );
             let count = session.preview_terrain_resolution(Actor::Agent, &faces, args.power)?;
-            Ok(json!({"faces_changed":count,"state":face_state(&session)}))
+            Ok(
+                json!({"faces_changed":count,"handle":session.face_preview_handle(),"state":face_state(&session)}),
+            )
         })
     }
 

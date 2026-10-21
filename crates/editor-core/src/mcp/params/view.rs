@@ -198,7 +198,7 @@ pub struct FacePreviewArgs {
 }
 
 pub(in crate::mcp) fn view_state(view: ViewOptions) -> Value {
-    json!({"instance_contents": view.instance_contents,"lighting_preview":view.lighting_preview,"lighting_sky_ambient":view.lighting_sky_ambient,"lighting_quality":view.lighting_quality.name(),"lighting_exposure_ev":view.lighting_exposure_ev,"normal_maps":view.normal_maps,"tool_textures":view.tool_textures,"sky_preview":view.sky_preview,"sky3d_preview":view.sky3d_preview,"sky_channel":view.sky_channel.name(),"sky_exposure_ev":view.sky_exposure_ev,"rope_preview":view.rope_preview,"selection_outlines":view.selection_outlines,"entity_images":view.entity_images,"additive_sprite_guides":view.additive_sprite_guides,"entity_model_guides":view.entity_model_guides,"fog":fog_parameters(view),"leak_path":view.leak_path,"surface":view.surface.name(),"smoothing_group":view.smoothing_group})
+    json!({"instance_contents": view.instance_contents,"lighting_preview":view.lighting_preview,"lighting_sky_ambient":view.lighting_sky_ambient,"lighting_quality":view.lighting_quality.name(),"lighting_exposure_ev":view.lighting_exposure_ev,"normal_maps":view.normal_maps,"surface_shading":view.surface_shading,"tool_textures":view.tool_textures,"sky_preview":view.sky_preview,"sky3d_preview":view.sky3d_preview,"sky_channel":view.sky_channel.name(),"sky_exposure_ev":view.sky_exposure_ev,"rope_preview":view.rope_preview,"selection_outlines":view.selection_outlines,"entity_images":view.entity_images,"additive_sprite_guides":view.additive_sprite_guides,"entity_model_guides":view.entity_model_guides,"fog":fog_parameters(view),"leak_path":view.leak_path,"surface":view.surface.name(),"smoothing_group":view.smoothing_group})
 }
 
 pub(in crate::mcp) fn fog_parameters(view: ViewOptions) -> Value {
@@ -315,6 +315,8 @@ pub struct SetViewArgs {
     pub additive_sprite_guides: Option<bool>,
     /// Opt-in flat-brush normals under fixed editor light or Detail authored-light preview. Defaults off.
     pub normal_maps: Option<bool>,
+    /// Stronger fixed ambient/directional sculpt-relief shading in Textured view. Defaults off, preserving ordinary weak shading. Authored-light receivers override it; tools/helpers remain unchanged.
+    pub surface_shading: Option<bool>,
     /// Show selected object/face edges and model brackets. Defaults on; selection, picking and tool guides remain active.
     pub selection_outlines: Option<bool>,
     /// Show literal FGD icons and static Sprite resource guides; false keeps ordinary boxes without image admission.
@@ -356,6 +358,8 @@ pub struct RenderArgs {
     pub additive_sprite_guides: Option<bool>,
     /// Temporary flat-brush normal-map preview; never changes shared settings. Textured only, no terrain/models.
     pub normal_maps: Option<bool>,
+    /// Temporary stronger fixed ambient/directional surface shading in Textured view; leaves shared settings unchanged. False preserves ordinary weak shading; authored-light receivers override it.
+    pub surface_shading: Option<bool>,
     /// Temporary selected-edge/model-bracket visibility override; leaves shared settings and picking unchanged.
     pub selection_outlines: Option<bool>,
     /// Show literal FGD icons and static Sprite resource guides; false keeps ordinary boxes without image admission.
@@ -463,6 +467,7 @@ macro_rules! view_update {
                     lighting_exposure_ev: self.lighting_exposure_ev,
                     additive_sprite_guides: self.additive_sprite_guides,
                     normal_maps: self.normal_maps,
+                    surface_shading: self.surface_shading,
                     surface: self.surface.as_deref(),
                     smoothing_group: self.smoothing_group,
                     tool_textures: self.tool_textures,

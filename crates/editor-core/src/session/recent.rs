@@ -96,7 +96,7 @@ impl Session {
                 "available": entry.path.is_file(),
                 "game_directory": entry.game_directory,
                 "context_compatible": entry.game_directory == game_directory,
-                "build_settings": entry.build_settings,
+                "build_settings": entry.build_settings.report(),
             })).collect::<Vec<_>>(),
         })
     }
@@ -521,6 +521,7 @@ mod tests {
                     visibility: Some("detailed"),
                     bounces: Some(2),
                     smoothing_angle: Some(35),
+                    lighting_work_limit: Some(1_234_567_890),
                     ..Default::default()
                 },
             )

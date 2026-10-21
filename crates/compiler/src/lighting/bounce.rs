@@ -219,6 +219,7 @@ pub(super) fn bake(
                     channels.add(0, &contribution, &mut colors, budget)?;
                 }
                 let positive = channels.finish_bounce_sample(t * width + s, &colors, budget)?;
+                budget.finish_sample();
                 stats.samples += usize::from(positive);
                 stats.model_samples += usize::from(plan.model != 0 && positive);
             }

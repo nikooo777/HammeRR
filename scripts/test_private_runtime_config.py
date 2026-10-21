@@ -14,6 +14,56 @@ from private_runtime_config import reject_configuration_writes
 
 
 class PrivateRuntimeGuards(unittest.TestCase):
+    def test_capture_requires_native_liveness_even_after_successful_readiness(self):
+        process = Mock()
+        process.poll.side_effect = [None, 3]
+        private_runtime.require_native_running(process, "before capture")
+        with self.assertRaisesRegex(RuntimeError, "exited with 3 after capture"):
+            private_runtime.require_native_running(process, "after capture")
+
+    def test_capture_dimensions_enforce_bounded_explicit_sizes(self):
+        self.assertEqual(runtime.capture_dimensions(1920, 1080), (1920, 1080))
+        self.assertEqual(runtime.capture_dimensions(4096, 2160), (4096, 2160))
+        for size in ((319, 720), (1280, 239), (4097, 720), (1280, 2161), (True, 720), (1280, 720.0)):
+            with self.subTest(size=size), self.assertRaises(ValueError):
+                runtime.capture_dimensions(*size)
+
+    def test_capture_output_refuses_the_desktop_and_uses_exact_private_mode(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory).resolve()
+            private_environment = {
+                "WLR_BACKENDS": "headless",
+                "XDG_RUNTIME_DIR": str(output / "wayland"),
+                "WAYLAND_DISPLAY": "wayland-0",
+            }
+            with patch.dict(os.environ, private_environment, clear=True), patch.object(runtime.subprocess, "run") as run:
+                runtime.configure_capture_output(output, 1920, 1080)
+                run.assert_called_once_with(
+                    ["wlr-randr", "--output", "HEADLESS-1", "--custom-mode", "1920x1080",
+                     "--scale", "1", "--transform", "normal"],
+                    check=True, timeout=10,
+                )
+            for changes in (
+                {"WLR_BACKENDS": "drm"},
+                {"XDG_RUNTIME_DIR": "/run/user/1000"},
+                {"WAYLAND_DISPLAY": ""},
+            ):
+                with patch.dict(os.environ, {**private_environment, **changes}, clear=True), patch.object(runtime.subprocess, "run") as run:
+                    with self.assertRaisesRegex(RuntimeError, "private headless compositor"):
+                        runtime.configure_capture_output(output, 1920, 1080)
+                    run.assert_not_called()
+
+    def test_capture_dimensions_are_read_from_image_and_mismatches_fail(self):
+        with tempfile.TemporaryDirectory() as directory:
+            image = Path(directory) / "capture.png"
+            image.write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x07\x80\x00\x00\x04\x38")
+            self.assertEqual(runtime.capture_image_dimensions(image, (1920, 1080)), (1920, 1080))
+            with self.assertRaisesRegex(ValueError, "do not match requested"):
+                runtime.capture_image_dimensions(image, (1280, 720))
+            image.write_bytes(b"not a capture")
+            with self.assertRaisesRegex(ValueError, "valid PNG"):
+                runtime.capture_image_dimensions(image, (1920, 1080))
+
     def test_prop_lighting_controls_keep_lan_and_insecure_launch(self):
         controls = {
             "r_proplightingfromdisk": 1,
@@ -22,6 +72,8 @@ class PrivateRuntimeGuards(unittest.TestCase):
             "r_rootlod": 0,
             "r_lod": 0,
             "mat_queue_mode": 0,
+            "mat_specular": 0,
+            "host_framerate": 0.0166666667,
         }
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "installed"

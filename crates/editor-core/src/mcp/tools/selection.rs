@@ -21,7 +21,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Change the shared highlighted object selection. Native groups expand to their outermost group unless set_group_selection_bypass enables individual selection. Hidden peers stay hidden; explicitly requested hidden objects remain selectable. Use select_object_group for an inner group."
+        description = "Change the shared highlighted object selection. Native groups expand to their outermost group unless set_group_selection_bypass enables individual selection. Hidden peers stay hidden; explicitly requested hidden objects remain selectable. Use select_object_group for an inner group. Changed selection invalidates affected geometry previews, including hollow, carve, repeat-array and terrain face drafts; cleared_preview_kinds lists affected active handle kinds. Repeating the current object selection preserves these previews. Property and connection drafts retain their captured targets. Inspect a preview again after changing selection before updating or committing it."
     )]
     pub(in crate::mcp) fn select(&self, Parameters(args): Parameters<SelectArgs>) -> ToolResult {
         run(|| {
@@ -33,13 +33,7 @@ impl EditorServer {
                 other => return Err(format!("unknown mode {other:?}")),
             };
             let mut session = self.session();
-            session.select_grouped(&parse_ids(&args.ids)?, mode)?;
-            let selection: Vec<String> = session
-                .selection()
-                .iter()
-                .map(|&id| id_string(id))
-                .collect();
-            Ok(json!({ "selection": selection }))
+            session.select_grouped_report(&parse_ids(&args.ids)?, mode)
         })
     }
 

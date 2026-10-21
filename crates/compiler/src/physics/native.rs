@@ -11,6 +11,7 @@ use source_formats::bsp::{
     PhysicsSolid,
 };
 
+use super::failure::{Failure, Stage};
 use super::{Body, Request, Shape, read_bounded};
 
 #[path = "native_mass.rs"]
@@ -21,11 +22,12 @@ mod soup;
 const LIBRARY_SHA256: &str = "2676cdc02be4b4188f7121c201d5f5a681f9c1c7c924fe7f9159cefd5a718277";
 const GUARD_BYTES: usize = 64;
 const GEOMETRY_EPSILON: f64 = 0.02;
+const CONVEX_MERGE_DISTANCE_HU: f32 = 0.01;
 const MAX_TRIANGLES: i32 = 512;
 const MAX_GEOMETRY_WORK: usize = 50_000_000;
 type Pointer = *mut c_void;
 type Factory = unsafe extern "C" fn(*const c_char, *mut i32) -> Pointer;
-type FromVertices = unsafe extern "C" fn(Pointer, *const *const Vector, i32) -> Pointer;
+type FromPlanes = unsafe extern "C" fn(Pointer, *const f32, i32, f32) -> Pointer;
 type SetGameData = unsafe extern "C" fn(Pointer, Pointer, u32);
 type Release = unsafe extern "C" fn(Pointer, Pointer);
 type Convert = unsafe extern "C" fn(Pointer, *const Pointer, i32) -> Pointer;
@@ -52,7 +54,7 @@ struct Vector([f32; 3]);
 struct Api {
     pointer: Pointer,
     base: usize,
-    from_vertices: FromVertices,
+    from_planes: FromPlanes,
     set_game_data: SetGameData,
     convex_free: Release,
     convert: Convert,
@@ -124,7 +126,7 @@ impl Api {
         Ok(Self {
             pointer,
             base,
-            from_vertices: unsafe { member(pointer, base, 2, 0x23030)? },
+            from_planes: unsafe { member(pointer, base, 3, 0x20d00)? },
             set_game_data: unsafe { member(pointer, base, 6, 0x20aa0)? },
             convex_free: unsafe { member(pointer, base, 7, 0x20c90)? },
             convert: unsafe { member(pointer, base, 15, 0x20980)? },
@@ -144,20 +146,21 @@ impl Api {
         })
     }
 
-    fn convex(&self, shape: &Shape) -> Result<Convex<'_>, String> {
-        let vertices = shape
-            .corners
-            .iter()
-            .map(|point| Vector(*point))
-            .collect::<Vec<_>>();
-        let pointers = vertices
-            .iter()
-            .map(|vertex| vertex as *const Vector)
-            .collect::<Vec<_>>();
-        let pointer =
-            unsafe { (self.from_vertices)(self.pointer, pointers.as_ptr(), pointers.len() as i32) };
+    fn convex(&self, shape: &Shape) -> Result<Convex<'_>, Failure> {
+        let pointer = unsafe {
+            (self.from_planes)(
+                self.pointer,
+                shape.planes.as_ptr().cast(),
+                shape.planes.len() as i32,
+                CONVEX_MERGE_DISTANCE_HU,
+            )
+        };
         if pointer.is_null() {
-            return Err(format!("Native physics rejected brush {}", shape.brush));
+            return Err(Failure::shape(
+                Stage::ConvexConstruction,
+                shape.brush,
+                "Native physics rejected the requested convex hull",
+            ));
         }
         let convex = Convex { api: self, pointer };
         unsafe {
@@ -166,9 +169,11 @@ impl Api {
         Ok(convex)
     }
 
-    fn body(&self, body: &Body) -> Result<Collide<'_>, String> {
+    fn body(&self, body: &Body) -> Result<Collide<'_>, Failure> {
         if let Some(mesh) = &body.mesh {
-            return self.soup(mesh);
+            return self
+                .soup(mesh)
+                .map_err(|message| Failure::new(Stage::CompoundConstruction, message));
         }
         let mut convexes = body
             .shapes
@@ -186,7 +191,10 @@ impl Api {
         let pointer =
             unsafe { (self.convert)(self.pointer, pointers.as_ptr(), pointers.len() as i32) };
         if pointer.is_null() {
-            return Err("Native physics could not build the compound body".into());
+            return Err(Failure::new(
+                Stage::CompoundConstruction,
+                "Native physics could not build the compound body",
+            ));
         }
         Ok(Collide { api: self, pointer })
     }
@@ -244,9 +252,11 @@ impl Collide<'_> {
         material: i32,
         assign: bool,
         work: &mut usize,
-    ) -> Result<f32, String> {
+    ) -> Result<f32, Failure> {
         if let Some(mesh) = &body.mesh {
-            return self.verify_soup(mesh, material, work);
+            return self
+                .verify_soup(mesh, material, work)
+                .map_err(Failure::from);
         }
         let volume = unsafe { (self.api.volume)(self.api.pointer, self.pointer) };
         if !volume.is_finite() || volume <= 0.0 {
@@ -283,7 +293,11 @@ impl Collide<'_> {
                 .ok_or("Native physics changed convex brush references")?;
             let triangle_count = unsafe { triangles(pointer, index) };
             if !(4..=MAX_TRIANGLES).contains(&triangle_count) {
-                return Err("Native physics has an invalid convex triangle count".into());
+                return Err(Failure::shape(
+                    Stage::GeometryVerification,
+                    brush,
+                    "Native physics has an invalid convex triangle count",
+                ));
             }
             let center = shape
                 .corners
@@ -294,7 +308,11 @@ impl Collide<'_> {
             for triangle in 0..triangle_count {
                 *work += shape.planes.len() * 7 + shape.corners.len();
                 if *work > MAX_GEOMETRY_WORK {
-                    return Err("Physics hull verification exceeded its work limit".into());
+                    return Err(Failure::shape(
+                        Stage::GeometryVerification,
+                        brush,
+                        "Physics hull verification exceeded its work limit",
+                    ));
                 }
                 let mut corners = [Vector::default(); 3];
                 unsafe {
@@ -313,8 +331,10 @@ impl Collide<'_> {
                                 > plane[3] as f64 + GEOMETRY_EPSILON * normal.length()
                         })
                     {
-                        return Err(format!(
-                            "Native physics expanded brush {brush} beyond its checked hull"
+                        return Err(Failure::shape(
+                            Stage::GeometryVerification,
+                            brush,
+                            "Native physics expanded the convex beyond its checked hull",
                         ));
                     }
                 }
@@ -322,7 +342,11 @@ impl Collide<'_> {
                     .cross(corners[2] - corners[0])
                     .normalize();
                 if !normal.is_finite() {
-                    return Err("Native physics emitted a degenerate triangle".into());
+                    return Err(Failure::shape(
+                        Stage::GeometryVerification,
+                        brush,
+                        "Native physics emitted a degenerate triangle",
+                    ));
                 }
                 if normal.dot(center - corners[0]) > 0.0 {
                     normal = -normal;
@@ -331,18 +355,27 @@ impl Collide<'_> {
                     normal.dot(DVec3::from_array(corner.map(f64::from)) - corners[0])
                         > GEOMETRY_EPSILON
                 }) {
-                    return Err(format!(
-                        "Native physics cropped brush {brush} beyond the geometry tolerance"
+                    return Err(Failure::shape(
+                        Stage::GeometryVerification,
+                        brush,
+                        "Native physics cropped the convex beyond the geometry tolerance",
                     ));
                 }
-                let material = triangle_material(shape, corners, normal, material)?;
+                let material =
+                    triangle_material(shape, corners, normal, material).map_err(|message| {
+                        Failure::shape(Stage::GeometryVerification, brush, message)
+                    })?;
                 if assign {
                     unsafe {
                         set_material(pointer, index, triangle, material);
                     }
                 }
                 if unsafe { get_material(pointer, index, triangle) } != material {
-                    return Err("Native physics did not retain the authored surface mapping".into());
+                    return Err(Failure::shape(
+                        Stage::GeometryVerification,
+                        brush,
+                        "Native physics did not retain the authored surface mapping",
+                    ));
                 }
             }
         }
@@ -443,9 +476,9 @@ pub(super) fn limits() -> io::Result<()> {
     Ok(())
 }
 
-pub(super) fn write(request: &Request, directory: &Path, output: &Path) -> Result<(), String> {
-    limits().map_err(|error| error.to_string())?;
-    let api = Api::load(directory)?;
+pub(super) fn write(request: &Request, directory: &Path, output: &Path) -> Result<(), Failure> {
+    limits().map_err(|error| Failure::new(Stage::Library, error.to_string()))?;
+    let api = Api::load(directory).map_err(|message| Failure::new(Stage::Library, message))?;
     let mut mass_api = None;
     let mut records = Vec::new();
     let mut work = 0;
@@ -454,17 +487,29 @@ pub(super) fn write(request: &Request, directory: &Path, output: &Path) -> Resul
         let mut solids = Vec::new();
         let mut keys = String::new();
         for (index, body) in model.bodies.iter().enumerate() {
-            let collide = api.body(body)?;
+            let collide = api
+                .body(body)
+                .map_err(|failure| failure.context(model.index, index))?;
             let material = if model.index == 0 && body.surface.is_none() {
                 1
             } else {
                 if mass_api.is_none() {
-                    mass_api = Some(mass::MassApi::load(&api, &request.surface_data)?);
+                    mass_api = Some(mass::MassApi::load(&api, &request.surface_data).map_err(
+                        |message| Failure::new(Stage::Keys, message).context(model.index, index),
+                    )?);
                 }
                 0
             };
-            let volume = collide.verify(body, material, true, &mut work)?;
-            let mut solid = collide.serialize()?;
+            let volume = collide
+                .verify(body, material, true, &mut work)
+                .map_err(|failure| {
+                    failure
+                        .stage(Stage::GeometryVerification)
+                        .context(model.index, index)
+                })?;
+            let mut solid = collide.serialize().map_err(|message| {
+                Failure::new(Stage::Serialization, message).context(model.index, index)
+            })?;
             let pointer = unsafe {
                 (api.unserialize)(
                     api.pointer,
@@ -474,52 +519,42 @@ pub(super) fn write(request: &Request, directory: &Path, output: &Path) -> Resul
                 )
             };
             if pointer.is_null() {
-                return Err("Native physics could not reload its checked generated body".into());
+                return Err(Failure::new(
+                    Stage::RoundTripVerification,
+                    "Native physics could not reload its checked generated body",
+                )
+                .context(model.index, index));
             }
             let loaded = Collide { api: &api, pointer };
-            loaded.verify(body, material, false, &mut work)?;
+            loaded
+                .verify(body, material, false, &mut work)
+                .map_err(|failure| {
+                    failure
+                        .stage(Stage::RoundTripVerification)
+                        .context(model.index, index)
+                })?;
             drop(loaded);
             bytes += 4 + solid.len();
             if bytes > source_formats::bsp::MAX_PHYSICS_BYTES {
-                return Err("Native physics data exceeds its 64 MiB limit".into());
+                return Err(Failure::new(
+                    Stage::Output,
+                    "Native physics data exceeds its 64 MiB limit",
+                ));
             }
-            if let Some(surface) = body.surface {
-                append_keys(&mut keys, &fluid_keys(index, body, surface)?)?;
-            } else if model.index == 0 {
-                append_keys(
-                    &mut keys,
-                    &format!(
-                        "staticsolid {{\n\"index\" \"{index}\"\n\"contents\" \"{}\"\n}}\n",
-                        body.contents
-                    ),
-                )?;
-            } else {
-                let property = body
-                    .surface_property
-                    .as_deref()
-                    .ok_or("Brush-model mass is missing its dominant surface property")?;
-                let area = body
-                    .mass_area
-                    .ok_or("Brush-model mass is missing its emitted area")?;
-                let mass = mass_api
-                    .as_ref()
-                    .ok_or("Brush-model mass surface database is unavailable")?
-                    .mass(property, volume, area)?;
-                append_keys(
-                    &mut keys,
-                    &format!(
-                        "solid {{\n\"index\" \"{index}\"\n\"mass\" \"{mass}\"\n\"surfaceprop\" \"{property}\"\n\"volume\" \"{volume}\"\n}}\n"
-                    ),
-                )?;
-            }
+            append_body_keys(
+                &mut keys,
+                index,
+                body,
+                model.index,
+                volume,
+                mass_api.as_ref(),
+            )
+            .map_err(|message| Failure::new(Stage::Keys, message).context(model.index, index))?;
             solids.push(solid);
         }
         if model.index == 0 {
-            append_keys(&mut keys, "materialtable {\n")?;
-            for (index, name) in request.materials.iter().enumerate() {
-                append_keys(&mut keys, &format!("\"{name}\" \"{}\"\n", index + 1))?;
-            }
-            append_keys(&mut keys, "}\n")?;
+            append_material_keys(&mut keys, &request.materials)
+                .map_err(|message| Failure::new(Stage::Keys, message))?;
         }
         keys.push('\0');
         bytes += 16 + keys.len();
@@ -537,11 +572,58 @@ pub(super) fn write(request: &Request, directory: &Path, output: &Path) -> Resul
                 key_data: keys.as_bytes(),
             })
         })
-        .collect::<Result<Vec<_>, String>>()?;
+        .collect::<Result<Vec<_>, String>>()
+        .map_err(|message| Failure::new(Stage::Output, message))?;
     let data = PhysicsCollision { models }
         .to_bytes(request.model_count)
-        .map_err(|error| error.to_string())?;
-    std::fs::write(output, data).map_err(|error| error.to_string())
+        .map_err(|error| Failure::new(Stage::Output, error.to_string()))?;
+    std::fs::write(output, data).map_err(|error| Failure::new(Stage::Output, error.to_string()))
+}
+
+fn append_body_keys(
+    keys: &mut String,
+    index: usize,
+    body: &Body,
+    model: usize,
+    volume: f32,
+    mass_api: Option<&mass::MassApi>,
+) -> Result<(), String> {
+    if let Some(surface) = body.surface {
+        append_keys(keys, &fluid_keys(index, body, surface)?)
+    } else if model == 0 {
+        append_keys(
+            keys,
+            &format!(
+                "staticsolid {{\n\"index\" \"{index}\"\n\"contents\" \"{}\"\n}}\n",
+                body.contents
+            ),
+        )
+    } else {
+        let property = body
+            .surface_property
+            .as_deref()
+            .ok_or("Brush-model mass is missing its dominant surface property")?;
+        let area = body
+            .mass_area
+            .ok_or("Brush-model mass is missing its emitted area")?;
+        let mass = mass_api
+            .ok_or("Brush-model mass surface database is unavailable")?
+            .mass(property, volume, area)?;
+        append_keys(
+            keys,
+            &format!(
+                "solid {{\n\"index\" \"{index}\"\n\"mass\" \"{mass}\"\n\"surfaceprop\" \"{property}\"\n\"volume\" \"{volume}\"\n}}\n"
+            ),
+        )
+    }
+}
+
+fn append_material_keys(keys: &mut String, materials: &[String]) -> Result<(), String> {
+    append_keys(keys, "materialtable {\n")?;
+    for (index, name) in materials.iter().enumerate() {
+        append_keys(keys, &format!("\"{name}\" \"{}\"\n", index + 1))?;
+    }
+    append_keys(keys, "}\n")
 }
 
 fn fluid_keys(index: usize, body: &Body, surface: f32) -> Result<String, String> {

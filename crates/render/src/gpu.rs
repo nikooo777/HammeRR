@@ -218,6 +218,7 @@ pub struct ViewOptions {
     pub lighting_quality: crate::lighting::Quality,
     pub lighting_exposure_ev: f32,
     pub normal_maps: bool,
+    pub surface_shading: bool,
     pub surface: SurfaceView,
     pub smoothing_group: u32,
     pub tool_textures: bool,
@@ -249,6 +250,7 @@ impl Default for ViewOptions {
             instance_contents: false,
             surface: SurfaceView::Textured,
             normal_maps: false,
+            surface_shading: false,
             lighting_preview: false,
             lighting_sky_ambient: false,
             lighting_quality: crate::lighting::Quality::Detail,
@@ -297,6 +299,21 @@ pub struct SceneKey {
 }
 
 impl ViewOptions {
+    fn surface_uniforms(&self) -> [u32; 4] {
+        [
+            match self.surface {
+                SurfaceView::Textured => 0,
+                SurfaceView::Flat => 3,
+                SurfaceView::Wireframe => 4,
+                SurfaceView::LightmapDensity => 1,
+                SurfaceView::SmoothingGroups => 2,
+            },
+            self.smoothing_group.clamp(1, 32) - 1,
+            u32::from(self.normal_maps && self.surface == SurfaceView::Textured),
+            u32::from(self.surface_shading && self.surface == SurfaceView::Textured),
+        ]
+    }
+
     pub fn sky3d_active(&self, camera: &Camera) -> bool {
         self.sky3d_preview
             && self.tool_textures
@@ -334,6 +351,10 @@ struct DrawBatch {
     helper: bool,
     sky: bool,
     sky3d_eligible: bool,
+}
+
+fn surface_shading_material(info: &MaterialInfo, editor: bool) -> bool {
+    !editor && !info.tool && !info.sky && !info.reference && info.helper.is_none()
 }
 
 fn translucent_order<'a>(
@@ -1108,7 +1129,7 @@ impl Renderer {
             flag(info.helper.is_some()),
             flag(editor || info.sky || info.reference),
             flag(normal_asset.is_some()),
-            0.0,
+            flag(surface_shading_material(info, editor)),
             transform[0],
             transform[1],
             transform[2],
@@ -1258,18 +1279,7 @@ impl Renderer {
                 0.0,
                 0.0,
             ],
-            surface_view: [
-                match options.surface {
-                    SurfaceView::Textured => 0,
-                    SurfaceView::Flat => 3,
-                    SurfaceView::Wireframe => 4,
-                    SurfaceView::LightmapDensity => 1,
-                    SurfaceView::SmoothingGroups => 2,
-                },
-                options.smoothing_group.clamp(1, 32) - 1,
-                u32::from(options.normal_maps && options.surface == SurfaceView::Textured),
-                0,
-            ],
+            surface_view: options.surface_uniforms(),
         };
         ctx.queue
             .write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
@@ -1801,6 +1811,46 @@ fn checkerboard_texture(ctx: &GpuContext) -> wgpu::Texture {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn surface_shading_uniforms_preserve_modes_and_exclude_editor_materials() {
+        use super::*;
+
+        let default = ViewOptions::default();
+        assert_eq!(default.surface_uniforms(), [0, 0, 0, 0]);
+        let shaded = ViewOptions {
+            surface_shading: true,
+            ..default
+        };
+        assert_eq!(shaded.surface_uniforms(), [0, 0, 0, 1]);
+        assert_eq!(default.scene_key(7), shaded.scene_key(7));
+        for surface in SurfaceView::ALL {
+            let view = ViewOptions {
+                surface,
+                normal_maps: true,
+                smoothing_group: 32,
+                ..shaded
+            };
+            let flags = view.surface_uniforms();
+            assert_eq!(flags[1], 31);
+            assert_eq!(flags[2], u32::from(surface == SurfaceView::Textured));
+            assert_eq!(flags[3], u32::from(surface == SurfaceView::Textured));
+        }
+        let mut info = MaterialInfo::untextured("test/surface");
+        assert!(surface_shading_material(&info, false));
+        assert!(!surface_shading_material(&info, true));
+        info.tool = true;
+        assert!(!surface_shading_material(&info, false));
+        info.tool = false;
+        info.sky = true;
+        assert!(!surface_shading_material(&info, false));
+        info.sky = false;
+        info.reference = true;
+        assert!(!surface_shading_material(&info, false));
+        let mut library = MaterialLibrary::default();
+        let bulb = library.light_bulb();
+        assert!(!surface_shading_material(library.get(bulb), false));
+    }
+
     #[test]
     fn transparent_model_order_tracks_render_camera_and_keeps_normal_order() {
         use super::*;

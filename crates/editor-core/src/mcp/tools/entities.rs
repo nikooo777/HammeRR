@@ -18,7 +18,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Begin a shared cancellable property draft for world settings or selected entities. Returns a token required by update/commit/cancel. Replaces any previous property draft."
+        description = "Begin a shared cancellable property draft for world settings or selected entities. Returns a token required by update/commit/cancel. Replaces any previous property draft. handle identifies kind=property_edit with a decimal-string token, separate from source revisions. Starting another property draft replaces ownership; map or definition changes make it stale. Selection changes retain the captured targets; they do not retarget the draft."
     )]
     pub(in crate::mcp) fn begin_property_edit(
         &self,
@@ -28,14 +28,12 @@ impl EditorServer {
             let mut session = self.session();
             let target = args.target(&session)?;
             session.begin_property_edit(target)?;
-            Ok(
-                json!({"draft":session.property_draft(), "preview":session.preview_property_edit()?}),
-            )
+            session.property_edit_report()
         })
     }
 
     #[tool(
-        description = "Replace pending property changes and validate every target before accepting. set writes a value; remove deletes the override; default explicitly writes the FGD default; flag changes one declared bit preserving others; component edits one vector/color component. Names use the dedicated safe rename workflow. No map mutation until commit."
+        description = "Replace pending property changes and validate every target before accepting. set writes a value; remove deletes the override; default explicitly writes the FGD default; flag changes one declared bit preserving others; component edits one vector/color component. Names use the dedicated safe rename workflow. No map mutation until commit. handle identifies kind=property_edit with a decimal-string token, separate from source revisions. Starting another property draft replaces ownership; map or definition changes make it stale. Selection changes retain the captured targets; they do not retarget the draft."
     )]
     pub(in crate::mcp) fn update_property_edit(
         &self,
@@ -44,22 +42,18 @@ impl EditorServer {
         run(|| {
             let mut session = self.session();
             session.update_property_edit(args.token, args.changes)?;
-            Ok(
-                json!({"draft":session.property_draft(), "preview":session.preview_property_edit()?}),
-            )
+            session.property_edit_report()
         })
     }
 
     #[tool(
-        description = "Read the shared property draft and preview; a stale map/FGD draft returns an error.",
+        description = "Read the shared property draft and preview; a closed or stale map/FGD draft returns an error. handle identifies the active property_edit token as a decimal string; commit/cancel return handle=null.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_property_edit(&self) -> ToolResult {
         run(|| {
             let session = self.session();
-            Ok(
-                json!({"draft":session.property_draft(), "preview":session.preview_property_edit()?}),
-            )
+            session.property_edit_report()
         })
     }
 
@@ -73,7 +67,7 @@ impl EditorServer {
         run(|| {
             self.session()
                 .commit_property_edit(Actor::Agent, args.token)?;
-            Ok(json!({"applied":true}))
+            Ok(json!({"handle":null,"applied":true}))
         })
     }
 
@@ -86,7 +80,7 @@ impl EditorServer {
     ) -> ToolResult {
         run(|| {
             self.session().cancel_property_edit(args.token)?;
-            Ok(json!({"cancelled":true}))
+            Ok(json!({"handle":null,"cancelled":true}))
         })
     }
 
@@ -268,7 +262,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Begin a shared, cancellable entity I/O form. Omit index to add; supply an outgoing index to edit. Leaves the map and undo history unchanged."
+        description = "Begin a shared, cancellable entity I/O form. Omit index to add; supply an outgoing index to edit. Leaves the map and undo history unchanged. handle identifies kind=connection_edit with a decimal-string token, separate from generation/revision. Starting another connection draft replaces ownership; map changes make it stale and clear its active handle. Selection changes retain the captured source; they do not retarget the draft."
     )]
     pub(in crate::mcp) fn begin_connection_edit(
         &self,
@@ -284,7 +278,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Change fields in the shared connection draft. Unfinished or invalid values return feedback without editing the map. Delay and firing count are strings; -1 is unlimited."
+        description = "Change fields in the shared connection draft. Unfinished or invalid values return feedback without editing the map. Delay and firing count are strings; -1 is unlimited. handle identifies kind=connection_edit with a decimal-string token, separate from generation/revision. Starting another connection draft replaces ownership; map changes make it stale and clear its active handle. Selection changes retain the captured source; they do not retarget the draft."
     )]
     pub(in crate::mcp) fn update_connection_draft(
         &self,
@@ -329,13 +323,15 @@ impl EditorServer {
                 .ok_or("Begin a connection edit first")?
                 .source;
             let index = session.commit_connection_edit(Actor::Agent)?;
-            Ok(connection_json(
+            let mut report = connection_json(
                 session
                     .connection_records(source)?
                     .into_iter()
                     .nth(index)
                     .ok_or("Connection no longer exists")?,
-            ))
+            );
+            report["handle"] = Value::Null;
+            Ok(report)
         })
     }
 
@@ -352,7 +348,7 @@ impl EditorServer {
                 session.check_connection_draft(token)?;
             }
             session.cancel_connection_edit();
-            Ok(json!({"cancelled":true}))
+            Ok(json!({"handle":null,"cancelled":true}))
         })
     }
 

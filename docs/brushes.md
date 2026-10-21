@@ -126,6 +126,11 @@ Set **Shift coordinate** X, **By coordinate** Y and **Factor** 0.5: every point 
 
 ## Brush shapes
 
+The default sphere has **12** sides and **5** latitude bands. Higher explicit
+resolution is preserved; the dialog warns above the 64-face limit for Hollow,
+Carve and component editing. Use fewer sides/bands when those operations are
+needed. Each final brush must still pass the operation's geometry checks.
+
 Build wedges, cylinders, cones, spheres and arches from exact dimensions.
 
 1. Open **Brush shapes…**.

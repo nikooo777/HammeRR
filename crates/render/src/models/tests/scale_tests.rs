@@ -365,6 +365,34 @@ fn model_scale_scene_vertices_wires_tint_opacity_and_unit_defaults_agree() {
 }
 
 #[test]
+fn surface_shading_model_normals_are_world_space_and_independent_of_uniform_scale() {
+    let asset = offset_asset(false);
+    let game = material_game(std::path::Path::new("/nonexistent-model-normal-fixture"));
+    for scale in ["0.015625", "0.5", "2", "64"] {
+        let mut source = entity(Some(scale));
+        source.properties.set("angles", "0 90 90");
+        let instance = Instance::new(&source, asset.clone()).unwrap();
+        let mut vmf = Document::empty().vmf().clone();
+        vmf.entities.push(source);
+        let mesh = crate::SceneMesh::build_with_models(
+            &vmf,
+            &game,
+            &mut crate::MaterialLibrary::default(),
+            &HashSet::new(),
+            &HashSet::new(),
+            &[],
+            &[instance],
+        );
+        assert_eq!(mesh.vertices.len(), 4);
+        for vertex in mesh.vertices {
+            let normal = glam::Vec3::from_array(vertex.normal);
+            assert!(normal.abs_diff_eq(glam::Vec3::X, 1e-6), "{scale}: {normal}");
+            assert!((normal.length_squared() - 1.0).abs() < 1e-6);
+        }
+    }
+}
+
+#[test]
 #[ignore = "requires an offscreen GPU; run explicitly with --ignored"]
 fn rendered_model_scale_keeps_default_pixels_and_changes_silhouette_coverage() {
     let directory = tempfile::tempdir().unwrap();

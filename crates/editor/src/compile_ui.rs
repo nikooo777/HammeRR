@@ -14,6 +14,8 @@ mod baked_prop_vertices;
 mod capture;
 #[cfg(test)]
 mod instance_dependency_tests;
+mod lighting_progress;
+mod lighting_work;
 mod prop_vertex_lighting;
 #[cfg(test)]
 mod recipe_authority_tests;
@@ -203,6 +205,17 @@ fn refresh_current_settings(window: &CompileWindow, session: &Session) {
                 .is_ok_and(compiler::LightingMode::performs_lighting),
     );
     window.set_smoothing_angle(settings["smoothing_angle"].as_u64().unwrap_or_default() as i32);
+    if !window.get_lighting_work_limit_editing() {
+        window.set_lighting_work_limit_millions(
+            lighting_work::millions(session.compile_options().lighting_work_limit).into(),
+        );
+    }
+    window.set_lighting_work_description(
+        settings["lighting_work_description"]
+            .as_str()
+            .unwrap_or_default()
+            .into(),
+    );
     let bounce_choice = settings["bounce_choices"]
         .as_array()
         .into_iter()
@@ -361,6 +374,9 @@ fn recipe_action(
     };
     match result {
         Ok(state) => {
+            if matches!(action, RecipeAction::Apply) {
+                window.set_lighting_work_limit_editing(false);
+            }
             let mut form = form.borrow_mut();
             form.revision = 0;
             if matches!(
@@ -551,6 +567,29 @@ impl Controller {
                             "Brush smoothing angle updated. The next build will use this angle."
                                 .into()
                         }
+                        Err(error) => error.into(),
+                    });
+                });
+            }
+        });
+        window.on_change_lighting_work_limit({
+            let (target, window, recipes) = (access.downgrade(), window.as_weak(), recipes.clone());
+            move |millions| {
+                admitted(&window, &target, |window, shared| {
+                    let mut session = lock(shared);
+                    let result = lighting_work::parse_millions(&millions).and_then(|limit| {
+                        session.update_build_settings(
+                            Actor::User,
+                            crate::session::compilation::BuildSettingsUpdate {
+                                lighting_work_limit: Some(limit),
+                                ..Default::default()
+                            },
+                        )
+                    });
+                    window.set_lighting_work_limit_editing(false);
+                    refresh_recipes(&window, &session, &recipes);
+                    window.set_message(match result {
+                        Ok(_) => "Lighting work limit updated for the next build.".into(),
                         Err(error) => error.into(),
                     });
                 });
@@ -1143,6 +1182,7 @@ impl Controller {
             })
             .unwrap_or_default();
         let region = &job["compile_region"];
+        let lighting_progress = lighting_progress::details(&result["stats"]);
         let region_label = if let Some(error) = region["error"].as_str() {
             format!("Invalid region: {error}")
         } else if region["enabled"] == true {
@@ -1152,7 +1192,7 @@ impl Controller {
         };
         self.window.set_details(
             format!(
-                "Output: {}\nRecipe at build start: {}\nCompile scope at build start: {region_label}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nIndirect light: {} · Brush smoothing angle: {}°\nStage: {} · {:.2}s elapsed{queue_details}{instances}{packed_sky}{packed_water}{packed_static_props}{samples}{reflections}{props}{prop_vertex_lighting}{details}{visibility}{hints}{bounce}{areas}{occluders}{terrain}{overlays}{water}{sky}{lighting}{bumps}{model_maps}{styles}{hdr}{smoothing}{physics}\n{}",
+                "Output: {}\nRecipe at build start: {}\nCompile scope at build start: {region_label}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nIndirect light: {} · Brush smoothing angle: {}°\nStage: {} · {:.2}s elapsed{queue_details}{instances}{packed_sky}{packed_water}{packed_static_props}{samples}{reflections}{props}{prop_vertex_lighting}{details}{visibility}{hints}{bounce}{areas}{occluders}{terrain}{overlays}{water}{sky}{lighting}{bumps}{model_maps}{styles}{hdr}{lighting_progress}{smoothing}{physics}\n{}",
                 job["path"].as_str().unwrap_or_default(),
                 job["recipe"]["name"].as_str().unwrap_or("Custom settings"),
                 compiler::LightingMode::parse(job["settings"]["lighting"].as_str().unwrap_or_default()).unwrap_or_default().label(),
@@ -1209,6 +1249,7 @@ impl Controller {
     }
 
     pub fn show(&self, session: &Session) -> Result<(), slint::PlatformError> {
+        self.window.set_lighting_work_limit_editing(false);
         self.window.set_message("Closing this window leaves an active build running. Cancel build stops it and preserves previous output.".into());
         self.refresh(session);
         self.window.show()

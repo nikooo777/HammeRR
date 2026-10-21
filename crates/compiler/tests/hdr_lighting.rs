@@ -569,6 +569,7 @@ fn both_channels_share_the_work_limit_and_cancelled_publication_is_atomic() {
     let (_directory, game) = game(false);
     let document = shadowed_model(false);
     let settings = Options {
+        lighting_work_limit: 100_000_000,
         sky_quality: SkyQuality::Balanced,
         ..options(LightingMode::DirectLdr, 1)
     };
@@ -584,7 +585,7 @@ fn both_channels_share_the_work_limit_and_cancelled_publication_is_atomic() {
         },
     );
     assert!(dual.report.has_errors() && dual.bsp.is_none());
-    assert!(format!("{:?}", dual.report).contains("100-million work-unit"));
+    assert!(format!("{:?}", dual.report).contains("100000000 work-unit"));
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("guarded.bsp");
     std::fs::write(&path, b"previous BSP").unwrap();

@@ -303,10 +303,14 @@ def worker(args, process_observer=None):
             else:
                 raise TimeoutError(f"Private HDR observer did not complete; inspect {output}")
             samples = hardware["samples"]
+            runtime.require_native_running(process, "before HDR capture observation")
             if process_observer is not None:
                 result.update(process_observer(process, records))
+            runtime.require_native_running(process, "before HDR PNG capture")
             subprocess.run(["grim", str(output / "game.png")], check=True, timeout=10)
+            runtime.require_native_running(process, "after HDR PNG capture")
             subprocess.run(["grim", "-t", "ppm", str(output / "game.ppm")], check=True, timeout=10)
+            runtime.require_native_running(process, "after HDR PPM capture")
             console = (game / "hammerr-runtime.log").read_text(errors="replace")
             controls = verify_controls(console, args.hdr_level)
             private_launch = runtime.verify_private_launch(game, console)
@@ -319,6 +323,7 @@ def worker(args, process_observer=None):
                       "engine_sha256": ENGINE_SHA256, "module_sha256": fingerprints,
                       "insecure": True, "post_map_sv_lan": True,
                       "display": os.environ.get("DISPLAY"), "wayland_display": os.environ.get("WAYLAND_DISPLAY")})
+            runtime.require_native_running(process, "after final HDR capture validation")
     finally:
         (output / "runtime.json").write_text(json.dumps(result, indent=2) + "\n")
 

@@ -158,11 +158,32 @@ impl Session {
     }
 
     pub fn primitive_state(&self) -> Value {
-        let preview=self.geometry.primitives.preview.as_ref().map(|preview| {
-            let brushes=preview.ids.iter().filter_map(|id| { let ObjectId::Solid(id)=id else {return None};let solid=preview.document.solid(*id)?;Some(json!({"id":format!("solid:{id}"),"sides":solid.sides.iter().map(|side|side.id).collect::<Vec<_>>()})) }).collect::<Vec<_>>();
+        let preview = self.geometry.primitives.preview.as_ref().map(|preview| {
+            let brushes = preview.ids.iter().filter_map(|id| {
+                let ObjectId::Solid(id) = id else { return None };
+                let solid = preview.document.solid(*id)?;
+                Some(json!({
+                    "id": format!("solid:{id}"),
+                    "sides": solid.sides.iter().map(|side| side.id).collect::<Vec<_>>(),
+                    "face_count": solid.sides.len(),
+                    "operation_side_count_supported": solid.sides.len() <= map_core::subobject::MAX_SIDES
+                }))
+            }).collect::<Vec<_>>();
             json!({"token":preview.token.to_string(),"generation":preview.generation,"revision":preview.revision,"spec":spec_json(&preview.spec),"brushes":brushes,"face_count":brushes.iter().map(|brush|brush["sides"].as_array().unwrap().len()).sum::<usize>(),"bounds":{"mins":preview.bounds[0].to_array(),"maxs":preview.bounds[1].to_array()}})
         });
-        json!({"preview":preview,"limits":{"segments":primitive::MAX_SEGMENTS,"faces_per_brush":primitive::MAX_FACES,"coordinate":primitive::MAX_COORDINATE,"minimum_size":primitive::MIN_SIZE},"bounds_note":"Curved shapes are inscribed in the supplied bounds. Arch bounds describe the full ellipse; the sweep chooses which part is built."})
+        let defaults = Spec::default();
+        json!({
+            "preview": preview,
+            "defaults": {"segments": defaults.segments, "bands": defaults.bands},
+            "limits": {"segments":primitive::MAX_SEGMENTS,"faces_per_brush":primitive::MAX_FACES,"coordinate":primitive::MAX_COORDINATE,"minimum_size":primitive::MIN_SIZE},
+            "operation_limits": {
+                "hollow": {"faces_per_brush": map_core::subobject::MAX_SIDES},
+                "carve": {"faces_per_brush": map_core::subobject::MAX_SIDES},
+                "component_editing": {"faces_per_brush": map_core::subobject::MAX_SIDES}
+            },
+            "operation_note": "The operation side limit applies to each brush. Geometry, thickness and selection limits are checked when the operation runs; explicit primitive resolution is preserved.",
+            "bounds_note":"Curved shapes are inscribed in the supplied bounds. Arch bounds describe the full ellipse; the sweep chooses which part is built."
+        })
     }
 }
 
@@ -191,6 +212,49 @@ mod tests {
             )
             .unwrap();
         session
+    }
+
+    #[test]
+    fn sphere_resolution_is_preserved_and_operation_side_limits_are_reported() {
+        for actor in [Actor::User, Actor::Agent] {
+            let mut session = session();
+            for (bands, faces, supported) in [(5, 60, true), (6, 72, false)] {
+                session
+                    .create_primitive(
+                        actor,
+                        Spec {
+                            shape: Shape::Sphere,
+                            bands,
+                            ..Spec::default()
+                        },
+                        true,
+                    )
+                    .unwrap();
+                let report = session.primitive_state();
+                assert_eq!(report["defaults"]["segments"], 12);
+                assert_eq!(report["defaults"]["bands"], 5);
+                assert_eq!(report["preview"]["spec"]["bands"], bands);
+                assert_eq!(report["preview"]["face_count"], faces);
+                assert_eq!(report["preview"]["brushes"][0]["face_count"], faces);
+                assert_eq!(
+                    report["preview"]["brushes"][0]["operation_side_count_supported"],
+                    supported
+                );
+                for operation in ["hollow", "carve", "component_editing"] {
+                    assert_eq!(
+                        report["operation_limits"][operation]["faces_per_brush"],
+                        map_core::subobject::MAX_SIDES
+                    );
+                }
+                let token = session.primitive_preview().unwrap().token;
+                let ids = session.commit_primitive_preview(actor, token).unwrap();
+                let ObjectId::Solid(id) = ids[0] else {
+                    unreachable!()
+                };
+                assert_eq!(session.document().solid(id).unwrap().sides.len(), faces);
+                session.undo(actor).unwrap();
+            }
+        }
     }
 
     #[test]

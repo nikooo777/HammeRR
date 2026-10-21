@@ -488,7 +488,7 @@ impl EditorServer {
             session
                 .check_face_preview_token(args.token.as_deref().map(parse_token).transpose()?)?;
             let changed = session.commit_face_preview(Actor::Agent)?;
-            Ok(json!({"faces_changed": changed}))
+            Ok(json!({"handle": session.face_preview_handle(), "faces_changed": changed}))
         })
     }
 
@@ -505,7 +505,7 @@ impl EditorServer {
                 Actor::Agent,
                 args.token.as_deref().map(parse_token).transpose()?,
             )?;
-            Ok(json!({"preview": false}))
+            Ok(json!({"handle": session.face_preview_handle(), "preview": false}))
         })
     }
 

@@ -17,6 +17,7 @@ use crate::{Control, Diagnostic, Report};
 
 pub(crate) mod current;
 pub(crate) mod damping;
+mod failure;
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 mod native;
 mod surface_data;
@@ -924,15 +925,21 @@ fn execute(
     }
 }
 
+pub(crate) struct Settings<'a> {
+    pub vmf: &'a source_formats::vmf::Vmf,
+    pub fs: &'a source_formats::gamefs::GameFs,
+}
+
 pub(crate) fn bake(
     map: &Map,
     models: &[emit::Model],
     water: &crate::water::Water,
-    fs: &source_formats::gamefs::GameFs,
+    settings: Settings<'_>,
     bsp: &mut Bsp,
     report: &mut Report,
     control: &Control,
 ) -> Result<Stats, String> {
+    let Settings { vmf, fs } = settings;
     let request = plan(map, models, water, bsp, report, control, fs)?;
     let directory = fs.base_dir.join("bin/linux64");
     if !directory.join("vphysics.so").is_file() {
@@ -944,6 +951,7 @@ pub(crate) fn bake(
     let input = temporary.path().join("request.json");
     let output = temporary.path().join("physics.bin");
     let log = temporary.path().join("worker.log");
+    let failure = temporary.path().join("failure.json");
     let bytes = serde_json::to_vec(&request).map_err(|error| error.to_string())?;
     if bytes.len() as u64 > MAX_REQUEST_BYTES {
         return Err("Physics request exceeds its 64 MiB limit".into());
@@ -960,6 +968,7 @@ pub(crate) fn bake(
         .arg(&directory)
         .arg(&input)
         .arg(&output)
+        .arg(&failure)
         .env("LD_LIBRARY_PATH", &directory)
         .stdin(Stdio::null())
         .stdout(Stdio::from(
@@ -968,10 +977,22 @@ pub(crate) fn bake(
         .stderr(Stdio::from(log_file));
     let status = execute(command, control, WORKER_TIMEOUT)?;
     if !status.success() {
-        let log = String::from_utf8_lossy(&read_bounded(&log, 64 * 1024)?)
-            .trim()
-            .to_owned();
-        return Err(format!("Physics worker failed ({status}): {log}"));
+        let log = match read_bounded(&log, 64 * 1024) {
+            Ok(bytes) => String::from_utf8_lossy(&bytes).trim().to_owned(),
+            Err(error) => format!("bounded worker log unavailable: {error}"),
+        };
+        let diagnostic = read_bounded(&failure, failure::MAX_FAILURE_BYTES)
+            .and_then(|bytes| {
+                serde_json::from_slice::<failure::Failure>(&bytes)
+                    .map_err(|error| error.to_string())
+            })
+            .and_then(|failure| failure.diagnostic(vmf, map, models, &request))
+            .map_err(|error| format!(
+                "Physics worker failed ({status}) without a valid structured failure: {error}; worker log: {log}"
+            ))?;
+        let message = diagnostic.message.clone();
+        report.diagnostics.push(diagnostic);
+        return Err(message);
     }
     control.checkpoint()?;
     let bytes = read_bounded(&output, MAX_PHYSICS_BYTES as u64)?;
@@ -1121,11 +1142,25 @@ pub(crate) fn bake(
 
 pub fn run_worker() -> Result<(), String> {
     let args = std::env::args_os().skip(1).collect::<Vec<_>>();
-    if args.len() != 3 {
+    if !(3..=4).contains(&args.len()) {
         return Err(
-            "usage: hammerr-physics <linux64-library-dir> <request.json> <physics.bin>".into(),
+            "usage: hammerr-physics <linux64-library-dir> <request.json> <physics.bin> [failure.json]".into(),
         );
     }
+    if let Err(failure) = run_worker_request(&args) {
+        if let Some(path) = args.get(3) {
+            let bytes = serde_json::to_vec(&failure).map_err(|error| error.to_string())?;
+            if bytes.len() as u64 > failure::MAX_FAILURE_BYTES {
+                return Err("Physics worker failure exceeds its structured protocol limit".into());
+            }
+            std::fs::write(path, bytes).map_err(|error| error.to_string())?;
+        }
+        return Err(failure.message);
+    }
+    Ok(())
+}
+
+fn run_worker_request(args: &[std::ffi::OsString]) -> Result<(), failure::Failure> {
     let request: Request =
         serde_json::from_slice(&read_bounded(Path::new(&args[1]), MAX_REQUEST_BYTES)?)
             .map_err(|error| error.to_string())?;

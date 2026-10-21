@@ -493,6 +493,8 @@ pub(super) fn run(
         mcp::WorkspaceUi,
     ) -> Result<(mcp::Workspace, String), Box<dyn std::error::Error>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize WGPU's debug lock TLS before Slint retains the queue.
+    ctx.queue.submit([]);
     slint::BackendSelector::new()
         .require_wgpu_30(slint::wgpu_30::WGPUConfiguration::Manual {
             instance: ctx.instance.clone(),

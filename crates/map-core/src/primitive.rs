@@ -150,7 +150,7 @@ impl Default for Spec {
             maxs: DVec3::new(64.0, 64.0, 128.0),
             axis: Axis::Z,
             segments: 12,
-            bands: 6,
+            bands: 5,
             inset: 16.0,
             start_angle: 0.0,
             sweep_angle: 180.0,
@@ -541,6 +541,57 @@ mod tests {
                 document.undo().unwrap();
                 assert_eq!(document.vmf(), &before);
             }
+        }
+    }
+
+    #[test]
+    fn default_sphere_can_be_hollowed_and_explicit_resolution_remains_unchanged() {
+        for (bands, supported) in [(Spec::default().bands, true), (6, false)] {
+            let mut document = Document::empty();
+            let ids = document
+                .edit("sphere", |tx| {
+                    create(
+                        tx,
+                        &Spec {
+                            shape: Shape::Sphere,
+                            bands,
+                            ..Spec::default()
+                        },
+                    )
+                })
+                .unwrap();
+            let ObjectId::Solid(id) = ids[0] else {
+                unreachable!()
+            };
+            assert_eq!(document.solid(id).unwrap().sides.len(), 12 * bands as usize);
+            let source = document.vmf().clone();
+            let revision = document.revision();
+            let history = document.undo_labels().count();
+            let result = document.edit("hollow sphere", |tx| {
+                crate::hollow::hollow(
+                    tx,
+                    &ids,
+                    &crate::hollow::Spec {
+                        thickness: 8.0,
+                        outward: false,
+                        open_faces: Default::default(),
+                    },
+                )
+            });
+            if supported {
+                let result = result.unwrap();
+                assert_eq!(result.brushes.len(), 60);
+                for solid in document.vmf().solids() {
+                    crate::subobject::topology(solid).unwrap();
+                    assert!(volume(&BrushGeometry::from_solid(solid).unwrap()) > 0.0);
+                }
+                document.undo().unwrap();
+            } else {
+                assert!(result.unwrap_err().to_string().contains("4–64 sides"));
+                assert_eq!(document.revision(), revision);
+                assert_eq!(document.undo_labels().count(), history);
+            }
+            assert_eq!(document.vmf(), &source);
         }
     }
 

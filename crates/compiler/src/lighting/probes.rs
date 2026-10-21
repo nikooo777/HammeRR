@@ -247,6 +247,7 @@ pub(super) fn bake(
             first_sample: u16::try_from(samples.len())
                 .map_err(|_| "Model ambient sample offset exceeds Source limits")?,
         };
+        budget.plan_samples(probes.len())?;
         for mut sample in probes {
             let point = DVec3::from_array(
                 sample
@@ -269,8 +270,10 @@ pub(super) fn bake(
                 *slot = encode_color(color)?;
             }
             samples.push(sample);
+            budget.finish_sample();
         }
     }
+    budget.samples_planned_complete();
     if missing != 0 {
         report.diagnostics.push(Diagnostic::warning(format!("{missing} open leaves have no safe quantized ambient probe; model ambient lighting there is missing"), None, None));
     }

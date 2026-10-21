@@ -1,5 +1,8 @@
 use super::*;
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Default)]
 pub(super) struct State {
     pub(super) entity_placement: entity_placement::State,
@@ -105,6 +108,49 @@ pub(super) enum Kind {
 }
 
 impl Session {
+    pub(crate) fn edit_handle(kind: &str, token: Option<u64>) -> serde_json::Value {
+        token.map_or(
+            serde_json::Value::Null,
+            |token| serde_json::json!({"kind": kind, "token": token.to_string()}),
+        )
+    }
+
+    pub fn face_preview_handle(&self) -> serde_json::Value {
+        Self::edit_handle("face_preview", self.face_preview_token())
+    }
+
+    fn feedback_handles(&self) -> Vec<serde_json::Value> {
+        [
+            self.hollow_handle(),
+            self.carve_handle(),
+            self.repeat_array_handle(),
+            self.face_preview_handle(),
+            self.terrain_stroke_handle(),
+        ]
+        .into_iter()
+        .filter(|handle| !handle.is_null())
+        .collect()
+    }
+
+    pub fn select_grouped_report(
+        &mut self,
+        ids: &[ObjectId],
+        mode: SelectMode,
+    ) -> Result<serde_json::Value, String> {
+        let before = self.feedback_handles();
+        self.select_grouped(ids, mode)?;
+        let after = self.feedback_handles();
+        let cleared = before
+            .iter()
+            .filter(|handle| !after.contains(handle))
+            .map(|handle| handle["kind"].clone())
+            .collect::<Vec<_>>();
+        Ok(serde_json::json!({
+            "selection": self.selection.iter().copied().map(crate::identity::id_string).collect::<Vec<_>>(),
+            "cleared_preview_kinds": cleared,
+        }))
+    }
+
     pub(super) fn clear_geometry_previews_except(&mut self, retained: &[Kind]) {
         if !retained.contains(&Kind::EntityPlacement) {
             self.clear_entity_placement();

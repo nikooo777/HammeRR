@@ -181,6 +181,8 @@ pub(super) fn bake(
     if details.props.is_empty() {
         return Ok(None);
     }
+    budget.plan_samples(details.props.len())?;
+    budget.samples_planned_complete();
     let surfaces = super::radiance::build_styled_sky(
         ctx.map,
         bsp,
@@ -244,6 +246,7 @@ pub(super) fn bake(
             }
         }
         ranges.push(start..records.len());
+        budget.finish_sample();
     }
     budget.consume(details.props.len())?;
     bsp.set_detail_props(&details)
@@ -652,7 +655,7 @@ mod tests {
             workers: 1,
         };
         let control = crate::Control::default();
-        let mut budget = Budget::new(&control);
+        let mut budget = Budget::with_limit(&control, 100_000_000);
         let shadows = ShadowIndex::new(Vec::new(), &mut |work| budget.consume(work)).unwrap();
         let terrain = ShadowIndex::new(Vec::new(), &mut |work| budget.consume(work)).unwrap();
         let props = ShadowIndex::new(Vec::new(), &mut |work| budget.consume(work)).unwrap();
@@ -676,14 +679,14 @@ mod tests {
         control.cancel().unwrap();
         assert!(cluster(&ctx, DVec3::ZERO, &mut budget).is_err());
         let control = crate::Control::default();
-        let mut budget = Budget::new(&control);
+        let mut budget = Budget::with_limit(&control, 100_000_000);
         budget.consume(100_000_000).unwrap();
         assert!(
             cluster(&ctx, DVec3::ZERO, &mut budget)
                 .unwrap_err()
-                .contains("shared 100-million")
+                .contains("shared 100000000")
         );
-        let mut budget = Budget::new(&control);
+        let mut budget = Budget::with_limit(&control, 100_000_000);
         let _held = budget
             .reserve_bytes(super::super::bake::MAX_LIGHTING_LIVE_BYTES)
             .unwrap();

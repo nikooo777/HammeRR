@@ -7,15 +7,18 @@ helpers, including power 2–4 terrain and nested references. The flat-color
 reference layer displays actual displaced terrain surfaces and composes the
 helpers' Source transforms from the innermost reference outward. Selection,
 content bounds and camera framing use the displayed geometry. Child files and
-parent map objects remain unchanged; no terrain switch is required.
+parent map objects remain unchanged; no terrain switch is required. Supported
+unnamed static child point/spot lights are counted for compilation, with no
+child-light display or illumination preview.
 
 1. Save the parent VMF. Use **Instance reference…** to create an explicit relative
    `.vmf` reference inside its directory tree; see [Instance authoring](instance-authoring.md).
 2. Under **VIEWPORT**, enable **Instance contents**, then open **Instance contents…**.
 3. Click **Refresh instance contents**. The inspector reports loading, ready,
    empty or failed state, owner references, transforms, world/detail counts,
-   content bounds and checked dependency identities. **Cancel refresh** cancels
-   the current request; **Clear** frees the resolved layer.
+   content bounds and checked dependency identities. **Expanded static lights:**
+   reports point/spot counts before compile-region filtering. **Cancel refresh**
+   cancels the current request; **Clear** frees the resolved layer.
 4. Click a displayed reference surface to select its root instance helper.
    Terrain picking follows the displaced triangles. Overlapping object cycling
    uses that same owner. **Frame instance contents** frames selected root
@@ -29,6 +32,8 @@ parent map objects remain unchanged; no terrain switch is required.
 ![Reference inspector with owner and dependency details](images/instance-contents-terrain.png)
 
 ![Nested world and detail terrain reference surfaces](images/instance-terrain-reference.png)
+
+![Light-only assembly counts and unavailable display controls](images/instance-contents-lights.png)
 
 Limits:
 
@@ -57,6 +62,14 @@ edges, with its brush cage faces omitted. Invalid terrain fails the whole
 refresh; there is no cage fallback. The layer does not load child materials or
 preview lighting, normal maps, sky, water, transparency, models or runtime
 entities.
+
+Supported [static child lights](instances.md) resolve and count but add no
+icons, light picking, light bounds or illumination to this layer or the
+authored-lighting preview. A light-only assembly is ready and retains
+its owner/dependency identities and counts, with no reference geometry to
+display, pick or frame. **Frame instance contents** is unavailable for that
+snapshot. Mixed assemblies retain their ordinary brush/terrain preview.
+
 **Tool textures** does not classify this flat reference layer. Child editing,
 parameter replacements and automatic live refresh remain unsupported.
 [Instance authoring](instance-authoring.md) edits the root reference.
@@ -96,6 +109,10 @@ its original solid/side IDs. Terrain provenance rows additionally report
 `geometry` counts describe the actual reference mesh, including any terrain
 density adjustments. Repeated placements may share those leaf identities;
 picks and framing still use the root helper.
+Inspection's `stats.point_lights` and `stats.spot_lights` are omitted individually
+when zero. Like compiler counts, they describe expansion before compile-region
+filtering. A light-only ready report has `available:false`, zero geometry
+counts, no face provenance and null owner content bounds.
 
 MCP uses `inspect_instance_contents` and `set_instance_contents` with
 `refresh`, `cancel`, `clear` or `frame`. Inspectors paginate at most 64 owners per

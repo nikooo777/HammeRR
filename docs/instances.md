@@ -2,41 +2,54 @@
 
 # Compile referenced brush assemblies
 
-Reuse saved VMFs' world and detail brushes, including power 2–4 terrain and
-nested references, at several positions and rotations. Compilation expands the
-referenced geometry without an extra switch. The editor can resolve a separate,
-explicitly refreshed [reference preview](instance-contents.md) with actual
-displaced terrain surfaces in a flat color.
+Reuse saved VMFs' world and detail brushes, power 2–4 terrain, unnamed static
+point/spot lights and nested references at several positions and rotations.
+Compilation expands the supported contents without an extra switch. The editor
+can resolve a separate, explicitly refreshed
+[reference preview](instance-contents.md) with actual displaced terrain surfaces
+in a flat color.
 Use [Extract selection to instance…](instance-extraction.md) to create a child
 from supported brushes already in the parent.
 
 1. Save the parent map. Save a child VMF inside the same directory tree, such as
    `parts/arch.vmf`. Keep the child's visible contents to world brushes,
-   ordinary `func_detail` brushes and supported nested `func_instance` references.
+   ordinary `func_detail` brushes, supported static lights and nested
+   `func_instance` references.
    World and detail brushes may carry supported power 2, 3 or 4 terrain. The
    child's world settings do not replace the parent's.
-2. Click **Instance reference…**. Set **VMF reference** to `parts/arch.vmf`,
+2. To add a child light, open the child and click **Entity…**, then choose `light`
+   or `light_spot`. Use **Advanced properties** to check the strict static fields
+   below. A spotlight needs an explicit `pitch`, such as `-90` for downward or
+   `0` with the first `angles` component zero for horizontal. Save the child
+   before returning to the parent. Loaded FGD defaults do not bypass these checks.
+3. Click **Instance reference…**. Set **VMF reference** to `parts/arch.vmf`,
    choose **Position** and **Rotation**, then click **Create**. **Cancel** leaves
    the map unchanged. See [Instance authoring](instance-authoring.md) for browsing,
    editing and file-check controls.
-3. To inspect child shapes, enable **Instance contents**, open **Instance contents…**
+4. To inspect child shapes, enable **Instance contents**, open **Instance contents…**
    and click **Refresh instance contents**. Terrain uses its displaced surface
    for the flat-color view, content bounds and picking. Clicking it selects the
-   root helper; the child remains read-only.
-4. Move or rotate the helper with the ordinary transform controls. Its origin
+   root helper; the child remains read-only. **Expanded static lights:** reports
+   point/spot counts, but child lights and their illumination/icons are not
+   shown in this layer or the authored-lighting preview.
+5. Move or rotate the helper with the ordinary transform controls. Its origin
    places the child's origin. The `angles` property uses Source pitch, yaw, roll;
-   brushes, terrain and attached texture coordinates rotate together. Keep
-   replacement fields empty; named runtime entities are unsupported.
-5. Click **Compile**. Unsaved parent edits are included. Open **Build details…**
+   brushes, terrain, light positions/spot directions and attached texture
+   coordinates rotate together. Keep replacement fields empty; named runtime
+   entities are unsupported.
+6. Click **Compile**. Unsaved parent edits are included. Open **Build details…**
    in the bar below the toolbar to inspect **Instances**, **Files**, **Nesting
    depth**, world/detail brush counts and each relative dependency's byte count
-   and **SHA256**.
-6. Recompile after changing any child or descendant. Changed, missing or
+   and **SHA256**. **Expanded static lights:** counts all expanded point/spot
+   lights before compile-region filtering, including lights outside the region.
+7. Recompile after changing any child or descendant. Changed, missing or
    retargeted dependencies make the completed build stale and disable **Play
    built map**. Launch also verifies exact dependency contents before starting
    the game.
 
 ![Instance counts, dependency identity and build diagnostics](images/build-instance-terrain.png)
+
+![Expanded static child light counts and build results](images/build-instance-lights.png)
 
 Limits:
 
@@ -55,11 +68,27 @@ Limits:
   parent first; an output BSP filename cannot establish its source directory.
 - Ancestor cycles reject, including aliases through hard links. Repeated siblings
   and shared descendants are allowed within the global limits.
-- Runtime entities, parameter helpers, replacements, active child compile
+- Other runtime entities, parameter helpers, replacements, active child compile
   regions and unknown semantic metadata reject. Ordinary hidden child objects
   remain excluded; hidden helpers never load their files.
-  Fix-up settings cannot introduce runtime name rewriting in this brush-only
+  Fix-up settings cannot introduce runtime name rewriting in this supported
   subset.
+- Child lights support only exact lowercase `light` and `light_spot` classes,
+  with an explicit finite `origin` inside Source compile bounds and valid
+  brightness/attenuation data. Ordinary color, HDR, falloff and spotlight
+  cone/focus fields are supported;
+  both LDR and HDR definitions validate even in **Fullbright**. Child lights
+  cannot contain brushes, I/O connections, unknown properties or opaque blocks.
+  Repeated property names, including case aliases, reject.
+- Light names, targets, parents, patterns and runtime references must be absent
+  or empty; whitespace is not empty. `style`, `defaultstyle` and `spawnflags`
+  must be absent or zero. Legacy `angle` must be absent or zero. Use canonical
+  lowercase `classname`, `origin`, `angles` and `angle` keys when present.
+- Each child `light_spot` requires canonical `pitch` from -90 to 90 degrees.
+  Its ordinary `pitch:-90` default is admitted; a zero `pitch` requires the first
+  `angles` component zero to avoid legacy fallback. Missing `angles` means zero
+  angles. Targets and legacy `angle:-1`/`-2` shortcuts are unsupported for child lights.
+  These restrictions do not change root-map spotlight behavior.
 - Terrain must have an effective quad base face and a valid power 2–4 grid.
   Supported deformation, alpha, smoothing, triangle-tag and native vertex-mask
   data are retained through transforms. Malformed or nonfinite rows, unsupported
@@ -79,8 +108,10 @@ Limits:
   than offering a generated child face as an editable parent face.
 - Expansion happens before parent compile-region selection. Geometry intersecting
   the region remains eligible even when its instance marker is outside. Ordinary
-  region geometry restrictions still apply. **Generate reflections** with
-  instances is unavailable.
+  region geometry restrictions still apply; child lights are selected by their
+  transformed origins. **Generate reflections** with instances is unavailable.
+  Keep lights inside sealing boundaries: a retained light on a generated wall
+  can be unavailable for baking, with an explicit diagnostic.
 - The [reference preview](instance-contents.md) has additional limits. A child
   that would change an existing parent terrain patch's displaced vertices or
   triangle indices makes the preview unavailable; compilation remains available.
@@ -101,6 +132,10 @@ MCP uses the same `create_entity`, `set_entity_properties`, transforms,
 is required. Build reports expose optional `stats.instances`, with nonzero
 `terrain_patches` and `terrain_vertices` for generated terrain. These vertex
 counts describe the original power grids before neighbor density adjustments.
+Optional `point_lights` and `spot_lights` count expanded static lights before
+compile-region filtering and are omitted individually when zero. A light-only
+assembly can resolve ready with dependency/count reports but has no reference
+geometry to display, pick or frame.
 Completed jobs also report dependency freshness. `get_compile_status.launch` and
 `inspect_baked_lightmaps` respect the retained build's dependencies.
 

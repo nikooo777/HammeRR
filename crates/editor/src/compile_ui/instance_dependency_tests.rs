@@ -69,6 +69,12 @@ fn instance_dependency_build_details_share_counts_hashes_and_stale_launch_status
             .get_details()
             .contains("Authored grid vertices:")
     );
+    assert!(
+        !controller
+            .window
+            .get_details()
+            .contains("Expanded static lights:")
+    );
     controller.window.show().unwrap();
     controller.window.window().take_snapshot().unwrap();
     controller

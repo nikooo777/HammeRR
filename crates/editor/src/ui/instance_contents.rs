@@ -115,6 +115,17 @@ impl Controller {
                     .unwrap_or_default()
             ));
         }
+        let points = state["stats"]["point_lights"].as_u64().unwrap_or_default();
+        let spots = state["stats"]["spot_lights"].as_u64().unwrap_or_default();
+        if points > 0 || spots > 0 {
+            summary.push_str(&format!(
+                "\nExpanded static lights: {points} point · {spots} spot · before compile-region filtering"
+            ));
+        }
+        if let Some(reason) = state["static_light_preview"]["reason"].as_str() {
+            summary.push('\n');
+            summary.push_str(reason);
+        }
         self.window.set_summary(summary.into());
         self.window
             .set_loading(state["loading"].as_bool().unwrap_or(false));

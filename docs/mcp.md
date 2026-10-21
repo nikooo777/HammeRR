@@ -279,7 +279,8 @@ manual-game discovery. Lower capture preflight retains its existing
 same-installation running-client rejection.
 
 A saved parent can compile nested world/detail brush instances, including power
-2–4 terrain, through four helper levels, counting a root helper as level one; see
+2–4 terrain and strictly admitted unnamed static point/spot lights, through four
+helper levels, counting a root helper as level one; see
 [Referenced brush assemblies](instances.md). `create_entity` uses
 `classname: "func_instance"`, an origin and string properties `file` (relative
 `.vmf`) and optional `angles` (Source pitch/yaw/roll). The current in-memory parent
@@ -302,6 +303,24 @@ bounded to 65,536 source-grid vertices, 262,144 expanded grid vertices and
 admission, each visible occurrence and every nested transform. Repeated
 placements spend the expanded and transform budgets separately.
 
+Child lights support only exact lowercase `light` and `light_spot` classes, with
+canonical `classname` and explicit finite `origin`. Canonical `angles` and
+legacy `angle` are optional; `angle` must be zero when present. Brightness,
+ordinary attenuation, HDR and spotlight cone/focus fields use existing compiler
+parsing, with both LDR and HDR definitions checked even in Fullbright. Neutral
+FGD defaults are accepted: `style`, `defaultstyle` and `spawnflags` absent or
+zero, and names, targets, parents, patterns and runtime references absent or
+empty. Whitespace is not empty. Brushes, connections, duplicate case aliases,
+unknown properties/blocks and other child runtime entities reject.
+
+Each child `light_spot` requires an explicit canonical `pitch` in `[-90,90]`;
+the usual `-90` downward default is accepted. A zero `pitch` requires the first
+`angles` component also zero; absent `angles` means zero angles. Child spotlights
+cannot rely on targets or legacy `angle:-1`/`-2` direction shortcuts. These checks
+leave root-map spotlight precedence unchanged. Use existing `create_entity`,
+`set_entity_properties` and `save_map` in the child, then the ordinary instance
+reference and compile operations; no new tool or setting is required.
+
 `compile_map`, `start_compile` and `run_map` use the same automatic expansion
 before region selection; no new compile switch is required. Optional
 `stats.instances` contains occurrence/file/world/detail counts,
@@ -310,12 +329,19 @@ Its `terrain_patches` and `terrain_vertices` fields appear only when nonzero,
 counting generated terrain patches and authored power-grid vertices before
 neighbor density adjustments. **Build details…** reports these as **Instance
 terrain patches:** and **Authored grid vertices:**.
+
+`stats.instances.point_lights` and `spot_lights` are omitted individually when
+zero. They count expanded static lights before compile-region filtering;
+enabled regions select emitted child lights by transformed origin. **Build
+details…** shows **Expanded static lights:** with point/spot counts and
+**before compile-region filtering**.
+
 Completed instance jobs report `instance_dependencies.current/error`; `stale`,
 launch readiness and baked inspection include the retained build's dependencies.
 Launch verifies exact contents in its worker. Source/settings changes, dependency failures and
 cancellation preserve previous BSP/pointfile bytes. Every transitive dependency
 participates in these checks. **Generate reflections** with instances rejects;
-runtime entities, replacements and scoped names remain unsupported.
+other runtime entities, replacements and scoped names remain unsupported.
 The explicitly refreshed flat-color reference layer is separate from compilation.
 `run_map_checks` performs only pure helper-field/path-state admission, leaving
 child reads and complete validation to explicit Refresh or compilation.
@@ -382,6 +408,18 @@ omit-zero `terrain_patches` and `terrain_vertices` totals as build reports.
 vertices:**. Its **Terrain:** rows identify the owner, leaf file and original
 brush/side; **Power** lines show the terrain power, grid vertices and displayed
 triangles.
+
+The same inspection `stats` reports optional `point_lights` and `spot_lights`,
+omitting each when zero and counting expansion before compile-region filtering.
+**Instance contents…** shows these under **Expanded static lights:**. Child
+lights, illumination and icons are not shown in the reference or authored-lighting
+preview. Lights add no reference bounds, pick surfaces or face-provenance rows.
+When expanded lights are present, `static_light_preview` explicitly reports
+`available:false` and the same explanatory `reason` shown by the inspector.
+A light-only assembly can report `state:"ready"` with its owner/dependency
+identities and light counts, `available:false`, zero geometry counts and null
+owner bounds. **Frame instance contents** has no geometry to frame in that
+snapshot. Mixed assemblies retain the supported brush/terrain preview.
 Repeated placements can share those leaf identities. Picking and framing retain
 the root helper owner.
 

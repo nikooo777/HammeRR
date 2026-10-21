@@ -106,7 +106,8 @@ impl<'a> Expansion<'a> {
             return Err(format!("Instance sources exceed {MAX_TOTAL_NODES} nodes"));
         }
         let child = Vmf::from_nodes(&parsed).map_err(|error| error.to_string())?;
-        child_admission(&child).map_err(|error| format!("Instance {relative}: {error}"))?;
+        child_admission(&child, self.control)
+            .map_err(|error| format!("Instance {relative}: {error}"))?;
         let ignored = child
             .world
             .properties
@@ -189,6 +190,11 @@ impl<'a> Expansion<'a> {
                     .is_some_and(|class| class.eq_ignore_ascii_case("func_instance"))
                 {
                     self.helper(tx, entity, owner, transforms, ancestors)?;
+                } else if let Some(kind) = entities::kind(entity) {
+                    self.entity(tx, entity, kind, owner.id, &relative, transforms)
+                        .map_err(|error| {
+                            EditError::Invalid(format!("Child light {}: {error}", entity.id))
+                        })?;
                 } else {
                     for solid in entity.solids.iter().filter(|solid| !solid.hidden) {
                         self.solid(tx, solid, true, owner.id, &relative, transforms)?;
@@ -200,6 +206,59 @@ impl<'a> Expansion<'a> {
         ancestors.pop();
         transforms.pop();
         result.map_err(|error| EditError::Invalid(format!("Instance {relative}: {error}")))
+    }
+
+    fn entity(
+        &mut self,
+        tx: &mut Transaction<'_>,
+        original: &Entity,
+        kind: entities::Kind,
+        owner: u32,
+        relative: &str,
+        transforms: &[edit::Transform],
+    ) -> Result<(), EditError> {
+        self.control.checkpoint().map_err(EditError::Invalid)?;
+        self.objects = self.objects.saturating_add(1);
+        let bytes = original
+            .properties
+            .iter()
+            .try_fold(0_usize, |bytes, (key, value)| {
+                bytes.checked_add(key.len())?.checked_add(value.len())
+            });
+        let work = bytes
+            .and_then(|bytes| bytes.checked_mul(transforms.len() + 1))
+            .and_then(|work| self.work.checked_add(work));
+        let Some(work) = work else {
+            return Err(EditError::Invalid("Instance light-work overflow".into()));
+        };
+        if self.objects > MAX_OBJECTS || work > MAX_GEOMETRY_WORK {
+            return Err(EditError::Invalid(
+                "Instance expansion exceeds combined objects or geometry-work limits".into(),
+            ));
+        }
+        self.work = work;
+        entities::check_pose(original, kind).map_err(EditError::Invalid)?;
+        let mut entity = original.clone();
+        entity.id = tx.new_object_id()?;
+        entity.editor = None;
+        self.provenance.insert(
+            format!("entity:{}", entity.id),
+            (owner, relative.to_owned(), original.id, None),
+        );
+        let id = tx.add_entity(entity)?;
+        for transform in transforms.iter().rev() {
+            self.control.checkpoint().map_err(EditError::Invalid)?;
+            edit::transform(tx, &[id], *transform)?;
+            let ObjectId::Entity(entity) = id else {
+                unreachable!()
+            };
+            entities::check_pose(tx.entity_mut(entity)?, kind).map_err(EditError::Invalid)?;
+        }
+        match kind {
+            entities::Kind::Point => self.stats.point_lights += 1,
+            entities::Kind::Spot => self.stats.spot_lights += 1,
+        }
+        Ok(())
     }
 
     fn solid(

@@ -1102,7 +1102,7 @@ impl Session {
                 .map(|record| record.faces.len())
                 .sum::<usize>()
         });
-        json!({
+        let mut report = json!({
             "token":self.instance_contents.serial,"status":status,"state":stored,"summary":summary,
             "requested":enabled,"displayed":displayed,"available":available,
             "loading":self.instance_contents.pending.is_some(),
@@ -1119,7 +1119,14 @@ impl Session {
             "geometry":ready.map(|ready|json!({"vertices":ready.mesh.vertices.len(),"indices":ready.mesh.indices.len(),"line_vertices":ready.mesh.edges.len(),"triangles":ready.mesh.indices.len()/3,"cpu_bytes":ready.cpu_bytes,"gpu_bytes":ready.gpu_bytes})),
             "policy":if has_terrain {"read_only_world_detail_terrain_root_owner_picking_no_material_loading"} else {"flat_read_only_world_detail_root_owner_picking_no_material_loading"},
             "authoring_bounds":"ordinary_root_objects_unchanged","limits":limits()
-        })
+        });
+        if ready.is_some_and(|ready| ready.stats.point_lights > 0 || ready.stats.spot_lights > 0) {
+            report["static_light_preview"] = json!({
+                "available":false,
+                "reason":"Child lights, illumination and icons are not shown in the reference or authored-lighting preview."
+            });
+        }
+        report
     }
 
     pub fn inspect_instance_contents(

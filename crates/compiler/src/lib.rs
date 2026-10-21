@@ -1596,6 +1596,11 @@ pub fn compile_with_source_controlled(
                     .push(Diagnostic::error(message, None, None));
             }
             prepared.annotate(&mut output.report);
+            if let Some(leak) = &mut output.leak
+                && let Some(owner) = prepared.root_entity(leak.entity)
+            {
+                leak.entity = owner;
+            }
         }
     }
     if control.cancelled() {

@@ -819,6 +819,13 @@ impl Controller {
                         stats["terrain_vertices"].as_u64().unwrap_or_default()
                     ));
                 }
+                let points = stats["point_lights"].as_u64().unwrap_or_default();
+                let spots = stats["spot_lights"].as_u64().unwrap_or_default();
+                if points > 0 || spots > 0 {
+                    summary.push_str(&format!(
+                        "\nExpanded static lights: {points} point · {spots} spot · before compile-region filtering\nChild lights, illumination and icons are not shown in the reference or authored-lighting preview."
+                    ));
+                }
                 for dependency in stats["dependencies"]
                     .as_array()
                     .into_iter()

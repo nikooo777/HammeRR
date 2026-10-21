@@ -9,6 +9,7 @@ use source_formats::vmf::{Entity, Solid, Vmf, parse_vec3};
 
 use crate::{Control, Diagnostic, FileIdentity, FileStamp, Report};
 
+mod entities;
 mod expand;
 mod terrain;
 
@@ -341,6 +342,10 @@ pub struct InstanceStats {
     pub terrain_patches: usize,
     #[serde(skip_serializing_if = "is_zero")]
     pub terrain_vertices: usize,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub point_lights: usize,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub spot_lights: usize,
     pub dependencies: Vec<DependencyInfo>,
 }
 
@@ -563,7 +568,7 @@ fn checked_solid_controlled(solid: &Solid, control: &Control) -> Result<(), Stri
     Ok(())
 }
 
-fn child_admission(child: &Vmf) -> Result<(), String> {
+fn child_admission(child: &Vmf, control: &Control) -> Result<(), String> {
     child.validate_ids().map_err(|error| error.to_string())?;
     if child
         .extra
@@ -581,12 +586,18 @@ fn child_admission(child: &Vmf) -> Result<(), String> {
         return Err("Active child compile regions are unsupported".into());
     }
     for entity in child.entities.iter().filter(|entity| !entity.hidden) {
+        control.checkpoint()?;
         if entity
             .classname()
             .is_some_and(|class| class.eq_ignore_ascii_case("func_instance"))
         {
             helper_admission(entity)
                 .map_err(|error| format!("Child instance {}: {error}", entity.id))?;
+            continue;
+        }
+        if let Some(kind) = entities::kind(entity) {
+            entities::admit(entity, kind)
+                .map_err(|error| format!("Child light {}: {error}", entity.id))?;
             continue;
         }
         for (key, value) in entity.properties.iter() {
@@ -598,7 +609,7 @@ fn child_admission(child: &Vmf) -> Result<(), String> {
             .is_some_and(|class| class.eq_ignore_ascii_case("func_detail"))
         {
             return Err(format!(
-                "Child entity {} ({}) is unsupported; only world/func_detail brushes and bounded func_instance helpers are supported",
+                "Child entity {} ({}) is unsupported; only world/func_detail brushes, unnamed static lights and bounded func_instance helpers are supported",
                 entity.id,
                 entity.classname().unwrap_or("missing class")
             ));
@@ -657,6 +668,12 @@ impl PreparedInstances<'_> {
 
     pub fn stats(&self) -> Option<&InstanceStats> {
         self.stats.as_ref()
+    }
+
+    pub fn root_entity(&self, generated: u32) -> Option<u32> {
+        self.provenance
+            .get(&format!("entity:{generated}"))
+            .map(|(owner, _, _, _)| *owner)
     }
 
     pub fn generated_brushes(&self) -> impl Iterator<Item = InstanceBrush<'_>> {

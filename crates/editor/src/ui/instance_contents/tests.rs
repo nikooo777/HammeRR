@@ -94,6 +94,12 @@ fn software_controls_share_visibility_reports_frame_clear_and_preserve_parent() 
             .contains("Instance terrain patches:")
     );
     assert!(!controller.window.get_owners().contains("Terrain:"));
+    assert!(
+        !controller
+            .window
+            .get_summary()
+            .contains("Expanded static lights:")
+    );
     assert!(controller.window.get_can_frame());
     controller.window.show().unwrap();
     controller
@@ -237,6 +243,196 @@ fn software_terrain_counts_and_provenance_match_build_details_and_preserve_paren
         .window()
         .set_size(slint::PhysicalSize::new(850, 690));
     crate::ui::tests::save_ui_snapshot(contents.window.window(), "instance-contents-terrain");
+    let session = lock(&shared);
+    assert_eq!(session.document().vmf(), &source);
+    assert_eq!(session.history_snapshot(), history);
+    assert_eq!(session.camera(), camera);
+    assert_eq!(session.compile_settings(), settings);
+    assert_eq!(serde_json::json!(session.property_draft()), draft);
+    assert_eq!(std::fs::read(&parent).unwrap(), parent_bytes);
+    assert_eq!(std::fs::read(&child).unwrap(), child_bytes);
+}
+
+#[test]
+fn software_fgd_static_child_lights_share_counts_without_preview_substitution() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: false,
+        },
+    )))
+    .unwrap();
+    let (directory, game) = crate::test_assets::game();
+    let child = directory.path().join("child-lights.vmf");
+    let parent = directory.path().join("instance-lights.vmf");
+    let mut session = Session::new(Ok(game));
+    session.set_definitions(
+        Actor::User,
+        source_formats::fgd::Catalog::parse(
+            r#"
+        @BaseClass = StaticLight [
+            angles(angle) : "Angles" : "0 0 0"
+            _light(color255) : "Light" : "255 192 128 64"
+            _lightHDR(color255) : "HDR light" : "128 192 255 96"
+            _constant_attn(float) : "Constant attenuation" : "1"
+            _linear_attn(float) : "Linear attenuation" : "0"
+            _quadratic_attn(float) : "Quadratic attenuation" : "0"
+            style(integer) : "Style" : "0"
+            defaultstyle(integer) : "Default style" : "0"
+            targetname(string) : "Name" : ""
+            target(string) : "Target" : ""
+            spawnflags(flags) = [ 1 : "Initially dark" : 0 ]
+        ]
+        @PointClass base(StaticLight) = light [ ]
+        @PointClass base(StaticLight) = light_spot [
+            pitch(float) : "Pitch" : "-90"
+            _inner_cone(float) : "Inner cone" : "20"
+            _cone(float) : "Outer cone" : "45"
+            _exponent(float) : "Exponent" : "2"
+        ]
+    "#,
+        )
+        .unwrap(),
+    );
+    let point = session
+        .create_entity(
+            Actor::User,
+            "light",
+            Some(DVec3::new(-48.0, 16.0, 128.0)),
+            BTreeMap::new(),
+        )
+        .unwrap();
+    let spot = session
+        .create_entity(
+            Actor::User,
+            "light_spot",
+            Some(DVec3::new(64.0, -16.0, 160.0)),
+            BTreeMap::from([("pitch".into(), "-45".into())]),
+        )
+        .unwrap();
+    session.save(Actor::User, Some(&child)).unwrap();
+    session.open(Actor::User, &child, false).unwrap();
+    for id in [point, spot] {
+        let ObjectId::Entity(id) = id else {
+            unreachable!()
+        };
+        let entity = session.document().entity(id).unwrap();
+        assert_eq!(entity.properties.get("angles"), Some("0 0 0"));
+        assert_eq!(entity.properties.get("style"), Some("0"));
+        assert_eq!(entity.properties.get("defaultstyle"), Some("0"));
+        assert_eq!(entity.properties.get("spawnflags"), Some("0"));
+        assert_eq!(entity.properties.get("targetname"), Some(""));
+    }
+    let ObjectId::Entity(spot) = spot else {
+        unreachable!()
+    };
+    assert_eq!(
+        session
+            .document()
+            .entity(spot)
+            .unwrap()
+            .properties
+            .get("pitch"),
+        Some("-45")
+    );
+    let child_bytes = std::fs::read(&child).unwrap();
+    let mut vmf = crate::test_assets::room();
+    for solid in &mut vmf.world.solids {
+        for side in &mut solid.sides {
+            side.material = "test/checker".into();
+        }
+    }
+    std::fs::write(&parent, vmf.write(&Default::default())).unwrap();
+    session.open(Actor::User, &parent, false).unwrap();
+    session
+        .create_entity(
+            Actor::User,
+            "func_instance",
+            Some(DVec3::new(16.0, -8.0, 4.0)),
+            BTreeMap::from([
+                ("file".into(), "child-lights.vmf".into()),
+                ("angles".into(), "0 0 0".into()),
+            ]),
+        )
+        .unwrap();
+    session.save(Actor::User, None).unwrap();
+    session
+        .update_compile_settings(Actor::User, Some("direct_ldr"), Some("none"))
+        .unwrap();
+    session
+        .begin_property_edit(session::PropertyTarget::World)
+        .unwrap();
+    let token = session.property_draft().unwrap().token;
+    session
+        .append_property_change(
+            token,
+            session::PropertyChange::Set {
+                key: "message".into(),
+                value: "Keep the static light review".into(),
+            },
+        )
+        .unwrap();
+    let source = session.document().vmf().clone();
+    let history = session.history_snapshot();
+    let camera = session.camera();
+    let settings = session.compile_settings();
+    let draft = serde_json::json!(session.property_draft());
+    let parent_bytes = std::fs::read(&parent).unwrap();
+    let result = session.begin_compile(Actor::User, None).unwrap().run();
+    assert!(
+        result.as_ref().unwrap().output.bsp.is_some(),
+        "{:?}",
+        result.as_ref().unwrap().output.report
+    );
+    session.finish_compile(Actor::User, &result);
+    assert_eq!(session.compile_status()["job"]["result"]["published"], true);
+    let request = session
+        .begin_instance_contents_refresh(Actor::User)
+        .unwrap();
+    session
+        .finish_instance_contents_refresh(Actor::User, request.run())
+        .unwrap();
+    let report = session.inspect_instance_contents(0, 64).unwrap();
+    assert_eq!(report["state"], "ready");
+    assert_eq!(report["available"], false);
+    assert_eq!(report["stats"]["point_lights"], 1);
+    assert_eq!(report["static_light_preview"]["available"], false);
+    assert_eq!(report["stats"]["spot_lights"], 1);
+    assert_eq!(report["stats"]["world_brushes"], 0);
+    assert_eq!(report["stats"]["detail_brushes"], 0);
+    assert_eq!(report["geometry"]["triangles"], 0);
+    assert_eq!(report["face_provenance_total"], 0);
+    let shared = Arc::new(Mutex::new(session));
+    let contents = Controller::new(shared.clone()).unwrap();
+    let build = crate::compile_ui::Controller::new(&shared).unwrap();
+    build.refresh(&lock(&shared));
+    let counts = "Expanded static lights: 1 point · 1 spot · before compile-region filtering";
+    let limit = "Child lights, illumination and icons are not shown in the reference or authored-lighting preview.";
+    assert!(build.window.get_details().contains(counts));
+    assert!(build.window.get_details().contains(limit));
+    assert!(contents.window.get_summary().contains(counts));
+    assert!(contents.window.get_summary().contains(limit));
+    assert!(!contents.window.get_can_frame());
+    assert!(contents.window.get_owners().contains("child-lights.vmf"));
+    assert!(!contents.window.get_owners().contains("Terrain:"));
+    build.window.show().unwrap();
+    build.window.window().take_snapshot().unwrap();
+    build
+        .window
+        .window()
+        .dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+            position: slint::LogicalPosition::new(360.0, 450.0),
+            delta_x: 0.0,
+            delta_y: -10_000.0,
+        });
+    crate::ui::tests::save_ui_snapshot(build.window.window(), "build-instance-lights");
+    contents.window.show().unwrap();
+    contents
+        .window
+        .window()
+        .set_size(slint::PhysicalSize::new(850, 690));
+    crate::ui::tests::save_ui_snapshot(contents.window.window(), "instance-contents-lights");
     let session = lock(&shared);
     assert_eq!(session.document().vmf(), &source);
     assert_eq!(session.history_snapshot(), history);

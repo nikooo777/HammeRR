@@ -2,6 +2,98 @@ use super::*;
 use std::sync::{Arc, Mutex};
 
 #[test]
+fn software_player_spawn_counts_share_missing_geometry_reason_with_build_details() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: false,
+        },
+    )))
+    .unwrap();
+    let fixture = crate::test_assets::instance_player_spawns::fixture(Actor::User, false);
+    let mut session = fixture.session;
+    session
+        .begin_property_edit(session::PropertyTarget::World)
+        .unwrap();
+    let token = session.property_draft().unwrap().token;
+    session
+        .append_property_change(
+            token,
+            session::PropertyChange::Set {
+                key: "message".into(),
+                value: "Keep the spawn review".into(),
+            },
+        )
+        .unwrap();
+    let memory = session.document().vmf().clone();
+    let history = session.history_snapshot();
+    let camera = session.camera();
+    let settings = session.compile_settings();
+    let draft = serde_json::json!(session.property_draft());
+    let parent_bytes = std::fs::read(&fixture.source).unwrap();
+    let child_bytes = std::fs::read(&fixture.child).unwrap();
+    let output = fixture.directory.path().join("instances.bsp");
+    let result = session
+        .begin_compile(Actor::User, Some(&output))
+        .unwrap()
+        .run();
+    assert!(
+        result.as_ref().unwrap().output.bsp.is_some(),
+        "{:?}",
+        result.as_ref().unwrap().output.report
+    );
+    session.finish_compile(Actor::User, &result);
+    assert_eq!(session.compile_status()["job"]["status"], "completed");
+    assert_eq!(
+        std::fs::read(&output).unwrap(),
+        result
+            .as_ref()
+            .unwrap()
+            .output
+            .bsp
+            .as_ref()
+            .unwrap()
+            .to_bytes()
+    );
+    let request = session
+        .begin_instance_contents_refresh(Actor::User)
+        .unwrap();
+    session
+        .finish_instance_contents_refresh(Actor::User, request.run())
+        .unwrap();
+    let report = session.inspect_instance_contents(0, 64).unwrap();
+    assert_eq!(report["state"], "ready");
+    assert_eq!(report["stats"]["player_spawns"], 2);
+    assert_eq!(report["player_spawn_preview"]["available"], false);
+    assert_eq!(report["available"], false);
+    assert_eq!(report["geometry"]["vertices"], 0);
+    assert!(report["owners"][0]["bounds"].is_null());
+    let shared = Arc::new(Mutex::new(session));
+    let contents = Controller::new(shared.clone()).unwrap();
+    let build = crate::compile_ui::Controller::new(&shared).unwrap();
+    build.refresh(&lock(&shared));
+    let count = "Expanded player spawns: 2 · before compile-region filtering";
+    let reason = editor_core::session::instance_contents::PLAYER_SPAWN_PREVIEW_REASON;
+    assert_eq!(report["player_spawn_preview"]["reason"], reason);
+    assert!(contents.window.get_summary().contains(count));
+    assert!(contents.window.get_summary().contains(reason));
+    assert!(build.window.get_details().contains(count));
+    assert!(build.window.get_details().contains(reason));
+    assert!(!contents.window.get_can_frame());
+    assert!(contents.window.get_owners().contains("child.vmf"));
+    assert!(!contents.window.get_owners().contains("Content bounds"));
+    let session = lock(&shared);
+    assert_eq!(session.document().vmf(), &memory);
+    assert_eq!(session.history_snapshot(), history);
+    assert_eq!(session.camera(), camera);
+    assert_eq!(session.compile_settings(), settings);
+    assert_eq!(serde_json::json!(session.property_draft()), draft);
+    assert_eq!(std::fs::read(&fixture.source).unwrap(), parent_bytes);
+    assert_eq!(std::fs::read(&fixture.child).unwrap(), child_bytes);
+}
+
+#[test]
 fn software_controls_share_visibility_reports_frame_clear_and_preserve_parent() {
     slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
         i_slint_backend_testing::TestingBackendOptions {

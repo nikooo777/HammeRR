@@ -20,6 +20,7 @@ mod terrain;
 
 pub const STATIC_PROP_PREVIEW_REASON: &str = "Child static-prop models are compiled but not shown in the reference preview; model bounds, picking and framing are unavailable.";
 pub const LIGHTING_ORIGIN_PREVIEW_REASON: &str = "Child lighting-origin helpers have no reference geometry or icons; helper bounds, picking and framing are unavailable.";
+pub const PLAYER_SPAWN_PREVIEW_REASON: &str = "Child player-spawn models and icons are not shown in the reference preview; spawn bounds, picking and framing are unavailable.";
 
 const MAX_DIAGNOSTICS: usize = 64;
 const MAX_ROWS: usize = 64;
@@ -1139,6 +1140,12 @@ impl Session {
             report["lighting_origin_preview"] = json!({
                 "available":false,
                 "reason":LIGHTING_ORIGIN_PREVIEW_REASON
+            });
+        }
+        if ready.is_some_and(|ready| ready.stats.player_spawns > 0) {
+            report["player_spawn_preview"] = json!({
+                "available":false,
+                "reason":PLAYER_SPAWN_PREVIEW_REASON
             });
         }
         report

@@ -1,4 +1,5 @@
 pub mod instance_lighting_origins;
+pub mod instance_player_spawns;
 pub mod instance_static_props;
 pub mod model_lighting;
 

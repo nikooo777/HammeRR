@@ -3,8 +3,8 @@
 # Compile referenced assemblies
 
 Reuse saved VMFs' world and detail brushes, power 2–4 terrain, unnamed static
-point/spot lights, static props, scoped lighting-origin helpers and nested
-references at several positions and rotations.
+point/spot lights, static props, scoped lighting-origin helpers, player spawns
+and nested references at several positions and rotations.
 Compilation expands the supported contents without an extra switch. The editor
 can resolve a separate, explicitly refreshed
 [reference preview](instance-contents.md) with actual displaced terrain surfaces
@@ -15,7 +15,8 @@ from supported brushes already in the parent.
 1. Save the parent map. Save a child VMF inside the same directory tree, such as
    `parts/arch.vmf`. Keep the child's visible contents to world brushes,
    ordinary `func_detail` brushes, supported static lights/props, `info_lighting`
-   helpers and nested `func_instance` references.
+   helpers, `info_player_terrorist` / `info_player_counterterrorist` spawns and
+   nested `func_instance` references.
    World and detail brushes may carry supported power 2, 3 or 4 terrain. The
    child's world settings do not replace the parent's.
 2. To add a child light, open the child and click **Entity…**, then choose `light`
@@ -30,12 +31,16 @@ from supported brushes already in the parent.
    Keep scale 1, body 0, normal white rendering and names empty. Choose a valid
    **Skin**, starting at 0. The ordinary [prop lighting options](static-props.md#props-in-referenced-assemblies)
    also work in children. Save the child before compiling its parent.
-4. To give a child prop a native lighting origin, add `info_lighting` through
+4. To add a child spawn, open **Entity…**, choose `info_player_terrorist` or
+   `info_player_counterterrorist`, then click **Place entity**. Set **Position**
+   and **Rotation** in the inspector and save the child. The class selects the
+   team; no additional enabled/team properties are supported.
+5. To give a child prop a native lighting origin, add `info_lighting` through
    **Entity…**. Set its **Name**, such as `sample`, and the prop's **Lighting
    Origin** to that same name. Save the child. See
    [Static props](static-props.md#native-lighting-origin) for the native point's
    effect on lighting.
-5. Click **Instance reference…**. Set **VMF reference** to `parts/arch.vmf`,
+6. Click **Instance reference…**. Set **VMF reference** to `parts/arch.vmf`,
    choose **Position** and **Rotation**, then click **Create**. **Cancel** leaves
    the map unchanged. For a child with lighting-origin helpers, set every
    containing reference's **Advanced properties → Fix Up Name** to an explicit
@@ -43,7 +48,7 @@ from supported brushes already in the parent.
    helper name is `assembly-sample`; nested prefixes join outermost first. See
    [Instance authoring](instance-authoring.md) for browsing, editing and file-check
    controls.
-6. To inspect child shapes, enable **Instance contents**, open **Instance contents…**
+7. To inspect child shapes, enable **Instance contents**, open **Instance contents…**
    and click **Refresh instance contents**. Terrain uses its displaced surface
    for the flat-color view, content bounds and picking. Clicking it selects the
    root helper; the child remains read-only. **Expanded static lights:** reports
@@ -52,12 +57,14 @@ from supported brushes already in the parent.
    reports child prop counts. Child models are compiled but have no reference
    display, model bounds, picking or framing. **Expanded lighting origins:**
    reports helper counts; these points have no reference geometry or icons.
-7. Move or rotate the helper with the ordinary transform controls. Its origin
+   **Expanded player spawns:** counts child spawns and explains that their
+   models, icons, bounds, picking and framing are unavailable in this layer.
+8. Move or rotate the helper with the ordinary transform controls. Its origin
    places the child's origin. The `angles` property uses Source pitch, yaw, roll;
-   brushes, terrain, static props, light positions/spot directions and attached
-   texture coordinates rotate together. Keep replacement fields empty; named runtime
+   brushes, terrain, static props, player-spawn poses, light positions/spot
+   directions and attached texture coordinates rotate together. Keep replacement fields empty; named runtime
    entities are unsupported.
-8. Click **Compile**. Unsaved parent edits are included. Open **Build details…**
+9. Click **Compile**. Unsaved parent edits are included. Open **Build details…**
    in the bar below the toolbar to inspect **Instances**, **Files**, **Nesting
    depth**, world/detail brush counts and each relative dependency's byte count
    and **SHA256**. **Expanded static lights:** counts all expanded point/spot
@@ -65,12 +72,13 @@ from supported brushes already in the parent.
    **Expanded static props:** uses the same expansion count before filtering;
    **Static props** counts props emitted by the selected build region.
    **Expanded lighting origins:** counts visible expanded helpers before region
-   filtering, including unreferenced helpers.
-9. Recompile after changing any child or descendant. Changed, missing or
-   retargeted dependencies make the completed build stale and disable **Play
-   built map**. Launch also verifies exact dependency contents before starting
-   the game. Consumed model sources also retain the original
-   [static-prop source checks](static-props.md).
+   filtering, including unreferenced helpers. **Expanded player spawns:** counts
+   both supported spawn classes before transformed-origin region filtering.
+10. Recompile after changing any child or descendant. Changed, missing or
+    retargeted dependencies make the completed build stale and disable **Play
+    built map**. Launch also verifies exact dependency contents before starting
+    the game. Consumed model sources also retain the original
+    [static-prop source checks](static-props.md).
 
 ![Instance counts, dependency identity and build diagnostics](images/build-instance-terrain.png)
 
@@ -98,6 +106,16 @@ Limits:
   remain excluded; hidden helpers never load their files.
   Name prefixing supports only the lighting-origin subset below; general
   runtime name rewriting remains unsupported.
+- Child player spawns support only canonical lowercase `info_player_terrorist`
+  and `info_player_counterterrorist`. An explicit finite `origin` and every
+  intermediate transformed point must fit ±16384 units. Optional finite
+  `angles` uses Source pitch/yaw/roll and defaults to zero; legacy `angle` must
+  be absent or zero. `spawnflags` must be absent or integer 0. Use canonical
+  lowercase keys. Names, targets and parents must be absent or empty.
+  Brushes, I/O, duplicate case aliases, opaque blocks and additional properties
+  reject. No player model asset is read. Ordinary point-origin flood/leak
+  diagnostics still apply; compilation does not verify native spawn selection,
+  team balancing or player-hull clearance.
 - Child lights support only exact lowercase `light` and `light_spot` classes,
   with an explicit finite `origin` inside Source compile bounds and valid
   brightness/attenuation data. Ordinary color, HDR, falloff and spotlight
@@ -184,7 +202,7 @@ Limits:
   intermediate helper point must remain within compile bounds.
 - Expansion happens before parent compile-region selection. Geometry intersecting
   the region remains eligible even when its instance marker is outside. Ordinary
-  region geometry restrictions still apply; child lights and props are selected
+  region geometry restrictions still apply; child lights, props and spawns are selected
   by transformed origin. **Generate reflections** with instances is unavailable.
   Keep lights inside sealing boundaries: a retained light on a generated wall
   can be unavailable for baking, with an explicit diagnostic. Region-omitted
@@ -212,12 +230,15 @@ is required. Build reports expose optional `stats.instances`, with nonzero
 counts describe the original power grids before neighbor density adjustments.
 Optional `point_lights` and `spot_lights` count expanded static lights before
 compile-region filtering and are omitted individually when zero. A light-only,
-model-only or lighting-helper-only assembly can resolve ready with dependency/count
+model-only, spawn-only or lighting-helper-only assembly can resolve ready with dependency/count
 reports but has
 no reference geometry to display, pick or frame. Optional `static_props` counts
 expanded child props before region filtering and is also omitted when zero.
 Optional `lighting_origins` counts expanded visible helpers before filtering,
 including unreferenced helpers, and is omitted when zero.
+Optional `player_spawns` counts both supported spawn classes before region
+filtering and is omitted when zero. A spawn-only ready assembly has no child
+model/icon, content bounds, picking or framing geometry.
 Reference resolution does not validate model headers; missing or unsupported
 models stop compilation through the ordinary static-prop consumer.
 Completed jobs also report dependency freshness. `get_compile_status.launch` and

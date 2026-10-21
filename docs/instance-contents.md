@@ -13,6 +13,8 @@ child-light display or illumination preview. Supported child static
 props are also counted for compilation, with model preview explicitly unavailable.
 Scoped child lighting-origin helpers are counted without reference geometry or
 icons.
+Supported child player spawns are counted without model/icon display, reference
+bounds, picking or framing.
 
 1. Save the parent VMF. Use **Instance reference…** to create an explicit relative
    `.vmf` reference inside its directory tree; see [Instance authoring](instance-authoring.md).
@@ -23,7 +25,9 @@ icons.
    reports point/spot counts before compile-region filtering. **Expanded static
    props:** reports child props before that filtering and explains the unavailable
    model preview. **Expanded lighting origins:** counts visible helpers,
-   including unreferenced helpers, before region filtering. **Cancel refresh**
+   including unreferenced helpers, before region filtering. **Expanded player
+   spawns:** counts both supported team-spawn classes before region filtering
+   and explains their unavailable model/icon geometry. **Cancel refresh**
    cancels the current request; **Clear** frees the resolved layer.
 4. Click a displayed reference surface to select its root instance helper.
    Terrain picking follows the displaced triangles. Overlapping object cycling
@@ -91,6 +95,14 @@ Mixed assemblies retain their actual brush/terrain preview. Local prop bindings
 are checked for retained props during compilation; a ready reference inspection
 does not prove a missing or hidden lighting helper is usable.
 
+Supported child `info_player_terrorist` and `info_player_counterterrorist` spawns
+likewise retain checked VMF identities and counts without loading player models.
+A spawn-only assembly can be ready while **Frame instance contents** is
+unavailable: it has no child spawn models, icons, bounds or pick surfaces.
+Adding spawns to a mixed assembly does not change its brush/terrain mesh,
+content bounds or face provenance. This preview does not certify native spawn
+selection, team balancing or player clearance.
+
 **Tool textures** does not classify this flat reference layer. Child editing,
 parameter replacements and automatic live refresh remain unsupported.
 [Instance authoring](instance-authoring.md) edits the root reference.
@@ -136,6 +148,10 @@ filtering. `stats.static_props` follows the same count and omit-zero convention.
 `stats.lighting_origins` also follows that convention and includes unreferenced
 visible helpers. A light-only, model-only or lighting-helper-only ready report has `available:false`, zero geometry
 counts, no face provenance and null owner content bounds.
+`stats.player_spawns` uses the same pre-region and omit-zero policy.
+`player_spawn_preview` reports `available:false` with the same reason shown by
+the inspector. Spawn-only ready reports also have zero geometry, null owner
+content bounds and no face provenance.
 
 MCP uses `inspect_instance_contents` and `set_instance_contents` with
 `refresh`, `cancel`, `clear` or `frame`. Inspectors paginate at most 64 owners per

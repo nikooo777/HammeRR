@@ -150,6 +150,18 @@ impl Controller {
             summary.push('\n');
             summary.push_str(reason);
         }
+        if let Some(spawns) = state["stats"]["player_spawns"]
+            .as_u64()
+            .filter(|&count| count > 0)
+        {
+            summary.push_str(&format!(
+                "\nExpanded player spawns: {spawns} · before compile-region filtering"
+            ));
+        }
+        if let Some(reason) = state["player_spawn_preview"]["reason"].as_str() {
+            summary.push('\n');
+            summary.push_str(reason);
+        }
         self.window.set_summary(summary.into());
         self.window
             .set_loading(state["loading"].as_bool().unwrap_or(false));

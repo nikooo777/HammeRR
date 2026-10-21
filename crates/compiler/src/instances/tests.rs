@@ -14,6 +14,9 @@ mod terrain_tests;
 #[path = "entities_tests.rs"]
 mod entities_tests;
 
+#[path = "spawns_tests.rs"]
+mod spawns_tests;
+
 #[path = "props_tests.rs"]
 mod props_tests;
 

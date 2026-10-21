@@ -13,6 +13,7 @@ mod entities;
 mod expand;
 mod names;
 mod props;
+mod spawns;
 mod terrain;
 
 pub const MAX_INSTANCES: usize = 256;
@@ -353,6 +354,8 @@ pub struct InstanceStats {
     pub static_props: usize,
     #[serde(skip_serializing_if = "is_zero")]
     pub lighting_origins: usize,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub player_spawns: usize,
     pub dependencies: Vec<DependencyInfo>,
 }
 
@@ -616,7 +619,7 @@ fn child_admission(child: &Vmf, control: &Control) -> Result<(), String> {
             .is_some_and(|class| class.eq_ignore_ascii_case("func_detail"))
         {
             return Err(format!(
-                "Child entity {} ({}) is unsupported; only world/func_detail brushes, unnamed static lights, bounded static props, scoped info_lighting helpers and bounded func_instance helpers are supported",
+                "Child entity {} ({}) is unsupported; only world/func_detail brushes, unnamed static lights, bounded static props, scoped info_lighting helpers, neutral player spawns and bounded func_instance helpers are supported",
                 entity.id,
                 entity.classname().unwrap_or("missing class")
             ));

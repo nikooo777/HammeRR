@@ -286,8 +286,8 @@ manual-game discovery. Lower capture preflight retains its existing
 same-installation running-client rejection.
 
 A saved parent can compile nested world/detail brush instances, including power
-2–4 terrain, strictly admitted unnamed static point/spot lights and
-static props, through four helper levels, counting a root helper as level one; see
+2–4 terrain, strictly admitted unnamed static point/spot lights,
+static props and player spawns, through four helper levels, counting a root helper as level one; see
 [Referenced brush assemblies](instances.md). `create_entity` uses
 `classname: "func_instance"`, an origin and string properties `file` (relative
 `.vmf`) and optional `angles` (Source pitch/yaw/roll). The current in-memory parent
@@ -327,6 +327,18 @@ cannot rely on targets or legacy `angle:-1`/`-2` direction shortcuts. These chec
 leave root-map spotlight precedence unchanged. Use existing `create_entity`,
 `set_entity_properties` and `save_map` in the child, then the ordinary instance
 reference and compile operations; no new tool or setting is required.
+
+Child spawns support only canonical lowercase `info_player_terrorist` and
+`info_player_counterterrorist`, with an explicit finite `origin`. Every source
+and intermediate point must fit ±16384 units. Optional finite `angles` defaults
+to zero; legacy `angle` must be absent/zero. `spawnflags` must be absent or
+integer 0. Names/targets/parents must be absent or empty. Brushes, I/O, opaque
+blocks, duplicate/case-ambiguous keys and unsupported properties reject. The
+installed FGD supplies only Angles; no additional enabled/team fields are
+supported. Use ordinary `create_entity`, `set_entity_properties` and `save_map`
+in the child, then reference and compile it. No player model asset is read.
+Ordinary point-origin flood/leak diagnostics apply; no native spawn-selection,
+team-balancing or player-clearance claim follows.
 
 Child `prop_static` supports unnamed, unit-scale/body 0 scenery with
 `solid:"0"`, `"2"` or `"6"`, canonical lowercase properties and finite `origin`.
@@ -415,6 +427,12 @@ launch checks as ordinary [static props](static-props.md).
 unreferenced helpers, before region filtering and is omitted when zero.
 **Build details…** shows **Expanded lighting origins:** and explains that helper
 reference geometry, icons, bounds, picking and framing are unavailable.
+
+`stats.instances.player_spawns` counts both supported expanded spawn classes
+before transformed-origin region filtering and is omitted when zero.
+**Build details…** shows **Expanded player spawns:** and the unavailable child
+model/icon/bounds/picking/framing reason. Ordinary runtime entities are emitted;
+this count describes expansion rather than selected native spawn locations.
 
 Completed instance jobs report `instance_dependencies.current/error`; `stale`,
 launch readiness and baked inspection include the retained build's dependencies.
@@ -519,6 +537,15 @@ VMF identities and counts, `available:false`, zero geometry and null owner
 bounds. Mixed references retain real brush/terrain surfaces. Missing or hidden
 local prop bindings are checked only for retained props during compilation;
 ready reference resolution does not prove those bindings usable.
+The optional `stats.player_spawns` also counts expansion before regions and
+omits zero. When nonzero, `player_spawn_preview` returns `available:false` and
+the shared `reason`: “Child player-spawn models and icons are not shown in the
+reference preview; spawn bounds, picking and framing are unavailable.”
+**Instance contents…** shows **Expanded player spawns:**. Spawn-only references
+can be ready with checked VMF identities/counts, zero geometry, null owner
+bounds and no face provenance. No spawn model/icon/pick surface is fabricated;
+mixed references retain their real brush/terrain geometry. Refresh does not
+load player model assets or establish native player clearance/selection.
 Repeated placements can share those leaf identities. Picking and framing retain
 the root helper owner.
 

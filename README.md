@@ -294,10 +294,10 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Paste placement and link handling](docs/images/clipboard-paste.png) |
 | Transfer brushes and entities between maps with previewed placement, groups, notes and checked links. |
 
-| Prefab library | Referenced brush assemblies |
+| Prefab library | Referenced assemblies |
 | --- | --- |
 | ![Textured prefab gallery with placement controls](docs/images/prefab-gallery.png) | ![Nested instance terrain reference surfaces](docs/images/instance-terrain-reference.png) |
-| Browse flat or textured assembly galleries, then place rotated or brush-scaled copies. | Extract and preview nested terrain assemblies; compile their static lights and props with checked sources. |
+| Browse flat or textured assembly galleries, then place rotated or brush-scaled copies. | Extract and preview nested terrain assemblies; compile their lights, props and team spawns with checked sources. |
 
 | Open documents and Save all |
 | --- |

@@ -3,6 +3,7 @@ use crate::session::{SelectMode, working_region};
 use map_core::edit;
 
 mod lighting_origins;
+mod player_spawns;
 mod static_props;
 mod terrain;
 

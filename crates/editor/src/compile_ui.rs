@@ -838,6 +838,12 @@ impl Controller {
                         editor_core::session::instance_contents::LIGHTING_ORIGIN_PREVIEW_REASON
                     ));
                 }
+                if let Some(spawns) = stats["player_spawns"].as_u64().filter(|&count| count > 0) {
+                    summary.push_str(&format!(
+                        "\nExpanded player spawns: {spawns} · before compile-region filtering\n{}",
+                        editor_core::session::instance_contents::PLAYER_SPAWN_PREVIEW_REASON
+                    ));
+                }
                 for dependency in stats["dependencies"]
                     .as_array()
                     .into_iter()

@@ -131,6 +131,8 @@ mod previews;
 mod rename_view;
 #[cfg(test)]
 mod selection_outline_tests;
+#[cfg(test)]
+mod water_analog_tests;
 pub use manipulation::{
     AreaPreview, GridSnap, Pointer, TransformDrag, TransformPreview, TransformTool,
 };
@@ -1142,11 +1144,21 @@ impl Session {
                 class.kind.label()
             ));
         }
-        let classname = class.map_or(classname, |class| class.name.as_str());
+        let stationary_water = kind == ClassKind::Solid
+            && classname.eq_ignore_ascii_case(compiler::WATER_ANALOG_CLASSNAME);
+        let classname = if stationary_water {
+            compiler::WATER_ANALOG_CLASSNAME
+        } else {
+            class.map_or(classname, |class| class.name.as_str())
+        };
         if classname.trim().is_empty() {
             return Err("classname must not be empty".into());
         }
-        let mut values = class.map_or_else(BTreeMap::new, |class| class.defaults());
+        let mut values = if stationary_water {
+            BTreeMap::new()
+        } else {
+            class.map_or_else(BTreeMap::new, |class| class.defaults())
+        };
         for (key, value) in properties {
             if key.eq_ignore_ascii_case("classname") {
                 if !value.eq_ignore_ascii_case(classname) {
@@ -1155,10 +1167,27 @@ impl Session {
                 continue;
             }
             self.validate_property(classname, &key, Some(&value))?;
-            let name = class
-                .and_then(|class| class.property(&key))
-                .map_or(key, |property| property.name.clone());
+            let name = if stationary_water {
+                if values.keys().any(|name| name.eq_ignore_ascii_case(&key)) {
+                    return Err(format!("duplicate {classname} property {key}"));
+                }
+                key
+            } else {
+                class
+                    .and_then(|class| class.property(&key))
+                    .map_or(key, |property| property.name.clone())
+            };
             values.insert(name, value);
+        }
+        if stationary_water {
+            for (key, value) in compiler::WATER_ANALOG_DEFAULTS {
+                if !values.keys().any(|name| {
+                    name.eq_ignore_ascii_case(key)
+                        || key == "angles" && name.eq_ignore_ascii_case("angle")
+                }) {
+                    values.insert(key.into(), value.into());
+                }
+            }
         }
         Ok((classname.into(), values.into_iter().collect()))
     }
@@ -1314,8 +1343,21 @@ impl Session {
                 )),
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let (classname, properties) =
+        let (classname, mut properties) =
             self.entity_properties(classname, ClassKind::Solid, properties)?;
+        if classname == compiler::WATER_ANALOG_CLASSNAME
+            && !properties
+                .iter()
+                .any(|(key, _)| key.eq_ignore_ascii_case("origin"))
+        {
+            let (mins, maxs) = query::bounds_of(&self.document, ids)
+                .ok_or("Cannot derive func_water_analog origin from selected brush bounds")?;
+            let origin = (mins + maxs) * 0.5;
+            if !origin.is_finite() {
+                return Err("origin expects three finite coordinates".into());
+            }
+            properties.push(("origin".into(), source_formats::vmf::format_vec3(origin)));
+        }
         let id = self.edit(actor, &format!("tie to {classname}"), |tx| {
             map_core::edit::tie_to_entity(tx, &solids, &classname, &properties)
         })?;

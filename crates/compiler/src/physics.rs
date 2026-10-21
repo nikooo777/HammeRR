@@ -477,6 +477,32 @@ fn plan(
     if request.surface_data.is_empty() && request.models.iter().any(|model| model.index > 0) {
         request.surface_data = surface_data::load(fs, control)?;
     }
+    if let Some(index) = crate::water_analog::model_index(map, models)? {
+        let carrier = map
+            .water_analog
+            .ok_or("Stationary water carrier is missing")?;
+        let actual = request.models.iter().find(|model| model.index == index);
+        let valid = actual.is_some_and(|model| {
+            let [body] = model.bodies.as_slice() else {
+                return false;
+            };
+            body.contents == MASK_SOLID
+                && body.surface.is_none()
+                && body.current_hu.is_none()
+                && body.damping.is_none()
+                && body.mesh.is_none()
+                && body.shapes.len() == 1
+                && body.shapes[0].brush as usize == carrier.brush
+        });
+        if !valid {
+            report.diagnostics.push(crate::water_analog::error(
+                map,
+                carrier,
+                "one ordinary inline physics body and convex are required",
+            ));
+            return Err("Stationary water physics body prerequisite failed".into());
+        }
+    }
     if map.water_current.is_some()
         && !request
             .models
@@ -1037,6 +1063,26 @@ pub(crate) fn bake(
                     .ok_or_else(|| format!("Physics worker solid is missing {key}"))
             };
             let property = field("surfaceprop")?;
+            if map
+                .water_analog
+                .is_some_and(|carrier| carrier.entity == models[actual.index].entity)
+                && (fields
+                    .iter()
+                    .filter(|field| field.key.eq_ignore_ascii_case("index"))
+                    .count()
+                    != 1
+                    || field("index")? != "0")
+            {
+                let carrier = map
+                    .water_analog
+                    .ok_or("Stationary water carrier is missing")?;
+                report.diagnostics.push(crate::water_analog::error(
+                    map,
+                    carrier,
+                    "the ordinary physics solid requires one index-zero key",
+                ));
+                return Err("Stationary water physics solid index is invalid".into());
+            }
             let mass = field("mass")?
                 .parse::<f32>()
                 .map_err(|_| "Invalid physics worker mass")?;

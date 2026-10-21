@@ -352,10 +352,10 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 
 [Baked prop vertices →](docs/baked-prop-vertices.md)
 
-| Physical water controls |
+| Water volumes and physics |
 | --- |
 | ![Water current and pressure damping in World settings](docs/images/water-pressure-world-settings.png) |
-| Set a world-axis current and native pressure coefficient for floating physics objects. |
+| Create pools or stationary invisible water; set world-water current and pressure for physics objects. |
 
 [Water →](docs/water.md)
 

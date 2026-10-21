@@ -30,6 +30,7 @@ pub mod tree;
 mod visclusters;
 mod visibility;
 mod water;
+mod water_analog;
 pub mod water_assets;
 pub mod water_dependencies;
 pub mod winding;
@@ -75,6 +76,7 @@ pub use physics::damping::{
 pub use portals::Leak;
 pub use publication::{FileIdentity, FileStamp, OutputLease};
 pub use sky_assets::{SkyAssetManifest, SkyAssetPlan, read_packed_sky, verify_packed_sky};
+pub use water_analog::{WATER_ANALOG_CLASSNAME, WATER_ANALOG_DEFAULTS};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -1016,6 +1018,10 @@ fn build(
     };
     map.water_current = water_current;
     map.water_damping = water_damping;
+    water_analog::admit_mode(&map, options.physics, &mut output.report);
+    if output.report.has_errors() {
+        return Ok(());
+    }
     let water_plan = if options.pack_water_assets
         && let Some(sources) = &material_sources
         && !output.report.has_errors()
@@ -1169,6 +1175,10 @@ fn build(
         return Ok(());
     }
     control.advance(Stage::Hints)?;
+    water_analog::admit_world(&map, &tree, &mut output.report, control)?;
+    if output.report.has_errors() {
+        return Ok(());
+    }
     let hints = hints::apply(&map, &mut tree, &mut output.report, control, hint_priority)?;
     output.stats.hint_splits = hints.splits;
     output.stats.hint_priority_splits = hints.priority_splits;
@@ -1325,6 +1335,10 @@ fn build(
             tree,
             faces,
         });
+    }
+    water_analog::admit_models(&map, &models, &mut output.report);
+    if output.report.has_errors() {
+        return Ok(());
     }
     control.advance(Stage::SkyVisibility)?;
     visibility.mark_sky(&map, &models[0].faces, control)?;

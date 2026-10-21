@@ -365,7 +365,7 @@ pub fn build(
                     };
                 }
                 leaves[leaf] = bsp::Leaf {
-                    contents: node.contents
+                    contents: crate::water_analog::leaf_contents(map, model.entity, node.contents)
                         | if model.entity == 0 && water.fog_tests[node_index] {
                             contents::TESTFOGVOLUME
                         } else {
@@ -451,12 +451,12 @@ pub fn build(
     }
     let mut brushes = Vec::new();
     let mut sides = Vec::new();
-    for brush in &map.brushes {
+    for (brush_index, brush) in map.brushes.iter().enumerate() {
         control.checkpoint()?;
         brushes.push(bsp::Brush {
             first_side: index(sides.len(), "brush side")?,
             side_count: index(brush.sides.len(), "brush side count")?,
-            contents: brush.contents,
+            contents: crate::water_analog::brush_contents(map, brush_index, brush.contents),
         });
         for side in &brush.sides {
             sides.push(bsp::BrushSide {

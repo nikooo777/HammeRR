@@ -177,7 +177,43 @@ Agents use the same material and compile operations: `create_block`, `select_fac
 
 Limits: structural-world water with a visible horizontal top; inward faces cover the top and exposed vertical sides. HammeRR caps their combined generation at four million work units, 65,536 prospective fragments and one million cumulative winding point allocations. Conservative reservations include clipping and merging; exceeding a budget fails the build and preserves previous output. Current input must contain exactly three ASCII-whitespace-separated finite decimal/scientific components in at most 128 UTF-8 bytes, with finite representable native velocity and vector length at most 128 units/s; invalid values or duplicate keys reject atomically. Damping input is one finite ASCII decimal/scientific coefficient in at most 32 bytes, within 0–0.01 before native conversion; a nonzero value must remain nonzero after conversion. Invalid, duplicate or unsupported controls fail explicitly. Either stored control rejects without engine physics, without emitted eligible water, or when retained slime/detail/model liquids are present. Hidden or region-omitted liquids do not supply eligible bodies. Sloped sides, negative-Z bottom faces, per-pool current/damping, player/NPC currents, sloped or enclosed tops and detail/model liquids remain unfinished. Conflicting overlapping liquids fail with a diagnostic. Editor previews use the material's editor texture; they do not render the game's water reflection, refraction or underwater view. In-game appearance depends on the water materials and renderer settings. Assets outside the admitted packed Water closure must remain available in the game's mounted content. Compile regions must contain the complete water volume.
 
-Visible `func_water_analog` entities fail **Compile** and **Run Map**, including empty, dry or liquid brush variants. Importing and editing them remains available. Hidden or region-omitted entities are excluded from the build.
+## Stationary invisible water
+
+Create one submerged volume without a rendered water surface.
+
+1. Use **Draw brush** or **Add brush** to make one axis-aligned box in dry,
+   open space inside a sealed room. Leave a gap from other brushes and terrain.
+2. Set **Selection → Objects**, apply `tools/toolsnodraw` to every face with
+   **Apply**, then click **Tie to entity…**.
+3. Enter `func_water_analog` in **Classname (custom classes are supported)** and
+   click **Tie selected brushes to entity**. Creation sets the origin to the
+   selected box's center and initializes zero rotation, start position and flags.
+4. Open **Build settings…**, choose **Physics bodies → CS:S engine physics**,
+   click **Close**, then **Compile** or **Run Map**. Read entity-owned errors in
+   **Build details… → Diagnostics** if the build is refused.
+
+![Material browser for choosing the volume's nodraw material](images/material-browser.png)
+
+Limits: one retained entity with one closed, six-sided cuboid and one uniform,
+mounted ordinary solid nodraw material. Imported entities need an explicit
+finite origin. Rotation, start position and flags must be zero; omitted values
+use zero. Empty entities, multiple brushes, terrain, origin brushes, hidden
+children and outputs are unsupported. Only the class, origin, stationary pose/flags,
+`targetname` and `hammerid` fields are accepted. Conservative bounds
+must not touch other initial brush or terrain bounds, and the entire volume
+must occupy dry open world space. Hidden or region-omitted entities are excluded.
+
+The volume has no rendered surface, fog, reflections, player current or per-pool
+pressure/current controls. Keep it stationary and unparented. Runtime movement,
+parenting, scripted changes, removal and save/restore are unsupported. This
+volume does not satisfy the structural-world-water requirement of the separate
+world current and damping settings. Unsupported variants fail compilation and
+preserve previous output; importing and editing them remains available.
+
+MCP uses the same `create_block`, `tie_to_entity`, `set_entity_properties`,
+`set_compile_settings` and compile operations. See
+[MCP](mcp.md#stationary-invisible-water).
+
 
 Historical map-local `$waterdepth` material aliases are not generated; their
 active consumer remains unverified. That is separate from static asset

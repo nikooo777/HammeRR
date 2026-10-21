@@ -173,6 +173,7 @@ pub struct Map<'a> {
     pub(crate) water_bottom_texinfos: HashMap<usize, usize>,
     pub(crate) water_current: Option<[f32; 3]>,
     pub(crate) water_damping: Option<f32>,
+    pub(crate) water_analog: Option<crate::water_analog::Carrier>,
     pub brushes: Vec<MapBrush>,
     /// Entity 0 is worldspawn.
     pub entities: Vec<MapEntity>,
@@ -221,6 +222,7 @@ impl<'a> Map<'a> {
             water_bottom_texinfos: HashMap::new(),
             water_current: None,
             water_damping: None,
+            water_analog: None,
             brushes: Vec::new(),
             entities: Vec::new(),
             cubemaps: Vec::new(),
@@ -471,16 +473,8 @@ impl<'a> Map<'a> {
                 ));
                 continue;
             }
-            if entity
-                .properties
-                .get_all("classname")
-                .any(|value| value.eq_ignore_ascii_case("func_water_analog"))
-            {
-                report.diagnostics.push(Diagnostic::error(
-                    "Cannot compile func_water_analog: inline water-analog physics and volume contents are unsupported",
-                    Some(object),
-                    entity.origin(),
-                ));
+            let water_analog = crate::water_analog::declared(entity);
+            if water_analog && !crate::water_analog::admit_source(entity, report) {
                 continue;
             }
             let origins = map.prepare_origins(entity, report, control)?;
@@ -520,6 +514,9 @@ impl<'a> Map<'a> {
                 } else {
                     Diagnostic::info("Consumed origin brush; remaining geometry uses the entity pivot", Some(format!("entity:{}", entity.id)), entity.origin)
                 });
+            }
+            if water_analog {
+                crate::water_analog::admit_carrier(&mut map, index, report);
             }
         }
         crate::areas::windows::validate(&map, report, control)?;

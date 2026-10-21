@@ -74,7 +74,7 @@ impl Pose {
     }
 }
 
-fn component(token: &str) -> Result<f64, String> {
+pub(crate) fn component(token: &str) -> Result<f64, String> {
     let value = token
         .parse::<f64>()
         .map_err(|_| "angle field is not numeric")?;

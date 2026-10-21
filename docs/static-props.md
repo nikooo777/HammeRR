@@ -24,7 +24,10 @@ Builds retain the first consumed MDL and required PHY source identities, includi
 HammeRR bounds static-prop leaf traversal and clipping to 16 million work units and four million cumulative reserved polygon points per build. A clipped fragment reserves at most 4,096 points and 256 faces. Exceeding these budgets, an invalid asset or a prop with no open leaf fails before publication. Existing native prop/model/leaf-table limits also apply. The source map and Undo history stay unchanged during compilation.
 
 Saved [referenced assemblies](instances.md) can contain the strict unnamed,
-unit-scale/body 0/skin 0, normal-white `solid:0` subset. Nested transforms compile
+unit-scale/body 0/skin 0, normal-white subset with **Collisions → Not Solid**,
+**Use Bounding Box** or **Use VPhysics**. An omitted collision property uses
+**Use VPhysics**, which requires the same matching PHY even with **No physics
+bodies**. Nested transforms compile
 through this same model consumer and retain its original source guards. Child
 props have expanded counts in **Build details…** and **Instance contents…**;
 their models, bounds, picking and framing are unavailable in the reference layer.

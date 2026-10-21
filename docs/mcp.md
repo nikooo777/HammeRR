@@ -286,7 +286,7 @@ manual-game discovery. Lower capture preflight retains its existing
 same-installation running-client rejection.
 
 A saved parent can compile nested world/detail brush instances, including power
-2–4 terrain, strictly admitted unnamed static point/spot lights and non-solid
+2–4 terrain, strictly admitted unnamed static point/spot lights and
 static props, through four helper levels, counting a root helper as level one; see
 [Referenced brush assemblies](instances.md). `create_entity` uses
 `classname: "func_instance"`, an origin and string properties `file` (relative
@@ -329,12 +329,14 @@ leave root-map spotlight precedence unchanged. Use existing `create_entity`,
 reference and compile operations; no new tool or setting is required.
 
 Child `prop_static` supports unnamed, unit-scale/body 0/skin 0 scenery with
-explicit `solid:"0"`, canonical lowercase properties and finite `origin`.
+`solid:"0"`, `"2"` or `"6"`, canonical lowercase properties and finite `origin`.
+An omitted `solid` remains omitted during expansion and uses ordinary default 6.
+Other values, fractions and malformed integers reject.
 Absent `angles` means zero. Supplied render settings must stay normal-white:
 `rendercolor:"255 255 255"`, `renderamt:"255"`, `rendermode:"0"` and
 `renderfx:"0"`. Names, targets, parents and `lightingorigin` must be absent or
 empty. Neutral FGD scale/fade/flag/DX/lighting defaults are admitted; custom
-fades, scaling, body/skin selections, collision, unknown properties, duplicate
+fades, scaling, body/skin selections, unknown properties, duplicate
 case aliases, brushes, I/O and opaque blocks reject. See the exact
 [child prop limits](instances.md). Use `create_entity` and `set_entity_properties`
 in the child, `save_map`, then the existing reference and compile operations.
@@ -342,6 +344,13 @@ No new tool or setting is required. Reference resolution does not load MDL
 headers. The ordinary compiler consumer reads retained props after origin-based
 region selection, checks model boxes at source and intermediate poses, and
 retains the original model-source guard through publication and launch.
+Mode 6 and omitted/default 6 require the ordinary matching PHY, including in
+Fullbright with `physics:"none"`; missing, unreadable, oversized or malformed
+required assets refuse publication. Modes 0/2 leave unused PHY unread, and
+region-omitted props leave both MDL and PHY unread. Consumed PHY and its original
+winning lookup share the existing completed-job stale/launch checks and
+`job.static_prop_source_issue`; restoring bytes requires a fresh compile rather
+than replacing the retained source identity.
 
 `compile_map`, `start_compile` and `run_map` use the same automatic expansion
 before region selection; no new compile switch is required. Optional

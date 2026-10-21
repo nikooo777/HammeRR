@@ -3,7 +3,7 @@
 # Compile referenced assemblies
 
 Reuse saved VMFs' world and detail brushes, power 2–4 terrain, unnamed static
-point/spot lights, non-solid static props and nested references at several
+point/spot lights, static props and nested references at several
 positions and rotations.
 Compilation expands the supported contents without an extra switch. The editor
 can resolve a separate, explicitly refreshed
@@ -25,9 +25,10 @@ from supported brushes already in the parent.
    before returning to the parent. Loaded FGD defaults do not bypass these checks.
 3. To add child scenery, choose `prop_static` in **Entity…** and set **World Model**
    to a supported static model. In **Advanced properties**, choose
-   **Collisions → Not Solid**.
+   **Collisions → Not Solid**, **Use Bounding Box** or **Use VPhysics**.
+   **Use VPhysics** is the default and requires the model's matching `.phy` asset.
    Keep scale 1, body/skin 0, normal white rendering and names empty. Save the
-   child. Collision and non-neutral prop settings are outside this child subset.
+   child. Other non-neutral prop settings remain outside this child subset.
 4. Click **Instance reference…**. Set **VMF reference** to `parts/arch.vmf`,
    choose **Position** and **Rotation**, then click **Create**. **Cancel** leaves
    the map unchanged. See [Instance authoring](instance-authoring.md) for browsing,
@@ -101,7 +102,9 @@ Limits:
   angles. Targets and legacy `angle:-1`/`-2` shortcuts are unsupported for child lights.
   These restrictions do not change root-map spotlight behavior.
 - Child `prop_static` supports unnamed, unit-scale, body 0/skin 0 scenery with
-  explicit `solid:0`. Use canonical lowercase keys and finite `origin`;
+  `solid` 0, 2 or 6; an omitted `solid` uses ordinary default 6. Other values,
+  fractions and malformed integers reject. Use canonical lowercase keys and
+  finite `origin`;
   absent `angles` means zero, and legacy `angle` must be absent or zero.
   Normal rendering requires white `rendercolor`,
   `renderamt:255`, and zero `rendermode`/`renderfx` when supplied. Names, targets,
@@ -112,10 +115,16 @@ Limits:
   `disableshadows`, `disablevertexlighting` and `disableselfshadowing`; `modelscale`
   and `fadescale` 1, `fademindist` -1 and `fademaxdist` 0. Custom fades, skin/body
   selections, scaling, named lighting
-  origins and collision are unsupported for child props. The ordinary compiler
+  origins are unsupported for child props. The ordinary compiler
   reads the retained model's MDL header only after region selection and checks
   its model boxes at the source pose and every nested transform. Bounds must
   remain valid at intermediate poses even if the final placement returns inside.
+- **Use VPhysics** needs a valid matching PHY even in **Fullbright** with
+  **Physics bodies → No physics bodies**. Missing, unreadable, oversized or
+  malformed required PHY assets stop publication. **Not Solid** and **Use Bounding
+  Box** do not read unused PHY assets. These are the ordinary prop collision
+  choices; bounding boxes and model VPhysics hulls can differ. Visibility still
+  uses conservative MDL header boxes, not exact PHY-hull clipping.
 - Terrain must have an effective quad base face and a valid power 2–4 grid.
   Supported deformation, alpha, smoothing, triangle-tag and native vertex-mask
   data are retained through transforms. Malformed or nonfinite rows, unsupported

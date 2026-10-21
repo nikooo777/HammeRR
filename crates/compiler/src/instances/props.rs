@@ -25,9 +25,13 @@ pub(super) fn admit(entity: &Entity) -> Result<(), String> {
         }
         match key {
             "classname" | "origin" | "angles" | "model" => {}
+            "solid" => {
+                if !matches!(value.parse::<i32>(), Ok(0 | 2 | 6)) {
+                    return Err("Static child prop solid must be 0, 2 or 6".into());
+                }
+            }
             "body"
             | "skin"
-            | "solid"
             | "spawnflags"
             | "generatelightmaps"
             | "ignorenormals"
@@ -66,9 +70,6 @@ pub(super) fn admit(entity: &Entity) -> Result<(), String> {
     }
     if entity.properties.get("classname") != Some("prop_static") {
         return Err("Static child prop requires canonical classname prop_static".into());
-    }
-    if entity.properties.get("solid").is_none() {
-        return Err("Static child prop requires explicit solid 0".into());
     }
     let model = source_formats::gamefs::asset_relative(
         entity

@@ -1,5 +1,5 @@
 use super::*;
-use crate::test_assets::instance_static_props::{self, MODEL};
+use crate::test_assets::instance_static_props::{self, MODEL, PHYSICS};
 
 fn prop_session(actor: Actor) -> (tempfile::TempDir, Session, PathBuf, PathBuf, ObjectId) {
     let (directory, game, source, child) = instance_static_props::fixture();
@@ -356,7 +356,7 @@ fn static_props_preserve_real_terrain_preview_and_invalid_or_cancelled_refreshes
         assert_eq!(hits[0].object, owner);
         assert!((hits[0].point.z - 60.0).abs() < 1e-6);
         for (key, value) in [
-            ("solid", "2"),
+            ("solid", "1"),
             ("skin", "1"),
             ("rendercolor", "255 128 255"),
             ("targetname", "named"),
@@ -372,7 +372,7 @@ fn static_props_preserve_real_terrain_preview_and_invalid_or_cancelled_refreshes
         }
         let mut hidden = complete.clone();
         hidden.entities[0].hidden = true;
-        hidden.entities[0].properties.set("solid", "2");
+        hidden.entities[0].properties.set("solid", "1");
         std::fs::write(&child, hidden.write(&Default::default())).unwrap();
         let report = refresh(&mut session, actor);
         assert_eq!(report["state"], "ready");
@@ -396,5 +396,259 @@ fn static_props_preserve_real_terrain_preview_and_invalid_or_cancelled_refreshes
         assert_eq!(session.history_snapshot(), history);
         assert_eq!(session.compile_settings(), settings);
         assert_eq!(std::fs::read(&source).unwrap(), source_bytes);
+    }
+}
+
+fn collision_session(
+    actor: Actor,
+    solid: Option<&str>,
+) -> (tempfile::TempDir, Session, PathBuf, PathBuf, ObjectId) {
+    let (directory, game, source, child) = instance_static_props::collision_fixture(solid);
+    let mut session = Session::new(Ok(game));
+    session.open(actor, &source, true).unwrap();
+    let owner = ObjectId::Entity(session.document.vmf().entities.last().unwrap().id);
+    session.set_view(render::ViewOptions {
+        instance_contents: true,
+        ..session.view()
+    });
+    session.select(&[owner], SelectMode::Replace).unwrap();
+    (directory, session, source, child, owner)
+}
+
+fn compile_collision_props(
+    session: &mut Session,
+    actor: Actor,
+    background: bool,
+) -> Result<crate::session::compilation::CompileResult, String> {
+    let request = session.begin_compile(actor, None)?;
+    if background {
+        let (result, native) = request.run_admitted();
+        assert!(native.is_none());
+        result
+    } else {
+        request.run()
+    }
+}
+
+#[test]
+fn child_vphysics_first_read_guards_refuse_staging_and_queued_launch_drift_until_recompiled() {
+    for (actor, background, solid) in [(Actor::User, false, Some("6")), (Actor::Agent, true, None)]
+    {
+        let (_directory, mut session, source, child, owner) = collision_session(actor, solid);
+        session
+            .begin_property_edit(crate::session::PropertyTarget::World)
+            .unwrap();
+        let token = session.property_draft().unwrap().token;
+        session
+            .append_property_change(
+                token,
+                crate::session::PropertyChange::Set {
+                    key: "message".into(),
+                    value: "Retain child collision review".into(),
+                },
+            )
+            .unwrap();
+        assert_eq!(session.compile_settings()["lighting"], "fullbright");
+        assert_eq!(session.compile_settings()["physics"], "none");
+        let memory = session.document.vmf().clone();
+        let history = session.history_snapshot();
+        let camera = session.camera();
+        let settings = session.compile_settings();
+        let draft = json!(session.property_draft());
+        let source_bytes = std::fs::read(&source).unwrap();
+        let child_bytes = std::fs::read(&child).unwrap();
+        let physics = session.game.game_dir.join(PHYSICS);
+        let original = std::fs::read(&physics).unwrap();
+        let mut changed = original.clone();
+        changed[12] ^= 1;
+        let result = compile_collision_props(&mut session, actor, background);
+        let output = &result.as_ref().unwrap().output;
+        assert!(output.bsp.is_some(), "{:?}", output.report);
+        assert!(output.static_prop_sources.is_some());
+        assert_eq!(
+            output
+                .bsp
+                .as_ref()
+                .unwrap()
+                .static_props()
+                .unwrap()
+                .unwrap()
+                .props[0]
+                .solid,
+            6
+        );
+        assert!(!result.as_ref().unwrap().published());
+        std::fs::write(&physics, &changed).unwrap();
+        session.finish_compile(actor, &result);
+        assert!(!result.as_ref().unwrap().published());
+        assert!(result.as_ref().unwrap().publication_error().is_some());
+        assert_eq!(
+            std::fs::read(source.with_extension("bsp")).unwrap(),
+            b"previous BSP"
+        );
+        assert_eq!(
+            std::fs::read(source.with_extension("lin")).unwrap(),
+            b"previous pointfile"
+        );
+        drop(result);
+        std::fs::write(&physics, &original).unwrap();
+        let result = compile_collision_props(&mut session, actor, background);
+        session.finish_compile(actor, &result);
+        assert!(
+            result.as_ref().unwrap().published(),
+            "{}",
+            session.compile_status()
+        );
+        drop(result);
+        let published = std::fs::read(source.with_extension("bsp")).unwrap();
+        let pointfile = std::fs::read(source.with_extension("lin")).ok();
+        let retained = session
+            .compiled
+            .as_ref()
+            .unwrap()
+            .static_prop_sources
+            .as_ref()
+            .unwrap()
+            .clone();
+        let launch = session.begin_launch(actor).unwrap();
+        let origin = launch.origin();
+        launch.verify_static_prop_sources().unwrap();
+        std::fs::write(&physics, &changed).unwrap();
+        assert!(retained.verify(&compiler::Control::default()).is_err());
+        assert!(launch.verify_static_prop_sources().is_err());
+        assert!(
+            session
+                .finish_launch(
+                    actor,
+                    &origin,
+                    Err("test completed without spawning".into())
+                )
+                .is_err()
+        );
+        drop(launch);
+        let status = session.compile_status();
+        assert_eq!(status["job"]["status"], "completed");
+        assert_eq!(status["job"]["stale"], true);
+        assert!(status["job"]["static_prop_source_issue"].is_string());
+        assert_eq!(status["launch"]["ready"], false);
+        assert_eq!(session.baked_lightmap_build_state()["status"], "stale");
+        assert_eq!(session.baked_prop_vertex_build_state()["status"], "stale");
+        std::fs::write(&physics, &original).unwrap();
+        assert!(retained.verify(&compiler::Control::default()).is_err());
+        assert_eq!(session.compile_status()["job"]["stale"], true);
+        assert!(session.launch_readiness().is_err());
+        assert_eq!(
+            std::fs::read(source.with_extension("bsp")).unwrap(),
+            published
+        );
+        assert_eq!(std::fs::read(source.with_extension("lin")).ok(), pointfile);
+        let report = refresh(&mut session, actor);
+        assert_model_preview_unavailable(&mut session, actor, &report, owner);
+        assert_eq!(report["stats"]["static_props"], 1);
+        let result = compile_collision_props(&mut session, actor, !background);
+        session.finish_compile(actor, &result);
+        assert!(
+            result.as_ref().unwrap().published(),
+            "{}",
+            session.compile_status()
+        );
+        drop(result);
+        assert_eq!(session.compile_status()["job"]["stale"], false);
+        assert!(session.launch_readiness().is_ok());
+        assert!(retained.verify(&compiler::Control::default()).is_err());
+        assert_eq!(session.document.vmf(), &memory);
+        assert_eq!(session.history_snapshot(), history);
+        assert_eq!(session.camera(), camera);
+        assert_eq!(session.compile_settings(), settings);
+        assert_eq!(json!(session.property_draft()), draft);
+        assert_eq!(session.selected_ids(), vec![owner]);
+        assert_eq!(std::fs::read(&source).unwrap(), source_bytes);
+        assert_eq!(std::fs::read(&child).unwrap(), child_bytes);
+    }
+}
+
+#[test]
+fn child_collision_unused_phy_and_region_omissions_preserve_ready_original_builds() {
+    for (actor, background, solid, omitted) in [
+        (Actor::User, false, Some("0"), false),
+        (Actor::Agent, true, Some("2"), false),
+        (Actor::User, true, Some("6"), true),
+        (Actor::Agent, false, None, true),
+    ] {
+        let (_directory, mut session, source, child, owner) = collision_session(actor, solid);
+        let physics = session.game.game_dir.join(PHYSICS);
+        std::fs::write(&physics, b"unused invalid PHY").unwrap();
+        if omitted {
+            let mut vmf = Vmf::parse(&std::fs::read_to_string(&child).unwrap()).unwrap();
+            vmf.entities[0].properties.set("origin", "96 32 8");
+            std::fs::write(&child, vmf.write(&Default::default())).unwrap();
+            std::fs::remove_file(session.game.game_dir.join(MODEL)).unwrap();
+            let definition = map_core::compile_region::Definition {
+                enabled: true,
+                bounds: map_core::compile_region::Bounds {
+                    mins: DVec3::new(-64.0, -64.0, 0.0),
+                    maxs: DVec3::new(64.0, 64.0, 160.0),
+                },
+            };
+            let stamp = session.compile_region_stamp();
+            let token = session
+                .preview_compile_region(actor, Some(definition), &stamp)
+                .unwrap()["draft"]["token"]
+                .as_u64()
+                .unwrap();
+            session.apply_compile_region(actor, token).unwrap();
+        }
+        let memory = session.document.vmf().clone();
+        let history = session.history_snapshot();
+        let settings = session.compile_settings();
+        let source_bytes = std::fs::read(&source).unwrap();
+        let child_bytes = std::fs::read(&child).unwrap();
+        let report = refresh(&mut session, actor);
+        assert_model_preview_unavailable(&mut session, actor, &report, owner);
+        assert_eq!(report["stats"]["static_props"], 1);
+        let result = compile_collision_props(&mut session, actor, background);
+        let output = &result.as_ref().unwrap().output;
+        assert!(output.bsp.is_some(), "{:?}", output.report);
+        assert_eq!(output.stats.instances.as_ref().unwrap().static_props, 1);
+        assert_eq!(output.stats.static_props, usize::from(!omitted));
+        if omitted {
+            assert!(output.static_prop_sources.is_none());
+        } else {
+            assert_eq!(
+                output
+                    .bsp
+                    .as_ref()
+                    .unwrap()
+                    .static_props()
+                    .unwrap()
+                    .unwrap()
+                    .props[0]
+                    .solid,
+                solid.unwrap().parse::<u8>().unwrap()
+            );
+        }
+        session.finish_compile(actor, &result);
+        assert!(
+            result.as_ref().unwrap().published(),
+            "{}",
+            session.compile_status()
+        );
+        drop(result);
+        let published = std::fs::read(source.with_extension("bsp")).unwrap();
+        std::fs::write(&physics, b"changed but still unused PHY").unwrap();
+        assert_eq!(session.compile_status()["job"]["stale"], false);
+        assert!(session.compile_status()["job"]["static_prop_source_issue"].is_null());
+        assert!(session.launch_readiness().is_ok());
+        assert_eq!(session.baked_lightmap_build_state()["status"], "current");
+        assert_eq!(session.baked_prop_vertex_build_state()["status"], "current");
+        assert_eq!(
+            std::fs::read(source.with_extension("bsp")).unwrap(),
+            published
+        );
+        assert_eq!(session.document.vmf(), &memory);
+        assert_eq!(session.history_snapshot(), history);
+        assert_eq!(session.compile_settings(), settings);
+        assert_eq!(std::fs::read(&source).unwrap(), source_bytes);
+        assert_eq!(std::fs::read(&child).unwrap(), child_bytes);
     }
 }

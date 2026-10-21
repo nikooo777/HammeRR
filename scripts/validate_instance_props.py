@@ -1,5 +1,6 @@
 import argparse
 import json
+import re
 import struct
 from pathlib import Path
 
@@ -22,6 +23,7 @@ from validate_material_albedo import (
 from validate_nested_brush_instances import FULL, assets, room, source_state
 from validate_prop_vertex_lighting import MANIFEST, VHV_NAME, pak_and_flags, read_vhv
 from validate_recovery_exit import require_clean_eof
+from validate_static_prop_physics_limits import physics_bytes
 from validate_static_props import static_records
 
 MODELS = ("models/hammerr719/first.mdl", "models/hammerr719/second.mdl")
@@ -35,6 +37,10 @@ DUAL = ("direct_ldr_hdr", 0)
 POINTFILE = b"13 17 19\n23 29 31\n"
 SPRP = int.from_bytes(b"sprp", "big")
 POSE_ERROR = 0.00001
+MIXED_SOURCE = (*SOURCE, ((-64, -48, 8), (0, 0, 0)), ((72, 40, 16), (0, 0, 0)),
+                ((0, 64, 32), (0, 0, 0)), ((-80, 72, 24), (0, 0, 0)))
+MIXED_LITERAL = (*LITERALS["translation"], ((-48, -56, 40), (0, 0, 0)), ((88, 32, 48), (0, 0, 0)),
+                 ((16, 56, 64), (0, 0, 0)), ((-64, 64, 56), (0, 0, 0)))
 
 
 def small_files(directory):
@@ -70,6 +76,7 @@ def game_assets(args):
                 data[752:784] = b"models/hammerr719\0".ljust(32, b"\0")
             (path.parent / f"{stem}{suffix}").write_bytes(data)
             generated.unlink()
+        path.with_suffix(".phy").write_bytes(physics_bytes(719 + index))
     (game / "models/oracle").rmdir()
     material = game / "materials/models/hammerr719/receiver.vmt"
     material.parent.mkdir(parents=True)
@@ -78,6 +85,7 @@ def game_assets(args):
     base.parent.mkdir(parents=True)
     base.write_bytes(fixture_texture(2, 2, (0.5, 0.5, 0.5), (255, 255, 255, 255)))
     (game / INVALID).write_bytes(b"Private omitted invalid MDL\n")
+    (game / INVALID).with_suffix(".phy").write_bytes(b"Private omitted invalid PHY\n")
     tools = game / "materials/tools"
     tools.mkdir()
     (tools / "toolsblack.vtf").write_bytes(fixture_texture(2, 2, (0, 0, 0), (0, 0, 0, 255)))
@@ -91,18 +99,24 @@ def game_assets(args):
     return game
 
 
-def prop(client, model, origin, angles, extra=None, classname="prop_static"):
-    values = {"model": model, "angles": " ".join(map(str, angles)), "solid": "0", "body": "0", "skin": "0",
+def prop(client, model, origin, angles, extra=None, classname="prop_static", solid="0"):
+    values = {"model": model, "angles": " ".join(map(str, angles)), "body": "0", "skin": "0",
               "modelscale": "1", "rendermode": "0", "renderfx": "0", "renderamt": "255", "rendercolor": "255 255 255"}
+    if solid is not None:
+        values["solid"] = str(solid)
     values.update(extra or {})
-    return client.call("create_entity", {"classname": classname, "origin": origin, "properties": values})["id"]
+    identifier = client.call("create_entity", {"classname": classname, "origin": origin, "properties": values})["id"]
+    if solid is None:
+        client.call("set_entity_properties", {"id": identifier, "remove": ["solid"]})
+    return identifier
 
 
-def leaf(client, path, models=MODELS, omitted=None):
+def leaf(client, path, models=MODELS, omitted=None, solids=(0, 0), poses=SOURCE, omitted_solid=0):
     client.call("new_map", {"discard_changes": True})
-    ids = [prop(client, model, origin, angles) for model, (origin, angles) in zip(models, SOURCE, strict=True)]
+    ids = [prop(client, model, origin, angles, solid=solid)
+           for model, (origin, angles), solid in zip(models, poses, solids, strict=True)]
     if omitted:
-        extra = prop(client, INVALID, [512, 0, 32] if omitted == "region" else [0, 0, 16], [0, 0, 0])
+        extra = prop(client, INVALID, [512, 0, 32] if omitted == "region" else [0, 0, 16], [0, 0, 0], solid=omitted_solid)
         if omitted == "hidden":
             client.call("set_object_visibility", {"action": "hide", "ids": [extra]})
     client.call("save_map", {"path": str(path)})
@@ -116,12 +130,13 @@ def middle(client, path, child, origin=(8, 16, 64), angles="90 0 0"):
     client.call("save_map", {"path": str(path)})
 
 
-def parent(client, path, placement, child=None, models=MODELS, region=False, bounds=False):
+def parent(client, path, placement, child=None, models=MODELS, region=False, bounds=False, solids=(0, 0), poses=None):
     client.call("new_map", {"discard_changes": True})
     ids = room(client)
     owner = None
     if child is None:
-        ids.extend(prop(client, model, origin, angles) for model, (origin, angles) in zip(models, LITERALS[placement], strict=True))
+        ids.extend(prop(client, model, origin, angles, solid=solid)
+                   for model, (origin, angles), solid in zip(models, poses or LITERALS[placement], solids, strict=True))
     else:
         origin, angles = ((16, -8, 32), "0 0 0") if placement == "translation" else ((16, -8, 128), "0 0 90")
         if bounds:
@@ -149,8 +164,19 @@ def pair(client, args, game, label, control, sources, failure=None, prior=None, 
     draft = property_state(client)
     for suffix in ("", "-background"):
         (output / f"{label}{suffix}.lin").write_bytes(POINTFILE)
-    with stopped_on_exit(client):
-        data, receipt = compile_pair(client, output, label, control["ids"], control["source"], game, failure, prior)
+    original_call = client.call
+
+    def counted_call(name, *values, **options):
+        if name in ("compile_map", "start_compile"):
+            args.compile_calls += 1
+        return original_call(name, *values, **options)
+
+    client.call = counted_call
+    try:
+        with stopped_on_exit(client):
+            data, receipt = compile_pair(client, output, label, control["ids"], control["source"], game, failure, prior)
+    finally:
+        client.call = original_call
     require(len(data) <= 16 * 1024 * 1024 and property_state(client) == draft
             and all(digest(Path(path).read_bytes()) == value for path, value in inputs.items()),
             "Child-prop compile exceeded its BSP bound or changed its draft/dependencies")
@@ -169,12 +195,12 @@ def pair(client, args, game, label, control, sources, failure=None, prior=None, 
     return data, receipt
 
 
-def counts(receipt, sources, depth, expanded=2):
+def counts(receipt, sources, depth, expanded=2, compiled=2):
     dependencies = [{"path": path.name, "bytes": path.stat().st_size, "sha256": digest(path.read_bytes())} for path in sorted(sources)]
     for result in (receipt["result"], receipt["background"]["result"]):
         stats = result["stats"]["instances"]
         require([stats[key] for key in ("instances", "files", "max_expansion_depth", "world_brushes", "detail_brushes", "static_props")]
-                == [depth, depth, depth, 0, 0, expanded] and result["stats"]["static_props"] == 2,
+                == [depth, depth, depth, 0, 0, expanded] and result["stats"]["static_props"] == compiled,
                 "Instance prop counts changed or were filtered before expansion accounting")
         require(stats["dependencies"] == dependencies, "Instance prop dependency hashes differ from saved child files")
 
@@ -183,38 +209,42 @@ def unread_model(client, args, game, source):
     before = source_state(client, source), property_state(client), client.call("get_compile_settings")
     outputs = identities(args.output / "builds")
     invalid = game / INVALID
-    original = invalid.read_bytes()
+    physics = invalid.with_suffix(".phy")
+    original, original_physics = invalid.read_bytes(), physics.read_bytes()
     try:
         invalid.write_bytes(b"Another private invalid unused MDL\n")
+        physics.write_bytes(b"Another private invalid unused PHY\n")
         status = client.call("get_compile_status")
         require(not status["job"]["stale"] and status["job"]["static_prop_source_issue"] is None
                 and status["job"]["instance_dependencies"]["current"],
-                "Hidden/region-omitted invalid MDL was consumed or guarded")
+                "Hidden/region-omitted invalid MDL/PHY was consumed or guarded")
         require((source_state(client, source), property_state(client), client.call("get_compile_settings")) == before
                 and identities(args.output / "builds") == outputs,
                 "Unused model inspection changed source/history/settings/draft or prior BSP/LIN")
         return status
     finally:
         invalid.write_bytes(original)
+        physics.write_bytes(original_physics)
 
 
-def native(data, placement, models):
+def native(data, placement, models, solids=(0, 0), poses=None):
     result = static_records(data)
     dictionary = list(dict.fromkeys(models))
-    require(result["models"] == dictionary and len(result["props"]) == 2, "Native sprp6 dictionary/ordinal count differs")
-    for ordinal, (row, (origin, angles), model) in enumerate(zip(result["props"], LITERALS[placement], models, strict=True)):
+    require(result["models"] == dictionary and len(result["props"]) == len(models), "Native sprp6 dictionary/ordinal count differs")
+    for ordinal, (row, (origin, angles), model, solid) in enumerate(zip(result["props"], poses or LITERALS[placement], models, solids, strict=True)):
         require(max(abs(a - b) for a, b in zip(row[:3], origin, strict=True)) <= POSE_ERROR
                 and max(abs((a - b + 180) % 360 - 180) for a, b in zip(row[3:6], angles, strict=True)) <= POSE_ERROR,
                 f"Native prop ordinal{ordinal} differs from independently authored literal origin/angles")
-        require(row[6] == dictionary.index(model) and row[8] > 0 and row[9] == row[11] == 0
-                and row[7] + row[8] <= len(result["leaves"]), "Native prop model index/leaf span/solid0/skin0 differs")
+        require(row[6] == dictionary.index(model) and row[8] > 0 and row[9] == (6 if solid is None else solid) and row[11] == 0
+                and row[7] + row[8] <= len(result["leaves"]), "Native prop model index/leaf span/collision mode/skin0 differs")
     require(not any(row.get("classname") in ("func_instance", "prop_static") for row in entity_rows(data)),
             "Compiler retained a helper or prop_static as a runtime entity")
     return result
 
 
-def compare(actual, literal, placement, models, baked=False):
-    first, second = native(actual, placement, models), native(literal, placement, models)
+def compare(actual, literal, placement, models, baked=False, solids=(0, 0), poses=None):
+    first = native(actual, placement, models, solids, poses)
+    second = native(literal, placement, models, solids, poses)
     require(first["models"] == second["models"] and first["leaves"] == second["leaves"]
             and all(a[6:] == b[6:] for a, b in zip(first["props"], second["props"], strict=True)),
             "Original sprp6 dictionary, ordinals, leaf lists or non-pose metadata differs from the literal control")
@@ -281,14 +311,18 @@ def baked(data, stats, args, model):
     return {"manifest": manifest, "vhv": reports}, entries
 
 
-def control_pair(client, args, game, label, placement, child, sources, models, mode, bake=False, region=False):
+def control_pair(client, args, game, label, placement, child, sources, models, mode, bake=False, region=False,
+                 solids=(0, 0), poses=None, check_unused_physics=False):
     nested = parent(client, args.output / f"{label}-parent.vmf", placement, child, models, region)
-    flat = parent(client, args.output / f"{label}-flat.vmf", placement, models=models, region=region)
+    flat = parent(client, args.output / f"{label}-flat.vmf", placement, models=models, region=region, solids=solids, poses=poses)
     client.call("open_map", {"path": str(nested["source"]), "discard_changes": True})
     setup(client, mode, bake)
     token = stage_property(client)
     data, receipt = pair(client, args, game, label, nested, sources)
-    counts(receipt, sources, 2 if placement == "noncommuting" else 1, 3 if region else 2)
+    counts(receipt, sources, 2 if placement == "noncommuting" else 1,
+           len(models) + (1 if region else 0), len(models))
+    if check_unused_physics:
+        receipt["unused_physics_status"] = unused_physics(client, args, game, nested["source"])
     if region:
         receipt["unused_model_status"] = unread_model(client, args, game, nested["source"])
     client.call("cancel_property_edit", {"token": token})
@@ -296,7 +330,7 @@ def control_pair(client, args, game, label, placement, child, sources, models, m
     setup(client, mode, bake)
     manual, comparison = pair(client, args, game, f"{label}-flat", flat, sources)
     require("instances" not in comparison["result"]["stats"], "Literal control acquired instance metadata")
-    receipt["comparison"] = compare(data, manual, placement, models, bake)
+    receipt["comparison"] = compare(data, manual, placement, models, bake, solids, poses)
     if mode == DUAL:
         receipt["floor"] = {}
         for channel in ("ldr", "hdr"):
@@ -374,10 +408,155 @@ def source_drift(client, args, game, control, child, prior):
                 and identities(args.output / "builds") == outputs, "Stale source inspection changed document/draft/settings or prior BSP/LIN")
     finally:
         model.write_bytes(original)
-    repaired, receipt = pair(client, args, game, "source-repaired", control, [child])
+    physics = {(game / name).with_suffix(".phy"): (game / name).with_suffix(".phy").read_bytes() for name in MODELS}
+    try:
+        for path in physics:
+            path.write_bytes(b"Malformed unused solid0 PHY\n")
+        repaired, receipt = pair(client, args, game, "source-repaired", control, [child])
+    finally:
+        for path, content in physics.items():
+            path.write_bytes(content)
     require(repaired == prior and receipt["background"]["static_prop_source_issue"] is None,
             "Repair did not restore original child-prop BSP bytes and source freshness")
     return {"before": before, "stale": stale, "repaired": receipt}
+
+
+def unused_physics(client, args, game, source):
+    before = source_state(client, source), property_state(client), client.call("get_compile_settings")
+    outputs = identities(args.output / "builds")
+    files = {(game / model).with_suffix(".phy"): (game / model).with_suffix(".phy").read_bytes() for model in MODELS}
+    try:
+        for path in files:
+            path.write_bytes(b"Edited unused PHY must remain unread\n")
+        status = client.call("get_compile_status")
+        require(not status["job"]["stale"] and status["job"]["static_prop_source_issue"] is None
+                and status["job"]["instance_dependencies"]["current"], "Solid0/2 guarded an unused PHY")
+        require((source_state(client, source), property_state(client), client.call("get_compile_settings")) == before
+                and identities(args.output / "builds") == outputs,
+                "Unused PHY inspection changed source/history/settings/draft or prior BSP/LIN")
+        return status
+    finally:
+        for path, original in files.items():
+            path.write_bytes(original)
+
+
+def physics_drift(client, args, game, control, sources, prior):
+    client.call("open_map", {"path": str(control["source"]), "discard_changes": True})
+    setup(client)
+    stage_property(client)
+    data, before = pair(client, args, game, "physics-before", control, sources)
+    require(data == prior, "Child collision control changed before required-PHY ownership check")
+    state = source_state(client, control["source"]), property_state(client), client.call("get_compile_settings")
+    outputs = identities(args.output / "builds")
+    path = (game / MODELS[0]).with_suffix(".phy")
+    original = path.read_bytes()
+    try:
+        path.write_bytes(original[:-1] + b"solid {}\0")
+        stale = client.call("get_compile_status")
+        issue = stale["job"]["static_prop_source_issue"]
+        require(stale["job"]["stale"] and stale["job"]["instance_dependencies"]["current"]
+                and isinstance(issue, str) and str(path.relative_to(game)) in issue
+                and not stale["launch"]["ready"] and issue in stale["launch"]["reason"],
+                "Required child PHY drift lost original source ownership or Run refusal")
+        require((source_state(client, control["source"]), property_state(client), client.call("get_compile_settings")) == state
+                and identities(args.output / "builds") == outputs,
+                "Required-PHY stale inspection changed source/history/settings/draft or prior BSP/LIN")
+        changed, changed_receipt = pair(client, args, game, "physics-changed", control, sources)
+        require(changed == prior and changed_receipt["background"]["static_prop_source_issue"] is None,
+                "Valid changed PHY text altered BSP bytes or failed fresh compilation")
+    finally:
+        path.write_bytes(original)
+    repaired, receipt = pair(client, args, game, "physics-repaired", control, sources)
+    status = client.call("get_compile_status")
+    require(repaired == prior and not status["job"]["stale"] and status["job"]["static_prop_source_issue"] is None,
+            "Required-PHY repair failed to restore BSP bytes and source freshness")
+    return {"before": before, "stale": stale, "changed": changed_receipt, "repaired": receipt, "status": status}
+
+
+def collision_cases(client, author, args, game, report):
+    controls = {}
+    physics = {(game / model).with_suffix(".phy"): (game / model).with_suffix(".phy").read_bytes() for model in MODELS}
+    for placement in LITERALS:
+        for solid in (2, 6, None):
+            label = f"collision-{placement}-{'default6' if solid is None else solid}"
+            child = args.output / f"{label}-props.vmf"
+            leaf(author, child, solids=(solid, solid))
+            require((not re.search(r'"solid"\s+"', child.read_text())) == (solid is None),
+                    "Default6 fixture must omit the stored solid property")
+            reference, sources = child, [child]
+            if placement == "noncommuting":
+                reference = args.output / f"{label}-middle.vmf"
+                middle(author, reference, child)
+                sources.append(reference)
+            mode = DUAL if placement == "noncommuting" and solid != 2 else FULL
+            try:
+                if solid == 2:
+                    for path in physics:
+                        path.write_bytes(b"Malformed unused solid2 PHY\n")
+                data, receipt, control = control_pair(client, args, game, label, placement, reference, sources, MODELS, mode,
+                                                     solids=(solid, solid), check_unused_physics=solid == 2)
+            finally:
+                for path, original in physics.items():
+                    path.write_bytes(original)
+            controls[placement, solid] = data, receipt, control, sources
+            report["positive"][label] = receipt
+            if solid is None:
+                require(data == controls[placement, 6][0]
+                        and receipt["flat"]["bsp_sha256"] == controls[placement, 6][1]["flat"]["bsp_sha256"],
+                        "Missing/default6 differs from explicit6 whole BSP for child or literal control")
+    models, solids = MODELS * 3, (0, 6, 2, 2, 6, 0)
+    child = args.output / "collision-cache-order-props.vmf"
+    leaf(author, child, models=models, solids=solids, poses=MIXED_SOURCE)
+    _, report["positive"]["collision-cache-order"], _ = control_pair(
+        client, args, game, "collision-cache-order", "translation", child, [child], models, FULL,
+        solids=solids, poses=MIXED_LITERAL)
+    for placement, solid, replacement, reason in (
+        ("translation", 6, None, "needs its .phy collision asset"),
+        ("translation", None, physics_bytes(720), "checksum"),
+    ):
+        data, _, control, sources = controls[placement, solid]
+        label = "required-phy-missing" if replacement is None else "required-default6-phy-checksum"
+        client.call("open_map", {"path": str(control["source"]), "discard_changes": True})
+        setup(client)
+        stage_property(client)
+        path = (game / MODELS[0]).with_suffix(".phy")
+        try:
+            if replacement is None:
+                path.unlink()
+            else:
+                path.write_bytes(replacement)
+            _, report["negative"][label] = pair(client, args, game, label, control, sources, reason, data, sources[0].name)
+        finally:
+            path.write_bytes(physics[path])
+    data, _, control, sources = controls["translation", 6]
+    report["physics_drift"] = physics_drift(client, args, game, control, sources, data)
+    for omitted, solid in (("region", 6), ("hidden", None)):
+        label = f"collision-{omitted}-{'default6' if solid is None else solid}"
+        child = args.output / f"{label}-props.vmf"
+        leaf(author, child, omitted=omitted, omitted_solid=solid)
+        control = parent(client, args.output / f"{label}-parent.vmf", "translation", child, region=omitted == "region")
+        setup(client)
+        stage_property(client)
+        data, receipt = pair(client, args, game, label, control, [child])
+        counts(receipt, [child], 1, 3 if omitted == "region" else 2)
+        literal = (args.output / "builds" / ("region-flat.bsp" if omitted == "region" else "translation-fullbright-flat.bsp")).read_bytes()
+        receipt["comparison"] = compare(data, literal, "translation", MODELS)
+        receipt["unused_model_physics_status"] = unread_model(client, args, game, control["source"])
+        report["omitted"][label] = receipt
+    data, _, control, sources = controls["translation", 6]
+    child = sources[0]
+    original = child.read_text()
+    client.call("open_map", {"path": str(control["source"]), "discard_changes": True})
+    setup(client)
+    stage_property(client)
+    for label, value in (("unsupported-solid", "1"), ("malformed-solid", "not_an_integer")):
+        changed, count = re.subn(r'("solid"\s+")6(")', rf'\g<1>{value}\2', original, count=1)
+        require(count == 1, "Unsupported imported fixture must change exactly one solid property")
+        try:
+            child.write_text(changed)
+            _, report["negative"][label] = pair(client, args, game, label, control, sources, "solid", data, child.name)
+        finally:
+            child.write_text(original)
 
 
 def cleanup_clients(clients, report):
@@ -402,11 +581,13 @@ def cleanup_clients(clients, report):
 def validate(args):
     clients = []
     failure = None
+    args.compile_calls = 0
     report = {"status": "failed", "binary": str(args.binary), "binary_sha256": digest(args.binary.read_bytes()),
-              "script_sha256": digest(Path(__file__).read_bytes()), "compile_calls": 36 + (4 if args.baked_fixture_game else 0),
+              "script_sha256": digest(Path(__file__).read_bytes()), "compile_calls": 0,
+              "expected_compile_calls": 82 + (4 if args.baked_fixture_game else 0),
               "graphics_initialized": False, "native_game_exercised": False, "desktop_input": False,
               "positive": {}, "negative": {}, "omitted": {},
-              "scope": "Compiler-only child prop_static solid0; complete tiny default model meshes support real shadow admission and literal native sprp6/face-lightmap controls. No native-placement or collision claim; VHV controls require the optional baked fixture."}
+              "scope": "Compiler-only child prop_static solid0/2/6 and absent/default6; complete tiny meshes and minimal admitted PHY framing support literal sprp6/face-lightmap and original-source controls. No native-placement or collision claim; VHV controls require the optional baked fixture."}
     try:
         (args.output / "tmp").mkdir()
         (args.output / "builds").mkdir()
@@ -456,6 +637,8 @@ def validate(args):
         clients.append(author)
         refusal_cases(client, author, args, game, child, ids, control, retained, report["negative"])
         report["source_drift"] = source_drift(client, args, game, control, child, retained)
+        report["unused_solid0_physics"] = unused_physics(client, args, game, control["source"])
+        collision_cases(client, author, args, game, report)
         if args.baked_fixture_game:
             baked_child = args.output / "baked-props.vmf"
             models = (args.baked_model, args.baked_model)
@@ -469,12 +652,14 @@ def validate(args):
                 "Compilation/EOF changed authored source or private/read-only mounted assets")
         report["sources"], report["assets"] = inputs, mounted
         report["baked_fixture"] = external
+        require(args.compile_calls == report["expected_compile_calls"], "Completed compile request count differs from the focused matrix")
         report["status"] = "accepted"
     except BaseException as error:
         failure = error
         report["error"] = f"{type(error).__name__}: {error!r}"
         raise
     finally:
+        report["compile_calls"] = args.compile_calls
         errors = cleanup_clients(clients, report)
         if errors:
             report["status"] = "failed"
@@ -488,9 +673,9 @@ def validate(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Validate719 compiler-only static props in instances through either production private-stdio MCP program. Steps: author/save child and nested assemblies plus independent literal-flat controls; compile foreground/background Fullbright and dual LDR/HDR; compare original sprp6 dictionaries/ordinals/poses/leaves and face lightmaps; check pre-region counts, hidden/region invalid-model no-read behavior, strict refusals preserving prior BSP/LIN and owned drafts, and717 source staleness/repair. No graphics, native game or desktop input.")
-    parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY, help="Integrated719 hammerr-headless or editor; launched with --headless")
-    parser.add_argument("--output", type=Path, required=True, help="New artifact directory below this repository's target/validation; complete tiny MDL/VVD/VTX/material fixtures require no installed game")
+    parser = argparse.ArgumentParser(description="Validate 719/721 compiler-only static props in instances through either production private-stdio MCP program. Steps: retain 719 placement/lightmap/source controls; author solid2/6/default6 translated and noncommuting children plus independent literal controls; compare original sprp6 dictionaries/ordinals/poses/leaves, default6 whole BSP and selected dual face lightmaps; check interleaved collision caching, required-PHY refusal/staleness/repair, unused PHY and hidden/region no-read behavior. Both compile paths preserve prior BSP/LIN, source/history/settings and drafts. 82 compile calls, 86 with optional baking. No graphics, native game or desktop input; synthetic PHY framing establishes compiler admission only.")
+    parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY, help="Integrated 721 hammerr-headless or editor; launched with --headless")
+    parser.add_argument("--output", type=Path, required=True, help="New artifact directory below this repository's target/validation; complete tiny MDL/VVD/VTX/material and minimal PHY fixtures require no installed game")
     parser.add_argument("--baked-fixture-game", type=Path, help="Optional read-only prepared model/material root under target/validation, at most256 files/64MiB; requires local admitted MDL/VVD/dx90.VTX companions. Adds4 real MCP compile calls and exact nested/flat dual-channel VHV controls")
     parser.add_argument("--baked-model", help="Required with --baked-fixture-game: canonical models/...mdl path, body0/skin0/unit-scale, opaque normal-white receiver with bounds fitting both literal placements")
     args = parser.parse_args()

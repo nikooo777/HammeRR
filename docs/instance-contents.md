@@ -9,7 +9,7 @@ helpers' Source transforms from the innermost reference outward. Selection,
 content bounds and camera framing use the displayed geometry. Child files and
 parent map objects remain unchanged; no terrain switch is required. Supported
 unnamed static child point/spot lights are counted for compilation, with no
-child-light display or illumination preview. Supported non-solid child static
+child-light display or illumination preview. Supported child static
 props are also counted for compilation, with model preview explicitly unavailable.
 
 1. Save the parent VMF. Use **Instance reference…** to create an explicit relative

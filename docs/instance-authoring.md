@@ -50,7 +50,7 @@ Limits:
 - File checks read metadata only and admit regular files up to 4 MiB. Malformed
   child VMFs and unsupported child contents can pass presence checks, then fail
   Refresh or Compile. Those full operations support world/ordinary `func_detail`
-  brushes, terrain and strictly admitted unnamed static lights/non-solid props
+  brushes, terrain and strictly admitted unnamed static lights/props
   through four helper levels, counting a root helper as level one,
   with global limits of 256 occurrences and 32 normalized requested paths plus
   aggregate source, geometry and dependency budgets. See [Referenced brush

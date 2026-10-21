@@ -1,6 +1,30 @@
 use super::*;
 
 pub const MODEL: &str = "models/props/instance.mdl";
+pub const PHYSICS: &str = "models/props/instance.phy";
+
+pub fn collision_fixture(solid: Option<&str>) -> (tempfile::TempDir, GameFs, PathBuf, PathBuf) {
+    let (directory, game, source, child) = fixture();
+    let mut physics = [16_i32, 0, 1, 0].map(i32::to_le_bytes).concat();
+    physics.extend_from_slice(&32_i32.to_le_bytes());
+    physics.extend_from_slice(b"VPHY");
+    physics.extend_from_slice(&0x100_u16.to_le_bytes());
+    physics.extend_from_slice(&0_u16.to_le_bytes());
+    physics.extend_from_slice(&4_u32.to_le_bytes());
+    physics.extend_from_slice(&[0; 20]);
+    physics.extend_from_slice(b"solid {}\0");
+    std::fs::write(game.game_dir.join(PHYSICS), physics).unwrap();
+    let mut vmf =
+        source_formats::vmf::Vmf::parse(&std::fs::read_to_string(&child).unwrap()).unwrap();
+    match solid {
+        Some(value) => vmf.entities[0].properties.set("solid", value),
+        None => {
+            vmf.entities[0].properties.remove("solid");
+        }
+    }
+    std::fs::write(&child, vmf.write(&Default::default())).unwrap();
+    (directory, game, source, child)
+}
 
 pub fn fixture() -> (tempfile::TempDir, GameFs, PathBuf, PathBuf) {
     let (directory, mut game, source, child) = instance_map(false);

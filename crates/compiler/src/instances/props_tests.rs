@@ -4,6 +4,9 @@ use super::*;
 
 use crate::test_static_prop_model;
 
+#[path = "props_collision_tests.rs"]
+mod collision_tests;
+
 const MODEL: &str = "models/props/instance.mdl";
 const SECOND_MODEL: &str = "models/props/second.mdl";
 
@@ -36,6 +39,16 @@ fn static_prop(id: u32, model: &str, origin: &str) -> Entity {
         entity.properties.set(key, value);
     }
     entity
+}
+
+fn with_collision(mut prop: Entity, solid: Option<&str>) -> Entity {
+    match solid {
+        Some(value) => prop.properties.set("solid", value),
+        None => {
+            prop.properties.remove("solid");
+        }
+    }
+    prop
 }
 
 fn write_model(directory: &Path, path: &str, mins: [f32; 3], maxs: [f32; 3]) {
@@ -282,6 +295,10 @@ fn noncommuting_nested_prop_matches_literal_basis_pose_and_native_leaf_lists() {
     let expected = prop_output(&flat, &game, None, crate::LightingMode::DirectLdrHdr)
         .bsp
         .unwrap();
+    assert_literal_prop_bsp(&actual, &expected);
+}
+
+fn assert_literal_prop_bsp(actual: &Bsp, expected: &Bsp) {
     for index in 0..64 {
         if index != lump::GAME_LUMP {
             assert_eq!(
@@ -293,22 +310,30 @@ fn noncommuting_nested_prop_matches_literal_basis_pose_and_native_leaf_lists() {
     }
     let mut actual = actual.static_props().unwrap().unwrap();
     let expected = expected.static_props().unwrap().unwrap();
-    for (a, b) in actual.props[0].origin.iter().zip(expected.props[0].origin) {
-        assert!((*a - b).abs() <= 1e-6);
+    assert_eq!(actual.props.len(), expected.props.len());
+    for (actual, expected) in actual.props.iter_mut().zip(&expected.props) {
+        for (a, b) in actual.origin.iter().zip(expected.origin) {
+            assert!((*a - b).abs() <= 1e-6);
+        }
+        for (a, b) in actual.angles.iter().zip(expected.angles) {
+            assert!((*a - b).abs() <= 1e-6);
+        }
+        actual.origin = expected.origin;
+        actual.angles = expected.angles;
     }
-    for (a, b) in actual.props[0].angles.iter().zip(expected.props[0].angles) {
-        assert!((*a - b).abs() <= 1e-6);
-    }
-    actual.props[0].origin = expected.props[0].origin;
-    actual.props[0].angles = expected.props[0].angles;
     assert_eq!(actual, expected);
 }
 
 #[test]
 fn source_and_intermediate_rotated_model_boxes_are_checked_from_the_consumed_header() {
+    assert_model_boxes_checked(Some("0"));
+}
+
+fn assert_model_boxes_checked(solid: Option<&str>) {
     for intermediate in [false, true] {
         let local = if intermediate { "0 0 32" } else { "16380 0 32" };
-        let (directory, mut parent, game) = prop_fixture(vec![static_prop(20, MODEL, local)]);
+        let (directory, mut parent, game) =
+            prop_fixture(vec![with_collision(static_prop(20, MODEL, local), solid)]);
         if intermediate {
             write_model(
                 directory.path(),
@@ -409,8 +434,11 @@ fn every_source_and_intermediate_origin_is_bounded_before_cloning_or_model_reads
 #[test]
 fn strict_static_prop_envelope_rejects_unsupported_semantics_and_ambiguous_pose_keys() {
     for (key, value) in [
-        ("solid", "2"),
-        ("solid", "6"),
+        ("solid", "1"),
+        ("solid", "5"),
+        ("solid", "-1"),
+        ("solid", "6.0"),
+        ("solid", ""),
         ("solid", "0.0"),
         ("skin", "1"),
         ("body", "1"),
@@ -440,7 +468,7 @@ fn strict_static_prop_envelope_rejects_unsupported_semantics_and_ambiguous_pose_
         prop.properties.set(key, value);
         assert!(props::admit(&prop).is_err(), "{key}={value}");
     }
-    for key in ["origin", "angles", "model", "classname"] {
+    for key in ["origin", "angles", "model", "classname", "solid"] {
         let mut prop = static_prop(20, MODEL, "0 0 32");
         prop.properties
             .0
@@ -457,7 +485,7 @@ fn strict_static_prop_envelope_rejects_unsupported_semantics_and_ambiguous_pose_
             .unwrap_err()
             .contains("repeats property")
     );
-    for key in ["origin", "model", "solid"] {
+    for key in ["origin", "model"] {
         let mut prop = static_prop(20, MODEL, "0 0 32");
         prop.properties.remove(key);
         assert!(props::admit(&prop).is_err(), "{key}");

@@ -592,6 +592,26 @@ pub fn capture(
     capture_with_cleanup(request, observer).map_err(|failure| failure.error)
 }
 
+fn capture_directory_in(parent: &Path) -> io::Result<tempfile::TempDir> {
+    let parent = parent.canonicalize()?;
+    if parent
+        .as_os_str()
+        .as_encoded_bytes()
+        .iter()
+        .any(u8::is_ascii_uppercase)
+    {
+        return Err(invalid(
+            "Native capture requires a temporary directory path without uppercase ASCII characters; choose a lowercase TMPDIR",
+        ));
+    }
+    let nonce = getrandom::u64().map_err(io::Error::other)?;
+    tempfile::Builder::new()
+        .prefix(&format!("hammerr_capture_{nonce:016x}"))
+        .rand_bytes(0)
+        .permissions(fs::Permissions::from_mode(0o700))
+        .tempdir_in(parent)
+}
+
 pub fn capture_with_cleanup(
     request: CaptureRequest,
     observer: &mut dyn CaptureObserver,
@@ -638,12 +658,9 @@ fn capture_inner(
     request.environment = guard::resolve_environment(&request.environment)?;
     guard::validate_environment(&request.environment)?;
     let helper = helper()?;
-    let directory = tempfile::Builder::new()
-        .prefix("hammerr_capture_")
-        .tempdir()?
+    let directory = capture_directory_in(&std::env::temp_dir())?
         .keep()
         .canonicalize()?;
-    fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))?;
     let staged = crate::adapter::capture_staging_bsp_for_channel(&request.bsp, request.channel)?;
     if staged
         .len()
@@ -855,6 +872,46 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
         directory
+    }
+
+    #[test]
+    fn capture_directories_are_lowercase_private_and_independently_owned() {
+        let first = capture_directory_in(&std::env::temp_dir()).unwrap();
+        let second = capture_directory_in(&std::env::temp_dir()).unwrap();
+        let path = first.path().to_owned();
+        assert_ne!(path, second.path());
+        assert!(
+            !path
+                .as_os_str()
+                .as_encoded_bytes()
+                .iter()
+                .any(u8::is_ascii_uppercase)
+        );
+        assert_eq!(fs::metadata(&path).unwrap().mode() & 0o777, 0o700);
+        drop(first);
+        assert!(!path.exists());
+        assert!(second.path().is_dir());
+    }
+
+    #[test]
+    fn uppercase_capture_parent_is_rejected_before_creating_outputs() {
+        let directory = capture_directory_in(&std::env::temp_dir()).unwrap();
+        let parent = directory.path().join("Uppercase");
+        fs::create_dir(&parent).unwrap();
+        let error = capture_directory_in(&parent).unwrap_err();
+        assert!(error.to_string().contains("lowercase TMPDIR"));
+        assert_eq!(fs::read_dir(parent).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn missing_capture_parent_does_not_select_another_directory() {
+        let directory = capture_directory_in(&std::env::temp_dir()).unwrap();
+        let parent = directory.path().join("missing");
+        assert_eq!(
+            capture_directory_in(&parent).unwrap_err().kind(),
+            io::ErrorKind::NotFound
+        );
+        assert!(!parent.exists());
     }
 
     fn namespace_lease_assertions() {

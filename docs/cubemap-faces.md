@@ -5,6 +5,10 @@
 Choose which `env_cubemap` sample a reflective face uses. The inspector shows
 the same manual and automatic assignments used by the compiler, including
 the chosen sample position, original material and generated material alias.
+Inspection and binding drafts are unavailable when the map contains a visible
+instance reference: authored faces do not describe the
+assembled geometry. This does not prevent [reflection generation](reflections.md)
+with root-map helpers.
 
 1. Select one visible `env_cubemap` entity and choose **Cubemap faces…**.
 2. Keep the window open and select faces in the map. **Select face** in the
@@ -30,6 +34,10 @@ The draft label identifies its current owner. **Review current draft** takes
 ownership and issues a new token; the previous owner cannot apply or cancel
 it. Changes to the map, face selection, mounted content or output namespace
 make a draft stale. Preview the intended operation again before applying it.
+Adding a visible instance reference keeps the current draft but makes it invalid;
+its owner can still cancel it.
+Hidden references are omitted from compilation and leave root-map inspection
+and binding authoring available without reading their child files.
 
 The same operations are available through `get_cubemap_bindings` and
 `set_cubemap_bindings`. Inspection and previews do not capture reflections or

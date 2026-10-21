@@ -1663,7 +1663,7 @@ fn bounded_parser_checks_per_file_and_aggregate_nodes_before_admission() {
 }
 
 #[test]
-fn unsupported_geometry_self_cycles_and_native_capture_stay_explicit() {
+fn unsupported_geometry_self_cycles_and_missing_capture_context_stay_explicit() {
     let (directory, mut parent, child, game) = fixture();
     let context = source(directory.path());
     for issue in ["uv", "metadata", "bounds", "region", "ids"] {
@@ -1724,6 +1724,7 @@ fn unsupported_geometry_self_cycles_and_native_capture_stay_explicit() {
         .unwrap()
         .properties
         .set("file", "child.vmf");
+    write_child(directory.path(), "child.vmf", &child);
     let output = compile_with_source_controlled(
         &parent,
         &game,
@@ -1744,7 +1745,7 @@ fn unsupported_geometry_self_cycles_and_native_capture_stay_explicit() {
             .last()
             .unwrap()
             .message
-            .contains("Generate reflections")
+            .contains("Generate reflections requires an explicit output CompileContext")
     );
 }
 

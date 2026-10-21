@@ -1689,14 +1689,15 @@ pub fn compile_with_source_controlled(
         .and_then(|_| control.advance(Stage::Loading))
     {
         Err(Diagnostic::error(message, None, None))
-    } else if source.is_some() && instances::requires_source(vmf) && options.generate_reflections {
-        Err(Diagnostic::error(
-            "Generate reflections is unsupported for referenced brush instances",
-            None,
-            None,
-        ))
     } else {
-        instances::prepare(vmf, source, control, &mut output.report)
+        let bindings = if instances::requires_source(vmf) && options.generate_reflections {
+            cubemap_assets::binding::validate_instance_root_bindings(vmf, control)
+        } else {
+            Ok(())
+        };
+        bindings
+            .map_err(|message| Diagnostic::error(message, None, None))
+            .and_then(|()| instances::prepare(vmf, source, control, &mut output.report))
     };
     match prepared {
         Err(diagnostic) => output.report.diagnostics.push(diagnostic),

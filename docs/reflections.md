@@ -6,7 +6,7 @@ Generate reflections for the map's `env_cubemap` samples as part of **Compile** 
 
 ## Choose reflection generation
 
-1. Place the map's `env_cubemap` entities using the entity tools and save the map. Use [Cubemap faces](cubemap-faces.md) to inspect or author face bindings.
+1. Use **Place entity** to add `env_cubemap` entities to the parent map and save it. For maps without visible instance references, use [Cubemap faces](cubemap-faces.md) to inspect or author face bindings.
 2. Click **Build settings…**, or **Build details…** after a build.
 3. Set **Build lighting** to **Direct LDR** for LDR reflections or **Direct LDR + HDR** for both channels.
 4. Enable **Generate reflections**. Read the capture runtime status below it. Enabling the setting does not launch CS:S.
@@ -16,6 +16,19 @@ Generate reflections for the map's `env_cubemap` samples as part of **Compile** 
 ![LDR and HDR reflection generation with shared build controls](images/build-hdr-reflection-controls.png)
 
 **Fullbright** cannot generate reflections. Turn off **Generate reflections** before choosing it. Switching between **Direct LDR** and **Direct LDR + HDR** retains the generation setting. An incompatible update preserves both current values.
+
+Saved [referenced assemblies](instances.md) use these same settings and build
+controls. Automatic assignment includes supported transformed child geometry;
+place the capture helpers in the parent VMF. Existing manual `sides` lists may
+refer only to unique original parent faces that survive the committed compile
+region. Missing or ambiguous root IDs reject before generated child IDs can
+satisfy them. Child `env_cubemap` helpers are unsupported.
+
+**Cubemap faces…** inspection and binding drafts are unavailable while a visible
+instance reference is present. The authored-only
+view cannot report complete assembled assignments. An existing owned draft
+can still be cancelled. Reflection generation does not require that inspector.
+Hidden references are omitted and leave root-only binding inspection available.
 
 ## Configure the capture runtime
 
@@ -82,6 +95,7 @@ capture cleanup, even when the capture and Play installations differ.
 - Generation supports one capture bounce per channel: LDR alone or paired LDR/HDR. Additional capture bounces, moving-scene reassignment and reflection preview inside the editor are unavailable. HDR playback still depends on the game setting and hardware; **HDR data ready** describes baked map data.
 - A build supports 1–32 samples at distinct integer positions. Sample size `0` uses the declared 128-pixel default. Explicit cube edges up to 128 pixels are supported; 256 pixels is rejected before launch. The private capture viewport must verify as 1280×720.
 - A supported CS:S installation, running Steam client, native runtime helper, Cage, grim and Bubblewrap must pass preflight. Bubblewrap needs usable Linux user namespaces. Unsupported materials, sample sizes, missing assets or unverified captures fail the build with diagnostics.
+- Native capture requires a temporary directory path without uppercase ASCII characters. If your temporary path contains uppercase letters, start HammeRR with `TMPDIR` pointing to a writable lowercase path.
 - The capture client reads external files through a read-only filesystem view. Only its owned capture directory is writable; source mounts keep their files and caches. Graphics devices and Steam IPC remain available.
 - Capture rejects authored scripts, script thinkers, script entities and command-executing entity inputs. This is a conservative capture restriction; the saved VMF and published entity lump keep their authored contents. A managed game in this editor process blocks capture. The existing UID-wide capture lock still rejects captures in another process, and capture preflight retains its same-installation running-client check. Those clients are never stopped.
 - Native capture keeps each private channel job within a 256 MiB file budget, including two BSP copies and 64 MiB of scratch admission. BSP staging larger than 96 MiB is rejected. Captured assets and retained diagnostics have additional limits.
@@ -89,4 +103,8 @@ capture cleanup, even when the capture and Play installations differ.
 - Active builds freeze compiler settings and runtime configuration. Changing generation afterward makes a previous build stale while its saved settings differ.
 - Failed, cancelled or stale generation preserves the previously published BSP. Capture does not add map Undo entries. **Cancel build** remains pending until owned processes stop and the preservation audit finishes.
 - Saving the map under another filename during capture rejects publication. Compile again from its new path.
+- Instance builds retain the original parent and transitive child identities
+  through capture, publication and Play. Changed or replaced dependencies
+  reject the build or make a completed build stale; repairing a source requires
+  recompilation. Capture does not save or flatten the authored VMFs.
 - Sample records and temporary bootstrap textures alone do not count as generated reflections. A BSP becomes available only after capture, packed-asset verification and publication succeed.

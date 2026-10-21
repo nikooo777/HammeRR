@@ -452,8 +452,24 @@ Completed instance jobs report `instance_dependencies.current/error`; `stale`,
 launch readiness and baked inspection include the retained build's dependencies.
 Launch verifies exact contents in its worker. Source/settings changes, dependency failures and
 cancellation preserve previous BSP/pointfile bytes. Every transitive dependency
-participates in these checks. **Generate reflections** with instances rejects;
-other runtime entities, replacements and general runtime naming remain unsupported.
+participates in these checks, including before capture and after each channel's
+receipt. **Generate reflections** supports assembled geometry using visible
+root-map `env_cubemap` helpers and the existing shared build operations. Automatic
+assignment includes transformed supported child faces. Existing manual `sides`
+lists must target unique original root-map faces that survive compilation;
+generated child IDs cannot satisfy missing original targets. Child cubemap
+helpers, extra capture bounces, other runtime entities, replacements and general
+runtime naming remain unsupported.
+
+For a visible instance reference, `get_cubemap_bindings`
+returns `available:false`, empty assignments and an explicit diagnostic;
+`state.context_error` gives the same reason. Authored-only assignments are not
+reported as complete. Binding preview, review and apply reject through the same
+Session context; an existing draft stays invalid and its owner may still cancel
+it. Plain-map successful reports return `available:true`. No new tool or setting
+is required for capture.
+Hidden references remain omitted; they do not disable root-only inspection or
+drafts and their child files are not read by these operations.
 The explicitly refreshed flat-color reference layer is separate from compilation.
 `run_map_checks` performs only pure helper-field/path-state admission, leaving
 child reads and complete validation to explicit Refresh or compilation.

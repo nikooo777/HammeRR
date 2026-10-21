@@ -11,6 +11,9 @@ use crate::{Control, LightingMode, Options, Output, compile_with_context_control
 #[path = "rotation_tests.rs"]
 mod rotation_tests;
 
+#[path = "instance_tests.rs"]
+mod instance_tests;
+
 pub(super) fn game() -> (tempfile::TempDir, GameFs) {
     let directory = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(directory.path().join("materials/dev")).unwrap();

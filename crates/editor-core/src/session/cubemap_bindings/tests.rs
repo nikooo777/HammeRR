@@ -23,6 +23,92 @@ fn preview(
 }
 
 #[test]
+fn instance_context_refuses_authored_only_reports_and_preserves_owned_drafts() {
+    let reason = "Cubemap binding inspection and drafts are unavailable while the map contains instances; authored faces do not describe the assembled geometry";
+    for actor in [Actor::User, Actor::Agent] {
+        for hidden in [false, true] {
+            let (_assets, mut session, _, far, face) = test_support::fixture();
+            assert_eq!(
+                session.get_cubemap_bindings(Query::default()).unwrap()["available"],
+                true
+            );
+            let draft = preview(&mut session, actor, far, face, Operation::Bind);
+            let token = draft["draft"]["token"].as_u64().unwrap();
+            session
+                .edit(actor, "reference unavailable child", |tx| {
+                    let ObjectId::Entity(id) = map_core::edit::create_entity(
+                        tx,
+                        "func_instance",
+                        Some(DVec3::ZERO),
+                        &[("file".into(), "missing-child.vmf".into())],
+                        Vec::new(),
+                    )?
+                    else {
+                        unreachable!()
+                    };
+                    tx.entity_mut(id)?.hidden = hidden;
+                    Ok(())
+                })
+                .unwrap();
+            let source = session.document.vmf().clone();
+            let history = session.history_snapshot();
+            let selected = session.selected_faces();
+            let report = session.get_cubemap_bindings(Query::default()).unwrap();
+            if hidden {
+                assert_eq!(report["available"], true);
+                assert_eq!(report["state"]["context_error"], Value::Null);
+                assert!(!report["assignments"].as_array().unwrap().is_empty());
+                let replacement = preview(&mut session, actor, far, face, Operation::Bind);
+                assert_eq!(replacement["draft"]["valid"], true);
+                session
+                    .cancel_cubemap_bindings(actor, replacement["draft"]["token"].as_u64().unwrap())
+                    .unwrap();
+                assert_eq!(session.document.vmf(), &source);
+                assert_eq!(session.history_snapshot(), history);
+                assert_eq!(session.selected_faces(), selected);
+                continue;
+            }
+            assert_eq!(report["available"], false);
+            assert_eq!(report["total"], 0);
+            assert_eq!(report["assignments"], json!([]));
+            assert_eq!(report["diagnostics"], json!([reason]));
+            assert_eq!(report["state"]["context_error"], reason);
+            assert_eq!(report["state"]["draft"]["token"], token);
+            assert_eq!(report["state"]["draft"]["valid"], false);
+            assert_eq!(
+                session
+                    .preview_cubemap_bindings(
+                        actor,
+                        Request {
+                            helper: far,
+                            faces: vec![face],
+                            operation: Operation::Bind,
+                        },
+                        &session.cubemap_bindings_stamp(),
+                    )
+                    .unwrap_err(),
+                reason
+            );
+            assert_eq!(
+                session.review_cubemap_bindings(actor, token).unwrap_err(),
+                reason
+            );
+            assert_eq!(
+                session.apply_cubemap_bindings(actor, token).unwrap_err(),
+                reason
+            );
+            assert_eq!(session.cubemap_binding_state()["draft"]["token"], token);
+            assert_eq!(session.document.vmf(), &source);
+            assert_eq!(session.history_snapshot(), history);
+            assert_eq!(session.selected_faces(), selected);
+            session.cancel_cubemap_bindings(actor, token).unwrap();
+            assert_eq!(session.cubemap_binding_state()["draft"], Value::Null);
+            assert_eq!(session.document.vmf(), &source);
+        }
+    }
+}
+
+#[test]
 fn binding_and_removal_review_actual_choices_and_preserve_source_in_one_undo() {
     for actor in [Actor::User, Actor::Agent] {
         let (_assets, mut session, near, far, face) = test_support::fixture();

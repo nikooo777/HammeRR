@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use glam::DVec3;
 use source_formats::bsp::PakEntry;
 use source_formats::gamefs::GameFs;
-use source_formats::vmf::Vmf;
+use source_formats::vmf::{Entity, Vmf};
 
 use super::material::{Graph, ensure_default_unmounted, material_name, sample_texture};
 use super::*;
@@ -12,6 +12,68 @@ use crate::map::Map;
 use crate::{Control, Report};
 
 const POSE_PROPERTY_SCANS: usize = 3;
+
+fn manual_side_ids(entity: &Entity) -> impl Iterator<Item = Result<u32, String>> + '_ {
+    entity
+        .properties
+        .get("sides")
+        .unwrap_or("")
+        .split_whitespace()
+        .map(move |value| {
+            value.parse::<u32>().map_err(|_| {
+                format!(
+                    "entity:{}: cubemap sides must contain positive face IDs",
+                    entity.id
+                )
+            })
+        })
+}
+
+pub(crate) fn validate_instance_root_bindings(vmf: &Vmf, control: &Control) -> Result<(), String> {
+    control.checkpoint()?;
+    if vmf
+        .object_ids()
+        .take(crate::instances::MAX_OBJECTS + 1)
+        .count()
+        > crate::instances::MAX_OBJECTS
+    {
+        return Err("Instance root cubemap validation exceeds the object limit".into());
+    }
+    let mut sides = BTreeSet::new();
+    for (index, id) in vmf.side_ids().enumerate() {
+        control.checkpoint()?;
+        if index >= crate::instances::MAX_SIDES {
+            return Err("Instance root cubemap validation exceeds the side limit".into());
+        }
+        sides.insert(id);
+    }
+    let mut work = 0;
+    for entity in &vmf.entities {
+        control.checkpoint()?;
+        if entity.hidden
+            || !entity
+                .classname()
+                .is_some_and(|name| name.eq_ignore_ascii_case("env_cubemap"))
+        {
+            continue;
+        }
+        for id in manual_side_ids(entity) {
+            control.checkpoint()?;
+            work += 1;
+            if work > MAX_ASSIGNMENT_WORK {
+                return Err("Cubemap assignment comparison budget exceeded".into());
+            }
+            let id = id?;
+            if !sides.contains(&id) {
+                return Err(format!(
+                    "entity:{}: side:{id} is missing from the original root map; generated instance sides cannot satisfy root cubemap bindings",
+                    entity.id
+                ));
+            }
+        }
+    }
+    Ok(())
+}
 
 pub(crate) struct Plan {
     pub manifest: CubemapAssetManifest,
@@ -303,18 +365,9 @@ pub(crate) fn prepare(
     let mut manual = BTreeMap::new();
     for (sample, entity) in helpers.iter().enumerate() {
         let mut own = BTreeSet::new();
-        for value in entity
-            .properties
-            .get("sides")
-            .unwrap_or("")
-            .split_whitespace()
-        {
-            let id = value.parse::<u32>().map_err(|_| {
-                format!(
-                    "entity:{}: cubemap sides must contain positive face IDs",
-                    entity.id
-                )
-            })?;
+        for id in manual_side_ids(entity) {
+            control.checkpoint()?;
+            let id = id?;
             if id == 0 || !own.insert(id) || manual.insert(id, sample).is_some() {
                 return Err(format!(
                     "entity:{}: side:{id} has duplicate cubemap ownership",

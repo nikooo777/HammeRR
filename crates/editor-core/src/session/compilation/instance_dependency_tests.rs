@@ -496,7 +496,7 @@ fn instance_source_symlinks_use_the_referring_directory_and_stale_retargeted_roo
 }
 
 #[test]
-fn instance_pointfile_conflicts_before_worker_and_reflection_requests_preserve_outputs() {
+fn instance_pointfile_conflicts_before_worker_preserve_outputs() {
     let (_directory, mut session, source, _child) = opened(Actor::Agent, true);
     let request = session.begin_compile(Actor::Agent, None).unwrap();
     std::fs::write(source.with_extension("lin"), b"external pointfile").unwrap();
@@ -510,23 +510,6 @@ fn instance_pointfile_conflicts_before_worker_and_reflection_requests_preserve_o
     assert_eq!(
         std::fs::read(source.with_extension("lin")).unwrap(),
         b"external pointfile"
-    );
-    session
-        .update_build_settings(
-            Actor::Agent,
-            BuildSettingsUpdate {
-                lighting: Some("direct_ldr"),
-                generate_reflections: Some(true),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-    assert!(
-        session
-            .begin_compile(Actor::Agent, None)
-            .err()
-            .unwrap()
-            .contains("Generate reflections with instances")
     );
     assert!(!session.compiling());
 }

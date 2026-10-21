@@ -59,6 +59,9 @@ pub fn finalize_reflections_with_capture(
     let Some(manifest) = output.cubemap_assets.clone() else {
         return Ok(output);
     };
+    if let Some(dependencies) = &output.instance_dependencies {
+        dependencies.verify(control)?;
+    }
     if manifest.logical_namespace != context.namespace()
         || manifest.namespace != context.namespace()
     {
@@ -136,6 +139,9 @@ pub fn finalize_reflections_with_capture(
                 })
                 .collect(),
         };
+        if let Some(dependencies) = &output.instance_dependencies {
+            dependencies.verify(control)?;
+        }
         let receipt = capture(
             request,
             &mut Observer {
@@ -144,6 +150,9 @@ pub fn finalize_reflections_with_capture(
                 total,
             },
         )?;
+        if let Some(dependencies) = &output.instance_dependencies {
+            dependencies.verify(control)?;
+        }
         if receipt.channel != channel {
             return Err(invalid(
                 "Native reflection receipt has the wrong capture channel",

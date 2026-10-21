@@ -210,10 +210,18 @@ Limits:
   Duplicate or case-ambiguous local names and generated-name collisions,
   including collisions with visible root helpers, reject. Source and every
   intermediate helper point must remain within compile bounds.
+- **Generate reflections** captures the assembled scene with visible root-map
+  `env_cubemap` helpers through the existing [reflection workflow](reflections.md).
+  Automatic assignment includes supported transformed child faces. Existing
+  manual `sides` lists may target only unique original root-map faces that
+  survive compilation; a generated child ID cannot repair a missing target.
+  Child `env_cubemap` helpers remain unsupported. **Cubemap faces…** inspection
+  and binding drafts are unavailable while a visible instance reference is present,
+  because authored faces alone do not describe the assembled scene.
 - Expansion happens before parent compile-region selection. Geometry intersecting
   the region remains eligible even when its instance marker is outside. Ordinary
   region geometry restrictions still apply; child lights, props and spawns are selected
-  by transformed origin. **Generate reflections** with instances is unavailable.
+  by transformed origin.
   Keep lights inside sealing boundaries: a retained light on a generated wall
   can be unavailable for baking, with an explicit diagnostic. Region-omitted
   child props do not read their model assets. Models remain external game

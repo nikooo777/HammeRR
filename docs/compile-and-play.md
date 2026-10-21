@@ -84,6 +84,10 @@ Unsupported or missing instance contents fail before publication; prior BSP and
 pointfile remain intact, and **Run Map** does not launch. Hidden helpers remain
 excluded. **Map checks** checks helper fields without opening child files; a
 supported-looking helper still needs compilation to validate its contents.
+**Generate reflections** also captures these assembled scenes using visible
+root-map `env_cubemap` helpers. Keep cubemap helpers in the parent VMF; child
+helpers are unsupported. See [Generated reflections](reflections.md) for binding
+and capture limits.
 
 ![Build settings, statistics, stage, output and diagnostics](images/build-status.png)
 
@@ -694,7 +698,10 @@ material aliases and per-pool/player controls remain unfinished.
    to choose their resolution.
 2. Select a helper and open **Cubemap faces…** to inspect automatic choices or
    preview manual face bindings. Review them before **Apply**; **Cancel** keeps
-   the previous bindings.
+   the previous bindings. This inspection and draft workflow is unavailable
+   when the map contains visible instance references. Automatic assignment still
+   includes supported child faces during compilation; existing manual lists
+   can target unique original root-map faces only.
 3. Open **Build settings…**, choose **Build lighting → Direct LDR** or
    **Direct LDR + HDR**, enable **Generate reflections**, then **Close** and
    **Compile** or **Run Map**.

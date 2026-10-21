@@ -214,7 +214,7 @@ fn report_json(vmf: &Vmf, report: &CubemapBindingReport) -> Value {
         .filter_map(|helper| helper["manual_error"].as_str())
         .collect::<Vec<_>>();
     json!({
-        "namespace":report.namespace,"total":report.total,"assignments":assignments,
+        "available":true,"namespace":report.namespace,"total":report.total,"assignments":assignments,
         "helpers":helpers,"diagnostics":diagnostics,
     })
 }
@@ -264,6 +264,9 @@ impl Session {
         if self.closing {
             return Err("The editor is closing".into());
         }
+        if compiler::instances::requires_source(self.document.vmf()) {
+            return Err("Cubemap binding inspection and drafts are unavailable while the map contains instances; authored faces do not describe the assembled geometry".into());
+        }
         if !std::ptr::eq(self.render_document(), &self.document) {
             return Err(
                 "Apply or cancel the geometry preview before editing cubemap bindings".into(),
@@ -284,6 +287,7 @@ impl Session {
     }
 
     fn checked_cubemap_binding(&self, token: u64) -> Result<&Draft, String> {
+        self.cubemap_binding_context()?;
         let draft = self
             .cubemap_bindings
             .draft
@@ -295,7 +299,6 @@ impl Session {
                 "Map, selection, output name or content changed; preview bindings again".into(),
             );
         }
-        self.cubemap_binding_context()?;
         Ok(draft)
     }
 
@@ -345,7 +348,10 @@ impl Session {
         if let Some(id) = query.helper {
             helper(self.document.vmf(), id)?;
         }
-        let mut value = match self.cubemap_binding_namespace().and_then(|namespace| {
+        let namespace = self
+            .cubemap_binding_context()
+            .and_then(|()| self.cubemap_binding_namespace());
+        let mut value = match namespace.and_then(|namespace| {
             self.inspect_cubemap_binding_map(
                 self.document.vmf(),
                 &CubemapBindingQuery {
@@ -360,7 +366,7 @@ impl Session {
         }) {
             Ok(report) => report_json(self.document.vmf(), &report),
             Err(error) => json!({
-                "namespace":self.cubemap_binding_namespace().ok(),"total":0,"assignments":[],
+                "available":false,"namespace":self.cubemap_binding_namespace().ok(),"total":0,"assignments":[],
                 "helpers":helpers_json(self.document.vmf(),None),"diagnostics":[error],
             }),
         };

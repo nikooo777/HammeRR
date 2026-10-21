@@ -25,6 +25,8 @@ mod ownership_tests;
 #[cfg(test)]
 mod instance_dependency_tests;
 #[cfg(test)]
+mod instance_reflection_tests;
+#[cfg(test)]
 mod instance_rejection_tests;
 #[cfg(test)]
 mod prop_vertex_lighting_settings_tests;
@@ -922,9 +924,6 @@ impl Session {
             return Err("Save the parent VMF before compiling instances; the BSP output path is not a source directory".into());
         }
         let generating = self.compilation.options.generate_reflections;
-        if instances && generating {
-            return Err("Generate reflections with instances is unsupported; resolve the instances before capturing reflections".into());
-        }
         let instance_source = if instances {
             let source = self
                 .path

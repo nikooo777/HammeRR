@@ -15,6 +15,7 @@ sha2 = "0.10.9"
 regex = "1.13.1"
 libc = "0.2.190"
 libloading = "0.8.9"
+getrandom = "0.4.3"
 
 [[bin]]
 name = "hammerr-native-runtime"

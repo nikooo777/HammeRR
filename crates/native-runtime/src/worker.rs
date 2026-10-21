@@ -20,6 +20,7 @@ const READY: &str = "HAMMERR_CUBEMAP_READY";
 const BEGIN: &str = "HAMMERR_CUBEMAP_CAPTURE_BEGIN";
 const RETURNED: &str = "HAMMERR_CUBEMAP_CAPTURE_RETURNED";
 const DISCONNECTED: &str = "HAMMERR_CUBEMAP_DISCONNECTED";
+const PRIVATE_PROFILE: &str = "hammerr_private_launch.cfg";
 const OBSERVER: &str = r#"
 stage <- 0;
 ready_at <- 0.0;
@@ -124,14 +125,8 @@ fn game_directory(directory: &Path, request: &WorkerRequest) -> io::Result<PathB
         request.map_name
     );
     guard::reject_writes(&profile, false)?;
-    util::atomic_write(
-        &game.join("cfg/hammerr_private_launch.cfg"),
-        profile.as_bytes(),
-    )?;
-    util::atomic_write(
-        &game.join("cfg/valve.rc"),
-        b"exec hammerr_private_launch.cfg\n",
-    )?;
+    util::atomic_write(&game.join("cfg").join(PRIVATE_PROFILE), profile.as_bytes())?;
+    util::atomic_write(&game.join("cfg/valve.rc"), b"stuffcmds\n")?;
     fs::copy(
         directory.join("staged.bsp"),
         game.join("maps").join(format!("{}.bsp", request.map_name)),
@@ -179,12 +174,23 @@ fn verify_markers(text: &str, channel: crate::CaptureChannel) -> io::Result<()> 
         }
         previous = Some(offset);
     }
-    if text.matches(BEGIN).count() != 1 || text.contains("Host_WriteConfiguration: Wrote") {
-        return Err(invalid(
-            "Native capture repeated or wrote archived configuration",
-        ));
+    if text.matches(PREMAP).count() != 1 || text.matches(BEGIN).count() != 1 {
+        return Err(invalid("Native launch profile or capture repeated"));
+    }
+    if text.contains("Host_WriteConfiguration: Wrote") {
+        return Err(invalid("Native capture wrote archived configuration"));
     }
     verify_controls(text, channel)
+}
+
+fn private_launch_options(command: &mut Command) {
+    command.args([
+        "-default",
+        "-condebug",
+        "+exec",
+        PRIVATE_PROFILE,
+        "-insecure",
+    ]);
 }
 
 fn verify_native_diagnostics(text: &str) -> io::Result<()> {
@@ -357,25 +363,19 @@ fn execute(directory: &Path, request: &WorkerRequest) -> io::Result<()> {
     let executable = root.join("cstrike_linux64").canonicalize()?;
     let mut isolated = crate::isolation::Launch::new(directory, &executable)?;
     let command = &mut isolated.command;
+    command.current_dir(&root).args(["-game"]).arg(&game).args([
+        "-windowed",
+        "-w",
+        "1280",
+        "-h",
+        "720",
+        "-novid",
+    ]);
     command
-        .current_dir(&root)
-        .args(["-game"])
-        .arg(&game)
-        .args([
-            "-windowed",
-            "-w",
-            "1280",
-            "-h",
-            "720",
-            "-novid",
-            "-default",
-            "-insecure",
-            "-nomaster",
-            "-nojoy",
-            "-console",
-            "-port",
-        ])
-        .arg(port.to_string())
+        .args(["-nomaster", "-nojoy", "-console", "-port"])
+        .arg(port.to_string());
+    private_launch_options(command);
+    command
         .env("LD_LIBRARY_PATH", root.join("bin/linux64"))
         .env("LD_DEBUG", "files")
         .env("LD_DEBUG_OUTPUT", directory.join("loader"))
@@ -632,6 +632,14 @@ mod tests {
             samples: vec![],
         };
         let game = game_directory(&output, &request).unwrap();
+        assert_eq!(fs::read(game.join("cfg/valve.rc")).unwrap(), b"stuffcmds\n");
+        let profile = fs::read_to_string(game.join("cfg").join(PRIVATE_PROFILE)).unwrap();
+        assert_eq!(profile.matches(PREMAP).count(), 1);
+        assert_eq!(profile.matches("\nmap fixture\n").count(), 1);
+        assert!(profile.contains("toggle sv_lan 1\n"));
+        assert!(profile.contains("toggle mat_hdr_level 0\n"));
+        assert!(!profile.contains("stuffcmds"));
+        assert!(!profile.contains("exec "));
         let mounted =
             source_formats::gamefs::GameFs::from_gameinfo(game.join("gameinfo.txt")).unwrap();
         let source_ids = |path: &Path| {
@@ -657,12 +665,42 @@ mod tests {
     }
 
     #[test]
+    fn private_launch_options_select_one_profile_with_configuration_guards() {
+        let mut command = Command::new("not-launched");
+        command.args(["-game", "private/cstrike", "-port", "27015"]);
+        private_launch_options(&mut command);
+        let arguments: Vec<_> = command
+            .get_args()
+            .map(|value| value.to_str().unwrap())
+            .collect();
+        assert_eq!(
+            arguments,
+            [
+                "-game",
+                "private/cstrike",
+                "-port",
+                "27015",
+                "-default",
+                "-condebug",
+                "+exec",
+                "hammerr_private_launch.cfg",
+                "-insecure"
+            ]
+        );
+    }
+
+    #[test]
     fn actual_controls_and_order_are_required() {
         let controls = "\"sv_lan\" = \"1\"\n\"mat_hdr_level\" = \"0\"\n\"mat_fullbright\" = \"0\"\n\"mat_envmapsize\" = \"128\"\n";
         let ordered = format!(
             "{PREMAP}\nHAMMERR_MAPSPAWN\n{READY}\n{BEGIN}\n{RETURNED}\n{DISCONNECTED}\n{controls}"
         );
         assert!(verify_markers(&ordered, crate::CaptureChannel::Ldr).is_ok());
+        for marker in [PREMAP, BEGIN] {
+            let duplicate = ordered.replace(marker, &format!("{marker}\n{marker}"));
+            let error = verify_markers(&duplicate, crate::CaptureChannel::Ldr).unwrap_err();
+            assert!(error.to_string().contains("repeated"));
+        }
         assert!(
             verify_markers(
                 &ordered.replace("\"sv_lan\" = \"1\"", "\"sv_lan\" = \"0\""),

@@ -43,15 +43,15 @@ pub(super) fn admit(entity: &Entity) -> Result<(), String> {
                     return Err(format!("Static child prop requires {key} 0 or 1"));
                 }
             }
-            "body" | "spawnflags" | "generatelightmaps" | "screenspacefade" | "mindxlevel"
-            | "maxdxlevel" | "rendermode" | "renderfx" => {
+            "fademindist" | "fademaxdist" | "fadescale" | "screenspacefade" | "mindxlevel"
+            | "maxdxlevel" => {}
+            "body" | "spawnflags" | "generatelightmaps" | "rendermode" | "renderfx" => {
                 if value.parse::<i32>().ok() != Some(0) {
                     return Err(format!("Static child prop requires {key} 0"));
                 }
             }
-            "angle" | "fademaxdist" => neutral(key, value, 0.0)?,
-            "modelscale" | "fadescale" => neutral(key, value, 1.0)?,
-            "fademindist" => neutral(key, value, -1.0)?,
+            "angle" => neutral(key, value, 0.0)?,
+            "modelscale" => neutral(key, value, 1.0)?,
             "renderamt" => neutral(key, value, 255.0)?,
             "rendercolor" => {
                 if source_formats::render_color::rgb(Some(value))
@@ -89,6 +89,7 @@ pub(super) fn admit(entity: &Entity) -> Result<(), String> {
         entity.properties.get("renderamt"),
         entity.properties.get("renderfx"),
     )?;
+    crate::static_props::visibility(entity)?;
     check_pose(entity)?;
     Ok(())
 }

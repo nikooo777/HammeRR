@@ -16,6 +16,9 @@ mod skin_tests;
 #[path = "props_lighting_tests.rs"]
 mod lighting_tests;
 
+#[path = "props_visibility_tests.rs"]
+mod visibility_tests;
+
 const MODEL: &str = "models/props/instance.mdl";
 const SECOND_MODEL: &str = "models/props/second.mdl";
 
@@ -467,8 +470,8 @@ fn strict_static_prop_envelope_rejects_unsupported_semantics_and_ambiguous_pose_
         ("lightingorigin", "@external"),
         ("name", "named"),
         ("globalname", "shared"),
-        ("fademaxdist", "1024"),
-        ("mindxlevel", "90"),
+        ("fademaxdist", "-1"),
+        ("mindxlevel", "65536"),
         ("generatelightmaps", "1"),
         ("lightmapresolution", "32"),
         ("pitch", "0"),

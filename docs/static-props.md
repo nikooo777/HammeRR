@@ -39,7 +39,8 @@ The ordinary root-map prop options described here remain available separately.
 2. Set **Skin** to a nonnegative family number, starting at 0. A build checks
    that the selected model actually contains that family.
 3. In **Advanced properties**, choose **No** or **Yes** for the lighting choices
-   below, then save the child and compile its parent.
+   below. The [visibility options](#visibility-options) below also work in
+   children. Save the child and compile its parent.
 
 | Advanced property | Effect |
 | --- | --- |
@@ -51,10 +52,46 @@ The ordinary root-map prop options described here remain available separately.
 Limits: these four choices accept only 0/1 and default to **No**. An omitted skin
 uses 0. Opting out of vertex lighting does not bypass required model or collision
 assets. Reference refresh does not inspect skin families or display child models.
-Other non-neutral flags, body selections, fades and scale remain unsupported in
+Other non-neutral flags, body selections and scale remain unsupported in
 children; see the [complete child limits](instances.md).
 
 Agents use the same `create_entity`, `set_entity_properties`, `compile_map` and `start_compile` operations.
+
+## Visibility options
+
+Set fade intervals and DX level bounds on ordinary or referenced
+static props through the same entity properties.
+
+1. Select a `prop_static`; for a referenced prop, open its child VMF first.
+2. Open **Advanced properties**. Set **Screen Space Fade** to **No** for distance
+   in Source units or **Yes** for the model's on-screen width in pixels.
+3. Set **Start Fade Dist/Pixels** and **End Fade Dist/Pixels**. A distance
+   interval can use 512 and 1024; a screen-space interval can use 256 and 64.
+   An end of 0 disables the authored fade interval. A negative start uses the
+   end value. **Fade Scale** defaults to 1; 0 disables the additional forced
+   fade described by the game's FGD.
+4. Choose **Minimum DX Level** and **Maximum DX Level**. Their default choices
+   use 0: **default (lowest)** and **default (highest)** respectively.
+5. Save the child, if applicable, and click **Compile** in its parent. These
+   properties do not add a live fade/DX preview or child model display.
+
+![Static model selection and property workflow](images/model-browser.png)
+
+Limits: start, end and scale must fit finite native floats; end and scale must
+be nonnegative. Missing values use start -1, end 0, scale 1 and distance fading.
+An end of 0 emits start 0; otherwise any negative start inherits the positive
+end. No start/end ordering is imposed: screen-space fading uses decreasing
+pixel widths. DX levels must be integers from 0 to 65535; a nonzero maximum
+must be at least the minimum. The inspector and typed MCP property edits offer
+the FGD's standard DX choices; imported values still receive these native range
+checks. **Screen Space Fade** accepts only 0/1.
+Reference refresh validates these options without reading model assets; it
+does not certify a skin family or native visibility behavior. Invalid options
+on a visible child reject refresh and compilation even if that prop would be
+outside the compile region. Model-specific checks remain after region selection.
+Requested baked vertex receivers still require unrestricted/default DX levels;
+nonzero DX bounds do not relax the ordinary vertex-bake limits. Native fade/DX
+appearance is not verified by these compiler checks.
 
 ## Bake vertex lighting
 

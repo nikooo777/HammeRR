@@ -169,10 +169,10 @@ fn absent_lighting_options_keep_explicit_zero_output_and_other_child_restriction
     for (key, value) in [
         ("body", "1"),
         ("spawnflags", "1"),
-        ("screenspacefade", "1"),
+        ("screenspacefade", "2"),
         ("generatelightmaps", "1"),
-        ("fadescale", "2"),
-        ("mindxlevel", "90"),
+        ("fadescale", "-1"),
+        ("mindxlevel", "65536"),
         ("modelscale", "2"),
     ] {
         let mut prop = static_prop(20, MODEL, "16 8 32");

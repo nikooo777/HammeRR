@@ -347,8 +347,8 @@ Other values, fractions and malformed integers reject.
 Absent `angles` means zero. Supplied render settings must stay normal-white:
 `rendercolor:"255 255 255"`, `renderamt:"255"`, `rendermode:"0"` and
 `renderfx:"0"`. Names, targets and parents must be absent or
-empty. The lighting exceptions below and neutral FGD scale/fade/flag/DX defaults are admitted; custom
-fades, scaling, body selections, unknown properties, duplicate
+empty. The lighting and visibility options below are admitted alongside neutral
+FGD scale/flag defaults; scaling, body selections, unknown properties, duplicate
 case aliases, brushes, I/O and opaque blocks reject. See the exact
 [child prop limits](instances.md). Use `create_entity` and `set_entity_properties`
 in the child, `save_map`, then the existing reference and compile operations.
@@ -364,6 +364,19 @@ to 0. They use the ordinary lighting consumers; vertex-bake opt-out affects only
 that receiver and still requires valid MDL and any required PHY. Set these through
 the same `set_entity_properties` operation before saving the child. A ready
 reference report does not certify model/skin compatibility or preview those flags.
+`fademindist`, `fademaxdist` and `fadescale` use finite native-float values,
+defaulting to -1, 0 and 1. End and scale must be nonnegative. Any negative start
+inherits a positive end; end 0 emits start 0 with no authored fade interval.
+`screenspacefade` accepts integer 0/1, defaulting to distance mode 0; mode 1
+interprets the interval as on-screen pixel widths. No start/end ordering is
+imposed. `mindxlevel` and `maxdxlevel` accept integers 0–65535, defaulting to 0;
+minimum cannot exceed a nonzero maximum. Typed property edits use the FGD's
+standard DX choices; the full native range also applies to imported VMFs. Zero
+bounds use ordinary unrestricted defaults. The same header-independent validation runs during reference refresh
+without model reads, including for a visible prop outside the compile region.
+Human controls use the [Advanced properties visibility labels](static-props.md#visibility-options).
+Ready reference resolution does not certify native fade/DX appearance. Opted-in
+baked vertex receivers retain their ordinary unrestricted-DX requirement.
 Mode 6 and omitted/default 6 require the ordinary matching PHY, including in
 Fullbright with `physics:"none"`; missing, unreadable, oversized or malformed
 required assets refuse publication. Modes 0/2 leave unused PHY unread, and

@@ -30,7 +30,9 @@ from supported brushes already in the parent.
    **Use VPhysics** is the default and requires the model's matching `.phy` asset.
    Keep scale 1, body 0, normal white rendering and names empty. Choose a valid
    **Skin**, starting at 0. The ordinary [prop lighting options](static-props.md#props-in-referenced-assemblies)
-   also work in children. Save the child before compiling its parent.
+   and [visibility options](static-props.md#visibility-options) also work in
+   children. Set fading and DX bounds through **Advanced properties**, then
+   save the child before compiling its parent.
 4. To add a child spawn, open **Entity…**, choose `info_player_terrorist` or
    `info_player_counterterrorist`, then click **Place entity**. Set **Position**
    and **Rotation** in the inspector and save the child. The class selects the
@@ -150,10 +152,18 @@ Limits:
   `disableselfshadowing` accept integer 0 or 1, with omitted values using 0.
   They retain ordinary prop lighting behavior. Disabling vertex lighting opts
   out only that receiver; its MDL and any required PHY must still be valid.
-- Other neutral FGD defaults remain required: zero `body`, `spawnflags`,
-  `mindxlevel`, `maxdxlevel`, `screenspacefade` and `generatelightmaps`; `modelscale`
-  and `fadescale` 1, `fademindist` -1 and `fademaxdist` 0. Custom fades, body
-  selections and scaling are unsupported for child props. The ordinary compiler
+- Child fade and DX properties use the ordinary [visibility rules](static-props.md#visibility-options).
+  `fademindist`, `fademaxdist` and `fadescale` must fit finite native floats;
+  end and scale must be nonnegative. Any negative start inherits a positive
+  end; end 0 emits start 0 with no authored fade interval. `screenspacefade`
+  accepts integer 0/1; no start/end ordering is imposed. `mindxlevel` and
+  `maxdxlevel` must fit unsigned native shorts; the minimum cannot exceed a
+  nonzero maximum. Zero DX bounds use ordinary defaults. Reference refresh
+  validates these fields without model reads and does not preview runtime
+  visibility. Invalid fields reject even for a visible region-omitted child.
+- Other neutral FGD defaults remain required: zero `body`, `spawnflags` and
+  `generatelightmaps`, with `modelscale` 1. Body selections and scaling are
+  unsupported for child props. The ordinary compiler
   reads the retained model's MDL header only after region selection and checks
   its model boxes at the source pose and every nested transform. Bounds must
   remain valid at intermediate poses even if the final placement returns inside.

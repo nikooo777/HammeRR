@@ -43,6 +43,52 @@ fn integer(entity: &Entity, key: &str, default: i32) -> Result<i32, String> {
     })
 }
 
+pub(crate) struct Visibility {
+    fade_min: f32,
+    fade_max: f32,
+    fade_scale: f32,
+    flags: u32,
+    dx_levels: [u16; 2],
+}
+
+pub(crate) fn visibility(entity: &Entity) -> Result<Visibility, String> {
+    let mut fade_min = number(entity, "fademindist", -1.0)?;
+    let fade_max = number(entity, "fademaxdist", 0.0)?;
+    let fade_scale = number(entity, "fadescale", 1.0)?;
+    if fade_scale < 0.0 || fade_max < 0.0 {
+        return Err("fade scale and end distance must be nonnegative".into());
+    }
+    let mut flags = 0;
+    if fade_max > 0.0 {
+        flags |= 1;
+        if fade_min < 0.0 {
+            fade_min = fade_max;
+        }
+    } else {
+        fade_min = 0.0;
+    }
+    match integer(entity, "screenspacefade", 0)? {
+        0 => {}
+        1 => flags |= 32,
+        _ => return Err("screenspacefade must be 0 or 1".into()),
+    }
+    let mut dx_levels = [0; 2];
+    for (index, key) in ["mindxlevel", "maxdxlevel"].into_iter().enumerate() {
+        dx_levels[index] = u16::try_from(integer(entity, key, 0)?)
+            .map_err(|_| format!("{key} must fit an unsigned native short"))?;
+    }
+    if dx_levels[1] != 0 && dx_levels[0] > dx_levels[1] {
+        return Err("minimum DX level exceeds maximum DX level".into());
+    }
+    Ok(Visibility {
+        fade_min,
+        fade_max,
+        fade_scale,
+        flags,
+        dx_levels,
+    })
+}
+
 pub(crate) fn angles(entity: &Entity) -> Result<DVec3, String> {
     let value = if let Some(raw) = entity.properties.get("angles") {
         parse_vec3(raw).ok_or("angles must contain Pitch Yaw Roll")?
@@ -191,31 +237,22 @@ fn record(
             header.skins - 1
         ));
     }
+    let visibility = visibility(entity)?;
     let mut prop = StaticProp {
         origin: origin.to_array().map(|v| v as f32),
         angles: angles.to_array().map(|v| v as f32),
         solid: solid as u8,
         skin,
-        fade_min: number(entity, "fademindist", -1.0)?,
-        fade_max: number(entity, "fademaxdist", 0.0)?,
-        fade_scale: number(entity, "fadescale", 1.0)?,
+        fade_min: visibility.fade_min,
+        fade_max: visibility.fade_max,
+        fade_scale: visibility.fade_scale,
+        flags: visibility.flags,
+        dx_levels: visibility.dx_levels,
         ..Default::default()
     };
-    if prop.fade_scale < 0.0 || prop.fade_max < 0.0 {
-        return Err("fade scale and end distance must be nonnegative".into());
-    }
-    if prop.fade_max > 0.0 {
-        prop.flags |= 1;
-        if prop.fade_min < 0.0 {
-            prop.fade_min = prop.fade_max;
-        }
-    } else {
-        prop.fade_min = 0.0;
-    }
     for (key, bit) in [
         ("ignorenormals", 8),
         ("disableshadows", 16),
-        ("screenspacefade", 32),
         ("disablevertexlighting", 64),
         ("disableselfshadowing", 128),
     ] {
@@ -224,13 +261,6 @@ fn record(
             1 => prop.flags |= bit,
             _ => return Err(format!("{key} must be 0 or 1")),
         }
-    }
-    for (index, key) in ["mindxlevel", "maxdxlevel"].into_iter().enumerate() {
-        prop.dx_levels[index] = u16::try_from(integer(entity, key, 0)?)
-            .map_err(|_| format!("{key} must fit an unsigned native short"))?;
-    }
-    if prop.dx_levels[1] != 0 && prop.dx_levels[0] > prop.dx_levels[1] {
-        return Err("minimum DX level exceeds maximum DX level".into());
     }
     if number(entity, "modelscale", 1.0)? != 1.0 {
         return Err("Static-prop output does not support modelscale other than 1; use a compatible dynamic model entity for scale".into());

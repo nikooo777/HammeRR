@@ -14,6 +14,154 @@ fn prop_session(actor: Actor) -> (tempfile::TempDir, Session, PathBuf, PathBuf, 
     (directory, session, source, child, owner)
 }
 
+#[test]
+fn child_visibility_options_share_no_read_refresh_native_fields_and_guarded_refusal() {
+    for actor in [Actor::User, Actor::Agent] {
+        let (directory, mut session, source, child, owner) = prop_session(actor);
+        session.open(actor, &child, true).unwrap();
+        let prop = session.document().vmf().entities[0].id;
+        session
+            .set_entity_properties(
+                actor,
+                prop,
+                &[
+                    ("fademindist".into(), Some("256".into())),
+                    ("fademaxdist".into(), Some("64".into())),
+                    ("fadescale".into(), Some("0.5".into())),
+                    ("screenspacefade".into(), Some("1".into())),
+                    ("mindxlevel".into(), Some("80".into())),
+                    ("maxdxlevel".into(), Some("95".into())),
+                ],
+            )
+            .unwrap();
+        session.save(actor, None).unwrap();
+        session.open(actor, &source, false).unwrap();
+        session.set_view(render::ViewOptions {
+            instance_contents: true,
+            ..session.view()
+        });
+        session.select(&[owner], SelectMode::Replace).unwrap();
+        session
+            .begin_property_edit(crate::session::PropertyTarget::World)
+            .unwrap();
+        let token = session.property_draft().unwrap().token;
+        session
+            .append_property_change(
+                token,
+                crate::session::PropertyChange::Set {
+                    key: "message".into(),
+                    value: "Retain the prop visibility review".into(),
+                },
+            )
+            .unwrap();
+        let memory = session.document().vmf().clone();
+        let history = session.history_snapshot();
+        let camera = session.camera();
+        let settings = session.compile_settings();
+        let draft = json!(session.property_draft());
+        let source_bytes = std::fs::read(&source).unwrap();
+        let child_bytes = std::fs::read(&child).unwrap();
+        let model = session.game.game_dir.join(MODEL);
+        let model_bytes = std::fs::read(&model).unwrap();
+        std::fs::write(&model, b"unread model during visibility refresh").unwrap();
+        let report = refresh(&mut session, actor);
+        assert_model_preview_unavailable(&mut session, actor, &report, owner);
+        assert_eq!(report["stats"]["static_props"], 1);
+        assert_eq!(
+            std::fs::read(&model).unwrap(),
+            b"unread model during visibility refresh"
+        );
+        std::fs::write(&model, &model_bytes).unwrap();
+        let output = directory.path().join("outputs/visibility.bsp");
+        std::fs::write(&output, b"previous BSP").unwrap();
+        std::fs::write(output.with_extension("lin"), b"visibility pointfile").unwrap();
+        let request = session.begin_compile(actor, Some(&output)).unwrap();
+        let result = if actor == Actor::Agent {
+            let (result, native) = request.run_admitted();
+            assert!(native.is_none());
+            result
+        } else {
+            request.run()
+        };
+        let compiled = &result.as_ref().unwrap().output;
+        assert!(compiled.bsp.is_some(), "{:?}", compiled.report);
+        let props = compiled
+            .bsp
+            .as_ref()
+            .unwrap()
+            .static_props()
+            .unwrap()
+            .unwrap();
+        assert_eq!(props.props.len(), 1);
+        let native = &props.props[0];
+        assert_eq!(
+            (native.fade_min, native.fade_max, native.fade_scale),
+            (256.0, 64.0, 0.5)
+        );
+        assert_eq!(native.flags, 1 | 32);
+        assert_eq!(native.dx_levels, [80, 95]);
+        compiled
+            .static_prop_sources
+            .as_ref()
+            .unwrap()
+            .verify_sources(&session.game, &compiler::Control::default())
+            .unwrap();
+        session.finish_compile(actor, &result);
+        assert!(result.as_ref().unwrap().published());
+        drop(result);
+        let published = std::fs::read(&output).unwrap();
+        let mut invalid = Vmf::parse(&String::from_utf8(child_bytes.clone()).unwrap()).unwrap();
+        invalid.entities[0].properties.set("fadescale", "NaN");
+        let invalid_bytes = invalid.write(&Default::default());
+        std::fs::write(&child, &invalid_bytes).unwrap();
+        std::fs::write(&model, b"unread model for malformed visibility").unwrap();
+        let failed = refresh(&mut session, actor);
+        assert_eq!(failed["state"], "failed", "{failed}");
+        assert!(
+            failed["error"].as_str().unwrap().contains("fadescale"),
+            "{failed}"
+        );
+        assert_eq!(failed["loading"], false);
+        assert!(!session.instance_workers_busy());
+        assert!(session.instance_contents_preview(true).mesh.is_none());
+        let result = session.begin_compile(actor, Some(&output)).unwrap().run();
+        let refused = &result.as_ref().unwrap().output;
+        assert!(refused.bsp.is_none() && refused.report.has_errors());
+        assert!(
+            refused
+                .report
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("fadescale")),
+            "{:?}",
+            refused.report
+        );
+        session.finish_compile(actor, &result);
+        assert!(!result.as_ref().unwrap().published());
+        assert_eq!(std::fs::read(&output).unwrap(), published);
+        assert_eq!(
+            std::fs::read(output.with_extension("lin")).unwrap(),
+            b"visibility pointfile"
+        );
+        assert_eq!(std::fs::read_to_string(&child).unwrap(), invalid_bytes);
+        assert_eq!(
+            std::fs::read(&model).unwrap(),
+            b"unread model for malformed visibility"
+        );
+        std::fs::write(&child, &child_bytes).unwrap();
+        std::fs::write(&model, &model_bytes).unwrap();
+        assert_eq!(refresh(&mut session, actor)["state"], "ready");
+        assert_eq!(session.document().vmf(), &memory);
+        assert_eq!(session.history_snapshot(), history);
+        assert_eq!(session.camera(), camera);
+        assert_eq!(session.compile_settings(), settings);
+        assert_eq!(json!(session.property_draft()), draft);
+        assert_eq!(session.selected_ids(), vec![owner]);
+        assert_eq!(std::fs::read(&source).unwrap(), source_bytes);
+        assert_eq!(std::fs::read(&child).unwrap(), child_bytes);
+    }
+}
+
 fn assert_model_preview_unavailable(
     session: &mut Session,
     actor: Actor,

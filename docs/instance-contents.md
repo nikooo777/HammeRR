@@ -87,6 +87,11 @@ picking and framing are unavailable. A missing or invalid MDL can leave referenc
 resolution ready and still fail compilation. Mixed assemblies retain their
 actual brush/terrain surfaces and bounds; props do not add placeholder geometry.
 Refresh does not validate a selected skin family or preview child lighting flags.
+It does validate the ordinary header-independent
+[fade and DX options](static-props.md#visibility-options) without reading model
+assets. Malformed options fail the whole refresh. A ready report certifies
+neither a selected model family nor native fade/DX appearance, and it adds no
+child model display or runtime-visibility preview.
 
 Supported child lighting-origin helpers likewise retain identities and counts
 without icons, reference bounds, picking or framing. A helper-only assembly can

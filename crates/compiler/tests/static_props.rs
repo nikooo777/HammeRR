@@ -564,8 +564,10 @@ fn invalid_static_props_preserve_previous_output_and_source() {
     let (directory, game) = game();
     let mut vmf = common::room();
     let prop = add_prop(&mut vmf, "32 32 8");
+    let outputs = directory.path().join("outputs");
+    std::fs::create_dir(&outputs).unwrap();
+    let path = outputs.join("existing.bsp");
     let output = compiler::compile(&vmf, &game);
-    let path = directory.path().join("existing.bsp");
     assert!(output.write(&path).unwrap());
     let old = std::fs::read(&path).unwrap();
     for amount in ["0", "128", "255"] {

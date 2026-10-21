@@ -249,6 +249,13 @@ waiting `compile_map` or `run_map` call detaches the reply; use `cancel_compile`
 to request cancellation. The same frozen map/settings and output reservations
 serve background and awaited builds.
 
+Static props retain the original consumed MDL and required PHY source identities
+in both build paths. `get_compile_status.job.static_prop_source_issue` reports a
+changed source or lookup; `job.stale` and the launch report use the same check.
+Recompile after changing those assets or reloading content. `launch_game` and
+`run_map` also recheck the retained sources before starting the game. This does
+not pack models or guard unused PHY payloads.
+
 Standalone launch captures its exact Session, map generation and build before
 worker scheduling. Queued work cannot choose a replacement map later. Abandoned
 or cancelled pending work retires only its own launch, after request/process

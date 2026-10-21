@@ -88,6 +88,23 @@ impl FileStamp {
         Ok(())
     }
 
+    pub(crate) fn capture_directory_for_resolution(&self) -> io::Result<Option<Self>> {
+        if self.kind != 2 {
+            return Ok(None);
+        }
+        let current = Self::capture_kind(&self.requested, true)?;
+        let same = self.path == current.path && current.kind == 2 && self.same_file(&current);
+        #[cfg(not(unix))]
+        let same = same && self.stamp == current.stamp;
+        if !same {
+            return Err(io::Error::other(format!(
+                "Build source lookup directory changed identity: {}",
+                self.requested.display()
+            )));
+        }
+        Ok(Some(current))
+    }
+
     pub fn capture(path: &Path) -> io::Result<Self> {
         Self::capture_kind(path, false)
     }
@@ -415,6 +432,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn resolved_directory_snapshots_detect_changes_after_the_verification_window_starts() {
+        let directory = tempfile::tempdir().unwrap();
+        let original = FileStamp::capture_container(directory.path()).unwrap();
+        fs::write(directory.path().join("earlier.log"), b"unrelated sibling").unwrap();
+        assert!(original.verify_metadata().is_err());
+        let current = original
+            .capture_directory_for_resolution()
+            .unwrap()
+            .unwrap();
+        current.verify_metadata().unwrap();
+        fs::write(directory.path().join("later.log"), b"new sibling").unwrap();
+        assert!(current.verify_metadata().is_err());
+        assert!(original.verify_metadata().is_err());
+    }
+
+    #[test]
     fn a_changed_output_or_accepted_cancel_preserves_the_previous_file() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("map.bsp");
@@ -438,6 +471,7 @@ mod tests {
             instance_output_stamp: None,
             prop_lighting_sources: None,
             material_sources: None,
+            static_prop_sources: None,
         };
         fs::write(&path, b"external replacement").unwrap();
         assert!(lease.verify(&Control::default()).is_err());
@@ -464,6 +498,7 @@ mod tests {
             instance_output_stamp: None,
             prop_lighting_sources: None,
             material_sources: None,
+            static_prop_sources: None,
         };
         control.cancel().unwrap();
         assert!(prepared.commit_checked(&lease, &control).is_err());

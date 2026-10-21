@@ -409,7 +409,9 @@ fn transformed_prop_spot_sun_and_skin_materials_use_shared_shadows() {
 fn failed_shadow_assets_preserve_bsp_while_fullbright_and_disabled_props_need_only_header() {
     let (directory, game) = game();
     let mut vmf = scene();
-    let destination = directory.path().join("existing.bsp");
+    let outputs = directory.path().join("outputs");
+    std::fs::create_dir(&outputs).unwrap();
+    let destination = outputs.join("existing.bsp");
     let good = compile(&vmf, &game);
     good.write(&destination).unwrap();
     let old = std::fs::read(&destination).unwrap();
@@ -559,7 +561,9 @@ fn requested_alpha_assets_and_effects_fail_on_the_prop_and_preserve_the_build() 
     let mut vmf = scene();
     vmf.entities.last_mut().unwrap().properties.set("skin", "1");
     let before = vmf.clone();
-    let destination = directory.path().join("existing.bsp");
+    let outputs = directory.path().join("outputs");
+    std::fs::create_dir(&outputs).unwrap();
+    let destination = outputs.join("existing.bsp");
     compile(&vmf, &game).write(&destination).unwrap();
     let old = std::fs::read(&destination).unwrap();
     for (material, expected) in [

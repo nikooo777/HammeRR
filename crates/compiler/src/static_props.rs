@@ -19,6 +19,7 @@ pub(crate) struct Stats {
     pub models: usize,
     pub leaf_refs: usize,
     pub sources: Vec<usize>,
+    pub source_guard: Option<crate::asset_sources::AssetSourceGuard>,
 }
 
 struct ModelAsset {
@@ -293,6 +294,7 @@ pub(crate) fn bake(
     if entities.is_empty() {
         return Ok(Stats::default());
     }
+    let source_owner = crate::asset_sources::BuildMaterialSources::without_retained_payloads();
     let lighting = crate::lighting_origins::Origins::new(
         vmf,
         entities
@@ -324,14 +326,17 @@ pub(crate) fn bake(
                         .map_err(|error| error.to_string())?,
                     None => source_formats::mdl::MAX_MODEL_BYTES,
                 };
-                let data = fs.read_limited(&path, maximum).map_err(|e| e.to_string())?;
+                let data = source_owner
+                    .read_asset(fs, &path, maximum)
+                    .map_err(|e| e.to_string())?;
                 if let Some(reads) = &mut source_reads {
                     reads
-                        .record(&path, data.as_deref())
+                        .record(&path, data.as_ref().map(|asset| asset.bytes()))
                         .map_err(|error| error.to_string())?;
                 }
                 let data = data.ok_or_else(|| format!("model {path} was not found"))?;
-                let header = ModelHeader::parse(&data).map_err(|e| format!("{path}: {e}"))?;
+                let header =
+                    ModelHeader::parse(data.bytes()).map_err(|e| format!("{path}: {e}"))?;
                 if !header.is_static_prop() {
                     return Err(format!("{path} was not built with $staticprop"));
                 }
@@ -352,13 +357,13 @@ pub(crate) fn bake(
                 if asset.collision.is_none() {
                     let phy_path = format!("{}.phy", &path[..path.len() - 4]);
                     asset.collision = Some(
-                        match fs
-                            .read_limited(&phy_path, bsp::MAX_PHYSICS_BYTES)
+                        match source_owner
+                            .read_asset(fs, &phy_path, bsp::MAX_PHYSICS_BYTES)
                             .map_err(|e| format!("{phy_path}: {e}"))?
                         {
                             Some(bytes) => {
                                 source_formats::mdl::validate_physics(
-                                    &bytes,
+                                    bytes.bytes(),
                                     asset.header.checksum,
                                 )
                                 .map_err(|e| format!("{phy_path}: {e}"))?;
@@ -405,6 +410,9 @@ pub(crate) fn bake(
     if report.has_errors() {
         return Ok(Stats::default());
     }
+    let source_guard = source_owner
+        .source_guard(fs, control)
+        .map_err(|error| error.to_string())?;
     if !props.props.is_empty() {
         report.diagnostics.push(Diagnostic::warning("Static props use model assets and conservative header-box leaf membership, with rotated boxes clipped through world leaves; exact model-hull leaf clipping is unfinished", None, None));
     }
@@ -414,5 +422,9 @@ pub(crate) fn bake(
         models: props.models.len(),
         leaf_refs: props.leaves.len(),
         sources,
+        source_guard: Some(source_guard),
     })
 }
+
+#[cfg(test)]
+mod source_tests;

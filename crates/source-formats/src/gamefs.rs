@@ -96,12 +96,7 @@ pub struct MountedAsset {
 fn read_file_limited(path: &Path, maximum: usize) -> io::Result<Vec<u8>> {
     let file = fs::File::open(path)?;
     let size = file.metadata()?.len();
-    if size > maximum as u64 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "asset exceeds the caller's byte read limit",
-        ));
-    }
+    check_file_size(size, maximum)?;
     let mut data = Vec::new();
     data.try_reserve_exact(size as usize)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
@@ -114,6 +109,16 @@ fn read_file_limited(path: &Path, maximum: usize) -> io::Result<Vec<u8>> {
         ));
     }
     Ok(data)
+}
+
+fn check_file_size(size: u64, maximum: usize) -> io::Result<()> {
+    if size > maximum as u64 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "asset exceeds the caller's byte read limit",
+        ));
+    }
+    Ok(())
 }
 
 fn existing<T>(path: &Path, result: io::Result<T>) -> io::Result<Option<T>> {
@@ -560,7 +565,7 @@ impl GameFs {
                     }),
                     _ => None,
                 },
-                Mount::Pak(pak) => match pak.asset_source_paths(&path)? {
+                Mount::Pak(pak) => match pak.asset_source_paths_limited(&path, maximum)? {
                     Some(files) => pak.read_limited(&path, maximum)?.map(|data| MountedAsset {
                         data,
                         origin: AssetOrigin::Vpk {
@@ -581,16 +586,25 @@ impl GameFs {
     /// Resolve the same `game` asset as [`Self::read`], including higher-priority lookup dependencies.
     /// Changed VPK indexes and dangling lookup symlinks require a content reload.
     pub fn asset_source_paths(&self, path: &str) -> io::Result<Option<AssetSourcePaths>> {
-        let (found, sources) = self.asset_lookup(path)?;
+        self.asset_source_paths_limited(path, usize::MAX)
+    }
+
+    pub fn asset_source_paths_limited(
+        &self,
+        path: &str,
+        maximum: usize,
+    ) -> io::Result<Option<AssetSourcePaths>> {
+        let (found, sources) = self.asset_lookup(path, maximum)?;
         Ok(found.then_some(sources))
     }
 
     /// Returns lookup dependencies even when the asset is absent.
     pub fn asset_lookup_paths(&self, path: &str) -> io::Result<AssetSourcePaths> {
-        self.asset_lookup(path).map(|(_, sources)| sources)
+        self.asset_lookup(path, usize::MAX)
+            .map(|(_, sources)| sources)
     }
 
-    fn asset_lookup(&self, path: &str) -> io::Result<(bool, AssetSourcePaths)> {
+    fn asset_lookup(&self, path: &str, maximum: usize) -> io::Result<(bool, AssetSourcePaths)> {
         let path = asset_relative(path)?;
         if path.is_empty() {
             return Ok((false, AssetSourcePaths::default()));
@@ -604,7 +618,7 @@ impl GameFs {
             let found = match &mounted.mount {
                 Mount::Pak(pak) => {
                     sources.file(pak.path())?;
-                    if let Some(paths) = pak.asset_source_paths(&path)? {
+                    if let Some(paths) = pak.asset_source_paths_limited(&path, maximum)? {
                         for file in paths {
                             sources.file(&file)?;
                         }
@@ -614,14 +628,18 @@ impl GameFs {
                     }
                 }
                 Mount::Directory(root) => {
-                    if let Some(file) =
-                        find_case_insensitive_traced(root, &path, Some(&mut sources))?
-                        && fs::metadata(&file)?.is_file()
-                    {
-                        sources.file(&file)?;
-                        true
-                    } else {
-                        false
+                    match find_case_insensitive_traced(root, &path, Some(&mut sources))? {
+                        Some(file) => {
+                            let metadata = fs::metadata(&file)?;
+                            if metadata.is_file() {
+                                check_file_size(metadata.len(), maximum)?;
+                                sources.file(&file)?;
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                        None => false,
                     }
                 }
             };
@@ -876,6 +894,12 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(
+            game.asset_source_paths_limited("MATERIALS/nested/asset.VMT", 6)
+                .unwrap()
+                .unwrap(),
+            before
+        );
+        assert_eq!(
             game.read("materials/nested/asset.vmt").unwrap().unwrap(),
             b"second"
         );
@@ -933,6 +957,12 @@ mod tests {
             ],
         );
         let sources = game.asset_source_paths("asset.txt").unwrap().unwrap();
+        assert_eq!(
+            game.asset_source_paths_limited("asset.txt", 5)
+                .unwrap()
+                .unwrap(),
+            sources
+        );
         assert!(sources.files.contains(&index));
         assert!(sources.files.contains(&asset));
         fs::write(&index, b"replaced index").unwrap();
@@ -1155,12 +1185,99 @@ mod tests {
             }
         );
         assert!(game.read_asset_limited("materials/test.vmt", 4).is_err());
+        assert_eq!(
+            game.asset_source_paths_limited("materials/test.vmt", 4)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert_eq!(
+            game.asset_source_paths_limited("MATERIALS/TEST.VMT", 5)
+                .unwrap(),
+            game.asset_source_paths("materials/test.vmt").unwrap()
+        );
         assert!(
             game.read_asset_limited("materials/missing.vmt", 5)
                 .unwrap()
                 .is_none()
         );
         assert!(game.read_asset_limited("../outside", 5).is_err());
+    }
+
+    #[test]
+    fn bounded_vpk_provenance_and_reads_preserve_the_winner_before_payload_resolution() {
+        let root = tempfile::tempdir().unwrap();
+        let index = root.path().join("bounded_dir.vpk");
+        let archive = root.path().join("bounded_042.vpk");
+        let mut tree = b"vmt\0materials\0test\0".to_vec();
+        tree.extend(0u32.to_le_bytes());
+        tree.extend(3u16.to_le_bytes());
+        tree.extend(42u16.to_le_bytes());
+        tree.extend(0u32.to_le_bytes());
+        tree.extend(4u32.to_le_bytes());
+        tree.extend(0xffffu16.to_le_bytes());
+        tree.extend(b"pre\0\0\0");
+        let mut bytes = 0x55aa_1234u32.to_le_bytes().to_vec();
+        bytes.extend(1u32.to_le_bytes());
+        bytes.extend((tree.len() as u32).to_le_bytes());
+        bytes.extend(tree);
+        fs::write(&index, bytes).unwrap();
+        let fallback = root.path().join("fallback");
+        fs::create_dir_all(fallback.join("materials")).unwrap();
+        fs::write(fallback.join("materials/test.vmt"), b"low").unwrap();
+        let game = provenance_game(
+            root.path(),
+            vec![
+                Mount::Pak(Vpk::open(&index).unwrap()),
+                Mount::Directory(fallback.clone()),
+            ],
+        );
+        for maximum in [6, 7] {
+            for error in [
+                game.asset_source_paths_limited("MATERIALS/TEST.VMT", maximum)
+                    .unwrap_err(),
+                game.read_asset_limited("materials/test.vmt", maximum)
+                    .unwrap_err(),
+                game.read_limited("materials/test.vmt", maximum)
+                    .unwrap_err(),
+            ] {
+                if maximum == 6 {
+                    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+                    assert_eq!(
+                        error.to_string(),
+                        "VPK entry exceeds the caller's byte read limit"
+                    );
+                } else {
+                    assert_eq!(error.kind(), io::ErrorKind::NotFound);
+                }
+            }
+            assert!(!archive.exists());
+        }
+        assert!(
+            game.asset_source_paths_limited("materials/absent.vmt", 0)
+                .unwrap()
+                .is_none()
+        );
+        fs::write(&archive, b"body").unwrap();
+        let sources = game
+            .asset_source_paths_limited("materials/test.vmt", 7)
+            .unwrap()
+            .unwrap();
+        assert!(sources.files.contains(&index));
+        assert!(sources.files.contains(&archive));
+        assert!(!sources.files.contains(&fallback.join("materials/test.vmt")));
+        assert_eq!(
+            sources,
+            game.asset_source_paths("materials/test.vmt")
+                .unwrap()
+                .unwrap()
+        );
+        let asset = game
+            .read_asset_limited("materials/test.vmt", 7)
+            .unwrap()
+            .unwrap();
+        assert_eq!(asset.data, b"prebody");
+        assert!(matches!(asset.origin, AssetOrigin::Vpk { .. }));
     }
 
     #[test]

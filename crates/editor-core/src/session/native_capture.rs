@@ -112,7 +112,7 @@ impl Session {
             self.native_capture.engine_root = engine_root;
             self.native_capture.steam_root = steam_root;
             *self.native_capture.cache.borrow_mut() = None;
-            self.content_epoch = self.content_epoch.wrapping_add(1);
+            self.advance_content_epoch();
             self.log(actor, "Changed native reflection capture runtime");
         }
         Ok(self.native_capture_runtime())

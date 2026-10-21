@@ -88,7 +88,7 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
     let source_text = std::fs::read_to_string(&map)?;
     let vmf = Vmf::parse(&source_text)?;
     let has_instances = instances::requires_source(&vmf);
-    let guarded = options.requires_guarded_publication() || has_instances;
+    let guarded = options.requires_guarded_publication_for(&vmf);
     let lease = guarded
         .then(|| OutputLease::acquire(&path, control))
         .transpose()?;

@@ -162,8 +162,24 @@ struct CompiledMap {
     content_epoch: u64,
     lightmap_identity: baked_lightmaps::BuildIdentity,
     prop_lighting_guard: Option<compiler::asset_sources::AssetSourceGuard>,
+    static_prop_sources: Option<StaticPropSources>,
     instance_dependencies: Option<compiler::instances::DependencyGuard>,
     instance_source_path: Option<PathBuf>,
+}
+
+#[derive(Clone)]
+struct StaticPropSources {
+    guard: compiler::asset_sources::AssetSourceGuard,
+    game: Arc<GameFs>,
+    content_epoch: u64,
+}
+
+impl StaticPropSources {
+    fn verify(&self, control: &compiler::Control) -> Result<(), String> {
+        self.guard.verify_resolved_sources(&self.game, control).map_err(|error| {
+            format!("Static-prop model/physics sources changed since compilation; compile again: {error}")
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -334,26 +350,47 @@ pub struct Session {
 }
 
 pub struct LaunchRequest {
+    #[cfg(test)]
+    before_checkpoint: Option<Box<dyn FnMut() + Send>>,
     native: Option<crate::runtime::native_activity::Permit>,
     artifact_claim: Option<crate::path_claims::Claim>,
     origin: LaunchOrigin,
     install: game::Install,
     bsp: PathBuf,
     instance_dependencies: Option<compiler::instances::DependencyGuard>,
+    static_prop_sources: Option<StaticPropSources>,
 }
 
 #[derive(Clone)]
 pub struct LaunchOrigin {
     generation: u64,
+    static_props: bool,
     ticket: Arc<LaunchTicket>,
 }
 
 struct LaunchTicket {
     active: AtomicBool,
     cancelled: AtomicBool,
+    content_changed: AtomicBool,
 }
 
 impl LaunchOrigin {
+    fn verify_static_prop_sources(
+        &self,
+        sources: Option<&StaticPropSources>,
+    ) -> Result<(), String> {
+        if self.ticket.content_changed.load(Ordering::Acquire) {
+            return Err(
+                "Content changed since static-prop compilation; compile again before launching"
+                    .into(),
+            );
+        }
+        if let Some(sources) = sources {
+            sources.verify(&compiler::Control::default())?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn retire(&self) {
         self.ticket.active.store(false, Ordering::Release);
     }
@@ -370,9 +407,11 @@ impl LaunchOrigin {
     fn new(generation: u64) -> Self {
         Self {
             generation,
+            static_props: false,
             ticket: Arc::new(LaunchTicket {
                 active: AtomicBool::new(true),
                 cancelled: AtomicBool::new(false),
+                content_changed: AtomicBool::new(false),
             }),
         }
     }
@@ -390,6 +429,11 @@ impl LaunchRequest {
         Ok(())
     }
 
+    fn verify_static_prop_sources(&self) -> Result<(), String> {
+        self.origin
+            .verify_static_prop_sources(self.static_prop_sources.as_ref())
+    }
+
     pub fn run(self) -> Result<game::Run, String> {
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.run_inner()))
             .unwrap_or_else(|_| Err("game launch panicked".into()))
@@ -402,17 +446,49 @@ impl LaunchRequest {
             })?;
         }
         self.verify_instance_dependencies()?;
+        self.verify_static_prop_sources()?;
+        let origin = &self.origin;
+        let sources = self.static_prop_sources.as_ref();
+        #[cfg(test)]
+        let mut before_checkpoint = self.before_checkpoint.take();
         game::Run::launch_admitted(&self.install, &self.bsp, self.native.take(), || {
-            if self.origin.cancelled() {
+            #[cfg(test)]
+            if let Some(hook) = &mut before_checkpoint {
+                hook();
+            }
+            if origin.cancelled() {
                 Err("game launch cancelled".into())
             } else {
-                Ok(())
+                origin.verify_static_prop_sources(sources)
             }
         })
     }
 }
 
 impl Session {
+    fn advance_content_epoch(&mut self) {
+        self.content_epoch = self.content_epoch.wrapping_add(1);
+        if let Some(origin) = &self.pending_launch
+            && origin.static_props
+        {
+            origin.ticket.content_changed.store(true, Ordering::Release);
+        }
+    }
+
+    fn static_prop_source_issue(&self, sources: Option<&StaticPropSources>) -> Option<String> {
+        let sources = sources?;
+        if sources.content_epoch != self.content_epoch {
+            return Some("Content changed since static-prop compilation; compile again".into());
+        }
+        sources
+            .guard
+            .verify_resolved_sources(&self.game, &compiler::Control::default())
+            .err()
+            .map(|error| {
+                format!("Static-prop model/physics sources changed since compilation: {error}")
+            })
+    }
+
     pub(crate) fn use_application_native_activity(
         &mut self,
         client: crate::runtime::native_activity::Client,
@@ -2073,6 +2149,9 @@ impl Session {
                 "Content changed since instance compilation; compile again before launching".into(),
             );
         }
+        if let Some(error) = self.static_prop_source_issue(compiled.static_prop_sources.as_ref()) {
+            return Err(format!("{error}; compile again before launching"));
+        }
         if compiled.options.generate_reflections && compiled.content_epoch != self.content_epoch {
             return Err("Content or native runtime changed since reflection capture; compile again before launching".into());
         }
@@ -2125,19 +2204,28 @@ impl Session {
         if let Some(permit) = &mut native {
             permit.phase(crate::runtime::native_activity::Phase::PlayStartup);
         }
+        let static_prop_sources = self
+            .compiled
+            .as_ref()
+            .and_then(|compiled| compiled.static_prop_sources.clone());
+        let mut origin = LaunchOrigin::new(self.document_generation);
+        origin.static_props = static_prop_sources.is_some();
         let request = LaunchRequest {
+            #[cfg(test)]
+            before_checkpoint: None,
             native,
             artifact_claim: self
                 .compiled
                 .as_ref()
                 .and_then(|compiled| compiled.claim.clone()),
-            origin: LaunchOrigin::new(self.document_generation),
+            origin,
             install,
             bsp,
             instance_dependencies: self
                 .compiled
                 .as_ref()
                 .and_then(|compiled| compiled.instance_dependencies.clone()),
+            static_prop_sources,
         };
         self.launch_serial = self
             .launch_serial
@@ -2175,6 +2263,12 @@ impl Session {
         }
         if origin.cancelled() {
             let error = "game launch cancelled";
+            self.log(actor, error);
+            return self.reject_launch(result, error);
+        }
+        if origin.ticket.content_changed.load(Ordering::Acquire) {
+            let error =
+                "Content changed since static-prop compilation; compile again before launching";
             self.log(actor, error);
             return self.reject_launch(result, error);
         }

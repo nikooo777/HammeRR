@@ -41,6 +41,46 @@ impl AssetSourceGuard {
         control.checkpoint().map_err(io::Error::other)?;
         self.verify_metadata()
     }
+
+    pub fn verify_resolved_sources(&self, game: &GameFs, control: &Control) -> io::Result<()> {
+        control.checkpoint().map_err(io::Error::other)?;
+        if self.material_lookups.is_empty() {
+            return Err(invalid(
+                "Resolved source verification requires original logical lookups",
+            ));
+        }
+        if self.material_lookups.len() > MAX_BUILD_MATERIAL_LOGICAL_PATHS
+            || self.stamps.len() > MAX_BUILD_MATERIAL_PHYSICAL_PATHS
+        {
+            return Err(invalid(
+                "Resolved source verification exceeds the source ownership limits",
+            ));
+        }
+        let mut directories = Vec::new();
+        let mut files = Vec::new();
+        for stamp in &self.stamps {
+            control.checkpoint().map_err(io::Error::other)?;
+            if let Some(current) = stamp.capture_directory_for_resolution()? {
+                directories.push(current);
+            } else {
+                stamp.verify_metadata()?;
+                files.push(stamp);
+            }
+        }
+        for (path, lookup) in &self.material_lookups {
+            control.checkpoint().map_err(io::Error::other)?;
+            lookup.verify(game, path)?;
+        }
+        for stamp in files {
+            control.checkpoint().map_err(io::Error::other)?;
+            stamp.verify_metadata()?;
+        }
+        for stamp in directories {
+            control.checkpoint().map_err(io::Error::other)?;
+            stamp.verify_metadata()?;
+        }
+        control.checkpoint().map_err(io::Error::other)
+    }
 }
 
 #[derive(Debug)]
@@ -50,11 +90,16 @@ pub struct OutputAssetSourceGuard {
     water: Option<AssetSourceGuard>,
     prop_lighting: Option<AssetSourceGuard>,
     material_sources: Option<AssetSourceGuard>,
+    static_prop_sources: Option<AssetSourceGuard>,
 }
 
 impl OutputAssetSourceGuard {
     pub fn prop_lighting_guard(&self) -> Option<AssetSourceGuard> {
         self.prop_lighting.clone()
+    }
+
+    pub fn static_prop_guard(&self) -> Option<AssetSourceGuard> {
+        self.static_prop_sources.clone()
     }
 
     pub fn verify_metadata(&self) -> io::Result<()> {
@@ -72,6 +117,9 @@ impl OutputAssetSourceGuard {
         }
         if let Some(material_sources) = &self.material_sources {
             material_sources.verify_metadata()?;
+        }
+        if let Some(static_prop_sources) = &self.static_prop_sources {
+            static_prop_sources.verify_metadata()?;
         }
         Ok(())
     }
@@ -109,12 +157,17 @@ pub fn capture_output_asset_source_guard(
     if let Some(material_sources) = &material_sources {
         material_sources.verify_sources(game, control)?;
     }
+    let static_prop_sources = output.static_prop_source_guard()?.cloned();
+    if let Some(static_prop_sources) = &static_prop_sources {
+        static_prop_sources.verify_sources(game, control)?;
+    }
     let guard = OutputAssetSourceGuard {
         reflections,
         sky,
         water,
         prop_lighting,
         material_sources,
+        static_prop_sources,
     };
     control.checkpoint().map_err(io::Error::other)?;
     guard.verify_metadata()?;

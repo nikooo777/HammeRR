@@ -44,6 +44,11 @@ fn prepared_assets(
     session.compilation.options.generate_reflections = reflections;
     session.compilation.options.pack_sky_assets = packing;
     session.compilation.job.as_mut().unwrap().options = session.compilation.options;
+    let guarded = session
+        .compilation
+        .options
+        .requires_guarded_publication_for(session.document.vmf());
+    session.compilation.job.as_mut().unwrap().guarded = guarded;
     let control = request.control;
     let destination_stamp = compiler::FileStamp::capture(&destination).unwrap();
     let lease = compiler::OutputLease::acquire(&destination, &control).unwrap();
@@ -82,6 +87,7 @@ fn prepared_assets(
             sky_assets: None,
             water_assets: None,
             material_sources: None,
+            static_prop_sources: None,
             prop_lighting_assets: None,
             instance_dependencies: None,
         }
@@ -97,6 +103,7 @@ fn prepared_assets(
     .unwrap();
     session.compiled = Some(CompiledMap {
         prop_lighting_guard: None,
+        static_prop_sources: None,
         claim: None,
         face_origins: Err("Fixture has no retained source mapping".into()),
         path: destination.clone(),
@@ -120,6 +127,7 @@ fn prepared_assets(
         options: session.compilation.options,
         content_epoch: session.content_epoch,
         source,
+        static_prop_sources: None,
         destination_stamp: Some(destination_stamp),
         control,
         publication: Mutex::new(Publication {

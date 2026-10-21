@@ -27,7 +27,7 @@ impl Session {
     pub fn reload_material_assets(&mut self, actor: Actor) -> Report {
         self.cancel_geometry_drags();
         self.cancel_selection_previews();
-        self.content_epoch = self.content_epoch.wrapping_add(1);
+        self.advance_content_epoch();
         let models = self.models.borrow_mut().reload_materials(&self.game);
         let mut result = self
             .materials

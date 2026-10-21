@@ -243,7 +243,7 @@ impl Vpk {
         self.read_limited(path, usize::MAX)
     }
 
-    pub fn read_limited(&self, path: &str, maximum: usize) -> io::Result<Option<Vec<u8>>> {
+    fn bounded_entry(&self, path: &str, maximum: usize) -> io::Result<Option<(&Entry, usize)>> {
         self.verify_index()?;
         let Some(entry) = self.entries.get(path) else {
             return Ok(None);
@@ -256,6 +256,13 @@ impl Vpk {
         if total > maximum {
             return Err(invalid("VPK entry exceeds the caller's byte read limit"));
         }
+        Ok(Some((entry, total)))
+    }
+
+    pub fn read_limited(&self, path: &str, maximum: usize) -> io::Result<Option<Vec<u8>>> {
+        let Some((entry, total)) = self.bounded_entry(path, maximum)? else {
+            return Ok(None);
+        };
         let mut data = entry.preload.to_vec();
         if entry.length > 0 {
             let (archive_path, start) = self.data_location(entry);
@@ -310,8 +317,15 @@ impl Vpk {
     /// Physical files used by the same cached entry mapping as [`Self::read_limited`].
     /// A changed index requires reloading the mount before provenance can be trusted.
     pub fn asset_source_paths(&self, path: &str) -> io::Result<Option<Vec<PathBuf>>> {
-        self.verify_index()?;
-        let Some(entry) = self.entries.get(path) else {
+        self.asset_source_paths_limited(path, usize::MAX)
+    }
+
+    pub fn asset_source_paths_limited(
+        &self,
+        path: &str,
+        maximum: usize,
+    ) -> io::Result<Option<Vec<PathBuf>>> {
+        let Some((entry, _)) = self.bounded_entry(path, maximum)? else {
             return Ok(None);
         };
         let mut paths = vec![std::path::absolute(&self.dir_path)?];
@@ -533,24 +547,34 @@ mod tests {
     #[test]
     fn bounded_reads_reject_declared_sizes_before_opening_an_archive() {
         let file = tempfile::NamedTempFile::new().unwrap();
-        let pak = Vpk {
-            dir_path: file.path().to_owned(),
-            archive_stem: file.path().with_extension("absent-archive"),
-            dir_data_start: 0,
-            index_identity: index_identity(&file.as_file().metadata().unwrap()),
-            entries: HashMap::from([(
-                "models/large.mdl".into(),
-                Entry {
-                    crc: 0,
-                    preload: Box::new([]),
-                    archive: 0,
-                    offset: 0,
-                    length: u32::MAX,
-                },
-            )]),
-        };
-        let error = pak.read_limited("models/large.mdl", 64).unwrap_err();
-        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
-        assert!(error.to_string().contains("limit"));
+        for (preload, length) in [(b"".as_slice(), u32::MAX), (b"pre", 64)] {
+            let pak = Vpk {
+                dir_path: file.path().to_owned(),
+                archive_stem: file.path().with_extension("absent-archive"),
+                dir_data_start: 0,
+                index_identity: index_identity(&file.as_file().metadata().unwrap()),
+                entries: HashMap::from([(
+                    "models/large.mdl".into(),
+                    Entry {
+                        crc: 0,
+                        preload: preload.into(),
+                        archive: 0,
+                        offset: 0,
+                        length,
+                    },
+                )]),
+            };
+            for error in [
+                pak.read_limited("models/large.mdl", 64).unwrap_err(),
+                pak.asset_source_paths_limited("models/large.mdl", 64)
+                    .unwrap_err(),
+            ] {
+                assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+                assert_eq!(
+                    error.to_string(),
+                    "VPK entry exceeds the caller's byte read limit"
+                );
+            }
+        }
     }
 }

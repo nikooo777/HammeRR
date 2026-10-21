@@ -36,6 +36,8 @@ mod reflection_transaction_tests;
 #[cfg(test)]
 mod sky_packing_settings_tests;
 #[cfg(test)]
+mod static_prop_source_tests;
+#[cfg(test)]
 mod viscluster_tests;
 #[cfg(test)]
 mod water_packing_settings_tests;
@@ -68,9 +70,13 @@ struct Job {
     status: &'static str,
     result: Option<Value>,
     instance_dependencies: Option<compiler::instances::DependencyGuard>,
+    static_prop_sources: Option<StaticPropSources>,
+    guarded: bool,
 }
 
 pub struct CompileRequest {
+    #[cfg(test)]
+    before_preparation: Option<Box<dyn FnOnce() + Send>>,
     #[cfg(test)]
     capture: Option<CaptureBackend>,
     native_plan: Option<NativeCapturePlan>,
@@ -119,6 +125,7 @@ pub struct CompileResult {
     revision: u64,
     options: compiler::Options,
     content_epoch: u64,
+    static_prop_sources: Option<StaticPropSources>,
     source: Option<compiler::FileIdentity>,
     destination_stamp: Option<compiler::FileStamp>,
     control: compiler::Control,
@@ -346,7 +353,7 @@ impl CompileRequest {
             None
         };
         let instances = compiler::instances::requires_source(&self.vmf);
-        let guarded = self.options.requires_guarded_publication() || instances;
+        let guarded = self.options.requires_guarded_publication_for(&self.vmf);
         let mut lease = None;
         let mut source = None;
         let mut pointfile_lease = None;
@@ -480,6 +487,10 @@ impl CompileRequest {
         if self.options.pack_water_assets && output.bsp.is_some() && output.water_assets.is_none() {
             return Err("Water packing did not return its retained asset plan".into());
         }
+        #[cfg(test)]
+        if let Some(hook) = self.before_preparation {
+            hook();
+        }
         let mut sources = None;
         let (pending, published, committed, claims, artifact, warning) = if guarded {
             if output.bsp.is_none() && output.leak.is_some() {
@@ -553,6 +564,14 @@ impl CompileRequest {
                 None => (None, false, false, None, None, None),
             }
         };
+        let static_prop_sources = sources
+            .as_ref()
+            .and_then(compiler::asset_sources::OutputAssetSourceGuard::static_prop_guard)
+            .map(|guard| StaticPropSources {
+                guard,
+                game: self.game.clone(),
+                content_epoch: self.content_epoch,
+            });
         Ok(CompileResult {
             origin: self.origin,
             token: self.token,
@@ -562,6 +581,7 @@ impl CompileRequest {
             revision: self.revision,
             options: self.options,
             content_epoch: self.content_epoch,
+            static_prop_sources,
             source,
             destination_stamp: self.destination_stamp,
             control: self.control,
@@ -878,6 +898,10 @@ impl Session {
         }
         let control = compiler::Control::default();
         let instances = compiler::instances::requires_source(self.document.vmf());
+        let guarded = self
+            .compilation
+            .options
+            .requires_guarded_publication_for(self.document.vmf());
         if instances && self.path.is_none() {
             return Err("Save the parent VMF before compiling instances; the BSP output path is not a source directory".into());
         }
@@ -923,19 +947,18 @@ impl Session {
                 })
             })
             .transpose()?;
-        let (source_stamp, destination_stamp) =
-            if self.compilation.options.requires_guarded_publication() || instances {
-                let source_stamp = (!instances)
-                    .then_some(self.path.as_ref())
-                    .flatten()
-                    .map(|path| compiler::FileStamp::capture(path).map_err(|e| e.to_string()))
-                    .transpose()?;
-                let destination_stamp =
-                    compiler::FileStamp::capture(&path).map_err(|e| e.to_string())?;
-                (source_stamp, Some(destination_stamp))
-            } else {
-                (None, None)
-            };
+        let (source_stamp, destination_stamp) = if guarded {
+            let source_stamp = (!instances)
+                .then_some(self.path.as_ref())
+                .flatten()
+                .map(|path| compiler::FileStamp::capture(path).map_err(|e| e.to_string()))
+                .transpose()?;
+            let destination_stamp =
+                compiler::FileStamp::capture(&path).map_err(|e| e.to_string())?;
+            (source_stamp, Some(destination_stamp))
+        } else {
+            (None, None)
+        };
         if self.file_claims.source.is_none()
             && let Some(source) = &self.path
         {
@@ -994,8 +1017,12 @@ impl Session {
             status: "running",
             result: None,
             instance_dependencies: None,
+            static_prop_sources: None,
+            guarded,
         });
         let request = CompileRequest {
+            #[cfg(test)]
+            before_preparation: None,
             #[cfg(test)]
             capture: None,
             native_plan,
@@ -1041,6 +1068,8 @@ impl Session {
                 "water asset packing"
             } else if result.output.instance_dependencies.is_some() {
                 "instance compilation"
+            } else if result.static_prop_sources.is_some() {
+                "static-prop compilation"
             } else {
                 "sky asset packing"
             };
@@ -1094,6 +1123,9 @@ impl Session {
                     }
                     if let Some(dependencies) = &result.output.instance_dependencies {
                         dependencies.verify_metadata()?;
+                    }
+                    if let Some(sources) = &result.static_prop_sources {
+                        sources.guard.verify_sources(&self.game, &result.control)?;
                     }
                     publication
                         .sources
@@ -1180,16 +1212,13 @@ impl Session {
                 return;
             }
             prop_lighting_guard = result.prop_lighting_guard();
-            if result.options.requires_guarded_publication()
-                || result.output.instance_dependencies.is_some()
-            {
-                let _ = self.commit_guarded_output(result);
-            }
+            let _ = self.commit_guarded_output(result);
         }
         self.compiling = false;
         if let Some(job) = &mut self.compilation.job {
             if let Ok(result) = result {
                 job.instance_dependencies = result.output.instance_dependencies.clone();
+                job.static_prop_sources = result.static_prop_sources.clone();
             }
             job.control.finish();
             job.finished = Some(job.started.elapsed());
@@ -1230,6 +1259,7 @@ impl Session {
                     .unwrap_or_else(|| Err("Build source identity is unavailable".into()));
                 self.compiled = Some(CompiledMap {
                     prop_lighting_guard,
+                    static_prop_sources: result.static_prop_sources.clone(),
                     claim: result.take_artifact_claim(),
                     face_origins: result.output.face_origins.clone(),
                     path: result.path.clone(),
@@ -1337,12 +1367,13 @@ impl Session {
         let job = self.compilation.job.as_ref().map(|job| {
             let progress = job.control.progress();
             let dependency_issue=self.instance_dependency_issue(job.instance_dependencies.as_ref(),&job.source_path);
+            let static_prop_source_issue=self.static_prop_source_issue(job.static_prop_sources.as_ref());
             let mut status=json!({"token":job.token.to_string(),"status":if matches!(job.status(), "queued" | "running") && progress.cancel_requested {"cancelling"} else {job.status()},
                 "stage":progress.stage.name(),"stage_label":progress.stage.label(),"cancellable":matches!(job.status(), "queued" | "running") && progress.cancellable && !progress.cancel_requested,
                 "elapsed_ms":job.elapsed().as_millis(),
                 "path":job.path.display().to_string(),"generation":job.snapshot.generation,"revision":job.snapshot.revision,
                 "compile_region":job.region,"recipe":job.recipe,"native_runtime":job.native_runtime,"reflections":{"channel":if job.options.lighting==compiler::LightingMode::DirectLdrHdr {"ldr_hdr"} else {"ldr"},"samples_complete":progress.reflection_samples_complete,"samples_total":progress.reflection_samples_total},"settings":{"bake_static_prop_vertices":job.options.bake_static_prop_vertices,"pack_sky_assets":job.options.pack_sky_assets,"pack_water_assets":job.options.pack_water_assets,"generate_reflections":job.options.generate_reflections,"smoothing_angle":job.options.smoothing_angle,"bounces":job.options.bounces,"lighting":job.options.lighting.name(),"physics":job.options.physics.name(),"sky_quality":job.options.sky_quality.name(),"visibility":job.options.visibility.name()},
-                "stale":!self.current_snapshot(&job.snapshot) || job.options != self.compilation.options || ((job.options.requires_guarded_publication() || job.instance_dependencies.is_some()) && job.content_epoch != self.content_epoch) || dependency_issue.is_some(),"result":job.result()});
+                "stale":!self.current_snapshot(&job.snapshot) || job.options != self.compilation.options || (job.guarded && job.content_epoch != self.content_epoch) || dependency_issue.is_some() || static_prop_source_issue.is_some(),"static_prop_source_issue":static_prop_source_issue,"result":job.result()});
             if let Some(queue) = &job.queue { status["queue"] = queue.snapshot(); }
             if job.instance_dependencies.is_some() { status["instance_dependencies"]=json!({"current":dependency_issue.is_none(),"error":dependency_issue}); }
             status
@@ -1417,10 +1448,14 @@ impl Session {
                             &job.source_path
                         )
                         .is_none()
-                    && !(job.instance_dependencies.is_some()
-                        && job.content_epoch != self.content_epoch)
+                    && self
+                        .static_prop_source_issue(job.static_prop_sources.as_ref())
+                        .is_none()
+                    && !(job.guarded && job.content_epoch != self.content_epoch)
                 {
                     ""
+                } else if job.static_prop_sources.is_some() {
+                    " · earlier map snapshot, build settings or model/physics sources"
                 } else if job.instance_dependencies.is_some() {
                     " · earlier map snapshot, build settings or dependencies"
                 } else {

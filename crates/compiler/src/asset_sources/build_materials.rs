@@ -54,7 +54,11 @@ pub(super) struct BuildMaterialLookup {
 
 impl BuildMaterialLookup {
     fn capture(game: &GameFs, path: &str) -> io::Result<Self> {
-        match game.asset_source_paths(path)? {
+        Self::capture_limited(game, path, usize::MAX)
+    }
+
+    fn capture_limited(game: &GameFs, path: &str, maximum: usize) -> io::Result<Self> {
+        match game.asset_source_paths_limited(path, maximum)? {
             Some(paths) => Ok(Self {
                 present: true,
                 paths,
@@ -86,6 +90,31 @@ impl BuildMaterialLookup {
 struct Observation {
     lookup: BuildMaterialLookup,
     asset: Option<CapturedBuildAsset>,
+    identity: Option<AssetIdentity>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct AssetIdentity {
+    bytes: usize,
+    sha256: String,
+    origin: AssetOrigin,
+}
+
+impl AssetIdentity {
+    fn capture(asset: &MountedAsset) -> Self {
+        Self {
+            bytes: asset.data.len(),
+            sha256: hash(&asset.data),
+            origin: asset.origin.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum PayloadRetention {
+    #[default]
+    Retained,
+    IdentityOnly,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -129,6 +158,7 @@ impl ReadFailure {
 #[derive(Debug, Default)]
 struct State {
     limits: Limits,
+    retention: PayloadRetention,
     observations: BTreeMap<String, Observation>,
     stamps: BTreeMap<PathBuf, FileStamp>,
     payload_bytes: usize,
@@ -142,6 +172,15 @@ pub struct BuildMaterialSources {
 }
 
 impl BuildMaterialSources {
+    pub(crate) fn without_retained_payloads() -> Self {
+        Self {
+            state: Arc::new(Mutex::new(State {
+                retention: PayloadRetention::IdentityOnly,
+                ..State::default()
+            })),
+        }
+    }
+
     pub fn read_asset(
         &self,
         game: &GameFs,
@@ -205,9 +244,32 @@ impl State {
         path: &str,
         maximum: usize,
     ) -> io::Result<Option<CapturedBuildAsset>> {
-        let before = BuildMaterialLookup::capture(game, path)?;
         let original = self.observations.get(path);
         let first_read = original.is_none();
+        let payload_limit = self.limits.payload_bytes;
+        let remaining = payload_limit - self.payload_bytes;
+        let retained = self.retention == PayloadRetention::Retained;
+        let limit = if first_read && retained {
+            maximum.min(remaining)
+        } else {
+            maximum
+        };
+        let read_error = |error: io::Error| {
+            if !retained {
+                return error;
+            }
+            io::Error::new(
+                error.kind(),
+                format!(
+                    "Build material {path} (retained payload limit {payload_limit} bytes; remaining {remaining} bytes; effective read limit {limit} bytes): {error}",
+                ),
+            )
+        };
+        let before = if first_read {
+            BuildMaterialLookup::capture_limited(game, path, limit).map_err(read_error)?
+        } else {
+            BuildMaterialLookup::capture(game, path)?
+        };
         if let Some(original) = original {
             if original.lookup != before {
                 return Err(changed(path));
@@ -234,6 +296,7 @@ impl State {
                 Observation {
                     lookup: before.clone(),
                     asset: None,
+                    identity: None,
                 },
             );
         }
@@ -244,32 +307,30 @@ impl State {
             physical_paths: self.limits.physical_paths,
         };
         capture_paths(&before.paths, &mut self.stamps, policy)?;
-        let remaining = self.limits.payload_bytes - self.payload_bytes;
-        let limit = if first_read {
-            maximum.min(remaining)
-        } else {
-            maximum
-        };
-        let asset = game.read_asset_limited(path, limit).map_err(|error| {
-            io::Error::new(
-                error.kind(),
-                format!(
-                    "Build material {path} (retained payload limit {} bytes; remaining {remaining} bytes; effective read limit {limit} bytes): {error}",
-                    self.limits.payload_bytes,
-                ),
-            )
-        })?;
+        let asset = game.read_asset_limited(path, limit).map_err(read_error)?;
         let after = BuildMaterialLookup::capture(game, path)?;
         if before != after || before.present != asset.is_some() {
             return Err(changed(path));
         }
         capture_paths(&after.paths, &mut self.stamps, policy)?;
+        let identity = if retained {
+            None
+        } else {
+            asset.as_ref().map(AssetIdentity::capture)
+        };
         if !first_read {
-            let original = &self.observations[path].asset;
-            if !same_asset(original.as_ref(), asset.as_ref()) {
+            let original = &self.observations[path];
+            let same = if retained {
+                same_asset(original.asset.as_ref(), asset.as_ref())
+            } else {
+                original.identity == identity
+            };
+            if !same {
                 return Err(changed(path));
             }
-            return Ok(original.clone());
+            if retained {
+                return Ok(original.asset.clone());
+            }
         }
         let asset = asset.map(|asset| CapturedBuildAsset {
             source: Arc::new(BuildAsset {
@@ -278,12 +339,16 @@ impl State {
                 origin: asset.origin,
             }),
         });
-        self.payload_bytes = self
-            .payload_bytes
-            .checked_add(asset.as_ref().map_or(0, |asset| asset.bytes().len()))
-            .filter(|bytes| *bytes <= self.limits.payload_bytes)
-            .ok_or_else(|| invalid("Build material retained payload accounting overflow"))?;
-        self.observations.get_mut(path).unwrap().asset = asset.clone();
+        if retained {
+            self.payload_bytes = self
+                .payload_bytes
+                .checked_add(asset.as_ref().map_or(0, |asset| asset.bytes().len()))
+                .filter(|bytes| *bytes <= self.limits.payload_bytes)
+                .ok_or_else(|| invalid("Build material retained payload accounting overflow"))?;
+            self.observations.get_mut(path).unwrap().asset = asset.clone();
+        } else if first_read {
+            self.observations.get_mut(path).unwrap().identity = identity;
+        }
         Ok(asset)
     }
 }

@@ -194,6 +194,17 @@ pub fn bounce_label(count: u8) -> &'static str {
 }
 
 impl Options {
+    pub fn requires_guarded_publication_for(self, vmf: &Vmf) -> bool {
+        self.requires_guarded_publication()
+            || instances::requires_source(vmf)
+            || vmf.entities.iter().any(|entity| {
+                !entity.hidden
+                    && entity
+                        .classname()
+                        .is_some_and(|class| class.eq_ignore_ascii_case("prop_static"))
+            })
+    }
+
     pub const fn requires_guarded_publication(self) -> bool {
         self.generate_reflections
             || self.pack_sky_assets
@@ -575,6 +586,7 @@ pub struct Output {
     pub sky_assets: Option<SkyAssetPlan>,
     pub water_assets: Option<water_assets::WaterAssetPlan>,
     pub material_sources: Option<asset_sources::AssetSourceGuard>,
+    pub static_prop_sources: Option<asset_sources::AssetSourceGuard>,
     pub prop_lighting_assets: Option<prop_lighting_assets::PropLightingPlan>,
 }
 
@@ -587,6 +599,7 @@ pub struct PreparedWrite {
     instance_output_stamp: Option<FileStamp>,
     prop_lighting_sources: Option<asset_sources::AssetSourceGuard>,
     material_sources: Option<asset_sources::AssetSourceGuard>,
+    static_prop_sources: Option<asset_sources::AssetSourceGuard>,
 }
 
 #[derive(Debug)]
@@ -657,6 +670,9 @@ impl PreparedWrite {
             if let Some(sources) = &self.material_sources {
                 sources.verify_metadata()?;
             }
+            if let Some(sources) = &self.static_prop_sources {
+                sources.verify_metadata()?;
+            }
             self.staged.commit().map(|publication| PublicationReceipt {
                 success: self.success,
                 publication,
@@ -701,6 +717,9 @@ impl PreparedWrite {
             if let Some(sources) = &self.material_sources {
                 sources.verify_metadata()?;
             }
+            if let Some(sources) = &self.static_prop_sources {
+                sources.verify_metadata()?;
+            }
             lease.verify_commit(&self.destination)?;
             self.staged.commit().map(|publication| PublicationReceipt {
                 success: self.success,
@@ -711,6 +730,17 @@ impl PreparedWrite {
 }
 
 impl Output {
+    pub(crate) fn static_prop_source_guard(
+        &self,
+    ) -> io::Result<Option<&asset_sources::AssetSourceGuard>> {
+        if self.stats.static_props > 0 && self.static_prop_sources.is_none() {
+            return Err(io::Error::other(
+                "Static-prop output is missing its original model/physics source guard",
+            ));
+        }
+        Ok(self.static_prop_sources.as_ref())
+    }
+
     pub fn write(&self, path: &Path) -> io::Result<bool> {
         self.write_controlled(path, &Control::default())
     }
@@ -827,6 +857,9 @@ impl Output {
         if let Some(sources) = &self.material_sources {
             sources.verify_metadata()?;
         }
+        if let Some(sources) = self.static_prop_source_guard()? {
+            sources.verify_metadata()?;
+        }
         let prop_lighting_sources = if let Some(plan) = &self.prop_lighting_assets {
             let bsp = self
                 .bsp
@@ -875,6 +908,7 @@ impl Output {
             instance_output_stamp,
             prop_lighting_sources,
             material_sources: self.material_sources.clone(),
+            static_prop_sources: self.static_prop_sources.clone(),
         }))
     }
 }
@@ -1309,6 +1343,7 @@ fn build(
         control,
         map.materials.prop_lighting_sources_mut(),
     )?;
+    output.static_prop_sources = prop_stats.source_guard;
     if output.report.has_errors() {
         return Ok(());
     }
@@ -1557,6 +1592,7 @@ pub fn compile_with_source_controlled(
         sky_assets: None,
         water_assets: None,
         material_sources: None,
+        static_prop_sources: None,
         prop_lighting_assets: None,
     };
     output.stats.lighting_mode = options.lighting;

@@ -323,7 +323,9 @@ fn real_compile_limits_preserve_previous_output_and_unrotated_bytes() {
         prop.properties.set(key, value);
     }
     vmf.entities.push(prop);
-    let path = directory.path().join("previous.bsp");
+    let outputs = directory.path().join("outputs");
+    std::fs::create_dir(&outputs).unwrap();
+    let path = outputs.join("previous.bsp");
     let baseline = crate::compile(&vmf, &game);
     assert!(!baseline.report.has_errors(), "{:?}", baseline.report);
     assert!(baseline.write(&path).unwrap());

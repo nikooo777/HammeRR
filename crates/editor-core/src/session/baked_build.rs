@@ -103,6 +103,9 @@ pub(super) fn build_state(session: &Session) -> Value {
             "Instance source/dependencies changed or cannot be verified: {error}"
         ));
     }
+    if let Some(error) = session.static_prop_source_issue(build.static_prop_sources.as_ref()) {
+        diagnostics.push(error);
+    }
     if session.compiling() {
         diagnostics
             .push("A new build is running; this is the previous successful build".to_owned());
@@ -210,6 +213,11 @@ pub(super) fn source_issue_controlled(
     build: &super::CompiledMap,
     control: &compiler::Control,
 ) -> Option<String> {
+    if let Some(sources) = &build.static_prop_sources
+        && let Err(error) = sources.verify(control)
+    {
+        return Some(error);
+    }
     if let Some(dependencies) = &build.instance_dependencies {
         dependencies
             .verify(control)
@@ -226,6 +234,11 @@ pub(super) fn source_issue_controlled(
 }
 
 pub(super) fn source_issue(build: &super::CompiledMap) -> Option<String> {
+    if let Some(sources) = &build.static_prop_sources
+        && let Err(error) = sources.verify(&compiler::Control::default())
+    {
+        return Some(error);
+    }
     if let Some(dependencies) = &build.instance_dependencies {
         dependencies
             .verify(&compiler::Control::default())
@@ -247,6 +260,11 @@ pub(super) struct Recheck {
 
 pub(super) fn recheck(build: &super::CompiledMap) -> Recheck {
     let mut stale = Vec::new();
+    if let Some(sources) = &build.static_prop_sources
+        && let Err(error) = sources.verify(&compiler::Control::default())
+    {
+        stale.push(error);
+    }
     if let Some(error) = build
         .instance_dependencies
         .as_ref()

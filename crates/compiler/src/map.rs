@@ -524,7 +524,7 @@ impl<'a> Map<'a> {
         crate::overlays::load(vmf, &mut map, report, control)?;
         if !map.cubemaps.is_empty() {
             report.diagnostics.push(Diagnostic::warning(
-                "Cubemap sample records compiled; reflection material binding and texture capture are not implemented yet",
+                "Cubemap sample records compiled; enable Generate reflections in Build settings for reflection material binding and texture capture. Sample records alone contain no captured textures",
                 None,
                 None,
             ));

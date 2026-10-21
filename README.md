@@ -21,7 +21,7 @@ HammeRR opens and saves Hammer's VMF files, renders your map with the game's own
 
 ## Quick start
 
-You need Linux, Rust 1.92 or newer, a Vulkan graphics driver, and Counter-Strike: Source installed through Steam.
+You need Linux, Rust 1.92 or newer, a C++20 compiler, a Vulkan graphics driver, and Counter-Strike: Source installed through Steam.
 
 ```sh
 cargo build --release -p editor -p editor-core -p compiler -p native-runtime

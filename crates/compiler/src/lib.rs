@@ -1090,7 +1090,7 @@ fn build(
             !item.message.starts_with("Cubemap sample records compiled;")
                 && !item
                     .message
-                    .starts_with("Cubemap face bindings are not implemented yet;")
+                    .starts_with("Cubemap face bindings require Generate reflections;")
         });
         Some(cubemap_assets::prepare(
             vmf,

@@ -48,7 +48,7 @@ impl Map<'_> {
             .is_some_and(|value| !value.trim().is_empty())
         {
             report.diagnostics.push(Diagnostic::warning(
-                "Cubemap face bindings are not implemented yet; the sample is compiled but its sides list is unused",
+                "Cubemap face bindings require Generate reflections; the sample is compiled but its sides list is unused in this build",
                 object,
                 Some(origin),
             ));

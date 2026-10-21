@@ -1132,6 +1132,7 @@ fn bake_inner(
         settings.vmf,
         settings.fs,
         prop_assets.as_mut(),
+        options.generate_reflections,
         report,
         budget,
     )?;

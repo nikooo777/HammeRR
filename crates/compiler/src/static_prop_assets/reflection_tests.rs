@@ -3,7 +3,7 @@ use std::fs;
 use source_formats::bsp::{self, Bsp, PakEntry, PakLimits};
 use source_formats::vmf::Entity;
 
-use super::tests::{Fixture, MODEL};
+use super::tests::{FIRST, Fixture, MODEL};
 use super::{PACKED_STATIC_PROPS_MANIFEST_PATH, verify_packed_static_props};
 use crate::cubemap_assets::{self, CompileContext, CubemapAssetPhase};
 use crate::prop_lighting_assets;
@@ -22,6 +22,63 @@ fn assert_preserved(bsp: &Bsp, expected: &[PakEntry]) {
             "Original packed entry changed: {}",
             original.name
         );
+    }
+}
+
+#[test]
+fn pending_reflection_generation_suppresses_prop_capture_guidance() {
+    let fixture = Fixture::new();
+    for directory in ["materials/dev", "materials/skybox"] {
+        fs::create_dir_all(fixture.directory.path().join(directory)).unwrap();
+    }
+    fixture.write(
+        "materials/dev/dev_measuregeneric01.vmt",
+        "LightmappedGeneric { $basetexture test/one $envmap env_cubemap }",
+    );
+    fixture.write(
+        FIRST,
+        "VertexLitGeneric { $basetexture test/one $envmap env_cubemap }",
+    );
+    for suffix in ["rt", "bk", "lf", "ft", "up", "dn"] {
+        fixture.write(
+            &format!("materials/skybox/sky_day01_01{suffix}.vmt"),
+            "UnlitGeneric { $basetexture test/one }",
+        );
+    }
+    let (mut source, _) = cubemap_assets::tests::source();
+    let id = source.object_ids().chain(source.side_ids()).max().unwrap() + 1;
+    let mut prop = Entity::new(id, "prop_static");
+    for (key, value) in [("model", MODEL), ("origin", "32 32 8"), ("solid", "0")] {
+        prop.properties.set(key, value);
+    }
+    source.entities.push(prop);
+    for lighting in [LightingMode::DirectLdr, LightingMode::DirectLdrHdr] {
+        for generate_reflections in [false, true] {
+            let pending = compile_with_context_controlled(
+                &source,
+                &fixture.game,
+                Options {
+                    generate_reflections,
+                    lighting,
+                    sky_quality: crate::SkyQuality::Fast,
+                    ..Default::default()
+                },
+                Some(&CompileContext::new("prop_reflection_guidance").unwrap()),
+                &Control::default(),
+            );
+            assert!(!pending.report.has_errors(), "{:?}", pending.report);
+            let warned = pending.report.diagnostics.iter().any(|diagnostic| {
+                diagnostic.object.as_deref() == Some(format!("entity:{id}").as_str())
+                    && diagnostic.message.contains("declares $envmap env_cubemap")
+            });
+            assert_eq!(warned, !generate_reflections, "{:?}", pending.report);
+            if generate_reflections {
+                assert_eq!(
+                    pending.cubemap_assets.as_ref().unwrap().phase,
+                    CubemapAssetPhase::Pending
+                );
+            }
+        }
     }
 }
 

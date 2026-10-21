@@ -14,20 +14,22 @@ use source_formats::bsp::{
 use super::failure::{Failure, Stage};
 use super::{Body, Request, Shape, read_bounded};
 
+#[path = "native_geometry.rs"]
+mod geometry;
 #[path = "native_mass.rs"]
 mod mass;
+#[path = "native_polyhedron.rs"]
+mod polyhedron;
 #[path = "native_soup.rs"]
 mod soup;
 
 const LIBRARY_SHA256: &str = "2676cdc02be4b4188f7121c201d5f5a681f9c1c7c924fe7f9159cefd5a718277";
 const GUARD_BYTES: usize = 64;
 const GEOMETRY_EPSILON: f64 = 0.02;
-const CONVEX_MERGE_DISTANCE_HU: f32 = 0.01;
 const MAX_TRIANGLES: i32 = 512;
 const MAX_GEOMETRY_WORK: usize = 50_000_000;
 type Pointer = *mut c_void;
 type Factory = unsafe extern "C" fn(*const c_char, *mut i32) -> Pointer;
-type FromPlanes = unsafe extern "C" fn(Pointer, *const f32, i32, f32) -> Pointer;
 type SetGameData = unsafe extern "C" fn(Pointer, Pointer, u32);
 type Release = unsafe extern "C" fn(Pointer, Pointer);
 type Convert = unsafe extern "C" fn(Pointer, *const Pointer, i32) -> Pointer;
@@ -54,7 +56,7 @@ struct Vector([f32; 3]);
 struct Api {
     pointer: Pointer,
     base: usize,
-    from_planes: FromPlanes,
+    from_polyhedron: polyhedron::Constructor,
     set_game_data: SetGameData,
     convex_free: Release,
     convert: Convert,
@@ -126,7 +128,7 @@ impl Api {
         Ok(Self {
             pointer,
             base,
-            from_planes: unsafe { member(pointer, base, 3, 0x20d00)? },
+            from_polyhedron: unsafe { member(pointer, base, 9, 0x20e00)? },
             set_game_data: unsafe { member(pointer, base, 6, 0x20aa0)? },
             convex_free: unsafe { member(pointer, base, 7, 0x20c90)? },
             convert: unsafe { member(pointer, base, 15, 0x20980)? },
@@ -147,14 +149,11 @@ impl Api {
     }
 
     fn convex(&self, shape: &Shape) -> Result<Convex<'_>, Failure> {
-        let pointer = unsafe {
-            (self.from_planes)(
-                self.pointer,
-                shape.planes.as_ptr().cast(),
-                shape.planes.len() as i32,
-                CONVEX_MERGE_DISTANCE_HU,
-            )
-        };
+        let (pointer, status) = polyhedron::construct(self.from_polyhedron, self.pointer, shape)
+            .map_err(|message| Failure::shape(Stage::ConvexConstruction, shape.brush, message))?;
+        let convex = Convex { api: self, pointer };
+        polyhedron::check_status(status)
+            .map_err(|message| Failure::shape(Stage::ConvexConstruction, shape.brush, message))?;
         if pointer.is_null() {
             return Err(Failure::shape(
                 Stage::ConvexConstruction,
@@ -162,7 +161,6 @@ impl Api {
                 "Native physics rejected the requested convex hull",
             ));
         }
-        let convex = Convex { api: self, pointer };
         unsafe {
             (self.set_game_data)(self.pointer, convex.pointer, shape.brush);
         }
@@ -299,6 +297,20 @@ impl Collide<'_> {
                     "Native physics has an invalid convex triangle count",
                 ));
             }
+            let triangle_work =
+                shape.planes.len() * 7 + shape.corners.len() * geometry::DISTANCE_WORK;
+            *work = (triangle_count as usize)
+                .checked_mul(triangle_work)
+                .and_then(|additional| work.checked_add(additional))
+                .filter(|&total| total <= MAX_GEOMETRY_WORK)
+                .ok_or_else(|| {
+                    Failure::shape(
+                        Stage::GeometryVerification,
+                        brush,
+                        "Physics hull verification exceeded its work limit",
+                    )
+                })?;
+            let mut nearest = vec![f64::INFINITY; shape.corners.len()];
             let center = shape
                 .corners
                 .iter()
@@ -306,14 +318,6 @@ impl Collide<'_> {
                 .sum::<DVec3>()
                 / shape.corners.len() as f64;
             for triangle in 0..triangle_count {
-                *work += shape.planes.len() * 7 + shape.corners.len();
-                if *work > MAX_GEOMETRY_WORK {
-                    return Err(Failure::shape(
-                        Stage::GeometryVerification,
-                        brush,
-                        "Physics hull verification exceeded its work limit",
-                    ));
-                }
                 let mut corners = [Vector::default(); 3];
                 unsafe {
                     vertices(pointer, index, triangle, corners.as_mut_ptr());
@@ -338,28 +342,20 @@ impl Collide<'_> {
                         ));
                     }
                 }
-                let mut normal = (corners[1] - corners[0])
-                    .cross(corners[2] - corners[0])
-                    .normalize();
-                if !normal.is_finite() {
-                    return Err(Failure::shape(
-                        Stage::GeometryVerification,
-                        brush,
-                        "Native physics emitted a degenerate triangle",
-                    ));
-                }
+                let surface = geometry::Triangle::new(corners).map_err(|message| {
+                    Failure::shape(Stage::GeometryVerification, brush, message)
+                })?;
+                let mut normal = surface.normal();
                 if normal.dot(center - corners[0]) > 0.0 {
                     normal = -normal;
                 }
-                if shape.corners.iter().any(|corner| {
-                    normal.dot(DVec3::from_array(corner.map(f64::from)) - corners[0])
-                        > GEOMETRY_EPSILON
-                }) {
-                    return Err(Failure::shape(
-                        Stage::GeometryVerification,
-                        brush,
-                        "Native physics cropped the convex beyond the geometry tolerance",
-                    ));
+                for (corner, nearest) in shape.corners.iter().zip(&mut nearest) {
+                    let distance = surface
+                        .distance_squared(DVec3::from_array(corner.map(f64::from)))
+                        .map_err(|message| {
+                            Failure::shape(Stage::GeometryVerification, brush, message)
+                        })?;
+                    *nearest = nearest.min(distance);
                 }
                 let material =
                     triangle_material(shape, corners, normal, material).map_err(|message| {
@@ -377,6 +373,16 @@ impl Collide<'_> {
                         "Native physics did not retain the authored surface mapping",
                     ));
                 }
+            }
+            if nearest
+                .iter()
+                .any(|&distance| distance > GEOMETRY_EPSILON * GEOMETRY_EPSILON)
+            {
+                return Err(Failure::shape(
+                    Stage::GeometryVerification,
+                    brush,
+                    "Native physics cropped the convex beyond the geometry tolerance",
+                ));
             }
         }
         drop(query);

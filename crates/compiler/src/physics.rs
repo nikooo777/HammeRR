@@ -22,6 +22,7 @@ mod failure;
 mod native;
 mod surface_data;
 mod terrain;
+mod topology;
 mod world_keys;
 
 const MAX_REQUEST_BYTES: u64 = 64 * 1024 * 1024;
@@ -87,6 +88,7 @@ struct Shape {
     brush: u32,
     corners: Vec<[f32; 3]>,
     planes: Vec<[f32; 4]>,
+    faces: Vec<Vec<u16>>,
     #[serde(default)]
     materials: Vec<u8>,
 }
@@ -193,54 +195,68 @@ fn surface_index(name: &str, names: &mut Vec<String>) -> Result<u8, String> {
     Ok(names.len() as u8)
 }
 
-fn hull(
+fn hull<'a>(
     map: &Map,
     tag: usize,
-    points: impl Iterator<Item = DVec3>,
-    planes: impl Iterator<Item = usize>,
+    sides: impl Clone + Iterator<Item = (usize, &'a crate::winding::Winding)>,
+    budget: &mut topology::Budget,
 ) -> Result<Shape, String> {
-    let corners = points
-        .map(|point| point.as_vec3().to_array())
-        .collect::<Vec<_>>();
-    let mut seen = BTreeSet::new();
-    let corners = corners
-        .into_iter()
-        .filter(|point| seen.insert(point.map(f32::to_bits)))
-        .collect();
-    let planes = planes
-        .map(|index| {
+    let brush = tag
+        .try_into()
+        .map_err(|_| "Physics brush index exceeds native bounds")?;
+    topology::build(
+        brush,
+        sides.map(|(index, winding)| {
             let plane = map.planes.get(index);
             let normal = plane.normal.as_vec3();
-            [normal.x, normal.y, normal.z, plane.dist as f32]
-        })
-        .collect();
-    Ok(Shape {
-        brush: tag
-            .try_into()
-            .map_err(|_| "Physics brush index exceeds native bounds")?,
-        corners,
-        planes,
-        materials: Vec::new(),
-    })
+            (
+                [normal.x, normal.y, normal.z, plane.dist as f32],
+                winding.0.as_slice(),
+            )
+        }),
+        budget,
+    )
 }
 
-fn shape(map: &Map, index: usize, materials: Option<&mut Vec<String>>) -> Result<Shape, String> {
+fn shape(
+    map: &Map,
+    index: usize,
+    materials: Option<&mut Vec<String>>,
+    budget: &mut topology::Budget,
+    report: &mut Report,
+) -> Result<Shape, String> {
     let brush = &map.brushes[index];
     let mut result = hull(
         map,
         index,
-        brush.points(),
         brush
             .sides
             .iter()
             .filter(|side| !side.bevel)
-            .map(|side| side.plane),
-    )?;
+            .filter_map(|side| {
+                let winding = side.winding.as_ref()?;
+                (!winding.0.is_empty()).then_some((side.plane, winding))
+            }),
+        budget,
+    )
+    .inspect_err(|message| {
+        let origin = map.entities[brush.entity].origin.unwrap_or(DVec3::ZERO);
+        report.diagnostics.push(Diagnostic::error(
+            message.clone(),
+            Some(format!("solid:{}", brush.id)),
+            Some((brush.mins + brush.maxs) * 0.5 + origin),
+        ));
+    })?;
     if let Some(names) = materials {
         result.materials = brush
             .sides
             .iter()
             .filter(|side| !side.bevel)
+            .filter(|side| {
+                side.winding
+                    .as_ref()
+                    .is_some_and(|winding| !winding.0.is_empty())
+            })
             .map(|side| material_index(map, side.material, names))
             .collect::<Result<_, _>>()?;
     }
@@ -263,6 +279,7 @@ fn plan(
         surface_data: Vec::new(),
     };
     let mut terrain_properties = None;
+    let mut topology_budget = topology::Budget::default();
     let emitted_models = bsp
         .records::<source_formats::bsp::Model>()
         .map_err(|error| error.to_string())?;
@@ -292,6 +309,8 @@ fn plan(
                             map,
                             index,
                             Some(&mut request.materials),
+                            &mut topology_budget,
+                            report,
                         )?);
                     }
                 }
@@ -312,6 +331,8 @@ fn plan(
                     map,
                     index,
                     Some(&mut request.materials),
+                    &mut topology_budget,
+                    report,
                 )?);
             }
         }
@@ -437,15 +458,30 @@ fn plan(
                 control.checkpoint()?;
                 let region = water.leaves[index];
                 if region >= 0 && !node.solid() && node.split.is_none() {
-                    fluids[region as usize].push(hull(
-                        map,
-                        map.brushes.len() + index,
-                        node.volume
-                            .sides
-                            .iter()
-                            .flat_map(|side| side.winding.0.iter().copied()),
-                        node.volume.sides.iter().map(|side| side.plane),
-                    )?);
+                    fluids[region as usize].push(
+                        hull(
+                            map,
+                            map.brushes.len() + index,
+                            node.volume
+                                .sides
+                                .iter()
+                                .filter(|side| !side.winding.0.is_empty())
+                                .map(|side| (side.plane, &side.winding)),
+                            &mut topology_budget,
+                        )
+                        .map_err(|message| {
+                            let (mins, maxs) = node.volume.bounds();
+                            let message = format!(
+                                "{message}; generated fluid hull for world wet leaf {index}"
+                            );
+                            report.diagnostics.push(Diagnostic::error(
+                                message.clone(),
+                                None,
+                                Some((mins + maxs) * 0.5),
+                            ));
+                            message
+                        })?,
+                    );
                 }
             }
             for (record, shapes) in water.records.iter().zip(fluids) {
@@ -572,6 +608,16 @@ fn validate_materials(materials: &[u8], count: usize, names: usize) -> Result<()
 }
 
 fn validate(request: &Request) -> Result<(), String> {
+    let mut topology_budget = topology::Budget::default();
+    for shape in request
+        .models
+        .iter()
+        .flat_map(|model| &model.bodies)
+        .flat_map(|body| &body.shapes)
+    {
+        let (indices, work) = topology::counts(shape)?;
+        topology_budget.charge(indices, work)?;
+    }
     let properties = surface_data::resolve(&request.surface_data)?;
     if request.models.iter().any(|model| model.index > 0) {
         for name in &request.materials {
@@ -775,65 +821,14 @@ fn validate(request: &Request) -> Result<(), String> {
                         "Engine physics exceeds 8,192 convexes or one million corners".into(),
                     );
                 }
-                if !(4..=MAX_CORNERS).contains(&shape.corners.len())
-                    || !(4..=MAX_PLANES).contains(&shape.planes.len())
-                {
-                    return Err(format!(
-                        "Physics brush {} needs 4–256 corners and planes",
-                        shape.brush
-                    ));
-                }
-                let mut mins = DVec3::splat(f64::INFINITY);
-                let mut maxs = DVec3::splat(f64::NEG_INFINITY);
-                let mut points = Vec::with_capacity(shape.corners.len());
-                for point in &shape.corners {
-                    let point = DVec3::from_array(point.map(f64::from));
-                    if !point.is_finite() || point.abs().max_element() > MAX_COMPILE_COORD {
-                        return Err("Physics corners require finite Source coordinates".into());
-                    }
-                    if fluid && point.z > body.surface.unwrap() as f64 + 0.02 {
-                        return Err("Fluid hull extends above its surface plane".into());
-                    }
-                    mins = mins.min(point);
-                    maxs = maxs.max(point);
-                    points.push(point);
-                }
-                if !mins.cmplt(maxs).all() {
-                    return Err("Physics convex has empty bounds".into());
-                }
-                let origin = points[0];
-                let axis = points
-                    .iter()
-                    .map(|point| *point - origin)
-                    .max_by(|a, b| a.length_squared().total_cmp(&b.length_squared()))
-                    .unwrap();
-                let normal = points
-                    .iter()
-                    .map(|point| axis.cross(*point - origin))
-                    .max_by(|a, b| a.length_squared().total_cmp(&b.length_squared()))
-                    .unwrap();
-                if normal.length_squared() == 0.0
-                    || points
+                topology::validate(shape)?;
+                if let Some(surface) = body.surface
+                    && shape
+                        .corners
                         .iter()
-                        .all(|point| normal.normalize().dot(*point - origin).abs() < 1e-5)
+                        .any(|point| f64::from(point[2]) > f64::from(surface) + 0.02)
                 {
-                    return Err("Physics convex corners are coplanar".into());
-                }
-                for plane in &shape.planes {
-                    let normal = DVec3::from_array([
-                        f64::from(plane[0]),
-                        f64::from(plane[1]),
-                        f64::from(plane[2]),
-                    ]);
-                    if !normal.is_finite()
-                        || normal.length_squared() == 0.0
-                        || !plane[3].is_finite()
-                        || points.iter().any(|point| {
-                            normal.dot(*point) > f64::from(plane[3]) + 0.02 * normal.length()
-                        })
-                    {
-                        return Err("Physics corners escape their supporting planes".into());
-                    }
+                    return Err("Fluid hull extends above its surface plane".into());
                 }
             }
         }
@@ -1257,6 +1252,14 @@ mod tests {
                 [0.0, -1.0, 0.0, 0.0],
                 [0.0, 0.0, 1.0, 32.0],
                 [0.0, 0.0, -1.0, 0.0],
+            ],
+            faces: vec![
+                vec![1, 3, 7, 5],
+                vec![0, 4, 6, 2],
+                vec![2, 6, 7, 3],
+                vec![0, 1, 5, 4],
+                vec![4, 5, 7, 6],
+                vec![0, 2, 3, 1],
             ],
             materials: Vec::new(),
         };

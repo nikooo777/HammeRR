@@ -24,9 +24,10 @@ construction or verification stage, VMF solid, owning entity/class/name and
 checked bounds. Instance failures identify the parent instance and original
 child file/object. Generated water hulls are labeled separately with their wet
 leaf and bounds. Repair the named geometry and compile again; a rejected hull
-stops publication and preserves the previous BSP. Very small facets can remain
-valid editable geometry while failing native hull construction; enlarge or
-reshape the named fragment rather than omitting its collision.
+stops publication and preserves the previous BSP. Convex bodies pass their checked
+faces and edges directly to the native constructor, retaining small carved
+fragments. Geometry that collapses in native coordinates or has invalid topology
+is rejected explicitly.
 
 For mixed-material models, the property covering the greatest emitted face
 area determines the base mass. Equal areas keep the first emitted property.

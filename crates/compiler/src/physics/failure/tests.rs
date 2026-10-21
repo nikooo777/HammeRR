@@ -36,7 +36,16 @@ fn request(map: &Map) -> Request {
             index: 0,
             bodies: vec![Body {
                 contents: MASK_SOLID,
-                shapes: vec![shape(map, 0, None).unwrap()],
+                shapes: vec![
+                    shape(
+                        map,
+                        0,
+                        None,
+                        &mut crate::physics::topology::Budget::default(),
+                        &mut Report::default(),
+                    )
+                    .unwrap(),
+                ],
                 surface: None,
                 current_hu: None,
                 damping: None,

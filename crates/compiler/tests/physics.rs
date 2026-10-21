@@ -263,6 +263,30 @@ entity
     }
 }
 "#,
+        r#"
+world { "id" "1" "classname" "worldspawn" }
+entity
+{
+    "id" "285"
+    "classname" "func_detail"
+    "targetname" "detail_misc"
+    solid
+    {
+        "id" "149"
+        side { "id" "1084" "plane" "(348.80912807335915 27.421634530871863 288.93721186479723) (362.57836546912813 41.19087192664084 288.93721186479723) (382.7129026269652 29.566191478555055 262.6972118647972)" "material" "DEV/DEV_MEASUREGENERIC01" "uaxis" "[1 0 0 0] 3" "vaxis" "[0 -1 0 0] 3" }
+        side { "id" "1085" "plane" "(360.4338085214449 7.2870973730347615 262.6972118647972) (382.7129026269652 29.566191478555055 262.6972118647972) (382.7129026269652 29.566191478555055 230.26278813520275)" "material" "DEV/DEV_MEASUREGENERIC01" "uaxis" "[1 0 0 0] 3" "vaxis" "[0 0 -1 0] 3" }
+        side { "id" "1086" "plane" "(362.57836546912813 41.19087192664084 288.93721186479723) (367.6182561467183 60 288.93721186479723) (390.86761704288983 60 262.6972118647972)" "material" "DEV/DEV_MEASUREGENERIC01" "uaxis" "[0 1 0 0] 3" "vaxis" "[0 0 -1 0] 3" }
+        side { "id" "1087" "plane" "(382.7129026269652 29.566191478555055 262.6972118647972) (390.86761704288983 60 262.6972118647972) (390.86761704288983 60 230.26278813520275)" "material" "DEV/DEV_MEASUREGENERIC01" "uaxis" "[0 1 0 0] 3" "vaxis" "[0 0 -1 0] 3" }
+        side { "id" "1088" "plane" "(333.0432097365025 153.2386590935652 287.459317982193) (338.63970283736114 90.73823490038663 300.044080222489) (295.52609943397425 96.33472800124528 347.0110523044479)" "material" "DEV/DEV_MEASUREGENERIC01" "uaxis" "[0 1 0 0] 3" "vaxis" "[0 0 -1 0] 3" }
+        side { "id" "1089" "plane" "(355.9570448490476 159.37840270747085 -16.56441888656122) (371.9570448490475 99.66558978636878 0.000000000000048096310517768615) (367.6698577701496 115.66558978636873 61.81925288250044)" "material" "DEV/DEV_MEASUREGENERIC01" "uaxis" "[0 1 0 0] 3" "vaxis" "[0 0 -1 0] 3" }
+        side { "id" "1090" "plane" "(50.49610398338425 -124.45402565027105 195.4364950386774) (44.89961088252561 -167.5676290536579 148.46952295671846) (-17.600813310652967 -173.16412215451655 161.05428519701445)" "material" "DEV/DEV_MEASUREGENERIC01" "uaxis" "[1 0 0 0] 3" "vaxis" "[0 0 -1 0] 3" }
+        side { "id" "1091" "plane" "(36.25216027546995 -71.29490403218392 61.8192528825004) (20.252160275469944 -75.58209111108191 0.00000000000002606193214334677) (-39.460652645632095 -91.58209111108191 16.564418886561363)" "material" "DEV/DEV_MEASUREGENERIC01" "uaxis" "[1 0 0 0] 3" "vaxis" "[0 0 -1 0] 3" }
+        side { "id" "1092" "plane" "(63.3802929681205 0.6197070318794928 331.08190978587936) (62.228287169493136 -62.22828716949314 319.04851843081406) (-0.619707031879507 -63.38029296812051 331.08190978587936)" "material" "DEV/DEV_MEASUREGENERIC01" "uaxis" "[1 0 0 0] 3" "vaxis" "[0 -1 0 0] 3" }
+        side { "id" "1093" "plane" "(178.19333615040586 -242.193336150406 194.8388809802324) (189.38632235212313 -189.3863223521233 229.2210908218954) (136.5793085538404 -200.57930855384058 263.60330066355834)" "material" "DEV/DEV_MEASUREGENERIC01" "uaxis" "[1 0 0 0] 3" "vaxis" "[0 -1 0 0] 3" }
+        side { "id" "1423" "plane" "(155.43827202076292 -9.403912719979957 356.7829597521494) (153.55204595610203 53.93356986061436 347.79377449508047) (94.92224251666595 55.81979592527524 373.386513697559)" "material" "CS_ITALY/YELLOW" "uaxis" "[1 0 0 0] 0.25" "vaxis" "[0 -1 0 0] 0.25" }
+    }
+}
+"#,
     ];
     for fixture in fixtures {
         let fragment = source_formats::vmf::Vmf::parse(fixture).unwrap();
@@ -314,7 +338,7 @@ entity
 }
 
 #[test]
-fn engine_worker_reports_rejected_carved_fragment_without_publishing() {
+fn engine_worker_preserves_tiny_carved_fragment_with_explicit_topology() {
     let Some(root) = installed_game() else {
         eprintln!("CS:S not installed; skipping native carved-fragment fixture");
         return;
@@ -396,23 +420,27 @@ entity
             ..Options::default()
         },
     );
-    assert!(output.report.has_errors());
-    assert!(output.bsp.is_none());
-    let diagnostic = output
-        .report
-        .diagnostics
-        .iter()
-        .find(|diagnostic| diagnostic.object.as_deref() == Some("solid:202"))
-        .unwrap();
-    assert!(diagnostic.message.contains("convex construction"));
-    assert!(diagnostic.message.contains("VMF entity 285"));
-    assert!(diagnostic.message.contains("detail_misc"));
-    assert!(diagnostic.message.contains("checked world bounds"));
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    assert_eq!(output.stats.physics_convexes, 7);
+    assert_eq!(output.stats.physics_solids, 1);
+    let bsp = output.bsp.as_ref().unwrap();
+    let reopened = Bsp::parse(&bsp.to_bytes()).unwrap();
+    let physics = reopened.physics().unwrap().unwrap();
+    assert_eq!(physics.models.len(), 1);
+    assert_eq!(physics.models[0].solids.len(), 1);
+    assert!(matches!(
+        physics.models[0].solids[0].header(),
+        CollisionHeader::Convex { .. }
+    ));
+    assert_eq!(
+        physics.to_bytes(1).unwrap(),
+        bsp.lump(lump::PHYSCOLLIDE).data
+    );
     let directory = tempfile::tempdir().unwrap();
     let previous = directory.path().join("previous.bsp");
     std::fs::write(&previous, b"previous BSP").unwrap();
-    assert!(!output.write(&previous).unwrap());
-    assert_eq!(std::fs::read(previous).unwrap(), b"previous BSP");
+    assert!(output.write(&previous).unwrap());
+    assert_eq!(std::fs::read(previous).unwrap(), bsp.to_bytes());
     assert_eq!(source.write(&Default::default()), before);
 }
 
@@ -676,7 +704,11 @@ fn absent_and_unverified_backends_preserve_previous_output() {
     assert!(!output.write(&path).unwrap());
     assert_eq!(std::fs::read(&path).unwrap(), before);
     let request = directory.path().join("bad.json");
-    std::fs::write(&request, "{\"model_count\":1,\"models\":[{\"index\":0,\"bodies\":[{\"contents\":33570827,\"shapes\":[{\"brush\":0,\"corners\":[[0,0,0],[1,0,0],[0,1,0],[1,1,0]],\"planes\":[[0,0,1,0],[0,0,-1,0],[1,0,0,1],[-1,0,0,0]]}]}]}]}").unwrap();
+    std::fs::write(
+        &request,
+        r#"{"model_count":1,"models":[{"index":0,"bodies":[{"contents":33570827,"shapes":[{"brush":0,"corners":[[0,0,0],[1,0,0],[0,1,0],[1,1,0]],"planes":[[0,0,1,0],[0,0,-1,0],[1,0,0,1],[-1,0,0,0]],"faces":[[0,1,3,2],[2,3,1,0],[0,2,3,1],[1,3,2,0]]}]}]}]}"#,
+    )
+    .unwrap();
     let failure = directory.path().join("failure.json");
     let result = Command::new(env!("CARGO_BIN_EXE_hammerr-physics"))
         .arg(&libraries)
@@ -687,8 +719,8 @@ fn absent_and_unverified_backends_preserve_previous_output() {
         .unwrap();
     assert!(!result.status.success());
     assert!(
-        String::from_utf8_lossy(&result.stderr).contains("coplanar")
-            || String::from_utf8_lossy(&result.stderr).contains("empty bounds")
+        String::from_utf8_lossy(&result.stderr).contains("topology")
+            && String::from_utf8_lossy(&result.stderr).contains("escapes its plane")
     );
     assert!(!directory.path().join("rejected.bin").exists());
     let failure: serde_json::Value =

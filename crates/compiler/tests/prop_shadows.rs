@@ -294,6 +294,108 @@ fn compile(vmf: &Vmf, game: &GameFs) -> compiler::Output {
 }
 
 #[test]
+fn local_reflection_guidance_keeps_each_prop_source_in_dual_lighting() {
+    let (directory, game) = game();
+    std::fs::write(
+        directory.path().join("materials/models/test/one.vmt"),
+        "VertexLitGeneric { $basetexture test $envmap \" EnV_CuBeMaP \" }",
+    )
+    .unwrap();
+    let mut vmf = scene();
+    let mut second = vmf.entities.last().unwrap().clone();
+    second.id = 9003;
+    second.properties.set("origin", "48 0 50");
+    vmf.entities.push(second);
+    let before = vmf.clone();
+    let output = compiler::compile_with_options(
+        &vmf,
+        &game,
+        Options {
+            lighting: LightingMode::DirectLdrHdr,
+            ..options()
+        },
+    );
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    assert!(output.bsp.is_some());
+    let warnings: Vec<_> = output
+        .report
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.message.contains("declares $envmap env_cubemap"))
+        .collect();
+    assert_eq!(warnings.len(), 2, "{:?}", output.report);
+    assert_eq!(warnings[0].level, compiler::Level::Warning);
+    assert_eq!(warnings[0].object.as_deref(), Some("entity:9002"));
+    assert_eq!(warnings[0].position, Some(DVec3::new(0.0, 0.0, 50.0)));
+    assert_eq!(warnings[1].object.as_deref(), Some("entity:9003"));
+    assert_eq!(warnings[1].position, Some(DVec3::new(48.0, 0.0, 50.0)));
+    assert!(warnings[0].message.contains("material one"));
+    assert!(
+        warnings[0]
+            .message
+            .contains("Generate reflections is disabled")
+    );
+    assert_eq!(vmf, before);
+}
+
+#[test]
+fn local_reflection_guidance_uses_active_skin_and_resolved_patch_declaration() {
+    let (directory, game) = game();
+    let materials = directory.path().join("materials/models/test");
+    std::fs::write(
+        materials.join("one.vmt"),
+        "VertexLitGeneric { $envmap engine/defaultcubemap }",
+    )
+    .unwrap();
+    std::fs::write(
+        materials.join("reflection.vmt"),
+        "VertexLitGeneric { $envmap env_cubemap }",
+    )
+    .unwrap();
+    std::fs::write(
+        materials.join("two.vmt"),
+        "Patch { include materials/models/test/reflection.vmt }",
+    )
+    .unwrap();
+    let mut vmf = scene();
+    let original = compile(&vmf, &game);
+    assert!(
+        !original
+            .report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| { diagnostic.message.contains("declares $envmap env_cubemap") })
+    );
+    vmf.entities.last_mut().unwrap().properties.set("skin", "1");
+    let selected = compile(&vmf, &game);
+    assert_eq!(
+        selected
+            .report
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| {
+                diagnostic.object.as_deref() == Some("entity:9002")
+                    && diagnostic.message.contains("declares $envmap env_cubemap")
+            })
+            .count(),
+        1
+    );
+    std::fs::write(
+        materials.join("two.vmt"),
+        "Patch { include materials/models/test/reflection.vmt replace { $envmap engine/defaultcubemap } }",
+    )
+    .unwrap();
+    let replaced = compile(&vmf, &game);
+    assert!(
+        !replaced
+            .report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| { diagnostic.message.contains("declares $envmap env_cubemap") })
+    );
+}
+
+#[test]
 fn opaque_prop_uses_mesh_holes_not_bounds_and_preserves_source() {
     let (_directory, game) = game();
     let mut vmf = scene();

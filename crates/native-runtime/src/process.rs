@@ -1,6 +1,7 @@
 use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::os::fd::{AsRawFd, FromRawFd};
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -39,6 +40,9 @@ pub(crate) struct WorkerResult {
 }
 
 const LEASE_FD: i32 = 198;
+const WAYLAND_DIRECTORY: &str = "wayland";
+const WAYLAND_SOCKET_NAME: &str = "wayland-0";
+const WAYLAND_SOCKET_PATH_CAPACITY: usize = 108;
 
 struct Lease(File);
 
@@ -421,6 +425,7 @@ fn finish_caller(
 
 pub(crate) fn supervise(directory: &Path) -> io::Result<()> {
     let directory = directory.canonicalize()?;
+    validate_capture_socket_path(&directory)?;
     let request: WorkerRequest = util::json_read(&directory.join("request.json"), 2 * 1024 * 1024)?;
     if request.version != 1
         || directory.file_name().and_then(|name| name.to_str()) != Some(&request.nonce)
@@ -458,7 +463,7 @@ pub(crate) fn supervise(directory: &Path) -> io::Result<()> {
     let start = Instant::now();
     let operation = (|| {
         check_caller(&request, &directory)?;
-        let wayland = directory.join("wayland");
+        let wayland = directory.join(WAYLAND_DIRECTORY);
         fs::create_dir(&wayland)?;
         fs::set_permissions(&wayland, fs::Permissions::from_mode(0o700))?;
         let log = File::create(directory.join("compositor.log"))?;
@@ -592,6 +597,18 @@ pub fn capture(
     capture_with_cleanup(request, observer).map_err(|failure| failure.error)
 }
 
+fn validate_capture_socket_path(directory: &Path) -> io::Result<()> {
+    let socket = directory.join(WAYLAND_DIRECTORY).join(WAYLAND_SOCKET_NAME);
+    let bytes = socket.as_os_str().as_bytes().len() + 1;
+    if bytes > WAYLAND_SOCKET_PATH_CAPACITY {
+        return Err(invalid(format!(
+            "Native capture Wayland socket path requires {bytes} bytes including its NUL terminator, exceeding the Linux limit of {WAYLAND_SOCKET_PATH_CAPACITY} bytes; choose a shorter lowercase TMPDIR (planned socket: {})",
+            socket.display(),
+        )));
+    }
+    Ok(())
+}
+
 fn capture_directory_in(parent: &Path) -> io::Result<tempfile::TempDir> {
     let parent = parent.canonicalize()?;
     if parent
@@ -605,8 +622,10 @@ fn capture_directory_in(parent: &Path) -> io::Result<tempfile::TempDir> {
         ));
     }
     let nonce = getrandom::u64().map_err(io::Error::other)?;
+    let prefix = format!("hammerr_capture_{nonce:016x}");
+    validate_capture_socket_path(&parent.join(&prefix))?;
     tempfile::Builder::new()
-        .prefix(&format!("hammerr_capture_{nonce:016x}"))
+        .prefix(&prefix)
         .rand_bytes(0)
         .permissions(fs::Permissions::from_mode(0o700))
         .tempdir_in(parent)
@@ -617,7 +636,7 @@ pub fn capture_with_cleanup(
     observer: &mut dyn CaptureObserver,
 ) -> Result<CaptureReceipt, crate::CaptureFailure> {
     let mut cleanup = crate::CleanupDisposition::Confirmed;
-    capture_inner(request, observer, &mut cleanup)
+    capture_inner(request, observer, &mut cleanup, &std::env::temp_dir())
         .map_err(|error| crate::CaptureFailure { error, cleanup })
 }
 
@@ -625,8 +644,10 @@ fn capture_inner(
     mut request: CaptureRequest,
     observer: &mut dyn CaptureObserver,
     disposition: &mut crate::CleanupDisposition,
+    temporary_parent: &Path,
 ) -> io::Result<CaptureReceipt> {
     observer.checkpoint()?;
+    let directory = capture_directory_in(temporary_parent)?;
     let lease = lease()?;
     util::validate_name(&request.map_name)?;
     if request.samples.is_empty() || request.samples.len() > 32 {
@@ -658,9 +679,7 @@ fn capture_inner(
     request.environment = guard::resolve_environment(&request.environment)?;
     guard::validate_environment(&request.environment)?;
     let helper = helper()?;
-    let directory = capture_directory_in(&std::env::temp_dir())?
-        .keep()
-        .canonicalize()?;
+    let directory = directory.keep().canonicalize()?;
     let staged = crate::adapter::capture_staging_bsp_for_channel(&request.bsp, request.channel)?;
     if staged
         .len()
@@ -809,7 +828,6 @@ fn capture_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::ffi::OsStrExt;
 
     struct CancelledObserver;
 
@@ -891,6 +909,93 @@ mod tests {
         drop(first);
         assert!(!path.exists());
         assert!(second.path().is_dir());
+    }
+
+    #[test]
+    fn capture_socket_path_capacity_matches_linux_unix_sockets() {
+        let address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+        assert_eq!(WAYLAND_SOCKET_PATH_CAPACITY, address.sun_path.len());
+    }
+
+    #[test]
+    fn capture_socket_path_accepts_capacity_including_nul_and_rejects_next_byte() {
+        let suffix_bytes = Path::new(WAYLAND_DIRECTORY)
+            .join(WAYLAND_SOCKET_NAME)
+            .as_os_str()
+            .as_bytes()
+            .len();
+        let directory_bytes = WAYLAND_SOCKET_PATH_CAPACITY - suffix_bytes - 2;
+        let directory = PathBuf::from(format!("/{}", "a".repeat(directory_bytes - 1)));
+        validate_capture_socket_path(&directory).unwrap();
+        let overlong = PathBuf::from(format!("{}a", directory.display()));
+        let error = validate_capture_socket_path(&overlong).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("requires 109 bytes"));
+        assert!(error.to_string().contains("shorter lowercase TMPDIR"));
+    }
+
+    #[test]
+    fn capture_socket_path_counts_non_ascii_filename_bytes() {
+        let directory = PathBuf::from(format!("/{}", "é".repeat(45)));
+        let socket = directory.join(WAYLAND_DIRECTORY).join(WAYLAND_SOCKET_NAME);
+        assert!(socket.to_str().unwrap().chars().count() < WAYLAND_SOCKET_PATH_CAPACITY);
+        let error = validate_capture_socket_path(&directory).unwrap_err();
+        assert!(error.to_string().contains("requires 110 bytes"));
+    }
+
+    #[derive(Default)]
+    struct PrestartObserver {
+        checkpoints: usize,
+        progress: usize,
+    }
+
+    impl CaptureObserver for PrestartObserver {
+        fn checkpoint(&mut self) -> io::Result<()> {
+            self.checkpoints += 1;
+            Ok(())
+        }
+
+        fn sample_progress(&mut self, _current: usize, _total: usize) {
+            self.progress += 1;
+        }
+    }
+
+    #[test]
+    fn overlong_capture_parent_is_rejected_before_readiness_or_native_startup() {
+        let directory = capture_directory_in(&std::env::temp_dir()).unwrap();
+        let parent = directory
+            .path()
+            .join("a".repeat(WAYLAND_SOCKET_PATH_CAPACITY));
+        fs::create_dir(&parent).unwrap();
+        let request = CaptureRequest {
+            channel: crate::CaptureChannel::Ldr,
+            environment: CaptureEnvironment {
+                engine_root: parent.join("missing-engine"),
+                steam_root: parent.join("missing-steam"),
+                mounts: Vec::new(),
+            },
+            bsp: Vec::new(),
+            map_name: "capture".into(),
+            samples: vec![CaptureSample {
+                origin: [0, 0, 0],
+                dimension: 32,
+                texture: "materials/maps/capture/c0_0_0.vtf".into(),
+                bootstrap_sha256: "a".repeat(64),
+            }],
+        };
+        let mut observer = PrestartObserver::default();
+        let mut disposition = crate::CleanupDisposition::Confirmed;
+        let error = capture_inner(request, &mut observer, &mut disposition, &parent)
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("shorter lowercase TMPDIR"));
+        assert_eq!(disposition, crate::CleanupDisposition::Confirmed);
+        assert_eq!(observer.checkpoints, 1);
+        assert_eq!(observer.progress, 0);
+        assert_eq!(fs::read_dir(&parent).unwrap().count(), 0);
+        let error = supervise(&parent).unwrap_err();
+        assert!(error.to_string().contains("shorter lowercase TMPDIR"));
+        assert_eq!(fs::read_dir(&parent).unwrap().count(), 0);
     }
 
     #[test]

@@ -30,6 +30,25 @@ view cannot report complete assembled assignments. An existing owned draft
 can still be cancelled. Reflection generation does not require that inspector.
 Hidden references are omitted and leave root-only binding inspection available.
 
+## Reflective props
+
+Materials that declare `$envmap env_cubemap` use scene reflection samples. Without
+generated scene reflections, the engine's default reflection can produce a
+different specular appearance, especially in HDR.
+
+1. Open **Build details… → Diagnostics** after a lit build. A reflective-prop
+   warning identifies the entity and material when **Generate reflections** is
+   disabled.
+2. Use **Place entity** to add `env_cubemap` helpers near the reflective props.
+   Save the map.
+3. Open **Build settings…**, choose **Direct LDR + HDR** when both channels are
+   needed, enable **Generate reflections**, then compile again.
+
+This warning uses materials already inspected for lit static-prop shadows,
+including the selected skin and resolved Patch materials. It does not inspect
+Fullbright or shadow-disabled props, and does not prove which runtime texture
+the game selects. Sample records alone are not captured reflections.
+
 ## Configure the capture runtime
 
 1. In the same window, click **Configure capture…**.
@@ -95,9 +114,10 @@ capture cleanup, even when the capture and Play installations differ.
 - Generation supports one capture bounce per channel: LDR alone or paired LDR/HDR. Additional capture bounces, moving-scene reassignment and reflection preview inside the editor are unavailable. HDR playback still depends on the game setting and hardware; **HDR data ready** describes baked map data.
 - A build supports 1–32 samples at distinct integer positions. Sample size `0` uses the declared 128-pixel default. Explicit cube edges up to 128 pixels are supported; 256 pixels is rejected before launch. The private capture viewport must verify as 1280×720.
 - A supported CS:S installation, running Steam client, native runtime helper, Cage, grim and Bubblewrap must pass preflight. Bubblewrap needs usable Linux user namespaces. Unsupported materials, sample sizes, missing assets or unverified captures fail the build with diagnostics.
-- Native capture requires a temporary directory path without uppercase ASCII characters. If your temporary path contains uppercase letters, start HammeRR with `TMPDIR` pointing to a writable lowercase path.
+- Native capture requires a short temporary directory path without uppercase ASCII characters. The complete private Wayland socket path, including its terminating NUL, must fit Linux's 108-byte limit. An overlong path is rejected before startup; use a writable lowercase `TMPDIR` such as `/path/to/project/target/native`.
 - The capture client reads external files through a read-only filesystem view. Only its owned capture directory is writable; source mounts keep their files and caches. Graphics devices and Steam IPC remain available.
 - Capture rejects authored scripts, script thinkers, script entities and command-executing entity inputs. This is a conservative capture restriction; the saved VMF and published entity lump keep their authored contents. A managed game in this editor process blocks capture. The existing UID-wide capture lock still rejects captures in another process, and capture preflight retains its same-installation running-client check. Those clients are never stopped.
+- External model assets in a generated-reflection scene are supported on `prop_static` only. Recording scripts and dynamic model entities need a separately authored capture scene; generation does not remove them automatically. Reflections captured from a scene with omitted objects do not establish matching reflections for those objects in the recording scene.
 - Native capture keeps each private channel job within a 256 MiB file budget, including two BSP copies and 64 MiB of scratch admission. BSP staging larger than 96 MiB is rejected. Captured assets and retained diagnostics have additional limits.
 - Packed generation shares a 64 MiB asset budget across both channels, with at most 1,024 material aliases and 4 MiB per captured VTF. HDR samples require VTF 7.4 RGBA16F, seven native faces and a full mip chain. A captured HDR default is optional; any extra LDR default emitted by the HDR pass is validated and reported, while the published LDR default comes from the LDR pass.
 - Active builds freeze compiler settings and runtime configuration. Changing generation afterward makes a previous build stale while its saved settings differ.

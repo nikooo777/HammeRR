@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 use glam::{DQuat, DVec2, DVec3, EulerRot};
 use source_formats::{
@@ -401,6 +404,7 @@ pub(super) fn build<'a>(
     vmf: &Vmf,
     fs: &'a GameFs,
     tracking: Option<&mut Tracker<'a>>,
+    generate_reflections: bool,
     report: &mut Report,
     budget: &mut Budget<'_>,
 ) -> Result<Prepared, String> {
@@ -475,6 +479,7 @@ pub(super) fn build<'a>(
             };
             stats.models += 1;
             let mut materials = BTreeMap::new();
+            let mut reflective_materials = BTreeSet::new();
             for &index in instances {
                 let entity = entities[index];
                 let prop = &props.props[index];
@@ -483,6 +488,7 @@ pub(super) fn build<'a>(
                         .skins
                         .get(prop.skin as usize)
                         .ok_or("Static-prop shadow skin is unavailable")?;
+                    let mut reflection_material = None;
                     for part in model.parts_for_body(0) {
                         budget.consume(1)?;
                         let material = *skin
@@ -492,6 +498,15 @@ pub(super) fn build<'a>(
                             materials.entry(material)
                         {
                             let loaded = assets.material(&model, material, budget)?;
+                            if !generate_reflections
+                                && loaded.as_ref().is_some_and(|material| {
+                                    material.get("$envmap").is_some_and(|value| {
+                                        value.trim().eq_ignore_ascii_case("env_cubemap")
+                                    })
+                                })
+                            {
+                                reflective_materials.insert(material);
+                            }
                             let cutout = if model.header.flags & CAST_TEXTURE_SHADOWS != 0 {
                                 let loaded = loaded.as_ref().ok_or_else(|| format!(
                                     "{path}: requested texture-shadow material {} was not found", model.materials[material]
@@ -519,6 +534,16 @@ pub(super) fn build<'a>(
                             }
                             entry.insert(cutout);
                         }
+                        if reflective_materials.contains(&material) {
+                            reflection_material.get_or_insert(material);
+                        }
+                    }
+                    if let Some(material) = reflection_material {
+                        report.diagnostics.push(Diagnostic::warning(
+                            format!("{path}: material {} declares $envmap env_cubemap, but Generate reflections is disabled. Review or place env_cubemap samples and enable Generate reflections in Build settings to capture map-local reflections", model.materials[material]),
+                            Some(format!("entity:{}", entity.id)),
+                            entity.origin(),
+                        ));
                     }
                     let before = triangles.len();
                     let degenerate = append(&model, prop, &materials, &mut triangles, budget)?;

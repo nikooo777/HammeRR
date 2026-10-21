@@ -86,6 +86,7 @@ fn prepared_assets(
             cubemap_assets: None,
             sky_assets: None,
             water_assets: None,
+            static_prop_assets: None,
             material_sources: None,
             static_prop_sources: None,
             prop_lighting_assets: None,

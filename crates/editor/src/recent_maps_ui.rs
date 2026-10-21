@@ -73,7 +73,7 @@ pub fn refresh(window: &RecentMapsWindow, session: &Session) {
                 .as_str()
                 .unwrap_or("No mounted game");
             selected_detail = Some(format!(
-                "{path}\nGame: {game}\nBuild: {} lighting · {} physics · {} sky · {} visibility · {} bounces · {}° smoothing · static-prop vertex lighting {} · reflections {} · sky packing {} · water packing {}\n{}",
+                "{path}\nGame: {game}\nBuild: {} lighting · {} physics · {} sky · {} visibility · {} bounces · {}° smoothing · static-prop vertex lighting {} · reflections {} · sky packing {} · water packing {} · static-prop packing {}\n{}",
                 settings["lighting"].as_str().unwrap_or_default(),
                 settings["physics"].as_str().unwrap_or_default(),
                 settings["sky_quality"].as_str().unwrap_or_default(),
@@ -96,6 +96,11 @@ pub fn refresh(window: &RecentMapsWindow, session: &Session) {
                     "off"
                 },
                 if settings["pack_water_assets"] == true {
+                    "on"
+                } else {
+                    "off"
+                },
+                if settings["pack_static_prop_assets"] == true {
                     "on"
                 } else {
                     "off"

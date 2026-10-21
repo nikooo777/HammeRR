@@ -20,6 +20,7 @@ mod recipe_authority_tests;
 #[cfg(test)]
 mod recipe_reload_tests;
 mod sky_packing;
+mod static_prop_packing;
 mod water_packing;
 
 pub struct Controller {
@@ -137,6 +138,7 @@ fn refresh_current_settings(window: &CompileWindow, session: &Session) {
     let settings = session.compile_settings();
     sky_packing::refresh(window, session);
     water_packing::refresh(window, session);
+    static_prop_packing::refresh(window, session);
     prop_vertex_lighting::refresh(window, session);
     window.set_generate_reflections(settings["generate_reflections"] == true);
     window.set_reflection_description(
@@ -419,6 +421,7 @@ impl Controller {
         sky_packing::bind(&window, &access, &recipes);
         prop_vertex_lighting::bind(&window, &access, &recipes);
         water_packing::bind(&window, &access, &recipes);
+        static_prop_packing::bind(&window, &access, &recipes);
         let baked_lightmaps = baked_lightmaps::bind(&window, &access)?;
         let baked_prop_vertices = baked_prop_vertices::bind(&window, &access)?;
         window.on_choose_recipe({
@@ -794,6 +797,7 @@ impl Controller {
         };
         let prop_vertex_lighting = prop_vertex_lighting::details(job);
         let packed_water = water_packing::details(job);
+        let packed_static_props = static_prop_packing::details(job);
         let samples = result["stats"]["cubemap_samples"]
             .as_u64()
             .map(|count| format!("\nCubemap samples: {count}"))
@@ -1148,7 +1152,7 @@ impl Controller {
         };
         self.window.set_details(
             format!(
-                "Output: {}\nRecipe at build start: {}\nCompile scope at build start: {region_label}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nIndirect light: {} · Brush smoothing angle: {}°\nStage: {} · {:.2}s elapsed{queue_details}{instances}{packed_sky}{packed_water}{samples}{reflections}{props}{prop_vertex_lighting}{details}{visibility}{hints}{bounce}{areas}{occluders}{terrain}{overlays}{water}{sky}{lighting}{bumps}{model_maps}{styles}{hdr}{smoothing}{physics}\n{}",
+                "Output: {}\nRecipe at build start: {}\nCompile scope at build start: {region_label}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nIndirect light: {} · Brush smoothing angle: {}°\nStage: {} · {:.2}s elapsed{queue_details}{instances}{packed_sky}{packed_water}{packed_static_props}{samples}{reflections}{props}{prop_vertex_lighting}{details}{visibility}{hints}{bounce}{areas}{occluders}{terrain}{overlays}{water}{sky}{lighting}{bumps}{model_maps}{styles}{hdr}{smoothing}{physics}\n{}",
                 job["path"].as_str().unwrap_or_default(),
                 job["recipe"]["name"].as_str().unwrap_or("Custom settings"),
                 compiler::LightingMode::parse(job["settings"]["lighting"].as_str().unwrap_or_default()).unwrap_or_default().label(),

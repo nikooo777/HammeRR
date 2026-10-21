@@ -76,6 +76,7 @@ impl Fixture {
             &Control::default(),
             None,
             &Default::default(),
+            None,
         )
         .unwrap();
         assert!(!report.has_errors(), "{report:?}");
@@ -88,6 +89,106 @@ impl Fixture {
         let index = if path == MODEL { 20 } else { data.len() - 2 };
         data[index] ^= 1;
         fs::write(file, data).unwrap();
+    }
+
+    fn bake_retained(
+        &self,
+        solid: &str,
+        sources: &crate::asset_sources::BuildMaterialSources,
+    ) -> (Stats, Report) {
+        let mut bsp = crate::compile(&crate::test_common::room(), &self.game)
+            .bsp
+            .unwrap();
+        let mut report = Report::default();
+        let stats = bake(
+            &self.source(solid),
+            &self.game,
+            &mut bsp,
+            &mut report,
+            &Control::default(),
+            None,
+            &Default::default(),
+            Some(sources),
+        )
+        .unwrap();
+        (stats, report)
+    }
+}
+
+#[test]
+fn retained_packing_owner_is_the_original_model_and_required_physics_owner() {
+    for solid in ["0", "2", "6"] {
+        let fixture = Fixture::new();
+        let owner = crate::asset_sources::BuildMaterialSources::default();
+        let (stats, report) = fixture.bake_retained(solid, &owner);
+        assert!(!report.has_errors(), "{report:?}");
+        assert_eq!(stats.props, 1);
+        assert_eq!(
+            owner.retained(MODEL).unwrap().unwrap().bytes(),
+            fs::read(fixture.directory.path().join(MODEL)).unwrap()
+        );
+        assert_eq!(owner.is_observed(PHYSICS).unwrap(), solid == "6");
+        if solid == "6" {
+            assert_eq!(
+                owner.retained(PHYSICS).unwrap().unwrap().bytes(),
+                fs::read(fixture.directory.path().join(PHYSICS)).unwrap()
+            );
+        }
+        stats
+            .source_guard
+            .unwrap()
+            .verify_sources(&fixture.game, &Control::default())
+            .unwrap();
+    }
+}
+
+#[test]
+fn retained_packing_reads_cannot_rebaseline_an_existing_original() {
+    for path in [MODEL, PHYSICS] {
+        let fixture = Fixture::new();
+        let owner = crate::asset_sources::BuildMaterialSources::default();
+        owner
+            .read_asset(
+                &fixture.game,
+                path,
+                bsp::PakLimits::default().max_entry_bytes,
+            )
+            .unwrap()
+            .unwrap();
+        fixture.mutate(path);
+        let (stats, report) = fixture.bake_retained("6", &owner);
+        assert!(report.has_errors());
+        assert!(stats.source_guard.is_none());
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .any(|row| row.message.contains("changed"))
+        );
+    }
+}
+
+#[test]
+fn retained_model_and_physics_reads_apply_the_pak_cap_before_payload_io() {
+    for path in [MODEL, PHYSICS] {
+        let fixture = Fixture::new();
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .open(fixture.directory.path().join(path))
+            .unwrap();
+        file.set_len(bsp::PakLimits::default().max_entry_bytes as u64 + 1)
+            .unwrap();
+        let owner = crate::asset_sources::BuildMaterialSources::default();
+        let (stats, report) = fixture.bake_retained("6", &owner);
+        assert!(report.has_errors());
+        assert!(stats.source_guard.is_none());
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .any(|row| row.message.contains("read limit")),
+            "{report:?}"
+        );
     }
 }
 
@@ -318,6 +419,7 @@ fn optional_prop_lighting_keeps_its_original_model_read_receipt() {
         &Control::default(),
         Some(&mut reads),
         &Default::default(),
+        None,
     )
     .unwrap();
     assert!(!report.has_errors(), "{report:?}");
@@ -346,6 +448,7 @@ fn optional_prop_lighting_keeps_its_original_model_read_receipt() {
         &Control::default(),
         Some(&mut reads),
         &Default::default(),
+        None,
     )
     .unwrap();
     assert!(report.has_errors());

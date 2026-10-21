@@ -11,7 +11,7 @@ mod manifest;
 mod material;
 mod sources;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 pub use binding::inspect_cubemap_bindings;
 pub use finalize::verify_sources as verify_reflection_sources;

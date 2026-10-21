@@ -88,6 +88,7 @@ pub struct OutputAssetSourceGuard {
     reflections: Option<crate::cubemap_assets::ReflectionSourceGuard>,
     sky: Option<crate::sky_assets::SkyAssetSourceGuard>,
     water: Option<AssetSourceGuard>,
+    static_prop_assets: Option<AssetSourceGuard>,
     prop_lighting: Option<AssetSourceGuard>,
     material_sources: Option<AssetSourceGuard>,
     static_prop_sources: Option<AssetSourceGuard>,
@@ -111,6 +112,9 @@ impl OutputAssetSourceGuard {
         }
         if let Some(water) = &self.water {
             water.verify_metadata()?;
+        }
+        if let Some(sources) = &self.static_prop_assets {
+            sources.verify_metadata()?;
         }
         if let Some(prop_lighting) = &self.prop_lighting {
             prop_lighting.verify_metadata()?;
@@ -153,6 +157,11 @@ pub fn capture_output_asset_source_guard(
         .as_ref()
         .map(|plan| plan.capture_source_guard(game, control))
         .transpose()?;
+    let static_prop_assets = output
+        .static_prop_assets
+        .as_ref()
+        .map(|plan| plan.capture_source_guard(game, control))
+        .transpose()?;
     let material_sources = output.material_sources.clone();
     if let Some(material_sources) = &material_sources {
         material_sources.verify_sources(game, control)?;
@@ -165,6 +174,7 @@ pub fn capture_output_asset_source_guard(
         reflections,
         sky,
         water,
+        static_prop_assets,
         prop_lighting,
         material_sources,
         static_prop_sources,

@@ -25,6 +25,7 @@ fn replacing_a_valid_model_after_leaf_emission_rejects_the_old_receiver_snapshot
         &control,
         map.materials.prop_lighting_sources_mut(),
         &Default::default(),
+        None,
     )
     .unwrap();
     assert!(!report.has_errors(), "{report:?}");

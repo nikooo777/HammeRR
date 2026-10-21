@@ -702,6 +702,7 @@ fn four_levels_repeated_props_keep_native_ordinals_and_optional_model_read_linka
         &Control::default(),
         Some(&mut reads),
         &prepared.static_prop_metadata(),
+        None,
     )
     .unwrap();
     assert!(!report.has_errors(), "{report:?}");

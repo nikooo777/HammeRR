@@ -7,6 +7,7 @@ mod bones;
 mod hardware;
 #[cfg(test)]
 mod hardware_tests;
+mod portable;
 mod reader;
 #[cfg(test)]
 mod tests;
@@ -17,6 +18,7 @@ pub use hardware::{
     HardwareCharge, HardwareLayout, HardwareLimits, HardwareSection, MAX_HARDWARE_BYTES,
     MAX_HARDWARE_SECTIONS, MAX_HARDWARE_VERTICES, MAX_HARDWARE_WORK,
 };
+pub use portable::{validate_portable_physics, validate_portable_static};
 
 pub fn material_candidates<'a>(
     name: &'a str,

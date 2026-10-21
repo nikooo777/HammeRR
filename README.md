@@ -366,6 +366,13 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 
 [Water packing →](docs/water.md#pack-static-water-assets)
 
+| Static-prop asset packing |
+| --- |
+| ![Static-prop asset packing in Build settings](docs/images/build-pack-static-prop-assets.png) |
+| Pack supported original static models, declared materials and textures into the BSP. |
+
+[Static-prop packing →](docs/static-props.md#pack-static-prop-assets)
+
 | Compile regions |
 | --- |
 | ![Orange compile-region bounds inside the full source map](docs/images/compile-region-preview.png) |

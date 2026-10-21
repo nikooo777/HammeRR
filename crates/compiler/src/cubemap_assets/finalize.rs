@@ -75,6 +75,10 @@ pub fn finalize_reflections_with_capture(
         crate::water_assets::verify_packed_water(original, &plan.manifest(), control)?;
         plan.verify_sources(game, control)?;
     }
+    if let Some(plan) = &output.static_prop_assets {
+        crate::static_prop_assets::verify_packed_static_props(original, &plan.manifest(), control)?;
+        plan.verify_sources(game, control)?;
+    }
     let source_guard = capture_reflection_source_guard(&manifest, game, control)?;
     if manifest.phase == CubemapAssetPhase::Verified {
         return Ok(output);
@@ -269,6 +273,10 @@ pub(super) fn merge_captures(
     verify_generated_cubemaps(bsp, &verified, control)?;
     if let Some(plan) = &output.water_assets {
         crate::water_assets::verify_packed_water(bsp, &plan.manifest(), control)?;
+        plan.verify_sources(game, control)?;
+    }
+    if let Some(plan) = &output.static_prop_assets {
+        crate::static_prop_assets::verify_packed_static_props(bsp, &plan.manifest(), control)?;
         plan.verify_sources(game, control)?;
     }
     verify_sources(&verified, game, control)?;

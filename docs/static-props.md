@@ -17,11 +17,58 @@ Place static scenery with model assets, native collision choices and visibility 
 
 Limits: MDL versions 44/48, scale 1 and body 0. Native static-prop collision choices remain none, bounding box or model VPhysics; VPhysics needs the model's checked `.phy` asset. Leaf clipping uses header boxes rather than the exact mesh or physics hull, so it can retain extra leaves. It preserves the existing 0.01-unit world-axis boundary padding, omits solid leaves and keeps the existing unrotated membership. It does not change collision, shadows, materials or baked lighting.
 
-Selected model VPhysics files are limited to 64 MiB before their payload is allocated, for both directory and VPK sources. Missing, unreadable, oversized or malformed `.phy` files stop publication even with **Fullbright** and **No physics bodies**; non-solid and bounding-box props leave unused `.phy` files unread.
+Ordinary model VPhysics reads are limited to 64 MiB before their payload is allocated, for both directory and VPK sources. Missing, unreadable, oversized or malformed `.phy` files stop publication even with **Fullbright** and **No physics bodies**; non-solid and bounding-box props leave unused `.phy` files unread.
 
-Builds retain the first consumed MDL and required PHY source identities, including consulted VPK files and content lookups. This does not pack model assets or snapshot every file in the installation. Unused PHY files remain outside that guard. Write outputs in a pre-existing map directory separate from consulted model-lookup directories; creating output entries directly inside an observed lookup directory can invalidate its conservative identity checks.
+Builds retain the first consumed MDL and required PHY source identities, including consulted VPK files and content lookups. Enable **Pack static prop assets** below to retain supported original dependencies in the BSP; ordinary source checks cover the files consumed by the build. Unused PHY files remain outside that guard. Write outputs in a pre-existing map directory separate from consulted model-lookup directories; creating output entries directly inside an observed lookup directory can invalidate its conservative identity checks.
 
 HammeRR bounds static-prop leaf traversal and clipping to 16 million work units and four million cumulative reserved polygon points per build. A clipped fragment reserves at most 4,096 points and 256 faces. Exceeding these budgets, an invalid asset or a prop with no open leaf fails before publication. Existing native prop/model/leaf-table limits also apply. The source map and Undo history stay unchanged during compilation.
+
+## Pack static prop assets
+
+Include the supported original model and material files for emitted static props
+in the BSP, including props expanded from referenced assemblies. Standard CS:S
+shaders and surface/prop-data definitions remain installed runtime prerequisites.
+
+1. Open **Build settings…** and enable **Pack static prop assets**. It starts
+   disabled and works with **Fullbright**, **Direct LDR** and **Direct LDR + HDR**.
+   **Bake static-prop vertex lighting** is a separate choice.
+2. Click **Close**, then **Compile** or **Run Map**. Missing or unsupported
+   dependencies stop the build and preserve the previous BSP and pointfile.
+3. Open **Build details…**. For a current successful published build,
+   **Static-prop assets** reports model, file and original-byte counts. With no
+   emitted static props, the counts are zero and packing still succeeds.
+4. Recompile after changing a consumed source file or its winning content mount.
+   Changing this setting makes a previous build stale until its captured settings
+   match again. Recipes and compatible recent maps retain the choice.
+
+![Static-prop asset packing in Build settings](images/build-pack-static-prop-assets.png)
+
+Limits: unit-scale static MDL 44/48 models with body 0, root LOD 0 and one
+bodypart/model. Original MDL, VVD and DX90 VTX files must agree. Every declared
+material, including other skins and draw LODs, must resolve to a plain opaque
+**VertexLitGeneric** VMT containing only one canonical `$basetexture`, with a
+complete supported VTF 7.0–7.4 containing one frame, one face and depth one. VTF 7.5,
+animated, cubemap and volume textures are unsupported. The matching original PHY
+is included only when an emitted use needs **Collisions → Use VPhysics**;
+**Not Solid** and **Use Bounding Box** leave an unused PHY unread.
+
+Included models, external or nontrivial animation, attachments, flexes, eye
+forms, LOD material replacements, material proxies/Patch/conditions, additional
+texture parameters and unsupported textures reject packing. Metadata must be
+empty or exactly the supported `Metal.Medium` prop-data declaration. Standard
+installed CS:S shaders and surface/prop-data definitions, plus DX90 or newer,
+remain runtime requirements. Authored DX visibility bounds are preserved.
+
+Packing follows the final emitted static-prop dictionary after hidden-content
+and compile-region selection. Hidden and region-omitted props do not add packing reads;
+dynamic and detail models are excluded. All producers share the final PAK limits:
+4,096 entries, 16 MiB per entry, 64 MiB each encoded and decoded, and a 512 MiB
+BSP. Conflicting archive paths, exceeded limits and changed original sources
+reject publication. Reflection generation and Run staging preserve the packed
+original model entries.
+
+Agents use `set_compile_settings {"pack_static_prop_assets":true}`; the CLI flag
+is `--pack-static-prop-assets`. Enabling the setting performs no asset reads.
 
 ## Props in referenced assemblies
 

@@ -253,8 +253,9 @@ Static props retain the original consumed MDL and required PHY source identities
 in both build paths. `get_compile_status.job.static_prop_source_issue` reports a
 changed source or lookup; `job.stale` and the launch report use the same check.
 Recompile after changing those assets or reloading content. `launch_game` and
-`run_map` also recheck the retained sources before starting the game. This does
-not pack models or guard unused PHY payloads.
+`run_map` also recheck the retained sources before starting the game. Unused PHY
+payloads remain outside these guards. Optional [static-prop asset packing](#static-prop-asset-packing)
+retains the admitted original model/material closure in the BSP.
 
 Standalone launch captures its exact Session, map generation and build before
 worker scheduling. Queued work cannot choose a replacement map later. Abandoned
@@ -854,7 +855,7 @@ volume/paint inspection report the active `selection_filters`. Human controls:
 
 **Compiling**
 
-- `set_compile_settings` takes `lighting` (`fullbright`, `direct_ldr` or `direct_ldr_hdr`), `physics` (`none` or `engine`), `visibility` (`fast` or `detailed`), `sky_quality` (`fast`, `balanced` or `detailed`), `bounces` (whole counts `0`–`4`), `smoothing_angle` (whole degrees `0`–`90`), `bake_static_prop_vertices`, `pack_sky_assets`, `pack_water_assets` and `generate_reflections` (booleans, all default `false`). Sky and Water packing work with every lighting mode; reflection generation requires `direct_ldr` or `direct_ldr_hdr`. Omitted/null fields retain their values, unknown arguments reject, and invalid combinations leave every setting unchanged.
+- `set_compile_settings` takes `lighting` (`fullbright`, `direct_ldr` or `direct_ldr_hdr`), `physics` (`none` or `engine`), `visibility` (`fast` or `detailed`), `sky_quality` (`fast`, `balanced` or `detailed`), `bounces` (whole counts `0`–`4`), `smoothing_angle` (whole degrees `0`–`90`), `bake_static_prop_vertices`, `pack_sky_assets`, `pack_water_assets`, `pack_static_prop_assets` and `generate_reflections` (booleans, all default `false`). Sky, Water and static-prop packing work with every lighting mode; reflection generation requires `direct_ldr` or `direct_ldr_hdr`. Omitted/null fields retain their values, unknown arguments reject, and invalid combinations leave every setting unchanged.
 - `bake_static_prop_vertices: true` requests static-prop vertex lighting with `lighting: direct_ldr|direct_ldr_hdr` and `bounces: 0..4`. Fullbright or depths above `4` reject the entire settings update; no lighting or bounce value is changed automatically. `get_compile_settings.prop_vertex_lighting` reports `available`, `unavailable_reason`, `description` and `limits`; availability checks current option compatibility and does not inspect model assets. The CPU bake requires no native capture runtime. `limits.bounces` exposes `{min:0,max:4}`, using the shared compiler maximum. At depth N above zero, prop reception uses world/terrain lightmaps from depth N−1 and adds direct light once; it does not sum separately gathered prop passes. Indirect reception requires texture-header or bounded authored `$reflectivity` for every lit source material. Dimensions independently use the effective diffuse VTF, `%tooltexture` VTF or the deliberate SDK128×128 no-preview convention selected by canonical `%notooltexture` `0`/`1`. Tool-header rho never supplies diffuse reflectivity. Required provider failures remain explicit; no-preview is selected before I/O and is named in an INFO build diagnostic. Empty/other NoTool spellings and numeric tool declarations remain unsupported. The compiler hashes every complete VTF actually consumed for either metric; unused diffuse/tool files are not read. `limits.indirect_reflectivity` is `texture_header_or_authored_material`; `limits.indirect_dimensions` is `header_or_native_no_preview`; `limits.indirect_dimension_sources` lists `diffuse_vtf_header`, `tool_vtf_header` and `native_no_preview_convention`. `limits.indirect_sources` and `indirect_reflectivity` expose this contract. Prop and brush-model reflected sources remain unavailable. Receivers require one static bodypart/model and all 1–8 draw LODs, body 0, root LOD 0, unit scale and plain opaque selected VertexLitGeneric materials. The total hardware-color section count is at most 256 per receiver across all LODs; `limits.receiver.hardware_meshes_max` exposes that shared native bound. `sample_origin: original_vertex` and `support_contacts: opaque_world_brush` describe the receiver contract. Vertices buried more than 0.000001 units in world brushes, or contacting terrain/other-prop triangles within that tolerance, reject with a prop and vertex diagnostic. Styles or specialized materials fail requested compilation unless that prop explicitly has `disablevertexlighting: "1"`. `limits.receiver.self_shadowing` reports the default, property/value and retained blockers. Author `disableselfshadowing: "1"` with `set_entity_properties` to omit only the receiver ordinal from point/spot, sun, sky-ambient and reflected receiver shadow tests. Other props, world and terrain remain blockers; absence or `"0"` retains self shadows. `limits.receiver.lighting_origin` reports `{"property":"lightingorigin","baked_samples":"actual_vertices","embedded_recovery":false}`. Create one visible `info_lighting` with an exact matching `targetname`, then bind a receiver using `set_entity_properties` and `set: {"lightingorigin":"helper_name"}`. Its finite native point is retained for runtime lighting; VHV sampling at all supported depths, normals and PVS still use actual vertices. Moving the helper inside a world brush does not relocate baked samples or recover buried vertices. Missing, hidden-only or ambiguous helpers reject publication. The human path uses **Name** on the helper and **Lighting Origin** on the prop. Both channels are independently evaluated and must be complete before LDR + HDR publication. Per-texel prop lightmaps and reflected prop sources remain unavailable.
 - `ignorenormals: "1"` on a static prop supports `bounces: 0` through `4`. Author it through `set_entity_properties`; absence or `"0"` keeps normal-facing reception. Point/spot/sun use constant angular reception `0.35`, retaining falloff, emitter cones and real shadows; sky ambient averages full-sphere visibility without that factor. `get_compile_settings.prop_vertex_lighting.limits.receiver.ignore_normals` reports this contract. At positive depths, full-sphere reflected reception uses SDK angular normalization on the preceding world/terrain pass and adds direct light once. Missed and blocked rays count in the denominator; this differs from unit sky-ambient averaging. `limits.receiver.ignore_normals.indirect` reports `spherical_sdk_normalization`. Finite nonzero model normals, original vertices/PVS, contact/burial limits and own-only `disableselfshadowing` semantics remain unchanged.
 - Jobs freeze `bake_static_prop_vertices` in their captured `settings`. Recipes and compatible recent maps retain it; omitted fields in older saved settings default to false and disabled values remain omitted. Successful published bakes expose `stats.prop_vertex_lighting` with `props`, `models`, `meshes`, `vertices`, `ldr_bytes`, `hdr_bytes`, `work` and `asset_bytes`. Mesh/vertex counts describe actual hardware-color output, and HDR bytes are zero for LDR-only output. **Build details…** displays these results only for current completed published output. Work/allocation/archive limits, changed sources and cancellation preserve previous output.
@@ -1968,6 +1969,53 @@ The flat reader admits ASCII unquoted tokens without parentheses, single quotes 
 
 Both synchronous and background builds guard original source identities, winning-mount resolution, destination leases and the current map/path/settings/content snapshot before publication. Packing-only builds need no native capture runtime. Failure, staleness or cancellation preserves previous output. After publication, packing-only Run can verify and stage the sky without the original custom mount, including after material reload. Run verifies before and after generated-cubemap rebasing and preserves the sky manifest and registered bytes literally. Combined reflection builds retain their existing native/runtime/content-freshness requirements. The compiler CLI exposes the same default-off choice as `--pack-sky-assets`.
 
+### Static-prop asset packing
+
+`set_compile_settings {"pack_static_prop_assets":true}` enables **Pack static prop assets**
+through the shared Session operation. It defaults to false and works in every
+lighting mode independently of `bake_static_prop_vertices`. Enabling it performs
+no asset lookup or native capture. Omitted/null fields retain the current value;
+invalid updates reject atomically. Active builds freeze the option. Recipes and
+compatible recent-map contexts retain it; absent legacy fields restore false.
+The CLI flag is `--pack-static-prop-assets`.
+
+1. Enable the setting, then use `compile_map`, `start_compile` or `run_map`.
+2. Inspect `success` and `stats.static_prop_assets:{models,files,asset_bytes}`.
+   A successful requested pack always has a manifest, including zero emitted
+   models. Current completed published output shows **Static-prop assets** in
+   **Build details…**.
+3. Resolve reported unsupported or missing dependencies and compile again.
+   Failure, cancellation, changed consumed sources and exceeded budgets preserve
+   the previous BSP and pointfile.
+
+`get_compile_settings` returns `pack_static_prop_assets` and
+`static_prop_packing_description`; `get_compile_status.job.settings` retains the
+captured boolean. The closure uses the emitted post-region static-prop dictionary,
+including referenced props. Hidden and region-omitted props add no packing reads.
+Dynamic and detail models are excluded.
+
+Accepted inputs are bounded static MDL 44/48, unit scale, body 0/root LOD 0 and
+one bodypart/model, with matching original VVD/DX90 VTX and required PHY. Every
+declared material across skins and LODs must resolve to a plain opaque
+`VertexLitGeneric` VMT with exactly one canonical `$basetexture`, and a complete
+supported static VTF 7.0–7.4 with one frame, one face and depth one. VTF 7.5,
+animated, cubemap and volume forms reject. PHY is consumed only if an
+emitted use has VPhysics collision; unused PHY remains outside the source guard.
+Included models, external/nontrivial animation, extended aliases, unsupported
+metadata and material graphs reject. Empty metadata or the exact supported
+`Metal.Medium` prop-data declaration is admitted. Standard installed CS:S shaders
+and surface/prop-data definitions with DX90 or newer remain runtime requirements;
+authored DX visibility bounds are preserved.
+
+The reserved `hammerr/packed-static-props.json` manifest binds the exact emitted
+static-prop bytes, model dictionary/uses and sorted original asset hashes. Packed
+readback reconstructs admitted dependencies from PAK bytes. Reflection finalization
+and Run staging verify and preserve original entries. Matching originals deduplicate
+within this producer; cross-producer path collisions reject. All PAK producers
+share 4,096 entries, 16 MiB per entry, 64 MiB each encoded/decoded and a 512 MiB BSP
+limit. See [Static props](static-props.md#pack-static-prop-assets) for the human
+workflow and limits.
+
 ### Static Water asset packing
 
 `set_compile_settings {"pack_water_assets":true}` enables **Pack water assets**
@@ -3004,7 +3052,7 @@ this preview. See [Fog preview](fog.md).
 
 ### Recent maps
 
-`get_recent_maps` returns up to 20 entries in most-recent-first order with exact `path`, file availability, retained game directory, a `build_settings` snapshot for all ten options (including `generate_reflections`, `pack_sky_assets`, `pack_water_assets` and `bake_static_prop_vertices`) and `context_compatible`. Missing booleans default to false; disabled opt-in packing/prop fields may be omitted. It also reports persistence, storage errors and bounds. Pass a listed `path` to `open_recent_map`, optionally with `discard_changes: true` when discarding the current edits is intended. It uses normal map validation and restores retained build values only while idle and with matching mounted game content. Game content and custom FGD files do not switch automatically.
+`get_recent_maps` returns up to 20 entries in most-recent-first order with exact `path`, file availability, retained game directory, a `build_settings` snapshot for every option (including `generate_reflections`, `pack_sky_assets`, `pack_water_assets`, `pack_static_prop_assets` and `bake_static_prop_vertices`) and `context_compatible`. Missing booleans default to false; disabled opt-in packing/prop fields may be omitted. It also reports persistence, storage errors and bounds. Pass a listed `path` to `open_recent_map`, optionally with `discard_changes: true` when discarding the current edits is intended. It uses normal map validation and restores retained build values only while idle and with matching mounted game content. Game content and custom FGD files do not switch automatically.
 
 `remove_recent_map {path}` and `clear_recent_maps {}` change only the retained list. Successful opens/saves update recency; changing build settings updates an existing entry without reordering it. Missing files remain listed. Failed primary opens/saves preserve the list; an auxiliary history-write failure is reported without failing an otherwise successful map operation.
 
@@ -3012,7 +3060,7 @@ Preferences use `recent-maps.json` in recovery storage. `HAMMERR_RECENT_MAPS_DIR
 
 ### Build recipes
 
-`get_build_recipes` returns built-in and custom recipes with all ten settings and readable descriptions, per-document action `revision`, current `active` identity, editability, persistence, path and errors. Built-in IDs `fast` and `final` are immutable. Fast preview uses Fullbright, no physics, Fast visibility/sampling, no bounces and 0° smoothing. Final lighting uses Direct LDR, engine physics, Detailed visibility/sampling, four bounces and 45° smoothing, retaining the compiler's existing requirements and limits. Both disable static-prop vertex lighting, sky/Water packing and reflection generation. Custom recipes can retain a direct-only or up to four-bounce prop bake in either lit mode, sky and Water packing in every lighting mode and reflection generation in either lit mode. Missing legacy booleans default to false; false packing fields remain omitted from stored version-1 records for byte compatibility.
+`get_build_recipes` returns built-in and custom recipes with every setting and readable descriptions, per-document action `revision`, current `active` identity, editability, persistence, path and errors. Built-in IDs `fast` and `final` are immutable. Fast preview uses Fullbright, no physics, Fast visibility/sampling, no bounces and 0° smoothing. Final lighting uses Direct LDR, engine physics, Detailed visibility/sampling, four bounces and 45° smoothing, retaining the compiler's existing requirements and limits. Both disable static-prop vertex lighting, sky/Water/static-prop packing and reflection generation. Custom recipes can retain a direct-only or up to four-bounce prop bake in either lit mode, sky, Water and static-prop packing in every lighting mode and reflection generation in either lit mode. Missing legacy booleans default to false; false packing fields remain omitted from stored version-1 records for byte compatibility.
 
 | Tool | Arguments and effect |
 | --- | --- |

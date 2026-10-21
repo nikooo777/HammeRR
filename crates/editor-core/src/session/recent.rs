@@ -651,6 +651,7 @@ mod tests {
                         smoothing_angle: Some(35),
                         pack_sky_assets: Some(true),
                         pack_water_assets: Some(true),
+                        pack_static_prop_assets: Some(true),
                         ..Default::default()
                     },
                 )
@@ -669,6 +670,7 @@ mod tests {
                         lighting: Some("fullbright"),
                         pack_sky_assets: Some(false),
                         pack_water_assets: Some(false),
+                        pack_static_prop_assets: Some(false),
                         ..Default::default()
                     },
                 )
@@ -682,6 +684,10 @@ mod tests {
             assert_eq!(restarted.compile_options(), retained);
             assert_eq!(restarted.compile_settings()["pack_sky_assets"], true);
             assert_eq!(restarted.compile_settings()["pack_water_assets"], true);
+            assert_eq!(
+                restarted.compile_settings()["pack_static_prop_assets"],
+                true
+            );
             assert_eq!(
                 restarted.recent_maps()["entries"][0]["context_compatible"],
                 true

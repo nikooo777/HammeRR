@@ -673,6 +673,8 @@ pub struct CompileSettingsArgs {
     pub pack_sky_assets: Option<bool>,
     /// Pack original files for complete supported static Water material/Patch/texture closures; default false. Requires explicit static cubemaps with original LDR/HDR siblings throughout. Runtime/default env_cubemap and incomplete or unsupported graphs fail compilation. Available in every lighting mode without native capture.
     pub pack_water_assets: Option<bool>,
+    /// Pack original bounded static MDL 44/48, VVD, DX90 VTX, every declared plain opaque VertexLitGeneric material and basetexture VTF, plus matching PHY only for emitted VPhysics props. Default false; independent of vertex lighting and available in every lighting mode. Missing or unsupported inputs stop publication. Runtime requires standard CS:S shaders and surface/prop-data definitions with DX90 or newer.
+    pub pack_static_prop_assets: Option<bool>,
     /// Generate one native reflection bounce per selected lighting channel; default false. Requires direct_ldr or direct_ldr_hdr; incompatible combinations reject atomically.
     pub generate_reflections: Option<bool>,
     /// Whole degrees 0–90; zero disables automatic smoothing on unassigned world/model faces.

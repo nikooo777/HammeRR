@@ -24,6 +24,7 @@ pub mod prop_lighting_assets;
 mod publication;
 pub mod sky_assets;
 pub mod sky_region;
+pub mod static_prop_assets;
 mod static_props;
 pub mod tree;
 mod visclusters;
@@ -178,6 +179,7 @@ pub struct Options {
     pub generate_reflections: bool,
     pub pack_sky_assets: bool,
     pub pack_water_assets: bool,
+    pub pack_static_prop_assets: bool,
     pub bake_static_prop_vertices: bool,
 }
 
@@ -213,6 +215,7 @@ impl Options {
         self.generate_reflections
             || self.pack_sky_assets
             || self.pack_water_assets
+            || self.pack_static_prop_assets
             || self.bake_static_prop_vertices
     }
 
@@ -526,6 +529,8 @@ pub struct Stats {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub water_assets: Option<PackedWaterStats>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub static_prop_assets: Option<PackedStaticPropStats>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub prop_vertex_lighting: Option<PropVertexLightingStats>,
     #[serde(rename = "elapsed_ms", serialize_with = "serialize_elapsed")]
     pub elapsed: Duration,
@@ -555,6 +560,13 @@ pub struct PackedSkyStats {
 pub struct PackedWaterStats {
     pub roots: usize,
     pub channels: &'static str,
+    pub files: usize,
+    pub asset_bytes: usize,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct PackedStaticPropStats {
+    pub models: usize,
     pub files: usize,
     pub asset_bytes: usize,
 }
@@ -589,6 +601,7 @@ pub struct Output {
     pub cubemap_assets: Option<CubemapAssetManifest>,
     pub sky_assets: Option<SkyAssetPlan>,
     pub water_assets: Option<water_assets::WaterAssetPlan>,
+    pub static_prop_assets: Option<static_prop_assets::StaticPropAssetPlan>,
     pub material_sources: Option<asset_sources::AssetSourceGuard>,
     pub static_prop_sources: Option<asset_sources::AssetSourceGuard>,
     pub prop_lighting_assets: Option<prop_lighting_assets::PropLightingPlan>,
@@ -767,6 +780,7 @@ impl Output {
             && self.cubemap_assets.is_none()
             && self.sky_assets.is_none()
             && self.water_assets.is_none()
+            && self.static_prop_assets.is_none()
             && self.prop_lighting_assets.is_none()
         {
             return Ok(None);
@@ -858,6 +872,24 @@ impl Output {
             plan.verify_source_metadata()?;
             water_assets::verify_packed_water(bsp, &plan.manifest(), control)?;
         }
+        if let Some(plan) = &self.static_prop_assets {
+            if self.material_sources.is_none() {
+                return Err(io::Error::other(
+                    "Packed static-prop output is missing its original build asset guard",
+                ));
+            }
+            let bsp = self
+                .bsp
+                .as_ref()
+                .ok_or_else(|| io::Error::other("Packed static-prop output has no BSP"))?;
+            if self.report.has_errors() {
+                return Err(io::Error::other(
+                    "Packed static-prop build diagnostics contain errors",
+                ));
+            }
+            plan.verify_source_metadata()?;
+            static_prop_assets::verify_packed_static_props(bsp, &plan.manifest(), control)?;
+        }
         if let Some(sources) = &self.material_sources {
             sources.verify_metadata()?;
         }
@@ -946,8 +978,7 @@ fn build(
     if options.generate_reflections {
         cubemap_assets::binding::capture_preflight(vmf)?;
     }
-    let material_sources = options
-        .pack_water_assets
+    let material_sources = (options.pack_water_assets || options.pack_static_prop_assets)
         .then(asset_sources::BuildMaterialSources::default);
     let prepared = cordons::prepare_with_material_sources(
         vmf,
@@ -985,7 +1016,8 @@ fn build(
     };
     map.water_current = water_current;
     map.water_damping = water_damping;
-    let water_plan = if let Some(sources) = &material_sources
+    let water_plan = if options.pack_water_assets
+        && let Some(sources) = &material_sources
         && !output.report.has_errors()
     {
         let roots = map
@@ -1340,6 +1372,12 @@ fn build(
             .sum::<usize>();
     }
     control.advance(Stage::StaticProps)?;
+    if options.pack_static_prop_assets
+        && let Some(reads) = map.materials.prop_lighting_sources_mut()
+        && let Some(sources) = &material_sources
+    {
+        reads.share_sources(sources.clone());
+    }
     let prop_stats = static_props::bake(
         vmf,
         fs,
@@ -1348,6 +1386,9 @@ fn build(
         control,
         map.materials.prop_lighting_sources_mut(),
         &prepared_instances.static_prop_metadata(),
+        material_sources
+            .as_ref()
+            .filter(|_| options.pack_static_prop_assets),
     )?;
     output.static_prop_sources = prop_stats.source_guard;
     if output.report.has_errors() {
@@ -1356,6 +1397,29 @@ fn build(
     output.stats.static_props = prop_stats.props;
     output.stats.static_prop_models = prop_stats.models;
     output.stats.static_prop_leaf_refs = prop_stats.leaf_refs;
+    let static_prop_plan = if options.pack_static_prop_assets {
+        let sources = material_sources
+            .as_ref()
+            .ok_or("Static-prop packing source owner is missing")?;
+        let archive = bsp
+            .pak_data_controlled(bsp::PakLimits::default(), &mut || {
+                control.checkpoint().map_err(io::Error::other)
+            })
+            .map_err(|error| error.to_string())?;
+        Some(
+            static_prop_assets::collect_static_prop_asset_plan(
+                &bsp,
+                fs,
+                sources,
+                &archive,
+                bsp::PakLimits::default(),
+                control,
+            )
+            .map_err(|error| error.to_string())?,
+        )
+    } else {
+        None
+    };
     let detail_stats = detail_props::bake(
         vmf,
         fs,
@@ -1528,12 +1592,27 @@ fn build(
         });
         output.water_assets = Some(plan);
     }
+    if let Some(plan) = static_prop_plan {
+        plan.verify_sources(fs, control)
+            .map_err(|error| error.to_string())?;
+        plan.attach(&mut bsp, control)
+            .map_err(|error| error.to_string())?;
+        output.stats.static_prop_assets = Some(PackedStaticPropStats {
+            models: plan.models().len(),
+            files: plan.entries().len(),
+            asset_bytes: plan.asset_bytes(),
+        });
+        output.static_prop_assets = Some(plan);
+    }
     if let Some(sources) = &material_sources {
         output.material_sources = Some(
             sources
                 .source_guard(fs, control)
                 .map_err(|error| error.to_string())?,
         );
+    }
+    if options.pack_static_prop_assets && output.stats.static_props > 0 {
+        output.static_prop_sources = output.material_sources.clone();
     }
     output.stats.nodes = bsp.records::<bsp::Node>().map_err(|e| e.to_string())?.len();
     output.stats.leaves = bsp.records::<bsp::Leaf>().map_err(|e| e.to_string())?.len();
@@ -1597,6 +1676,7 @@ pub fn compile_with_source_controlled(
         cubemap_assets: None,
         sky_assets: None,
         water_assets: None,
+        static_prop_assets: None,
         material_sources: None,
         static_prop_sources: None,
         prop_lighting_assets: None,

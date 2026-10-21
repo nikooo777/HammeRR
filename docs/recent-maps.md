@@ -5,7 +5,8 @@
 Reopen a map from a persistent list of your twenty most recent maps. Each entry
 retains its full path, the game content directory used with it, and its build
 settings. Reopening restores compatible build settings through the same operation
-as **Build settings…**.
+as **Build settings…**, including **Pack static prop assets**. Legacy entries
+without that setting restore it as disabled.
 
 1. Click **Recent…** in the toolbar.
 2. Select a map by its file name. Read its full path, availability, game directory

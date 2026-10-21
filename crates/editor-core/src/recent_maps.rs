@@ -416,6 +416,7 @@ mod tests {
         let settings: BuildSettings = serde_json::from_slice(legacy).unwrap();
         settings.validate().unwrap();
         assert!(!settings.pack_water_assets);
+        assert!(!settings.pack_static_prop_assets);
         assert_eq!(
             settings,
             BuildSettings::from_options(compiler::Options::default())
@@ -440,6 +441,7 @@ mod tests {
                 lighting: compiler::LightingMode::parse(lighting).unwrap(),
                 pack_sky_assets: true,
                 pack_water_assets: true,
+                pack_static_prop_assets: true,
                 ..Default::default()
             });
             store.save(std::slice::from_ref(&saved)).unwrap();
@@ -454,6 +456,10 @@ mod tests {
                 file["entries"][0]["build_settings"]["pack_water_assets"],
                 true
             );
+            assert_eq!(
+                file["entries"][0]["build_settings"]["pack_static_prop_assets"],
+                true
+            );
             let restarted = Store {
                 directory: directory.path().to_owned(),
             };
@@ -464,6 +470,7 @@ mod tests {
         let loaded = store.load().unwrap();
         assert!(!loaded[0].build_settings.pack_sky_assets);
         assert!(!loaded[0].build_settings.pack_water_assets);
+        assert!(!loaded[0].build_settings.pack_static_prop_assets);
         store.save(&loaded).unwrap();
         assert_eq!(fs::read(&path).unwrap(), original);
     }
@@ -477,6 +484,7 @@ mod tests {
         let mut saved = entry(directory.path().join("portable.vmf"));
         saved.build_settings.pack_sky_assets = true;
         saved.build_settings.pack_water_assets = true;
+        saved.build_settings.pack_static_prop_assets = true;
         store.save(std::slice::from_ref(&saved)).unwrap();
         let path = directory.path().join(FILE_NAME);
         let original = fs::read(&path).unwrap();
@@ -489,7 +497,11 @@ mod tests {
             serde_json::json!([]),
             serde_json::json!({}),
         ] {
-            for field in ["pack_sky_assets", "pack_water_assets"] {
+            for field in [
+                "pack_sky_assets",
+                "pack_water_assets",
+                "pack_static_prop_assets",
+            ] {
                 let mut file = valid.clone();
                 file["entries"][0]["build_settings"][field] = value.clone();
                 invalid.push(serde_json::to_vec(&file).unwrap());
@@ -498,7 +510,11 @@ mod tests {
         let mut unknown = valid;
         unknown["entries"][0]["build_settings"]["pack_sky_asset"] = serde_json::json!(true);
         invalid.push(serde_json::to_vec(&unknown).unwrap());
-        for field in ["pack_sky_assets", "pack_water_assets"] {
+        for field in [
+            "pack_sky_assets",
+            "pack_water_assets",
+            "pack_static_prop_assets",
+        ] {
             let duplicate = String::from_utf8(original.clone()).unwrap().replace(
                 &format!("\"{field}\": true"),
                 &format!("\"{field}\": true, \"{field}\": false"),

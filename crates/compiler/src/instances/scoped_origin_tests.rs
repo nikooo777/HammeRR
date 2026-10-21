@@ -447,6 +447,7 @@ fn ordinary_consumer_requires_the_retained_local_helper_identity() {
         &Control::default(),
         None,
         &prepared.static_prop_metadata(),
+        None,
     )
     .unwrap();
     assert!(report.has_errors());

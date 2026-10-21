@@ -732,6 +732,7 @@ mod tests {
         for recipe in builtins() {
             assert!(!recipe.settings.pack_sky_assets);
             assert!(!recipe.settings.pack_water_assets);
+            assert!(!recipe.settings.pack_static_prop_assets);
             assert!(
                 recipe.json(true)["description"]
                     .as_str()
@@ -742,7 +743,13 @@ mod tests {
                 recipe.json(true)["description"]
                     .as_str()
                     .unwrap()
-                    .ends_with("water packing off")
+                    .contains("water packing off")
+            );
+            assert!(
+                recipe.json(true)["description"]
+                    .as_str()
+                    .unwrap()
+                    .ends_with("static-prop packing off")
             );
             current
                 .update_build_settings(
@@ -750,6 +757,7 @@ mod tests {
                     BuildSettingsUpdate {
                         pack_sky_assets: Some(true),
                         pack_water_assets: Some(true),
+                        pack_static_prop_assets: Some(true),
                         ..Default::default()
                     },
                 )
@@ -851,11 +859,13 @@ mod tests {
                         generate_reflections: Some(true),
                         pack_sky_assets: Some(true),
                         pack_water_assets: Some(true),
+                        pack_static_prop_assets: Some(true),
                         bake_static_prop_vertices: Some(false),
                     },
                 )
                 .unwrap();
             assert!(current.compile_options().pack_water_assets);
+            assert!(current.compile_options().pack_static_prop_assets);
             let retained = current.compile_options();
             current
                 .save_build_recipe(actor, "Portable", None, None)
@@ -869,9 +879,14 @@ mod tests {
             restarted.configure_build_recipes_at(Ok(path.clone()));
             assert!(!restarted.compile_options().pack_sky_assets);
             assert!(!restarted.compile_options().pack_water_assets);
+            assert!(!restarted.compile_options().pack_static_prop_assets);
             let saved = restarted.build_recipes();
             assert_eq!(saved["recipes"][2]["settings"]["pack_sky_assets"], true);
             assert_eq!(saved["recipes"][2]["settings"]["pack_water_assets"], true);
+            assert_eq!(
+                saved["recipes"][2]["settings"]["pack_static_prop_assets"],
+                true
+            );
             assert!(
                 saved["recipes"][2]["description"]
                     .as_str()
@@ -882,7 +897,13 @@ mod tests {
                 saved["recipes"][2]["description"]
                     .as_str()
                     .unwrap()
-                    .ends_with("water packing on")
+                    .contains("water packing on")
+            );
+            assert!(
+                saved["recipes"][2]["description"]
+                    .as_str()
+                    .unwrap()
+                    .ends_with("static-prop packing on")
             );
             restarted
                 .apply_build_recipe(actor, "custom:1", None)
@@ -913,12 +934,14 @@ mod tests {
             restarted.apply_build_recipe(actor, "fast", None).unwrap();
             assert!(!restarted.compile_options().pack_sky_assets);
             assert!(!restarted.compile_options().pack_water_assets);
+            assert!(!restarted.compile_options().pack_static_prop_assets);
             restarted
                 .save_build_recipe(actor, "Portable", Some("custom:1"), None)
                 .unwrap();
             let replaced = String::from_utf8(fs::read(&path).unwrap()).unwrap();
             assert!(!replaced.contains("pack_sky_assets"));
             assert!(!replaced.contains("pack_water_assets"));
+            assert!(!replaced.contains("pack_static_prop_assets"));
             let mut restored = session();
             restored.configure_build_recipes_at(Ok(path));
             restored
@@ -927,6 +950,7 @@ mod tests {
                     BuildSettingsUpdate {
                         pack_sky_assets: Some(true),
                         pack_water_assets: Some(true),
+                        pack_static_prop_assets: Some(true),
                         ..Default::default()
                     },
                 )
@@ -953,6 +977,7 @@ mod tests {
                 BuildSettingsUpdate {
                     pack_sky_assets: Some(true),
                     pack_water_assets: Some(true),
+                    pack_static_prop_assets: Some(true),
                     ..Default::default()
                 },
             )
@@ -967,7 +992,11 @@ mod tests {
         let before = map_state(&current);
         let mut invalid = Vec::new();
         for value in [json!(null), json!("true"), json!(1), json!([]), json!({})] {
-            for field in ["pack_sky_assets", "pack_water_assets"] {
+            for field in [
+                "pack_sky_assets",
+                "pack_water_assets",
+                "pack_static_prop_assets",
+            ] {
                 let mut file = valid.clone();
                 file["recipes"][0]["settings"][field] = value.clone();
                 invalid.push(serde_json::to_vec(&file).unwrap());
@@ -976,7 +1005,11 @@ mod tests {
         let mut unknown = valid;
         unknown["recipes"][0]["settings"]["pack_sky_asset"] = json!(true);
         invalid.push(serde_json::to_vec(&unknown).unwrap());
-        for field in ["pack_sky_assets", "pack_water_assets"] {
+        for field in [
+            "pack_sky_assets",
+            "pack_water_assets",
+            "pack_static_prop_assets",
+        ] {
             let duplicate = String::from_utf8(original.clone()).unwrap().replace(
                 &format!("\"{field}\": true"),
                 &format!("\"{field}\": true, \"{field}\": false"),

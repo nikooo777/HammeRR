@@ -294,6 +294,7 @@ fn record(
     Ok(prop)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn bake(
     vmf: &Vmf,
     fs: &GameFs,
@@ -302,6 +303,7 @@ pub(crate) fn bake(
     control: &Control,
     mut source_reads: Option<&mut crate::lighting::asset_tracking::SourceReads>,
     instance_metadata: &crate::instances::StaticPropMetadata<'_>,
+    retained_sources: Option<&crate::asset_sources::BuildMaterialSources>,
 ) -> Result<Stats, String> {
     let mut props = StaticProps {
         version: 6,
@@ -328,7 +330,10 @@ pub(crate) fn bake(
     if entities.is_empty() {
         return Ok(Stats::default());
     }
-    let source_owner = crate::asset_sources::BuildMaterialSources::without_retained_payloads();
+    let source_owner = retained_sources
+        .cloned()
+        .unwrap_or_else(crate::asset_sources::BuildMaterialSources::without_retained_payloads);
+    let maximum_asset_bytes = retained_sources.map(|_| bsp::PakLimits::default().max_entry_bytes);
     let lighting = crate::lighting_origins::Origins::new(
         vmf,
         entities
@@ -354,11 +359,14 @@ pub(crate) fn bake(
                     return Err("Static-prop model dictionary exceeds the native limit".into());
                 }
                 let name = StaticProps::model_record(&path).map_err(|e| e.to_string())?;
+                let maximum = maximum_asset_bytes
+                    .unwrap_or(source_formats::mdl::MAX_MODEL_BYTES)
+                    .min(source_formats::mdl::MAX_MODEL_BYTES);
                 let maximum = match source_reads.as_deref() {
                     Some(reads) => reads
-                        .read_limit(&path, source_formats::mdl::MAX_MODEL_BYTES)
+                        .read_limit(&path, maximum)
                         .map_err(|error| error.to_string())?,
-                    None => source_formats::mdl::MAX_MODEL_BYTES,
+                    None => maximum,
                 };
                 let data = source_owner
                     .read_asset(fs, &path, maximum)
@@ -413,7 +421,13 @@ pub(crate) fn bake(
                     let phy_path = format!("{}.phy", &path[..path.len() - 4]);
                     asset.collision = Some(
                         match source_owner
-                            .read_asset(fs, &phy_path, bsp::MAX_PHYSICS_BYTES)
+                            .read_asset(
+                                fs,
+                                &phy_path,
+                                maximum_asset_bytes
+                                    .unwrap_or(bsp::MAX_PHYSICS_BYTES)
+                                    .min(bsp::MAX_PHYSICS_BYTES),
+                            )
                             .map_err(|e| format!("{phy_path}: {e}"))?
                         {
                             Some(bytes) => {

@@ -33,7 +33,7 @@ pub(super) fn game() -> (tempfile::TempDir, GameFs) {
     (directory, game)
 }
 
-pub(super) fn source() -> (Vmf, [u32; 2]) {
+pub(crate) fn source() -> (Vmf, [u32; 2]) {
     let mut document = Document::new(crate::test_common::room());
     let ids = document
         .edit("reflection fixture", |tx| {
@@ -192,7 +192,7 @@ fn neutral_bootstraps_add_no_energy_and_keep_opaque_black_capture_freshness() {
     }
 }
 
-fn merge(output: Output, game: &GameFs) -> Output {
+pub(crate) fn merge(output: Output, game: &GameFs) -> Output {
     let manifest = output.cubemap_assets.clone().unwrap();
     let (private_manifest, staged, receipt) = capture_fixture(&output);
     finalize::merge_capture(

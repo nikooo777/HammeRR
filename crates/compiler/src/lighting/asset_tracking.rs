@@ -13,6 +13,7 @@ const MAX_LOOKUPS: usize = 16_384;
 
 #[derive(Debug, Default)]
 pub(crate) struct SourceReads {
+    shared_sources: Option<crate::asset_sources::BuildMaterialSources>,
     sources: BTreeMap<String, SourceAsset>,
     missing: BTreeSet<String>,
     bytes: usize,
@@ -36,6 +37,10 @@ fn bounded_path(path: &str) -> io::Result<String> {
 }
 
 impl SourceReads {
+    pub(crate) fn share_sources(&mut self, sources: crate::asset_sources::BuildMaterialSources) {
+        self.shared_sources = Some(sources);
+    }
+
     pub(crate) fn read_limit(&self, path: &str, maximum: usize) -> io::Result<usize> {
         let path = bounded_path(path)?;
         if self.lookups >= MAX_LOOKUPS {
@@ -199,10 +204,14 @@ impl<'a> Tracker<'a> {
             self.allocation
                 .grow(budget, size_of::<SourceAsset>() + path.len() * 2 + 320)?;
         }
-        let data = self
-            .fs
-            .read_limited(&path, maximum)
-            .map_err(|error| format!("Static-prop lighting source {path}: {error}"))?;
+        let data = if let Some(sources) = &self.reads.shared_sources {
+            sources
+                .read_asset(self.fs, &path, maximum)
+                .map(|asset| asset.map(|asset| asset.bytes().to_vec()))
+        } else {
+            self.fs.read_limited(&path, maximum)
+        }
+        .map_err(|error| format!("Static-prop lighting source {path}: {error}"))?;
         if let Some(data) = &data {
             budget.consume(data.len().div_ceil(64))?;
         }

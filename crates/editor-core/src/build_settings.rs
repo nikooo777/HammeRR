@@ -16,6 +16,8 @@ pub struct BuildSettings {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub pack_water_assets: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pack_static_prop_assets: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub bake_static_prop_vertices: bool,
 }
 
@@ -37,6 +39,7 @@ impl BuildSettings {
             generate_reflections: options.generate_reflections,
             pack_sky_assets: options.pack_sky_assets,
             pack_water_assets: options.pack_water_assets,
+            pack_static_prop_assets: options.pack_static_prop_assets,
             bake_static_prop_vertices: options.bake_static_prop_vertices,
         }
     }
@@ -52,6 +55,7 @@ impl BuildSettings {
             generate_reflections: self.generate_reflections,
             pack_sky_assets: self.pack_sky_assets,
             pack_water_assets: self.pack_water_assets,
+            pack_static_prop_assets: self.pack_static_prop_assets,
             bake_static_prop_vertices: self.bake_static_prop_vertices,
         }
         .validate()
@@ -74,6 +78,7 @@ impl BuildSettings {
             generate_reflections: Some(self.generate_reflections),
             pack_sky_assets: Some(self.pack_sky_assets),
             pack_water_assets: Some(self.pack_water_assets),
+            pack_static_prop_assets: Some(self.pack_static_prop_assets),
             bake_static_prop_vertices: Some(self.bake_static_prop_vertices),
         }
     }

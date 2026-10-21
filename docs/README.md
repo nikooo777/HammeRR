@@ -59,7 +59,7 @@ Start with [Getting started](getting-started.md) and [Editor basics](basics.md).
 | [Referenced instances](instances.md) | Compile saved assemblies with static lights, props, scoped lighting origins and guarded sources |
 | [Compile regions](compile-regions.md) | Previewing and saving bounds for sealed partial-map builds |
 | [Physics and mass](physics.md) | Engine collision bodies and material-derived brush-model masses |
-| [Static props](static-props.md) | Model placement, collision choices and rotated visibility bounds |
+| [Static props](static-props.md) | Model placement, collision choices, rotated visibility bounds and original static asset packing |
 | [Model detail props](model-detail-props.md) | Explicit decorative models compiled without collision |
 | [Explicit detail sprites](detail-sprites.md) | Place scaled atlas cards or fixed cross/tri shapes with optional sway |
 | [Material detail scattering](material-detail-scattering.md) | Generate decorative models and sprites from ground materials when building |

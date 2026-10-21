@@ -8,7 +8,7 @@ use compiler::{
 use source_formats::gamefs::GameFs;
 use source_formats::vmf::Vmf;
 
-const USAGE: &str = "usage: hammerr-compile <map.vmf> --game <gameinfo.txt> [-o <map.bsp>] [--lighting fullbright|direct_ldr|direct_ldr_hdr] [--physics none|engine] [--sky-quality fast|balanced|detailed] [--visibility fast|detailed] [--bounces 0..4] [--smoothing-angle 0..90] [--pack-sky-assets] [--pack-water-assets] [--bake-static-prop-vertices] [--generate-reflections] [--reflection-engine-root <directory>] [--reflection-steam-root <directory>]";
+const USAGE: &str = "usage: hammerr-compile <map.vmf> --game <gameinfo.txt> [-o <map.bsp>] [--lighting fullbright|direct_ldr|direct_ldr_hdr] [--physics none|engine] [--sky-quality fast|balanced|detailed] [--visibility fast|detailed] [--bounces 0..4] [--smoothing-angle 0..90] [--pack-sky-assets] [--pack-water-assets] [--pack-static-prop-assets] [--bake-static-prop-vertices] [--generate-reflections] [--reflection-engine-root <directory>] [--reflection-steam-root <directory>]";
 
 fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args_os().skip(1);
@@ -23,6 +23,7 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
             Some("--generate-reflections") => options.generate_reflections = true,
             Some("--pack-sky-assets") => options.pack_sky_assets = true,
             Some("--pack-water-assets") => options.pack_water_assets = true,
+            Some("--pack-static-prop-assets") => options.pack_static_prop_assets = true,
             Some("--bake-static-prop-vertices") => options.bake_static_prop_vertices = true,
             Some("--reflection-engine-root") => {
                 reflection_engine = Some(PathBuf::from(args.next().ok_or(USAGE)?))
@@ -65,7 +66,7 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
             }
             Some("-h" | "--help") => {
                 println!(
-                    "{USAGE}\n\n--pack-water-assets packs original files for complete supported static Water material/Patch/texture closures. Every reachable Water material requires an explicit static cubemap with original LDR/HDR siblings. Runtime/default env_cubemap and missing or unsupported assets stop publication. Default off; available in every lighting mode without native capture."
+                    "{USAGE}\n\n--pack-water-assets packs original files for complete supported static Water material/Patch/texture closures. Every reachable Water material requires an explicit static cubemap with original LDR/HDR siblings. Runtime/default env_cubemap and missing or unsupported assets stop publication. Default off; available in every lighting mode without native capture.\n\n--pack-static-prop-assets packs original MDL, VVD, DX90 VTX, every declared plain opaque VertexLitGeneric material and basetexture VTF, and matching PHY only for emitted VPhysics props. Supports bounded static MDL 44/48, body 0/root LOD 0, trivial local animation and empty or exact Metal.Medium prop metadata. Missing or unsupported inputs stop publication. Default off; independent of vertex lighting and available in every lighting mode. Requires standard CS:S shaders and surface/prop-data definitions with DX90 or newer at runtime."
                 );
                 return Ok(());
             }
@@ -125,6 +126,14 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
         source_context.as_ref(),
         control,
     );
+    if options.pack_static_prop_assets
+        && output.bsp.is_some()
+        && output.static_prop_assets.is_none()
+    {
+        return Err(
+            "Static-prop asset packing was requested but no packing plan was produced".into(),
+        );
+    }
     if options.generate_reflections
         && let Some(context) = &context
         && output.bsp.is_some()
@@ -220,6 +229,12 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
         println!(
             "Water assets: {} materials · {} · {} asset files · {} asset bytes",
             water.roots, water.channels, water.files, water.asset_bytes
+        );
+    }
+    if let Some(props) = &stats.static_prop_assets {
+        println!(
+            "Static-prop assets: {} models · {} asset files · {} asset bytes",
+            props.models, props.files, props.asset_bytes
         );
     }
     if let Some(props) = &stats.prop_vertex_lighting {

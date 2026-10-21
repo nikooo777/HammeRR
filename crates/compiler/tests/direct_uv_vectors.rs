@@ -103,7 +103,7 @@ fn finite_no_progress_lightmap_splits_fail_and_preserve_bsp_and_pointfile() {
                 diagnostic.level == compiler::Level::Error
                     && diagnostic.message.contains(&format!("side:{side}:"))
                     && diagnostic.message.contains("Lightmap subdivision")
-                    && diagnostic.message.contains("extent 1000")
+                    && diagnostic.message.contains("32-luxel limit")
             }),
             "{:?}",
             output.report

@@ -74,27 +74,39 @@ without replacing the previous BSP.
 
 ## Overlays in referenced assemblies
 
-Use ordinary unnamed overlays on direct visible world/detail brushes in a
-saved [child assembly](instances.md). Their projections compile with the
-transformed target surfaces; parent reference inspection shows the target
-brushes without the projected overlay.
+Use unnamed overlays on ordinary or actual displacement-bearing faces of
+direct visible world/detail brushes in a saved [child assembly](instances.md).
+Their projections compile with the transformed target surfaces; parent
+reference inspection shows the actual target mesh without the projected overlay.
 
-1. Open the child VMF as a normal map. Select an ordinary world/detail quad in
-   **Faces · materials & textures**, open **Overlay…** and choose **Material**.
+1. Open the child VMF as a normal map. Set **Selection** to **Faces · materials &
+   textures**. Select an ordinary world quad if it will become terrain; an
+   ordinary overlay may also start on `func_detail`. Open **Overlay…** and choose **Material**.
 2. Keep **Name** empty. Set the ordinary render order, texture ranges and fades,
-   then click **Fit / Preview → Apply overlay**. Existing **Review current
+   then click **Fit / Preview** and **Apply overlay**. Existing **Review current
    draft**, refit, rebind and corner operations remain available within their
    usual single-quad limits while the child is open normally.
-3. Save the child and return to its parent. Use **Instance contents… → Refresh
-   instance contents**, then **Compile**. **Overlay helpers:** counts expanded
-   child helpers before compile-region filtering; **Overlays** and **Surface
-   references** describe the emitted root and child output.
+3. For a terrain target, select that same world face again. Choose **Terrain
+   grid** and **Start corner**, then click **Create terrain**. Use **Edit terrain…**
+   to sculpt the surface as described in [Terrain](terrain.md). The original
+   side ID and overlay binding stay fixed. Direct terrain **Fit / Preview**, **Refit
+   selected overlay** and **Preview rebind** remain unavailable.
+4. If needed, set **Selection** to **Objects**, select the terrain brush and
+   click **Tie to entity…**. Choose `func_detail`, then click **Tie selected
+   brushes to entity** to make it detail geometry.
+5. Save and reopen the child, then return to its parent. Use **Instance
+   contents… → Refresh instance contents**, then **Compile**. **Overlay helpers:**
+   counts expanded child helpers before compile-region filtering; **Overlays**
+   and **Surface references** describe the emitted root and child output.
 
-Child imported bindings allow 1–64 distinct positive side IDs from visible
-ordinary world or `func_detail` brushes directly in that same occurrence.
-Authored and rewritten lists each fit 512 bytes. Terrain-bearing solids,
+Child imported bindings allow 1–64 distinct positive side IDs from direct
+visible world or `func_detail` brushes in that same occurrence: ordinary sides
+on brushes without terrain or actual displacement-bearing sides at powers 2–4.
+Mixed ordinary/terrain lists retain their authored order. Authored and rewritten
+lists each fit 512 bytes. Non-displaced cage sides of terrain-bearing solids,
 runtime-model/helper sides and parent/descendant/sibling/repeated/root/generated
-IDs cannot supply a missing local target. Child transitions are unsupported.
+IDs cannot supply a missing local target. Manual cubemap bindings still exclude
+every side of a terrain-bearing solid. Child transitions are unsupported.
 The assembled map shares the ordinary regular-overlay and binding limits below.
 
 Keep the shared writer's canonical fields, including `BasisOrigin`,
@@ -117,11 +129,11 @@ reference, true leaf file and original helper.
 
 **Instance contents…** reports child projections/icons and overlay-specific
 bounds, picking, framing and editing drafts as unavailable. The target brushes
-keep their actual reference mesh, owner bounds, picking and **Frame instance
-contents** behavior. Existing root-face overlay drafts stay available in the
-parent. Open the child as a normal map to edit its overlay; a ready reference
-does not certify retained target emission, material availability or final
-surface budgets.
+keep their actual brush/terrain reference mesh, owner bounds, picking and
+**Frame instance contents** behavior. Existing root-face overlay drafts stay
+available in the parent. Open the child as a normal map to edit its overlay;
+a ready reference does not certify retained target emission, material
+availability or final surface budgets.
 
 ## Build imported water transitions
 
@@ -171,7 +183,7 @@ omitting any referenced surface stops publication of the new BSP.
 ## Limits
 
 - New overlay fitting supports one visible planar world or `func_detail` quad. Terrain, brush models and faces with other corner counts cannot be used for new fitting. Imported overlays retain their broader compile support.
-- Refit supports only one existing bound world or `func_detail` quad. Explicit rebind supports a different visible world/detail quad and requires one eligible existing binding. Numeric and viewport corner editing use the existing single bound quad and projection plane. Multiface/terrain/model creation, material projection and automatic refitting after geometry edits are unavailable. The imported **Overlay Basis** and **Overlay Point** fields remain read-only outside the explicit overlay operations.
+- Refit supports only one existing bound world or `func_detail` quad. Explicit rebind supports a different visible world/detail quad and requires one eligible existing binding. Numeric and viewport corner editing use the existing single bound quad and projection plane. Direct multiface/terrain/model fitting, terrain refit/rebind, material projection and automatic refitting after geometry edits are unavailable. The imported **Overlay Basis** and **Overlay Point** fields remain read-only outside the explicit overlay operations.
 - Targets must be visible, exposed world, detail or terrain faces. Hidden, absent, non-rendering and brush-model targets fail compilation. Hidden overlays are omitted.
 - Budgets: 1,024 regular overlays, 64 source sides and 64 compiled surface references per regular overlay, and 65,536 total source or face bindings. Subdivision can increase the compiled face count; use fewer targets or a larger lightmap scale if it exceeds the budget. These are bounded compiler budgets, not a claim about every engine limit.
 - Imported water transitions have a separate 1,024-record budget, at most 64

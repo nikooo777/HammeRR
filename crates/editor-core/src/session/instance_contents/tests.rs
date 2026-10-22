@@ -10,6 +10,7 @@ mod overlays;
 mod player_spawns;
 mod static_props;
 mod terrain;
+mod terrain_overlays;
 mod visclusters;
 
 fn nested_opened(

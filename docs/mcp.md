@@ -529,7 +529,7 @@ entity, solid or side. Use existing `create_block`, `set_material`,
 `tie_to_entity`, `set_entity_properties` and `save_map` operations while the
 child is open as a normal map; no extra setting is required.
 
-`stats.instances.overlays` counts visible expanded ordinary child overlays
+`stats.instances.overlays` counts visible expanded child overlays
 before compile-region filtering and is omitted when zero. **Build details…**
 shows **Overlay helpers:** with that expanded-before-filtering meaning.
 Top-level `stats.overlays` and `overlay_face_refs` keep their emitted totals,
@@ -730,8 +730,9 @@ with `available:false` and the shared reason: “Child overlay projections and
 icons are not shown in the reference preview; overlay bounds, picking, framing
 and editing drafts are unavailable. Underlying brush preview is unchanged.”
 **Instance contents…** shows **Overlay helpers:**. This flag describes only
-the child projection: target-brush mesh, content bounds, owner picking and
-`set_instance_contents` with `action:"frame"` retain their existing behavior.
+the child projection: actual target-brush/terrain mesh, content bounds, owner
+picking and `set_instance_contents` with `action:"frame"` retain their existing
+behavior.
 Ordinary root-face overlay drafts stay available. The field is omitted when
 zero or no current ready snapshot exists, including stale/cancelled/failed
 refreshes. Refresh uses shared source/frame/direct-local binding checks; it
@@ -3540,18 +3541,25 @@ selection, placement review and history. It renders no other library pages.
 
 For a child assembly, open its VMF as a normal map and use the same
 `preview_overlay`/`review_overlay`/`apply_overlay` operations with no
-`targetname`, then `save_map` and refresh its parent. Refitting, rebinding and
-corner editing retain their existing single-quad limits. Child imported
-`info_overlay` bindings require 1–64 positive distinct side IDs from direct
-visible ordinary world/detail brushes in the same occurrence; authored and
-rewritten lists each fit 512 bytes. Terrain-bearing solids, runtime-model/
-helper/foreign targets and child transitions reject. Preserve the normal
+`targetname`. For a terrain target, apply the overlay on an ordinary world
+quad first, then use `create_terrain` and the shared terrain edit previews on
+that same stable side. Optionally tie its brush to `func_detail` after terrain
+creation with `tie_to_entity`, then `save_map`, reopen the child and refresh its
+parent. `preview_overlay`, `preview_overlay_refit` and `preview_overlay_rebind`
+cannot fit terrain directly; corner editing also keeps its single-quad limits.
+Child imported `info_overlay` bindings require 1–64 positive distinct
+side IDs from direct visible world/detail brushes in the same occurrence:
+ordinary sides on brushes without terrain or actual displacement-bearing sides
+at powers 2–4. Mixed lists retain authored order; authored and rewritten lists
+each fit 512 bytes. Non-displaced terrain cage sides, runtime-model/helper/
+foreign targets and child transitions reject. Manual cubemap bindings still
+exclude every side of a terrain-bearing solid. Preserve the normal
 writer's canonical field casing; optional names/reference fields must be
 exactly empty (whitespace rejects), angles/runtime flags neutral, and unknown
 keys, case aliases, connections and opaque blocks absent. Source and every
 intermediate frame/marker use the ordinary projection/native compile bounds.
 Parent inspection has no child projection/editing draft; its actual target
-brush preview and ordinary root overlay operations are unchanged. See
+brush/terrain preview and ordinary root overlay operations remain available. See
 [Overlays](overlays.md#overlays-in-referenced-assemblies).
 
 | Tool | Inputs and result |

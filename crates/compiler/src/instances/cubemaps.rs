@@ -106,12 +106,20 @@ pub(super) fn remap_sides(
         original.properties.get("sides").map_or(0, str::len),
         control,
     )?;
-    remap_side_ids(side_ids(original)?, local_sides, work, control, "cubemap")
+    remap_side_ids(
+        side_ids(original)?,
+        local_sides,
+        None,
+        work,
+        control,
+        "cubemap",
+    )
 }
 
 pub(super) fn remap_side_ids(
     mut sides: Vec<u32>,
     local_sides: &BTreeMap<u32, u32>,
+    displacement_sides: Option<&BTreeMap<u32, u32>>,
     work: &mut usize,
     control: &Control,
     helper: &str,
@@ -121,11 +129,17 @@ pub(super) fn remap_side_ids(
         charge_side_bindings(work, 1, control, helper)?;
         *id = local_sides
             .get(id)
+            .or_else(|| displacement_sides.and_then(|sides| sides.get(id)))
             .copied()
             .filter(|id| *id != 0)
             .ok_or_else(|| {
+                let target = if displacement_sides.is_some() {
+                    "ordinary or displacement"
+                } else {
+                    "ordinary"
+                };
                 format!(
-                    "{helper} sides target side:{id} must name a visible ordinary world or func_detail side in the same child"
+                    "{helper} sides target side:{id} must name a visible {target} world or func_detail side in the same child"
                 )
             })?;
         bytes = bytes

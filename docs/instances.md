@@ -5,9 +5,9 @@
 Reuse saved VMFs' world and detail brushes, power 2–4 terrain, unnamed static
 point/spot and sun/sky lights, static props, scoped lighting-origin helpers,
 player spawns,
-visibility volumes, unnamed stationary occluders, ordinary unnamed overlays,
-cubemap samples with local face bindings and nested references at several
-positions and rotations.
+visibility volumes, unnamed stationary occluders, unnamed overlays on ordinary
+or actual terrain faces, cubemap samples with local face bindings and nested
+references at several positions and rotations.
 Compilation expands the supported contents without an extra switch. The editor
 can resolve a separate, explicitly refreshed
 [reference preview](instance-contents.md) with actual displaced terrain surfaces
@@ -20,8 +20,8 @@ from supported brushes already in the parent.
    ordinary `func_detail` brushes, supported static lights/props, `info_lighting`
    helpers, `info_player_terrorist` / `info_player_counterterrorist` spawns,
    `func_viscluster` volumes, unnamed stationary `func_occluder` helpers,
-   ordinary unnamed `info_overlay` projections, supported `env_cubemap` samples
-   and nested `func_instance` references.
+   unnamed `info_overlay` projections on ordinary or actual terrain faces,
+   supported `env_cubemap` samples and nested `func_instance` references.
    World and detail brushes may carry supported power 2, 3 or 4 terrain. The
    child's world settings do not replace the parent's.
 2. To add a child light, open the child and click **Entity…**, then choose `light`
@@ -75,9 +75,14 @@ from supported brushes already in the parent.
 
    To add a child overlay, open the child normally and select a visible ordinary
    world/detail quad in **Faces · materials & textures**. Open **Overlay…**,
-   choose **Material**, keep **Name** empty, then click **Fit / Preview → Apply
-   overlay** and save the child. See [Overlays](overlays.md#overlays-in-referenced-assemblies)
-   for local bindings and projection limits.
+   choose **Material**, keep **Name** empty, then click **Fit / Preview** and
+   **Apply overlay**. For a terrain target, create the overlay on an ordinary
+   world quad first, then use **Create terrain** and sculpt that same face. Its
+   side ID stays fixed. Optionally tie the terrain brush to `func_detail` afterward,
+   then save and reopen the child before referencing it. Direct terrain
+   **Fit / Preview**, **Refit selected overlay** and **Preview rebind** remain
+   unavailable. See [Overlays](overlays.md#overlays-in-referenced-assemblies) for
+   local bindings and projection limits.
 8. Click **Instance reference…**. Set **VMF reference** to `parts/arch.vmf`,
    choose **Position** and **Rotation**, then click **Create**. **Cancel** leaves
    the map unchanged. For a child with lighting-origin helpers, set every
@@ -108,7 +113,7 @@ from supported brushes already in the parent.
    be framed; mixed references keep their real brush/terrain preview.
    **Overlay helpers:** counts child overlays before regions. Their projections,
    icons and overlay-specific bounds, picking, framing and editing drafts are
-   unavailable here; their real target brushes keep the ordinary reference
+   unavailable here; their target brushes keep the actual brush/terrain reference
    mesh, bounds, picking and **Frame instance contents** behavior.
    **Cubemap samples:** counts child samples, with the same unavailable display,
    bounds, picking and framing.
@@ -193,13 +198,15 @@ Limits:
   omission and share the instance expansion budgets. The retained assembled
   map shares the ordinary 1,024-helper, union, native-output and area limits in
   [Occluders](occluders.md).
-- Child `info_overlay` supports ordinary unnamed projections with 1–64 distinct
-  positive side IDs from direct visible ordinary world/detail brushes in the
-  same child occurrence. Both authored and rewritten lists fit 512 bytes.
-  Terrain-bearing solids, runtime models, consumed helpers and foreign
-  occurrence IDs cannot supply targets. Use the canonical shared overlay
-  writer fields; names/reference fields must be absent or exactly empty,
-  orientation/runtime flags must be neutral, and connections, opaque blocks,
+- Child `info_overlay` supports unnamed projections with 1–64 distinct positive
+  side IDs from direct visible world/detail brushes in the same child
+  occurrence: ordinary sides on brushes without terrain or actual
+  displacement-bearing sides at powers 2–4. Mixed ordinary/terrain target lists
+  retain their authored order. Both authored and rewritten lists fit 512 bytes.
+  Non-displaced cage sides of terrain-bearing solids, runtime models, consumed
+  helpers and foreign occurrence IDs cannot supply targets. Use the canonical
+  shared overlay writer fields; names/reference fields must be absent or
+  exactly empty, orientation/runtime flags must be neutral, and connections, opaque blocks,
   duplicate case aliases and unknown keys reject. Source and every transformed
   frame/marker must satisfy the ordinary finite projection/compile bounds.
   Regions preserve the whole projection independently of marker position;

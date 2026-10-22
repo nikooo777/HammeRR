@@ -145,6 +145,7 @@ pub(super) fn transform(
 pub(super) fn remap_sides(
     original: &Entity,
     local_sides: &BTreeMap<u32, u32>,
+    displacement_sides: &BTreeMap<u32, u32>,
     work: &mut usize,
     control: &Control,
 ) -> Result<String, String> {
@@ -157,7 +158,14 @@ pub(super) fn remap_sides(
     check_pose(original)?;
     let sides =
         crate::cubemap_assets::binding::manual_side_ids(original).collect::<Result<Vec<_>, _>>()?;
-    cubemaps::remap_side_ids(sides, local_sides, work, control, "overlay")
+    cubemaps::remap_side_ids(
+        sides,
+        local_sides,
+        Some(displacement_sides),
+        work,
+        control,
+        "overlay",
+    )
 }
 
 #[cfg(test)]
@@ -186,6 +194,7 @@ mod tests {
     #[test]
     fn rewritten_lists_preserve_authored_order_and_enforce_512_before_formatting() {
         let mut helper = helper();
+        let displacement_sides = BTreeMap::new();
         helper.properties.set(
             "sides",
             (1..=57)
@@ -198,7 +207,14 @@ mod tests {
         let mut local_sides = (1..=57)
             .map(|id| (id, 10_000_000 + id))
             .collect::<BTreeMap<_, _>>();
-        let rewritten = remap_sides(&helper, &local_sides, &mut 0, &Control::default()).unwrap();
+        let rewritten = remap_sides(
+            &helper,
+            &local_sides,
+            &displacement_sides,
+            &mut 0,
+            &Control::default(),
+        )
+        .unwrap();
         let expected = (10_000_001..=10_000_057)
             .rev()
             .map(|id| id.to_string())
@@ -208,9 +224,15 @@ mod tests {
         assert_eq!(rewritten, expected);
         local_sides.insert(1, 100_000_000);
         assert!(
-            remap_sides(&helper, &local_sides, &mut 0, &Control::default())
-                .unwrap_err()
-                .contains("Child overlay rewritten sides exceed 512 bytes")
+            remap_sides(
+                &helper,
+                &local_sides,
+                &displacement_sides,
+                &mut 0,
+                &Control::default()
+            )
+            .unwrap_err()
+            .contains("Child overlay rewritten sides exceed 512 bytes")
         );
         assert_eq!(helper, before);
     }
@@ -218,12 +240,14 @@ mod tests {
     #[test]
     fn remapping_keeps_positive_distinct_source_checks_and_shared_work_and_cancellation() {
         let mut helper = helper();
+        let displacement_sides = BTreeMap::new();
         for sides in ["0", "1 1", "+1 01"] {
             helper.properties.set("sides", sides);
             assert!(
                 remap_sides(
                     &helper,
                     &BTreeMap::from([(1, 99)]),
+                    &displacement_sides,
                     &mut 0,
                     &Control::default()
                 )
@@ -237,18 +261,20 @@ mod tests {
             remap_sides(
                 &helper,
                 &BTreeMap::from([(2, 1)]),
+                &displacement_sides,
                 &mut 0,
                 &Control::default()
             )
             .unwrap_err()
             .contains(
-                "side:1 must name a visible ordinary world or func_detail side in the same child"
+                "side:1 must name a visible ordinary or displacement world or func_detail side in the same child"
             )
         );
         assert!(
             remap_sides(
                 &helper,
                 &BTreeMap::from([(1, 99)]),
+                &displacement_sides,
                 &mut (MAX_GEOMETRY_WORK - 1),
                 &Control::default()
             )
@@ -258,9 +284,53 @@ mod tests {
         let control = Control::default();
         control.cancel().unwrap();
         assert!(
-            remap_sides(&helper, &BTreeMap::from([(1, 99)]), &mut 0, &control)
-                .unwrap_err()
-                .contains("cancelled")
+            remap_sides(
+                &helper,
+                &BTreeMap::from([(1, 99)]),
+                &displacement_sides,
+                &mut 0,
+                &control
+            )
+            .unwrap_err()
+            .contains("cancelled")
+        );
+    }
+
+    #[test]
+    fn displacement_supplement_preserves_order_and_work_without_widening_cubemaps() {
+        let mut helper = helper();
+        helper.properties.set("sides", "3 1 2");
+        let before = helper.clone();
+        let ordinary = BTreeMap::from([(1, 99)]);
+        let displacement = BTreeMap::from([(2, 777), (3, 8)]);
+        let mut work = 0;
+        let rewritten = remap_sides(
+            &helper,
+            &ordinary,
+            &displacement,
+            &mut work,
+            &Control::default(),
+        )
+        .unwrap();
+        assert_eq!(rewritten, "8 99 777");
+        assert_eq!(work, "3 1 2".len() + 3 + rewritten.len());
+        assert_eq!(helper, before);
+
+        let error =
+            cubemaps::remap_sides(&helper, &ordinary, &mut 0, &Control::default()).unwrap_err();
+        assert!(error.contains(
+            "cubemap sides target side:3 must name a visible ordinary world or func_detail side in the same child"
+        ));
+        assert!(
+            remap_sides(
+                &helper,
+                &ordinary,
+                &displacement,
+                &mut (MAX_GEOMETRY_WORK - work + 1),
+                &Control::default()
+            )
+            .unwrap_err()
+            .contains("Instance overlay bindings exceed the shared geometry-work limit")
         );
     }
 }

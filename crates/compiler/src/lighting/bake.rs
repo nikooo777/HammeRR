@@ -1155,6 +1155,7 @@ fn bake_inner(
         None
     };
     budget.phase(LightingPhase::Preparation);
+    bsp.set_records(&infos);
     if !map.terrains.is_empty() {
         let mut data = bsp
             .displacements()
@@ -1194,11 +1195,13 @@ fn bake_inner(
         if missing != 0 {
             report.diagnostics.push(Diagnostic::info(format!("{missing} power-4 terrain luxels use missing auxiliary records because native triangle 511 is unrepresentable; their lighting uses full-precision surface geometry"), None, None));
         }
+        // Sample validation reads dimensions from the stored faces.
+        bsp.set_lighting_faces(LightingKind::Ldr, &faces)
+            .map_err(|error| error.to_string())?;
         bsp.lumps[bsp::lump::DISP_LIGHTMAP_SAMPLE_POSITIONS].data = bytes;
         bsp.set_displacements(&data)
             .map_err(|error| error.to_string())?;
     }
-    bsp.set_records(&infos);
     if dual {
         // Both channels start from this unlit geometry, before either owns styles or offsets.
         bsp.set_lighting_faces(LightingKind::Hdr, &faces)

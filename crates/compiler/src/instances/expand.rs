@@ -213,6 +213,12 @@ impl<'a> Expansion<'a> {
                         && (cubemaps::has_manual_bindings(entity) || overlays::is_helper(entity))
                 })
                 .then(BTreeMap::new);
+            let mut displacement_sides = child
+                .vmf
+                .entities
+                .iter()
+                .any(|entity| !entity.hidden && overlays::is_helper(entity))
+                .then(BTreeMap::new);
             let mut manual_cubemaps = Vec::new();
             let mut overlay_bindings = Vec::new();
             for entity in child
@@ -268,6 +274,7 @@ impl<'a> Expansion<'a> {
                     &relative,
                     transforms,
                     local_sides.as_mut(),
+                    displacement_sides.as_mut(),
                 )?;
             }
             for entity in child.vmf.entities.iter().filter(|entity| !entity.hidden) {
@@ -356,6 +363,7 @@ impl<'a> Expansion<'a> {
                             &relative,
                             transforms,
                             local_sides.as_mut(),
+                            displacement_sides.as_mut(),
                         )?;
                     }
                 }
@@ -376,6 +384,7 @@ impl<'a> Expansion<'a> {
                 let rewritten = overlays::remap_sides(
                     original,
                     local_sides.as_ref().unwrap(),
+                    displacement_sides.as_ref().unwrap(),
                     &mut self.work,
                     self.control,
                 )
@@ -795,6 +804,7 @@ impl<'a> Expansion<'a> {
         relative: &str,
         transforms: &[edit::Transform],
         local_sides: Option<&mut BTreeMap<u32, u32>>,
+        mut displacement_sides: Option<&mut BTreeMap<u32, u32>>,
     ) -> Result<(), EditError> {
         self.control.checkpoint().map_err(EditError::Invalid)?;
         self.objects = self.objects.saturating_add(1 + usize::from(detail));
@@ -824,6 +834,15 @@ impl<'a> Expansion<'a> {
             cubemaps::charge_bindings(&mut self.work, original.sides.len() * 2, self.control)
                 .map_err(EditError::Invalid)?;
         }
+        if displacement_sides.is_some() {
+            let sides = original
+                .sides
+                .iter()
+                .filter(|side| side.displacement.is_some())
+                .count();
+            cubemaps::charge_side_bindings(&mut self.work, sides * 2, self.control, "overlay")
+                .map_err(EditError::Invalid)?;
+        }
         let mut local_sides = local_sides.filter(|_| {
             original
                 .sides
@@ -846,6 +865,11 @@ impl<'a> Expansion<'a> {
             );
             if let Some(local_sides) = &mut local_sides {
                 local_sides.insert(original_side, side.id);
+            }
+            if side.displacement.is_some()
+                && let Some(displacement_sides) = &mut displacement_sides
+            {
+                displacement_sides.insert(original_side, side.id);
             }
         }
         let id = if detail {
@@ -1080,6 +1104,73 @@ mod tests {
             assert!(expansion.provenance.is_empty());
             assert_eq!(expansion.stats.overlays, 0);
             assert_eq!(document.vmf(), &vmf);
+        }
+    }
+
+    #[test]
+    fn overlay_displacement_map_reserves_work_before_cloning_and_excludes_cage_sides() {
+        let (_directory, vmf, _, source) = fixture();
+        let solid = &vmf.world.solids[0];
+        let geometry = BrushGeometry::from_solid(solid).unwrap();
+        let face = geometry
+            .faces
+            .iter()
+            .find(|face| face.plane.normal.z > 0.99)
+            .unwrap();
+        let target = map_core::surface::FaceId {
+            solid: solid.id,
+            side: solid.sides[face.side].id,
+        };
+        let mut authored = Document::new(vmf.clone());
+        authored
+            .edit("terrain target", |tx| {
+                map_core::displacement::edit::create(tx, &[target], 2, 0).map(|_| ())
+            })
+            .unwrap();
+        let original = &authored.vmf().world.solids[0];
+        let baseline_work = original.sides.len().pow(3) + original.sides.len() * 2;
+        for exhausted in [false, true] {
+            let control = Control::default();
+            let mut report = Report::default();
+            let mut expansion = Expansion::new(&vmf, &source, &control, &mut report);
+            if exhausted {
+                expansion.work = MAX_GEOMETRY_WORK - baseline_work - 1;
+            }
+            let mut ordinary = BTreeMap::new();
+            let mut displacement = BTreeMap::new();
+            let mut document = Document::new(vmf.clone());
+            let result = document.edit("terrain binding map", |tx| {
+                expansion.solid(
+                    tx,
+                    original,
+                    false,
+                    2000,
+                    "child.vmf",
+                    &[edit::Transform::default()],
+                    Some(&mut ordinary),
+                    Some(&mut displacement),
+                )
+            });
+            assert!(ordinary.is_empty());
+            if exhausted {
+                assert!(
+                    result.unwrap_err().to_string().contains(
+                        "Instance overlay bindings exceed the shared geometry-work limit"
+                    )
+                );
+                assert!(displacement.is_empty());
+                assert!(expansion.provenance.is_empty());
+                assert_eq!(document.vmf(), &vmf);
+            } else {
+                result.unwrap();
+                assert_eq!(expansion.work, baseline_work + 2);
+                assert_eq!(displacement.len(), 1);
+                let generated = displacement[&target.side];
+                assert_eq!(
+                    expansion.provenance[&format!("side:{generated}")],
+                    (2000, "child.vmf".into(), target.side, Some(target.solid))
+                );
+            }
         }
     }
 }

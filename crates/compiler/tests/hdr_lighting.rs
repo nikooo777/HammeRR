@@ -391,44 +391,51 @@ fn multiple_bounces_and_model_probes_read_only_the_selected_channel() {
 fn terrain_channel_geometry_and_auxiliary_records_are_shared() {
     let (_directory, game) = game(true);
     let mut document = room();
-    document
-        .edit("terrain receiver", |tx| {
-            let ObjectId::Solid(id) = edit::create_block(
-                tx,
-                DVec3::new(64.0, 64.0, 0.0),
-                DVec3::new(192.0, 192.0, 16.0),
-                "dev/dev_measuregeneric01",
-            )?
-            else {
-                unreachable!()
-            };
-            let solid = tx.solid_mut(id)?;
-            let geometry = BrushGeometry::from_solid(solid).unwrap();
-            let top = geometry
-                .faces
-                .iter()
-                .find(|face| face.plane.normal.z > 0.99)
-                .unwrap();
-            solid.sides[top.side].lightmap_scale = 64;
-            solid.sides[top.side].displacement = Some(DispInfo {
-                power: 2,
-                start_position: top.vertices[0],
-                flags: Some(0),
-                elevation: 0.0,
-                subdivided: false,
-                normals: Some(vec![vec![DVec3::Z; 5]; 5]),
-                distances: Some(vec![vec![0.0; 5]; 5]),
-                offsets: None,
-                offset_normals: None,
-                alphas: None,
-                triangle_tags: None,
-                allowed_verts: None,
-                extra_properties: Default::default(),
-                extra: Vec::new(),
-            });
-            Ok(())
-        })
-        .unwrap();
+    for (power, mins, maxs, scale) in [
+        (2, [9.0, 17.0, 0.0], [41.0, 65.0, 16.0], 64),
+        (4, [73.0, 81.0, 0.0], [201.0, 145.0, 16.0], 32),
+        (3, [-191.0, -175.0, 0.0], [-95.0, -47.0, 16.0], 64),
+    ] {
+        document
+            .edit("terrain receiver", |tx| {
+                let ObjectId::Solid(id) = edit::create_block(
+                    tx,
+                    DVec3::from_array(mins),
+                    DVec3::from_array(maxs),
+                    "dev/dev_measuregeneric01",
+                )?
+                else {
+                    unreachable!()
+                };
+                let solid = tx.solid_mut(id)?;
+                let geometry = BrushGeometry::from_solid(solid).unwrap();
+                let top = geometry
+                    .faces
+                    .iter()
+                    .find(|face| face.plane.normal.z > 0.99)
+                    .unwrap();
+                let size = (1 << power) + 1;
+                solid.sides[top.side].lightmap_scale = scale;
+                solid.sides[top.side].displacement = Some(DispInfo {
+                    power,
+                    start_position: top.vertices[0],
+                    flags: Some(0),
+                    elevation: 0.0,
+                    subdivided: false,
+                    normals: Some(vec![vec![DVec3::Z; size]; size]),
+                    distances: Some(vec![vec![0.0; size]; size]),
+                    offsets: None,
+                    offset_normals: None,
+                    alphas: None,
+                    triangle_tags: None,
+                    allowed_verts: None,
+                    extra_properties: Default::default(),
+                    extra: Vec::new(),
+                });
+                Ok(())
+            })
+            .unwrap();
+    }
     light(
         &mut document,
         DVec3::new(0.0, 0.0, 128.0),
@@ -437,6 +444,9 @@ fn terrain_channel_geometry_and_auxiliary_records_are_shared() {
         None,
     );
     let source = document.vmf();
+    let fullbright = compiled(source, &game, LightingMode::Fullbright, 0)
+        .bsp
+        .unwrap();
     let ldr = compiled(source, &game, LightingMode::DirectLdr, 0)
         .bsp
         .unwrap();
@@ -448,11 +458,92 @@ fn terrain_channel_geometry_and_auxiliary_records_are_shared() {
         .unwrap();
     assert_channel_reference(&dual, LightingKind::Ldr, &ldr);
     assert_channel_reference(&dual, LightingKind::Hdr, &reference);
-    assert_eq!(
-        dual.displacement_lightmap_samples(0).unwrap(),
-        ldr.displacement_lightmap_samples(0).unwrap()
-    );
+    let dual = Bsp::parse(&dual.to_bytes()).unwrap();
+    let data = dual.displacements().unwrap().unwrap();
+    assert_eq!(data.infos.len(), 3);
+    let ldr_faces = dual.lighting_faces(LightingKind::Ldr).unwrap();
     let faces = dual.lighting_faces(LightingKind::Hdr).unwrap();
+    let fullbright_faces = fullbright.lighting_faces(LightingKind::Ldr).unwrap();
+    assert!(data.infos.iter().any(|info| {
+        let index = usize::from(info.face);
+        fullbright_faces[index].lightmap_size != ldr_faces[index].lightmap_size
+    }));
+    let mut hdr_only = dual.clone();
+    hdr_only.lumps[bsp::lump::FACES].data.clear();
+    let mut cursor = 0;
+    let mut escaped = false;
+    for (index, info) in data.infos.iter().enumerate() {
+        let face = ldr_faces[usize::from(info.face)];
+        let hdr_face = faces[usize::from(info.face)];
+        assert_eq!(face.dispinfo, hdr_face.dispinfo);
+        assert_eq!(face.texinfo, hdr_face.texinfo);
+        assert_eq!(face.lightmap_size, hdr_face.lightmap_size);
+        let samples = dual.displacement_lightmap_samples(index).unwrap().unwrap();
+        assert_eq!(
+            samples,
+            ldr.displacement_lightmap_samples(index).unwrap().unwrap()
+        );
+        assert_eq!(
+            samples,
+            hdr_only
+                .displacement_lightmap_samples(index)
+                .unwrap()
+                .unwrap()
+        );
+        let [width, height] = face.lightmap_size.map(|size| size as usize + 1);
+        assert_eq!(samples.len(), width * height);
+        assert_eq!(
+            samples.len(),
+            match info.power {
+                2 => 4,
+                3 => 12,
+                4 => 24,
+                _ => unreachable!(),
+            }
+        );
+        let positions = data
+            .positions(index, dual.displacement_quad(index).unwrap())
+            .unwrap();
+        let sampler = bsp::DisplacementSurfaceSampler::new(*info, &positions).unwrap();
+        for (sample_index, sample) in samples.iter().enumerate() {
+            let expected = sampler
+                .sample([
+                    (sample_index % width) as f64 / (width - 1) as f64,
+                    (sample_index / width) as f64 / (height - 1) as f64,
+                ])
+                .unwrap()
+                .lightmap_record()
+                .unwrap_or(bsp::DisplacementLightmapSample {
+                    triangle: 0,
+                    weights: [0; 3],
+                });
+            assert_eq!(*sample, expected);
+            escaped |= sample.triangle >= 255;
+        }
+        assert_eq!(info.lightmap_sample_start as usize, cursor);
+        let encoded = info.encode_lightmap_samples(&samples).unwrap();
+        assert_eq!(
+            &dual.lumps[bsp::lump::DISP_LIGHTMAP_SAMPLE_POSITIONS].data
+                [cursor..cursor + encoded.len()],
+            encoded
+        );
+        cursor += encoded.len();
+    }
+    assert!(escaped);
+    assert_eq!(
+        cursor,
+        dual.lumps[bsp::lump::DISP_LIGHTMAP_SAMPLE_POSITIONS]
+            .data
+            .len()
+    );
+    let mut invalid = dual.clone();
+    let info = data.infos.iter().find(|info| info.power == 2).unwrap();
+    invalid.lumps[bsp::lump::DISP_LIGHTMAP_SAMPLE_POSITIONS].data
+        [info.lightmap_sample_start as usize] = info.triangle_count().unwrap() as u8;
+    assert_eq!(
+        invalid.displacements().unwrap_err().to_string(),
+        "displacement lightmap sample triangle is out of range"
+    );
     let face = faces.iter().find(|face| face.dispinfo >= 0).unwrap();
     let infos = dual.records::<TexInfo>().unwrap();
     let lighting = dual.lighting(LightingKind::Hdr).unwrap().unwrap();

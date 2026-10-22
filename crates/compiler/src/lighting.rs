@@ -484,9 +484,15 @@ pub struct Occluder {
     planes: Vec<Plane>,
     sky: Vec<bool>,
     source: Option<HullSource>,
-    optical: Option<Vec<Option<brush_alpha::Face>>>,
+    optical: Option<Box<OpticalHull>>,
     mins: DVec3,
     maxs: DVec3,
+}
+
+#[derive(Debug, Clone)]
+struct OpticalHull {
+    faces: Vec<Option<brush_alpha::Face>>,
+    pose: Option<crate::brush_model_pose::Pose>,
 }
 
 #[derive(Debug, Clone)]
@@ -563,19 +569,22 @@ impl Occluder {
         Ok(self)
     }
 
-    #[cfg(test)]
-    fn with_optical(mut self, faces: Vec<Option<brush_alpha::Face>>) -> Result<Self, String> {
+    fn with_optical(
+        mut self,
+        faces: Vec<Option<brush_alpha::Face>>,
+        pose: Option<crate::brush_model_pose::Pose>,
+    ) -> Result<Self, String> {
         if faces.len() != self.planes.len() {
             return Err("Brush texture shadow boundaries must match hull planes".into());
         }
         if faces.iter().any(Option::is_some) {
-            self.optical = Some(faces);
+            self.optical = Some(Box::new(OpticalHull { faces, pose }));
         }
         Ok(self)
     }
 
     fn optical_entry(&self, start: DVec3, end: DVec3) -> Result<Option<(f64, bool)>, String> {
-        let Some(faces) = &self.optical else {
+        let Some(optical) = &self.optical else {
             return self.entry(start, end);
         };
         let Some(interval) = self.interval(start, end)? else {
@@ -600,10 +609,12 @@ impl Occluder {
             {
                 continue;
             }
-            if let Some(face) = &faces[index]
-                && !face.covered(start.lerp(end, fraction))?
-            {
-                continue;
+            if let Some(face) = &optical.faces[index] {
+                let world = start.lerp(end, fraction);
+                let local = optical.pose.map_or(world, |pose| pose.local_point(world));
+                if !face.covered(local)? {
+                    continue;
+                }
             }
             let sky = self.sky[index];
             first = match first {

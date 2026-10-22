@@ -51,7 +51,14 @@ impl ShadowObject for Occluder {
         (self.mins, self.maxs)
     }
     fn work(&self) -> usize {
-        self.plane_count() + 1 + self.optical.as_ref().map_or(0, |faces| faces.len() * 32)
+        self.plane_count()
+            + 1
+            + self.optical.as_ref().map_or(0, |optical| {
+                let inverse = optical
+                    .pose
+                    .map_or(0, |pose| if pose.rotation.is_some() { 18 } else { 3 });
+                optical.faces.len() * (32 + inverse)
+            })
     }
     fn intersects(&self, start: DVec3, end: DVec3) -> Result<bool, String> {
         self.intersects(start, end)
@@ -468,7 +475,7 @@ mod tests {
         let mut faces = vec![None; 6];
         faces[0] = Some(face.clone());
         faces[1] = Some(face);
-        let hull = cube(DVec3::ZERO, 1.0).with_optical(faces).unwrap();
+        let hull = cube(DVec3::ZERO, 1.0).with_optical(faces, None).unwrap();
         let ray = |y: f64| (DVec3::new(-2.0, y, 0.25), DVec3::new(2.0, y, 0.25));
         let (start, end) = ray(0.25);
         let index = ShadowIndex::new(vec![hull.clone()], &mut |_| Ok(())).unwrap();
@@ -492,7 +499,7 @@ mod tests {
                 .is_none()
         );
         let mut mixed = hull.clone();
-        mixed.optical.as_mut().unwrap()[0] = None;
+        mixed.optical.as_mut().unwrap().faces[0] = None;
         let (start, end) = ray(0.25);
         assert_eq!(
             mixed.optical_entry(start, end).unwrap(),
@@ -510,10 +517,60 @@ mod tests {
     }
 
     #[test]
+    fn model_cutouts_use_each_hulls_inverse_pose_and_preserve_geometric_hits() {
+        use crate::brush_model_pose::Pose;
+        use glam::DMat3;
+
+        let face = super::super::brush_alpha::test_face([0, 255, 255, 255]);
+        let c = std::f64::consts::FRAC_1_SQRT_2;
+        let mixed = DMat3::from_cols(
+            DVec3::new(0.5, 0.5, -c),
+            DVec3::new(c / 2.0 - 0.5, c / 2.0 + 0.5, 0.5),
+            DVec3::new(c / 2.0 + 0.5, c / 2.0 - 0.5, 0.5),
+        );
+        for (offset, rotation) in [
+            (DVec3::new(10.125, -20.5, 30.5), None),
+            (
+                DVec3::new(101.5, -67.25, 32.125),
+                Some(DMat3::from_cols(DVec3::Y, -DVec3::X, DVec3::Z)),
+            ),
+            (DVec3::new(-70.25, 41.5, -25.125), Some(mixed)),
+        ] {
+            let literal = rotation.unwrap_or(DMat3::IDENTITY);
+            let pose = Pose { offset, rotation };
+            let mut hull = cube(DVec3::ZERO, 1.0);
+            for plane in &mut hull.planes {
+                plane.normal = literal * plane.normal;
+                plane.dist += plane.normal.dot(offset);
+            }
+            hull.mins = offset - DVec3::splat(2.0);
+            hull.maxs = offset + DVec3::splat(2.0);
+            let opaque_work = hull.work();
+            let untextured = hull
+                .clone()
+                .with_optical(vec![None; 6], Some(pose))
+                .unwrap();
+            assert!(untextured.optical.is_none());
+            assert_eq!(untextured.work(), opaque_work);
+            let hull = hull
+                .with_optical(vec![Some(face.clone()); 6], Some(pose))
+                .unwrap();
+            let inverse_work = if rotation.is_some() { 18 } else { 3 };
+            assert_eq!(hull.work(), opaque_work + 6 * (32 + inverse_work));
+            for (y, z, covered) in [(0.25, 0.25, false), (0.75, 0.25, true), (0.25, 0.75, true)] {
+                let start = literal * DVec3::new(-2.0, y, z) + offset;
+                let end = literal * DVec3::new(2.0, y, z) + offset;
+                assert!(hull.entry(start, end).unwrap().is_some());
+                assert_eq!(hull.optical_entry(start, end).unwrap().is_some(), covered);
+            }
+        }
+    }
+
+    #[test]
     fn sky_queries_continue_through_cutouts_but_keep_opaque_ties() {
         let face = super::super::brush_alpha::test_face([0; 4]);
         let pane = cube(DVec3::ZERO, 1.0)
-            .with_optical(vec![Some(face); 6])
+            .with_optical(vec![Some(face); 6], None)
             .unwrap();
         let sky = cube(DVec3::X * 4.0, 1.0)
             .with_sky(vec![false, true, false, false, false, false])

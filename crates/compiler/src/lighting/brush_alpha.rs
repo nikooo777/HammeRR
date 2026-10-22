@@ -4,7 +4,7 @@ use std::{
 };
 
 use glam::{DVec2, DVec3};
-use source_formats::{gamefs::GameFs, vmt};
+use source_formats::{bsp::contents, gamefs::GameFs, vmt};
 
 use super::{
     bake::{Allocation, Budget},
@@ -35,12 +35,17 @@ impl Face {
 
 pub(super) struct Prepared {
     materials: BTreeMap<usize, Option<Arc<alpha::Material>>>,
+    model_alpha: bool,
     _allocations: Vec<Allocation>,
 }
 
 impl Prepared {
     pub(super) fn contains(&self, material: usize) -> bool {
         self.materials.get(&material).is_some_and(Option::is_some)
+    }
+
+    pub(super) fn has_model_alpha(&self) -> bool {
+        self.model_alpha
     }
 
     pub(super) fn face(&self, material: usize, projection: [[f32; 4]; 2]) -> Option<Face> {
@@ -51,6 +56,50 @@ impl Prepared {
                 material: Arc::clone(material),
                 projection,
             })
+    }
+
+    pub(super) fn qualify_models(
+        &self,
+        map: &Map<'_>,
+        scopes: &[super::models::Scope],
+        receivers: &[bool],
+        budget: &mut Budget<'_>,
+    ) -> Result<(), String> {
+        if !self.model_alpha {
+            return Ok(());
+        }
+        if scopes.len() != receivers.len() {
+            return Err("Brush texture shadow model scopes do not match receivers".into());
+        }
+        let _allocation = budget.reserve::<bool>(map.entities.len())?;
+        budget.consume(map.entities.len())?;
+        let mut admitted = vec![false; map.entities.len()];
+        for (scope, &receiver) in scopes.iter().zip(receivers) {
+            budget.consume(1)?;
+            admitted[scope.entity] = receiver;
+        }
+        for brush in map.brushes.iter().filter(|brush| brush.entity != 0) {
+            for side in brush
+                .sides
+                .iter()
+                .filter(|side| !side.bevel && side.visible)
+            {
+                budget.consume(self.materials.len().checked_ilog2().unwrap_or(0) as usize + 1)?;
+                if self.contains(side.material)
+                    && (!admitted[brush.entity]
+                        || brush.contents & (contents::SOLID | contents::WINDOW | contents::GRATE)
+                            == 0)
+                {
+                    return Err(format!(
+                        "Brush texture shadows entity:{} solid:{} material {} has no applicable baked self-shadow scope",
+                        map.entities[brush.entity].id,
+                        brush.id,
+                        map.materials.get(side.material).name
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -103,6 +152,11 @@ pub(super) fn prepare(
     }
     let _read_metadata = budget
         .reserve::<Allocation>(2 * (crate::MAX_BRUSH_SHADOW_MATERIAL_LOOKUPS + 5 * sides + 2))?;
+    let hull_bytes = map
+        .brushes
+        .len()
+        .checked_mul(size_of::<super::OpticalHull>())
+        .ok_or("Brush texture shadows hull allocation overflow")?;
     let allocation = budget.reserve_bytes(
         sides
             .checked_mul(
@@ -110,10 +164,12 @@ pub(super) fn prepare(
                     + 4 * size_of::<(usize, Option<Arc<alpha::Material>>)>()
                     + 16 * size_of::<usize>(),
             )
+            .and_then(|bytes| bytes.checked_add(hull_bytes))
             .ok_or("Brush texture shadows boundary allocation overflow")?,
     )?;
     budget.consume(sides)?;
     let mut materials = BTreeMap::new();
+    let mut model_alpha = false;
     let mut assets = Assets::for_brushes(fs, sources);
     for brush in &map.brushes {
         for side in brush
@@ -147,12 +203,7 @@ pub(super) fn prepare(
                 };
                 entry.insert(alpha);
             }
-            if brush.entity != 0 && materials[&side.material].is_some() {
-                return Err(format!(
-                    "Brush texture shadows does not support brush-model alpha casters (solid:{}, material {})",
-                    brush.id, info.name
-                ));
-            }
+            model_alpha |= brush.entity != 0 && materials[&side.material].is_some();
         }
     }
     let mut allocations = assets.into_allocations();
@@ -160,6 +211,7 @@ pub(super) fn prepare(
     allocations.push(_read_metadata);
     Ok(Prepared {
         materials,
+        model_alpha,
         _allocations: allocations,
     })
 }
@@ -175,6 +227,75 @@ pub(super) fn test_face(alpha: [u8; 4]) -> Face {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn model_alpha_requires_an_actual_receiver_scope_and_existing_shadow_contents() {
+        use super::super::models::Scope;
+        use crate::{Control, Report, brush_model_pose::Pose, map::MapEntity};
+
+        let game = crate::test_common::empty_game();
+        let mut map =
+            Map::load(&crate::test_common::room(), &game, &mut Report::default()).unwrap();
+        let entity = map.entities.len();
+        map.entities.push(MapEntity {
+            id: 777,
+            classname: "func_brush".into(),
+            properties: Vec::new(),
+            brushes: vec![0],
+            origin: None,
+        });
+        map.entities[0].brushes.retain(|&brush| brush != 0);
+        map.brushes[0].entity = entity;
+        let material = map.brushes[0]
+            .sides
+            .iter()
+            .find(|side| side.visible && !side.bevel)
+            .unwrap()
+            .material;
+        let mut prepared = Prepared {
+            materials: BTreeMap::from([(material, Some(alpha::test_cutout([0; 4])))]),
+            model_alpha: true,
+            _allocations: Vec::new(),
+        };
+        let scope = Scope {
+            entity,
+            pose: Pose {
+                offset: DVec3::ZERO,
+                rotation: None,
+            },
+            faces: 0..1,
+        };
+        let control = Control::default();
+        let mut budget = Budget::new(&control);
+        let error = prepared
+            .qualify_models(&map, &[], &[], &mut budget)
+            .unwrap_err();
+        assert!(
+            error.contains("entity:777") && error.contains("no applicable baked self-shadow scope")
+        );
+        assert_eq!(budget.live_bytes(), 0);
+        assert!(
+            prepared
+                .qualify_models(&map, std::slice::from_ref(&scope), &[false], &mut budget)
+                .is_err()
+        );
+        prepared
+            .qualify_models(&map, std::slice::from_ref(&scope), &[true], &mut budget)
+            .unwrap();
+        assert_eq!(budget.live_bytes(), 0);
+        map.brushes[0].contents = contents::WATER;
+        assert!(
+            prepared
+                .qualify_models(&map, &[scope], &[true], &mut budget)
+                .is_err()
+        );
+        prepared.model_alpha = false;
+        let work = budget.work();
+        prepared
+            .qualify_models(&map, &[], &[], &mut budget)
+            .unwrap();
+        assert_eq!(budget.work(), work);
+    }
 
     #[test]
     fn classification_uses_numeric_neutral_values_and_refuses_unknown_opacity() {

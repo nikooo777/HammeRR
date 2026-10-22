@@ -193,41 +193,56 @@ def validate(client, output, game):
     return checks
 
 
-def brush_samples(data, point):
+def brush_samples(data, point, model=0, plane_z=0):
     from validate_authored_planes import records
     from validate_direct_lighting import FACE_FORMAT
     from validate_material_albedo import payload
 
     planes = records(data, 1, "<4fi")
     infos = records(data, 6, "<16f2i")
+    models = records(data, 14, "<9f3i")
+    assert 0 <= model < len(models)
+    if model:
+        bounds = {1: (-72, -36, -4, 24, 60, 16, 0, 0, 0), 2: (-48, -48, 8, 48, 48, 12, 0, 0, 0)}
+        assert len(models) == 3 and models[model][:9] == bounds[model], "Independent literal model bounds or local origin changed"
+        assert models[model][11] == (12 if model == 1 else 6), "Compound/separate model face ownership changed"
     result = {}
     for channel, face_slot, light_slot, version in [("ldr", 7, 8, 0), ("hdr", 58, 53, 1)]:
         colors = payload(data, light_slot)
         samples = []
-        for face in records(data, face_slot, FACE_FORMAT, expected_version=version):
+        faces = records(data, face_slot, FACE_FORMAT, expected_version=version)
+        first, count = models[model][10:12]
+        assert 0 <= first < first + count <= len(faces)
+        for face in faces[first:first + count]:
             assert face[0] < len(planes) and 0 <= face[5] < len(infos)
-            if planes[face[0]][:4] != (0, 0, 1, 0):
+            if planes[face[0]][:4] != (0, 0, 1, plane_z):
                 continue
             info = infos[face[5]]
-            u = point[0] * info[8] + point[1] * info[9] + info[11] - face[14]
-            v = point[0] * info[12] + point[1] * info[13] + info[15] - face[15]
+            if model:
+                offset_u, offset_v = (1.5, -0.75) if model == 1 else (0, 0)
+                assert info[8:16] == (0.0625, 0, 0, offset_u, 0, 0.0625, 0, offset_v), "Literal model lightmap projection changed"
+            u = point[0] * info[8] + point[1] * info[9] + plane_z * info[10] + info[11] - face[14]
+            v = point[0] * info[12] + point[1] * info[13] + plane_z * info[14] + info[15] - face[15]
             width, height = face[16] + 1, face[17] + 1
             assert face[6] == -1 and not info[16] & 0x800 and face[8:12] == (0, 255, 255, 255)
             assert 1 <= width <= 65 and 1 <= height <= 65
             if not (0 <= u < width and 0 <= v < height):
                 continue
+            if model:
+                assert 0 < u < width - 1 and 0 < v < height - 1, "Model witness must be a strict interior luxel"
             assert u == int(u) and v == int(v), "Literal point must be an exact native luxel"
             offset = face[12] + (int(v) * width + int(u)) * 4
             assert 0 <= offset <= offset + 4 <= len(colors)
             samples.append(colors[offset:offset + 4].hex())
-        assert samples, f"Missing {channel} floor sample at {point}"
+        assert samples, f"Missing {channel} model {model} sample at {(*point, plane_z)}"
         result[channel] = samples
     return result
 
 
 def validate_brush_shadows(client, output, game, receipt):
     from validate_build_recipes import protected_state
-    from validate_material_albedo import compile_pair, digest
+    from validate_instance_lighting import entity_rows
+    from validate_material_albedo import compile_pair, digest, payload
 
     checks = receipt["passed"]
 
@@ -249,6 +264,10 @@ def validate_brush_shadows(client, output, game, receipt):
     original_texture = bytes(alpha_texture())
     material.write_text(original_material)
     texture.write_bytes(original_texture)
+    model_material = game / "materials/model-cutout.vmt"
+    model_texture = game / "materials/model-cutout.vtf"
+    model_material.write_text('LightmappedGeneric { $alphatest 1 $basetexture "model-cutout" }\n')
+    model_texture.write_bytes(original_texture)
     client.call("new_map", {"discard_changes": True})
     ids = []
     for low, high in ROOM:
@@ -264,6 +283,26 @@ def validate_brush_shadows(client, output, game, receipt):
             ids.append(client.call("tie_to_entity", {"ids": [block], "classname": "func_detail"})["id"])
         else:
             ids.append(block)
+    compound = []
+    for low, high in [(16, 24), (32, 36)]:
+        block = client.call("create_block", {"mins": [-48, -48, low], "maxs": [48, 48, high], "material": "dev/dev_measuregeneric01"})["id"]
+        brush = detail(client, [block])[0]
+        horizontal = [face_ref(brush, face) for face in brush["faces"] if abs(face["normal"][2]) == 1]
+        check(len(horizontal) == 2, "Compound-model solids retain both literal horizontal faces")
+        client.call("edit_faces", {"faces": horizontal, "material": "model-cutout" if low == 32 else "dev/dev_measuregeneric01",
+                                   "u_axis": [1, 0, 0], "v_axis": [0, 1, 0], "scale_u": 16, "scale_v": 16,
+                                   "shift_u": 0.5 if low == 32 else 0, "shift_v": 0, "lightmap_scale": 16})
+        compound.append(block)
+    ids.append(client.call("tie_to_entity", {"ids": compound, "classname": "func_brush", "properties": {
+        "origin": "24 -12 20", "angles": "0 0 0", "targetname": "brush_self_shadow"}})["id"])
+    other = client.call("create_block", {"mins": [-48, -48, 8], "maxs": [48, 48, 12], "material": "dev/dev_measuregeneric01"})["id"]
+    brush = detail(client, [other])[0]
+    horizontal = [face_ref(brush, face) for face in brush["faces"] if abs(face["normal"][2]) == 1]
+    check(len(horizontal) == 2, "The independent model receiver has both literal horizontal faces")
+    client.call("edit_faces", {"faces": horizontal, "u_axis": [1, 0, 0], "v_axis": [0, 1, 0], "scale_u": 16, "scale_v": 16,
+                               "shift_u": 0, "shift_v": 0, "lightmap_scale": 16})
+    ids.append(client.call("tie_to_entity", {"ids": [other], "classname": "func_brush", "properties": {
+        "origin": "0 0 0", "angles": "0 0 0", "targetname": "brush_isolation"}})["id"])
     ids.append(client.call("create_entity", {"classname": "info_player_terrorist", "origin": [-128, -128, 8]})["id"])
     ids.append(client.call("create_entity", {"classname": "light", "origin": [0, 0, 100], "properties": {
         "_light": "255 0 0 200", "_lightHDR": "0 0 255 400", "_constant_attn": "1", "_linear_attn": "0", "_quadratic_attn": "0"}})["id"])
@@ -281,6 +320,8 @@ def validate_brush_shadows(client, output, game, receipt):
     client.call("save_build_recipe", {"name": "Opaque brush control"})
     receipt["source_sha256"] = digest(source.read_bytes())
     receipt["literal_samples"] = {"off": {"ldr": "00000000", "hdr": "00000000"}, "on": {"ldr": "c8000000", "hdr": "0000c801"}}
+    receipt["model_literal_samples"] = {"opaque": {"ldr": "00000000", "hdr": "00000000"},
+                                        "clear": {"ldr": "b8000000", "hdr": "0000b801"}}
 
     def pair(label, error=None, retained=None):
         pointfiles = [output / f"{label}{suffix}.lin" for suffix in ("", "-background")]
@@ -299,13 +340,28 @@ def validate_brush_shadows(client, output, game, receipt):
         return data
 
     def exact(data, enabled):
+        entities = {row.get("targetname"): row for row in entity_rows(data)}
+        check([(entities[name]["classname"], entities[name]["model"], entities[name]["origin"], entities[name]["angles"])
+               for name in ("brush_self_shadow", "brush_isolation")] ==
+              [("func_brush", "*1", "24 -12 20", "0 0 0"), ("func_brush", "*2", "0 0 0", "0 0 0")],
+              "Native model indices and initial poses retain their independent literal authoring values")
         actual = brush_samples(data, (0, 0))
         expected = receipt["literal_samples"]["on" if enabled else "off"]
         check(all(all(row == expected[channel] for row in rows) for channel, rows in actual.items()),
               f"Exact independent LDR/HDR center RGBExp32 bytes with brush texture shadows {enabled}: {actual}")
         opaque = brush_samples(data, (-32, 0))
         check(all(all(row == "00000000" for row in rows) for rows in opaque.values()), "The independently selected opaque texel remains black in both channels")
-        return {"center": actual, "opaque": opaque}
+        own_opaque = brush_samples(data, (-24, 12), model=1, plane_z=4)
+        own_clear = brush_samples(data, (8, 12), model=1, plane_z=4)
+        other = brush_samples(data, (0, 0), model=2, plane_z=12)
+        for label, rows, colors in [
+            ("own opaque center", own_opaque, receipt["model_literal_samples"]["opaque"]),
+            ("own clear point", own_clear, receipt["model_literal_samples"]["clear"] if enabled else receipt["literal_samples"]["off"]),
+            ("other-model center", other, expected),
+        ]:
+            check(all(all(row == colors[channel] for row in samples) for channel, samples in rows.items()),
+                  f"Exact independent {label} RGBExp32 bytes with brush texture shadows {enabled}: {rows}")
+        return {"center": actual, "opaque": opaque, "own_opaque": own_opaque, "own_clear": own_clear, "other_model": other}
 
     try:
         baseline = pair("brush-off")
@@ -321,12 +377,14 @@ def validate_brush_shadows(client, output, game, receipt):
         cutout = pair("brush-on")
         receipt["cases"]["brush-on"]["samples"] = exact(cutout, True)
         check(cutout != baseline, "The enabled cutouts change actual compiled lighting")
+        check(all(payload(cutout, index) == payload(baseline, index) for index in (0, 1, 2, 3, 6, 12, 13, 14, 18, 19, 48)),
+              "Cutout self shadows preserve complete native entity, projection, model, geometry and collision payloads")
         material.write_text('LightmappedGeneric { $translucent 1 $basetexture "brush-cutout" }\n')
         pair("brush-fractional-refused", "fractional translucency is unsupported", cutout)
         material.write_text(original_material)
-        texture.write_bytes(b"VTF\0")
-        pair("brush-corrupt-refused", "brush-cutout", cutout)
-        texture.write_bytes(original_texture)
+        model_texture.write_bytes(b"VTF\0")
+        pair("brush-corrupt-refused", "model-cutout", cutout)
+        model_texture.write_bytes(original_texture)
         client.call("set_compile_settings", {"brush_texture_shadows": False})
         restored = pair("brush-off-restored")
         check(restored == baseline, "Restored sources and disabled setting reproduce the complete original BSP bytes")
@@ -334,6 +392,7 @@ def validate_brush_shadows(client, output, game, receipt):
     finally:
         material.write_text(original_material)
         texture.write_bytes(original_texture)
+        model_texture.write_bytes(original_texture)
         client.call = call
     return checks
 
@@ -342,7 +401,7 @@ def main():
     parser = argparse.ArgumentParser(description="Validate shared shadow compilation using isolated generated game assets; requires an existing headless or graphical MCP-capable binary.")
     parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
     parser.add_argument("--output", type=Path, default=Path("/tmp/hammerr-prop-shadows"))
-    parser.add_argument("--brush-texture-shadows", action="store_true", help="Run five exact dual-channel brush-shadow foreground/background pairs, recipe/settings admission and BSP/pointfile/source custody; requires a fresh --output directory under target/.")
+    parser.add_argument("--brush-texture-shadows", action="store_true", help="Run five exact dual-channel world/detail and initial-pose same-model cutout foreground/background pairs, world/other-model isolation, recipe/settings admission and BSP/pointfile/source custody; requires a fresh --output directory under target/.")
     args = parser.parse_args()
     args.output = args.output.resolve()
     if args.brush_texture_shadows:

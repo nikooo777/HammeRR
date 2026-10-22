@@ -795,10 +795,17 @@ impl Session {
         settings["brush_texture_shadowing"] = json!({
             "available":self.compilation.options.lighting.performs_lighting(),
             "unavailable_reason":if self.compilation.options.lighting.performs_lighting() { None } else { Some("Choose Direct LDR or Direct LDR + HDR before enabling brush texture shadows.") },
-            "description":"Use binary base-texture alpha on plain LightmappedGeneric world and func_detail brush faces for baked shadows. Default off; independent of native model-requested prop texture shadows. Geometry, collision and sealing remain unchanged. Requested unsupported materials or missing textures stop publication.",
+            "description":"Use binary base-texture alpha on plain LightmappedGeneric world/detail faces and within the same brush model at its admitted initial baked pose. Model cutouts affect only that model's own lit receivers; models do not cast permanent shadows into the world or other models and do not supply reflected radiance. Default off; independent of native model-requested prop texture shadows. Geometry, collision and sealing remain unchanged. Requested unsupported materials, model scopes or missing textures stop publication.",
             "limits":{
                 "lighting_modes":["direct_ldr","direct_ldr_hdr"],
-                "casters":["world","func_detail"],
+                "casters":["world","func_detail","brush_model_self"],
+                "model_scope":{
+                    "receivers":"same_model_only",
+                    "pose":"existing_admitted_initial_pose",
+                    "nonzero_rotation":{"classname":"func_brush","parented":false},
+                    "requires_lit_receiver_scope":true,
+                    "casts_into_world":false,"casts_into_other_models":false,"radiance_source":false
+                },
                 "material":"plain LightmappedGeneric",
                 "coverage":"binary_alpha_test",
                 "mip":0,
@@ -813,7 +820,7 @@ impl Session {
                 "transform_absolute_max":compiler::MAX_BRUSH_SHADOW_TRANSFORM,
                 "frames":1,"faces":1,"depth":1,
                 "alpha_reference":{"default":0.5,"min":0,"max":1,"zero_uses_default":true},
-                "unsupported":["fractional translucency","terrain alpha casters","brush-model alpha casters","conditional or animated materials"]
+                "unsupported":["fractional translucency","terrain alpha casters","unadmitted model poses or models without lit receivers","permanent model-to-world or other-model shadows","model radiance sources","conditional or animated materials"]
             }
         });
         settings["pack_water_assets"] = self.compilation.options.pack_water_assets.into();

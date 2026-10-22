@@ -309,13 +309,16 @@ do not add baked shadows or collision.
 #### Brush texture shadows
 
 Use binary texture alpha to let baked light pass through cutout world and
-**func_detail** brush faces. The option defaults off and preserves the existing
-model-requested [static-prop texture shadows](prop-shadows.md).
+**func_detail** brush faces, or through a grille onto another solid in the same
+brush model at its admitted initial pose. The option defaults off and preserves
+the existing model-requested [static-prop texture shadows](prop-shadows.md).
 
 1. Open **Build settings…** and choose **Build lighting → Direct LDR** or
    **Direct LDR + HDR**.
 2. Enable **Brush texture shadows**. Caster faces need a plain
    **LightmappedGeneric** material with `$alphatest 1` and `$basetexture`.
+   For model self shadows, tie the grille and receiving solids to the same
+   **func_brush**, using its existing supported initial lighting pose.
 3. Click **Close**, then **Compile**. Inspect **Diagnostics** in **Build details…**
    if a requested material is unsupported or its texture is missing or corrupt.
    Failed builds retain the previous BSP and pointfile.
@@ -331,12 +334,20 @@ the default is 0.5, values from 0 to 1 are supported, and explicit zero uses 0.5
 Direct, sky, reflected and ambient rays share this cutout behavior. Brush
 geometry, collision, sealing and visibility remain unchanged.
 
+Model cutouts affect only that model's own lit receivers. An opaque or cutout
+model does not cast permanent shadows into the world or another model, and
+model surfaces do not supply reflected radiance. Nonzero rotations retain the
+existing unparented **func_brush** admission rules; the other supported
+zero-rotation receiver scopes are unchanged. A requested model cutout without
+an admitted lit receiver scope fails explicitly. This does not provide runtime
+relighting or extend moving/parented pose support.
+
 Limits: plain static materials only, one texture frame/face/depth, frame zero,
 4096 pixels per axis, 64 MiB decoded alpha, 256 MiB asset reads, 64 KiB per VMT,
-65,536 material/include lookups and 65,536 retained brush boundary sides.
+65,536 material/include lookups and 65,536 original brush boundary sides inspected.
 Authored transform values must be within ±1024. The existing aggregate lighting
 allocation and **Lighting work limit (millions)** also apply. Fractional brush
-translucency, terrain or brush-model alpha casters, conditional/animated
+translucency, terrain alpha casters, unadmitted model scopes, conditional/animated
 materials, bump/envmap caster effects and other unsupported opacity parameters
 stop an enabled build explicitly. Opaque bumped receivers remain supported.
 
@@ -1007,7 +1018,7 @@ admitted, publication replaces its directory entry and preserves its former targ
 | --- | --- |
 | `-o <map.bsp>` | Output file. Defaults to the VMF's name with `.bsp`. |
 | `--lighting fullbright\|direct_ldr\|direct_ldr_hdr` | Lighting mode. Defaults to `fullbright`. |
-| `--brush-texture-shadows` | Binary alpha-test shadows from supported world/detail brush faces; default off, requires lit mode. |
+| `--brush-texture-shadows` | Binary alpha-test world/detail shadows and admitted initial-pose same-model self shadows; default off, requires lit mode. |
 | `--physics none\|engine` | Physics bodies. Defaults to `none`. Needs `hammerr-physics` next to the compiler. |
 | `--sky-quality fast\|balanced\|detailed` | Sky, model-ambient and bounce sampling for both lit modes. Defaults to `fast`. |
 | `--pack-water-assets` | Pack original files for supported static Water closures with explicit LDR/HDR cubemap pairs. Off by default; all lighting modes. See [Water](water.md#pack-static-water-assets). |

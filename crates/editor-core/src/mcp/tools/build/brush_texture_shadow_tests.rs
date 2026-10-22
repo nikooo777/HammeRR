@@ -27,6 +27,15 @@ fn brush_texture_shadows_share_atomic_settings_without_document_or_draft_changes
     let initial = lock(&shared).compile_settings();
     assert_eq!(initial["brush_texture_shadows"], false);
     assert_eq!(initial["brush_texture_shadowing"]["available"], false);
+    assert_eq!(
+        initial["brush_texture_shadowing"]["limits"]["model_scope"],
+        json!({
+            "receivers":"same_model_only","pose":"existing_admitted_initial_pose",
+            "nonzero_rotation":{"classname":"func_brush","parented":false},
+            "requires_lit_receiver_scope":true,
+            "casts_into_world":false,"casts_into_other_models":false,"radiance_source":false
+        })
+    );
     let source = lock(&shared).document().vmf().clone();
     let history = lock(&shared).history_snapshot();
     let failed = server

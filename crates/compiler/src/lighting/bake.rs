@@ -678,11 +678,24 @@ fn posed_occluders(
         } else {
             (brush.mins + pose.offset, brush.maxs + pose.offset)
         };
-        result.push(
-            Occluder::new(planes, mins, maxs)?
-                .with_sky(sky)?
-                .with_source(index, sources)?,
-        );
+        let mut hull = Occluder::new(planes, mins, maxs)?
+            .with_sky(sky)?
+            .with_source(index, sources)?;
+        if let Some(textures) = brush_textures {
+            if entity != 0 {
+                budget.consume(brush.sides.len())?;
+            }
+            let faces = brush
+                .sides
+                .iter()
+                .filter(|side| !side.bevel)
+                .map(|side| {
+                    textures.face(side.material, map.texinfos.infos[side.texinfo].texture_vecs)
+                })
+                .collect();
+            hull = hull.with_optical(faces, (entity != 0).then_some(pose))?;
+        }
+        result.push(hull);
     }
     Ok(result)
 }
@@ -872,7 +885,7 @@ pub(super) fn model_blocked(
     budget: &mut Budget<'_>,
 ) -> Result<bool, String> {
     match model {
-        Some(model) => model.blocked(start, end, &mut |amount| budget.consume(amount)),
+        Some(model) => model.optical_blocked(start, end, &mut |amount| budget.consume(amount)),
         None => Ok(false),
     }
 }
@@ -1032,7 +1045,7 @@ fn bake_inner(
     if options.brush_texture_shadows && brush_textures.is_none() {
         return Err("Brush texture shadows is missing original material sources".into());
     }
-    let mut world_hulls = posed_occluders(
+    let world_hulls = posed_occluders(
         map,
         0,
         Pose {
@@ -1043,27 +1056,6 @@ fn bake_inner(
         budget,
         brush_textures.as_ref(),
     )?;
-    if let Some(textures) = &brush_textures {
-        for hull in &mut world_hulls {
-            let source = hull
-                .source
-                .as_ref()
-                .ok_or("Brush texture shadow hull has no original source")?;
-            let brush = &map.brushes[source.brush];
-            let faces: Vec<_> = brush
-                .sides
-                .iter()
-                .filter(|side| !side.bevel)
-                .map(|side| {
-                    textures.face(side.material, map.texinfos.infos[side.texinfo].texture_vecs)
-                })
-                .collect();
-            if faces.iter().any(Option::is_some) {
-                hull.optical = Some(faces);
-            }
-        }
-        report.diagnostics.push(Diagnostic::info("Brush texture shadows samples binary alpha-test world/detail boundaries; geometry, terrain and brush-model occupancy remain unchanged", None, None));
-    }
     let mut faces = bsp
         .lighting_faces(LightingKind::Ldr)
         .map_err(|error| error.to_string())?;
@@ -1133,6 +1125,10 @@ fn bake_inner(
     if report.has_errors() {
         return Ok(BakeStats::default());
     }
+    if let Some(textures) = &brush_textures {
+        textures.qualify_models(map, &scopes, &has_receivers, budget)?;
+        report.diagnostics.push(Diagnostic::info("Brush texture shadows samples binary alpha-test world/detail boundaries and admitted initial-pose same-model self shadows; geometry and occupancy remain unchanged, with no model-to-world/other-model shadows or model radiance sources", None, None));
+    }
     for plan in &mut plans {
         let scope = &scopes[plan.model];
         if scope.pose.rotation.is_some() {
@@ -1144,7 +1140,16 @@ fn bake_inner(
     for (model, scope) in scopes.iter().enumerate() {
         let shadows = if model != 0 && has_receivers[model] {
             Some(ShadowIndex::new(
-                posed_occluders(map, scope.entity, scope.pose, report, budget, None)?,
+                posed_occluders(
+                    map,
+                    scope.entity,
+                    scope.pose,
+                    report,
+                    budget,
+                    brush_textures
+                        .as_ref()
+                        .filter(|textures| textures.has_model_alpha()),
+                )?,
                 &mut |amount| budget.consume(amount),
             )?)
         } else {

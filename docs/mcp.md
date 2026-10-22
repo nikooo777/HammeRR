@@ -3379,7 +3379,14 @@ shadows** in **Build settings…**:
 ```
 
 This enables binary `$alphatest 1` cutouts on plain **LightmappedGeneric** world
-and **func_detail** brush faces. Authored face UVs and bounded material transforms
+and **func_detail** faces, plus same-model self shadows at an admitted initial
+baked pose. Author a compound grille and receiver through existing
+`create_block`, `edit_faces`, `tie_to_entity` and `set_entity_properties` calls.
+`brush_texture_shadowing.limits.model_scope` reports the receiver and pose
+restrictions: models do not cast permanent world/other-model shadows or supply
+reflected radiance. Nonzero rotations retain the existing unparented
+**func_brush** admission rules. Requested model alpha requires an actual admitted
+lit receiver scope. Authored face UVs and bounded material transforms
 select nearest mip-0 alpha using VTF clamp/repeat. The default reference is 0.5;
 explicit references accept 0–1 and zero selects 0.5. Every crossed boundary uses
 the same transfer in direct, sky, reflected and ambient rays. Geometry,
@@ -3390,8 +3397,8 @@ enabled; a single update can disable it and select Fullbright. Validation is
 atomic and does not read assets or edit VMF, history, camera or pending reviews.
 Active builds freeze settings. Recipes and saved map context retain the boolean;
 older stored settings and built-in recipes keep it off. Job settings report the
-captured value. Fractional translucency, terrain/brush-model alpha casters,
-conditional/animated materials, unsupported effects and missing/corrupt required
+captured value. Fractional translucency, terrain alpha casters, unadmitted model
+scopes, conditional/animated materials, unsupported effects and missing/corrupt required
 sources fail compilation without replacing prior BSP or pointfile. See
 [Brush texture shadows](compile-and-play.md#brush-texture-shadows) for the
 supported material and resource bounds.

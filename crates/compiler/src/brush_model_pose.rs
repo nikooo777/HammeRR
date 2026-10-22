@@ -19,6 +19,14 @@ impl Pose {
         }
     }
 
+    pub(crate) fn local_point(self, world: DVec3) -> DVec3 {
+        let translated = world - self.offset;
+        match self.rotation {
+            Some(rotation) => rotation.transpose() * translated,
+            None => translated,
+        }
+    }
+
     pub(crate) fn normal(self, local: DVec3) -> DVec3 {
         match self.rotation {
             Some(rotation) => rotation * local,
@@ -300,6 +308,7 @@ mod tests {
                 rotation: Some(actual),
             };
             assert_vector(pose.point(point), expected * point + offset);
+            assert_vector(pose.local_point(expected * point + offset), point);
             assert_vector(pose.normal(normal), expected * normal);
             assert_vector(
                 pose.point(point) + pose.normal(normal) * 0.25,
@@ -307,6 +316,21 @@ mod tests {
             );
             assert!((pose.normal(normal).length() - 1.0).abs() < 2e-15);
         }
+    }
+
+    #[test]
+    fn inverse_translation_retains_f64_subtraction_without_native_projection_rounding() {
+        let pose = Pose {
+            offset: DVec3::new(101.500001, -67.250001, 32.125001),
+            rotation: None,
+        };
+        let world = DVec3::new(102.0, -66.0, 33.0);
+        let local = pose.local_point(world);
+        assert_eq!(
+            local.to_array().map(f64::to_bits),
+            (world - pose.offset).to_array().map(f64::to_bits)
+        );
+        assert_ne!(local, (world.as_vec3() - pose.offset.as_vec3()).as_dvec3());
     }
 
     #[test]

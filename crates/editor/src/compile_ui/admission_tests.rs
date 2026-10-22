@@ -127,6 +127,7 @@ fn retained_actions(controller: &Controller, error: &str) {
     window.invoke_change_pack_water_assets(true);
     window.invoke_change_pack_static_prop_assets(true);
     window.invoke_change_bake_static_prop_vertices(true);
+    window.invoke_change_brush_texture_shadows(true);
     window.invoke_change_reflections(true);
     window.invoke_begin_capture_edit();
     window.set_capture_engine_root("/unapplied/engine".into());

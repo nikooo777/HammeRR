@@ -24,6 +24,8 @@ pub struct BuildSettings {
     pub pack_static_prop_assets: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub bake_static_prop_vertices: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub brush_texture_shadows: bool,
 }
 
 fn default_lighting_work_limit() -> u64 {
@@ -55,6 +57,7 @@ impl BuildSettings {
             pack_water_assets: options.pack_water_assets,
             pack_static_prop_assets: options.pack_static_prop_assets,
             bake_static_prop_vertices: options.bake_static_prop_vertices,
+            brush_texture_shadows: options.brush_texture_shadows,
         }
     }
 
@@ -72,6 +75,7 @@ impl BuildSettings {
             pack_water_assets: self.pack_water_assets,
             pack_static_prop_assets: self.pack_static_prop_assets,
             bake_static_prop_vertices: self.bake_static_prop_vertices,
+            brush_texture_shadows: self.brush_texture_shadows,
         }
         .validate()
     }
@@ -81,6 +85,7 @@ impl BuildSettings {
     pub(crate) fn report(&self) -> serde_json::Value {
         let mut settings = serde_json::json!(self);
         settings["lighting_work_limit"] = self.lighting_work_limit.into();
+        settings["brush_texture_shadows"] = self.brush_texture_shadows.into();
         settings
     }
 
@@ -102,6 +107,7 @@ impl BuildSettings {
             pack_water_assets: Some(self.pack_water_assets),
             pack_static_prop_assets: Some(self.pack_static_prop_assets),
             bake_static_prop_vertices: Some(self.bake_static_prop_vertices),
+            brush_texture_shadows: Some(self.brush_texture_shadows),
         }
     }
 }

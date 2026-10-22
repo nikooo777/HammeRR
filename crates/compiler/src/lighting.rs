@@ -8,6 +8,7 @@ use crate::map::MapEntity;
 pub(crate) mod asset_tracking;
 mod bake;
 mod bounce;
+mod brush_alpha;
 mod bump;
 mod culling;
 mod details;
@@ -483,6 +484,7 @@ pub struct Occluder {
     planes: Vec<Plane>,
     sky: Vec<bool>,
     source: Option<HullSource>,
+    optical: Option<Vec<Option<brush_alpha::Face>>>,
     mins: DVec3,
     maxs: DVec3,
 }
@@ -524,6 +526,7 @@ impl Occluder {
         Ok(Self {
             sky: vec![false; planes.len()],
             source: None,
+            optical: None,
             planes,
             mins,
             maxs,
@@ -558,6 +561,62 @@ impl Occluder {
         }
         self.source = Some(HullSource { brush, sides });
         Ok(self)
+    }
+
+    #[cfg(test)]
+    fn with_optical(mut self, faces: Vec<Option<brush_alpha::Face>>) -> Result<Self, String> {
+        if faces.len() != self.planes.len() {
+            return Err("Brush texture shadow boundaries must match hull planes".into());
+        }
+        if faces.iter().any(Option::is_some) {
+            self.optical = Some(faces);
+        }
+        Ok(self)
+    }
+
+    fn optical_entry(&self, start: DVec3, end: DVec3) -> Result<Option<(f64, bool)>, String> {
+        let Some(faces) = &self.optical else {
+            return self.entry(start, end);
+        };
+        let Some(interval) = self.interval(start, end)? else {
+            return Ok(None);
+        };
+        let mut first: Option<(f64, bool)> = None;
+        for (index, plane) in self.planes.iter().enumerate() {
+            let a = plane.distance_to(start);
+            let b = plane.distance_to(end);
+            if (a > 0.0) == (b > 0.0) {
+                continue;
+            }
+            let fraction = a / (a - b);
+            let boundary = if a > 0.0 {
+                interval.entering
+            } else {
+                interval.leaving
+            };
+            if (fraction - boundary).abs() > shadows::TRIANGLE_EPSILON
+                || fraction <= 0.0
+                || fraction >= 1.0
+            {
+                continue;
+            }
+            if let Some(face) = &faces[index]
+                && !face.covered(start.lerp(end, fraction))?
+            {
+                continue;
+            }
+            let sky = self.sky[index];
+            first = match first {
+                Some((previous, visible))
+                    if (fraction - previous).abs() <= shadows::TRIANGLE_EPSILON =>
+                {
+                    Some((previous.min(fraction), visible && sky))
+                }
+                Some((previous, _)) if previous < fraction => first,
+                _ => Some((fraction, sky)),
+            };
+        }
+        Ok(first)
     }
 
     fn interval(&self, start: DVec3, end: DVec3) -> Result<Option<HullInterval>, String> {
@@ -638,7 +697,9 @@ fn sky_visibility_skipping_owner(
 ) -> Result<f64, String> {
     budget.consume(1)?;
     let end = origin + direction * sky::TRACE_LENGTH;
-    if let Some(fraction) = shadows.sky_fraction(origin, end, &mut |work| budget.consume(work))? {
+    if let Some(fraction) =
+        shadows.optical_sky_fraction(origin, end, &mut |work| budget.consume(work))?
+    {
         let hit = origin.lerp(end, fraction) + direction * sky::SKY_HIT_BIAS;
         if terrain.blocked(origin, hit, &mut |work| budget.consume(work))? {
             return Ok(0.0);

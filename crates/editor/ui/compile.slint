@@ -27,6 +27,10 @@ export component CompileWindow inherits Window {
     in property <bool> prop-vertex-lighting-enabled;
     in property <string> prop-vertex-lighting-description;
     callback change-bake-static-prop-vertices(bool);
+    in property <bool> brush-texture-shadows;
+    in property <bool> brush-texture-shadows-enabled;
+    in property <string> brush-texture-shadows-description;
+    callback change-brush-texture-shadows(bool);
     in property <bool> pack-sky-assets;
     callback change-pack-sky-assets(bool);
     in property <bool> pack-water-assets;
@@ -133,6 +137,8 @@ export component CompileWindow inherits Window {
                     lighting-selector := ComboBox { model: root.lighting-modes; enabled: root.lighting-enabled; selected(value) => { root.change-lighting(self.current-index); } }
                 }
                 Text { text: root.lighting-description; wrap: word-wrap; color: #bac2ce; }
+                CheckBox { text: "Brush texture shadows"; checked: root.brush-texture-shadows; enabled: root.brush-texture-shadows-enabled; toggled => { root.change-brush-texture-shadows(self.checked); } }
+                Text { text: root.brush-texture-shadows-description; wrap: word-wrap; color: #bac2ce; }
                 CheckBox { text: "Bake static-prop vertex lighting"; checked: root.bake-static-prop-vertices; enabled: root.prop-vertex-lighting-enabled; toggled => { root.change-bake-static-prop-vertices(self.checked); } }
                 Text { text: root.prop-vertex-lighting-description; wrap: word-wrap; color: #bac2ce; }
                 CheckBox { text: "Pack sky assets"; checked: root.pack-sky-assets; enabled: root.lighting-enabled; toggled => { root.change-pack-sky-assets(self.checked); } }

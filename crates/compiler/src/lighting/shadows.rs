@@ -6,7 +6,7 @@ use super::Occluder;
 const MAX_OCCLUDERS: usize = 65_536;
 const LEAF_SIZE: usize = 4;
 const STACK_SIZE: usize = usize::BITS as usize;
-const TRIANGLE_EPSILON: f64 = 1e-9;
+pub(super) const TRIANGLE_EPSILON: f64 = 1e-9;
 pub(super) const CONTACT_EPSILON: f64 = 1e-6;
 
 pub(super) enum Visit {
@@ -51,7 +51,7 @@ impl ShadowObject for Occluder {
         (self.mins, self.maxs)
     }
     fn work(&self) -> usize {
-        self.plane_count() + 1
+        self.plane_count() + 1 + self.optical.as_ref().map_or(0, |faces| faces.len() * 32)
     }
     fn intersects(&self, start: DVec3, end: DVec3) -> Result<bool, String> {
         self.intersects(start, end)
@@ -373,15 +373,55 @@ impl<T: ShadowObject> ShadowIndex<T> {
 }
 
 impl ShadowIndex<Occluder> {
+    pub(super) fn optical_blocked(
+        &self,
+        start: DVec3,
+        end: DVec3,
+        consume: &mut impl FnMut(usize) -> Result<(), String>,
+    ) -> Result<bool, String> {
+        self.visit(start, end, consume, &mut |hull| {
+            Ok(if hull.optical_entry(start, end)?.is_some() {
+                Visit::Stop
+            } else {
+                Visit::Continue(1.0)
+            })
+        })
+    }
+
+    pub(super) fn optical_sky_fraction(
+        &self,
+        start: DVec3,
+        end: DVec3,
+        consume: &mut impl FnMut(usize) -> Result<(), String>,
+    ) -> Result<Option<f64>, String> {
+        self.sky_fraction_with(start, end, consume, true)
+    }
+
+    #[cfg(test)]
     pub(super) fn sky_fraction(
         &self,
         start: DVec3,
         end: DVec3,
         consume: &mut impl FnMut(usize) -> Result<(), String>,
     ) -> Result<Option<f64>, String> {
+        self.sky_fraction_with(start, end, consume, false)
+    }
+
+    fn sky_fraction_with(
+        &self,
+        start: DVec3,
+        end: DVec3,
+        consume: &mut impl FnMut(usize) -> Result<(), String>,
+        optical: bool,
+    ) -> Result<Option<f64>, String> {
         let mut first: Option<(f64, bool)> = None;
         self.visit(start, end, consume, &mut |hull| {
-            if let Some((fraction, sky)) = hull.entry(start, end)? {
+            let entry = if optical {
+                hull.optical_entry(start, end)?
+            } else {
+                hull.entry(start, end)?
+            };
+            if let Some((fraction, sky)) = entry {
                 first = match first {
                     Some((previous, visible))
                         if (fraction - previous).abs() <= TRIANGLE_EPSILON =>
@@ -420,6 +460,85 @@ mod tests {
             center + DVec3::splat(half),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn brush_cutouts_sample_both_boundaries_without_changing_occupancy() {
+        let face = super::super::brush_alpha::test_face([0, 255, 0, 255]);
+        let mut faces = vec![None; 6];
+        faces[0] = Some(face.clone());
+        faces[1] = Some(face);
+        let hull = cube(DVec3::ZERO, 1.0).with_optical(faces).unwrap();
+        let ray = |y: f64| (DVec3::new(-2.0, y, 0.25), DVec3::new(2.0, y, 0.25));
+        let (start, end) = ray(0.25);
+        let index = ShadowIndex::new(vec![hull.clone()], &mut |_| Ok(())).unwrap();
+        assert!(index.blocked(start, end, &mut |_| Ok(())).unwrap());
+        assert!(!index.optical_blocked(start, end, &mut |_| Ok(())).unwrap());
+        let (start, end) = ray(0.75);
+        assert!(index.optical_blocked(start, end, &mut |_| Ok(())).unwrap());
+        assert!(
+            hull.optical_entry(DVec3::new(0.0, 0.25, 0.25), DVec3::new(2.0, 0.25, 0.25))
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            hull.optical_entry(DVec3::new(0.0, 0.75, 0.25), DVec3::new(2.0, 0.75, 0.25))
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            hull.optical_entry(DVec3::new(-2.0, 0.75, 0.25), DVec3::new(-1.0, 0.75, 0.25))
+                .unwrap()
+                .is_none()
+        );
+        let mut mixed = hull.clone();
+        mixed.optical.as_mut().unwrap()[0] = None;
+        let (start, end) = ray(0.25);
+        assert_eq!(
+            mixed.optical_entry(start, end).unwrap(),
+            Some((0.75, false))
+        );
+        assert_eq!(
+            mixed.optical_entry(start.lerp(end, 0.5), end).unwrap(),
+            Some((0.5, false))
+        );
+        assert!(
+            hull.optical_entry(DVec3::new(-2.0, -2.0, 0.25), DVec3::new(2.0, 2.0, 0.25))
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn sky_queries_continue_through_cutouts_but_keep_opaque_ties() {
+        let face = super::super::brush_alpha::test_face([0; 4]);
+        let pane = cube(DVec3::ZERO, 1.0)
+            .with_optical(vec![Some(face); 6])
+            .unwrap();
+        let sky = cube(DVec3::X * 4.0, 1.0)
+            .with_sky(vec![false, true, false, false, false, false])
+            .unwrap();
+        let start = DVec3::new(-3.0, 0.25, 0.25);
+        let end = DVec3::new(8.0, 0.25, 0.25);
+        let index = ShadowIndex::new(vec![pane.clone(), sky.clone()], &mut |_| Ok(())).unwrap();
+        assert_eq!(
+            index
+                .optical_sky_fraction(start, end, &mut |_| Ok(()))
+                .unwrap(),
+            Some(6.0 / 11.0)
+        );
+        assert_eq!(
+            index.sky_fraction(start, end, &mut |_| Ok(())).unwrap(),
+            None
+        );
+        let index =
+            ShadowIndex::new(vec![pane, sky, cube(DVec3::X * 4.0, 1.0)], &mut |_| Ok(())).unwrap();
+        assert_eq!(
+            index
+                .optical_sky_fraction(start, end, &mut |_| Ok(()))
+                .unwrap(),
+            None
+        );
     }
 
     #[test]

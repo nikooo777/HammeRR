@@ -11,6 +11,7 @@ use crate::session::{Actor, Session};
 mod admission_tests;
 mod baked_lightmaps;
 mod baked_prop_vertices;
+mod brush_texture_shadows;
 mod capture;
 #[cfg(test)]
 mod instance_dependency_tests;
@@ -142,6 +143,7 @@ fn refresh_current_settings(window: &CompileWindow, session: &Session) {
     water_packing::refresh(window, session);
     static_prop_packing::refresh(window, session);
     prop_vertex_lighting::refresh(window, session);
+    brush_texture_shadows::refresh(window, session);
     window.set_generate_reflections(settings["generate_reflections"] == true);
     window.set_reflection_description(
         settings["reflection_description"]
@@ -436,6 +438,7 @@ impl Controller {
         let capture = capture::bind(&window, &access, &recipes);
         sky_packing::bind(&window, &access, &recipes);
         prop_vertex_lighting::bind(&window, &access, &recipes);
+        brush_texture_shadows::bind(&window, &access, &recipes);
         water_packing::bind(&window, &access, &recipes);
         static_prop_packing::bind(&window, &access, &recipes);
         let baked_lightmaps = baked_lightmaps::bind(&window, &access)?;

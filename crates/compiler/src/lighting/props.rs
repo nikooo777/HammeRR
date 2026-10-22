@@ -18,14 +18,14 @@ use super::shadows::{ShadowIndex, ShadowObject, Triangle};
 use crate::{Diagnostic, Report, map::MAX_COMPILE_COORD};
 
 const MAX_TRIANGLES: usize = 262_144;
-const MAX_ASSET_BYTES: usize = 256 * 1024 * 1024;
-const MAX_MATERIAL_BYTES: usize = 64 * 1024;
-const MAX_MATERIAL_LOOKUPS: usize = 65_536;
+const MAX_ASSET_BYTES: usize = crate::MAX_BRUSH_SHADOW_ASSET_BYTES;
+const MAX_MATERIAL_BYTES: usize = crate::MAX_BRUSH_SHADOW_MATERIAL_BYTES;
+const MAX_MATERIAL_LOOKUPS: usize = crate::MAX_BRUSH_SHADOW_MATERIAL_LOOKUPS;
 const MAX_TRACKING_BYTES: usize = 8 * MAX_MATERIAL_LOOKUPS * size_of::<Allocation>();
 const NO_SHADOW: u32 = 0x10;
 const CAST_TEXTURE_SHADOWS: u32 = 0x0004_0000;
 
-mod alpha;
+pub(super) mod alpha;
 #[cfg(test)]
 pub(super) use alpha::fractional_triangle;
 
@@ -231,9 +231,10 @@ impl Buffers {
     }
 }
 
-struct Assets<'fs, 'tracking> {
+pub(super) struct Assets<'fs, 'tracking> {
     fs: &'fs GameFs,
     tracking: Option<&'tracking mut Tracker<'fs>>,
+    material_sources: Option<&'fs crate::asset_sources::BuildMaterialSources>,
     bytes: usize,
     lookups: usize,
     textures: BTreeMap<String, Arc<alpha::Texture>>,
@@ -241,10 +242,76 @@ struct Assets<'fs, 'tracking> {
     allocations: Vec<Allocation>,
 }
 
-impl Assets<'_, '_> {
+impl<'fs> Assets<'fs, '_> {
+    pub(super) fn for_brushes(
+        fs: &'fs GameFs,
+        sources: &'fs crate::asset_sources::BuildMaterialSources,
+    ) -> Self {
+        Self {
+            fs,
+            tracking: None,
+            material_sources: Some(sources),
+            bytes: 0,
+            lookups: 0,
+            textures: BTreeMap::new(),
+            alpha_bytes: 0,
+            allocations: Vec::new(),
+        }
+    }
+
+    pub(super) fn into_allocations(self) -> Vec<Allocation> {
+        self.allocations
+    }
+
+    pub(super) fn brush_material(
+        &mut self,
+        name: &str,
+        budget: &mut Budget<'_>,
+    ) -> Result<Material, String> {
+        let sources = self
+            .material_sources
+            .ok_or("Brush texture shadows is missing original material sources")?;
+        Material::load_with_reader(&source_formats::vmt::material_path(name), &mut |path| {
+            budget.consume(1).map_err(std::io::Error::other)?;
+            self.lookups += 1;
+            if self.lookups > MAX_MATERIAL_LOOKUPS {
+                return Err(std::io::Error::other(
+                    "Brush texture shadows exceeds 65,536 material lookups",
+                ));
+            }
+            let remaining = MAX_ASSET_BYTES - self.bytes;
+            let asset = sources.read_asset(self.fs, path, MAX_MATERIAL_BYTES.min(remaining))?;
+            if let Some(asset) = &asset {
+                budget
+                    .consume(asset.bytes().len().div_ceil(64))
+                    .map_err(std::io::Error::other)?;
+                self.allocations.push(
+                    budget
+                        .reserve_bytes(asset.bytes().len())
+                        .map_err(std::io::Error::other)?,
+                );
+                self.bytes += asset.bytes().len();
+            }
+            Ok(asset.map(|asset| asset.bytes().to_vec()))
+        })
+        .map_err(|error| format!("Brush texture shadows material {name}: {error}"))?
+        .ok_or_else(|| format!("Brush texture shadows material {name} was not found"))
+    }
+
     fn read(&mut self, path: &str, budget: &mut Budget<'_>) -> Result<Vec<u8>, String> {
         let limit = source_formats::mdl::MAX_MODEL_BYTES.min(MAX_ASSET_BYTES - self.bytes);
-        let data = if let Some(tracking) = &mut self.tracking {
+        let data = if let Some(sources) = self.material_sources {
+            budget.consume(1)?;
+            let data = sources
+                .read_asset(self.fs, path, limit)
+                .map_err(|error| format!("{path}: {error}"))?;
+            if let Some(data) = &data {
+                budget.consume(data.bytes().len().div_ceil(64))?;
+                self.allocations
+                    .push(budget.reserve_bytes(data.bytes().len())?);
+            }
+            data.map(|asset| asset.bytes().to_vec())
+        } else if let Some(tracking) = &mut self.tracking {
             tracking.read(path, limit, budget)?
         } else {
             budget.consume(1)?;
@@ -428,6 +495,7 @@ pub(super) fn build<'a>(
             return Err("Static-prop shadow source records do not match emitted props".into());
         }
         let mut assets = Assets {
+            material_sources: None,
             fs,
             tracking,
             bytes: 0,

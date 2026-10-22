@@ -10,16 +10,17 @@ fn scroll_to_packing_control(window: &CompileWindow) {
     let size = window.window().size();
     for _ in 0..32 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(250));
-        let control = i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+        if let Some(control) = i_slint_backend_testing::ElementHandle::find_by_accessible_label(
             window,
             "Pack static prop assets",
         )
         .next()
-        .unwrap();
-        let top = control.absolute_position().y;
-        if top >= 0.0 && top + control.size().height <= size.height as f32 - 64.0 {
-            assert_dialog_button_visible(window, "Pack static prop assets");
-            return;
+        {
+            let top = control.absolute_position().y;
+            if top >= 0.0 && top + control.size().height <= size.height as f32 - 64.0 {
+                assert_dialog_button_visible(window, "Pack static prop assets");
+                return;
+            }
         }
         window
             .window()

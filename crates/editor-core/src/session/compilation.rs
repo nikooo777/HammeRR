@@ -713,6 +713,7 @@ pub struct BuildSettingsUpdate<'a> {
     pub pack_water_assets: Option<bool>,
     pub pack_static_prop_assets: Option<bool>,
     pub bake_static_prop_vertices: Option<bool>,
+    pub brush_texture_shadows: Option<bool>,
 }
 
 impl Session {
@@ -790,6 +791,31 @@ impl Session {
         settings["lighting_work_description"] = "One aggregate allowance for preparation, LDR and HDR lighting. Raising it preserves sampling quality and all independent allocation, sample, light, probe and geometry limits.".into();
         settings["bake_static_prop_vertices"] =
             self.compilation.options.bake_static_prop_vertices.into();
+        settings["brush_texture_shadows"] = self.compilation.options.brush_texture_shadows.into();
+        settings["brush_texture_shadowing"] = json!({
+            "available":self.compilation.options.lighting.performs_lighting(),
+            "unavailable_reason":if self.compilation.options.lighting.performs_lighting() { None } else { Some("Choose Direct LDR or Direct LDR + HDR before enabling brush texture shadows.") },
+            "description":"Use binary base-texture alpha on plain LightmappedGeneric world and func_detail brush faces for baked shadows. Default off; independent of native model-requested prop texture shadows. Geometry, collision and sealing remain unchanged. Requested unsupported materials or missing textures stop publication.",
+            "limits":{
+                "lighting_modes":["direct_ldr","direct_ldr_hdr"],
+                "casters":["world","func_detail"],
+                "material":"plain LightmappedGeneric",
+                "coverage":"binary_alpha_test",
+                "mip":0,
+                "filter":"nearest",
+                "addressing":"vtf_clamp_or_repeat",
+                "sides_max":compiler::MAX_BRUSH_SHADOW_SIDES,
+                "texture_axis_max":compiler::MAX_BRUSH_SHADOW_TEXTURE_SIZE,
+                "alpha_bytes_max":compiler::MAX_BRUSH_SHADOW_ALPHA_BYTES,
+                "asset_bytes_max":compiler::MAX_BRUSH_SHADOW_ASSET_BYTES,
+                "material_bytes_max":compiler::MAX_BRUSH_SHADOW_MATERIAL_BYTES,
+                "material_lookups_max":compiler::MAX_BRUSH_SHADOW_MATERIAL_LOOKUPS,
+                "transform_absolute_max":compiler::MAX_BRUSH_SHADOW_TRANSFORM,
+                "frames":1,"faces":1,"depth":1,
+                "alpha_reference":{"default":0.5,"min":0,"max":1,"zero_uses_default":true},
+                "unsupported":["fractional translucency","terrain alpha casters","brush-model alpha casters","conditional or animated materials"]
+            }
+        });
         settings["pack_water_assets"] = self.compilation.options.pack_water_assets.into();
         settings["pack_static_prop_assets"] =
             self.compilation.options.pack_static_prop_assets.into();
@@ -882,9 +908,12 @@ impl Session {
             pack_water_assets,
             pack_static_prop_assets,
             bake_static_prop_vertices,
+            brush_texture_shadows,
         } = update;
         let bounces = bounces.unwrap_or(self.compilation.options.bounces);
         let options = compiler::Options {
+            brush_texture_shadows: brush_texture_shadows
+                .unwrap_or(self.compilation.options.brush_texture_shadows),
             bake_static_prop_vertices: bake_static_prop_vertices
                 .unwrap_or(self.compilation.options.bake_static_prop_vertices),
             pack_sky_assets: pack_sky_assets.unwrap_or(self.compilation.options.pack_sky_assets),
@@ -934,13 +963,14 @@ impl Session {
             self.log(
                 actor,
                 format!(
-                    "Build settings: {} · {} · {} visibility · {} diffuse bounces · {}° brush smoothing · {} lighting work units · static-prop vertex lighting {} · reflections {} · sky packing {} · water packing {} · static-prop packing {}",
+                    "Build settings: {} · {} · {} visibility · {} diffuse bounces · {}° brush smoothing · {} lighting work units · brush texture shadows {} · static-prop vertex lighting {} · reflections {} · sky packing {} · water packing {} · static-prop packing {}",
                     options.lighting.label(),
                     options.physics.label(),
                     options.visibility.label(),
                     options.bounces,
                     options.smoothing_angle,
                     options.lighting_work_limit,
+                    if options.brush_texture_shadows { "on" } else { "off" },
                     if options.bake_static_prop_vertices { "on" } else { "off" },
                     if options.generate_reflections { "on" } else { "off" },
                     if options.pack_sky_assets { "on" } else { "off" },
@@ -1480,6 +1510,7 @@ impl Session {
                 "compile_region":job.region,"recipe":job.recipe,"native_runtime":job.native_runtime,"reflections":{"channel":if job.options.lighting==compiler::LightingMode::DirectLdrHdr {"ldr_hdr"} else {"ldr"},"samples_complete":progress.reflection_samples_complete,"samples_total":progress.reflection_samples_total},"settings":{"bake_static_prop_vertices":job.options.bake_static_prop_vertices,"pack_sky_assets":job.options.pack_sky_assets,"pack_water_assets":job.options.pack_water_assets,"pack_static_prop_assets":job.options.pack_static_prop_assets,"generate_reflections":job.options.generate_reflections,"smoothing_angle":job.options.smoothing_angle,"bounces":job.options.bounces,"lighting":job.options.lighting.name(),"physics":job.options.physics.name(),"sky_quality":job.options.sky_quality.name(),"visibility":job.options.visibility.name()},
                 "stale":!self.current_snapshot(&job.snapshot) || job.options != self.compilation.options || (job.guarded && job.content_epoch != self.content_epoch) || dependency_issue.is_some() || static_prop_source_issue.is_some(),"static_prop_source_issue":static_prop_source_issue,"result":job.result()});
             status["settings"]["lighting_work_limit"] = job.options.lighting_work_limit.into();
+            status["settings"]["brush_texture_shadows"] = job.options.brush_texture_shadows.into();
             if let Some(queue) = &job.queue { status["queue"] = queue.snapshot(); }
             if job.instance_dependencies.is_some() { status["instance_dependencies"]=json!({"current":dependency_issue.is_none(),"error":dependency_issue}); }
             status

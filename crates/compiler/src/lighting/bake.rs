@@ -595,6 +595,7 @@ fn lights(
     Ok(lights)
 }
 
+#[cfg(test)]
 pub(super) fn occluders(
     map: &Map,
     entity: usize,
@@ -610,6 +611,7 @@ pub(super) fn occluders(
         },
         report,
         budget,
+        None,
     )
 }
 
@@ -619,6 +621,7 @@ fn posed_occluders(
     pose: Pose,
     report: &mut Report,
     budget: &mut Budget<'_>,
+    brush_textures: Option<&super::brush_alpha::Prepared>,
 ) -> Result<Vec<Occluder>, String> {
     let mut result = Vec::new();
     for &index in &map.entities[entity].brushes {
@@ -627,7 +630,14 @@ fn posed_occluders(
         if brush.contents & (contents::SOLID | contents::WINDOW | contents::GRATE) == 0 {
             continue;
         }
-        if brush.contents & (contents::WINDOW | contents::TRANSLUCENT | contents::GRATE) != 0 {
+        if brush.contents & (contents::WINDOW | contents::TRANSLUCENT | contents::GRATE) != 0
+            && brush_textures.is_none_or(|textures| {
+                !brush
+                    .sides
+                    .iter()
+                    .any(|side| textures.contains(side.material))
+            })
+        {
             report.diagnostics.push(Diagnostic::warning("Direct LDR casts opaque shadows from translucent/grate brush hulls; material transmittance is unfinished", Some(format!("solid:{}", brush.id)), None));
         }
         budget.consume(brush.sides.len())?;
@@ -893,6 +903,7 @@ pub(crate) struct Settings<'a> {
     pub model_entities: &'a [usize],
     pub prop_sources: &'a [usize],
     pub prop_material_sources: Option<super::asset_tracking::SourceReads>,
+    pub brush_material_sources: Option<&'a crate::asset_sources::BuildMaterialSources>,
     pub world_leaf_nodes: &'a [Option<usize>],
     pub detail_model_centers: &'a [DVec3],
     pub detail_lighting_origins: &'a [Option<DVec3>],
@@ -1014,7 +1025,45 @@ fn bake_inner(
         budget.reserve::<Option<DVec3>>(settings.detail_lighting_origins.len())?;
     let _detail_tints =
         budget.reserve::<crate::detail_props::Tint>(settings.detail_lighting_tints.len())?;
-    let world_hulls = occluders(map, 0, report, budget)?;
+    let brush_textures = settings
+        .brush_material_sources
+        .map(|sources| super::brush_alpha::prepare(map, settings.fs, sources, budget))
+        .transpose()?;
+    if options.brush_texture_shadows && brush_textures.is_none() {
+        return Err("Brush texture shadows is missing original material sources".into());
+    }
+    let mut world_hulls = posed_occluders(
+        map,
+        0,
+        Pose {
+            offset: map.entities[0].origin.unwrap_or(DVec3::ZERO),
+            rotation: None,
+        },
+        report,
+        budget,
+        brush_textures.as_ref(),
+    )?;
+    if let Some(textures) = &brush_textures {
+        for hull in &mut world_hulls {
+            let source = hull
+                .source
+                .as_ref()
+                .ok_or("Brush texture shadow hull has no original source")?;
+            let brush = &map.brushes[source.brush];
+            let faces: Vec<_> = brush
+                .sides
+                .iter()
+                .filter(|side| !side.bevel)
+                .map(|side| {
+                    textures.face(side.material, map.texinfos.infos[side.texinfo].texture_vecs)
+                })
+                .collect();
+            if faces.iter().any(Option::is_some) {
+                hull.optical = Some(faces);
+            }
+        }
+        report.diagnostics.push(Diagnostic::info("Brush texture shadows samples binary alpha-test world/detail boundaries; geometry, terrain and brush-model occupancy remain unchanged", None, None));
+    }
     let mut faces = bsp
         .lighting_faces(LightingKind::Ldr)
         .map_err(|error| error.to_string())?;
@@ -1095,7 +1144,7 @@ fn bake_inner(
     for (model, scope) in scopes.iter().enumerate() {
         let shadows = if model != 0 && has_receivers[model] {
             Some(ShadowIndex::new(
-                posed_occluders(map, scope.entity, scope.pose, report, budget)?,
+                posed_occluders(map, scope.entity, scope.pose, report, budget, None)?,
                 &mut |amount| budget.consume(amount),
             )?)
         } else {
@@ -1226,6 +1275,7 @@ fn bake_inner(
         detail_lighting_origins: settings.detail_lighting_origins,
         detail_lighting_tints: settings.detail_lighting_tints,
         face_sources: settings.face_sources,
+        brush_textures: brush_textures.as_ref(),
         options,
     };
     let mut detail_ldr = None;
@@ -1313,6 +1363,7 @@ fn bake_inner(
 }
 
 struct ChannelContext<'a> {
+    brush_textures: Option<&'a super::brush_alpha::Prepared>,
     face_sources: &'a [std::sync::Arc<[u32]>],
     world_leaf_nodes: &'a [Option<usize>],
     map: &'a Map<'a>,
@@ -1346,6 +1397,7 @@ fn bake_channel(
     budget.channel(kind);
     let start_work = budget.work;
     let ChannelContext {
+        brush_textures,
         face_sources,
         world_leaf_nodes,
         map,
@@ -1525,9 +1577,11 @@ fn bake_channel(
                         Emitter::Point(light) => {
                             let contribution = light.contribution(point, normal)?;
                             if contribution != DVec3::ZERO
-                                && !shadows.blocked(origin, light.origin, &mut |amount| {
-                                    budget.consume(amount)
-                                })?
+                                && !shadows.optical_blocked(
+                                    origin,
+                                    light.origin,
+                                    &mut |amount| budget.consume(amount),
+                                )?
                                 && !terrain_shadows.blocked(
                                     origin,
                                     light.origin,
@@ -1654,6 +1708,7 @@ fn bake_channel(
             budget.consume(0)?;
             let (stats, surfaces) = super::bounce::bake(
                 &mut super::bounce::Context {
+                    brush_textures,
                     face_sources,
                     map,
                     kind,
@@ -1740,6 +1795,7 @@ fn bake_channel(
     budget.phase(LightingPhase::AmbientProbes);
     let ambient = super::probes::bake(
         &super::probes::Context {
+            brush_textures,
             face_sources,
             world_leaf_nodes,
             map,
@@ -1760,6 +1816,7 @@ fn bake_channel(
     budget.phase(LightingPhase::DetailProps);
     *detail_lighting = super::details::bake(
         &super::details::Context {
+            brush_textures,
             face_sources,
             map,
             tree,
@@ -1954,7 +2011,7 @@ mod tests {
                 DVec3::Z,
             )),
         };
-        let rotated = posed_occluders(&map, 0, pose, &mut report, &mut budget).unwrap();
+        let rotated = posed_occluders(&map, 0, pose, &mut report, &mut budget, None).unwrap();
         assert!(!original.is_empty());
         assert_eq!(original.len(), rotated.len());
         for (local, world) in original.iter().zip(&rotated) {

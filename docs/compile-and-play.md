@@ -15,6 +15,7 @@ HammeRR includes its own native compiler, so it builds Counter-Strike: Source ma
    - **Brush smoothing angle**: **0°** keeps unassigned brush faces flat; higher angles blend eligible neighbors. Assigned face groups keep their rules.
    - **Sampling quality**, for either lit mode’s sky, model ambient and bounced light: **Fast (32 directions)**, **Balanced (128 directions)** or **Detailed (512 directions)**.
    - **Lighting work limit (millions)**: **1000** by default. Enter a different allowance and click **Apply work limit** when a larger bake needs more headroom.
+   - **Brush texture shadows**: bake binary cutouts from supported world/detail materials. See [Brush texture shadows](#brush-texture-shadows).
    - **Bake static-prop vertex lighting**: opt in to direct vertex lighting and up to four diffuse world/terrain bounces for admitted simple opaque models. Choose a lit **Build lighting** mode and the desired **Indirect light** depth first.
    - **Pack sky assets**: include the applied sky family's supported materials and textures in the BSP. This is off by default and works with every lighting mode.
    - **Pack water assets**: include original files for supported static Water materials and their dependencies. This is off by default, works with every lighting mode and requires explicit static LDR/HDR cubemap pairs throughout the graph.
@@ -286,7 +287,7 @@ Limits: the same area-boundary limits as plain areaportals apply. Model referenc
 With **Direct LDR** or **Direct LDR + HDR**:
 
 - `light` and `light_spot` support static, switchable and animated appearances. `light_environment` remains static. All are baked in color.
-- Opaque world brushes, detail brushes, terrain and [static-prop meshes](prop-shadows.md) cast shadows. Models authored with `$casttextureshadows` also support the bounded alpha-test cutouts described under **Static props** below.
+- Opaque world brushes, detail brushes, terrain and [static-prop meshes](prop-shadows.md) cast shadows. **Brush texture shadows** adds binary cutouts for supported world/detail materials. Models authored with `$casttextureshadows` independently support cutout and translucent texture shadows.
 - Rendered brush entities receive pivot-aware direct lightmaps that move with the model. Their own brushes can shadow one another; they do not cast permanent shadows into the world.
 - Each face uses its [lightmap scale and assigned smoothing groups](textures.md#face-lighting). World/detail brush smoothing retains the same fan across lightmap subdivisions.
 - Terrain is lit using its real raised surface, with smooth normals within patches and across matching equal-power full edges. The viewport uses the same normal construction.
@@ -304,6 +305,40 @@ so switched detail lighting need not match static-base intensity. Each receiver
 allows 63 extras; LDR and HDR arrays together allow 65,536 records.
 **Fullbright** retains white unbaked base colors without extras. Detail objects
 do not add baked shadows or collision.
+
+#### Brush texture shadows
+
+Use binary texture alpha to let baked light pass through cutout world and
+**func_detail** brush faces. The option defaults off and preserves the existing
+model-requested [static-prop texture shadows](prop-shadows.md).
+
+1. Open **Build settings…** and choose **Build lighting → Direct LDR** or
+   **Direct LDR + HDR**.
+2. Enable **Brush texture shadows**. Caster faces need a plain
+   **LightmappedGeneric** material with `$alphatest 1` and `$basetexture`.
+3. Click **Close**, then **Compile**. Inspect **Diagnostics** in **Build details…**
+   if a requested material is unsupported or its texture is missing or corrupt.
+   Failed builds retain the previous BSP and pointfile.
+4. Use **Save current as new** to retain the option in a build recipe. Disable
+   it before selecting **Fullbright**.
+
+![Brush texture shadows enabled in Build settings](images/build-brush-texture-shadows.png)
+
+Each crossed brush boundary samples the face's authored UVs, then the material's
+finite center/scale/rotation/translation transform. Sampling uses nearest mip-0
+texels with VTF clamp/repeat. Alpha at or above `$alphatestreference` blocks light;
+the default is 0.5, values from 0 to 1 are supported, and explicit zero uses 0.5.
+Direct, sky, reflected and ambient rays share this cutout behavior. Brush
+geometry, collision, sealing and visibility remain unchanged.
+
+Limits: plain static materials only, one texture frame/face/depth, frame zero,
+4096 pixels per axis, 64 MiB decoded alpha, 256 MiB asset reads, 64 KiB per VMT,
+65,536 material/include lookups and 65,536 retained brush boundary sides.
+Authored transform values must be within ±1024. The existing aggregate lighting
+allocation and **Lighting work limit (millions)** also apply. Fractional brush
+translucency, terrain or brush-model alpha casters, conditional/animated
+materials, bump/envmap caster effects and other unsupported opacity parameters
+stop an enabled build explicitly. Opaque bumped receivers remain supported.
 
 #### HDR channels
 
@@ -972,6 +1007,7 @@ admitted, publication replaces its directory entry and preserves its former targ
 | --- | --- |
 | `-o <map.bsp>` | Output file. Defaults to the VMF's name with `.bsp`. |
 | `--lighting fullbright\|direct_ldr\|direct_ldr_hdr` | Lighting mode. Defaults to `fullbright`. |
+| `--brush-texture-shadows` | Binary alpha-test shadows from supported world/detail brush faces; default off, requires lit mode. |
 | `--physics none\|engine` | Physics bodies. Defaults to `none`. Needs `hammerr-physics` next to the compiler. |
 | `--sky-quality fast\|balanced\|detailed` | Sky, model-ambient and bounce sampling for both lit modes. Defaults to `fast`. |
 | `--pack-water-assets` | Pack original files for supported static Water closures with explicit LDR/HDR cubemap pairs. Off by default; all lighting modes. See [Water](water.md#pack-static-water-assets). |

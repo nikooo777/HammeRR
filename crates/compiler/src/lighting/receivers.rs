@@ -117,7 +117,7 @@ pub(super) fn direct_with_reception(
                 if value != DVec3::ZERO
                     && !ctx
                         .shadows
-                        .blocked(sample.origin, light.origin, &mut |work| {
+                        .optical_blocked(sample.origin, light.origin, &mut |work| {
                             budget.consume(work)
                         })?
                     && !ctx

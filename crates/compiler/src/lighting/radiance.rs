@@ -38,6 +38,7 @@ struct Radiance {
     sky: bool,
     extras: Vec<Layer>,
     boundary: Option<SourceBoundary>,
+    alpha: Option<super::brush_alpha::Face>,
 }
 
 struct SourceBoundary {
@@ -210,9 +211,19 @@ pub(super) fn build(
     kind: LightingKind,
     sky_radiance: DVec3,
     face_sources: &[Arc<[u32]>],
+    brush_textures: Option<&super::brush_alpha::Prepared>,
     budget: &mut Budget<'_>,
 ) -> Result<SurfaceIndex, String> {
-    build_with_styles(map, bsp, kind, sky_radiance, false, face_sources, budget)
+    build_with_styles(
+        map,
+        bsp,
+        kind,
+        sky_radiance,
+        false,
+        face_sources,
+        brush_textures,
+        budget,
+    )
 }
 
 pub(super) fn build_styled(
@@ -220,9 +231,19 @@ pub(super) fn build_styled(
     bsp: &Bsp,
     kind: LightingKind,
     face_sources: &[Arc<[u32]>],
+    brush_textures: Option<&super::brush_alpha::Prepared>,
     budget: &mut Budget<'_>,
 ) -> Result<SurfaceIndex, String> {
-    build_with_styles(map, bsp, kind, DVec3::ZERO, true, face_sources, budget)
+    build_with_styles(
+        map,
+        bsp,
+        kind,
+        DVec3::ZERO,
+        true,
+        face_sources,
+        brush_textures,
+        budget,
+    )
 }
 
 pub(super) fn build_styled_sky(
@@ -231,11 +252,22 @@ pub(super) fn build_styled_sky(
     kind: LightingKind,
     sky_radiance: DVec3,
     face_sources: &[Arc<[u32]>],
+    brush_textures: Option<&super::brush_alpha::Prepared>,
     budget: &mut Budget<'_>,
 ) -> Result<SurfaceIndex, String> {
-    build_with_styles(map, bsp, kind, sky_radiance, true, face_sources, budget)
+    build_with_styles(
+        map,
+        bsp,
+        kind,
+        sky_radiance,
+        true,
+        face_sources,
+        brush_textures,
+        budget,
+    )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_with_styles(
     map: &Map<'_>,
     bsp: &Bsp,
@@ -243,6 +275,7 @@ fn build_with_styles(
     sky_radiance: DVec3,
     styled: bool,
     face_sources: &[Arc<[u32]>],
+    brush_textures: Option<&super::brush_alpha::Prepared>,
     budget: &mut Budget<'_>,
 ) -> Result<SurfaceIndex, String> {
     let decoded_bytes = [
@@ -445,6 +478,9 @@ fn build_with_styles(
         };
         let source = radiance.len();
         radiance.push(Radiance {
+            alpha: brush_textures.and_then(|textures| {
+                textures.face(map.texdata[info.texdata as usize], info.texture_vecs)
+            }),
             average,
             reflectivity,
             samples: samples.to_vec(),
@@ -567,43 +603,60 @@ impl SurfaceIndex {
     ) -> Result<Option<Hit>, String> {
         budget.consume(11)?;
         let end = point + direction * super::sky::TRACE_LENGTH;
+        let pending_alpha = Cell::new(0usize);
         let hit = self.geometry.nearest(
             point,
             end,
-            &mut |work| budget.consume(work),
+            &mut |work| {
+                budget.consume(
+                    work.checked_add(pending_alpha.replace(0))
+                        .ok_or("Brush alpha source work overflow")?,
+                )
+            },
             &mut |surface| {
-                Ok(surface
-                    .triangle
-                    .source_intersection(point, end)?
-                    .map(|(fraction, weights)| {
-                        let uv = surface.coordinates.map(|coordinates| {
-                            coordinates
-                                .into_iter()
-                                .zip(weights)
-                                .map(|(point, weight)| point * weight)
-                                .sum::<DVec2>()
-                        });
-                        (
-                            fraction,
-                            (
-                                surface.source,
-                                uv,
-                                surface.normal.dot(-direction) > 0.0,
-                                surface.triangle.point(weights),
-                                surface.boundary_error
-                                    * weights.into_iter().map(f64::abs).sum::<f64>(),
-                            ),
-                        )
-                    }))
+                let Some((fraction, weights)) = surface.triangle.source_intersection(point, end)?
+                else {
+                    return Ok(None);
+                };
+                let position = surface.triangle.point(weights);
+                if let Some(alpha) = &self.radiance[surface.source].alpha {
+                    pending_alpha.set(
+                        pending_alpha
+                            .get()
+                            .checked_add(24)
+                            .ok_or("Brush alpha source work overflow")?,
+                    );
+                    if !alpha.covered(position)? {
+                        return Ok(None);
+                    }
+                }
+                let uv = surface.coordinates.map(|coordinates| {
+                    coordinates
+                        .into_iter()
+                        .zip(weights)
+                        .map(|(point, weight)| point * weight)
+                        .sum::<DVec2>()
+                });
+                Ok(Some((
+                    fraction,
+                    (
+                        surface.source,
+                        uv,
+                        surface.normal.dot(-direction) > 0.0,
+                        position,
+                        surface.boundary_error * weights.into_iter().map(f64::abs).sum::<f64>(),
+                    ),
+                )))
             },
         )?;
+        budget.consume(pending_alpha.replace(0))?;
         let Some((fraction, (source, uv, front, position, boundary_error))) = hit else {
             return Ok(None);
         };
         let radiance = &self.radiance[source];
         if radiance.sky
             && shadows
-                .sky_fraction(point, end, &mut |work| budget.consume(work))?
+                .optical_sky_fraction(point, end, &mut |work| budget.consume(work))?
                 .is_none()
         {
             return Ok(None);
@@ -635,7 +688,13 @@ impl SurfaceIndex {
                         return Ok(None);
                     }
                 }
-                Ok(Some((interval.entering, ())))
+                if hull.optical.is_none() {
+                    Ok(Some((interval.entering, ())))
+                } else {
+                    Ok(hull
+                        .optical_entry(point, position)?
+                        .map(|(fraction, _)| (fraction, ())))
+                }
             },
         );
         budget.consume(pending.replace(0))?;
@@ -667,6 +726,68 @@ impl SurfaceIndex {
 mod tests {
     use super::*;
     #[test]
+    fn cutout_sources_continue_to_the_farther_radiance_without_skipping_opaque_texels() {
+        let control = crate::Control::default();
+        let mut budget = Budget::new(&control);
+        let surfaces = [1.0, 2.0]
+            .into_iter()
+            .enumerate()
+            .map(|(source, x)| Surface {
+                triangle: Triangle::new([
+                    DVec3::new(x, -2.0, -2.0),
+                    DVec3::new(x, 2.0, -2.0),
+                    DVec3::new(x, 0.0, 2.0),
+                ])
+                .unwrap(),
+                normal: DVec3::NEG_X,
+                source,
+                coordinates: None,
+                boundary_error: 0.0,
+            })
+            .collect();
+        let field = SurfaceIndex {
+            geometry: ShadowIndex::new(surfaces, &mut |work| budget.consume(work)).unwrap(),
+            radiance: [0, 1]
+                .map(|source| Radiance {
+                    alpha: (source == 0)
+                        .then(|| super::super::brush_alpha::test_face([0, 255, 0, 255])),
+                    average: DVec3::splat((source + 1) as f64),
+                    reflectivity: DVec3::ONE,
+                    samples: Vec::new(),
+                    dimensions: [0; 2],
+                    projection: [[0.0; 4]; 2],
+                    mins: [0; 2],
+                    sky: false,
+                    extras: Vec::new(),
+                    boundary: None,
+                })
+                .into(),
+            _allocation: budget.reserve_bytes(0).unwrap(),
+        };
+        let shadows = ShadowIndex::new(Vec::<Occluder>::new(), &mut |_| Ok(())).unwrap();
+        let props = ShadowIndex::new(Vec::<super::super::props::PropTriangle>::new(), &mut |_| {
+            Ok(())
+        })
+        .unwrap();
+        for (y, expected) in [(0.25, 1), (0.75, 0)] {
+            let hit = field
+                .trace(
+                    DVec3::new(0.0, y, 0.25),
+                    DVec3::X,
+                    0.0,
+                    &shadows,
+                    &props,
+                    &mut budget,
+                )
+                .unwrap()
+                .unwrap();
+            assert_eq!(hit.source, expected);
+            assert_eq!(hit.color, DVec3::splat((expected + 1) as f64));
+            assert_eq!(hit.point.x, (expected + 1) as f64);
+        }
+    }
+
+    #[test]
     fn prop_occlusion_clips_indirect_rays_at_the_radiating_surface() {
         let control = crate::Control::default();
         let mut budget = Budget::new(&control);
@@ -694,6 +815,7 @@ mod tests {
             )
             .unwrap(),
             radiance: vec![Radiance {
+                alpha: None,
                 average: color,
                 reflectivity: DVec3::ONE,
                 samples: Vec::new(),
@@ -747,6 +869,7 @@ mod tests {
     #[test]
     fn local_radiance_interpolates_clamps_and_filters_distant_detail() {
         let field = Radiance {
+            alpha: None,
             average: DVec3::new(96.0 / 255.0, 0.0, 0.0),
             reflectivity: DVec3::splat(1.0 / 255.0),
             samples: [0, 64, 128, 192]

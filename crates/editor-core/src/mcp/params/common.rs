@@ -667,6 +667,8 @@ pub struct ReloadBuildRecipesArgs {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CompileSettingsArgs {
+    /// Binary alpha-test shadows from plain LightmappedGeneric world/func_detail brush faces; default false. Requires direct_ldr or direct_ldr_hdr. Independent of native model-requested prop texture shadows. Unsupported requested materials, fractional transparency and terrain/model alpha casters reject compilation without replacing prior output.
+    pub brush_texture_shadows: Option<bool>,
     /// Bake static-prop vertex lighting; default false. Requires direct_ldr or direct_ldr_hdr and bounces:0 through 4. Indirect reception uses the preceding world/terrain lighting pass and texture-header or authored material reflectivity. Dimensions independently use diffuse or tool VTF headers, or the SDK no-preview 128x128 convention selected before dimension reads by trimmed %notooltexture 0 or 1 only. Empty/other values and failed required providers reject without fallback; invalid depths reject atomically. Unsupported receivers fail the requested build; disablevertexlighting:1 opts out one prop.
     pub bake_static_prop_vertices: Option<bool>,
     /// Pack the exact complete authored sky family and supported LDR/HDR dependencies; default false. Incomplete or unsupported families fail during compilation without automatic family fallback.

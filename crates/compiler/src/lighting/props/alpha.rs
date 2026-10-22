@@ -5,18 +5,20 @@ use source_formats::{vmt, vtf::Vtf};
 
 use super::{Allocation, Assets, Budget};
 
-const MAX_TEXTURE_SIZE: u32 = 4096;
-const MAX_ALPHA_BYTES: usize = 64 * 1024 * 1024;
+const MAX_TEXTURE_SIZE: u32 = crate::MAX_BRUSH_SHADOW_TEXTURE_SIZE;
+const MAX_ALPHA_BYTES: usize = crate::MAX_BRUSH_SHADOW_ALPHA_BYTES;
 const CLAMP_S: u32 = 0x0000_0004;
 const CLAMP_T: u32 = 0x0000_0008;
 
-pub(super) struct Texture {
+#[derive(Debug)]
+pub(in crate::lighting) struct Texture {
     dimensions: [usize; 2],
     clamp: [bool; 2],
     alpha: Vec<u8>,
 }
 
-pub(super) struct Material {
+#[derive(Debug)]
+pub(in crate::lighting) struct Material {
     texture: Arc<Texture>,
     transform: [[f64; 3]; 2],
     reference: f64,
@@ -24,15 +26,19 @@ pub(super) struct Material {
 }
 
 impl Material {
-    pub(super) fn blocks(&self, uv: DVec2) -> Result<bool, String> {
+    pub(in crate::lighting) fn dimensions(&self) -> [usize; 2] {
+        self.texture.dimensions
+    }
+
+    pub(in crate::lighting) fn blocks(&self, uv: DVec2) -> Result<bool, String> {
         Ok(self.coverage(uv)? != 0)
     }
 
-    pub(super) fn fractional(&self) -> bool {
+    pub(in crate::lighting) fn fractional(&self) -> bool {
         self.fractional
     }
 
-    pub(super) fn coverage(&self, uv: DVec2) -> Result<u8, String> {
+    pub(in crate::lighting) fn coverage(&self, uv: DVec2) -> Result<u8, String> {
         let [s, t] = self.transform;
         let uv = if s[1] == 0.0 && t[0] == 0.0 {
             uv * DVec2::new(s[0], t[1]) + DVec2::new(s[2], t[2])
@@ -119,11 +125,57 @@ fn texture_allocations(
     Ok((alpha, rgba))
 }
 
-pub(super) fn prepare(
+pub(in crate::lighting) fn prepare(
     material: &vmt::Material,
     assets: &mut Assets<'_, '_>,
     budget: &mut Budget<'_>,
 ) -> Result<Option<Arc<Material>>, String> {
+    prepare_for(material, assets, budget, false)
+}
+
+pub(in crate::lighting) fn prepare_brush(
+    material: &vmt::Material,
+    assets: &mut Assets<'_, '_>,
+    budget: &mut Budget<'_>,
+) -> Result<Arc<Material>, String> {
+    prepare_for(material, assets, budget, true)?
+        .ok_or_else(|| "Brush texture shadows requires $alphatest 1".into())
+}
+
+fn prepare_for(
+    material: &vmt::Material,
+    assets: &mut Assets<'_, '_>,
+    budget: &mut Budget<'_>,
+    brush: bool,
+) -> Result<Option<Arc<Material>>, String> {
+    if brush {
+        if material.shader != "lightmappedgeneric"
+            || scalar(material, "$alphatest", 0.0)? != 1.0
+            || scalar(material, "$translucent", 0.0)? != 0.0
+        {
+            return Err("Brush texture shadows supports only binary $alphatest 1 LightmappedGeneric; fractional translucency is unsupported".into());
+        }
+        for (key, _) in &material.params {
+            if !matches!(
+                key.as_str(),
+                "$basetexture"
+                    | "$basetexturetransform"
+                    | "$alphatest"
+                    | "$alphatestreference"
+                    | "$translucent"
+                    | "$alpha"
+                    | "$frame"
+                    | "$surfaceprop"
+                    | "$surfaceprop2"
+                    | "%keywords"
+                    | "%tooltexture"
+            ) {
+                return Err(format!(
+                    "Brush texture shadows does not support alpha material parameter {key}"
+                ));
+            }
+        }
+    }
     if !matches!(
         material.shader.as_str(),
         "vertexlitgeneric" | "unlitgeneric" | "lightmappedgeneric"
@@ -163,10 +215,12 @@ pub(super) fn prepare(
             return Err(format!("{key} is unsupported for texture shadows"));
         }
     }
-    if !matches!(
-        material.shader.as_str(),
-        "vertexlitgeneric" | "unlitgeneric"
-    ) {
+    if !brush
+        && !matches!(
+            material.shader.as_str(),
+            "vertexlitgeneric" | "unlitgeneric"
+        )
+    {
         return Err(format!(
             "alpha-texture shadows do not support shader {}",
             material.shader
@@ -258,6 +312,11 @@ pub(super) fn prepare(
     let texture = match assets.textures.get(&path) {
         Some(texture) => Arc::clone(texture),
         None => {
+            if brush {
+                assets.allocations.push(budget.reserve_bytes(
+                    path.len() + 16 * size_of::<(String, Arc<Texture>)>() + 16 * size_of::<usize>(),
+                )?);
+            }
             let bytes = assets.read(&path, budget)?;
             let vtf = Vtf::parse(bytes).map_err(|error| format!("{path}: {error}"))?;
             if vtf.frames != 1 || vtf.faces != 1 || vtf.depth != 1 {
@@ -312,6 +371,20 @@ pub(super) fn prepare(
         reference,
         fractional,
     })))
+}
+
+#[cfg(test)]
+pub(in crate::lighting) fn test_cutout(alpha: [u8; 4]) -> Arc<Material> {
+    Arc::new(Material {
+        texture: Arc::new(Texture {
+            dimensions: [2, 2],
+            clamp: [false; 2],
+            alpha: alpha.into(),
+        }),
+        transform: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+        reference: 0.5,
+        fractional: false,
+    })
 }
 
 #[cfg(test)]

@@ -3367,6 +3367,35 @@ Pass the returned per-document action `revision` to reject stale edits. It cover
 
 Custom recipes use `build-recipes.json` in recovery storage; `HAMMERR_BUILD_RECIPES` overrides the file and `HAMMERR_RECOVERY_DIR` isolates the default. Requested recipe paths must be valid UTF-8. Invalid configuration returns `path:null`, `persistence:"blocked"`, `custom_editable:false` and an explicit error; it does not redirect storage or serialize a substituted filename. Fix the override and restart; Reload does not reread environment configuration. A valid UTF-8 requested symlink may still target a non-UTF-8 physical filename. Limits are 32 customs, unique names ignoring case, 1–80 UTF-8 bytes per trimmed name without control characters and a 65,536-byte file. Invalid loads block custom edits while built-ins remain usable. Precommit busy, stale and storage failures preserve the saved file, registry and compiler settings; detected disk changes require `reload_build_recipes`. A committed write that cannot be verified reports that the file was written, retains the last verified list and blocks custom edits until successful Reload; inspect the reloaded list before retrying. Reload shares **Reload recipes** in **Build settings…** or **Build details…**. A failed configured-path Reload retains the valid list and active identity, reports the error and blocks custom edits until repaired storage reloads. Successful Reload retains the same applied recipe ID only when its loaded settings still match current options; rename updates the label, replacement/deletion clears it. Neither outcome applies options or changes map/history/camera/owned drafts or captured jobs. Unconfigured session-only storage rejects Reload without blocking local edits. Edits to an attached application registry are serialized. On Linux, participating processes use a nonblocking `.build-recipes.lock` in the physical destination directory, including custom paths and valid file symlinks. Busy storage rejects the operation; independent lists adopt changes through Reload. External writers that ignore the lock are outside the coordination guarantee. Configured persistent writes require Linux and fail explicitly elsewhere; unconfigured session-only editing remains available. Loading recipes does not apply a custom recipe automatically. See [Build recipes](build-recipes.md).
 
+### Brush texture shadows
+
+`get_compile_settings` reports the default-off `brush_texture_shadows` boolean
+and `brush_texture_shadowing` availability, explanation and numeric limits.
+`set_compile_settings` uses the same Session operation as **Brush texture
+shadows** in **Build settings…**:
+
+```json
+{"lighting":"direct_ldr_hdr","brush_texture_shadows":true}
+```
+
+This enables binary `$alphatest 1` cutouts on plain **LightmappedGeneric** world
+and **func_detail** brush faces. Authored face UVs and bounded material transforms
+select nearest mip-0 alpha using VTF clamp/repeat. The default reference is 0.5;
+explicit references accept 0–1 and zero selects 0.5. Every crossed boundary uses
+the same transfer in direct, sky, reflected and ambient rays. Geometry,
+collision, sealing and native model-requested prop shadow policy are unchanged.
+
+Fullbright rejects enabling the option or switching lighting while it remains
+enabled; a single update can disable it and select Fullbright. Validation is
+atomic and does not read assets or edit VMF, history, camera or pending reviews.
+Active builds freeze settings. Recipes and saved map context retain the boolean;
+older stored settings and built-in recipes keep it off. Job settings report the
+captured value. Fractional translucency, terrain/brush-model alpha casters,
+conditional/animated materials, unsupported effects and missing/corrupt required
+sources fail compilation without replacing prior BSP or pointfile. See
+[Brush texture shadows](compile-and-play.md#brush-texture-shadows) for the
+supported material and resource bounds.
+
 ### Prop shadows and occluders
 
 Existing `create_entity` and `set_entity_properties` calls author static-prop

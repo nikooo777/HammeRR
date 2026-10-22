@@ -91,6 +91,7 @@ fn surface_points(
     SurfaceIndex {
         geometry: ShadowIndex::new(geometry, &mut |work| budget.consume(work)).unwrap(),
         radiance: vec![Radiance {
+            alpha: None,
             average: COLOR,
             reflectivity: DVec3::ONE,
             samples: Vec::new(),
@@ -564,7 +565,15 @@ fn actual_emission_excludes_nodraw_faces_but_the_shared_hull_builder_keeps_the_b
         .unwrap();
     let control = crate::Control::default();
     let mut budget = Budget::new(&control);
-    let index = build_styled(&map, &bsp, LightingKind::Ldr, &face_sources, &mut budget).unwrap();
+    let index = build_styled(
+        &map,
+        &bsp,
+        LightingKind::Ldr,
+        &face_sources,
+        None,
+        &mut budget,
+    )
+    .unwrap();
     assert!(index.radiance.iter().all(|source| {
         source
             .boundary
@@ -592,6 +601,7 @@ fn actual_emission_excludes_nodraw_faces_but_the_shared_hull_builder_keeps_the_b
         &bsp,
         LightingKind::Ldr,
         &face_sources[..face_sources.len() - 1],
+        None,
         &mut budget,
     )
     .err()

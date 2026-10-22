@@ -444,10 +444,11 @@ mod tests {
     }
 
     #[test]
-    fn prop_vertex_lighting_recent_context_preserves_legacy_bytes_and_validates_saved_settings() {
+    fn lighting_recent_context_preserves_legacy_bytes_and_validates_saved_settings() {
         let legacy = br#"{"lighting":"fullbright","physics":"none","sky_quality":"fast","visibility":"fast","bounces":0,"smoothing_angle":0,"generate_reflections":false}"#;
         let settings: BuildSettings = serde_json::from_slice(legacy).unwrap();
         assert!(!settings.bake_static_prop_vertices);
+        assert!(!settings.brush_texture_shadows);
         assert_eq!(serde_json::to_vec(&settings).unwrap(), legacy.as_slice());
         let directory = tempfile::tempdir().unwrap();
         let store = Store {
@@ -466,6 +467,7 @@ mod tests {
             saved.build_settings = BuildSettings::from_options(compiler::Options {
                 lighting: compiler::LightingMode::parse(lighting).unwrap(),
                 bake_static_prop_vertices: true,
+                brush_texture_shadows: true,
                 bounces: compiler::MAX_LIGHT_BOUNCES,
                 ..Default::default()
             });
@@ -485,6 +487,7 @@ mod tests {
         fs::write(&path, &disabled).unwrap();
         let loaded = store.load().unwrap();
         assert!(!loaded[0].build_settings.bake_static_prop_vertices);
+        assert!(!loaded[0].build_settings.brush_texture_shadows);
         store.save(&loaded).unwrap();
         assert_eq!(fs::read(path).unwrap(), disabled);
     }

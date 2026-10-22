@@ -864,6 +864,7 @@ mod tests {
                         pack_water_assets: Some(true),
                         pack_static_prop_assets: Some(true),
                         bake_static_prop_vertices: Some(false),
+                        brush_texture_shadows: Some(false),
                     },
                 )
                 .unwrap();

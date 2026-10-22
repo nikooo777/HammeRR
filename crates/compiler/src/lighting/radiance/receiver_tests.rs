@@ -19,6 +19,7 @@ fn floor(budget: &mut Budget<'_>) -> SurfaceIndex {
     SurfaceIndex {
         geometry: ShadowIndex::new(surfaces.into(), &mut |work| budget.consume(work)).unwrap(),
         radiance: vec![Radiance {
+            alpha: None,
             average: DVec3::new(32.0, 16.0, 8.0) / 255.0,
             reflectivity: DVec3::ONE,
             samples: Vec::new(),

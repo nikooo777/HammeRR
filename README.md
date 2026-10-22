@@ -330,8 +330,8 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 
 | Native compiler | Play in CS:S |
 | --- | --- |
-| ![Build settings, statistics and diagnostics](docs/images/build-status.png) | ![Soft sun shadows in Counter-Strike: Source](docs/images/soft-sun.png) |
-| Compile playable maps with baked lighting, CS:S engine physics, water, props and terrain. | **Run Map** compiles and launches the game. Builds run in the background and never overwrite good output with a failed one. |
+| ![Build settings with brush texture shadows](docs/images/build-brush-texture-shadows.png) | ![Soft sun shadows in Counter-Strike: Source](docs/images/soft-sun.png) |
+| Compile playable maps with baked lighting, brush cutout shadows, CS:S engine physics, water, props and terrain. | **Run Map** compiles and launches the game. Builds run in the background and never overwrite good output with a failed one. |
 
 | Named build recipes | Portable sky assets |
 | --- | --- |

@@ -185,7 +185,16 @@ pub struct Options {
     pub pack_water_assets: bool,
     pub pack_static_prop_assets: bool,
     pub bake_static_prop_vertices: bool,
+    pub brush_texture_shadows: bool,
 }
+
+pub const MAX_BRUSH_SHADOW_SIDES: usize = 65_536;
+pub const MAX_BRUSH_SHADOW_TEXTURE_SIZE: u32 = 4096;
+pub const MAX_BRUSH_SHADOW_ALPHA_BYTES: usize = 64 * 1024 * 1024;
+pub const MAX_BRUSH_SHADOW_ASSET_BYTES: usize = 256 * 1024 * 1024;
+pub const MAX_BRUSH_SHADOW_MATERIAL_BYTES: usize = 64 * 1024;
+pub const MAX_BRUSH_SHADOW_MATERIAL_LOOKUPS: usize = 65_536;
+pub const MAX_BRUSH_SHADOW_TRANSFORM: f64 = 1024.0;
 
 pub const MIN_LIGHTING_WORK_LIMIT: u64 = 1;
 pub const DEFAULT_LIGHTING_WORK_LIMIT: u64 = 1_000_000_000;
@@ -215,6 +224,7 @@ impl Default for Options {
             pack_water_assets: false,
             pack_static_prop_assets: false,
             bake_static_prop_vertices: false,
+            brush_texture_shadows: false,
         }
     }
 }
@@ -253,10 +263,16 @@ impl Options {
             || self.pack_water_assets
             || self.pack_static_prop_assets
             || self.bake_static_prop_vertices
+            || self.brush_texture_shadows
     }
 
     pub fn validate(self) -> Result<Self, String> {
         validate_lighting_work_limit(self.lighting_work_limit)?;
+        if self.brush_texture_shadows && !self.lighting.performs_lighting() {
+            return Err(
+                "Brush texture shadows requires Direct LDR or Direct LDR + HDR lighting".into(),
+            );
+        }
         if self.bake_static_prop_vertices && !self.lighting.performs_lighting() {
             return Err(
                 "Bake static-prop vertex lighting requires Direct LDR or Direct LDR + HDR lighting"
@@ -1049,7 +1065,9 @@ fn build(
     if options.generate_reflections {
         cubemap_assets::binding::capture_preflight(vmf)?;
     }
-    let material_sources = (options.pack_water_assets || options.pack_static_prop_assets)
+    let material_sources = (options.pack_water_assets
+        || options.pack_static_prop_assets
+        || options.brush_texture_shadows)
         .then(asset_sources::BuildMaterialSources::default);
     let prepared = cordons::prepare_with_material_sources(
         vmf,
@@ -1545,6 +1563,9 @@ fn build(
                 detail_lighting_tints: &detail_stats.lighting_tints,
                 prop_sources: &prop_stats.sources,
                 prop_material_sources,
+                brush_material_sources: material_sources
+                    .as_ref()
+                    .filter(|_| options.brush_texture_shadows),
             },
             &mut output.stats.lighting_progress,
         );

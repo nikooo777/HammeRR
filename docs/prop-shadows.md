@@ -4,6 +4,10 @@
 
 Direct LDR and Direct LDR + HDR trace a static prop's actual model triangles. Open space in a model stays open to light even when it lies inside the model's render or collision bounds. Models authored with `$casttextureshadows` also support binary alpha-test cutouts and fractional translucent texture shadows. Shadow casting is independent of the prop's collision choice.
 
+The separate default-off [Brush texture shadows](compile-and-play.md#brush-texture-shadows)
+setting controls supported world/detail brush cutouts. It does not change a
+model's `$casttextureshadows` request or prop shadow behavior.
+
 1. Click **Entity…**, choose `prop_static`, then **Place entity**. Use **Browse…** beside **World Model** to choose its model and skin. Keep `disableshadows` at `0` to let it cast shadows.
 2. Click **Build settings…**, set **Build lighting** to **Direct LDR** or **Direct LDR + HDR**, and choose **Direct only** or the desired number of diffuse bounces under **Indirect light**.
 3. Click **Close**, then **Compile**.

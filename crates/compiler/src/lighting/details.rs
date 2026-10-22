@@ -27,6 +27,7 @@ pub(super) struct Channel {
 }
 
 pub(super) struct Context<'a> {
+    pub brush_textures: Option<&'a super::brush_alpha::Prepared>,
     pub face_sources: &'a [std::sync::Arc<[u32]>],
     pub map: &'a Map<'a>,
     pub tree: &'a Tree,
@@ -189,6 +190,7 @@ pub(super) fn bake(
         ctx.kind,
         ctx.sky_radiance,
         ctx.face_sources,
+        ctx.brush_textures,
         budget,
     )?;
     if ctx.directions.is_empty() {
@@ -660,6 +662,7 @@ mod tests {
         let terrain = ShadowIndex::new(Vec::new(), &mut |work| budget.consume(work)).unwrap();
         let props = ShadowIndex::new(Vec::new(), &mut |work| budget.consume(work)).unwrap();
         let ctx = Context {
+            brush_textures: None,
             face_sources: &[],
             map: &map,
             tree: &tree,

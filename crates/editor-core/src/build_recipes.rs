@@ -47,7 +47,7 @@ impl Recipe {
             .options()
             .expect("recipe settings are validated");
         let description = format!(
-            "{} · {} · {} · {} · {} · {}° brush smoothing · {} lighting work units · static-prop vertex lighting {} · reflections {} · sky packing {} · water packing {} · static-prop packing {}",
+            "{} · {} · {} · {} · {} · {}° brush smoothing · {} lighting work units · brush texture shadows {} · static-prop vertex lighting {} · reflections {} · sky packing {} · water packing {} · static-prop packing {}",
             options.lighting.label(),
             options.physics.label(),
             options.visibility.label(),
@@ -55,6 +55,11 @@ impl Recipe {
             compiler::bounce_label(options.bounces),
             options.smoothing_angle,
             options.lighting_work_limit,
+            if options.brush_texture_shadows {
+                "on"
+            } else {
+                "off"
+            },
             if options.bake_static_prop_vertices {
                 "on"
             } else {
@@ -144,6 +149,7 @@ pub(crate) fn builtins() -> [Recipe; 2] {
                 pack_water_assets: false,
                 pack_static_prop_assets: false,
                 bake_static_prop_vertices: false,
+                brush_texture_shadows: false,
             }
             .into(),
         },

@@ -20,17 +20,26 @@ from private_runtime_config import (
 )
 from validate_authored_planes import records
 from validate_bump_lighting import texture
+from validate_collision_topology import identity
 from validate_face_lighting import DEFAULT_BINARY, Client, detail
 from validate_visibility import ROOM
 from validate_water_bottom import native_faces, raw_lump
 
 TOP = "hammerr/water_surface"
 SIDE = "hammerr/water_side"
+BOTTOM_SURFACE = "hammerr/water_bottom_surface"
 NEUTRAL_BOTTOM = "hammerr/water_below_neutral"
 BOTTOMS = {"red": "hammerr/water_below_red", "blue": "hammerr/water_below_blue"}
 SURFACE = 160
 VIEWS = {"above": (224, 75), "below": (112, -75), "away": (112, 75)}
 SIDE_VIEWS = {"above": (224, 75), "side": (112, 0), "away": (112, 75)}
+BOTTOM_Z = 32
+BOTTOM_VIEWS = {"above": (224, 75), "bottom": (112, 75), "away": (112, -75)}
+BOTTOM_MODULES = (
+    "cstrike_linux64", "bin/linux64/engine.so", "bin/linux64/vphysics.so",
+    "cstrike/bin/linux64/server.so", "cstrike/bin/linux64/client.so",
+    "bin/linux64/materialsystem.so", "bin/linux64/stdshader_dx9.so",
+)
 CONTROLS = {
     "sv_lan": 1,
     "mat_hdr_level": 0,
@@ -116,11 +125,19 @@ def material_hashes(game):
     }
 
 
-def views(vertical_sides):
+def views(vertical_sides, negative_z_bottom=False):
+    if negative_z_bottom:
+        assert not vertical_sides
+        return BOTTOM_VIEWS
     return SIDE_VIEWS if vertical_sides else VIEWS
 
 
-def observer_script(vertical_sides):
+def observer_script(vertical_sides, negative_z_bottom=False):
+    if negative_z_bottom:
+        assert not vertical_sides
+        original = 'phase == 1 ? "setang -75 0 0" : "setang 75 0 0"'
+        assert OBSERVER.count(original) == 1
+        return OBSERVER.replace(original, 'phase == 2 ? "setang -75 0 0" : "setang 75 0 0"')
     if not vertical_sides:
         return OBSERVER
     original = 'phase == 1 ? "setang -75 0 0"'
@@ -166,7 +183,7 @@ def assets(args):
         "LightmappedGeneric { $basetexture hammerr/water_white }\n"
     )
     colors = {"red": [255, 3, 3, 255], "blue": [3, 3, 255, 255]}
-    if args.vertical_sides:
+    if args.vertical_sides or getattr(args, "negative_z_bottom", False):
         colors["neutral"] = [32, 32, 32, 255]
     for name, color in colors.items():
         (folder / f"water_signature_{name}.vtf").write_bytes(
@@ -288,7 +305,68 @@ def check_vertical_native(data, bottom):
     }
 
 
-def check_fixture(data, bottom, vertical_sides):
+def check_negative_z_native(data, bottom):
+    infos, faces, materials = native_faces(data)
+    planes = records(data, 1, "<4fi")
+    water = records(data, 36, "<ffhh")
+    assert len(water) == 1 and water[0][:2] == (SURFACE, BOTTOM_Z)
+    expected = {
+        TOP: ((0, 0, 1), SURFACE, False),
+        NEUTRAL_BOTTOM: ((0, 0, -1), SURFACE, True),
+        BOTTOM_SURFACE: ((0, 0, -1), BOTTOM_Z, False),
+        bottom: ((0, 0, 1), BOTTOM_Z, True),
+    }
+    selected = {name: [i for i, material in enumerate(materials) if material == name]
+                for name in expected}
+    leaves = records(data, 10, "<ihh6h4Hhh", expected_version=1)
+    leaf_faces = [index for (index,) in records(data, 16, "<H")]
+    vertices = records(data, 3, "<3f")
+    edges = records(data, 12, "<2H")
+    surfedges = [edge for (edge,) in records(data, 13, "<i")]
+    for material, indices in selected.items():
+        normal, z, wet = expected[material]
+        assert indices and sum(faces[i][13] for i in indices) == 320 * 320
+        for i in indices:
+            face = faces[i]
+            assert planes[face[0]][:3] == normal and planes[face[0]][3] == normal[2] * z
+            assert face[7] == 0 and face[12] == -1 and face[8:12] == (255,) * 4
+            assert 3 <= face[4] <= MAX_FIXTURE_FACE_VERTICES
+            points = [vertices[edges[abs(edge)][int(edge < 0)]]
+                      for edge in surfedges[face[3]:face[3] + face[4]]]
+            assert all(point[2] == z and -160 <= point[0] <= 160
+                       and -160 <= point[1] <= 160 for point in points)
+            twice_area = sum(a[0] * b[1] - a[1] * b[0]
+                             for a, b in zip(points, points[1:] + points[:1], strict=True))
+            assert abs(twice_area) / 2 == face[13] and twice_area * normal[2] < 0
+            references = [leaf for leaf in leaves
+                          if i in leaf_faces[leaf[9]:leaf[9] + leaf[10]]]
+            assert references and all(bool(leaf[0] & 32) == wet
+                                      and (not wet or leaf[13] == face[7])
+                                      for leaf in references)
+    assert water[0][2] in [faces[i][5] for i in selected[TOP]]
+    projections = {}
+    for original, inward in [(TOP, NEUTRAL_BOTTOM), (BOTTOM_SURFACE, bottom)]:
+        projection = {tuple(infos[faces[i][5]][:17]) for i in selected[original]}
+        assert len(projection) == 1 and all(tuple(infos[faces[i][5]][:17]) in projection
+                                          for i in selected[inward])
+        projections[original] = list(next(iter(projection)))
+    assert projections[TOP][:16] != projections[BOTTOM_SURFACE][:16]
+    assert all(other not in materials for other in BOTTOMS.values() if other != bottom)
+    return {
+        "top": TOP, "top_underside": NEUTRAL_BOTTOM,
+        "authored_bottom": BOTTOM_SURFACE, "inward_bottom": bottom,
+        "bottom_z": BOTTOM_Z, "inward_normal": [0, 0, 1], "area": 320 * 320,
+        "face_counts": {name: len(indices) for name, indices in selected.items()},
+        "source_projections": projections, "water": [list(row) for row in water],
+        "collision_sha256": {str(index): digest(raw_lump(data, index))
+                             for index in COLLISION_LUMPS},
+    }
+
+
+def check_fixture(data, bottom, vertical_sides, negative_z_bottom=False):
+    if negative_z_bottom:
+        assert not vertical_sides
+        return check_negative_z_native(data, bottom)
     return (
         check_vertical_native(data, bottom)
         if vertical_sides
@@ -316,7 +394,7 @@ def check_side_binding_only(cases):
         ]
         assert names.count(BOTTOMS[name]) == 1
         normalized[name] = [
-            "$selected_vertical_bottom" if material == BOTTOMS[name] else material
+            "$selected_bottom" if material == BOTTOMS[name] else material
             for material in names
         ]
     assert normalized["red"] == normalized["blue"]
@@ -496,9 +574,9 @@ def view_states(text):
     return [list(map(float, row.split())) for row in rows if len(row.split()) == 11]
 
 
-def valid_pose(row, vertical_sides=False):
+def valid_pose(row, vertical_sides=False, negative_z_bottom=False):
     phase, _, team, health, wet, x, y, z, pitch, yaw, roll = row
-    configured = views(vertical_sides)
+    configured = views(vertical_sides, negative_z_bottom)
     if phase not in range(len(configured)):
         return False
     eye, angle = list(configured.values())[int(phase)]
@@ -515,6 +593,76 @@ def valid_pose(row, vertical_sides=False):
         and abs(roll) < 1
         and (0 <= wet < 3 if phase == 0 else wet == 3)
     )
+
+
+def bottom_module_identities(root):
+    result = {str((root / name).resolve(strict=True)): identity(root / name)
+              for name in BOTTOM_MODULES}
+    assert all(result.values())
+    return result
+
+
+def bottom_mapping_mount(name, rows):
+    matches = []
+    for row in rows:
+        fields = row.split(" - ", 1)[0].split()
+        mount_point = Path(fields[4].replace("\\040", " ").replace("\\011", "\t")
+                           .replace("\\012", "\n").replace("\\134", "\\"))
+        if Path(name).is_relative_to(mount_point):
+            major, minor = (int(value, 10) for value in fields[2].split(":"))
+            matches.append({"row": row, "mount_point": str(mount_point),
+                            "device": os.makedev(major, minor)})
+    assert matches, ("No owning module mount", name)
+    depth = max(len(Path(row["mount_point"]).parts) for row in matches)
+    owners = [row for row in matches if len(Path(row["mount_point"]).parts) == depth]
+    assert len(owners) == 1, ("Ambiguous owning module mount", name, owners)
+    return owners[0]
+
+
+def bottom_loaded_modules(root, expected, audit_path):
+    executable = (root / "cstrike_linux64").resolve(strict=True)
+    candidates = []
+    for pid in runtime.private_group_members(os.getpgrp()):
+        try:
+            if Path(f"/proc/{pid}/exe").resolve(strict=True) == executable:
+                candidates.append(pid)
+        except FileNotFoundError:
+            continue
+    audit = {"candidates": candidates, "expected": expected, "modules": {}}
+    try:
+        assert len(candidates) == 1, ("Expected one owned CS:S process", candidates)
+        pid = candidates[0]
+        audit["pid"] = pid
+        audit["raw_maps"] = Path(f"/proc/{pid}/maps").read_text().splitlines()
+        audit["raw_mountinfo"] = Path(f"/proc/{pid}/mountinfo").read_text().splitlines()
+        audit["executable_identity"] = identity(Path(f"/proc/{pid}/exe"))
+        audit_path.write_text(json.dumps(audit, indent=2) + "\n")
+        assert audit["executable_identity"] == expected[str(executable)]
+        mappings = audit["modules"]
+        for row in audit["raw_maps"]:
+            fields = row.split(maxsplit=5)
+            if len(fields) != 6 or fields[5] not in expected or "x" not in fields[1]:
+                continue
+            name = fields[5]
+            major, minor = (int(value, 16) for value in fields[3].split(":"))
+            entry = {"mapping": row, "identity": expected[name],
+                     "maps_device": os.makedev(major, minor), "maps_inode": int(fields[4])}
+            mappings[name] = entry
+            namespace_path = Path(f"/proc/{pid}/root") / name.lstrip("/")
+            entry["namespace_path"] = str(namespace_path)
+            entry["namespace_identity"] = identity(namespace_path)
+            entry["owning_mount"] = bottom_mapping_mount(name, audit["raw_mountinfo"])
+            audit_path.write_text(json.dumps(audit, indent=2) + "\n")
+            assert Path(name).is_absolute() and str(Path(name)) == name
+            assert entry["namespace_identity"] == expected[name], (name, entry)
+            assert entry["maps_inode"] == expected[name]["inode"], (name, entry)
+            assert entry["maps_device"] == entry["owning_mount"]["device"], (name, entry)
+        assert mappings.keys() == expected.keys(), mappings.keys()
+        assert bottom_module_identities(root) == expected
+        return {"pid": pid, "executable": str(executable),
+                "executable_identity": audit["executable_identity"], "modules": mappings}
+    finally:
+        audit_path.write_text(json.dumps(audit, indent=2) + "\n")
 
 
 def runtime_diagnostics(text):
@@ -574,18 +722,23 @@ def worker(args):
     assert os.environ.get("WAYLAND_DISPLAY") and os.environ.get(
         "XDG_RUNTIME_DIR"
     ) == str(output / "wayland")
+    negative_z_bottom = args.negative_z_bottom
+    modules = bottom_module_identities(root) if negative_z_bottom else None
     game = runtime.private_game(root, output, args.bsp)
     shutil.copytree(args.fixture_game / "materials", game / "materials")
     assert (game / f"materials/{TOP}.vmt").read_text() == top_material(
-        NEUTRAL_BOTTOM if args.vertical_sides else BOTTOMS["red"]
+        NEUTRAL_BOTTOM if args.vertical_sides or negative_z_bottom else BOTTOMS["red"]
     )
     if args.vertical_sides:
         assert (game / f"materials/{SIDE}.vmt").read_text() == top_material(
             BOTTOMS["red"]
         )
-    check_fixture(args.bsp.read_bytes(), BOTTOMS[args.variant], args.vertical_sides)
+    if negative_z_bottom:
+        assert (game / f"materials/{BOTTOM_SURFACE}.vmt").read_text() == top_material(BOTTOMS["red"])
+    check_fixture(args.bsp.read_bytes(), BOTTOMS[args.variant], args.vertical_sides,
+                  negative_z_bottom)
     (game / "scripts/vscripts/hammerr_observer.nut").write_text(
-        private_observer(observer_script(args.vertical_sides))
+        private_observer(observer_script(args.vertical_sides, negative_z_bottom))
     )
     for name in ["listenserver.cfg", "server.cfg"]:
         assert re.search(r"(?m)^toggle sv_lan 1$", (game / "cfg" / name).read_text())
@@ -627,7 +780,7 @@ def worker(args):
         "27589",
     ]
     captures = {}
-    configured = views(args.vertical_sides)
+    configured = views(args.vertical_sides, negative_z_bottom)
     report = {}
     try:
         with private_native_process(command, root, game, output, environment, report) as process:
@@ -642,7 +795,7 @@ def worker(args):
                 rows = view_states(text)
                 if (
                     len(rows) >= 3
-                    and all(valid_pose(row, args.vertical_sides) for row in rows[-3:])
+                    and all(valid_pose(row, args.vertical_sides, negative_z_bottom) for row in rows[-3:])
                     and len({row[0] for row in rows[-3:]}) == 1
                 ):
                     row = rows[-1]
@@ -655,6 +808,10 @@ def worker(args):
                     ):
                         values = controls(text)
                         verify_private_launch(game, text)
+                        if negative_z_bottom and "loaded_modules" not in report:
+                            report["loaded_modules"] = bottom_loaded_modules(
+                                root, modules, output / "module-mappings-before.json"
+                            )
                         subprocess.run(
                             ["grim", str(output / f"{key}.png")], check=True, timeout=5
                         )
@@ -676,6 +833,11 @@ def worker(args):
                 json.dumps(diagnostics, indent=2) + "\n"
             )
             assert not diagnostics["fixture_failures"], diagnostics["fixture_failures"]
+            if negative_z_bottom:
+                runtime.require_native_running(process, "after bottom captures")
+                assert bottom_loaded_modules(
+                    root, modules, output / "module-mappings-after.json"
+                ) == report["loaded_modules"]
             report.update({
                 "diagnostics": diagnostics,
                 "private_launch": verify_private_launch(game, text),
@@ -691,7 +853,12 @@ def worker(args):
                 "materials_sha256": material_hashes(game),
             })
     finally:
+        if negative_z_bottom:
+            report["module_identities_after"] = bottom_module_identities(root)
+            report["modules_preserved"] = report["module_identities_after"] == modules
         (output / "runtime.json").write_text(json.dumps(report, indent=2) + "\n")
+    if negative_z_bottom:
+        assert report["modules_preserved"]
 
 
 def pixels(path):
@@ -742,6 +909,12 @@ def compare(first, second):
 
 def native_cases(args, fixture):
     assert shutil.which("cage") and shutil.which("grim"), "Cage and grim are required"
+    negative_z_bottom = args.negative_z_bottom
+    modules = bottom_module_identities(args.game_dir.resolve()) if negative_z_bottom else None
+    if negative_z_bottom:
+        assert fixture["negative_z_bottom"] is True
+        assert {path: identity(Path(path)) for path in fixture["custody"]} == fixture["custody"]
+        assert check_side_binding_only(fixture["cases"]) == fixture["binding_only"]
     common = args.output / "runtime-materials"
     for case in fixture["cases"].values():
         assert material_hashes(Path(case["fixture_game"])) == case["materials_sha256"]
@@ -750,13 +923,15 @@ def native_cases(args, fixture):
         common / "materials",
     )
     (common / f"materials/{TOP}.vmt").write_text(
-        top_material(NEUTRAL_BOTTOM if args.vertical_sides else BOTTOMS["red"])
+        top_material(NEUTRAL_BOTTOM if args.vertical_sides or negative_z_bottom else BOTTOMS["red"])
     )
     if args.vertical_sides:
         (common / f"materials/{SIDE}.vmt").write_text(top_material(BOTTOMS["red"]))
         assert check_side_binding_only(fixture["cases"]) == fixture["binding_only"]
+    if negative_z_bottom:
+        (common / f"materials/{BOTTOM_SURFACE}.vmt").write_text(top_material(BOTTOMS["red"]))
     expected_materials = material_hashes(common)
-    configured = views(args.vertical_sides)
+    configured = views(args.vertical_sides, negative_z_bottom)
     results = {}
     for name, case in fixture["cases"].items():
         output = args.output / name
@@ -778,8 +953,17 @@ def native_cases(args, fixture):
         ]
         if args.vertical_sides:
             command.append("--vertical-sides")
+        if negative_z_bottom:
+            command.append("--negative-z-bottom")
         runtime.private_compositor(command, output, timeout=63)
         results[name] = json.loads((output / "runtime.json").read_text())
+        if negative_z_bottom:
+            cleanup = json.loads((output / "private-cleanup.json").read_text())
+            assert cleanup["worker_result"] == 0 and cleanup["worker_failure"] is None
+            assert cleanup["cleanup_failures"] == cleanup["remaining_live_processes"] == []
+            assert results[name]["modules_preserved"]
+            assert results[name]["module_identities_after"] == modules
+            results[name]["owned_process_drain"] = cleanup
         assert (
             material_hashes(Path(results[name]["game"]))
             == results[name]["materials_sha256"]
@@ -814,7 +998,7 @@ def native_cases(args, fixture):
             differences[view]["mean_difference"] < 2
             and differences[view]["changed"] < differences[view]["pixels"] * 0.01
         ), (view, differences)
-    signature = "side" if args.vertical_sides else "below"
+    signature = "bottom" if negative_z_bottom else "side" if args.vertical_sides else "below"
     red, blue = (
         results["red"]["frames"][signature],
         results["blue"]["frames"][signature],
@@ -828,7 +1012,7 @@ def native_cases(args, fixture):
         "cases": results,
         "fixture_materials_sha256": expected_materials,
         "runtime_materials_sha256": results["red"]["materials_sha256"],
-        "runtime_top_bottom": NEUTRAL_BOTTOM if args.vertical_sides else BOTTOMS["red"],
+        "runtime_top_bottom": NEUTRAL_BOTTOM if args.vertical_sides or negative_z_bottom else BOTTOMS["red"],
         "runtime_materials_identical": True,
         "roi": REGION,
         "differences": differences,
@@ -840,6 +1024,13 @@ def native_cases(args, fixture):
         report["runtime_side_bottom"] = BOTTOMS["red"]
         report["vertical_side_material_dependent_pixels"] = True
         report["binding_only"] = fixture["binding_only"]
+    if negative_z_bottom:
+        assert {path: identity(Path(path)) for path in fixture["custody"]} == fixture["custody"]
+        assert bottom_module_identities(args.game_dir.resolve()) == modules
+        report.update({"negative_z_bottom": True, "binding_only": fixture["binding_only"],
+                       "source_custody_preserved": True, "modules_preserved": True,
+                       "inward_bottom_material_dependent_pixels": True,
+                       "runtime_authored_bottom_target": BOTTOMS["red"]})
     return report
 
 
@@ -857,6 +1048,10 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--runtime", action="store_true")
     parser.add_argument(
+        "--negative-z-bottom", action="store_true",
+        help="Verify downward views of an authored bottom; requires --runtime and a fixture from validate_negative_z_water_bottom.py",
+    )
+    parser.add_argument(
         "--vertical-sides",
         action="store_true",
         help="Verify an exposed vertical side with a fixed neutral horizontal underside",
@@ -871,6 +1066,10 @@ def main():
     parser.add_argument("--fixture-game", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--variant", choices=list(BOTTOMS), help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.negative_z_bottom and args.vertical_sides:
+        parser.error("--negative-z-bottom and --vertical-sides are mutually exclusive")
+    if args.negative_z_bottom and not args.worker and not (args.runtime and args.reuse_fixture):
+        parser.error("--negative-z-bottom requires --runtime and --reuse-fixture")
     args.output = args.output.resolve()
     args.output.mkdir(parents=True, exist_ok=args.worker)
     if args.worker:
@@ -883,12 +1082,16 @@ def main():
             assert fixture.get("vertical_sides", False) == args.vertical_sides, (
                 "Reuse requires the same --vertical-sides mode as the compile fixture"
             )
+            assert fixture.get("negative_z_bottom", False) == args.negative_z_bottom, (
+                "Reuse requires the same --negative-z-bottom mode as the compile fixture"
+            )
             for name, case in fixture["cases"].items():
                 assert (
                     check_fixture(
                         Path(case["bsp"]).read_bytes(),
                         BOTTOMS[name],
                         args.vertical_sides,
+                        args.negative_z_bottom,
                     )
                     == case["native"]
                 )

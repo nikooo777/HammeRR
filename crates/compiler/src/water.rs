@@ -31,8 +31,12 @@ pub(crate) fn has_horizontal_surface(map: &Map, brush: &MapBrush) -> bool {
         })
 }
 
-pub(crate) fn inward_surface(normal: DVec3, vertical: bool) -> bool {
-    normal.abs_diff_eq(DVec3::Z, NORMAL_EPSILON) || (vertical && normal.z.abs() <= NORMAL_EPSILON)
+pub(crate) fn paired_surface(normal: DVec3) -> bool {
+    normal.z.abs() <= NORMAL_EPSILON || normal.abs_diff_eq(DVec3::NEG_Z, NORMAL_EPSILON)
+}
+
+pub(crate) fn inward_surface(normal: DVec3, horizontal_pool: bool) -> bool {
+    normal.abs_diff_eq(DVec3::Z, NORMAL_EPSILON) || (horizontal_pool && paired_surface(normal))
 }
 
 pub(crate) fn prepare_materials(
@@ -46,12 +50,12 @@ pub(crate) fn prepare_materials(
         if brush.entity != 0 || !brush.structural() || brush.contents & contents::WATER == 0 {
             continue;
         }
-        let vertical = has_horizontal_surface(map, brush);
+        let horizontal_pool = has_horizontal_surface(map, brush);
         for side in &brush.sides {
             if side.bevel
                 || !side.visible
                 || map.materials.get(side.material).contents & contents::WATER == 0
-                || !inward_surface(map.planes.get(side.plane).normal, vertical)
+                || !inward_surface(map.planes.get(side.plane).normal, horizontal_pool)
             {
                 continue;
             }

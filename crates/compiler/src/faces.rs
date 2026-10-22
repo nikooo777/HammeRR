@@ -213,7 +213,7 @@ pub fn build_with_smoothing(
                 && brush.sides.iter().any(|side| {
                     side.visible
                         && !side.bevel
-                        && map.planes.get(side.plane).normal.z.abs() <= 1e-8
+                        && water::paired_surface(map.planes.get(side.plane).normal)
                         && map.water_bottom_texinfos.contains_key(&side.texinfo)
                 })
         });
@@ -329,7 +329,7 @@ fn build_impl(
     for &brush_index in &map.entities[entity].brushes {
         control.checkpoint()?;
         let brush = &map.brushes[brush_index];
-        let vertical = water::has_horizontal_surface(map, brush);
+        let horizontal_pool = water::has_horizontal_surface(map, brush);
         for side in brush.sides.iter().filter(|s| s.visible && !s.bevel) {
             if include.is_some_and(|include| !side.source_id.is_some_and(include)) {
                 continue;
@@ -343,14 +343,14 @@ fn build_impl(
             let bottom = if entity == 0
                 && brush.structural()
                 && brush.contents & contents::WATER != 0
-                && water::inward_surface(map.planes.get(side.plane).normal, vertical)
+                && water::inward_surface(map.planes.get(side.plane).normal, horizontal_pool)
             {
                 map.water_bottom_texinfos.get(&side.texinfo).copied()
             } else {
                 None
             };
-            let vertical_side =
-                bottom.is_some() && map.planes.get(side.plane).normal.z.abs() <= 1e-8;
+            let paired_surface =
+                bottom.is_some() && water::paired_surface(map.planes.get(side.plane).normal);
             let mut pending = vec![(
                 0,
                 winding.clone(),
@@ -414,17 +414,15 @@ fn build_impl(
                         if below_water && node.contents & contents::WATER == 0 {
                             continue;
                         }
-                        if vertical_side
+                        if paired_surface
                             && !below_water
                             && node.contents & (contents::WATER | contents::SLIME) != 0
                         {
                             continue;
                         }
-                        let water_region = if below_water
-                            && map.planes.get(face_plane).normal.z.abs() <= 1e-8
-                        {
+                        let water_region = if below_water && paired_surface {
                             let Some(&region) = water_regions.get(index) else {
-                                return Err("Vertical water faces require checked world-water region ownership".into());
+                                return Err("Paired water faces require checked world-water region ownership".into());
                             };
                             if region < 0 {
                                 continue;
@@ -479,9 +477,9 @@ fn build_impl(
                                 face_plane ^ 1,
                                 bottom,
                                 true,
-                                vertical_side.then_some((index, on_node)),
+                                paired_surface.then_some((index, on_node)),
                             ));
-                            if vertical_side {
+                            if paired_surface {
                                 continue;
                             }
                         }

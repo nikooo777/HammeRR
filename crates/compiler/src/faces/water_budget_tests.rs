@@ -279,3 +279,130 @@ fn vertical_only_generated_water_is_budgeted_and_cancellable_before_publication(
         assert_eq!(source, original);
     }
 }
+
+#[test]
+fn authored_bottom_only_generation_obeys_all_budgets_and_cancellation_before_publication() {
+    let (directory, game, source) = crossed_partitions();
+    std::fs::write(
+        directory.path().join("materials/water.vmt"),
+        "Water { $abovewater 1 }",
+    )
+    .unwrap();
+    let pool = source
+        .world
+        .solids
+        .iter()
+        .find(|solid| solid.sides.iter().any(|side| side.material == "water"))
+        .unwrap()
+        .id;
+    let mut document = Document::new(source);
+    document
+        .edit("exposed bottom-only water", |tx| {
+            edit::transform(
+                tx,
+                &[ObjectId::Solid(pool)],
+                edit::Transform {
+                    translation: DVec3::new(0.0, 0.0, 32.0),
+                    ..Default::default()
+                },
+            )?;
+            for side in &mut tx.solid_mut(pool)?.sides {
+                if Plane::from_points(side.plane.0).unwrap().normal == DVec3::NEG_Z {
+                    side.material = "side".into();
+                }
+            }
+            Ok(())
+        })
+        .unwrap();
+    let source = document.into_vmf();
+    let original = source.clone();
+    let baseline = successful(&source, &game);
+    let bsp = baseline.bsp.as_ref().unwrap();
+    let names = bsp.texdata_strings().unwrap();
+    let data = bsp.records::<bsp::TexData>().unwrap();
+    let infos = bsp.records::<TexInfo>().unwrap();
+    let planes = bsp.records::<bsp::Plane>().unwrap();
+    let generated = bsp
+        .records::<Face>()
+        .unwrap()
+        .into_iter()
+        .filter(|face| {
+            names[data[infos[face.texinfo as usize].texdata as usize].name_index as usize]
+                == "BELOW"
+        })
+        .collect::<Vec<_>>();
+    assert!(!generated.is_empty());
+    for face in generated {
+        let plane = planes[face.plane as usize];
+        assert_eq!(plane.normal, [0.0, 0.0, 1.0]);
+        assert_eq!(plane.dist, 32.0);
+        assert!(face.fog_volume >= 0);
+    }
+    let path = directory.path().join("bottom-previous.bsp");
+    assert!(baseline.write(&path).unwrap());
+    let previous = std::fs::read(&path).unwrap();
+    let pointfile = path.with_extension("lin");
+    let previous_pointfile = b"retained pointfile\n";
+    std::fs::write(&pointfile, previous_pointfile).unwrap();
+    for (config, expected) in [
+        (
+            TestConfig {
+                limits: Limits {
+                    work: 0,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some("traversal work"),
+        ),
+        (
+            TestConfig {
+                limits: Limits {
+                    fragments: 0,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some("generated fragment"),
+        ),
+        (
+            TestConfig {
+                limits: Limits {
+                    points: 0,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some("winding point allocation"),
+        ),
+        (
+            TestConfig {
+                cancel_after_visits: Some(3),
+                ..Default::default()
+            },
+            None,
+        ),
+    ] {
+        let control = Control::default();
+        let output = with_config(config, || {
+            crate::compile_controlled(&source, &game, &control)
+        });
+        assert!(output.bsp.is_none(), "{:?}", output.report);
+        assert_eq!(control.progress().stage, Stage::Faces);
+        assert_eq!(control.cancelled(), expected.is_none());
+        assert!(
+            output.report.diagnostics.iter().any(|diagnostic| {
+                expected.map_or(diagnostic.message == "Compilation cancelled", |expected| {
+                    diagnostic.message.contains("Water undersides")
+                        && diagnostic.message.contains(expected)
+                })
+            }),
+            "{:?}",
+            output.report
+        );
+        assert!(!output.write(&path).unwrap());
+        assert_eq!(std::fs::read(&path).unwrap(), previous);
+        assert_eq!(std::fs::read(&pointfile).unwrap(), previous_pointfile);
+        assert_eq!(source, original);
+    }
+}

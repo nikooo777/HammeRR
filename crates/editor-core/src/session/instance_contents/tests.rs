@@ -6,6 +6,7 @@ mod lighting_origins;
 mod player_spawns;
 mod static_props;
 mod terrain;
+mod visclusters;
 
 fn nested_opened(
     actor: Actor,

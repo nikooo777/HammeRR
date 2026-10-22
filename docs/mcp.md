@@ -297,7 +297,8 @@ same-installation running-client rejection.
 
 A saved parent can compile nested world/detail brush instances, including power
 2–4 terrain, strictly admitted unnamed static point/spot lights,
-static props and player spawns, through four helper levels, counting a root helper as level one; see
+static props, player spawns and consumed visibility volumes, through four helper
+levels, counting a root helper as level one; see
 [Referenced brush assemblies](instances.md). `create_entity` uses
 `classname: "func_instance"`, an origin and string properties `file` (relative
 `.vmf`) and optional `angles` (Source pitch/yaw/roll). The current in-memory parent
@@ -457,6 +458,16 @@ before transformed-origin region filtering and is omitted when zero.
 model/icon/bounds/picking/framing reason. Ordinary runtime entities are emitted;
 this count describes expansion rather than selected native spawn locations.
 
+`stats.instances.visclusters` counts expanded visible child `func_viscluster`
+helpers before region filtering and is omitted when zero. **Build details…**
+shows **Visibility helpers:** with that pre-filter meaning. The ordinary
+`stats.viscluster_helpers` counts retained root and child volumes after region
+selection. Helpers retain their class and source provenance and never become
+physical detail or runtime entities. The assembled retained map shares the
+ordinary 16-helper limit; source/pose admission and expansion work are checked
+before regional omission. Author child volumes through existing `create_block`,
+`tie_to_entity` and `save_map` operations; see [Visibility clusters](visclusters.md).
+
 Completed instance jobs report `instance_dependencies.current/error`; `stale`,
 launch readiness and baked inspection include the retained build's dependencies.
 Launch verifies exact contents in its worker. Source/settings changes, dependency failures and
@@ -576,6 +587,16 @@ VMF identities and counts, `available:false`, zero geometry and null owner
 bounds. Mixed references retain real brush/terrain surfaces. Missing or hidden
 local prop bindings are checked only for retained props during compilation;
 ready reference resolution does not prove those bindings usable.
+The optional `stats.visclusters` counts visible expanded child visibility volumes
+before regions and omits zero. When nonzero, `viscluster_preview` returns
+`available:false` with the reason: “Child visibility helpers have no reference
+geometry or icons; helper bounds, picking and framing are unavailable.”
+**Instance contents…** shows **Visibility helpers:**. A visibility-only reference
+is ready with source identities, zero geometry, no face provenance and null owner
+content bounds. Mixed references keep their actual brush/terrain mesh. Ready
+inspection checks supported source/pose rules; leaf membership, retained-helper
+limits, liquids and area crossings are checked during compilation.
+
 The optional `stats.player_spawns` also counts expansion before regions and
 omits zero. When nonzero, `player_spawn_preview` returns `available:false` and
 the shared `reason`: “Child player-spawn models and icons are not shown in the
@@ -898,7 +919,8 @@ volume/paint inspection report the active `selection_filters`. Human controls:
 Authored `func_viscluster` uses `create_block` then `tie_to_entity` with that
 classname. Ordinary compile paths group dry open leaves whose exact convex
 intersection exceeds 10% of leaf volume, subject to bounded numerical admission.
-Up to 16 single-convex-brush helpers are supported; ambiguous overlapping claims,
+The assembled root and supported instances share up to 16 retained single-convex-brush
+helpers after region selection; ambiguous overlapping claims,
 liquid/portal/area crossings reject. Active regions retain complete contained
 helpers, omit hidden or disjoint helpers and reject crossing bounds; marker origins
 do not select their geometry. Membership uses the sealed regional leaves. Geometry is not

@@ -2,6 +2,100 @@ use super::*;
 use std::sync::{Arc, Mutex};
 
 #[test]
+fn software_visibility_helpers_share_counts_and_missing_geometry_with_build_details() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: false,
+        },
+    )))
+    .unwrap();
+    let (_directory, game, parent, child) = crate::test_assets::instance_map(false);
+    std::fs::write(
+        &child,
+        map_core::Document::empty().vmf().write(&Default::default()),
+    )
+    .unwrap();
+    let mut session = Session::new(Ok(game));
+    session.set_definitions(
+        Actor::User,
+        source_formats::fgd::Catalog::parse("@SolidClass color(180 180 0) = func_viscluster []")
+            .unwrap(),
+    );
+    session.open(Actor::User, &child, true).unwrap();
+    let brush = session
+        .create_block(
+            Actor::User,
+            DVec3::new(-250.0, -250.0, 8.0),
+            DVec3::new(250.0, 250.0, 248.0),
+            "test/checker",
+            false,
+        )
+        .unwrap();
+    session
+        .tie_to_entity(Actor::User, &[brush], "func_viscluster", BTreeMap::new())
+        .unwrap();
+    session.save(Actor::User, None).unwrap();
+    session.open(Actor::User, &parent, false).unwrap();
+    let memory = session.document().vmf().clone();
+    let history = session.history_snapshot();
+    let camera = session.camera();
+    let parent_bytes = std::fs::read(&parent).unwrap();
+    let child_bytes = std::fs::read(&child).unwrap();
+    let result = session.begin_compile(Actor::User, None).unwrap().run();
+    assert!(
+        result.as_ref().unwrap().output.bsp.is_some(),
+        "{:?}",
+        result.as_ref().unwrap().output.report
+    );
+    session.finish_compile(Actor::User, &result);
+    let request = session
+        .begin_instance_contents_refresh(Actor::User)
+        .unwrap();
+    let report = session
+        .finish_instance_contents_refresh(Actor::User, request.run())
+        .unwrap();
+    assert_eq!(report["state"], "ready");
+    assert_eq!(report["stats"]["visclusters"], 1);
+    assert_eq!(report["available"], false);
+    assert_eq!(report["geometry"]["vertices"], 0);
+    assert!(report["owners"][0]["bounds"].is_null());
+    let shared = Arc::new(Mutex::new(session));
+    let contents = Controller::new(shared.clone()).unwrap();
+    let build = crate::compile_ui::Controller::new(&shared).unwrap();
+    build.refresh(&lock(&shared));
+    let count = "Visibility helpers: 1 · expanded before compile-region filtering";
+    let reason = editor_core::session::instance_contents::VISCLUSTER_PREVIEW_REASON;
+    assert_eq!(report["viscluster_preview"]["reason"], reason);
+    assert!(contents.window.get_summary().contains(count));
+    assert!(contents.window.get_summary().contains(reason));
+    assert!(build.window.get_details().contains(count));
+    assert!(build.window.get_details().contains(reason));
+    assert!(
+        build
+            .window
+            .get_details()
+            .contains("Authored visclusters: 1 helpers")
+    );
+    assert!(!contents.window.get_can_frame());
+    assert!(contents.window.get_owners().contains("child.vmf"));
+    contents.window.invoke_frame_contents();
+    assert!(
+        contents
+            .window
+            .get_message()
+            .contains("no visible geometry")
+    );
+    let session = lock(&shared);
+    assert_eq!(session.document().vmf(), &memory);
+    assert_eq!(session.history_snapshot(), history);
+    assert_eq!(session.camera(), camera);
+    assert_eq!(std::fs::read(&parent).unwrap(), parent_bytes);
+    assert_eq!(std::fs::read(&child).unwrap(), child_bytes);
+}
+
+#[test]
 fn software_player_spawn_counts_share_missing_geometry_reason_with_build_details() {
     slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
         i_slint_backend_testing::TestingBackendOptions {

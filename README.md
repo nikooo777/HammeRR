@@ -297,7 +297,7 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | Prefab library | Referenced assemblies |
 | --- | --- |
 | ![Textured prefab gallery with placement controls](docs/images/prefab-gallery.png) | ![Nested instance terrain reference surfaces](docs/images/instance-terrain-reference.png) |
-| Browse flat or textured assembly galleries, then place rotated or brush-scaled copies. | Extract and preview nested terrain assemblies; compile their lights, props and team spawns with checked sources. |
+| Browse flat or textured assembly galleries, then place rotated or brush-scaled copies. | Preview nested terrain assemblies and compile their lights, props, spawns and visibility volumes. |
 
 | Open documents and Save all |
 | --- |

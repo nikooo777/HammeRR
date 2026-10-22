@@ -15,6 +15,8 @@ Scoped child lighting-origin helpers are counted without reference geometry or
 icons.
 Supported child player spawns are counted without model/icon display, reference
 bounds, picking or framing.
+Child visibility-cluster volumes are counted for compilation without adding
+reference geometry or icons.
 
 1. Save the parent VMF. Use **Instance reference…** to create an explicit relative
    `.vmf` reference inside its directory tree; see [Instance authoring](instance-authoring.md).
@@ -27,7 +29,9 @@ bounds, picking or framing.
    model preview. **Expanded lighting origins:** counts visible helpers,
    including unreferenced helpers, before region filtering. **Expanded player
    spawns:** counts both supported team-spawn classes before region filtering
-   and explains their unavailable model/icon geometry. **Cancel refresh**
+   and explains their unavailable model/icon geometry. **Visibility helpers:**
+   counts expanded child visibility volumes before region filtering and explains
+   their unavailable geometry. **Cancel refresh**
    cancels the current request; **Clear** frees the resolved layer.
 4. Click a displayed reference surface to select its root instance helper.
    Terrain picking follows the displaced triangles. Overlapping object cycling
@@ -108,6 +112,14 @@ Adding spawns to a mixed assembly does not change its brush/terrain mesh,
 content bounds or face provenance. This preview does not certify native spawn
 selection, team balancing or player clearance.
 
+Supported child `func_viscluster` volumes retain source identities and counts
+without becoming physical detail or reference surfaces. A visibility-only
+assembly is ready with zero geometry and unavailable framing. Mixed assemblies
+keep their actual brush/terrain mesh and bounds; visibility volumes add no
+placeholder geometry. Refresh checks their supported source and transform
+rules. Build-time leaf membership, area/liquid restrictions and the assembled
+retained-helper limit are checked during compilation.
+
 **Tool textures** does not classify this flat reference layer. Child editing,
 parameter replacements and automatic live refresh remain unsupported.
 [Instance authoring](instance-authoring.md) edits the root reference.
@@ -157,6 +169,11 @@ counts, no face provenance and null owner content bounds.
 `player_spawn_preview` reports `available:false` with the same reason shown by
 the inspector. Spawn-only ready reports also have zero geometry, null owner
 content bounds and no face provenance.
+
+`stats.visclusters` counts expanded visible child visibility helpers before
+region filtering and is omitted when zero. `viscluster_preview` reports
+`available:false` and the inspector's unavailable-geometry reason. Visibility-only
+ready reports have zero geometry, no face provenance and null owner content bounds.
 
 MCP uses `inspect_instance_contents` and `set_instance_contents` with
 `refresh`, `cancel`, `clear` or `frame`. Inspectors paginate at most 64 owners per

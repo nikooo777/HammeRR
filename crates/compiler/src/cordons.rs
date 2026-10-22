@@ -151,10 +151,16 @@ fn selected_helper(
         return Ok(false);
     }
     if !bounds.contains(mins) || !bounds.contains(maxs) {
-        return Err(format!(
+        let message = format!(
             "{classname} crosses a compile-region boundary; include every visible brush in the helper or disable the region (entity:{})",
             entity.id
+        );
+        report.diagnostics.push(Diagnostic::error(
+            message.clone(),
+            Some(format!("entity:{}", entity.id)),
+            Some((mins + maxs) * 0.5),
         ));
+        return Err(message);
     }
     Ok(true)
 }

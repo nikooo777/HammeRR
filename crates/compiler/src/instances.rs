@@ -15,6 +15,7 @@ mod names;
 mod props;
 mod spawns;
 mod terrain;
+mod visclusters;
 
 pub const MAX_INSTANCES: usize = 256;
 pub const MAX_EXPANSION_DEPTH: usize = 4;
@@ -356,6 +357,8 @@ pub struct InstanceStats {
     pub lighting_origins: usize,
     #[serde(skip_serializing_if = "is_zero")]
     pub player_spawns: usize,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub visclusters: usize,
     pub dependencies: Vec<DependencyInfo>,
 }
 
@@ -525,6 +528,13 @@ fn checked_solid(solid: &Solid) -> Result<(), String> {
 }
 
 fn checked_solid_controlled(solid: &Solid, control: &Control) -> Result<(), String> {
+    checked_solid_geometry_controlled(solid, control).map(|_| ())
+}
+
+fn checked_solid_geometry_controlled(
+    solid: &Solid,
+    control: &Control,
+) -> Result<BrushGeometry, String> {
     if solid.sides.len() > MAX_BRUSH_SIDES
         || !solid.extra.is_empty()
         || !solid.extra_properties.0.is_empty()
@@ -575,7 +585,7 @@ fn checked_solid_controlled(solid: &Solid, control: &Control) -> Result<(), Stri
         ));
     }
     terrain::check_solid(solid, &geometry, control)?;
-    Ok(())
+    Ok(geometry)
 }
 
 fn child_admission(child: &Vmf, control: &Control) -> Result<(), String> {
@@ -610,6 +620,11 @@ fn child_admission(child: &Vmf, control: &Control) -> Result<(), String> {
                 .map_err(|error| format!("Child {} {}: {error}", kind.label(), entity.id))?;
             continue;
         }
+        if visclusters::is_helper(entity) {
+            visclusters::admit(entity)
+                .map_err(|error| format!("Child viscluster {}: {error}", entity.id))?;
+            continue;
+        }
         for (key, value) in entity.properties.iter() {
             field(key)?;
             field(value)?;
@@ -619,7 +634,7 @@ fn child_admission(child: &Vmf, control: &Control) -> Result<(), String> {
             .is_some_and(|class| class.eq_ignore_ascii_case("func_detail"))
         {
             return Err(format!(
-                "Child entity {} ({}) is unsupported; only world/func_detail brushes, unnamed static lights, bounded static props, scoped info_lighting helpers, neutral player spawns and bounded func_instance helpers are supported",
+                "Child entity {} ({}) is unsupported; only world/func_detail brushes, unnamed static lights, bounded static props, scoped info_lighting helpers, neutral player spawns, consumed func_viscluster volumes and bounded func_instance helpers are supported",
                 entity.id,
                 entity.classname().unwrap_or("missing class")
             ));
@@ -725,6 +740,7 @@ impl PreparedInstances<'_> {
                 self.vmf
                     .entities
                     .iter()
+                    .filter(|entity| !visclusters::is_helper(entity))
                     .flat_map(|entity| entity.solids.iter().map(|solid| (solid, true))),
             )
             .filter_map(move |(solid, detail)| {

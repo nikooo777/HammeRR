@@ -38,6 +38,94 @@ fn write_child(directory: &Path, name: &str, child: &Vmf) {
     std::fs::write(directory.join(name), child.write(&Default::default())).unwrap();
 }
 
+#[test]
+fn child_viscluster_envelope_accepts_optional_markers_and_only_neutral_reference_defaults() {
+    let mut helper = Entity::new(1000, "func_viscluster");
+    helper
+        .solids
+        .push(test_common::room().world.solids[0].clone());
+    visclusters::admit(&helper).unwrap();
+    assert!(helper.properties.get("origin").is_none());
+    for (key, value) in [
+        ("origin", "125 -250 16"),
+        ("angles", "0 0 0"),
+        ("angle", "0"),
+        ("spawnflags", "0"),
+        ("mindxlevel", "0"),
+        ("maxdxlevel", "0"),
+        ("targetname", ""),
+        ("target", ""),
+        ("parentname", ""),
+        ("name", ""),
+        ("globalname", ""),
+        ("killtarget", ""),
+        ("lightingorigin", ""),
+    ] {
+        helper.properties.set(key, value);
+    }
+    visclusters::admit(&helper).unwrap();
+    for (key, value) in [
+        ("origin", "NaN 0 0"),
+        ("origin", "16385 0 0"),
+        ("origin", "0 0"),
+        ("angles", "bad"),
+        ("angles", "0 1 0"),
+        ("angle", "1"),
+        ("targetname", "runtime_name"),
+        ("target", "runtime_target"),
+        ("parentname", "runtime_parent"),
+        ("spawnflags", "1"),
+        ("mindxlevel", "1"),
+        ("maxdxlevel", "90"),
+        ("Origin", "0 0 0"),
+        ("unsupported", ""),
+    ] {
+        let mut invalid = helper.clone();
+        invalid.properties.remove(key);
+        invalid.properties.set(key, value);
+        assert!(visclusters::admit(&invalid).is_err(), "{key}={value}");
+    }
+    let mut duplicate = helper.clone();
+    duplicate
+        .properties
+        .0
+        .push(("origin".into(), "0 0 0".into()));
+    assert!(
+        visclusters::admit(&duplicate)
+            .unwrap_err()
+            .contains("repeats")
+    );
+    let mut opaque = helper.clone();
+    opaque.extra.push(Node::block("opaque", Vec::new()));
+    assert!(visclusters::admit(&opaque).unwrap_err().contains("opaque"));
+    helper.connections = Some(vec![source_formats::vmf::Connection {
+        output: "OnUser1".into(),
+        value: "target,Kill,,0,-1".into(),
+    }]);
+    assert!(
+        visclusters::admit(&helper)
+            .unwrap_err()
+            .contains("connections")
+    );
+}
+
+#[test]
+fn child_viscluster_admission_defers_hull_work_and_preserves_hidden_omission() {
+    let mut helper = Entity::new(1000, "func_viscluster");
+    helper
+        .solids
+        .push(test_common::room().world.solids[0].clone());
+    helper.solids[0].sides[0].plane.0 = [DVec3::ZERO; 3];
+    visclusters::admit(&helper).unwrap();
+    assert!(checked_solid(&helper.solids[0]).is_err());
+    helper.properties.set("angles", "bad");
+    helper.solids[0].hidden = true;
+    visclusters::admit(&helper).unwrap();
+    assert!(crate::visclusters::source_solid(&helper).unwrap().is_none());
+    helper.solids.clear();
+    assert!(visclusters::admit(&helper).is_err());
+}
+
 fn manual_flat_brushes(parent: &Vmf, brushes: &[(&Solid, bool, DVec3)]) -> Vmf {
     let mut document = Document::new(parent.clone());
     document

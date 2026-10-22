@@ -3,8 +3,8 @@
 # Compile referenced assemblies
 
 Reuse saved VMFs' world and detail brushes, power 2–4 terrain, unnamed static
-point/spot lights, static props, scoped lighting-origin helpers, player spawns
-and nested references at several positions and rotations.
+point/spot lights, static props, scoped lighting-origin helpers, player spawns,
+visibility volumes and nested references at several positions and rotations.
 Compilation expands the supported contents without an extra switch. The editor
 can resolve a separate, explicitly refreshed
 [reference preview](instance-contents.md) with actual displaced terrain surfaces
@@ -15,8 +15,8 @@ from supported brushes already in the parent.
 1. Save the parent map. Save a child VMF inside the same directory tree, such as
    `parts/arch.vmf`. Keep the child's visible contents to world brushes,
    ordinary `func_detail` brushes, supported static lights/props, `info_lighting`
-   helpers, `info_player_terrorist` / `info_player_counterterrorist` spawns and
-   nested `func_instance` references.
+   helpers, `info_player_terrorist` / `info_player_counterterrorist` spawns,
+   `func_viscluster` volumes and nested `func_instance` references.
    World and detail brushes may carry supported power 2, 3 or 4 terrain. The
    child's world settings do not replace the parent's.
 2. To add a child light, open the child and click **Entity…**, then choose `light`
@@ -42,7 +42,11 @@ from supported brushes already in the parent.
    Origin** to that same name. Save the child. See
    [Static props](static-props.md#native-lighting-origin) for the native point's
    effect on lighting.
-6. Click **Instance reference…**. Set **VMF reference** to `parts/arch.vmf`,
+6. To add a child visibility volume, create one convex brush, select it and
+   click **Tie to entity…**. Choose `func_viscluster`, then click **Tie selected
+   brushes to entity** and save the child. See [Visibility clusters](visclusters.md)
+   for membership and region rules.
+7. Click **Instance reference…**. Set **VMF reference** to `parts/arch.vmf`,
    choose **Position** and **Rotation**, then click **Create**. **Cancel** leaves
    the map unchanged. For a child with lighting-origin helpers, set every
    containing reference's **Advanced properties → Fix Up Name** to an explicit
@@ -50,7 +54,7 @@ from supported brushes already in the parent.
    helper name is `assembly-sample`; nested prefixes join outermost first. See
    [Instance authoring](instance-authoring.md) for browsing, editing and file-check
    controls.
-7. To inspect child shapes, enable **Instance contents**, open **Instance contents…**
+8. To inspect child shapes, enable **Instance contents**, open **Instance contents…**
    and click **Refresh instance contents**. Terrain uses its displaced surface
    for the flat-color view, content bounds and picking. Clicking it selects the
    root helper; the child remains read-only. **Expanded static lights:** reports
@@ -61,12 +65,14 @@ from supported brushes already in the parent.
    reports helper counts; these points have no reference geometry or icons.
    **Expanded player spawns:** counts child spawns and explains that their
    models, icons, bounds, picking and framing are unavailable in this layer.
-8. Move or rotate the helper with the ordinary transform controls. Its origin
+   **Visibility helpers:** counts consumed child volumes; they add no reference
+   surfaces, icons, bounds, picking or framing.
+9. Move or rotate the helper with the ordinary transform controls. Its origin
    places the child's origin. The `angles` property uses Source pitch, yaw, roll;
    brushes, terrain, static props, player-spawn poses, light positions/spot
    directions and attached texture coordinates rotate together. Keep replacement fields empty; named runtime
    entities are unsupported.
-9. Click **Compile**. Unsaved parent edits are included. Open **Build details…**
+10. Click **Compile**. Unsaved parent edits are included. Open **Build details…**
    in the bar below the toolbar to inspect **Instances**, **Files**, **Nesting
    depth**, world/detail brush counts and each relative dependency's byte count
    and **SHA256**. **Expanded static lights:** counts all expanded point/spot
@@ -76,7 +82,9 @@ from supported brushes already in the parent.
    **Expanded lighting origins:** counts visible expanded helpers before region
    filtering, including unreferenced helpers. **Expanded player spawns:** counts
    both supported spawn classes before transformed-origin region filtering.
-10. Recompile after changing any child or descendant. Changed, missing or
+   **Visibility helpers:** also counts expansion before filtering; the visibility
+   summary counts helpers retained by the selected build region.
+11. Recompile after changing any child or descendant. Changed, missing or
     retargeted dependencies make the completed build stale and disable **Play
     built map**. Launch also verifies exact dependency contents before starting
     the game. Consumed model sources also retain the original
@@ -103,6 +111,16 @@ Limits:
   parent first; an output BSP filename cannot establish its source directory.
 - Ancestor cycles reject, including aliases through hard links. Repeated siblings
   and shared descendants are allowed within the global limits.
+- Child `func_viscluster` volumes are consumed by the compiler. They require one
+  visible convex brush, at most 64 sides, no terrain or origin materials and no
+  runtime parent or nonzero entity angles. Transform the containing instance
+  instead. An optional marker origin must be finite and within compile bounds;
+  it does not select or move the volume. Hidden helpers and helpers with only
+  hidden brushes are omitted. Unknown properties, duplicate case aliases, I/O
+  and opaque blocks reject. The 16-helper admission limit covers the assembled
+  root and all retained child occurrences after region selection. Child source
+  and intermediate geometry still validate before regional omission and spend
+  the separate instance expansion work budget.
 - Other runtime entities, parameter helpers, replacements, active child compile
   regions and unknown semantic metadata reject. Ordinary hidden child objects
   remain excluded; hidden helpers never load their files.

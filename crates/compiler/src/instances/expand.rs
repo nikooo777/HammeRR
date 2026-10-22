@@ -258,6 +258,11 @@ impl<'a> Expansion<'a> {
                     .is_some_and(|class| class.eq_ignore_ascii_case("func_instance"))
                 {
                     self.helper(tx, entity, owner, transforms, ancestors)?;
+                } else if visclusters::is_helper(entity) {
+                    self.viscluster(tx, entity, owner.id, &relative, transforms)
+                        .map_err(|error| {
+                            EditError::Invalid(format!("Child viscluster {}: {error}", entity.id))
+                        })?;
                 } else if let Some(kind) = entities::kind(entity) {
                     if matches!(kind, entities::Kind::LightingOrigin) {
                         continue;
@@ -313,6 +318,113 @@ impl<'a> Expansion<'a> {
         transforms.pop();
         self.name_scopes.pop();
         result.map_err(|error| EditError::Invalid(format!("Instance {relative}: {error}")))
+    }
+
+    fn viscluster(
+        &mut self,
+        tx: &mut Transaction<'_>,
+        original: &Entity,
+        owner: u32,
+        relative: &str,
+        transforms: &[edit::Transform],
+    ) -> Result<(), EditError> {
+        self.control.checkpoint().map_err(EditError::Invalid)?;
+        let Some(original_solid) =
+            crate::visclusters::source_solid(original).map_err(EditError::Invalid)?
+        else {
+            return Ok(());
+        };
+        self.objects = self.objects.saturating_add(2);
+        self.sides = self.sides.saturating_add(original_solid.sides.len());
+        let property_bytes = original
+            .properties
+            .iter()
+            .try_fold(0_usize, |bytes, (key, value)| {
+                bytes.checked_add(key.len())?.checked_add(value.len())
+            });
+        let work = original_solid
+            .sides
+            .len()
+            .checked_pow(3)
+            .and_then(|work| work.checked_mul(transforms.len()))
+            .and_then(|work| {
+                let hull_work = crate::visclusters::hull_work(original_solid.sides.len())
+                    .checked_mul(transforms.len() + 1)?;
+                work.checked_add(hull_work)
+            })
+            .and_then(|work| {
+                let field_work = property_bytes?.checked_mul(transforms.len() + 1)?;
+                work.checked_add(field_work)
+            })
+            .and_then(|work| self.work.checked_add(work));
+        let Some(work) = work else {
+            return Err(EditError::Invalid(
+                "Instance expansion geometry-work overflow".into(),
+            ));
+        };
+        if self.objects > MAX_OBJECTS || self.sides > MAX_SIDES || work > MAX_GEOMETRY_WORK {
+            return Err(EditError::Invalid(
+                "Instance expansion exceeds combined objects, sides or geometry-work limits".into(),
+            ));
+        }
+        self.work = work;
+        self.viscluster_pose(original)?;
+        let mut entity = original.clone();
+        entity.id = tx.new_object_id()?;
+        entity.editor = None;
+        self.provenance.insert(
+            format!("entity:{}", entity.id),
+            (owner, relative.to_owned(), original.id, None),
+        );
+        let mut solid = original_solid.clone();
+        solid.id = tx.new_object_id()?;
+        solid.editor = None;
+        self.provenance.insert(
+            format!("solid:{}", solid.id),
+            (owner, relative.to_owned(), original_solid.id, None),
+        );
+        for side in &mut solid.sides {
+            let original_side = side.id;
+            side.id = tx.new_side_id()?;
+            self.provenance.insert(
+                format!("side:{}", side.id),
+                (
+                    owner,
+                    relative.to_owned(),
+                    original_side,
+                    Some(original_solid.id),
+                ),
+            );
+        }
+        entity.solids = vec![solid];
+        let generated = entity.id;
+        let id = tx.add_entity(entity)?;
+        for transform in transforms.iter().rev() {
+            self.control.checkpoint().map_err(EditError::Invalid)?;
+            edit::transform(tx, &[id], *transform)?;
+            self.viscluster_pose(tx.entity_mut(generated)?)?;
+        }
+        self.stats.visclusters += 1;
+        Ok(())
+    }
+
+    fn viscluster_pose(&mut self, entity: &Entity) -> Result<(), EditError> {
+        self.control.checkpoint().map_err(EditError::Invalid)?;
+        visclusters::check_pose(entity).map_err(EditError::Invalid)?;
+        let Some(solid) = crate::visclusters::source_solid(entity).map_err(EditError::Invalid)?
+        else {
+            return Err(EditError::Invalid(
+                "Expanded viscluster has no visible brush".into(),
+            ));
+        };
+        crate::visclusters::source_rules(entity, solid).map_err(EditError::Invalid)?;
+        let geometry =
+            checked_solid_geometry_controlled(solid, self.control).map_err(EditError::Invalid)?;
+        let refund =
+            crate::visclusters::checked_hull(solid, &geometry).map_err(EditError::Invalid)?;
+        self.control.checkpoint().map_err(EditError::Invalid)?;
+        self.work -= refund;
+        Ok(())
     }
 
     fn entity(
@@ -525,4 +637,87 @@ fn check_cycle(
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture() -> (tempfile::TempDir, Vmf, Entity, SourceContext) {
+        let directory = tempfile::tempdir().unwrap();
+        let vmf = crate::test_common::room();
+        let path = directory.path().join("parent.vmf");
+        std::fs::write(&path, vmf.write(&Default::default())).unwrap();
+        let source = SourceContext::capture(&path, &Control::default()).unwrap();
+        let mut helper = Entity::new(1000, "func_viscluster");
+        helper.solids.push(vmf.world.solids[0].clone());
+        (directory, vmf, helper, source)
+    }
+
+    #[test]
+    fn viscluster_work_is_reserved_for_every_pose_before_invalid_geometry_is_evaluated() {
+        let (_directory, vmf, mut helper, source) = fixture();
+        helper.solids[0].sides[0].plane.0 = [DVec3::ZERO; 3];
+        let control = Control::default();
+        let mut report = Report::default();
+        let mut expansion = Expansion::new(&vmf, &source, &control, &mut report);
+        expansion.work =
+            MAX_GEOMETRY_WORK - crate::visclusters::hull_work(helper.solids[0].sides.len());
+        let mut document = Document::new(vmf.clone());
+        let error = document
+            .edit("reserved helper work", |tx| {
+                expansion.viscluster(
+                    tx,
+                    &helper,
+                    2000,
+                    "child.vmf",
+                    &[edit::Transform::default()],
+                )
+            })
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("geometry-work limits"),
+            "{error}"
+        );
+        assert!(expansion.provenance.is_empty());
+        assert_eq!(expansion.stats.visclusters, 0);
+        assert_eq!(document.vmf(), &vmf);
+    }
+
+    #[test]
+    fn viscluster_point_work_refunds_allow_repeated_small_hulls_without_a_local_helper_cap() {
+        let (_directory, vmf, helper, source) = fixture();
+        let control = Control::default();
+        let mut report = Report::default();
+        let mut expansion = Expansion::new(&vmf, &source, &control, &mut report);
+        let sides = helper.solids[0].sides.len();
+        let reserve = crate::visclusters::hull_work(sides) * 2 + sides.pow(3);
+        expansion.work = MAX_GEOMETRY_WORK - reserve - 200_000;
+        let mut document = Document::new(vmf);
+        document
+            .edit("repeated helper work", |tx| {
+                for _ in 0..32 {
+                    expansion.viscluster(
+                        tx,
+                        &helper,
+                        2000,
+                        "child.vmf",
+                        &[edit::Transform::default()],
+                    )?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(expansion.stats.visclusters, 32);
+        assert!(expansion.work <= MAX_GEOMETRY_WORK);
+        assert_eq!(
+            document
+                .vmf()
+                .entities
+                .iter()
+                .filter(|entity| visclusters::is_helper(entity))
+                .count(),
+            32,
+        );
+    }
 }

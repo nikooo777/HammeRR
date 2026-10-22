@@ -23,14 +23,31 @@ MCP uses the same `tie_to_entity` operation with `classname:"func_viscluster"`
 and the same `compile_map` or `start_compile` build paths. No additional setting
 or recipe option enables grouping. Builds consume the frozen unsaved map snapshot.
 
+## Referenced volumes
+
+1. Create and save the volume in a child VMF using the same **Tie to entity…**
+   steps above.
+2. In the parent map, use **Instance reference…** to place the child. Move or
+   rotate the reference to position the volume; keep the child helper's own
+   entity angles absent or zero.
+3. Click **Compile**, then open **Build details…**. **Visibility helpers:**
+   counts expanded child volumes before region selection. The visibility summary
+   counts retained root and child helpers after that selection.
+4. Open **Instance contents…** and click **Refresh instance contents** to inspect
+   child sources and counts. The volumes have no reference surfaces, icons,
+   picking bounds or framing.
+
+## Membership and limits
+
 The volume qualifies an existing open leaf when their actual convex intersection
 is strictly greater than 10% of the leaf's volume. AABB overlap and the leaf
 center do not decide membership. Helper boundaries do not cut the BSP tree.
 Near-threshold numerical uncertainty rejects the build and asks you to move
 the boundary; it does not lower the overlap threshold.
 
-Limits: full-map or compile-region builds, 16 retained helpers and one visible convex brush
-per helper, with at most 64 authored sides. The combined leaf/helper intersection
+Full-map and compile-region builds support 16 retained helpers across the root
+and all child occurrences. Each helper requires one visible convex brush with
+at most 64 authored sides. The combined leaf/helper intersection
 is limited to 128 planes and 2,048 polygon points. Geometry and grouping share
 the bounded visibility work allowance. These are compiler admission limits.
 Displacements, origin materials, runtime parents/angles, liquid/areaportal
@@ -41,6 +58,12 @@ remain unsupported. In a region build, contained helpers stay whole, hidden or
 wholly exterior helpers are omitted, and crossing helpers stop publication. The
 marker origin does not select the volume. Membership uses the sealed regional
 leaves, so its groups can differ from a full-map build.
+
+In referenced assemblies, Hidden, all-hidden-brush and region-exterior
+helpers are omitted. Crossing helpers reject. Source geometry and each
+intermediate transform still validate before regional omission; expansion has
+its own work allowance. Failures identify the root reference, child file and
+original helper. See [Referenced assemblies](instances.md) for child field limits.
 
 The compiler solves its existing physical leaf graph, then unions source and
 destination cluster groups and recomputes audibility. Every baseline visible

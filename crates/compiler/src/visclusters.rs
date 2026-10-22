@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use glam::DVec3;
 use map_core::{BrushGeometry, subobject};
 use source_formats::bsp::contents;
-use source_formats::vmf::Entity;
+use source_formats::vmf::{Entity, Solid};
 
 use crate::map::{Map, origins};
 use crate::{Control, Diagnostic, Report};
@@ -43,19 +43,81 @@ fn clipping_work(sides: usize) -> usize {
     sides * sides * (sides + 8)
 }
 
+pub(crate) fn source_solid(entity: &Entity) -> Result<Option<&Solid>, String> {
+    let mut visible = entity.solids.iter().filter(|solid| !solid.hidden);
+    let Some(solid) = visible.next() else {
+        return if entity.solids.is_empty() {
+            Err(
+                "Visclusters require one visible convex brush per helper and at most 16 helpers"
+                    .into(),
+            )
+        } else {
+            Ok(None)
+        };
+    };
+    if visible.next().is_some() {
+        return Err(
+            "Visclusters require one visible convex brush per helper and at most 16 helpers".into(),
+        );
+    }
+    if solid.sides.len() > MAX_SIDES {
+        return Err("Viscluster brushes support at most 64 sides".into());
+    }
+    Ok(Some(solid))
+}
+
+pub(crate) fn source_rules(entity: &Entity, solid: &Solid) -> Result<(), String> {
+    if solid.sides.iter().any(|side| side.displacement.is_some()) {
+        return Err(
+            "Visclusters require ordinary convex geometry without terrain or origin materials"
+                .into(),
+        );
+    }
+    for (key, value) in entity.properties.iter() {
+        if key.eq_ignore_ascii_case("parentname") && !value.trim().is_empty() {
+            return Err(
+                "Viscluster volumes are fixed in authored world space; remove the parent".into(),
+            );
+        }
+        if key.eq_ignore_ascii_case("angles")
+            && source_formats::fgd::vector(value, 3)
+                .is_none_or(|values| values.iter().any(|&value| value != 0.0))
+        {
+            return Err(
+                "Viscluster entity angles are unsupported; transform the brush geometry instead"
+                    .into(),
+            );
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn hull_work(sides: usize) -> usize {
+    clipping_work(sides) * 2 + MAX_POINTS * MAX_POINTS
+}
+
+pub(crate) fn checked_hull(solid: &Solid, geometry: &BrushGeometry) -> Result<usize, String> {
+    let point_count = geometry
+        .faces
+        .iter()
+        .map(|face| face.vertices.len())
+        .sum::<usize>();
+    if point_count > MAX_POINTS {
+        return Err("Viscluster input exceeds its 2048-point hull budget".into());
+    }
+    subobject::topology(solid)
+        .map_err(|error| format!("Viscluster needs closed convex geometry: {error}"))?;
+    measure(geometry)?;
+    Ok(MAX_POINTS * MAX_POINTS - point_count * point_count)
+}
+
 pub(crate) fn load(
     map: &mut Map<'_>,
     entity: &Entity,
     report: &mut Report,
     control: &Control,
 ) -> Result<(), String> {
-    let solids = entity
-        .solids
-        .iter()
-        .filter(|solid| !solid.hidden)
-        .take(2)
-        .collect::<Vec<_>>();
-    if solids.is_empty() && !entity.solids.is_empty() {
+    if !entity.solids.is_empty() && entity.solids.iter().all(|solid| solid.hidden) {
         return Ok(());
     }
     let result: Result<Option<Definition>, String> = (|| {
@@ -67,60 +129,29 @@ pub(crate) fn load(
             );
         }
         map.viscluster_attempts += 1;
-        if solids.len() != 1 {
-            return Err(
-                "Visclusters require one visible convex brush per helper and at most 16 helpers"
-                    .into(),
-            );
-        }
-        let solid = solids[0];
-        if solid.sides.len() > MAX_SIDES {
-            return Err("Viscluster brushes support at most 64 sides".into());
-        }
-        let reserved = clipping_work(solid.sides.len()) * 2 + MAX_POINTS * MAX_POINTS;
+        let Some(solid) = source_solid(entity)? else {
+            return Ok(None);
+        };
+        let reserved = hull_work(solid.sides.len());
         map.viscluster_work = map
             .viscluster_work
             .checked_add(reserved)
             .filter(|&work| work <= crate::visibility::MAX_VISIBILITY_WORK)
             .ok_or("Viscluster input exhausted the shared visibility work budget")?;
-        if solid.sides.iter().any(|side| side.displacement.is_some())
-            || origins::origin_material(&mut map.materials, solid, control)?
-        {
+        source_rules(entity, solid)?;
+        if origins::origin_material(&mut map.materials, solid, control)? {
             return Err(
                 "Visclusters require ordinary convex geometry without terrain or origin materials"
                     .into(),
             );
         }
-        for (key, value) in entity.properties.iter() {
-            if key.eq_ignore_ascii_case("parentname") && !value.trim().is_empty() {
-                return Err(
-                    "Viscluster volumes are fixed in authored world space; remove the parent"
-                        .into(),
-                );
-            }
-            if key.eq_ignore_ascii_case("angles")
-                && source_formats::fgd::vector(value, 3)
-                    .is_none_or(|values| values.iter().any(|&value| value != 0.0))
-            {
-                return Err("Viscluster entity angles are unsupported; transform the brush geometry instead".into());
-            }
-        }
         control.checkpoint()?;
         let Some(geometry) = origins::checked_geometry(solid, report) else {
             return Ok(None);
         };
-        let point_count = geometry
-            .faces
-            .iter()
-            .map(|face| face.vertices.len())
-            .sum::<usize>();
-        if point_count > MAX_POINTS {
-            return Err("Viscluster input exceeds its 2048-point hull budget".into());
-        }
-        subobject::topology(solid)
-            .map_err(|error| format!("Viscluster needs closed convex geometry: {error}"))?;
-        measure(&geometry)?;
-        map.viscluster_work -= MAX_POINTS * MAX_POINTS - point_count * point_count;
+        let refund = checked_hull(solid, &geometry)?;
+        control.checkpoint()?;
+        map.viscluster_work -= refund;
         Ok(Some(Definition {
             entity: entity.id,
             solid: solid.id,
@@ -370,6 +401,14 @@ pub(crate) struct Context<'a> {
     pub control: &'a Control,
 }
 
+fn helper_error(report: &mut Report, helper: &Definition, message: &str) {
+    report.diagnostics.push(Diagnostic::error(
+        message,
+        Some(format!("entity:{}", helper.entity)),
+        Some(helper.geometry.center()),
+    ));
+}
+
 pub(crate) fn partition(
     context: Context<'_>,
     clusters: &[Option<usize>],
@@ -432,37 +471,46 @@ pub(crate) fn partition(
                 claims(&helper.geometry, &leaf, consume)
             })()
             .map_err(|message| {
-                format!(
+                let message = format!(
                     "func_viscluster entity:{} solid:{}: {message}",
                     helper.entity, helper.solid
-                )
+                );
+                helper_error(report, helper, &message);
+                message
             })?;
             if !result {
                 continue;
             }
             if let Some(previous) = claims_by_leaf[cluster] {
                 let previous: &Definition = &map.visclusters[previous];
-                return Err(format!(
+                let message = format!(
                     "Viscluster entity:{} and entity:{} both qualify for leaf cluster {cluster}; separate their overlap claims",
                     previous.entity, helper.entity
-                ));
+                );
+                helper_error(report, previous, &message);
+                helper_error(report, helper, &message);
+                return Err(message);
             }
             if tree.nodes[node].contents
                 & (contents::WATER | contents::SLIME | contents::AREAPORTAL)
                 != 0
                 || water.leaves[node] >= 0
             {
-                return Err(format!(
+                let message = format!(
                     "Viscluster entity:{} selects liquid or areaportal leaves; only dry volumes are supported",
                     helper.entity
-                ));
+                );
+                helper_error(report, helper, &message);
+                return Err(message);
             }
             let area = areas.indices[node];
             if helper_areas[index].is_some_and(|previous| previous != area) {
-                return Err(format!(
+                let message = format!(
                     "Viscluster entity:{} crosses visibility areas; use separate helpers",
                     helper.entity
-                ));
+                );
+                helper_error(report, helper, &message);
+                return Err(message);
             }
             helper_areas[index] = Some(area);
             claims_by_leaf[cluster] = Some(index);

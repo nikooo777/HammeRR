@@ -8,7 +8,7 @@ the chosen sample position, original material and generated material alias.
 Inspection and binding drafts are unavailable when the map contains a visible
 instance reference: authored faces do not describe the
 assembled geometry. This does not prevent [reflection generation](reflections.md)
-with root-map or automatic child helpers.
+with root-map or supported child helpers.
 
 1. Select one visible `env_cubemap` entity and choose **Cubemap faces…**.
 2. Keep the window open and select faces in the map. **Select face** in the
@@ -39,6 +39,18 @@ its owner can still cancel it.
 Hidden references are omitted from compilation and leave root-map inspection
 and binding authoring available without reading their child files.
 
+To author bindings for a referenced assembly:
+
+1. Open the child VMF as a normal map.
+2. Follow the steps above to bind its `env_cubemap` to visible ordinary world or
+   `func_detail` faces directly in that child. Keep each helper's **Brush faces**
+   list within 512 bytes; the generated list must also fit 512 bytes.
+3. Save the child, return to the parent and create or refresh its instance
+   reference. Compile the parent through the ordinary reflection workflow.
+
+A child with visible nested references keeps the same inspection/draft
+restriction; raw `sides` editing remains available for its direct local IDs.
+
 The same operations are available through `get_cubemap_bindings` and
 `set_cubemap_bindings`. Inspection and previews do not capture reflections or
 require reflection generation to be enabled. Build and capture settings are
@@ -57,8 +69,13 @@ described in [Generated reflections](reflections.md).
   duplicate owners and non-emitting targets reject with a diagnostic.
   With visible instance references, existing root `sides` lists may name only
   original root-map face IDs; generated child IDs cannot satisfy missing targets.
-  Child `env_cubemap` samples require absent or whitespace-only `sides` and use
-  automatic assignment. See [Referenced assemblies](instances.md).
+  A child `sides` list must contain positive distinct IDs from visible ordinary
+  world or `func_detail` brushes directly in the same child occurrence. No side
+  of a terrain-bearing solid, runtime model, parent, descendant, sibling, repeated
+  occurrence or root map can supply a missing local target. Authored and rewritten
+  lists each have a 512-byte limit. Retained child targets must pass the same
+  region and visible-face checks. An absent or whitespace-only list uses automatic
+  assignment. See [Referenced assemblies](instances.md).
 - Another authored helper's manual ownership also blocks reassignment when
   that helper is hidden or excluded by the compile region. Unhide it or
   restore its region, remove the old binding explicitly, then bind the face

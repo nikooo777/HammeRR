@@ -13,7 +13,7 @@ use crate::{Control, Diagnostic, Report};
 
 const POSE_PROPERTY_SCANS: usize = 3;
 
-fn manual_side_ids(entity: &Entity) -> impl Iterator<Item = Result<u32, String>> + '_ {
+pub(crate) fn manual_side_ids(entity: &Entity) -> impl Iterator<Item = Result<u32, String>> + '_ {
     entity
         .properties
         .get("sides")
@@ -392,18 +392,34 @@ pub(crate) fn prepare(
         let mut own = BTreeSet::new();
         for id in manual_side_ids(entity) {
             control.checkpoint()?;
-            let id = id?;
+            let id = match id {
+                Ok(id) => id,
+                Err(message) => {
+                    helper_error(report, entity, &message);
+                    return Err(message);
+                }
+            };
+            let previous = manual.get(&id).copied();
             if id == 0 || !own.insert(id) || manual.insert(id, sample).is_some() {
-                return Err(format!(
+                let message = format!(
                     "entity:{}: side:{id} has duplicate cubemap ownership",
                     entity.id
-                ));
+                );
+                if let Some(previous) = previous
+                    && previous != sample
+                {
+                    helper_error(report, helpers[previous], &message);
+                }
+                helper_error(report, entity, &message);
+                return Err(message);
             }
             if !sides.contains_key(&id) {
-                return Err(format!(
+                let message = format!(
                     "entity:{}: side:{id} is missing, hidden, outside the compile region or does not produce a visible compiled side",
                     entity.id
-                ));
+                );
+                helper_error(report, entity, &message);
+                return Err(message);
             }
         }
     }

@@ -204,6 +204,13 @@ impl<'a> Expansion<'a> {
         self.stats.max_expansion_depth = self.stats.max_expansion_depth.max(depth);
         let result: Result<(), EditError> = (|| {
             let mut local_helpers = BTreeMap::new();
+            let mut local_sides = child
+                .vmf
+                .entities
+                .iter()
+                .any(|entity| !entity.hidden && cubemaps::has_manual_bindings(entity))
+                .then(BTreeMap::new);
+            let mut manual_cubemaps = Vec::new();
             for entity in child
                 .vmf
                 .entities
@@ -249,7 +256,15 @@ impl<'a> Expansion<'a> {
                 local_helpers.insert(entity.id, generated);
             }
             for solid in child.vmf.world.solids.iter().filter(|solid| !solid.hidden) {
-                self.solid(tx, solid, false, owner.id, &relative, transforms)?;
+                self.solid(
+                    tx,
+                    solid,
+                    false,
+                    owner.id,
+                    &relative,
+                    transforms,
+                    local_sides.as_mut(),
+                )?;
             }
             for entity in child.vmf.entities.iter().filter(|entity| !entity.hidden) {
                 self.control.checkpoint().map_err(EditError::Invalid)?;
@@ -264,10 +279,14 @@ impl<'a> Expansion<'a> {
                             EditError::Invalid(format!("Child viscluster {}: {error}", entity.id))
                         })?;
                 } else if cubemaps::is_helper(entity) {
-                    self.cubemap(tx, entity, owner.id, &relative, transforms)
+                    let generated = self
+                        .cubemap(tx, entity, owner.id, &relative, transforms)
                         .map_err(|error| {
                             EditError::Invalid(format!("Child cubemap {}: {error}", entity.id))
                         })?;
+                    if cubemaps::has_manual_bindings(entity) {
+                        manual_cubemaps.push((entity, generated));
+                    }
                 } else if let Some(kind) = entities::kind(entity) {
                     if matches!(kind, entities::Kind::LightingOrigin) {
                         continue;
@@ -313,9 +332,29 @@ impl<'a> Expansion<'a> {
                     })?;
                 } else {
                     for solid in entity.solids.iter().filter(|solid| !solid.hidden) {
-                        self.solid(tx, solid, true, owner.id, &relative, transforms)?;
+                        self.solid(
+                            tx,
+                            solid,
+                            true,
+                            owner.id,
+                            &relative,
+                            transforms,
+                            local_sides.as_mut(),
+                        )?;
                     }
                 }
+            }
+            for (original, generated) in manual_cubemaps {
+                let rewritten = cubemaps::remap_sides(
+                    original,
+                    local_sides.as_ref().unwrap(),
+                    &mut self.work,
+                    self.control,
+                )
+                .map_err(|error| {
+                    EditError::Invalid(format!("Child cubemap {}: {error}", original.id))
+                })?;
+                tx.entity_mut(generated)?.properties.set("sides", rewritten);
             }
             Ok(())
         })();
@@ -332,7 +371,7 @@ impl<'a> Expansion<'a> {
         owner: u32,
         relative: &str,
         transforms: &[edit::Transform],
-    ) -> Result<(), EditError> {
+    ) -> Result<u32, EditError> {
         self.control.checkpoint().map_err(EditError::Invalid)?;
         self.objects = self.objects.saturating_add(1);
         let bytes = original
@@ -370,9 +409,10 @@ impl<'a> Expansion<'a> {
             format!("entity:{}", entity.id),
             (owner, relative.to_owned(), original.id, None),
         );
+        let generated = entity.id;
         tx.add_entity(entity)?;
         self.stats.cubemaps += 1;
-        Ok(())
+        Ok(generated)
     }
 
     fn viscluster(
@@ -575,6 +615,7 @@ impl<'a> Expansion<'a> {
         Ok(generated)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn solid(
         &mut self,
         tx: &mut Transaction<'_>,
@@ -583,6 +624,7 @@ impl<'a> Expansion<'a> {
         owner: u32,
         relative: &str,
         transforms: &[edit::Transform],
+        local_sides: Option<&mut BTreeMap<u32, u32>>,
     ) -> Result<(), EditError> {
         self.control.checkpoint().map_err(EditError::Invalid)?;
         self.objects = self.objects.saturating_add(1 + usize::from(detail));
@@ -608,6 +650,16 @@ impl<'a> Expansion<'a> {
             .expanded(original, transforms.len(), self.control)
             .map_err(EditError::Invalid)?;
         checked_solid_controlled(original, self.control).map_err(EditError::Invalid)?;
+        if local_sides.is_some() {
+            cubemaps::charge_bindings(&mut self.work, original.sides.len() * 2, self.control)
+                .map_err(EditError::Invalid)?;
+        }
+        let mut local_sides = local_sides.filter(|_| {
+            original
+                .sides
+                .iter()
+                .all(|side| side.displacement.is_none())
+        });
         let mut solid = original.clone();
         solid.id = tx.new_object_id()?;
         solid.editor = None;
@@ -622,6 +674,9 @@ impl<'a> Expansion<'a> {
                 format!("side:{}", side.id),
                 (owner, relative.to_owned(), original_side, Some(original.id)),
             );
+            if let Some(local_sides) = &mut local_sides {
+                local_sides.insert(original_side, side.id);
+            }
         }
         let id = if detail {
             let id = tx.new_object_id()?;

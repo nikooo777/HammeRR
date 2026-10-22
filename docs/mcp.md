@@ -297,7 +297,7 @@ same-installation running-client rejection.
 
 A saved parent can compile nested world/detail brush instances, including power
 2–4 terrain, strictly admitted unnamed static point/spot lights,
-static props, player spawns, consumed visibility volumes and automatic cubemap
+static props, player spawns, consumed visibility volumes and supported cubemap
 samples, through four helper levels, counting a root helper as level one; see
 [Referenced brush assemblies](instances.md). `create_entity` uses
 `classname: "func_instance"`, an origin and string properties `file` (relative
@@ -425,16 +425,32 @@ retain ordinary exact lookup and may explicitly name a generated helper such as
 case-fold collisions, including visible root helpers, reject. This native point
 does not move vertex-bake samples away from their actual model vertices.
 
-Child `env_cubemap` supports automatic samples with canonical lowercase unique
-`classname` and an explicit finite `origin`. Source and every inner-to-outer
-transformed point must fit ±16384 units. Use ordinary `create_entity` with
+Child `env_cubemap` supports automatic samples and direct local manual bindings
+with canonical lowercase unique properties and an explicit finite `origin`.
+Source and every inner-to-outer transformed point must fit ±16384 units. Use ordinary `create_entity` with
 `classname:"env_cubemap"`, `origin` and optional `properties.cubemapsize`, then
 `save_map` before compiling the parent. The installed FGD default is
 `cubemapsize:"0"`, with no `sides` or orientation default. Missing or trim-empty
-size also uses 0; ordinary integer size enums 0–9 are supported. `sides` must be
-absent or trim-empty, so a child cannot manually bind its local face IDs.
+size also uses 0; ordinary integer size enums 0–9 are supported. An absent or
+trim-empty `sides` list uses automatic assignment. A manual list requires positive
+distinct IDs from visible ordinary world or `func_detail` brushes directly in
+the same child occurrence. Every side of a terrain-bearing solid is excluded;
+runtime-model, parent, descendant, sibling, repeated-occurrence and root IDs
+cannot supply a missing local target. Both authored and rewritten lists are
+limited to 512 bytes. Missing or hidden source targets reject during expansion.
+With `generate_reflections:true`, retained targets must survive compile-region
+and visible-face planning; duplicate ownership and non-emitting targets reject.
+Ordinary sample-only builds leave `sides` unused and report a warning.
+
+Open the child normally. Without visible nested references, use
+`get_cubemap_bindings` and `set_cubemap_bindings` to inspect, preview and apply its local bindings, then
+`save_map` before opening the parent and creating or refreshing the reference.
+The human path is **Cubemap faces… → Bind selected faces → Apply**, then save.
+Raw `set_entity_properties` also edits the standard `sides` property.
+It remains available when visible nested references make binding inspection and
+drafts unavailable.
 Optional `angles` must be a finite zero vector; optional legacy `angle` must be
-zero. Expansion changes only the origin through the shared checked position
+zero. Expansion maps the origin through the shared checked position
 mapping and preserves authored orientation fields or their absence.
 `spawnflags`, `mindxlevel` and `maxdxlevel` must be absent or integer 0.
 `targetname`, `target`, `parentname`, `name`, `globalname`, `killtarget` and
@@ -506,12 +522,12 @@ Launch verifies exact contents in its worker. Source/settings changes, dependenc
 cancellation preserve previous BSP/pointfile bytes. Every transitive dependency
 participates in these checks, including before capture and after each channel's
 receipt. **Generate reflections** supports assembled geometry using visible
-root-map and automatic child `env_cubemap` helpers and the existing shared build
-operations. Automatic assignment includes transformed supported child faces. Existing manual `sides`
-lists must target unique original root-map faces that survive compilation;
-generated child IDs cannot satisfy missing original targets. Child manual
-bindings, extra capture bounces, other runtime entities, replacements and general
-runtime naming remain unsupported.
+root-map and supported child `env_cubemap` helpers and the existing shared build
+operations. Automatic assignment includes transformed supported child faces.
+Existing root manual `sides` lists must target unique original root-map faces that survive compilation;
+generated child IDs cannot satisfy missing original targets. Child manual lists
+use only their direct local targets. Extra capture bounces, other runtime
+entities, replacements and general runtime naming remain unsupported.
 
 For a visible instance reference, `get_cubemap_bindings`
 returns `available:false`, empty assignments and an explicit diagnostic;
@@ -2238,13 +2254,18 @@ Existing `compile_map`, `start_compile` and `run_map` perform the shared compile
 
 Generation supports one capture bounce per channel, 1–32 distinct integer sample positions and cube edges up to 128 pixels; size `0` uses 128 pixels. Direct LDR uses `mat_hdr_level 0`; dual lighting captures LDR first and HDR with `mat_hdr_level 2`, retaining both lighting channels. HDR capture requires nonempty native HDR lighting/world-light/ambient arrays and rejects known HDR fallback warnings. Both matching sample sets and preservation/source guards must pass before one publication. Additional bounces and editor reflection previews are unavailable. The native helper, private compositor dependencies, supported assets and running Steam client must pass preflight. See [Generated reflections](reflections.md) for controls and capture limits, and [Cubemap faces](cubemap-faces.md) for binding authoring.
 
-Automatic `env_cubemap` samples may live in supported [referenced children](instances.md).
+`env_cubemap` samples may live in supported [referenced children](instances.md),
+with automatic assignment or direct local manual bindings authored in the child.
 The 1–32 capture limit covers retained root and child samples together after
 region selection. Ordinary sample compilation supports size enums 0–9 and up
 to 1024 retained samples independently; a size-9 record does not permit a
 256-pixel capture. Existing root manual `sides` lists remain restricted to
-original root faces; child lists must be absent or trim-empty. Source-linked
-capture preparation errors retain the root reference and original child identity.
+original root faces. Child lists require positive distinct IDs from visible
+ordinary world/detail brushes in the same child occurrence, with 512-byte source
+and rewritten limits; terrain-bearing solids, runtime models and cross-scope IDs
+reject. Retained targets must survive ordinary region and visible-face checks.
+Source-linked capture preparation errors retain the root reference and original
+child identity.
 
 Generated packing keeps the existing version-1 `channel:"ldr"` manifest for
 LDR-only builds. Dual builds use version 2 with `channel:"ldr_hdr"`, LDR `samples`

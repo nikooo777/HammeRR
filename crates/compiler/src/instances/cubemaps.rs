@@ -1,3 +1,5 @@
+use std::fmt::Write;
+
 use super::*;
 
 pub(super) fn is_helper(entity: &Entity) -> bool {
@@ -28,8 +30,7 @@ pub(super) fn admit(entity: &Entity) -> Result<(), String> {
             return Err(format!("Child cubemap requires canonical property {lower}"));
         }
         match key {
-            "classname" | "origin" | "cubemapsize" => {}
-            "sides" if value.trim().is_empty() => {}
+            "classname" | "origin" | "cubemapsize" | "sides" => {}
             "angles" if vector(entity, key)? == DVec3::ZERO => {}
             "angle" if value.trim().parse::<f64>().ok() == Some(0.0) => {}
             "spawnflags" | "mindxlevel" | "maxdxlevel"
@@ -44,7 +45,86 @@ pub(super) fn admit(entity: &Entity) -> Result<(), String> {
         return Err("Child cubemap requires canonical property classname".into());
     }
     crate::map::Map::cubemap_size(entity)?;
+    side_ids(entity)?;
     point(entity).map(|_| ())
+}
+
+pub(super) fn has_manual_bindings(entity: &Entity) -> bool {
+    is_helper(entity)
+        && entity
+            .properties
+            .get("sides")
+            .is_some_and(|value| !value.trim().is_empty())
+}
+
+fn side_ids(entity: &Entity) -> Result<Vec<u32>, String> {
+    field(entity.properties.get("sides").unwrap_or(""))?;
+    let mut seen = BTreeSet::new();
+    let mut sides = Vec::new();
+    for id in crate::cubemap_assets::binding::manual_side_ids(entity) {
+        let id = id?;
+        if id == 0 || !seen.insert(id) {
+            return Err("Child cubemap sides require positive distinct side IDs".into());
+        }
+        sides.push(id);
+    }
+    Ok(sides)
+}
+
+pub(super) fn charge_bindings(
+    work: &mut usize,
+    amount: usize,
+    control: &Control,
+) -> Result<(), String> {
+    control.checkpoint()?;
+    *work = work
+        .checked_add(amount)
+        .filter(|value| *value <= MAX_GEOMETRY_WORK)
+        .ok_or("Instance cubemap bindings exceed the shared geometry-work limit")?;
+    Ok(())
+}
+
+pub(super) fn remap_sides(
+    original: &Entity,
+    local_sides: &BTreeMap<u32, u32>,
+    work: &mut usize,
+    control: &Control,
+) -> Result<String, String> {
+    charge_bindings(
+        work,
+        original.properties.get("sides").map_or(0, str::len),
+        control,
+    )?;
+    let mut sides = side_ids(original)?;
+    let mut bytes = 0usize;
+    for (index, id) in sides.iter_mut().enumerate() {
+        charge_bindings(work, 1, control)?;
+        *id = local_sides
+            .get(id)
+            .copied()
+            .filter(|id| *id != 0)
+            .ok_or_else(|| {
+                format!(
+                    "cubemap sides target side:{id} must name a visible ordinary world or func_detail side in the same child"
+                )
+            })?;
+        bytes = bytes
+            .checked_add(id.ilog10() as usize + 1 + usize::from(index != 0))
+            .filter(|bytes| *bytes <= MAX_FIELD_BYTES)
+            .ok_or_else(|| {
+                format!("Child cubemap rewritten sides exceed {MAX_FIELD_BYTES} bytes")
+            })?;
+    }
+    charge_bindings(work, bytes, control)?;
+    let mut rewritten = String::with_capacity(bytes);
+    for (index, id) in sides.into_iter().enumerate() {
+        control.checkpoint()?;
+        if index != 0 {
+            rewritten.push(' ');
+        }
+        write!(rewritten, "{id}").unwrap();
+    }
+    Ok(rewritten)
 }
 
 pub(super) fn point(entity: &Entity) -> Result<DVec3, String> {
@@ -104,7 +184,100 @@ mod tests {
     }
 
     #[test]
-    fn manual_runtime_ambiguous_and_nonfinite_child_properties_reject() {
+    fn manual_ids_use_the_shared_positive_distinct_grammar_without_changing_sources() {
+        for (text, expected) in [
+            ("1 2", vec![1, 2]),
+            (" \t1\n2 ", vec![1, 2]),
+            ("+1 02", vec![1, 2]),
+            ("4294967295", vec![u32::MAX]),
+        ] {
+            let mut helper = sample();
+            helper.properties.set("sides", text);
+            let before = helper.clone();
+            admit(&helper).unwrap();
+            assert_eq!(side_ids(&helper).unwrap(), expected);
+            assert_eq!(helper, before);
+        }
+        for text in [
+            "0",
+            "1 1",
+            "01 +1",
+            "-1",
+            "1.0",
+            "4294967296",
+            "1,2",
+            "side",
+        ] {
+            let mut helper = sample();
+            helper.properties.set("sides", text);
+            assert!(admit(&helper).is_err(), "accepted {text}");
+        }
+    }
+
+    #[test]
+    fn rewritten_manual_lists_check_the_exact_byte_limit_before_formatting() {
+        let mut helper = sample();
+        helper.properties.set(
+            "sides",
+            (1..=57)
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
+        let before = helper.clone();
+        let mut local_sides = (1..=57)
+            .map(|id| (id, 10_000_000 + id))
+            .collect::<BTreeMap<_, _>>();
+        let rewritten = remap_sides(&helper, &local_sides, &mut 0, &Control::default()).unwrap();
+        let expected = (10_000_001..=10_000_057)
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(expected.len(), 512);
+        assert_eq!(rewritten, expected);
+        local_sides.insert(1, 100_000_000);
+        assert!(
+            remap_sides(&helper, &local_sides, &mut 0, &Control::default())
+                .unwrap_err()
+                .contains("rewritten sides exceed 512 bytes")
+        );
+        assert_eq!(helper, before);
+    }
+
+    #[test]
+    fn manual_remapping_requires_local_keys_and_shared_work_and_cancellation() {
+        let mut helper = sample();
+        helper.properties.set("sides", "1");
+        let missing = remap_sides(
+            &helper,
+            &BTreeMap::from([(2, 1)]),
+            &mut 0,
+            &Control::default(),
+        )
+        .unwrap_err();
+        assert!(missing.contains("side:1") && missing.contains("same child"));
+        let local_sides = BTreeMap::from([(1, 10_000_000)]);
+        assert!(
+            remap_sides(
+                &helper,
+                &local_sides,
+                &mut (MAX_GEOMETRY_WORK - 2),
+                &Control::default(),
+            )
+            .unwrap_err()
+            .contains("shared geometry-work limit")
+        );
+        let control = Control::default();
+        control.cancel().unwrap();
+        assert!(
+            remap_sides(&helper, &local_sides, &mut 0, &control)
+                .unwrap_err()
+                .contains("cancelled")
+        );
+    }
+
+    #[test]
+    fn runtime_ambiguous_and_nonfinite_child_properties_reject() {
         for (key, value) in [
             ("origin", "NaN 0 0"),
             ("origin", "16385 0 0"),
@@ -112,7 +285,7 @@ mod tests {
             ("cubemapsize", "10"),
             ("cubemapsize", "-1"),
             ("cubemapsize", "1.0"),
-            ("sides", "1"),
+            ("sides", "1 1"),
             ("angles", "0 1 0"),
             ("angles", "NaN 0 0"),
             ("angle", "1"),

@@ -4,8 +4,8 @@
 
 Reuse saved VMFs' world and detail brushes, power 2–4 terrain, unnamed static
 point/spot lights, static props, scoped lighting-origin helpers, player spawns,
-visibility volumes, automatic cubemap samples and nested references at several
-positions and rotations.
+visibility volumes, cubemap samples with local face bindings and nested
+references at several positions and rotations.
 Compilation expands the supported contents without an extra switch. The editor
 can resolve a separate, explicitly refreshed
 [reference preview](instance-contents.md) with actual displaced terrain surfaces
@@ -17,7 +17,7 @@ from supported brushes already in the parent.
    `parts/arch.vmf`. Keep the child's visible contents to world brushes,
    ordinary `func_detail` brushes, supported static lights/props, `info_lighting`
    helpers, `info_player_terrorist` / `info_player_counterterrorist` spawns,
-   `func_viscluster` volumes, automatic `env_cubemap` samples and nested
+   `func_viscluster` volumes, supported `env_cubemap` samples and nested
    `func_instance` references.
    World and detail brushes may carry supported power 2, 3 or 4 terrain. The
    child's world settings do not replace the parent's.
@@ -50,9 +50,14 @@ from supported brushes already in the parent.
    for membership and region rules.
 7. To add a child reflection sample, open **Entity…**, choose `env_cubemap`,
    then click **Place entity**. Set **Position** and **Advanced properties →
-   Cubemap Size**. Keep **Brush faces** empty and save the child. The loaded
-   **Default** size uses `cubemapsize:0`; rotate the containing reference to
-   reposition samples.
+   Cubemap Size**. Keep **Brush faces** empty for automatic assignment. For manual
+   bindings, open the child VMF as a normal map and follow [Cubemap faces](cubemap-faces.md):
+   select the helper, choose **Cubemap faces…**, select its local world/detail
+   faces, then **Bind selected faces → Apply**. Save the child before returning
+   to the parent and creating or refreshing its reference. The loaded **Default**
+   size uses `cubemapsize:0`; rotate the containing reference to reposition samples.
+   A child with visible nested references keeps the binding-window restriction;
+   use its raw **Brush faces** property for direct local IDs instead.
 8. Click **Instance reference…**. Set **VMF reference** to `parts/arch.vmf`,
    choose **Position** and **Rotation**, then click **Create**. **Cancel** leaves
    the map unchanged. For a child with lighting-origin helpers, set every
@@ -137,16 +142,27 @@ Limits:
   remain excluded; hidden helpers never load their files.
   Name prefixing supports only the lighting-origin subset below; general
   runtime name rewriting remains unsupported.
-- Child `env_cubemap` samples support automatic assignment only: `sides` must be
-  absent or whitespace-only. Use canonical lowercase unique keys and an explicit
-  finite `origin`. Source and every intermediate transformed point must fit
+- Child `env_cubemap` samples support automatic and direct local manual
+  assignment. For automatic assignment, keep `sides` absent or whitespace-only.
+  Use canonical lowercase unique keys and an explicit finite `origin`. Source
+  and every intermediate transformed point must fit
   ±16384 units, even when a later transform would return inside the bounds.
   Optional `angles` and legacy `angle` must be zero; expansion preserves their
-  authored presence or absence and changes only position. Names, targets,
-  parents and other reference fields must be absent or whitespace-only.
+  authored presence or absence without rotating those orientation fields.
+  Names, targets, parents and other reference fields must be absent or whitespace-only.
   `spawnflags`, `mindxlevel` and `maxdxlevel` must be absent or integer 0.
   Brushes, I/O, unknown properties, duplicate case aliases and opaque blocks
   reject. Hidden samples are omitted before expansion.
+- Manual child `sides` lists require positive distinct side IDs from visible
+  ordinary world or `func_detail` brushes directly in the same child occurrence.
+  Every side of a terrain-bearing solid is excluded, as are runtime-model sides.
+  Parent, descendant, sibling, repeated-occurrence, root and generated IDs cannot
+  supply a missing local target. Both the authored list and the rewritten list
+  of generated IDs are limited to 512 bytes. Missing or hidden source targets
+  reject during expansion. With **Generate reflections**, retained targets must
+  survive compile-region and visible-face planning; duplicate ownership and
+  non-emitting targets reject. Ordinary sample-only builds leave `sides` unused
+  and report a warning.
 - Cubemap sizes use ordinary enums 0–9; an absent or blank `cubemapsize` uses 0.
   Ordinary compilation admits up to 1024 retained root and child samples.
   **Generate reflections** independently admits 1–32 samples at distinct native
@@ -257,11 +273,12 @@ Limits:
   including collisions with visible root helpers, reject. Source and every
   intermediate helper point must remain within compile bounds.
 - **Generate reflections** captures the assembled scene with visible root-map
-  and automatic child `env_cubemap` helpers through the existing
+  and child `env_cubemap` helpers through the existing
   [reflection workflow](reflections.md).
   Automatic assignment includes supported transformed child faces. Existing
-  manual `sides` lists may target only unique original root-map faces that
+  root manual `sides` lists may target only unique original root-map faces that
   survive compilation; a generated child ID cannot repair a missing target.
+  Child manual lists use only the direct local targets described above.
   Capture-size, quantized-position collision and excess-sample diagnostics
   identify the containing root reference, leaf file and original child helper;
   a collision identifies both implicated helpers. **Cubemap faces…** inspection

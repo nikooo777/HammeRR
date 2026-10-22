@@ -6,7 +6,7 @@ Generate reflections for the map's `env_cubemap` samples as part of **Compile** 
 
 ## Choose reflection generation
 
-1. Open **Entity…**, choose `env_cubemap`, then click **Place entity**. Set **Position** and **Advanced properties → Cubemap Size**, then save the map. Samples may also live in [referenced child VMFs](instances.md); keep their **Brush faces** empty. For maps without visible instance references, use [Cubemap faces](cubemap-faces.md) to inspect or author face bindings.
+1. Open **Entity…**, choose `env_cubemap`, then click **Place entity**. Set **Position** and **Advanced properties → Cubemap Size**, then save the map. Samples may also live in [referenced child VMFs](instances.md). Keep **Brush faces** empty for automatic assignment, or open the child normally, follow [Cubemap faces](cubemap-faces.md) to bind its direct world/detail faces, then save it before returning to the parent. Binding inspection and drafts remain unavailable in a parent with visible instance references.
 2. Click **Build settings…**, or **Build details…** after a build.
 3. Set **Build lighting** to **Direct LDR** for LDR reflections or **Direct LDR + HDR** for both channels.
 4. Enable **Generate reflections**. Read the capture runtime status below it. Enabling the setting does not launch CS:S.
@@ -19,13 +19,18 @@ Generate reflections for the map's `env_cubemap` samples as part of **Compile** 
 
 Saved [referenced assemblies](instances.md) use these same settings and build
 controls. Automatic assignment includes supported transformed child geometry
-and samples. Child `env_cubemap` helpers require an explicit finite origin and
-absent or whitespace-only `sides`; instance transforms change their positions
-without synthesizing orientation fields. Source and every intermediate position
+and samples. Child `env_cubemap` helpers require an explicit finite origin;
+instance transforms change their positions without synthesizing orientation
+fields. Source and every intermediate position
 must remain within ±16384 units. Existing root manual `sides` lists may
 refer only to unique original parent faces that survive the committed compile
 region. Missing or ambiguous root IDs reject before generated child IDs can
-satisfy them. Child manual bindings remain unsupported.
+satisfy them. Child manual `sides` lists require positive distinct IDs from
+visible ordinary world or `func_detail` brushes directly in that same child
+occurrence. Terrain-bearing solids, runtime models and cross-scope targets are
+unsupported. Authored and rewritten lists each have a 512-byte limit. Retained
+targets must pass the ordinary region and visible-face planner checks. Empty or
+absent child lists keep automatic assignment.
 
 **Instance contents…** and the instance section of **Build details…** report
 **Cubemap samples:** before regional filtering. Child samples have no reference

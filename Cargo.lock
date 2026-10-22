@@ -1242,6 +1242,7 @@ dependencies = [
 name = "editor-app-ui"
 version = "0.1.0"
 dependencies = [
+ "i-slint-core",
  "slint",
  "slint-build",
 ]
@@ -1250,6 +1251,7 @@ dependencies = [
 name = "editor-build-ui"
 version = "0.1.0"
 dependencies = [
+ "i-slint-core",
  "slint",
  "slint-build",
 ]

@@ -13,7 +13,11 @@ thiserror = "2.0.21"
 source-formats = { path = "crates/source-formats" }
 map-core = { path = "crates/map-core" }
 render = { path = "crates/render" }
-slint = { version = "1.18", default-features = false, features = ["std", "backend-winit", "renderer-femtovg-wgpu", "unstable-wgpu-30", "accessibility", "compat-1-2"] }
+slint = { version = "=1.18.1", default-features = false, features = ["std", "backend-winit", "renderer-femtovg-wgpu", "unstable-wgpu-30", "accessibility", "compat-1-2"] }
+
+slint-build = "=1.18.1"
+# Share the font-cache feature with software tests without adding a renderer.
+i-slint-core = { version = "=1.18.1", default-features = false, features = ["shared-swash"] }
 
 [profile.dev]
 opt-level = 2

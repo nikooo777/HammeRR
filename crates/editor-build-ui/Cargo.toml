@@ -11,6 +11,7 @@ doctest = false
 
 [dependencies]
 slint.workspace = true
+i-slint-core.workspace = true
 
 [build-dependencies]
-slint-build = "1.18"
+slint-build.workspace = true

@@ -107,6 +107,10 @@ arrays. The published BSP retains both baked channels. No result is published
 until all required samples, source guards and preservation checks pass; a failed
 HDR pass keeps the previous output even when its LDR pass completed.
 
+Capture verifies unchanged geometry, entities, lighting and game records before
+reading the reflection archive. Invalid, overlapping or out-of-file lump ranges
+reject the build and preserve the previous BSP.
+
 LDR textures keep their ordinary `.vtf` names; matching HDR textures use
 `.hdr.vtf`. Material aliases retain their unsuffixed reflection names so the game
 can select the channel. HDR packing retains the six image faces' finite,

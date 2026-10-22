@@ -179,8 +179,8 @@ pub enum SourceRetention {
     All,
 }
 
-pub fn build(map: &Map, tree: &Tree, entity: usize) -> Vec<Face> {
-    build_controlled(map, tree, entity, &Control::default()).expect("uncancelled faces")
+pub fn build(map: &Map, tree: &Tree, entity: usize) -> Result<Vec<Face>, String> {
+    build_controlled(map, tree, entity, &Control::default())
 }
 
 pub fn build_controlled(

@@ -357,7 +357,7 @@ fn camera_on_extended_open_partition_is_valid() {
         .filter(|&index| prepared.map.brushes[index].structural())
         .collect::<Vec<_>>();
     let tree = Tree::build(&prepared.map.brushes, &indices, &mut prepared.map.planes).unwrap();
-    let links = portals::build(&tree, &prepared.map.planes);
+    let links = portals::build(&tree, &prepared.map.planes).unwrap();
     let portal = links
         .iter()
         .filter(|portal| {

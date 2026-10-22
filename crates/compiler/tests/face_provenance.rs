@@ -12,11 +12,38 @@ fn world_faces(vmf: &Vmf) -> Vec<faces::Face> {
     let mut report = Report::default();
     let mut map = Map::load(vmf, &game, &mut report).unwrap();
     let mut tree = Tree::build(&map.brushes, &map.entities[0].brushes, &mut map.planes).unwrap();
-    let links = portals::build(&tree, &map.planes);
+    let links = portals::build(&tree, &map.planes).unwrap();
     assert!(portals::flood(&mut tree, &map.planes, &links, &map.entities, &mut report).is_none());
     tree.prune();
     assert!(!report.has_errors(), "{report:?}");
-    faces::build(&map, &tree, 0)
+    faces::build(&map, &tree, 0).unwrap()
+}
+
+#[test]
+fn finite_authored_projection_refusal_returns_errors_from_both_face_builders() {
+    let mut source = common::room();
+    let side = source.world.solids[0]
+        .sides
+        .iter_mut()
+        .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal == DVec3::Z)
+        .unwrap();
+    side.u_axis.axis = DVec3::new(1e12, 0.0, 0.0);
+    let side_id = side.id;
+    let game = common::empty_game();
+    let mut report = Report::default();
+    let mut map = Map::load(&source, &game, &mut report).unwrap();
+    let mut tree = Tree::build(&map.brushes, &map.entities[0].brushes, &mut map.planes).unwrap();
+    let links = portals::build(&tree, &map.planes).unwrap();
+    assert!(portals::flood(&mut tree, &map.planes, &links, &map.entities, &mut report).is_none());
+    tree.prune();
+    assert!(!report.has_errors(), "{report:?}");
+    let expected =
+        format!("side:{side_id}: Lightmap bounds exceed native signed 32-bit coordinates");
+    assert_eq!(faces::build(&map, &tree, 0).unwrap_err(), expected);
+    assert_eq!(
+        faces::build_controlled(&map, &tree, 0, &compiler::Control::default()).unwrap_err(),
+        expected
+    );
 }
 
 #[test]

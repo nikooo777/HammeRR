@@ -1064,7 +1064,7 @@ fn public_face_build_discovers_regions_for_bottom_only_generated_surfaces() {
     let mut tree =
         compiler::tree::Tree::build(&map.brushes, &map.entities[0].brushes, &mut map.planes)
             .unwrap();
-    let portals = compiler::portals::build(&tree, &map.planes);
+    let portals = compiler::portals::build(&tree, &map.planes).unwrap();
     assert!(
         compiler::portals::flood(&mut tree, &map.planes, &portals, &map.entities, &mut report)
             .is_none()

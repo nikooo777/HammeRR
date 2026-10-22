@@ -129,6 +129,14 @@ impl OutputAssetSourceGuard {
     }
 }
 
+/// Validates the output's recorded asset sources against `game` and retains guards
+/// for final metadata checks. Reserve output before source collection when its
+/// destination lies within observed lookup roots; see [`crate::Output::prepare_write_reserved`].
+///
+/// Retain the returned guard and call [`OutputAssetSourceGuard::verify_metadata`]
+/// in [`crate::PreparedWrite::commit_checked_with_receipt`]'s validation callback.
+/// Map/document, content/settings and additional destination checks remain the
+/// caller's responsibility.
 pub fn capture_output_asset_source_guard(
     output: &crate::Output,
     game: &GameFs,

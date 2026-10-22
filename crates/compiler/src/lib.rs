@@ -709,6 +709,9 @@ impl WriteReservation {
 }
 
 impl PreparedWrite {
+    /// Publishes the staged snapshot with its retained dependency and feature guards.
+    /// Full live-source validation requires caller-supplied checks through
+    /// [`Self::commit_checked_with_receipt`].
     pub fn commit(self, control: &Control) -> io::Result<bool> {
         self.commit_receipt(control).map(|receipt| receipt.success)
     }
@@ -735,10 +738,15 @@ impl PreparedWrite {
         })
     }
 
+    /// Publishes with retained guards and the leased destination identity check.
+    /// The lease covers the destination only; see [`Self::commit_checked_with_receipt`]
+    /// for caller-supplied live-source validation.
     pub fn commit_checked(self, lease: &OutputLease, control: &Control) -> io::Result<bool> {
         self.commit_checked_with(lease, control, || Ok(()))
     }
 
+    /// Applies [`Self::commit_checked_with_receipt`]'s validation and returns its
+    /// success flag.
     pub fn commit_checked_with(
         self,
         lease: &OutputLease,
@@ -749,6 +757,15 @@ impl PreparedWrite {
             .map(|receipt| receipt.success)
     }
 
+    /// Publishes under `lease` after `validate` succeeds inside the publication gate.
+    /// Retained dependency and feature guards and the leased destination are also
+    /// checked. The lease covers destination identity, not full live-source authority.
+    ///
+    /// The caller must establish that map/asset sources still match the build and
+    /// that document, content, settings and additional destination preconditions
+    /// remain valid, supplying their final checks through `validate`. See
+    /// [`asset_sources::capture_output_asset_source_guard`] for asset guards and
+    /// [`Output::prepare_write_reserved`] for reservation ordering.
     pub fn commit_checked_with_receipt(
         self,
         lease: &OutputLease,
@@ -796,10 +813,15 @@ impl Output {
         Ok(self.static_prop_sources.as_ref())
     }
 
+    /// Publishes through [`Self::write_controlled`] with a default [`Control`].
     pub fn write(&self, path: &Path) -> io::Result<bool> {
         self.write_controlled(path, &Control::default())
     }
 
+    /// Publishes the owned BSP or leak snapshot with applicable retained feature guards.
+    /// These guards can reject source changes, but do not establish complete current
+    /// map, asset-source or settings identity. For live-source publication, use
+    /// [`Self::prepare_write_reserved`] and [`PreparedWrite::commit_checked_with_receipt`].
     pub fn write_controlled(&self, path: &Path, control: &Control) -> io::Result<bool> {
         match self.prepare_write_controlled(path, control)? {
             Some(prepared) => prepared.commit(control),
@@ -807,6 +829,9 @@ impl Output {
         }
     }
 
+    /// Stages under [`Self::prepare_write_reserved`]'s snapshot and guard contract,
+    /// creating a reservation here. Use that method with an early reservation when
+    /// the output lies within observed source lookup roots.
     pub fn prepare_write_controlled(
         &self,
         path: &Path,
@@ -826,6 +851,14 @@ impl Output {
         self.prepare_write_reserved(WriteReservation::new(path, control)?, control)
     }
 
+    /// Stages the owned BSP or leak snapshot with applicable retained feature guards.
+    /// No complete current GameFs/source context is supplied here; live-source
+    /// publication requires [`PreparedWrite::commit_checked_with_receipt`]'s checks.
+    ///
+    /// When the output lies within observed source lookup roots, create `reservation`
+    /// before collecting sources and capturing guards. Staging-file creation changes
+    /// directory metadata; reusing the early reservation preserves the original
+    /// source-directory observations.
     pub fn prepare_write_reserved(
         &self,
         reservation: WriteReservation,

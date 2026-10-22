@@ -87,8 +87,8 @@ fn connect(
     Ok(())
 }
 
-pub fn build(tree: &Tree, planes: &PlaneSet) -> Vec<Portal> {
-    build_controlled(tree, planes, &Control::default()).expect("uncancelled portals")
+pub fn build(tree: &Tree, planes: &PlaneSet) -> Result<Vec<Portal>, String> {
+    build_controlled(tree, planes, &Control::default())
 }
 
 pub fn build_controlled(

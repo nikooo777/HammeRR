@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
+use std::ops::Range;
 
 use native_runtime::{
     CaptureChannel, CaptureEnvironment, CaptureObserver, CaptureReceipt, CaptureRequest,
@@ -330,11 +331,11 @@ fn merge_channel(
     }
     let baseline = Bsp::parse(&receipt.staged_bsp)?;
     verify_generated_cubemaps(&baseline, private_manifest, control)?;
-    let captured = Bsp::parse(&receipt.bsp)?;
-    verify_non_pak(&receipt.staged_bsp, &receipt.bsp, &baseline, &captured)?;
+    let captured_pak = verify_non_pak(&receipt.staged_bsp, &receipt.bsp, &baseline, control)?;
     let mut check = || control.checkpoint().map_err(io::Error::other);
     let staged_archive = baseline.pak_data_controlled(PakLimits::default(), &mut check)?;
-    let captured_archive = captured.pak_data_controlled(PakLimits::default(), &mut check)?;
+    let captured_archive =
+        bsp::PakArchive::parse_controlled(captured_pak, PakLimits::default(), &mut check)?;
     let hdr = receipt.channel == CaptureChannel::Hdr;
     let private_samples = if hdr {
         &private_manifest.hdr_samples
@@ -524,58 +525,97 @@ pub fn verify_sources(
     Ok(())
 }
 
-fn verify_non_pak(
+fn integer(bytes: &[u8], offset: usize) -> io::Result<usize> {
+    let value = i32::from_le_bytes(
+        bytes
+            .get(offset..offset + 4)
+            .ok_or_else(|| invalid("Truncated captured BSP header"))?
+            .try_into()
+            .unwrap(),
+    );
+    usize::try_from(value).map_err(|_| invalid("Negative captured BSP offset/count/size"))
+}
+
+fn lump_range(bytes: &[u8], index: usize) -> io::Result<Range<usize>> {
+    let header = 8 + index * 16;
+    let start = integer(bytes, header)?;
+    let size = integer(bytes, header + 4)?;
+    let end = start
+        .checked_add(size)
+        .ok_or_else(|| invalid("Captured BSP lump span overflow"))?;
+    if end > bytes.len() || size != 0 && start < 8 + bsp::LUMP_COUNT * 16 + 4 {
+        return Err(invalid(
+            "Captured BSP lump exceeds file bounds or overlaps its header",
+        ));
+    }
+    Ok(start..end)
+}
+
+fn verify_non_pak<'a>(
     before_bytes: &[u8],
-    after_bytes: &[u8],
+    after_bytes: &'a [u8],
     before: &Bsp,
-    after: &Bsp,
-) -> io::Result<()> {
-    if before.version != after.version
-        || before.map_revision != after.map_revision
-        || before.game_lumps != after.game_lumps
-        || before
-            .lumps
-            .iter()
-            .zip(&after.lumps)
-            .enumerate()
-            .any(|(index, (old, new))| index != bsp::lump::PAKFILE && old != new)
+    control: &Control,
+) -> io::Result<&'a [u8]> {
+    control.checkpoint().map_err(io::Error::other)?;
+    let revision = 8 + bsp::LUMP_COUNT * 16;
+    if before_bytes.get(..8) != after_bytes.get(..8)
+        || before_bytes.get(revision..revision + 4) != after_bytes.get(revision..revision + 4)
     {
         return Err(invalid(
             "Native capture changed non-PAK BSP metadata, geometry, lighting, entities or game records",
         ));
     }
-    let before_game = normalized_game_lump(before_bytes)?;
-    let after_game = normalized_game_lump(after_bytes)?;
+    let mut pak = &[][..];
+    let mut spans = Vec::with_capacity(bsp::LUMP_COUNT);
+    for index in 0..bsp::LUMP_COUNT {
+        control.checkpoint().map_err(io::Error::other)?;
+        let span = lump_range(after_bytes, index)?;
+        let captured = &after_bytes[span.clone()];
+        if !span.is_empty() {
+            spans.push(span);
+        }
+        let header = 8 + index * 16;
+        if index == bsp::lump::PAKFILE {
+            if after_bytes[header + 8..header + 16] != [0; 8] {
+                return Err(invalid("Captured BSP PAK must be uncompressed version 0"));
+            }
+            pak = captured;
+            continue;
+        }
+        let original = &before_bytes[lump_range(before_bytes, index)?];
+        if before_bytes[header + 8..header + 16] != after_bytes[header + 8..header + 16]
+            || original.len() != captured.len()
+            || index != bsp::lump::GAME_LUMP && original != captured
+        {
+            return Err(invalid(
+                "Native capture changed non-PAK BSP metadata, geometry, lighting, entities or game records",
+            ));
+        }
+    }
+    spans.sort_unstable_by_key(|span| span.start);
+    if spans.windows(2).any(|pair| pair[0].end > pair[1].start) {
+        return Err(invalid("Captured BSP lump spans overlap"));
+    }
+    let before_game = normalized_game_lump(before_bytes, &before.game_lumps, control)?;
+    let after_game = normalized_game_lump(after_bytes, &before.game_lumps, control)?;
     if before_game != after_game {
         return Err(invalid(
             "Native capture changed game-lump bytes outside absolute entry offsets",
         ));
     }
-    Ok(())
+    Ok(pak)
 }
 
-fn normalized_game_lump(bytes: &[u8]) -> io::Result<Vec<u8>> {
-    fn integer(bytes: &[u8], offset: usize) -> io::Result<usize> {
-        let value = i32::from_le_bytes(
-            bytes
-                .get(offset..offset + 4)
-                .ok_or_else(|| invalid("Truncated game-lump header"))?
-                .try_into()
-                .unwrap(),
-        );
-        usize::try_from(value).map_err(|_| invalid("Negative game-lump offset/count/size"))
-    }
-    let header = 8 + bsp::lump::GAME_LUMP * 16;
-    let start = integer(bytes, header)?;
-    let size = integer(bytes, header + 4)?;
-    let end = start
-        .checked_add(size)
-        .ok_or_else(|| invalid("Game-lump span overflow"))?;
-    let mut normalized = bytes
-        .get(start..end)
-        .ok_or_else(|| invalid("Game lump exceeds BSP bounds"))?
-        .to_vec();
-    let count = integer(&normalized, 0)?;
+fn normalized_game_lump(
+    bytes: &[u8],
+    expected: &[bsp::GameLump],
+    control: &Control,
+) -> io::Result<Vec<u8>> {
+    let span = lump_range(bytes, bsp::lump::GAME_LUMP)?;
+    let (start, end) = (span.start, span.end);
+    let data = &bytes[span];
+    let count = integer(data, 0)?;
     let directory_end = 4usize
         .checked_add(
             count
@@ -583,26 +623,129 @@ fn normalized_game_lump(bytes: &[u8]) -> io::Result<Vec<u8>> {
                 .ok_or_else(|| invalid("Game-lump count overflow"))?,
         )
         .ok_or_else(|| invalid("Game-lump directory overflow"))?;
-    if count > 4096 || directory_end > size {
+    if count > 4096 || directory_end > data.len() || count != expected.len() {
         return Err(invalid("Invalid game-lump entry count"));
     }
     let mut spans = Vec::with_capacity(count);
-    for index in 0..count {
+    for (index, entry) in expected.iter().enumerate() {
+        control.checkpoint().map_err(io::Error::other)?;
         let field = 4 + index * 16 + 8;
-        let offset = integer(&normalized, field)?;
-        let length = integer(&normalized, field + 4)?;
+        let offset = integer(data, field)?;
+        let length = integer(data, field + 4)?;
         let limit = offset
             .checked_add(length)
             .ok_or_else(|| invalid("Game-lump entry span overflow"))?;
         if offset < start + directory_end || limit > end {
             return Err(invalid("Game-lump entry escapes its payload/BSP"));
         }
+        if bytes[offset..limit] != entry.data {
+            return Err(invalid("Native capture changed game-lump payloads"));
+        }
         spans.push((offset, limit));
-        normalized[field..field + 4].fill(0);
     }
     spans.sort_unstable();
     if spans.windows(2).any(|pair| pair[0].1 > pair[1].0) {
         return Err(invalid("Overlapping game-lump entry payloads"));
     }
+    let mut normalized = data.to_vec();
+    for index in 0..count {
+        let field = 4 + index * 16 + 8;
+        normalized[field..field + 4].fill(0);
+    }
     Ok(normalized)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn word(bytes: &mut [u8], offset: usize, value: usize) {
+        bytes[offset..offset + 4].copy_from_slice(&i32::try_from(value).unwrap().to_le_bytes());
+    }
+
+    #[test]
+    fn captured_layout_checks_borrowed_ranges_and_preserves_relocated_game_payloads() {
+        let mut baseline = Bsp::new();
+        baseline.lumps[bsp::lump::ENTITIES].data = vec![1, 2, 3, 4];
+        baseline.lumps[bsp::lump::VERTEXES].data = vec![1, 2, 3, 4];
+        baseline.game_lumps = [*b"test", *b"next"]
+            .into_iter()
+            .map(|id| bsp::GameLump {
+                id,
+                flags: 0,
+                version: 1,
+                data: vec![5, 6, 7, 8],
+            })
+            .collect();
+        let limits = PakLimits::default();
+        let mut archive = bsp::PakArchive {
+            entries: vec![bsp::PakEntry {
+                name: "capture.bin".into(),
+                data: vec![0],
+            }],
+        };
+        baseline.set_pak_data(&archive, limits).unwrap();
+        let before = baseline.to_bytes();
+        let control = Control::default();
+        verify_non_pak(&before, &before, &baseline, &control).unwrap();
+        archive.entries[0].data = vec![42, 43];
+        let mut captured = bsp::replace_bsp_pak(&before, &archive, limits).unwrap();
+        let original_game = lump_range(&captured, bsp::lump::GAME_LUMP).unwrap();
+        let mut relocated = captured[original_game.clone()].to_vec();
+        let new_start = captured.len().next_multiple_of(4);
+        for index in 0..2 {
+            let field = 4 + index * 16 + 8;
+            let offset = integer(&relocated, field).unwrap();
+            word(
+                &mut relocated,
+                field,
+                new_start + offset - original_game.start,
+            );
+        }
+        captured.resize(new_start, 0);
+        captured.extend_from_slice(&relocated);
+        word(&mut captured, 8 + bsp::lump::GAME_LUMP * 16, new_start);
+        let pak = verify_non_pak(&before, &captured, &baseline, &control).unwrap();
+        let decoded = bsp::PakArchive::parse(pak, limits).unwrap();
+        assert_eq!(decoded.entries.len(), 1);
+        assert_eq!(decoded.entries[0].name, "capture.bin");
+        assert_eq!(decoded.entries[0].data, [42, 43]);
+
+        let game = lump_range(&captured, bsp::lump::GAME_LUMP).unwrap();
+        let vertices = lump_range(&captured, bsp::lump::VERTEXES).unwrap();
+        for (case, expected) in [
+            ("truncated", "non-PAK"),
+            ("negative", "Negative"),
+            ("header_overlap", "overlaps its header"),
+            ("ordinary_overlap", "lump spans overlap"),
+            ("game_count", "entry count"),
+            ("game_overlap", "Overlapping game-lump"),
+            ("game_escape", "escapes its payload"),
+            ("game_payload", "changed game-lump payloads"),
+            ("game_metadata", "outside absolute entry offsets"),
+            ("pak_metadata", "uncompressed version 0"),
+        ] {
+            let mut invalid = captured.clone();
+            match case {
+                "truncated" => invalid.truncate(100),
+                "negative" => invalid[8..12].copy_from_slice(&(-1_i32).to_le_bytes()),
+                "header_overlap" => word(&mut invalid, 8, 0),
+                "ordinary_overlap" => word(&mut invalid, 8, vertices.start),
+                "game_count" => word(&mut invalid, game.start, 4097),
+                "game_overlap" => {
+                    let first = integer(&invalid, game.start + 12).unwrap();
+                    word(&mut invalid, game.start + 28, first);
+                }
+                "game_escape" => word(&mut invalid, game.start + 12, vertices.start),
+                "game_payload" => invalid[game.end - 1] ^= 1,
+                "game_metadata" => invalid[game.start + 4] ^= 1,
+                "pak_metadata" => word(&mut invalid, 8 + bsp::lump::PAKFILE * 16 + 8, 1),
+                _ => unreachable!(),
+            }
+            let error = verify_non_pak(&before, &invalid, &baseline, &control)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(expected), "{case}: {error}");
+        }
+    }
 }

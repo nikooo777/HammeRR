@@ -875,6 +875,7 @@ The shared desktop and private stdio server expose workspace and document tools.
 | 3D sky preview | `get_3d_sky_preview`, `set_3d_sky_preview` |
 | Baked lightmap inspection | `inspect_baked_lightmaps` |
 | Baked prop vertex inspection | `inspect_baked_prop_vertices` |
+| Compiled light inspection | `inspect_compiled_world_lights` |
 | Authored lighting preview | `get_lighting_preview`; shared `set_view` and temporary `render_view` settings |
 | Selection and history | `select`, `get_selection`, `set_selection_mode`, `undo`, `redo`, `get_history`, `navigate_history` |
 | Measurement guides | `get_measurements`, `set_measurement` |
@@ -2669,6 +2670,54 @@ per page, at most 256 hardware sections per receiver and bounded source/BSP/
 archive work. Diagnostics cap at 64 strings across the report, each at most
 512 UTF-8 bytes; containers expose `diagnostics_total`/`diagnostics_truncated`. Limits or validation failures never
 return partial colors. See [Baked prop vertices](baked-prop-vertices.md).
+
+### Compiled light inspection
+
+`inspect_compiled_world_lights` reads exact native world-light records from this
+Session's last successful owned BSP. It shares **Build settings… / Build
+details… → Inspect compiled lights…** and changes no source, history, selection,
+camera, build settings or pending drafts. It accepts no file path, exposure or
+authored-object selector and does not initialize graphics or the game.
+
+Start with `{}` for LDR or `{"channel":"hdr"}`. Optional `offset` and `limit`
+default to 0 and 64; limits must be 1–64. The returned `build.token` is an opaque
+decimal string. Retain it as `build_token` for subsequent channel/page requests;
+nonzero offsets require it. Wrong or malformed tokens, invalid limits, overflow
+and offsets greater than the total reject. Offset equal to total returns an
+empty final page. For example, after observing token `"12"`, request
+`{"build_token":"12","channel":"hdr","offset":64,"limit":64}` only if that
+channel has at least 64 records. Tokens do not transfer between Sessions.
+
+`page` contains `offset`, `limit`, `returned`, `total`, `next_offset` and `rows`.
+Rows preserve native order and contain `ordinal`, `kind`, `kind_name`, `origin`,
+`intensity`, `normal`, `cluster`, `style`, `stop_dot`, `stop_dot2`, `exponent`,
+`radius`, `constant_attenuation`, `linear_attenuation`,
+`quadratic_attenuation`, signed `flags`, `texinfo` and `owner`. These are stored
+native binary32/integer fields, not RGBExp32 samples or screen brightness.
+Known kinds have names; unknown numeric codes remain `unknown`. Record numbers,
+owner, cluster and texinfo do not establish authored entity associations.
+
+`channels` gives LDR/HDR `lump`, `status`, `bytes` and `count` independently.
+`available` includes valid zero-record lit tables; `not_baked` distinguishes
+Fullbright and an unbuilt HDR channel. `unavailable` has unknown counts, not
+invented zero records. No missing channel falls back. Table availability does
+not imply native HDR readiness or identify the game's active channel.
+
+`build.status` is `current`, `stale` or `unavailable`, with captured lighting
+settings and diagnostics. Intact stale output remains readable with
+`historical:true`. Changed, missing or corrupt output clears rows, totals,
+continuation and the token; restoring bytes alone does not adopt a new owner.
+Currentness covers the committed map/settings and retained source guards, not
+every world material/texture on disk. Original asset-directory checks are
+conservative, so unrelated directory changes can also make source evidence
+stale. Pending drafts are not baked and remain untouched.
+
+Both native tables are validated before any page, including off-page records,
+unsupported metadata and all finite scalar fields. Each table caps at 8,192
+records; serialized reports cap at 256 KiB. Diagnostics are bounded with
+explicit totals/truncation, and `limits` describes read, metadata and transient
+allocation budgets. No material emission, native light-selection behavior,
+exposure or pixels are inferred. See [Compiled lights](compiled-lights.md).
 
 ### Stationary invisible water
 

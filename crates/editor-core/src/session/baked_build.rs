@@ -89,7 +89,59 @@ impl BuildIdentity {
     }
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum SourceVerification {
+    Resolved,
+    OriginalMetadata { maximum_bytes: usize },
+}
+
+impl SourceVerification {
+    fn error(self, error: &str) -> String {
+        match self {
+            Self::Resolved => error.to_owned(),
+            Self::OriginalMetadata { .. } => bounded_message(error),
+        }
+    }
+}
+
+pub(super) const MAX_DIAGNOSTIC_BYTES: usize = 512;
+const TRUNCATION_SUFFIX: &str = " [truncated]";
+
+pub(super) fn bounded_message(message: &str) -> String {
+    if message.len() <= MAX_DIAGNOSTIC_BYTES {
+        return message.to_owned();
+    }
+    let mut end = MAX_DIAGNOSTIC_BYTES - TRUNCATION_SUFFIX.len();
+    while !message.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}{TRUNCATION_SUFFIX}", &message[..end])
+}
+
 pub(super) fn build_state(session: &Session) -> Value {
+    build_state_with_mode(
+        session,
+        SourceVerification::Resolved,
+        &compiler::Control::default(),
+    )
+}
+
+pub(super) fn build_state_controlled(
+    session: &Session,
+    mode: SourceVerification,
+    control: &compiler::Control,
+) -> Result<Value, String> {
+    control.checkpoint()?;
+    let state = build_state_with_mode(session, mode, control);
+    control.checkpoint()?;
+    Ok(state)
+}
+
+fn build_state_with_mode(
+    session: &Session,
+    mode: SourceVerification,
+    control: &compiler::Control,
+) -> Value {
     let Some(build) = &session.compiled else {
         return json!({"status":"unavailable", "current":false, "diagnostics":["Compile the map successfully in this session before inspecting baked lightmaps"]});
     };
@@ -114,7 +166,23 @@ pub(super) fn build_state(session: &Session) -> Value {
             "Instance source/dependencies changed or cannot be verified: {error}"
         ));
     }
-    if let Some(error) = session.static_prop_source_issue(build.static_prop_sources.as_ref()) {
+    let asset_issue = match mode {
+        SourceVerification::Resolved => {
+            session.static_prop_source_issue(build.static_prop_sources.as_ref())
+        }
+        SourceVerification::OriginalMetadata { .. } => {
+            if build
+                .static_prop_sources
+                .as_ref()
+                .is_some_and(|sources| sources.content_epoch != session.content_epoch)
+            {
+                Some("Content changed since static-prop compilation; compile again".into())
+            } else {
+                asset_source_issue(build, mode, control)
+            }
+        }
+    };
+    if let Some(error) = asset_issue {
         diagnostics.push(error);
     }
     if session.compiling() {
@@ -126,7 +194,7 @@ pub(super) fn build_state(session: &Session) -> Value {
             .verify_metadata()
             .err()
             .map(|error| error.to_string()),
-        Err(error) => Some(error.clone()),
+        Err(error) => Some(mode.error(error)),
     };
     if let Some(issue) = &output_issue {
         diagnostics.push(format!(
@@ -148,19 +216,42 @@ pub(super) fn build_state(session: &Session) -> Value {
                 diagnostics.push("The source map path changed since this build".to_owned());
             }
         }
-        Err(error) => diagnostics.push(format!("Saved VMF source identity unavailable: {error}")),
+        Err(error) => diagnostics.push(format!(
+            "Saved VMF source identity unavailable: {}",
+            mode.error(error)
+        )),
         Ok(None) if session.path.is_some() => {
             diagnostics.push("The map was saved to a new source path after this build".to_owned())
         }
         Ok(None) => {}
     }
+    let source = identity
+        .source
+        .as_ref()
+        .ok()
+        .and_then(|source| source.as_ref())
+        .map(compiler::FileIdentity::path);
+    let paths_admitted = matches!(mode, SourceVerification::Resolved)
+        || std::iter::once(build.path.as_path())
+            .chain(source)
+            .all(|path| {
+                path.as_os_str().as_encoded_bytes().len() <= 16 * 1024 && path.to_str().is_some()
+            });
+    if !paths_admitted {
+        diagnostics.push("Build/source path cannot be represented as UTF-8 JSON or exceeds the inspection metadata path budget".into());
+    }
+    if matches!(mode, SourceVerification::OriginalMetadata { .. }) {
+        for diagnostic in &mut diagnostics {
+            *diagnostic = bounded_message(diagnostic);
+        }
+    }
     json!({
         "status":if output_issue.is_some() {"unavailable"} else if diagnostics.is_empty() {"current"} else {"stale"},
         "current":diagnostics.is_empty(), "token":identity.token.to_string(),
         "render_context":{"pending_preview":pending_preview,"current_for_display":diagnostics.is_empty() && !pending_preview,"diagnostics":if pending_preview {vec!["The displayed geometry/face draft was not baked; this inspection uses the committed build snapshot"]} else {Vec::<&str>::new()}},
-        "bsp":build.path, "generation":build.snapshot.generation, "revision":build.snapshot.revision,
+        "bsp":if paths_admitted {Some(&build.path)} else {None}, "generation":build.snapshot.generation, "revision":build.snapshot.revision,
         "lighting":build.options.lighting.name(), "diagnostics":diagnostics,
-        "source":identity.source.as_ref().ok().and_then(|source| source.as_ref()).map(compiler::FileIdentity::path),
+        "source":if paths_admitted {source} else {None},
     })
 }
 
@@ -220,13 +311,48 @@ pub(super) fn read_owned_bytes_controlled(
     Ok(bytes)
 }
 
+fn asset_source_issue(
+    build: &super::CompiledMap,
+    mode: SourceVerification,
+    control: &compiler::Control,
+) -> Option<String> {
+    match mode {
+        SourceVerification::Resolved => build
+            .static_prop_sources
+            .as_ref()
+            .and_then(|sources| sources.verify(control).err()),
+        SourceVerification::OriginalMetadata { maximum_bytes } => {
+            for guard in build
+                .static_prop_sources
+                .as_ref()
+                .map(|sources| &sources.guard)
+                .into_iter()
+                .chain(build.prop_lighting_guard.as_ref())
+            {
+                if let Err(error) = guard.verify_original_metadata(control, maximum_bytes) {
+                    return Some(format!(
+                        "Original tracked asset metadata changed or cannot be verified: {error}"
+                    ));
+                }
+            }
+            None
+        }
+    }
+}
+
 pub(super) fn source_issue_controlled(
     build: &super::CompiledMap,
     control: &compiler::Control,
 ) -> Option<String> {
-    if let Some(sources) = &build.static_prop_sources
-        && let Err(error) = sources.verify(control)
-    {
+    source_issue_with_mode(build, SourceVerification::Resolved, control)
+}
+
+pub(super) fn source_issue_with_mode(
+    build: &super::CompiledMap,
+    mode: SourceVerification,
+    control: &compiler::Control,
+) -> Option<String> {
+    if let Some(error) = asset_source_issue(build, mode, control) {
         return Some(error);
     }
     if let Some(dependencies) = &build.instance_dependencies {
@@ -270,10 +396,20 @@ pub(super) struct Recheck {
 }
 
 pub(super) fn recheck(build: &super::CompiledMap) -> Recheck {
+    recheck_with_mode(
+        build,
+        SourceVerification::Resolved,
+        &compiler::Control::default(),
+    )
+}
+
+pub(super) fn recheck_with_mode(
+    build: &super::CompiledMap,
+    mode: SourceVerification,
+    control: &compiler::Control,
+) -> Recheck {
     let mut stale = Vec::new();
-    if let Some(sources) = &build.static_prop_sources
-        && let Err(error) = sources.verify(&compiler::Control::default())
-    {
+    if let Some(error) = asset_source_issue(build, mode, control) {
         stale.push(error);
     }
     if let Some(error) = build

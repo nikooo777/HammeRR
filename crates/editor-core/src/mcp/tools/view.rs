@@ -3,6 +3,28 @@ use super::super::*;
 #[tool_router(router = view_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
+        description = "Inspect exact native world-light records from this Session's last successful owned BSP, shared with Build settings… / Build details… → Inspect compiled lights…. CPU-only and read-only, with no path, exposure, camera or source-selection argument. Returns captured current/stale/unavailable build provenance, independent LDR/HDR table status and pages of at most 64 native records with ordinal, kind/code, origin, intensity, normal, cluster, style, cone dots, exponent, radius, attenuation, signed flags, texinfo and owner. Values are stored native fields, not screen brightness or authored entity associations. Unknown kind codes remain exact. Start without build_token only at offset0; retain the returned opaque token for subsequent channel/page requests. Wrong tokens, malformed arguments and invalid ranges reject. Fullbright and unbaked HDR are explicit; a valid lit channel can contain zero records without implying runtime HDR readiness. Intact stale output remains historical; changed/corrupt output clears rows and totals. Pending drafts are not baked and survive inspection. Source freshness covers the committed map/settings and retained guards, not every world material/texture. Original asset-directory changes conservatively mark source evidence stale. No native game or viewport shading.",
+        annotations(read_only_hint = true)
+    )]
+    pub(in crate::mcp) fn inspect_compiled_world_lights(
+        &self,
+        Parameters(args): Parameters<InspectCompiledWorldLightsArgs>,
+    ) -> ToolResult {
+        use crate::session::compiled_world_lights::{Channel, Query};
+        run(|| {
+            let defaults = Query::default();
+            let query = Query {
+                build_token: args.build_token,
+                channel: Channel::parse(args.channel.as_deref().unwrap_or("ldr"))?,
+                offset: args.offset.unwrap_or(defaults.offset),
+                limit: args.limit.unwrap_or(defaults.limit),
+            };
+            let inspection = self.session().inspect_compiled_world_lights(&query)?;
+            serde_json::to_value(inspection).map_err(|error| error.to_string())
+        })
+    }
+
+    #[tool(
         description = "Inspect actual baked static-prop VHV colors from this Session's successful owned BSP, shared with Build settings… / Build details… → Inspect baked prop vertices…. CPU-only and read-only; no graphics, game, model loading, arbitrary paths or map/history/selection/camera/settings changes. Returns current/stale/unavailable build provenance, native sprp ordinals/model/origin/flags, independent LDR/HDR availability and packed-file identity, ordered all-LOD hardware sections and exact stored BGRA8/RGBA8 rows. These are encoded 0–255 vertex-color bytes, not linear irradiance or native screen brightness. Pages contain at most 32 props, 32 sections and 256 vertices, with offset/limit/returned/total/next_offset. Omit build_token only for a fresh observation; explicit prop/section and nonzero offsets require the returned opaque token. Changed tokens/ranges reject without silently reusing indices. Disabled props retain ordinal holes and have no color rows; missing HDR has no fallback. Intact historical output remains explicitly stale after source/assets/settings changes; replaced/corrupt output clears all rows. Pending displayed drafts are explicitly not baked. No authored entity/root-model vertex/position mapping or viewport shading.",
         annotations(read_only_hint = true)
     )]
@@ -460,3 +482,5 @@ impl EditorServer {
 
 #[cfg(test)]
 mod baked_prop_vertices_tests;
+#[cfg(test)]
+mod compiled_world_lights_tests;

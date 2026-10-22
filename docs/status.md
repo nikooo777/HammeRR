@@ -71,6 +71,7 @@ launching require Linux.
 | [Models](models.md) | Static/reference poses, materials/skins/bodygroups, mesh picking, attachments, dynamic tint/opacity and uniform scale; reload retires captured selections. | Animation, procedural/IK poses, virtual attachments/parenting, fades/proxies, intersecting transparency and native appearance parity; static/detail/guides remain unit-scale. |
 | [Baked lightmap inspection](baked-lightmaps.md) | Last successful build's LDR/HDR faces, styles, directional maps, images, statistics and authored provenance. | Viewport baked lighting, prop relighting, arbitrary BSP browsing and native tone mapping. |
 | [Baked prop vertex inspection](baked-prop-vertices.md) | Packed VHV ordinals, all-LOD sections and exact LDR/HDR color rows with build provenance. | Entity association, root-model vertices, world positions and viewport baked-prop shading. |
+| [Compiled light inspection](compiled-lights.md) | Exact native LDR/HDR light records, paginated fields and current/stale/unavailable owned-build provenance. | Authored entity association, arbitrary BSP browsing, native light/channel selection, exposure and viewport shading. |
 | [Sounds](sounds.md) | Mounted WAV/MP3 and script search, variants, audition, volume, agent audio export and assignment. | Game mixing, soundscapes, voice/sentence synthesis, map-specific overrides and ambiguous script resolution. |
 
 ## Compiler

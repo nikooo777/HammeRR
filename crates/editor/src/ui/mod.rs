@@ -3248,7 +3248,7 @@ fn create_document_window(
                     if let Some(controller) = &ui.compile_status
                         && controller.is_visible()
                     {
-                        controller.refresh(&lock(&ui.session));
+                        controller.refresh_visible(&lock(&ui.session));
                     }
                     if let Some(window) = &ui.game_log_window {
                         let text = lock(&ui.session)

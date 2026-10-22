@@ -13,6 +13,7 @@ mod baked_lightmaps;
 mod baked_prop_vertices;
 mod brush_texture_shadows;
 mod capture;
+mod compiled_lights;
 #[cfg(test)]
 mod instance_dependency_tests;
 mod lighting_progress;
@@ -33,6 +34,7 @@ pub struct Controller {
     capture: capture::Form,
     baked_lightmaps: baked_lightmaps::Form,
     baked_prop_vertices: baked_prop_vertices::Form,
+    compiled_lights: compiled_lights::Form,
 }
 
 #[derive(Default)]
@@ -434,6 +436,7 @@ impl Controller {
     pub(crate) fn hide_windows(&self, errors: &mut Vec<String>) {
         self.baked_lightmaps.hide_window(errors);
         self.baked_prop_vertices.hide_window(errors);
+        self.compiled_lights.hide_window(errors);
         crate::ui::hide_window("Compile", self.window.window(), errors);
     }
 
@@ -457,6 +460,7 @@ impl Controller {
         static_prop_packing::bind(&window, &access, &recipes);
         let baked_lightmaps = baked_lightmaps::bind(&window, &access)?;
         let baked_prop_vertices = baked_prop_vertices::bind(&window, &access)?;
+        let compiled_lights = compiled_lights::bind(&window, &access)?;
         window.on_choose_recipe({
             let (target, window, recipes) = (access.downgrade(), window.as_weak(), recipes.clone());
             move |index| {
@@ -812,7 +816,19 @@ impl Controller {
             capture,
             baked_lightmaps,
             baked_prop_vertices,
+            compiled_lights,
         })
+    }
+
+    pub(crate) fn refresh_visible(&self, session: &Session) {
+        if self.window.window().is_visible()
+            || self.baked_lightmaps.is_visible()
+            || self.baked_prop_vertices.is_visible()
+        {
+            self.refresh(session);
+        } else {
+            self.compiled_lights.refresh(session);
+        }
     }
 
     pub fn refresh(&self, session: &Session) {
@@ -820,6 +836,7 @@ impl Controller {
         self.capture.refresh(&self.window, session);
         self.baked_lightmaps.refresh(session);
         self.baked_prop_vertices.refresh(session);
+        self.compiled_lights.refresh(session);
         self.token.set(session.compile_token());
         self.window.set_cancellable(session.compile_cancellable());
         let status = session.compile_status();
@@ -1359,6 +1376,7 @@ impl Controller {
         self.window.window().is_visible()
             || self.baked_lightmaps.is_visible()
             || self.baked_prop_vertices.is_visible()
+            || self.compiled_lights.is_visible()
     }
 }
 

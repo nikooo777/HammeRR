@@ -28,6 +28,7 @@ mod baked_build;
 pub mod baked_lightmaps;
 pub mod baked_prop_vertices;
 mod buffer_replacement;
+pub mod compiled_world_lights;
 mod document_close;
 #[cfg(test)]
 mod launch_custody_tests;

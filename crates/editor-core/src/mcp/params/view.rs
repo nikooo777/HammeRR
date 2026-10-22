@@ -6,6 +6,18 @@ pub(in crate::mcp) struct InspectSkyAssetsArgs {}
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub(in crate::mcp) struct InspectCompiledWorldLightsArgs {
+    /// Opaque successful-build token; required for nonzero offsets.
+    pub build_token: Option<String>,
+    /// ldr (default) or hdr; unavailable channels never fall back.
+    pub channel: Option<String>,
+    pub offset: Option<usize>,
+    /// 1–64 native records; default 64.
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(in crate::mcp) struct InspectBakedLightmapsArgs {
     pub channel: Option<String>,
     pub face: Option<usize>,

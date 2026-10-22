@@ -52,6 +52,7 @@ Start with [Getting started](getting-started.md) and [Editor basics](basics.md).
 | [HDR exposure controllers](hdr-exposure.md) | Fixed game exposure through ordinary entities and connections |
 | [Baked lightmaps](baked-lightmaps.md) | Actual compiled LDR/HDR face samples, style and directional-map inspection |
 | [Baked prop vertices](baked-prop-vertices.md) | Native prop ordinals, LOD hardware sections and exact packed LDR/HDR color bytes |
+| [Compiled lights](compiled-lights.md) | Exact native LDR/HDR light records, named fields and owned-build provenance |
 | [Water](water.md) | Flat world pools, underwater materials, fog and floating objects |
 | [Instance authoring](instance-authoring.md) | Place and edit saved VMF references with readable path and transform controls |
 | [Extract brush assemblies](instance-extraction.md) | Export selected brushes and replace them with a guarded instance reference |

@@ -345,12 +345,12 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 
 [Baked lightmaps →](docs/baked-lightmaps.md)
 
-| Baked prop vertices |
-| --- |
-| ![Baked static-prop vertex color inspection](docs/images/baked-prop-vertices.png) |
-| Inspect compiled LDR/HDR colors by native prop, draw LOD, hardware section and vertex. |
+| Baked prop vertices | Compiled lights |
+| --- | --- |
+| ![Baked static-prop vertex color inspection](docs/images/baked-prop-vertices.png) | ![Compiled HDR light records and selected fields](docs/images/compiled-lights.png) |
+| Inspect compiled LDR/HDR colors by native prop, draw LOD, hardware section and vertex. | Inspect native LDR/HDR light fields with owned-build provenance. |
 
-[Baked prop vertices →](docs/baked-prop-vertices.md)
+[Baked prop vertices →](docs/baked-prop-vertices.md) · [Compiled lights →](docs/compiled-lights.md)
 
 | Water volumes and physics |
 | --- |

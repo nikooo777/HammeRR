@@ -1,0 +1,137 @@
+import { Button, ComboBox, ScrollView, StandardTableView, TextEdit } from "std-widgets.slint";
+
+export struct CompiledLightDetails {
+    record: string,
+    kind: string,
+    style: string,
+    origin: string,
+    intensity: string,
+    normal: string,
+    cluster: string,
+    stop-dot: string,
+    stop-dot2: string,
+    exponent: string,
+    radius: string,
+    constant-attenuation: string,
+    linear-attenuation: string,
+    quadratic-attenuation: string,
+    flags: string,
+    texinfo: string,
+    owner: string,
+}
+
+component DetailField inherits VerticalLayout {
+    in property <string> label;
+    in property <string> value;
+    spacing: 2px;
+    Text { text: root.label; color: #bac2ce; font-size: 12px; }
+    Text { text: root.value; wrap: word-wrap; }
+}
+
+export component CompiledLightsWindow inherits Window {
+    title: "Compiled lights - HammeRR";
+    preferred-width: 1100px;
+    preferred-height: 900px;
+    min-width: 880px;
+    min-height: 720px;
+    in-out property <string> channel: "LDR";
+    in property <string> build-state;
+    in property <string> channels;
+    in property <string> light-page;
+    in property <string> diagnostics;
+    in property <[[StandardListViewItem]]> light-rows;
+    in-out property <[TableColumn]> light-columns;
+    in-out property <int> current-row: -1;
+    in property <bool> previous-lights;
+    in property <bool> next-lights;
+    in property <bool> has-selection;
+    in property <CompiledLightDetails> details;
+    callback refresh-inspection();
+    callback change-channel();
+    callback inspect-light(int);
+    callback page-lights(int);
+    callback reset-sort();
+    callback close-dialog();
+    forward-focus: keys;
+    keys := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape { root.close-dialog(); return accept; }
+            return reject;
+        }
+        VerticalLayout {
+            padding: 20px;
+            spacing: 10px;
+            Text { text: "Compiled lights"; font-size: 24px; font-weight: 600; }
+            Text { text: root.build-state; wrap: word-wrap; color: #ffcb80; }
+            Text { text: root.channels; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: 8px;
+                Text { text: "Channel"; vertical-alignment: center; }
+                ComboBox { model: ["LDR", "HDR"]; current-value <=> root.channel; selected(value) => { root.change-channel(); } }
+                Button { text: "Refresh inspection"; clicked => { root.refresh-inspection(); } }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            Text { text: root.light-page; }
+            StandardTableView {
+                rows: root.light-rows;
+                columns <=> root.light-columns;
+                current-row <=> root.current-row;
+                min-height: 160px;
+                preferred-height: 240px;
+                vertical-stretch: 1;
+                current-row-changed(row) => { root.inspect-light(row); }
+                sort-ascending(column) => { root.reset-sort(); }
+                sort-descending(column) => { root.reset-sort(); }
+                accessible-label: "Compiled lights in native record order";
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                Button { text: "Previous lights"; enabled: root.previous-lights; clicked => { root.page-lights(-1); } }
+                Button { text: "Next lights"; enabled: root.next-lights; clicked => { root.page-lights(1); } }
+                Rectangle { horizontal-stretch: 1; }
+                Text { text: "Native record order"; vertical-alignment: center; color: #bac2ce; }
+            }
+            Text { text: root.has-selection ? "Selected record " + root.details.record : "Select a light to inspect its fields"; font-size: 18px; font-weight: 600; }
+            if root.has-selection: ScrollView {
+                content-width: self.width;
+                min-height: 170px;
+                preferred-height: 240px;
+                vertical-stretch: 1;
+                HorizontalLayout {
+                    spacing: 20px;
+                    VerticalLayout {
+                        spacing: 8px;
+                        DetailField { label: "Kind (native code)"; value: root.details.kind; }
+                        DetailField { label: "Origin"; value: root.details.origin; }
+                        DetailField { label: "Intensity (native RGB)"; value: root.details.intensity; }
+                        DetailField { label: "Normal"; value: root.details.normal; }
+                        DetailField { label: "Style"; value: root.details.style; }
+                    }
+                    VerticalLayout {
+                        spacing: 8px;
+                        DetailField { label: "Inner cone dot"; value: root.details.stop-dot; }
+                        DetailField { label: "Outer cone dot"; value: root.details.stop-dot2; }
+                        DetailField { label: "Exponent"; value: root.details.exponent; }
+                        DetailField { label: "Radius"; value: root.details.radius; }
+                        DetailField { label: "Cluster"; value: root.details.cluster; }
+                    }
+                    VerticalLayout {
+                        spacing: 8px;
+                        DetailField { label: "Constant attenuation"; value: root.details.constant-attenuation; }
+                        DetailField { label: "Linear attenuation"; value: root.details.linear-attenuation; }
+                        DetailField { label: "Quadratic attenuation"; value: root.details.quadratic-attenuation; }
+                        DetailField { label: "Flags (signed / hexadecimal)"; value: root.details.flags; }
+                        DetailField { label: "Texinfo"; value: root.details.texinfo; }
+                        DetailField { label: "Owner"; value: root.details.owner; }
+                    }
+                }
+            }
+            Text { text: "Stored native fields, not screen brightness or authored entity IDs. Unapplied drafts are not baked. Choosing a record leaves map selection and camera unchanged."; wrap: word-wrap; color: #bac2ce; font-size: 12px; }
+            if root.diagnostics != "": TextEdit { text: root.diagnostics; read-only: true; wrap: word-wrap; min-height: 55px; max-height: 90px; accessible-label: "Compiled light inspection diagnostics"; }
+            HorizontalLayout {
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Close"; clicked => { root.close-dialog(); } }
+            }
+        }
+    }
+}

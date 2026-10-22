@@ -17,6 +17,8 @@ pub use build_materials::{
 pub(crate) use material_inspection::MaterialInspectionIssueKind;
 pub use material_inspection::{CapturedMaterial, MaterialInspectionCapture};
 
+const ORIGINAL_METADATA_SCRATCH_BYTES: usize = 256 * 1024;
+
 #[derive(Debug, Clone)]
 pub struct AssetSourceGuard {
     stamps: Vec<FileStamp>,
@@ -29,6 +31,32 @@ impl AssetSourceGuard {
             stamp.verify_metadata()?;
         }
         Ok(())
+    }
+
+    /// Checks original stamps without collecting fresh lookup paths or accepting changed directories.
+    pub fn verify_original_metadata(
+        &self,
+        control: &Control,
+        maximum_bytes: usize,
+    ) -> io::Result<()> {
+        control.checkpoint().map_err(io::Error::other)?;
+        let mut bytes = size_of::<Self>() + ORIGINAL_METADATA_SCRATCH_BYTES;
+        for stamp in &self.stamps {
+            control.checkpoint().map_err(io::Error::other)?;
+            bytes = bytes
+                .checked_add(stamp.original_metadata_bytes()?)
+                .ok_or_else(|| invalid("Original source metadata admission overflow"))?;
+        }
+        if bytes > maximum_bytes {
+            return Err(invalid(
+                "Original source metadata exceeds the inspection byte budget",
+            ));
+        }
+        for stamp in &self.stamps {
+            control.checkpoint().map_err(io::Error::other)?;
+            stamp.verify_metadata()?;
+        }
+        control.checkpoint().map_err(io::Error::other)
     }
 
     pub fn verify_sources(&self, game: &GameFs, control: &Control) -> io::Result<()> {
@@ -305,3 +333,54 @@ pub(crate) fn hash(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod original_metadata_tests {
+    use super::*;
+
+    #[test]
+    fn original_metadata_admission_precedes_io_and_preserves_directory_baseline() {
+        let directory = tempfile::tempdir().unwrap();
+        let guard = AssetSourceGuard {
+            stamps: vec![FileStamp::capture_container(directory.path()).unwrap()],
+            material_lookups: BTreeMap::new(),
+        };
+        let admitted = size_of::<AssetSourceGuard>()
+            + ORIGINAL_METADATA_SCRATCH_BYTES
+            + guard.stamps[0].original_metadata_bytes().unwrap();
+        guard
+            .verify_original_metadata(&Control::default(), admitted)
+            .unwrap();
+        assert!(
+            guard
+                .verify_original_metadata(&Control::default(), admitted - 1)
+                .unwrap_err()
+                .to_string()
+                .contains("byte budget")
+        );
+        std::fs::write(directory.path().join("unrelated"), b"sibling").unwrap();
+        assert!(
+            guard
+                .verify_original_metadata(&Control::default(), admitted)
+                .unwrap_err()
+                .to_string()
+                .contains("changed")
+        );
+        assert!(
+            guard
+                .verify_original_metadata(&Control::default(), admitted - 1)
+                .unwrap_err()
+                .to_string()
+                .contains("byte budget")
+        );
+        let control = Control::default();
+        control.cancel().unwrap();
+        assert!(
+            guard
+                .verify_original_metadata(&control, admitted)
+                .unwrap_err()
+                .to_string()
+                .contains("cancel")
+        );
+    }
+}

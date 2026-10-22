@@ -148,6 +148,21 @@ impl FileStamp {
         })
     }
 
+    pub(crate) fn original_metadata_bytes(&self) -> io::Result<usize> {
+        const MAX_PATH_BYTES: usize = 16 * 1024;
+        let requested = self.requested.as_os_str().as_encoded_bytes().len();
+        let resolved = self.path.as_os_str().as_encoded_bytes().len();
+        if requested > MAX_PATH_BYTES || resolved > MAX_PATH_BYTES {
+            return Err(io::Error::other(
+                "Original source metadata path exceeds 16 KiB",
+            ));
+        }
+        requested
+            .checked_add(resolved)
+            .and_then(|bytes| bytes.checked_add(size_of::<Self>()))
+            .ok_or_else(|| io::Error::other("Original source metadata size overflow"))
+    }
+
     pub fn verify_metadata(&self) -> io::Result<()> {
         if Self::capture_kind(&self.requested, self.container)? != *self {
             return Err(io::Error::other(format!(

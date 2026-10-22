@@ -12,6 +12,10 @@ pub use manifest::{
     PACKED_STATIC_PROPS_MANIFEST_PATH, StaticPropAssetManifest, StaticPropPackedAsset,
     StaticPropPackedUse, read_packed_static_props, verify_packed_static_props,
 };
+pub(crate) use material::{
+    Dependency as MaterialDependency, dependency as material_dependency,
+    validate_edit_chain as validate_material_edit_chain,
+};
 
 const MAX_MANIFEST_BYTES: usize = 2 * 1024 * 1024;
 const MAX_LOOKUPS: usize = 16_384;

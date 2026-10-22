@@ -18,6 +18,8 @@ mod scoped_origins;
 mod source_identity;
 mod spherical_indirect;
 
+const CUTOUT_RECEIVER: &str = "VertexLitGeneric { $basetexture test $alphatest 1 }";
+
 fn options(dual: bool) -> Options {
     Options {
         lighting: if dual {
@@ -187,10 +189,22 @@ fn dual_channels_preserve_emitted_ordinals_duplicates_and_unused_group_vertices(
 }
 
 #[test]
-fn all_declared_lods_remap_the_same_root_colors_in_distinct_group_order() {
+fn cutout_receivers_preserve_all_lod_colors_without_reading_unrequested_alpha() {
     let (directory, game) = fixtures::game();
     fixtures::add_lod(directory.path());
+    let texture = directory.path().join("materials/test.vtf");
+    std::fs::write(&texture, fixtures::caster_texture(0)).unwrap();
+    let opaque = compile(&fixtures::scene(false), &game, true);
+    std::fs::write(
+        directory.path().join("materials/shared/base.vmt"),
+        CUTOUT_RECEIVER,
+    )
+    .unwrap();
     let output = compile(&fixtures::scene(false), &game, true);
+    assert_eq!(
+        output.prop_lighting_assets.as_ref().unwrap().entries(),
+        opaque.prop_lighting_assets.as_ref().unwrap().entries()
+    );
     let stats = output.stats.prop_vertex_lighting.as_ref().unwrap();
     assert_eq!(
         (stats.props, stats.models, stats.meshes, stats.vertices),
@@ -230,6 +244,35 @@ fn all_declared_lods_remap_the_same_root_colors_in_distinct_group_order() {
             }
         }
     }
+    assert_eq!(output.stats.prop_shadow_alpha_triangles, 0);
+    let manifest = output.prop_lighting_assets.as_ref().unwrap().manifest();
+    for path in ["materials/one.vmt", "materials/shared/base.vmt"] {
+        assert!(manifest.sources.iter().any(|source| source.path == path));
+    }
+    assert!(
+        !manifest
+            .sources
+            .iter()
+            .any(|source| source.path == "materials/test.vtf")
+    );
+    assert!(
+        !manifest
+            .missing_sources
+            .iter()
+            .any(|path| path == "materials/test.vtf")
+    );
+    let output_directory = tempfile::tempdir_in(directory.path().parent().unwrap()).unwrap();
+    let destination = output_directory.path().join("previous.bsp");
+    std::fs::write(&destination, b"previous complete output").unwrap();
+    let expected = output.bsp.as_ref().unwrap().to_bytes();
+    let prepared = output
+        .prepare_write_controlled(&destination, &Control::default())
+        .unwrap()
+        .unwrap();
+    overwrite(&texture, 0, &fixtures::caster_texture(255));
+    drop(output);
+    assert!(prepared.commit(&Control::default()).unwrap());
+    assert_eq!(std::fs::read(destination).unwrap(), expected);
 }
 
 #[test]
@@ -478,9 +521,14 @@ fn unsupported_flags_styles_and_selected_skin_fail_with_source_diagnostics() {
 }
 
 #[test]
-fn prepared_write_rejects_changed_patch_or_new_higher_priority_candidate_after_output_drop() {
+fn prepared_write_rejects_changed_cutout_patch_or_new_candidate_after_output_drop() {
     for change_patch in [true, false] {
         let (directory, game) = fixtures::game();
+        std::fs::write(
+            directory.path().join("materials/shared/base.vmt"),
+            CUTOUT_RECEIVER,
+        )
+        .unwrap();
         let output_directory = tempfile::tempdir_in(directory.path().parent().unwrap()).unwrap();
         let destination = output_directory.path().join("previous.bsp");
         std::fs::write(&destination, b"previous complete output").unwrap();
@@ -1055,6 +1103,166 @@ fn self_shadow_flag(vmf: &mut Vmf, value: &str) {
         .unwrap()
         .properties
         .set("disableselfshadowing", value);
+}
+
+#[test]
+fn selected_cutout_self_shadows_require_model_flag_and_guard_sampled_alpha() {
+    fn center(output: &crate::Output) -> [[u8; 4]; 2] {
+        ["sp_0.vhv", "sp_hdr_0.vhv"].map(|name| {
+            let file = file(output.bsp.as_ref().unwrap(), name);
+            assert_eq!(file.meshes.len(), 1);
+            let colors = &file.meshes[0].colors;
+            assert_eq!(colors.len(), 9);
+            assert!(colors.iter().all(|color| color.alpha == 255));
+            let color = colors[1];
+            [color.red, color.green, color.blue, color.alpha]
+        })
+    }
+
+    let (directory, game) = fixtures::game();
+    fixtures::self_shadow_model(directory.path());
+    std::fs::write(
+        directory.path().join("materials/shared/base.vmt"),
+        CUTOUT_RECEIVER,
+    )
+    .unwrap();
+    let vertex_path = directory.path().join("models/props/test.vvd");
+    for vertex in 4..7 {
+        for (axis, value) in [0.375_f32, 0.625].into_iter().enumerate() {
+            overwrite(
+                &vertex_path,
+                (64 + vertex * 48 + 40 + axis * 4) as u64,
+                &value.to_le_bytes(),
+            );
+        }
+    }
+    let mut texture = fixtures::caster_texture(255);
+    texture[83] = 0;
+    texture[80 + (2 * 4 + 1) * 4 + 3] = 0;
+    let texture_path = directory.path().join("materials/test.vtf");
+    std::fs::write(&texture_path, &texture).unwrap();
+    let vmf = fixtures::scene(false);
+    let unrequested = compile(&vmf, &game, true);
+    assert_eq!(center(&unrequested), [[0, 0, 0, 255]; 2]);
+    assert_eq!(unrequested.stats.prop_shadow_alpha_triangles, 0);
+    assert!(
+        unrequested
+            .report
+            .diagnostics
+            .iter()
+            .any(
+                |diagnostic| diagnostic.object.as_deref() == Some("entity:9101")
+                    && diagnostic.message.contains("opaque mesh triangles")
+            )
+    );
+    drop(unrequested);
+
+    overwrite(
+        &directory.path().join("models/props/test.mdl"),
+        152,
+        &0x0004_0010_u32.to_le_bytes(),
+    );
+    let clear = compile(&vmf, &game, true);
+    assert_eq!(center(&clear), [[128, 0, 0, 255], [0, 0, 128, 255]]);
+    assert_eq!(clear.stats.prop_shadow_alpha_triangles, 2);
+    assert!(
+        clear
+            .prop_lighting_assets
+            .as_ref()
+            .unwrap()
+            .manifest()
+            .sources
+            .iter()
+            .any(|source| source.path == "materials/test.vtf")
+    );
+    let output_directory = tempfile::tempdir_in(directory.path().parent().unwrap()).unwrap();
+    let destination = output_directory.path().join("previous.bsp");
+    std::fs::write(&destination, b"previous BSP").unwrap();
+    std::fs::write(destination.with_extension("lin"), b"previous LIN").unwrap();
+    let prepared = clear
+        .prepare_write_controlled(&destination, &Control::default())
+        .unwrap()
+        .unwrap();
+    texture[80 + (2 * 4 + 1) * 4 + 3] = 255;
+    overwrite(&texture_path, 0, &texture);
+    drop(clear);
+    assert!(prepared.commit(&Control::default()).is_err());
+    assert_eq!(std::fs::read(&destination).unwrap(), b"previous BSP");
+    assert_eq!(
+        std::fs::read(destination.with_extension("lin")).unwrap(),
+        b"previous LIN"
+    );
+
+    let opaque = compile(&vmf, &game, true);
+    assert_eq!(center(&opaque), [[0, 0, 0, 255]; 2]);
+    drop(opaque);
+    let mut skipped = vmf;
+    self_shadow_flag(&mut skipped, "1");
+    let open = compile(&skipped, &game, true);
+    assert_eq!(center(&open), [[128, 0, 0, 255], [0, 0, 128, 255]]);
+    drop(open);
+    fixtures::caster(directory.path(), 255);
+    let mut blocked = fixtures::caster_scene();
+    self_shadow_flag(&mut blocked, "1");
+    let other = compile(&blocked, &game, true);
+    assert_eq!(center(&other), [[0, 0, 0, 255]; 2]);
+    assert_eq!(
+        other
+            .prop_lighting_assets
+            .as_ref()
+            .unwrap()
+            .manifest()
+            .receivers
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn selected_cutout_receivers_preserve_final_world_bounce_colors() {
+    let (directory, game, vmf, _) = indirect_sources::world_fixture(true);
+    let options = Options {
+        bounces: 1,
+        ..options(false)
+    };
+    let opaque = crate::compile_with_options(&vmf, &game, options);
+    assert!(!opaque.report.has_errors(), "{:?}", opaque.report);
+    std::fs::write(
+        directory.path().join("materials/shared/base.vmt"),
+        CUTOUT_RECEIVER,
+    )
+    .unwrap();
+    let cutout = crate::compile_with_options(&vmf, &game, options);
+    assert!(!cutout.report.has_errors(), "{:?}", cutout.report);
+    assert_eq!(cutout.stats.bounces, 1);
+    assert!(cutout.stats.bounce_samples > 0);
+    let plan = cutout.prop_lighting_assets.as_ref().unwrap();
+    assert_eq!(
+        plan.entries(),
+        opaque.prop_lighting_assets.as_ref().unwrap().entries()
+    );
+    let received = file(cutout.bsp.as_ref().unwrap(), "sp_0.vhv").meshes[0].colors[1];
+    assert!(received.red > 128, "one bounce={received:?}");
+    assert_eq!((received.green, received.blue, received.alpha), (0, 0, 255));
+    let manifest = plan.manifest();
+    assert!(
+        manifest
+            .sources
+            .iter()
+            .any(|source| source.path == "materials/indirect_textures/source.vtf")
+    );
+    assert!(
+        !manifest
+            .sources
+            .iter()
+            .any(|source| source.path == "materials/test.vtf")
+    );
+    assert!(
+        !manifest
+            .missing_sources
+            .iter()
+            .any(|path| path == "materials/test.vtf")
+    );
 }
 
 #[test]

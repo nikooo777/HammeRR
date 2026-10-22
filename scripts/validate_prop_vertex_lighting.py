@@ -8,8 +8,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 import validate_cubemap_capture_probe as probe
-from validate_bump_lighting import texture
 from validate_build_recipes import protected_state
+from validate_bump_lighting import texture
 from validate_compile_jobs import stopped_on_exit, wait_job
 from validate_face_lighting import DEFAULT_BINARY, ROOT, Client, detail
 from validate_recovery_exit import require_clean_eof
@@ -24,6 +24,10 @@ LIGHTING_ORIGIN_POINTS = [("open", (16.125, 64.25, 112.375)), ("solid-floor", (1
 SELF_SHADOW_MODEL = "models/props_junk/wood_crate001a.mdl"
 SELF_SHADOW_MATERIAL = "materials/models/props_junk/woodcrates01a.vmt"
 SELF_SHADOW_HEIGHT = 20.01078987121582
+MODEL_CAST_TEXTURE_SHADOWS = 0x00040000
+CUTOUT_BASETEXTURE = "hammerr_prop_vertex/cutout_receiver_missing"
+CUTOUT_TERMINAL = f"VertexLitGeneric {{ $basetexture {CUTOUT_BASETEXTURE} $alphatest 1 }}\n".encode()
+CUTOUT_OPAQUE_MATERIAL_SHA256 = "35ec2dd6afa6b17c8aaf61fd2064daa9cf97191b178b6dd2791e14b34f5b8dec"
 SELF_SHADOW_GEOMETRY = {
     SELF_SHADOW_MODEL: "8fc43694049559d0512805630ff0ac7d6bb77fe819c98deeec2e02c364648126",
     "models/props_junk/wood_crate001a.vvd": "3fa20fc03c7cd6f754018f69c486ff5390344ee8af6684f0a2395be85d720849",
@@ -206,6 +210,99 @@ def self_shadow_sources(args, game):
             require(digest == SELF_SHADOW_GEOMETRY[name], f"Self-shadow geometry prerequisite changed: {name}")
         expected.append({"path": name, "sha256": digest, "bytes": len(raw)})
     return expected
+
+
+def validate_cutout(client, args, game, source, ids, props, report):
+    require(args.model == SELF_SHADOW_MODEL and args.origins[1][2] == SELF_SHADOW_HEIGHT
+            and args.material in (None, SELF_SHADOW_MATERIAL),
+            "--cutout-control requires the retained 614 wood_crate001a fixture and --origin-z 20.01078987121582")
+    sources = self_shadow_sources(args, game)
+    original_material = args.fixture_game / SELF_SHADOW_MATERIAL
+    require(probe.digest(original_material.read_bytes()) == CUTOUT_OPAQUE_MATERIAL_SHA256,
+            "Cutout control requires the retained opaque crate VMT, including its opaque-only parameters")
+    model_flags = struct.unpack_from("<I", (args.fixture_game / args.model).read_bytes(), 152)[0]
+    require(model_flags == 0x11 and not model_flags & MODEL_CAST_TEXTURE_SHADOWS,
+            "Cutout parity requires the original MDL without a texture-shadow request")
+    settings = client.call("get_compile_settings")
+    require(settings["lighting"] == "direct_ldr_hdr" and settings["bounces"] == 0
+            and settings["bake_static_prop_vertices"] and not settings["pack_static_prop_assets"],
+            "Cutout control requires the existing unpacked direct LDR + HDR baseline")
+    baseline = (args.output / "direct_ldr_hdr.bsp").read_bytes()
+    baseline_entries, baseline_flags = pak_and_flags(baseline)
+    original_manifest = report["channels"]["direct_ldr_hdr"]["manifest"]
+    require(original_manifest["sources"] == sources, "Opaque baseline does not retain the exact fixture source closure")
+    expected_meshes = [{"lod": 0, "vertex_count": 400}, {"lod": 1, "vertex_count": 84}]
+    require(all(row["meshes"] == expected_meshes for row in original_manifest["receivers"]),
+            "Cutout control requires both complete retained hardware LODs")
+    overlay = game / SELF_SHADOW_MATERIAL
+    require(not overlay.exists(), "Cutout control would overwrite an existing private material")
+    require(all(not (mount / f"materials/{CUTOUT_BASETEXTURE}.vtf").exists() for mount in (game, args.fixture_game)),
+            "Receiver-only missing-texture control unexpectedly has a VTF")
+    fixture_files = [args.fixture_game / name for name in [*SELF_SHADOW_GEOMETRY, SELF_SHADOW_MATERIAL,
+                                                         "gameinfo.txt", "materials/hammerr/white.vtf"]]
+    originals = {path: path.read_bytes() for path in fixture_files}
+    retained = {path: path.read_bytes() for pattern in ("*.bsp", "*.lin") for path in args.output.glob(pattern)}
+    overlay.parent.mkdir(parents=True, exist_ok=True)
+    token = client.call("begin_property_edit", {"world": True})["draft"]["token"]
+    client.call("update_property_edit", {"token": token, "changes": [
+        {"action": "set", "key": "message", "value": "Retained cutout receiver review"}]})
+    draft = client.call("get_property_edit")
+    before = unchanged(client, source, ids)
+    cases = {}
+    try:
+        with patch.object(client, "call", wraps=client.call) as calls:
+            overlay.write_bytes(CUTOUT_TERMINAL)
+            (args.output / "cutout-terminal.vmt").write_bytes(CUTOUT_TERMINAL)
+            path, alpha, result = compile_pair(client, args, source, ids, "cutout-receiver", True)
+            checked = verify_output(args, game, alpha, result["stats"], ["ldr", "hdr"])
+            alpha_entries, alpha_flags = pak_and_flags(alpha)
+            require(alpha_flags == baseline_flags and set(alpha_entries) == set(baseline_entries),
+                    "Cutout admission changed level flags or PAK membership")
+            require(all(alpha_entries[name] == raw for name, raw in baseline_entries.items() if name != MANIFEST),
+                    "Cutout admission changed complete LDR/HDR VHV bytes")
+            require(all(left == right for index, (left, right) in enumerate(zip(
+                probe.bsp_lumps(baseline), probe.bsp_lumps(alpha), strict=True)) if index != 40),
+                "Cutout admission changed geometry, static props, world lighting or other non-PAK data")
+            expected_sources = [dict(row, sha256=probe.digest(CUTOUT_TERMINAL), bytes=len(CUTOUT_TERMINAL))
+                                if row["path"] == SELF_SHADOW_MATERIAL else row for row in sources]
+            require(checked["manifest"] == dict(original_manifest, sources=expected_sources),
+                    "Cutout manifest changed beyond the independently authored material identity")
+            require(unchanged(client, source, ids) == before and client.call("get_compile_settings") == settings
+                    and client.call("get_property_edit") == draft, "Cutout admission changed source, settings or the populated review")
+            cases["admitted"] = checked
+            rejected = CUTOUT_TERMINAL.replace(b"$alphatest 1", b"$alphatest 1 $alphatestreference 0.5")
+            overlay.write_bytes(rejected)
+            (args.output / "cutout-authored-reference.vmt").write_bytes(rejected)
+            pointfile = path.with_suffix(".lin")
+            sentinel = b"retained cutout receiver pointfile\n"
+            pointfile.write_bytes(sentinel)
+            cases["authored_reference_refused"] = rejected_compile(
+                client, path, source, ids, props[1], "Baked prop cutout material")
+            background = client.call("get_compile_status")["job"]
+            require(any(row["level"] == "error" and row["object"] == props[1]
+                        and "Baked prop cutout material" in row["message"] for row in background["result"]["diagnostics"]),
+                    "Background refusal did not identify the selected cutout receiver")
+            require(path.read_bytes() == alpha and pointfile.read_bytes() == sentinel
+                    and client.call("get_compile_settings") == settings and client.call("get_property_edit") == draft,
+                    "Cutout refusal changed prior BSP/LIN, settings or the populated review")
+            overlay.unlink()
+            _, restored, _ = compile_pair(client, args, source, ids, "cutout-opaque-restored", True)
+            require(restored == baseline, "Restoring the original opaque material did not restore complete BSP bytes")
+            require(unchanged(client, source, ids) == before and client.call("get_compile_settings") == settings
+                    and client.call("get_property_edit") == draft, "Opaque restoration changed source, settings or the populated review")
+            dispatches = [call.args[0] for call in calls.call_args_list if call.args[0] in ("compile_map", "start_compile")]
+            require(dispatches == ["compile_map", "start_compile"] * 3, "Cutout control did not complete its six real compile dispatches")
+    finally:
+        overlay.unlink(missing_ok=True)
+        client.call("cancel_property_edit", {"token": token})
+        require(all(path.read_bytes() == raw for path, raw in originals.items()), "Cutout control changed an original fixture asset")
+        require(all(path.read_bytes() == raw for path, raw in retained.items()), "Cutout control changed a retained BSP/LIN")
+    report["cutout_control"] = {"cases": cases, "compile_dispatches": dispatches, "model_flags": model_flags,
+                                "expected_meshes": expected_meshes, "vhv_exact_opaque_parity": True,
+                                "opaque_bsp_restored_exactly": True, "receiver_vtf_absent": True,
+                                "source_history_camera_settings_draft_preserved": True, "baseline_bsp_lin_preserved": True,
+                                "fixture_sha256": {str(path.relative_to(args.fixture_game)): probe.digest(raw) for path, raw in originals.items()},
+                                "native_exercised": False}
 
 
 def compare_self_shadow(before, after, channels, sources):
@@ -878,6 +975,8 @@ def validate(client, args, game, report):
         client.call("save_build_recipe", {"name": f"Prop vertex {mode}"})
         path, data, result = compile_pair(client, args, source, ids, mode, True)
         report["channels"][mode] = verify_output(args, game, data, result["stats"], channels)
+    if getattr(args, "cutout_control", False):
+        validate_cutout(client, args, game, source, ids, props, report)
     if args.self_shadow_control:
         validate_self_shadow(client, args, game, source, ids, props, report)
     if args.ignore_normals_control:
@@ -942,6 +1041,7 @@ def main():
     parser.add_argument("--unsupported-model-diagnostic", default="root LOD")
     parser.add_argument("--material", help="Optional selected receiver materials/...vmt to shadow for rejection; auto-detected only when unambiguous")
     parser.add_argument("--origin-z", type=float, default=48.0, help="Receiver origin height; use the fixture's exact minimum-Z offset to check floor contact")
+    parser.add_argument("--cutout-control", action="store_true", help="Add six real compile dispatches using the hash-guarded retained 614 wood_crate001a fixture (--origin-z 20.01078987121582): strict cutout admission with an absent receiver-only VTF and exact opaque LDR/HDR VHV parity, authored-reference refusal preserving BSP/LIN and a populated property draft, then exact opaque BSP restoration. Uses only a private VMT override; original assets remain read only. Headless admission does not qualify native cutout pixels.")
     parser.add_argument("--self-shadow-control", action="store_true", help="Check positive own-occlusion using the exact grounded wood_crate001a companions; requires --origin-z 20.01078987121582")
     parser.add_argument("--ignore-normals-control", action="store_true", help="Author IgnoreNormals through shared property operations; compare foreground/background colors at depths 0..4, exact default/zero restoration and current owned hardware-color inspection, retain atomic unsupported-receiver rejection and preserve every existing artifact without graphics")
     parser.add_argument("--one-bounce-control", action="store_true", help="Build, reject incompatible depths, clear and restore one-bounce prop lighting in both channels using the private measured wall VTF")

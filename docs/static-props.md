@@ -67,7 +67,9 @@ is included only when an emitted use needs **Collisions → Use VPhysics**;
 Packing preserves model flags. Compiler cutout texture shadows require the
 original MDL `CAST_TEXTURE_SHADOWS` request; without it, enabled prop shadows
 remain opaque mesh shadows with the existing warning. **Bake static-prop vertex lighting**
-still refuses selected alpha-tested receiver materials. Enable **Disable Vertex lighting** for that prop to pack it while baking other supported props.
+also admits these cutout terminals and Patch forms for the selected skin,
+independently of packing. Other unsupported receivers require **Disable Vertex lighting**
+on that prop when baking supported props.
 
 Included models, external or nontrivial animation, attachments, flexes, eye
 forms, LOD material replacements, material proxies/conditions, nested edited
@@ -182,8 +184,8 @@ stored in the BSP for every declared draw LOD.
 
 ![Static-prop vertex lighting in Build settings](images/build-prop-vertex-lighting.png)
 
-Limits: this is an experimental, default-off vertex bake for simple opaque
-models. Prop reception supports zero to four diffuse bounces. Indirect light
+Limits: this is an experimental, default-off vertex bake for admitted opaque or
+default-alpha-test models. Prop reception supports zero to four diffuse bounces. Indirect light
 needs texture-header or [authored material reflectivity](compile-and-play.md#authored-material-reflectivity)
 from every lit world or terrain source. Dimensions independently use the
 selected diffuse/tool VTF or the deliberate SDK no-preview convention described
@@ -199,6 +201,23 @@ before enabling it on a larger map. Per-texel prop lightmaps and reflected sourc
 remain unavailable. Each nonzero depth receives the preceding world/terrain
 lighting pass: one bounce uses direct world lighting, while four use the world
 result after three bounces. Direct prop light is added once.
+
+Selected cutout materials must resolve to a plain **VertexLitGeneric** terminal
+containing only one canonical `$basetexture` and one literal `$alphatest 1`.
+The cutoff is the default 0.5: authored `$alphatestreference`, even `0.5`,
+`$basetexturetransform`, extra keys, duplicates, conditional sections and proxies
+are unsupported. Include-only **Patch** chains allow at most eight include edges;
+one Patch directly including that terminal may instead insert or replace its
+existing `$basetexture`. Edited nested chains reject. Existing opaque material
+admission is unchanged.
+
+Receiver admission checks the selected skin across every declared draw LOD.
+Every hardware-color vertex is baked, including unused and duplicated vertices;
+VHV alpha stays `255` and does not encode the material cutout. A receiver-only
+basetexture is not read unless texture casting or asset packing needs it.
+**Pack static prop assets** remains optional and checks all declared skins.
+Receiving cutout materials does not enable cutout casting: texture shadows still
+require the original MDL `CAST_TEXTURE_SHADOWS` flag.
 
 Agents enable the same setting with `set_compile_settings` and
 `bake_static_prop_vertices: true`. Use `set_entity_properties` with
@@ -257,6 +276,6 @@ Agents set the same property with `set_entity_properties` and use shared compile
 settings; `get_compile_settings` describes the supported receiver limits.
 
 Limits: zero to four diffuse bounces are supported. The spherical reflected kernel differs from a unit visibility average; this is an angular policy, not full VRAD parity. Finite nonzero
-model normals, original-point contact/burial rules, opaque materials, source
+model normals, original-point contact/burial rules, admitted receiver materials, source
 guards, native ordinals and hardware-section limits remain the same. This does
 not enable VTX morph strip groups or change normal-facing world/terrain lighting.

@@ -16,10 +16,10 @@ HammeRR includes its own native compiler, so it builds Counter-Strike: Source ma
    - **Sampling quality**, for either lit mode’s sky, model ambient and bounced light: **Fast (32 directions)**, **Balanced (128 directions)** or **Detailed (512 directions)**.
    - **Lighting work limit (millions)**: **1000** by default. Enter a different allowance and click **Apply work limit** when a larger bake needs more headroom.
    - **Brush texture shadows**: bake binary cutouts from supported world/detail materials. See [Brush texture shadows](#brush-texture-shadows).
-   - **Bake static-prop vertex lighting**: opt in to direct vertex lighting and up to four diffuse world/terrain bounces for admitted simple opaque models. Choose a lit **Build lighting** mode and the desired **Indirect light** depth first.
+   - **Bake static-prop vertex lighting**: opt in to direct vertex lighting and up to four diffuse world/terrain bounces for admitted opaque or default-alpha-test models. Choose a lit **Build lighting** mode and the desired **Indirect light** depth first.
    - **Pack sky assets**: include the applied sky family's supported materials and textures in the BSP. This is off by default and works with every lighting mode.
    - **Pack water assets**: include original files for supported static Water materials and their dependencies. This is off by default, works with every lighting mode and requires explicit static LDR/HDR cubemap pairs throughout the graph.
-   - **Pack static prop assets**: include original files for admitted static models, every declared plain opaque material and its basetexture, plus PHY when VPhysics is needed. This is off by default and works independently of vertex lighting in every lighting mode. See [Static props](static-props.md#pack-static-prop-assets).
+   - **Pack static prop assets**: include original files for admitted static models, every declared admitted opaque or default-alpha-test material and its basetexture, plus PHY when VPhysics is needed. This is off by default and works independently of vertex lighting in every lighting mode. See [Static props](static-props.md#pack-static-prop-assets).
 3. Click **Close**, then **Compile** to build with the chosen settings, or **Run Map** to build and launch CS:S. Choose an output file if the map has not been saved.
 4. The progress bar below the toolbar offers **Build details…** to inspect the build. **Play built map** in that window launches the last successful build again without compiling, as long as the map and settings haven't changed.
 
@@ -149,7 +149,7 @@ for steps and limits.
 **Pack static prop assets** (all lighting modes)
 
 Off by default. Embed the admitted original static MDL/VVD/DX90 VTX files,
-every declared plain opaque **VertexLitGeneric** material and basetexture VTF,
+every declared admitted opaque or default-alpha-test **VertexLitGeneric** material and basetexture VTF,
 and the matching PHY only for emitted VPhysics uses. It is independent of
 **Bake static-prop vertex lighting**. Missing or unsupported inputs stop
 publication; dynamic/detail models are excluded. See [Static props](static-props.md#pack-static-prop-assets)
@@ -856,9 +856,15 @@ static-prop shadow controls.
 ![Static-prop vertex lighting in Build settings](images/build-prop-vertex-lighting.png)
 
 Limits: receivers require a static model with one bodypart, one model and all
-1–8 draw LODs, body 0, authored root LOD 0, unit scale and plain opaque selected
-**VertexLitGeneric** materials. A receiver may have at most 256 hardware-color
-sections across all LODs together. Samples stay at the original vertices.
+1–8 draw LODs, body 0, authored root LOD 0, unit scale and admitted opaque or
+strict default-alpha-test selected **VertexLitGeneric** materials. Cutout terminals
+allow only canonical `$basetexture` and literal `$alphatest 1`, with include-only
+Patch chains up to eight edges or one direct basetexture edit. Authored references,
+transforms and other keys on cutout materials reject. See the
+[receiver material limits](static-props.md#bake-vertex-lighting).
+A receiver may have at most 256 hardware-color sections across all LODs together.
+All hardware vertices retain VHV alpha `255`; samples stay at the original vertices.
+Packing is optional, and texture casting still needs the original MDL request.
 Ordinary opaque brush contact is supported; vertices buried more than
 0.000001 units inside a world brush, or touching terrain or another prop within
 that tolerance, reject explicitly. Set `disableselfshadowing` to `1` in a
@@ -1022,7 +1028,7 @@ admitted, publication replaces its directory entry and preserves its former targ
 | `--physics none\|engine` | Physics bodies. Defaults to `none`. Needs `hammerr-physics` next to the compiler. |
 | `--sky-quality fast\|balanced\|detailed` | Sky, model-ambient and bounce sampling for both lit modes. Defaults to `fast`. |
 | `--pack-water-assets` | Pack original files for supported static Water closures with explicit LDR/HDR cubemap pairs. Off by default; all lighting modes. See [Water](water.md#pack-static-water-assets). |
-| `--pack-static-prop-assets` | Pack admitted original static models and all declared plain opaque material/basetexture dependencies, plus required PHY. Off by default; independent of vertex lighting in all lighting modes. See [Static props](static-props.md#pack-static-prop-assets). |
+| `--pack-static-prop-assets` | Pack admitted original static models and all declared admitted opaque or default-alpha-test material/basetexture dependencies, plus required PHY. Off by default; independent of vertex lighting in all lighting modes. See [Static props](static-props.md#pack-static-prop-assets). |
 
 To try it on a generated test room with both teams' spawns:
 

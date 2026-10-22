@@ -35,13 +35,13 @@ pub(super) fn logical_path(name: &str, extension: &str) -> io::Result<String> {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub(super) enum Dependency {
+pub(crate) enum Dependency {
     Include(String),
     EditedInclude { include: String, texture: String },
     Texture(String),
 }
 
-pub(super) fn dependency(path: &str, bytes: &[u8]) -> io::Result<Dependency> {
+pub(crate) fn dependency(path: &str, bytes: &[u8]) -> io::Result<Dependency> {
     if bytes.len() > MAX_MATERIAL_BYTES {
         return Err(invalid(format!(
             "Static-prop material exceeds its byte budget: {path}"
@@ -168,6 +168,15 @@ pub(super) fn dependency(path: &str, bytes: &[u8]) -> io::Result<Dependency> {
     } else {
         Ok(Dependency::Texture(logical_path(reference, "vtf")?))
     }
+}
+
+pub(crate) fn validate_edit_chain(depth: usize, edited: bool) -> io::Result<()> {
+    if edited && depth > 1 {
+        return Err(invalid(
+            "Static-prop Patch edits require a direct plain VertexLitGeneric include",
+        ));
+    }
+    Ok(())
 }
 
 pub(super) fn texture(path: &str, bytes: Vec<u8>, control: &Control) -> io::Result<()> {

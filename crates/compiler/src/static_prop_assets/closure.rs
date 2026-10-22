@@ -275,11 +275,7 @@ pub(super) fn collect_closure(
                 if texture.is_some() {
                     edit_texture = texture;
                 }
-                if edit_texture.is_some() && chain.len() > 1 {
-                    return Err(invalid(
-                        "Static-prop Patch edits require a direct plain VertexLitGeneric include",
-                    ));
-                }
+                material::validate_edit_chain(chain.len(), edit_texture.is_some())?;
                 if chain.iter().any(|(path, _)| path == &include_path) {
                     return Err(invalid(format!(
                         "Static-prop Patch include cycle: {include_path}"
@@ -293,11 +289,10 @@ pub(super) fn collect_closure(
                     )));
                 }
                 if let Some(included) = included {
-                    if (edit_texture.is_some() || included.edited) && depth > 1 {
-                        return Err(invalid(
-                            "Static-prop Patch edits require a direct plain VertexLitGeneric include",
-                        ));
-                    }
+                    material::validate_edit_chain(
+                        depth,
+                        edit_texture.is_some() || included.edited,
+                    )?;
                     break MaterialSummary {
                         depth: included.depth + 1,
                         edited: included.edited,

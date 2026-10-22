@@ -23,7 +23,7 @@ fn texture() -> Vec<u8> {
     bytes
 }
 
-fn world_fixture(present: bool) -> (tempfile::TempDir, GameFs, Vmf, Vec<u8>) {
+pub(super) fn world_fixture(present: bool) -> (tempfile::TempDir, GameFs, Vmf, Vec<u8>) {
     let (directory, game) = fixtures::game();
     for folder in ["materials/indirect_sources", "materials/indirect_textures"] {
         std::fs::create_dir_all(directory.path().join(folder)).unwrap();

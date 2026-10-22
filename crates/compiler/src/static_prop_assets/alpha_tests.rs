@@ -492,7 +492,7 @@ fn rehashed_offline_alpha_bundles_still_check_grammar_mips_and_overridden_depend
 }
 
 #[test]
-fn packing_unselected_cutouts_does_not_admit_alpha_vertex_receivers_or_request_texture_shadows() {
+fn packing_cutouts_preserves_vertex_admission_opt_out_and_independent_shadow_requests() {
     let fixture = alpha_fixture("plain");
     fixture.write(FIRST, "VertexLitGeneric { $basetexture test/one }");
     let mut source = crate::test_common::room();
@@ -517,8 +517,9 @@ fn packing_unselected_cutouts_does_not_admit_alpha_vertex_receivers_or_request_t
         let before = source.clone();
         let output = crate::compile_with_options(&source, &fixture.game, options);
         assert_eq!(source, before);
-        if skin == "1" && !opt_out {
-            assert!(output.bsp.is_none() && output.report.has_errors());
+        assert!(!output.report.has_errors(), "{:?}", output.report);
+        assert_eq!(output.stats.prop_shadow_alpha_triangles, 0);
+        if skin == "1" {
             assert!(
                 output
                     .report
@@ -526,16 +527,12 @@ fn packing_unselected_cutouts_does_not_admit_alpha_vertex_receivers_or_request_t
                     .iter()
                     .any(
                         |diagnostic| diagnostic.object == Some(format!("entity:{owner}"))
-                            && diagnostic.message.contains("$alphatest")
-                            && diagnostic.message.contains("plain opaque")
+                            && diagnostic.message.contains("opaque mesh triangles")
                     ),
                 "{:?}",
                 output.report
             );
-            continue;
         }
-        assert!(!output.report.has_errors(), "{:?}", output.report);
-        assert_eq!(output.stats.prop_shadow_alpha_triangles, 0);
         let bsp = output.bsp.as_ref().unwrap();
         let plan = output.static_prop_assets.as_ref().unwrap();
         verify_packed_static_props(bsp, &plan.manifest(), &Control::default()).unwrap();
@@ -552,15 +549,6 @@ fn packing_unselected_cutouts_does_not_admit_alpha_vertex_receivers_or_request_t
                     .entries
                     .iter()
                     .all(|entry| !entry.name.ends_with(".vhv"))
-            );
-            assert!(
-                output
-                    .report
-                    .diagnostics
-                    .iter()
-                    .any(|diagnostic| diagnostic.message.contains("opaque mesh triangles")),
-                "{:?}",
-                output.report
             );
         } else {
             let lighting = output.prop_lighting_assets.as_ref().unwrap();

@@ -2,6 +2,147 @@ use super::*;
 use std::sync::{Arc, Mutex};
 
 #[test]
+fn software_cubemap_samples_distinguish_expanded_and_retained_counts_without_reference_geometry() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: false,
+        },
+    )))
+    .unwrap();
+    let (_directory, mut game, parent, child) = crate::test_assets::instance_map(false);
+    let tools = game.game_dir.join("materials/tools");
+    std::fs::create_dir_all(&tools).unwrap();
+    std::fs::write(tools.join("toolsblack.vmt"), "LightmappedGeneric {}").unwrap();
+    game.mounts.push(source_formats::gamefs::MountedPath {
+        ids: vec!["game".into()],
+        mount: source_formats::gamefs::Mount::Directory(game.game_dir.clone()),
+    });
+    let definitions = crate::steam::find_css_fgd(&game)
+        .map_or_else(
+            || {
+                source_formats::fgd::Catalog::parse(
+                    "@PointClass = env_cubemap [ cubemapsize(integer) : \"Cubemap Size\" : 0 ]",
+                )
+            },
+            |path| source_formats::fgd::Catalog::load(&path),
+        )
+        .unwrap();
+    let mut session = Session::new(Ok(game));
+    session.set_definitions(Actor::User, definitions);
+    for x in [16.0, 192.0] {
+        session
+            .create_entity(
+                Actor::User,
+                "env_cubemap",
+                Some(DVec3::new(x, 8.0, 64.0)),
+                BTreeMap::new(),
+            )
+            .unwrap();
+    }
+    session.save(Actor::User, Some(&child)).unwrap();
+    session.open(Actor::User, &parent, false).unwrap();
+    let stamp = session.compile_region_stamp();
+    let token = session
+        .preview_compile_region(
+            Actor::User,
+            Some(map_core::compile_region::Definition {
+                enabled: true,
+                bounds: map_core::compile_region::Bounds {
+                    mins: DVec3::new(-64.0, -64.0, 0.0),
+                    maxs: DVec3::new(64.0, 64.0, 160.0),
+                },
+            }),
+            &stamp,
+        )
+        .unwrap()["draft"]["token"]
+        .as_u64()
+        .unwrap();
+    session.apply_compile_region(Actor::User, token).unwrap();
+    session
+        .begin_property_edit(session::PropertyTarget::World)
+        .unwrap();
+    let token = session.property_draft().unwrap().token;
+    session
+        .append_property_change(
+            token,
+            session::PropertyChange::Set {
+                key: "message".into(),
+                value: "Keep the cubemap review".into(),
+            },
+        )
+        .unwrap();
+    let memory = session.document().vmf().clone();
+    let history = session.history_snapshot();
+    let camera = session.camera();
+    let settings = session.compile_settings();
+    let draft = serde_json::json!(session.property_draft());
+    let parent_bytes = std::fs::read(&parent).unwrap();
+    let child_bytes = std::fs::read(&child).unwrap();
+    let result = session.begin_compile(Actor::User, None).unwrap().run();
+    let output = &result.as_ref().unwrap().output;
+    assert!(output.bsp.is_some(), "{:?}", output.report);
+    assert_eq!(output.stats.cubemap_samples, 1);
+    assert_eq!(output.stats.instances.as_ref().unwrap().cubemaps, 2);
+    session.finish_compile(Actor::User, &result);
+    let request = session
+        .begin_instance_contents_refresh(Actor::User)
+        .unwrap();
+    let report = session
+        .finish_instance_contents_refresh(Actor::User, request.run())
+        .unwrap();
+    assert_eq!(report["state"], "ready");
+    assert_eq!(report["stats"]["cubemaps"], 2);
+    assert_eq!(report["cubemap_preview"]["available"], false);
+    assert_eq!(report["available"], false);
+    assert_eq!(report["geometry"]["vertices"], 0);
+    assert_eq!(report["face_provenance_total"], 0);
+    assert!(report["owners"][0]["bounds"].is_null());
+    let shared = Arc::new(Mutex::new(session));
+    let contents = Controller::new(shared.clone()).unwrap();
+    let build = crate::compile_ui::Controller::new(&shared).unwrap();
+    build.refresh(&lock(&shared));
+    let count = "Cubemap samples: 2 · expanded before compile-region filtering";
+    let reason = editor_core::session::instance_contents::CUBEMAP_PREVIEW_REASON;
+    assert_eq!(report["cubemap_preview"]["reason"], reason);
+    assert!(contents.window.get_summary().contains(count));
+    assert!(contents.window.get_summary().contains(reason));
+    assert!(build.window.get_details().contains(count));
+    assert!(build.window.get_details().contains(reason));
+    assert!(
+        build
+            .window
+            .get_details()
+            .lines()
+            .any(|line| line == "Cubemap samples: 1")
+    );
+    assert!(!contents.window.get_can_frame());
+    assert!(contents.window.get_owners().contains("child.vmf"));
+    contents.window.invoke_frame_contents();
+    assert!(
+        contents
+            .window
+            .get_message()
+            .contains("no visible geometry")
+    );
+    contents.window.show().unwrap();
+    contents
+        .window
+        .window()
+        .set_size(slint::PhysicalSize::new(850, 690));
+    crate::ui::tests::save_ui_snapshot(contents.window.window(), "instance-contents-cubemaps");
+    let session = lock(&shared);
+    assert_eq!(session.document().vmf(), &memory);
+    assert_eq!(session.history_snapshot(), history);
+    assert_eq!(session.camera(), camera);
+    assert_eq!(session.compile_settings(), settings);
+    assert_eq!(serde_json::json!(session.property_draft()), draft);
+    assert_eq!(std::fs::read(&parent).unwrap(), parent_bytes);
+    assert_eq!(std::fs::read(&child).unwrap(), child_bytes);
+}
+
+#[test]
 fn software_visibility_helpers_share_counts_and_missing_geometry_with_build_details() {
     slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
         i_slint_backend_testing::TestingBackendOptions {

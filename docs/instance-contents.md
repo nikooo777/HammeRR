@@ -16,7 +16,8 @@ icons.
 Supported child player spawns are counted without model/icon display, reference
 bounds, picking or framing.
 Child visibility-cluster volumes are counted for compilation without adding
-reference geometry or icons.
+reference geometry or icons. Automatic child cubemap samples likewise retain
+source identities and counts without sample geometry or icons.
 
 1. Save the parent VMF. Use **Instance reference…** to create an explicit relative
    `.vmf` reference inside its directory tree; see [Instance authoring](instance-authoring.md).
@@ -31,7 +32,9 @@ reference geometry or icons.
    spawns:** counts both supported team-spawn classes before region filtering
    and explains their unavailable model/icon geometry. **Visibility helpers:**
    counts expanded child visibility volumes before region filtering and explains
-   their unavailable geometry. **Cancel refresh**
+   their unavailable geometry. **Cubemap samples:** counts visible expanded
+   child samples before region filtering and explains their unavailable geometry,
+   icons, bounds, picking and framing. **Cancel refresh**
    cancels the current request; **Clear** frees the resolved layer.
 4. Click a displayed reference surface to select its root instance helper.
    Terrain picking follows the displaced triangles. Overlapping object cycling
@@ -120,6 +123,17 @@ placeholder geometry. Refresh checks their supported source and transform
 rules. Build-time leaf membership, area/liquid restrictions and the assembled
 retained-helper limit are checked during compilation.
 
+Supported automatic child `env_cubemap` samples retain source identities and
+counts without adding geometry or icons. A sample-only assembly is ready with
+zero geometry, null content bounds, no face provenance and unavailable
+**Frame instance contents**. Mixed assemblies keep their actual brush/terrain
+mesh, bounds and picking. Refresh checks finite source and intermediate
+positions, ordinary size enums 0–9 and absent or whitespace-only `sides`.
+It does not certify capture-size eligibility, distinct quantized positions or
+the retained sample limits; those are checked during compilation and reflection
+preparation. Size 9 can therefore be ready for reference inspection and ordinary
+sample compilation while its 256-pixel capture remains unsupported.
+
 **Tool textures** does not classify this flat reference layer. Child editing,
 parameter replacements and automatic live refresh remain unsupported.
 [Instance authoring](instance-authoring.md) edits the root reference.
@@ -174,6 +188,13 @@ content bounds and no face provenance.
 region filtering and is omitted when zero. `viscluster_preview` reports
 `available:false` and the inspector's unavailable-geometry reason. Visibility-only
 ready reports have zero geometry, no face provenance and null owner content bounds.
+
+`stats.cubemaps` counts expanded visible child cubemap samples before region
+filtering and is omitted when zero. When nonzero, `cubemap_preview` reports
+`available:false` with the inspector's reason: “Child cubemap samples have no
+reference geometry or icons; sample bounds, picking and framing are unavailable.”
+Sample-only ready reports have zero geometry, no face provenance and null owner
+content bounds.
 
 MCP uses `inspect_instance_contents` and `set_instance_contents` with
 `refresh`, `cancel`, `clear` or `frame`. Inspectors paginate at most 64 owners per

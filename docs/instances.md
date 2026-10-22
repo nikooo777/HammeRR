@@ -4,7 +4,8 @@
 
 Reuse saved VMFs' world and detail brushes, power 2–4 terrain, unnamed static
 point/spot lights, static props, scoped lighting-origin helpers, player spawns,
-visibility volumes and nested references at several positions and rotations.
+visibility volumes, automatic cubemap samples and nested references at several
+positions and rotations.
 Compilation expands the supported contents without an extra switch. The editor
 can resolve a separate, explicitly refreshed
 [reference preview](instance-contents.md) with actual displaced terrain surfaces
@@ -16,7 +17,8 @@ from supported brushes already in the parent.
    `parts/arch.vmf`. Keep the child's visible contents to world brushes,
    ordinary `func_detail` brushes, supported static lights/props, `info_lighting`
    helpers, `info_player_terrorist` / `info_player_counterterrorist` spawns,
-   `func_viscluster` volumes and nested `func_instance` references.
+   `func_viscluster` volumes, automatic `env_cubemap` samples and nested
+   `func_instance` references.
    World and detail brushes may carry supported power 2, 3 or 4 terrain. The
    child's world settings do not replace the parent's.
 2. To add a child light, open the child and click **Entity…**, then choose `light`
@@ -46,7 +48,12 @@ from supported brushes already in the parent.
    click **Tie to entity…**. Choose `func_viscluster`, then click **Tie selected
    brushes to entity** and save the child. See [Visibility clusters](visclusters.md)
    for membership and region rules.
-7. Click **Instance reference…**. Set **VMF reference** to `parts/arch.vmf`,
+7. To add a child reflection sample, open **Entity…**, choose `env_cubemap`,
+   then click **Place entity**. Set **Position** and **Advanced properties →
+   Cubemap Size**. Keep **Brush faces** empty and save the child. The loaded
+   **Default** size uses `cubemapsize:0`; rotate the containing reference to
+   reposition samples.
+8. Click **Instance reference…**. Set **VMF reference** to `parts/arch.vmf`,
    choose **Position** and **Rotation**, then click **Create**. **Cancel** leaves
    the map unchanged. For a child with lighting-origin helpers, set every
    containing reference's **Advanced properties → Fix Up Name** to an explicit
@@ -54,7 +61,7 @@ from supported brushes already in the parent.
    helper name is `assembly-sample`; nested prefixes join outermost first. See
    [Instance authoring](instance-authoring.md) for browsing, editing and file-check
    controls.
-8. To inspect child shapes, enable **Instance contents**, open **Instance contents…**
+9. To inspect child shapes, enable **Instance contents**, open **Instance contents…**
    and click **Refresh instance contents**. Terrain uses its displaced surface
    for the flat-color view, content bounds and picking. Clicking it selects the
    root helper; the child remains read-only. **Expanded static lights:** reports
@@ -66,13 +73,15 @@ from supported brushes already in the parent.
    **Expanded player spawns:** counts child spawns and explains that their
    models, icons, bounds, picking and framing are unavailable in this layer.
    **Visibility helpers:** counts consumed child volumes; they add no reference
-   surfaces, icons, bounds, picking or framing.
-9. Move or rotate the helper with the ordinary transform controls. Its origin
+   surfaces, icons, bounds, picking or framing. **Cubemap samples:** counts child
+   samples, with the same unavailable display, bounds, picking and framing.
+10. Move or rotate the helper with the ordinary transform controls. Its origin
    places the child's origin. The `angles` property uses Source pitch, yaw, roll;
    brushes, terrain, static props, player-spawn poses, light positions/spot
-   directions and attached texture coordinates rotate together. Keep replacement fields empty; named runtime
+   directions, cubemap sample positions and attached texture coordinates rotate
+   together. Keep replacement fields empty; named runtime
    entities are unsupported.
-10. Click **Compile**. Unsaved parent edits are included. Open **Build details…**
+11. Click **Compile**. Unsaved parent edits are included. Open **Build details…**
    in the bar below the toolbar to inspect **Instances**, **Files**, **Nesting
    depth**, world/detail brush counts and each relative dependency's byte count
    and **SHA256**. **Expanded static lights:** counts all expanded point/spot
@@ -83,8 +92,10 @@ from supported brushes already in the parent.
    filtering, including unreferenced helpers. **Expanded player spawns:** counts
    both supported spawn classes before transformed-origin region filtering.
    **Visibility helpers:** also counts expansion before filtering; the visibility
-   summary counts helpers retained by the selected build region.
-11. Recompile after changing any child or descendant. Changed, missing or
+   summary counts helpers retained by the selected build region. The instance
+   **Cubemap samples:** count also describes expansion before filtering; the
+   ordinary cubemap summary counts retained root and child samples together.
+12. Recompile after changing any child or descendant. Changed, missing or
     retargeted dependencies make the completed build stale and disable **Play
     built map**. Launch also verifies exact dependency contents before starting
     the game. Consumed model sources also retain the original
@@ -126,6 +137,23 @@ Limits:
   remain excluded; hidden helpers never load their files.
   Name prefixing supports only the lighting-origin subset below; general
   runtime name rewriting remains unsupported.
+- Child `env_cubemap` samples support automatic assignment only: `sides` must be
+  absent or whitespace-only. Use canonical lowercase unique keys and an explicit
+  finite `origin`. Source and every intermediate transformed point must fit
+  ±16384 units, even when a later transform would return inside the bounds.
+  Optional `angles` and legacy `angle` must be zero; expansion preserves their
+  authored presence or absence and changes only position. Names, targets,
+  parents and other reference fields must be absent or whitespace-only.
+  `spawnflags`, `mindxlevel` and `maxdxlevel` must be absent or integer 0.
+  Brushes, I/O, unknown properties, duplicate case aliases and opaque blocks
+  reject. Hidden samples are omitted before expansion.
+- Cubemap sizes use ordinary enums 0–9; an absent or blank `cubemapsize` uses 0.
+  Ordinary compilation admits up to 1024 retained root and child samples.
+  **Generate reflections** independently admits 1–32 samples at distinct native
+  integer positions, with cube edges up to 128 pixels; size 0 uses 128 pixels.
+  Size 9 can compile a sample record but its 256-pixel capture is unsupported.
+  Both sample-count limits apply globally after regional filtering. Coordinates convert to Source’s 32-bit floats before truncation to integer sample positions. Source and
+  intermediate child positions still validate before regional omission.
 - Child player spawns support only canonical lowercase `info_player_terrorist`
   and `info_player_counterterrorist`. An explicit finite `origin` and every
   intermediate transformed point must fit ±16384 units. Optional finite
@@ -229,17 +257,20 @@ Limits:
   including collisions with visible root helpers, reject. Source and every
   intermediate helper point must remain within compile bounds.
 - **Generate reflections** captures the assembled scene with visible root-map
-  `env_cubemap` helpers through the existing [reflection workflow](reflections.md).
+  and automatic child `env_cubemap` helpers through the existing
+  [reflection workflow](reflections.md).
   Automatic assignment includes supported transformed child faces. Existing
   manual `sides` lists may target only unique original root-map faces that
   survive compilation; a generated child ID cannot repair a missing target.
-  Child `env_cubemap` helpers remain unsupported. **Cubemap faces…** inspection
+  Capture-size, quantized-position collision and excess-sample diagnostics
+  identify the containing root reference, leaf file and original child helper;
+  a collision identifies both implicated helpers. **Cubemap faces…** inspection
   and binding drafts are unavailable while a visible instance reference is present,
   because authored faces alone do not describe the assembled scene.
 - Expansion happens before parent compile-region selection. Geometry intersecting
   the region remains eligible even when its instance marker is outside. Ordinary
   region geometry restrictions still apply; child lights, props and spawns are selected
-  by transformed origin.
+  by transformed origin, as are child cubemap samples.
   Keep lights inside sealing boundaries: a retained light on a generated wall
   can be unavailable for baking, with an explicit diagnostic. Region-omitted
   child props do not read their model assets. Models remain external game
@@ -275,6 +306,10 @@ including unreferenced helpers, and is omitted when zero.
 Optional `player_spawns` counts both supported spawn classes before region
 filtering and is omitted when zero. A spawn-only ready assembly has no child
 model/icon, content bounds, picking or framing geometry.
+Optional `cubemaps` counts visible expanded child samples before region filtering
+and is omitted when zero. A sample-only assembly can be ready with source
+identities and counts, zero geometry, null content bounds and unavailable
+picking/framing; mixed assemblies keep their real brush/terrain geometry.
 Reference resolution does not validate model headers; missing or unsupported
 models stop compilation through the ordinary static-prop consumer.
 Completed jobs also report dependency freshness. `get_compile_status.launch` and

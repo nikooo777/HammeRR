@@ -6,7 +6,7 @@ Generate reflections for the map's `env_cubemap` samples as part of **Compile** 
 
 ## Choose reflection generation
 
-1. Use **Place entity** to add `env_cubemap` entities to the parent map and save it. For maps without visible instance references, use [Cubemap faces](cubemap-faces.md) to inspect or author face bindings.
+1. Open **Entity…**, choose `env_cubemap`, then click **Place entity**. Set **Position** and **Advanced properties → Cubemap Size**, then save the map. Samples may also live in [referenced child VMFs](instances.md); keep their **Brush faces** empty. For maps without visible instance references, use [Cubemap faces](cubemap-faces.md) to inspect or author face bindings.
 2. Click **Build settings…**, or **Build details…** after a build.
 3. Set **Build lighting** to **Direct LDR** for LDR reflections or **Direct LDR + HDR** for both channels.
 4. Enable **Generate reflections**. Read the capture runtime status below it. Enabling the setting does not launch CS:S.
@@ -18,11 +18,20 @@ Generate reflections for the map's `env_cubemap` samples as part of **Compile** 
 **Fullbright** cannot generate reflections. Turn off **Generate reflections** before choosing it. Switching between **Direct LDR** and **Direct LDR + HDR** retains the generation setting. An incompatible update preserves both current values.
 
 Saved [referenced assemblies](instances.md) use these same settings and build
-controls. Automatic assignment includes supported transformed child geometry;
-place the capture helpers in the parent VMF. Existing manual `sides` lists may
+controls. Automatic assignment includes supported transformed child geometry
+and samples. Child `env_cubemap` helpers require an explicit finite origin and
+absent or whitespace-only `sides`; instance transforms change their positions
+without synthesizing orientation fields. Source and every intermediate position
+must remain within ±16384 units. Existing root manual `sides` lists may
 refer only to unique original parent faces that survive the committed compile
 region. Missing or ambiguous root IDs reject before generated child IDs can
-satisfy them. Child `env_cubemap` helpers are unsupported.
+satisfy them. Child manual bindings remain unsupported.
+
+**Instance contents…** and the instance section of **Build details…** report
+**Cubemap samples:** before regional filtering. Child samples have no reference
+geometry, icons, bounds, picking or framing; a sample-only reference can still
+be ready with its checked source identities and counts. The ordinary cubemap
+summary counts retained root and child samples together.
 
 **Cubemap faces…** inspection and binding drafts are unavailable while a visible
 instance reference is present. The authored-only
@@ -112,7 +121,8 @@ capture cleanup, even when the capture and Play installations differ.
 
 - Automatic face assignment supports checked initial rotations of unparented `func_brush` models; manual bindings select their authored helper directly. Later model motion does not reassign samples. See [Cubemap faces](cubemap-faces.md) for pose and work limits.
 - Generation supports one capture bounce per channel: LDR alone or paired LDR/HDR. Additional capture bounces, moving-scene reassignment and reflection preview inside the editor are unavailable. HDR playback still depends on the game setting and hardware; **HDR data ready** describes baked map data.
-- A build supports 1–32 samples at distinct integer positions. Sample size `0` uses the declared 128-pixel default. Explicit cube edges up to 128 pixels are supported; 256 pixels is rejected before launch. The private capture viewport must verify as 1280×720.
+- Ordinary compilation supports size enums 0–9 and up to 1024 cubemap sample records. Reflection generation independently supports 1–32 samples at distinct native integer positions. Both count limits cover the complete assembled root and retained child samples after regional filtering. Coordinates convert to Source’s 32-bit floats before truncation to integer sample positions. Sample size `0` uses the declared 128-pixel default. Explicit cube edges up to 128 pixels are supported; size `9` can compile an ordinary 256-pixel sample record but capture rejects it before launch. The private capture viewport must verify as 1280×720.
+- Capture-size, quantized-position collision and excess-sample errors identify the containing root reference, leaf filename and original child helper. Collision errors identify both helpers. Child source and intermediate positions validate before regional omission; malformed source, duplicate/case-aliased properties, non-neutral runtime fields, brushes, I/O and opaque blocks reject. See the [child cubemap limits](instances.md).
 - A supported CS:S installation, running Steam client, native runtime helper, Cage, grim and Bubblewrap must pass preflight. Bubblewrap needs usable Linux user namespaces. Unsupported materials, sample sizes, missing assets or unverified captures fail the build with diagnostics.
 - Native capture requires a short temporary directory path without uppercase ASCII characters. The complete private Wayland socket path, including its terminating NUL, must fit Linux's 108-byte limit. An overlong path is rejected before startup; use a writable lowercase `TMPDIR` such as `/path/to/project/target/native`.
 - The capture client reads external files through a read-only filesystem view. Only its owned capture directory is writable; source mounts keep their files and caches. Graphics devices and Steam IPC remain available.

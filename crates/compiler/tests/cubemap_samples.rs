@@ -28,13 +28,46 @@ fn add_sample(vmf: Vmf, origin: Option<DVec3>, size: Option<&str>) -> (Vmf, u32)
 fn native_samples_use_source_integer_positions_byte_sizes_and_no_runtime_entities() {
     let mut vmf = common::room();
     let cases = [
-        (DVec3::new(-12.875, 34.5, 64.125), Some("9"), 9),
-        (DVec3::new(-0.75, 0.75, 72.875), Some("1"), 1),
-        (DVec3::new(48.5, -48.5, 128.25), Some("5"), 5),
-        (DVec3::new(96.0, 96.0, 128.0), None, 0),
-        (DVec3::new(128.0, 96.0, 128.0), Some(" 0 "), 0),
+        (
+            DVec3::new(-12.875, 34.5, 64.125),
+            Some("9"),
+            9,
+            [-12, 34, 64],
+        ),
+        (DVec3::new(-0.75, 0.75, 72.875), Some("1"), 1, [0, 0, 72]),
+        (
+            DVec3::new(48.5, -48.5, 128.25),
+            Some("5"),
+            5,
+            [48, -48, 128],
+        ),
+        (DVec3::new(96.0, 96.0, 128.0), None, 0, [96, 96, 128]),
+        (
+            DVec3::new(128.0, 96.0, 128.0),
+            Some(" 0 "),
+            0,
+            [128, 96, 128],
+        ),
+        (
+            DVec3::new(-95.99999999999999, 95.99999999999999, 64.0),
+            Some("6"),
+            6,
+            [-96, 96, 64],
+        ),
+        (
+            DVec3::new(-0.99999999, 0.99999999, 72.0),
+            Some("6"),
+            6,
+            [-1, 1, 72],
+        ),
+        (
+            DVec3::new(-16383.9999, 16383.9999, 128.0),
+            Some("6"),
+            6,
+            [-16384, 16384, 128],
+        ),
     ];
-    for (origin, size, _) in cases {
+    for (origin, size, _, _) in cases {
         vmf = add_sample(vmf, Some(origin), size).0;
     }
     let source = vmf.clone();
@@ -46,8 +79,8 @@ fn native_samples_use_source_integer_positions_byte_sizes_and_no_runtime_entitie
     let parsed = Bsp::parse(&bsp.to_bytes()).unwrap();
     let samples = parsed.records::<Cubemap>().unwrap();
     assert_eq!(samples.len(), cases.len());
-    for (sample, (origin, _, size)) in samples.iter().zip(cases) {
-        assert_eq!(sample.origin, origin.to_array().map(|value| value as i32));
+    for (sample, (_, _, size, expected)) in samples.iter().zip(cases) {
+        assert_eq!(sample.origin, expected);
         assert_eq!(sample.size, size);
         assert_eq!(sample.padding, [0; 3]);
     }
@@ -100,6 +133,8 @@ fn invalid_sizes_origins_and_helper_geometry_fail_with_object_diagnostics() {
     for value in [
         "NaN 0 0".to_owned(),
         "0 infinity 0".to_owned(),
+        "16384.00001 0 0".to_owned(),
+        "-16384.00001 0 0".to_owned(),
         format_vec3(DVec3::X * (MAX_COMPILE_COORD + 0.5)),
         "1 2".to_owned(),
     ] {

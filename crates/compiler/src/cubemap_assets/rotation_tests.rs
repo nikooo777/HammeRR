@@ -435,8 +435,8 @@ fn absent_exact_zero_and_signed_zero_keep_identical_assignment_alias_plans() {
         &game,
         &mut map,
         &context,
-        false,
-        false,
+        binding::PrepareOptions::default(),
+        &mut crate::Report::default(),
         &Control::default(),
     )
     .unwrap();
@@ -456,8 +456,8 @@ fn absent_exact_zero_and_signed_zero_keep_identical_assignment_alias_plans() {
             &game,
             &mut map,
             &context,
-            false,
-            false,
+            binding::PrepareOptions::default(),
+            &mut crate::Report::default(),
             &Control::default(),
         )
         .unwrap();

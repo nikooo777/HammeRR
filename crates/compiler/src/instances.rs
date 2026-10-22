@@ -9,6 +9,7 @@ use source_formats::vmf::{Entity, Solid, Vmf, parse_vec3};
 
 use crate::{Control, Diagnostic, FileIdentity, FileStamp, Report};
 
+mod cubemaps;
 mod entities;
 mod expand;
 mod names;
@@ -359,6 +360,8 @@ pub struct InstanceStats {
     pub player_spawns: usize,
     #[serde(skip_serializing_if = "is_zero")]
     pub visclusters: usize,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub cubemaps: usize,
     pub dependencies: Vec<DependencyInfo>,
 }
 
@@ -625,6 +628,11 @@ fn child_admission(child: &Vmf, control: &Control) -> Result<(), String> {
                 .map_err(|error| format!("Child viscluster {}: {error}", entity.id))?;
             continue;
         }
+        if cubemaps::is_helper(entity) {
+            cubemaps::admit(entity)
+                .map_err(|error| format!("Child cubemap {}: {error}", entity.id))?;
+            continue;
+        }
         for (key, value) in entity.properties.iter() {
             field(key)?;
             field(value)?;
@@ -634,7 +642,7 @@ fn child_admission(child: &Vmf, control: &Control) -> Result<(), String> {
             .is_some_and(|class| class.eq_ignore_ascii_case("func_detail"))
         {
             return Err(format!(
-                "Child entity {} ({}) is unsupported; only world/func_detail brushes, unnamed static lights, bounded static props, scoped info_lighting helpers, neutral player spawns, consumed func_viscluster volumes and bounded func_instance helpers are supported",
+                "Child entity {} ({}) is unsupported; only world/func_detail brushes, unnamed static lights, bounded static props, scoped info_lighting helpers, neutral player spawns, consumed func_viscluster volumes, automatic env_cubemap samples and bounded func_instance helpers are supported",
                 entity.id,
                 entity.classname().unwrap_or("missing class")
             ));

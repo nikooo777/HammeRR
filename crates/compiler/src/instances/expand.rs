@@ -263,6 +263,11 @@ impl<'a> Expansion<'a> {
                         .map_err(|error| {
                             EditError::Invalid(format!("Child viscluster {}: {error}", entity.id))
                         })?;
+                } else if cubemaps::is_helper(entity) {
+                    self.cubemap(tx, entity, owner.id, &relative, transforms)
+                        .map_err(|error| {
+                            EditError::Invalid(format!("Child cubemap {}: {error}", entity.id))
+                        })?;
                 } else if let Some(kind) = entities::kind(entity) {
                     if matches!(kind, entities::Kind::LightingOrigin) {
                         continue;
@@ -318,6 +323,56 @@ impl<'a> Expansion<'a> {
         transforms.pop();
         self.name_scopes.pop();
         result.map_err(|error| EditError::Invalid(format!("Instance {relative}: {error}")))
+    }
+
+    fn cubemap(
+        &mut self,
+        tx: &mut Transaction<'_>,
+        original: &Entity,
+        owner: u32,
+        relative: &str,
+        transforms: &[edit::Transform],
+    ) -> Result<(), EditError> {
+        self.control.checkpoint().map_err(EditError::Invalid)?;
+        self.objects = self.objects.saturating_add(1);
+        let bytes = original
+            .properties
+            .iter()
+            .try_fold(0_usize, |bytes, (key, value)| {
+                bytes.checked_add(key.len())?.checked_add(value.len())
+            });
+        let work = bytes
+            .and_then(|bytes| bytes.checked_mul(transforms.len() + 1))
+            .and_then(|work| self.work.checked_add(work));
+        let Some(work) = work else {
+            return Err(EditError::Invalid("Instance entity-work overflow".into()));
+        };
+        if self.objects > MAX_OBJECTS || work > MAX_GEOMETRY_WORK {
+            return Err(EditError::Invalid(
+                "Instance expansion exceeds combined objects or geometry-work limits".into(),
+            ));
+        }
+        self.work = work;
+        cubemaps::point(original).map_err(EditError::Invalid)?;
+        let mut entity = original.clone();
+        entity.id = tx.new_object_id()?;
+        entity.editor = None;
+        for transform in transforms.iter().rev() {
+            self.control.checkpoint().map_err(EditError::Invalid)?;
+            let point = cubemaps::point(&entity).map_err(EditError::Invalid)?;
+            let point = map_core::transform::transform_point(point, *transform)?;
+            entity
+                .properties
+                .set("origin", source_formats::vmf::format_vec3(point));
+            cubemaps::point(&entity).map_err(EditError::Invalid)?;
+        }
+        self.provenance.insert(
+            format!("entity:{}", entity.id),
+            (owner, relative.to_owned(), original.id, None),
+        );
+        tx.add_entity(entity)?;
+        self.stats.cubemaps += 1;
+        Ok(())
     }
 
     fn viscluster(

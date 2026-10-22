@@ -416,6 +416,10 @@ impl Mapping {
     }
 }
 
+pub fn transform_point(point: DVec3, transform: Transform) -> Result<DVec3, EditError> {
+    Mapping::new(transform)?.point(point)
+}
+
 pub fn transform(
     tx: &mut Transaction,
     ids: &[ObjectId],
@@ -484,6 +488,35 @@ mod tests {
             angles.x.to_radians(),
             angles.z.to_radians(),
         )
+    }
+
+    #[test]
+    fn checked_positions_match_literal_nested_rotations_and_reject_nonfinite_input() {
+        let inner = Transform {
+            translation: DVec3::new(4.5, -6.25, 12.125),
+            rotation: DVec3::new(90.0, 0.0, 0.0),
+            ..Default::default()
+        };
+        let outer = Transform {
+            translation: DVec3::new(80.125, 16.375, 8.0625),
+            rotation: DVec3::new(0.0, 0.0, 90.0),
+            ..Default::default()
+        };
+        let point = transform_point(DVec3::new(2.25, -3.5, 7.75), inner).unwrap();
+        assert!(point.abs_diff_eq(DVec3::new(6.75, -14.0, 8.625), 1e-10));
+        let point = transform_point(point, outer).unwrap();
+        assert!(point.abs_diff_eq(DVec3::new(94.125, 23.125, 16.6875), 1e-10));
+        assert!(transform_point(DVec3::splat(f64::NAN), Transform::default()).is_err());
+        assert!(
+            transform_point(
+                DVec3::ZERO,
+                Transform {
+                    translation: DVec3::splat(f64::INFINITY),
+                    ..Default::default()
+                },
+            )
+            .is_err()
+        );
     }
 
     #[test]

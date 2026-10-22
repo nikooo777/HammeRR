@@ -5,6 +5,21 @@ use super::*;
 const MAX_CUBEMAP_SIZE: u8 = 9;
 
 impl Map<'_> {
+    pub(crate) fn cubemap_size(entity: &Entity) -> Result<u8, String> {
+        let size = entity
+            .properties
+            .get("cubemapsize")
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("0")
+            .parse::<u8>()
+            .map_err(|_| cubemap_size_message())?;
+        if size > MAX_CUBEMAP_SIZE {
+            return Err(cubemap_size_message());
+        }
+        Ok(size)
+    }
+
     pub(super) fn add_cubemap(&mut self, entity: &Entity, report: &mut Report) {
         let object = Some(format!("entity:{}", entity.id));
         let origin = entity.origin().unwrap_or(DVec3::ZERO);
@@ -16,21 +31,15 @@ impl Map<'_> {
             ));
             return;
         }
-        let size = entity
-            .properties
-            .get("cubemapsize")
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or("0")
-            .parse::<u8>();
-        let Ok(size) = size else {
-            report.diagnostics.push(cubemap_size_error(object, origin));
-            return;
+        let size = match Self::cubemap_size(entity) {
+            Ok(size) => size,
+            Err(message) => {
+                report
+                    .diagnostics
+                    .push(Diagnostic::error(message, object, Some(origin)));
+                return;
+            }
         };
-        if size > MAX_CUBEMAP_SIZE {
-            report.diagnostics.push(cubemap_size_error(object, origin));
-            return;
-        }
         if self.cubemaps.len() >= bsp::MAX_CUBEMAP_SAMPLES {
             report.diagnostics.push(Diagnostic::error(
                 format!(
@@ -54,19 +63,15 @@ impl Map<'_> {
             ));
         }
         self.cubemaps.push(bsp::Cubemap {
-            origin: origin.to_array().map(|value| value as i32),
+            origin: origin.to_array().map(|value| value as f32 as i32),
             size,
             padding: [0; 3],
         });
     }
 }
 
-fn cubemap_size_error(object: Option<String>, origin: DVec3) -> Diagnostic {
-    Diagnostic::error(
-        format!(
-            "Cubemap Size must be an integer from 0 to {MAX_CUBEMAP_SIZE} (0 uses the game default; 1–9 select 1–256 pixels)"
-        ),
-        object,
-        Some(origin),
+fn cubemap_size_message() -> String {
+    format!(
+        "Cubemap Size must be an integer from 0 to {MAX_CUBEMAP_SIZE} (0 uses the game default; 1–9 select 1–256 pixels)"
     )
 }

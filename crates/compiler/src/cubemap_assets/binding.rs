@@ -9,7 +9,7 @@ use super::material::{Graph, ensure_default_unmounted, material_name, sample_tex
 use super::*;
 use crate::brush_model_pose::{Pose, initial_offset, initial_rotation};
 use crate::map::Map;
-use crate::{Control, Report};
+use crate::{Control, Diagnostic, Report};
 
 const POSE_PROPERTY_SCANS: usize = 3;
 
@@ -79,6 +79,12 @@ pub(crate) struct Plan {
     pub manifest: CubemapAssetManifest,
     pub entries: Vec<PakEntry>,
     eligible_faces: BTreeSet<u32>,
+}
+
+#[derive(Default)]
+pub(crate) struct PrepareOptions {
+    pub capture_scene: bool,
+    pub hdr: bool,
 }
 
 struct Side {
@@ -167,8 +173,8 @@ pub fn inspect_cubemap_bindings(
         fs,
         &mut map,
         &context,
-        false,
-        false,
+        PrepareOptions::default(),
+        &mut report,
         control,
     )?;
     if !requested.is_subset(&plan.eligible_faces) {
@@ -208,15 +214,24 @@ pub(crate) fn capture_preflight(vmf: &Vmf) -> Result<(), String> {
     native_runtime::preflight_vmf(vmf).map_err(|error| error.to_string())
 }
 
+fn helper_error(report: &mut Report, entity: &Entity, message: &str) {
+    report.diagnostics.push(Diagnostic::error(
+        message,
+        Some(format!("entity:{}", entity.id)),
+        entity.origin(),
+    ));
+}
+
 pub(crate) fn prepare(
     vmf: &Vmf,
     fs: &GameFs,
     map: &mut Map<'_>,
     context: &CompileContext,
-    capture_scene: bool,
-    hdr: bool,
+    options: PrepareOptions,
+    report: &mut Report,
     control: &Control,
 ) -> Result<Plan, String> {
+    let PrepareOptions { capture_scene, hdr } = options;
     let helpers: Vec<_> = vmf
         .entities
         .iter()
@@ -228,7 +243,12 @@ pub(crate) fn prepare(
         })
         .collect();
     if helpers.is_empty() || helpers.len() > MAX_SAMPLES || helpers.len() != map.cubemaps.len() {
-        return Err("Generate reflections requires 1–32 valid visible env_cubemap helpers".into());
+        let message = "Generate reflections requires 1–32 valid visible env_cubemap helpers";
+        for helper in helpers.iter().skip(MAX_SAMPLES) {
+            control.checkpoint()?;
+            helper_error(report, helper, message);
+        }
+        return Err(message.into());
     }
     if capture_scene {
         ensure_default_unmounted(fs, context.namespace())?;
@@ -236,7 +256,7 @@ pub(crate) fn prepare(
             super::material::ensure_hdr_default_unmounted(fs, context.namespace())?;
         }
     }
-    let mut positions = BTreeSet::new();
+    let mut positions = BTreeMap::new();
     let mut samples = Vec::with_capacity(helpers.len());
     let mut hdr_samples = Vec::new();
     for (entity, cube) in helpers.iter().zip(&map.cubemaps) {
@@ -248,16 +268,21 @@ pub(crate) fn prepare(
                 .ok_or("Invalid cubemap size")?
         };
         if edge > MAX_CUBE_EDGE {
-            return Err(format!(
+            let message = format!(
                 "entity:{}: native reflection capture currently supports cube edges up to {MAX_CUBE_EDGE}; size 256 requires a larger verified viewport",
                 entity.id
-            ));
+            );
+            helper_error(report, entity, &message);
+            return Err(message);
         }
-        if !positions.insert(cube.origin) {
-            return Err(format!(
+        if let Some(previous) = positions.insert(cube.origin, *entity) {
+            let message = format!(
                 "entity:{}: cubemap helpers collide after native integer origin quantization at {:?}",
                 entity.id, cube.origin
-            ));
+            );
+            helper_error(report, previous, &message);
+            helper_error(report, entity, &message);
+            return Err(message);
         }
         let bootstrap = super::manifest::bootstrap_cube(edge)?;
         let sha256 = hash(&bootstrap);

@@ -8,7 +8,7 @@ the chosen sample position, original material and generated material alias.
 Inspection and binding drafts are unavailable when the map contains a visible
 instance reference: authored faces do not describe the
 assembled geometry. This does not prevent [reflection generation](reflections.md)
-with root-map helpers.
+with root-map or automatic child helpers.
 
 1. Select one visible `env_cubemap` entity and choose **Cubemap faces…**.
 2. Keep the window open and select faces in the map. **Select face** in the
@@ -55,6 +55,10 @@ described in [Generated reflections](reflections.md).
 - Manual targets must be unique, visible authored faces that survive the
   committed compile region. Missing faces, ambiguous IDs, malformed lists,
   duplicate owners and non-emitting targets reject with a diagnostic.
+  With visible instance references, existing root `sides` lists may name only
+  original root-map face IDs; generated child IDs cannot satisfy missing targets.
+  Child `env_cubemap` samples require absent or whitespace-only `sides` and use
+  automatic assignment. See [Referenced assemblies](instances.md).
 - Another authored helper's manual ownership also blocks reassignment when
   that helper is hidden or excluded by the compile region. Unhide it or
   restore its region, remove the old binding explicitly, then bind the face

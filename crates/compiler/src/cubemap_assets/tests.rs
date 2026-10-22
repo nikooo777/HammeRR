@@ -729,6 +729,82 @@ fn script_and_size_preflight_fail_before_native_launch() {
 }
 
 #[test]
+fn capture_admission_errors_link_size_collisions_and_excess_sample_owners() {
+    let (_directory, game) = game();
+    for failure in ["size", "collision", "count"] {
+        let (mut vmf, helpers) = source();
+        let expected = match failure {
+            "size" => {
+                vmf.entities
+                    .iter_mut()
+                    .find(|entity| entity.id == helpers[0])
+                    .unwrap()
+                    .properties
+                    .set("cubemapsize", "9");
+                vec![helpers[0]]
+            }
+            "collision" => {
+                vmf.entities
+                    .iter_mut()
+                    .find(|entity| entity.id == helpers[1])
+                    .unwrap()
+                    .properties
+                    .set("origin", "-96.9 0 64");
+                helpers.to_vec()
+            }
+            "count" => {
+                let helper = vmf
+                    .entities
+                    .iter()
+                    .find(|entity| entity.id == helpers[0])
+                    .unwrap()
+                    .clone();
+                let first = vmf.object_ids().max().unwrap() + 1;
+                for index in 0..MAX_SAMPLES - helpers.len() + 1 {
+                    let mut helper = helper.clone();
+                    helper.id = first + index as u32;
+                    helper.properties.set("origin", format!("{index} 0 64"));
+                    vmf.entities.push(helper);
+                }
+                vec![vmf.entities.last().unwrap().id]
+            }
+            _ => unreachable!(),
+        };
+        let control = Control::default();
+        let mut report = crate::Report::default();
+        let mut map = crate::map::Map::load_controlled(&vmf, &game, &mut report, &control).unwrap();
+        assert!(!report.has_errors(), "{failure}: {report:?}");
+        let error = binding::prepare(
+            &vmf,
+            &game,
+            &mut map,
+            &CompileContext::new("reflection_errors").unwrap(),
+            binding::PrepareOptions::default(),
+            &mut report,
+            &control,
+        )
+        .err()
+        .unwrap();
+        assert_eq!(
+            report
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.level == crate::Level::Error)
+                .map(|diagnostic| {
+                    assert_eq!(diagnostic.message, error);
+                    diagnostic.object.clone().unwrap()
+                })
+                .collect::<Vec<_>>(),
+            expected
+                .iter()
+                .map(|helper| format!("entity:{helper}"))
+                .collect::<Vec<_>>(),
+            "{failure}",
+        );
+    }
+}
+
+#[test]
 fn changing_a_nonreflective_scene_texture_rejects_capture_publication() {
     let (directory, game) = game();
     std::fs::create_dir_all(directory.path().join("materials/ordinary")).unwrap();

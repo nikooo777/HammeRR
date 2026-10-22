@@ -22,6 +22,7 @@ pub const STATIC_PROP_PREVIEW_REASON: &str = "Child static-prop models are compi
 pub const LIGHTING_ORIGIN_PREVIEW_REASON: &str = "Child lighting-origin helpers have no reference geometry or icons; helper bounds, picking and framing are unavailable.";
 pub const PLAYER_SPAWN_PREVIEW_REASON: &str = "Child player-spawn models and icons are not shown in the reference preview; spawn bounds, picking and framing are unavailable.";
 pub const VISCLUSTER_PREVIEW_REASON: &str = "Child visibility helpers have no reference geometry or icons; helper bounds, picking and framing are unavailable.";
+pub const CUBEMAP_PREVIEW_REASON: &str = "Child cubemap samples have no reference geometry or icons; sample bounds, picking and framing are unavailable.";
 
 const MAX_DIAGNOSTICS: usize = 64;
 const MAX_ROWS: usize = 64;
@@ -1153,6 +1154,12 @@ impl Session {
             report["viscluster_preview"] = json!({
                 "available":false,
                 "reason":VISCLUSTER_PREVIEW_REASON
+            });
+        }
+        if ready.is_some_and(|ready| ready.stats.cubemaps > 0) {
+            report["cubemap_preview"] = json!({
+                "available":false,
+                "reason":CUBEMAP_PREVIEW_REASON
             });
         }
         report

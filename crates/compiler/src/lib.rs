@@ -1097,8 +1097,11 @@ fn build(
             fs,
             &mut map,
             context.unwrap(),
-            true,
-            options.lighting == LightingMode::DirectLdrHdr,
+            cubemap_assets::binding::PrepareOptions {
+                capture_scene: true,
+                hdr: options.lighting == LightingMode::DirectLdrHdr,
+            },
+            &mut output.report,
             control,
         )?)
     } else {

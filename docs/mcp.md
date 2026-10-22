@@ -297,8 +297,8 @@ same-installation running-client rejection.
 
 A saved parent can compile nested world/detail brush instances, including power
 2–4 terrain, strictly admitted unnamed static point/spot lights,
-static props, player spawns and consumed visibility volumes, through four helper
-levels, counting a root helper as level one; see
+static props, player spawns, consumed visibility volumes and automatic cubemap
+samples, through four helper levels, counting a root helper as level one; see
 [Referenced brush assemblies](instances.md). `create_entity` uses
 `classname: "func_instance"`, an origin and string properties `file` (relative
 `.vmf`) and optional `angles` (Source pitch/yaw/roll). The current in-memory parent
@@ -425,6 +425,23 @@ retain ordinary exact lookup and may explicitly name a generated helper such as
 case-fold collisions, including visible root helpers, reject. This native point
 does not move vertex-bake samples away from their actual model vertices.
 
+Child `env_cubemap` supports automatic samples with canonical lowercase unique
+`classname` and an explicit finite `origin`. Source and every inner-to-outer
+transformed point must fit ±16384 units. Use ordinary `create_entity` with
+`classname:"env_cubemap"`, `origin` and optional `properties.cubemapsize`, then
+`save_map` before compiling the parent. The installed FGD default is
+`cubemapsize:"0"`, with no `sides` or orientation default. Missing or trim-empty
+size also uses 0; ordinary integer size enums 0–9 are supported. `sides` must be
+absent or trim-empty, so a child cannot manually bind its local face IDs.
+Optional `angles` must be a finite zero vector; optional legacy `angle` must be
+zero. Expansion changes only the origin through the shared checked position
+mapping and preserves authored orientation fields or their absence.
+`spawnflags`, `mindxlevel` and `maxdxlevel` must be absent or integer 0.
+`targetname`, `target`, `parentname`, `name`, `globalname`, `killtarget` and
+`lightingorigin` must be absent or trim-empty. Brushes, I/O, opaque blocks,
+unknown properties and duplicate/case-aliased keys reject; hidden samples are
+omitted before expansion. Source/pose validation precedes regional omission.
+
 `compile_map`, `start_compile` and `run_map` use the same automatic expansion
 before region selection; no new compile switch is required. Optional
 `stats.instances` contains occurrence/file/world/detail counts,
@@ -468,17 +485,32 @@ ordinary 16-helper limit; source/pose admission and expansion work are checked
 before regional omission. Author child volumes through existing `create_block`,
 `tie_to_entity` and `save_map` operations; see [Visibility clusters](visclusters.md).
 
+`stats.instances.cubemaps` counts expanded visible child samples before
+transformed-origin region filtering and is omitted when zero. **Build details…**
+shows **Cubemap samples:** with **expanded before compile-region filtering**.
+Top-level `stats.cubemap_samples` counts retained root and child sample records.
+Child samples add no physical/reference geometry, icons, bounds, picking or
+framing. The ordinary 1024-sample limit and reflection preparation's independent
+1–32 limit each cover the complete retained assembled map after region selection.
+Final sample coordinates convert to Source 32-bit floats before integer
+truncation, after precise source/intermediate bounds validation.
+Capture independently requires distinct native integer positions and cube edges
+up to 128 pixels; size 0 uses 128. Size 9 can compile an ordinary sample record
+but its 256-pixel capture rejects. Capture-size, integer-position collision and
+excess-sample errors carry the containing root reference, leaf filename and
+original child helper; collisions identify both helpers.
+
 Completed instance jobs report `instance_dependencies.current/error`; `stale`,
 launch readiness and baked inspection include the retained build's dependencies.
 Launch verifies exact contents in its worker. Source/settings changes, dependency failures and
 cancellation preserve previous BSP/pointfile bytes. Every transitive dependency
 participates in these checks, including before capture and after each channel's
 receipt. **Generate reflections** supports assembled geometry using visible
-root-map `env_cubemap` helpers and the existing shared build operations. Automatic
-assignment includes transformed supported child faces. Existing manual `sides`
+root-map and automatic child `env_cubemap` helpers and the existing shared build
+operations. Automatic assignment includes transformed supported child faces. Existing manual `sides`
 lists must target unique original root-map faces that survive compilation;
-generated child IDs cannot satisfy missing original targets. Child cubemap
-helpers, extra capture bounces, other runtime entities, replacements and general
+generated child IDs cannot satisfy missing original targets. Child manual
+bindings, extra capture bounces, other runtime entities, replacements and general
 runtime naming remain unsupported.
 
 For a visible instance reference, `get_cubemap_bindings`
@@ -596,6 +628,18 @@ is ready with source identities, zero geometry, no face provenance and null owne
 content bounds. Mixed references keep their actual brush/terrain mesh. Ready
 inspection checks supported source/pose rules; leaf membership, retained-helper
 limits, liquids and area crossings are checked during compilation.
+
+The optional `stats.cubemaps` counts visible expanded child samples before
+regions and omits zero. When nonzero, `cubemap_preview` returns
+`available:false` with the exact shared reason: “Child cubemap samples have no
+reference geometry or icons; sample bounds, picking and framing are unavailable.”
+**Instance contents…** shows **Cubemap samples:** with its pre-filter meaning.
+Sample-only references can be `state:"ready"` with source/dependency identities,
+zero geometry, no face provenance and null owner content bounds; **Frame
+instance contents** is unavailable. Mixed references keep their actual
+brush/terrain mesh, bounds and picking. Refresh checks the child envelope,
+ordinary size enums and source/intermediate points; it does not certify capture
+edge size, distinct quantized positions or the post-region sample limits.
 
 The optional `stats.player_spawns` also counts expansion before regions and
 omits zero. When nonzero, `player_spawn_preview` returns `available:false` and
@@ -2188,6 +2232,14 @@ The default engine installation is the mounted game's base directory only when i
 Existing `compile_map`, `start_compile` and `run_map` perform the shared compile/capture/verify/publication job. `get_compile_status.job.settings.generate_reflections` and `job.native_runtime` retain its start configuration; `job.reflections.channel` identifies `ldr` or `ldr_hdr`; `job.reflections.samples_complete` and `job.reflections.samples_total` report capture progress. For dual builds, progress totals include both channel passes (`2 ×` sample positions). `stats.reflections.channel` is `ldr` or `ldr_hdr`; `verified_samples` counts logical positions, while `capture_artifacts` lists both receipts for a dual result and the existing `artifacts` path remains the first receipt. Cancellation waits for owned-process cleanup and the preservation audit. Failed, cancelled or stale capture preserves the prior published BSP and launch state without adding map Undo.
 
 Generation supports one capture bounce per channel, 1–32 distinct integer sample positions and cube edges up to 128 pixels; size `0` uses 128 pixels. Direct LDR uses `mat_hdr_level 0`; dual lighting captures LDR first and HDR with `mat_hdr_level 2`, retaining both lighting channels. HDR capture requires nonempty native HDR lighting/world-light/ambient arrays and rejects known HDR fallback warnings. Both matching sample sets and preservation/source guards must pass before one publication. Additional bounces and editor reflection previews are unavailable. The native helper, private compositor dependencies, supported assets and running Steam client must pass preflight. See [Generated reflections](reflections.md) for controls and capture limits, and [Cubemap faces](cubemap-faces.md) for binding authoring.
+
+Automatic `env_cubemap` samples may live in supported [referenced children](instances.md).
+The 1–32 capture limit covers retained root and child samples together after
+region selection. Ordinary sample compilation supports size enums 0–9 and up
+to 1024 retained samples independently; a size-9 record does not permit a
+256-pixel capture. Existing root manual `sides` lists remain restricted to
+original root faces; child lists must be absent or trim-empty. Source-linked
+capture preparation errors retain the root reference and original child identity.
 
 Generated packing keeps the existing version-1 `channel:"ldr"` manifest for
 LDR-only builds. Dual builds use version 2 with `channel:"ldr_hdr"`, LDR `samples`

@@ -47,7 +47,7 @@ fn literal_declarations_report_failures_and_keep_other_forms_and_precedence_expl
             assert_eq!(session.document().undo_labels().count(), history);
         }
         for (classname, extra, reason) in [
-            ("light", "", "specialized_light"),
+            ("light_spot", "", "specialized_light"),
             ("move_rope", "", "specialized_rope"),
             ("sample", "decal()", "specialized_helper"),
         ] {

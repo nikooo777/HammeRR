@@ -8,7 +8,6 @@ use map_core::{BrushGeometry, DisplacementMesh, ObjectId, texel_uv};
 use source_formats::gamefs::GameFs;
 use source_formats::vmf::{Color, Entity, Solid, Vmf};
 
-use crate::helpers::bulb_model;
 use crate::materials::{MaterialId, MaterialLibrary};
 
 mod model_lighting;
@@ -58,7 +57,7 @@ pub struct Vertex {
     pub position: [f32; 3],
     pub normal: [f32; 3],
     pub uv: [f32; 2],
-    /// RGB tint; alpha blends brush layers or marks an emissive helper surface.
+    /// RGB tint; alpha blends brush layers.
     pub color: [u8; 4],
     pub lightmap: [f32; 3],
     pub smoothing: u32,
@@ -772,47 +771,6 @@ impl Builder<'_> {
         }
     }
 
-    fn add_bulb(&mut self, center: Vec3, color: [u8; 3], selected: bool) {
-        let model = bulb_model();
-        let material = self.library.light_bulb();
-        if self.indices.len() <= material {
-            self.indices.resize_with(material + 1, Vec::new);
-        }
-        let first = self.vertices.len() as u32;
-        for &template in &model.vertices {
-            let tint = if template.color[3] == 255 {
-                color
-            } else {
-                [255; 3]
-            };
-            self.push_vertex(Vertex {
-                position: (center + Vec3::from_array(template.position)).to_array(),
-                color: [tint[0], tint[1], tint[2], template.color[3]],
-                ..template
-            });
-        }
-        self.indices[material].extend(model.indices.iter().map(|&i| first + i));
-        if selected {
-            let lo = model.mins - Vec3::splat(1.0);
-            let hi = model.maxs + Vec3::splat(1.0);
-            for x in [lo.x, hi.x] {
-                for y in [lo.y, hi.y] {
-                    for z in [lo.z, hi.z] {
-                        let corner = Vec3::new(x, y, z);
-                        let sign = (lo + hi) * 0.5 - corner;
-                        for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
-                            self.selection_line(
-                                center + corner,
-                                center + corner + axis * sign.dot(axis).signum() * 4.0,
-                                SELECTED_EDGE,
-                            );
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     fn add_model(&mut self, instance: &crate::models::Instance, selected: bool) {
         self.add_model_with_material(instance, selected, None);
     }
@@ -938,10 +896,7 @@ impl Builder<'_> {
 
     fn add_light(&mut self, entity: &Entity, selected: bool) -> bool {
         let class = entity.classname().unwrap_or("").to_ascii_lowercase();
-        if !matches!(
-            class.as_str(),
-            "light" | "light_spot" | "light_dynamic" | "light_environment"
-        ) {
+        if !map_core::entity_helpers::specialized_light(entity) {
             return false;
         }
         let center = entity.origin().expect("point entity origin").as_vec3();
@@ -1016,8 +971,6 @@ impl Builder<'_> {
                     );
                 }
             }
-        } else {
-            self.add_bulb(center, color, selected);
         }
         true
     }
@@ -1851,7 +1804,7 @@ mod tests {
 
     #[test]
     fn light_shapes_keep_their_color_when_selected() {
-        for classname in ["light", "light_spot", "light_dynamic", "light_environment"] {
+        for classname in ["light_spot", "light_dynamic", "light_environment"] {
             let mesh = light_mesh(classname, true);
             assert_eq!(mesh.stats.point_entities, 1);
             assert_eq!(mesh.stats.brushes, 0);
@@ -1875,22 +1828,24 @@ mod tests {
     }
 
     #[test]
-    fn bulb_selection_preserves_geometry_and_only_the_globe_is_tinted() {
-        let plain = light_mesh("light", false);
-        let selected = light_mesh("light", true);
-        assert_eq!(plain.vertices, selected.vertices);
-        assert_eq!(plain.indices, selected.indices);
-        assert!(plain.lines.is_empty());
-        assert!(!selected.lines.is_empty());
-        for vertex in &plain.vertices {
-            let expected = if vertex.color[3] == 255 {
-                [255, 210, 150]
-            } else {
-                [255; 3]
-            };
-            assert_eq!(vertex.color[..3], expected);
+    fn point_lights_use_standard_entity_markers() {
+        for selected in [false, true] {
+            let light = light_mesh("light", selected);
+            let generic = light_mesh("info_target", selected);
+            assert_eq!(light.vertices.len(), 24);
+            assert_eq!(light.indices.len(), 36);
+            assert_eq!(light.vertices, generic.vertices);
+            assert_eq!(light.indices, generic.indices);
+            assert!(
+                light
+                    .lines
+                    .iter()
+                    .map(|line| (line.position, line.color))
+                    .eq(generic.lines.iter().map(|line| (line.position, line.color)))
+            );
+            assert_eq!(light.batches, generic.batches);
+            assert_eq!(light.stats.missing_materials, 0);
         }
-        assert_eq!(plain.stats.missing_materials, 0);
     }
 
     #[test]

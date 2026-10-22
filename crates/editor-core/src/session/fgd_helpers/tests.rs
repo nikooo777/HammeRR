@@ -218,27 +218,49 @@ fn invalid_size_keeps_a_diagnostic_marker_visible_and_reload_updates_every_share
 }
 
 #[test]
-fn fgd_boxes_do_not_replace_specialized_lights_or_loaded_models() {
-    let mut session = Session::new(Err("no assets needed".into()));
-    session.set_definitions(
-        Actor::Agent,
-        Catalog::parse("@PointClass size(2 2 2) color(1 2 3) = light []").unwrap(),
-    );
-    let id = session
-        .create_entity(Actor::Agent, "light", Some(DVec3::ZERO), BTreeMap::new())
-        .unwrap();
-    let ObjectId::Entity(entity) = id else {
-        unreachable!()
-    };
-    assert_eq!(
-        session.entity_helper_report(entity).unwrap().bounds_source,
-        "specialized_light"
-    );
-    assert_eq!(
-        session.object_bounds_in(session.document(), &[id]),
-        Some((DVec3::splat(-18.0), DVec3::splat(18.0)))
-    );
-    assert!(session.build_scene().vertices.len() > 24);
+fn point_lights_share_fgd_boxes_while_directional_lights_keep_their_helpers() {
+    for actor in [Actor::User, Actor::Agent] {
+        for (class, source, half, vertices) in [
+            ("light", "fgd_size", 1.0, 24),
+            ("light_spot", "specialized_light", 18.0, 0),
+        ] {
+            let mut session = Session::new(Err("no assets needed".into()));
+            session.set_definitions(
+                actor,
+                Catalog::parse(&format!(
+                    "@PointClass size(2 2 2) color(1 2 3) = {class} []"
+                ))
+                .unwrap(),
+            );
+            let id = session
+                .create_entity(actor, class, Some(DVec3::ZERO), BTreeMap::new())
+                .unwrap();
+            let ObjectId::Entity(entity) = id else {
+                unreachable!()
+            };
+            session.select(&[], SelectMode::Replace).unwrap();
+            assert_eq!(
+                session.entity_helper_report(entity).unwrap().bounds_source,
+                source
+            );
+            assert_eq!(
+                session.object_bounds_in(session.document(), &[id]),
+                Some((DVec3::splat(-half), DVec3::splat(half)))
+            );
+            let scene = session.build_scene();
+            if vertices > 0 {
+                assert_eq!(scene.vertices.len(), vertices);
+                assert!(
+                    scene
+                        .vertices
+                        .iter()
+                        .all(|vertex| vertex.color[..3] == [1, 2, 3])
+                );
+            } else {
+                assert!(scene.vertices.len() > 24);
+            }
+        }
+    }
 }
 
 #[test]
@@ -499,7 +521,7 @@ fn sphere_scene_budget_and_specialized_precedence_are_reported_deterministically
         .collect::<Vec<_>>()
         .join(" ");
     let mut session = Session::new(Err("no assets needed".into()));
-    session.set_definitions(Actor::Agent, Catalog::parse(&format!("@PointClass {helpers} = sample [{properties}] @PointClass sphere(radius) = light [ radius(float) : \"Radius\" : 128 ] @PointClass sphere(radius) = move_rope [ radius(float) : \"Radius\" : 128 ]")).unwrap());
+    session.set_definitions(Actor::Agent, Catalog::parse(&format!("@PointClass {helpers} = sample [{properties}] @PointClass sphere(radius) = light_spot [ radius(float) : \"Radius\" : 128 ] @PointClass sphere(radius) = move_rope [ radius(float) : \"Radius\" : 128 ]")).unwrap());
     let mut objects = Vec::new();
     for i in 0..9 {
         objects.push(
@@ -561,7 +583,7 @@ fn sphere_scene_budget_and_specialized_precedence_are_reported_deterministically
         spheres::MAX_DISPLAYED_SPHERES * 3 * 32 * 2
     );
     for (class, reason) in [
-        ("light", "specialized_light"),
+        ("light_spot", "specialized_light"),
         ("move_rope", "specialized_rope"),
     ] {
         let ObjectId::Entity(id) = session

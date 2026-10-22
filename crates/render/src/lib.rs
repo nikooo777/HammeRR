@@ -5,7 +5,6 @@ pub mod fog;
 pub mod gpu;
 mod grid;
 pub mod handles;
-mod helpers;
 pub mod icons;
 pub mod lighting;
 pub mod materials;

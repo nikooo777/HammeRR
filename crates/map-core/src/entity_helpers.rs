@@ -134,7 +134,7 @@ pub fn specialized_light(entity: &Entity) -> bool {
             .unwrap_or("")
             .to_ascii_lowercase()
             .as_str(),
-        "light" | "light_spot" | "light_environment" | "light_dynamic"
+        "light_spot" | "light_environment" | "light_dynamic"
     )
 }
 

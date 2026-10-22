@@ -11,8 +11,6 @@ use source_formats::gamefs::{GameFs, asset_relative};
 use source_formats::vmt::{Material, material_path, texture_path};
 use source_formats::vtf::Vtf;
 
-use crate::helpers::{HelperMaterial, bulb_material};
-
 /// Texture size assumed for UV mapping when a material can't be loaded.
 const FALLBACK_SIZE: u32 = 128;
 pub const MAX_RELOAD_FAILURES: usize = 100;
@@ -43,7 +41,6 @@ pub struct MaterialInfo {
     /// No usable display texture is available.
     pub missing: bool,
     pub error: Option<String>,
-    pub(crate) helper: Option<&'static HelperMaterial>,
 }
 
 impl MaterialInfo {
@@ -151,7 +148,6 @@ impl MaterialInfo {
             ),
             display_texture,
             normal: None,
-            helper: None,
             error: None,
             missing: base.is_none(),
             alpha_test: material.is_some_and(Material::alpha_test),
@@ -177,7 +173,6 @@ impl MaterialInfo {
             model_lighting_error: Some("Editor helper or unavailable material".into()),
             display_texture: None,
             normal: None,
-            helper: None,
             name: name.to_owned(),
             base: None,
             blend: None,
@@ -411,8 +406,7 @@ impl MaterialLibrary {
         self.icons.clear();
         self.hdr_skybox = None;
         for (id, material) in self.materials.iter_mut().enumerate().skip(1) {
-            if material.reference || material.helper.is_some() || Some(id) == self.unavailable_model
-            {
+            if material.reference || Some(id) == self.unavailable_model {
                 continue;
             }
             *material = MaterialInfo::load(fs, &material.name);
@@ -510,21 +504,6 @@ impl MaterialLibrary {
         material.reference = true;
         let id = self.materials.len();
         self.materials.push(material);
-        id
-    }
-
-    pub(crate) fn light_bulb(&mut self) -> MaterialId {
-        const NAME: &str = "__editor/lightbulb";
-        if let Some(&id) = self.by_name.get(NAME) {
-            return id;
-        }
-        let mut material = MaterialInfo::untextured(NAME);
-        material.helper = Some(bulb_material());
-        material.width = 512;
-        material.height = 512;
-        let id = self.materials.len();
-        self.materials.push(material);
-        self.by_name.insert(NAME.to_owned(), id);
         id
     }
 

@@ -354,7 +354,7 @@ struct DrawBatch {
 }
 
 fn surface_shading_material(info: &MaterialInfo, editor: bool) -> bool {
-    !editor && !info.tool && !info.sky && !info.reference && info.helper.is_none()
+    !editor && !info.tool && !info.sky && !info.reference
 }
 
 fn translucent_order<'a>(
@@ -497,7 +497,6 @@ impl Renderer {
                 },
                 uniform_entry(3, wgpu::ShaderStages::FRAGMENT),
                 texture_entry(4),
-                texture_entry(5),
             ],
         });
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -906,7 +905,7 @@ impl Renderer {
                 tool: info.tool,
                 sky: info.sky,
                 sky3d_eligible: info.sky3d_eligible,
-                helper: batch.material == MaterialLibrary::EDITOR || info.helper.is_some(),
+                helper: batch.material == MaterialLibrary::EDITOR,
             };
             if info.translucent || batch.model_translucent {
                 translucent.push(draw);
@@ -1093,12 +1092,11 @@ impl Renderer {
         sampler: &wgpu::Sampler,
     ) -> wgpu::BindGroup {
         let (white, missing) = (&self.white, &self.missing);
-        let untextured = info.base.is_none() && info.helper.is_none() && !info.missing;
-        let base = match (info.helper, &info.base) {
-            (Some(helper), _) => upload_helper_texture(ctx, &helper.diffuse, true),
-            (_, Some(vtf)) => upload_vtf(ctx, vtf).unwrap_or_else(|| missing.clone()),
-            (_, None) if untextured => white.clone(),
-            (_, None) => missing.clone(),
+        let untextured = info.base.is_none() && !info.missing;
+        let base = match &info.base {
+            Some(vtf) => upload_vtf(ctx, vtf).unwrap_or_else(|| missing.clone()),
+            None if untextured => white.clone(),
+            None => missing.clone(),
         };
         self.material_bind_group_with_base(ctx, info, editor, sampler, base)
     }
@@ -1112,7 +1110,7 @@ impl Renderer {
         base: wgpu::Texture,
     ) -> wgpu::BindGroup {
         let white = &self.white;
-        let untextured = info.base.is_none() && info.helper.is_none() && !info.missing;
+        let untextured = info.base.is_none() && !info.missing;
         let blend = info
             .blend
             .as_ref()
@@ -1126,7 +1124,7 @@ impl Renderer {
             flag(info.blend.is_some()),
             flag(info.translucent),
             flag(untextured),
-            flag(info.helper.is_some()),
+            0.0,
             flag(editor || info.sky || info.reference),
             flag(normal_asset.is_some()),
             flag(surface_shading_material(info, editor)),
@@ -1144,22 +1142,10 @@ impl Renderer {
             });
         let base_view = base.create_view(&Default::default());
         let blend_view = blend.create_view(&Default::default());
-        let normal = info
-            .helper
-            .map(|helper| upload_helper_texture(ctx, &helper.normal, false))
-            .or_else(|| {
-                normal_asset
-                    .and_then(|asset| asset.image.as_ref())
-                    .map(|image| upload_normal(ctx, image))
-            });
-        let surface = info
-            .helper
-            .map(|helper| upload_helper_texture(ctx, &helper.surface, false));
+        let normal = normal_asset
+            .and_then(|asset| asset.image.as_ref())
+            .map(|image| upload_normal(ctx, image));
         let normal_view = normal
-            .as_ref()
-            .unwrap_or(white)
-            .create_view(&Default::default());
-        let surface_view = surface
             .as_ref()
             .unwrap_or(white)
             .create_view(&Default::default());
@@ -1186,10 +1172,6 @@ impl Renderer {
                 wgpu::BindGroupEntry {
                     binding: 4,
                     resource: wgpu::BindingResource::TextureView(&normal_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: wgpu::BindingResource::TextureView(&surface_view),
                 },
             ],
         })
@@ -1753,38 +1735,6 @@ fn solid_texture(ctx: &GpuContext, rgba: [u8; 4]) -> wgpu::Texture {
     texture
 }
 
-fn upload_helper_texture(
-    ctx: &GpuContext,
-    mips: &[source_formats::vtf::RgbaImage],
-    srgb: bool,
-) -> wgpu::Texture {
-    let first = &mips[0];
-    let format = if srgb {
-        wgpu::TextureFormat::Rgba8UnormSrgb
-    } else {
-        wgpu::TextureFormat::Rgba8Unorm
-    };
-    let texture = texture_2d(
-        ctx,
-        "helper",
-        (first.width, first.height),
-        mips.len() as u32,
-        format,
-    );
-    for (level, image) in mips.iter().enumerate() {
-        write_mip(
-            ctx,
-            &texture,
-            level as u32,
-            &image.pixels,
-            image.width * 4,
-            image.height,
-            (image.width, image.height),
-        );
-    }
-    texture
-}
-
 /// The engine's missing-texture pattern: purple and black squares.
 fn checkerboard_texture(ctx: &GpuContext) -> wgpu::Texture {
     const SIZE: u32 = 64;
@@ -1846,9 +1796,6 @@ mod tests {
         info.sky = false;
         info.reference = true;
         assert!(!surface_shading_material(&info, false));
-        let mut library = MaterialLibrary::default();
-        let bulb = library.light_bulb();
-        assert!(!surface_shading_material(library.get(bulb), false));
     }
 
     #[test]

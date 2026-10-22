@@ -555,5 +555,4 @@ The [manual](docs/README.md) covers every feature, step by step:
 
 ## Credits
 
-- The point-light helper uses a [CC0 light bulb model by Josh Dean / Poly Haven](https://polyhaven.com/a/lightbulb_led) ([provenance](crates/render/assets/lightbulb/SOURCE.txt)).
 - Counter-Strike: Source and its assets are not included.

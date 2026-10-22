@@ -4,7 +4,7 @@ use glam::DVec3;
 use map_core::{edit::Transform, query::Ray};
 use source_formats::fgd::Catalog;
 
-const FGD: &str = "@PointClass size(8 8 8) line(12 34 56,targetname,aim) line(65 43 21,targetname,start,targetname,aim) = sample [ aim(string) : \"Target\" start(string) : \"Start\" ] @PointClass = target [] @PointClass line(12 34 56,targetname,aim) = light [ aim(string) : \"Target\" ] @PointClass studio(missing.mdl) line(12 34 56,targetname,aim) = model [ aim(string) : \"Target\" ]";
+const FGD: &str = "@PointClass size(8 8 8) line(12 34 56,targetname,aim) line(65 43 21,targetname,start,targetname,aim) = sample [ aim(string) : \"Target\" start(string) : \"Start\" ] @PointClass = target [] @PointClass line(12 34 56,targetname,aim) = light_spot [ aim(string) : \"Target\" ] @PointClass studio(missing.mdl) line(12 34 56,targetname,aim) = model [ aim(string) : \"Target\" ]";
 
 const NODE_FGD: &str = "@PointClass size(8 8 8) line(12 34 56,nodeid,start,nodeid,finish) = link [ start(node_dest) : \"Start\" : 0 finish(node_dest) : \"End\" : 42 ] @PointClass size(8 8 8) studio(missing.mdl) = node [ nodeid(integer) readonly : \"Node ID\" ]";
 
@@ -204,7 +204,10 @@ fn hidden_ambiguous_filtered_and_specialized_cases_explain_suppression() {
     assert_eq!(report.lines[0].state, "missing");
     assert!(report.status.contains("missing"));
     session.undo(Actor::Agent).unwrap();
-    for (class, reason) in [("light", "specialized_light"), ("model", "model_helper")] {
+    for (class, reason) in [
+        ("light_spot", "specialized_light"),
+        ("model", "model_helper"),
+    ] {
         let ObjectId::Entity(id) = session
             .create_entity(
                 Actor::Agent,

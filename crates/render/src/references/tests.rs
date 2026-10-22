@@ -109,7 +109,7 @@ fn reference_append_filters_owners_preserves_root_and_reuses_edges_for_outlines(
     }
     let material = materials.get(mesh.batches.last().unwrap().material);
     assert!(material.reference && !material.tool && !material.sky && !material.translucent);
-    assert!(material.base.is_none() && material.normal.is_none() && material.helper.is_none());
+    assert!(material.base.is_none() && material.normal.is_none());
     let fs = source_formats::gamefs::GameFs {
         game_dir: Default::default(),
         base_dir: Default::default(),

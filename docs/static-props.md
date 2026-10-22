@@ -45,13 +45,15 @@ shaders and surface/prop-data definitions remain installed runtime prerequisites
 
 Limits: unit-scale static MDL 44/48 models with body 0, root LOD 0 and one
 bodypart/model. Original MDL, VVD and DX90 VTX files must agree. Every declared
-material, including other skins and draw LODs, must resolve to a plain opaque
-**VertexLitGeneric** VMT containing only one canonical `$basetexture`, directly
-or through include-only **Patch** chains of up to eight include edges. Each Patch
-contains exactly one `include` with a canonical lowercase full path such as
-`materials/models/props/cabinet_base.vmt`.
+material, including other skins and draw LODs, must resolve to a plain
+**VertexLitGeneric** terminal with one canonical `$basetexture`. The only optional
+terminal parameter is one scalar `$alphatest` with the literal value `1`, using
+the default 0.5 cutoff. Authored `$alphatestreference` and other terminal keys are
+unsupported. Both terminal forms work directly or through include-only **Patch**
+chains of up to eight include edges. Each Patch contains exactly one `include`
+with a canonical lowercase full path such as `materials/models/props/cabinet_base.vmt`.
 
-A single Patch directly including that plain terminal may also contain one
+A single Patch directly including either admitted terminal may also contain one
 `insert` or `replace` block containing only one `$basetexture`. The key must
 already exist in the terminal; either operation overwrites its value. The BSP
 packs every original VMT and both the terminal and replacement VTFs with their
@@ -61,6 +63,11 @@ one. VTF 7.5,
 animated, cubemap and volume textures are unsupported. The matching original PHY
 is included only when an emitted use needs **Collisions → Use VPhysics**;
 **Not Solid** and **Use Bounding Box** leave an unused PHY unread.
+
+Packing preserves model flags. Compiler cutout texture shadows require the
+original MDL `CAST_TEXTURE_SHADOWS` request; without it, enabled prop shadows
+remain opaque mesh shadows with the existing warning. **Bake static-prop vertex lighting**
+still refuses selected alpha-tested receiver materials. Enable **Disable Vertex lighting** for that prop to pack it while baking other supported props.
 
 Included models, external or nontrivial animation, attachments, flexes, eye
 forms, LOD material replacements, material proxies/conditions, nested edited

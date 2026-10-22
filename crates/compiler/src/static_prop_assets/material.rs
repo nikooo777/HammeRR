@@ -97,6 +97,19 @@ pub(super) fn dependency(path: &str, bytes: &[u8]) -> io::Result<Dependency> {
                 })?;
             (parameter, Some((section, reference)))
         }
+        [first, second] if !patch => {
+            let (parameter, alpha) = if first.key.eq_ignore_ascii_case("$basetexture") {
+                (first, second)
+            } else {
+                (second, first)
+            };
+            if !alpha.key.eq_ignore_ascii_case("$alphatest") || alpha.as_str() != Some("1") {
+                return Err(invalid(format!(
+                    "Unsupported static-prop material {path}: alpha-tested VertexLitGeneric requires one literal $alphatest 1"
+                )));
+            }
+            (parameter, None)
+        }
         _ => {
             return Err(invalid(format!(
                 "Unsupported static-prop material {path}: requires one $basetexture or Patch include with at most one edit"
@@ -121,11 +134,15 @@ pub(super) fn dependency(path: &str, bytes: &[u8]) -> io::Result<Dependency> {
         Some((section, _)) => parsed.blocks.as_slice() == std::slice::from_ref(section),
         None => parsed.blocks.is_empty(),
     };
-    if parsed.shader != shader
-        || parsed.params.len() != 1
-        || !blocks_agree
-        || parsed.params[0] != (key.into(), reference.into())
-    {
+    let mut raw_params = children
+        .iter()
+        .filter_map(|node| node.as_str().map(|value| (node.key.as_str(), value)));
+    let params_agree = parsed.params.iter().all(|(key, value)| {
+        raw_params.next().is_some_and(|(raw_key, raw_value)| {
+            raw_key.eq_ignore_ascii_case(key) && raw_value == value.as_str()
+        })
+    }) && raw_params.next().is_none();
+    if parsed.shader != shader || !params_agree || !blocks_agree {
         return Err(invalid(format!(
             "Static-prop raw and parsed material disagree: {path}"
         )));

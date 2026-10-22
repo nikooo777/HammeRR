@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod alpha_tests;
 mod closure;
 mod collection;
 mod manifest;

@@ -36,6 +36,14 @@ const MIN_LIGHT_DISTANCE: f64 = 1.0;
 const REFERENCE_DISTANCE: f64 = 100.0;
 pub const IGNORE_NORMALS_FACTOR: f64 = 0.35;
 
+pub(crate) fn validate_environment_light(entity: &MapEntity) -> Result<(), String> {
+    let targets = map_core::light::Targets::new();
+    for kind in [LightingKind::Ldr, LightingKind::Hdr] {
+        sky::SkyLight::from_entity_kind(entity, &targets, kind)?;
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy)]
 pub(super) enum ReceiverAngularMode {
     Normal,

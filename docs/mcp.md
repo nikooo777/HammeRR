@@ -473,6 +473,15 @@ enabled regions select emitted child lights by transformed origin. **Build
 details…** shows **Expanded static lights:** with point/spot counts and
 **before compile-region filtering**.
 
+`stats.instances.environment_lights` separately counts visible expanded child
+`light_environment` helpers before regions and omits zero. **Build details…**
+shows **Sun and sky lights:** with **expanded before compile-region filtering**.
+It does not count point/spot helpers or native SKY/SKY_AMBIENT/worldlight
+records. Regions retain the global sun independently of marker location.
+One source across root and children may contribute to baked lighting; duplicate
+root/child or repeated suns fail the existing global bake rule. **Fullbright**
+keeps its existing no-bake behavior without an eager global cap.
+
 `stats.instances.static_props` is likewise omitted when zero and counts expanded
 child props before region filtering. **Build details…** shows **Expanded static
 props:** with **before compile-region filtering**; top-level `stats.static_props`
@@ -651,6 +660,31 @@ geometry. Model-only references can be `state:"ready"` with VMF identities and
 counts while `available:false`, with zero geometry and null owner bounds.
 Missing or malformed models can leave that reference report ready and still
 fail compilation. Mixed references retain their real brush/terrain preview.
+The optional `stats.environment_lights` counts expanded visible child sun/sky
+helpers before regions and omits zero. It extends the existing
+`static_light_preview:{available:false,reason}`; an environment-positive
+snapshot uses the shared reason: “Child lights, sun/sky illumination and icons
+are not shown in the reference or authored-lighting preview; child light
+bounds, picking and framing are unavailable.” Point/spot-only reason text is
+unchanged. **Instance contents…** shows **Sun and sky lights:**. A light-only
+reference may be ready with source/dependency identities, zero mesh/null bounds
+and camera-preserving `set_instance_contents` `action:"frame"` refusal. Mixed
+brush display/bounds/picking/Frame and ordinary root drafts stay unchanged.
+The field disappears when no current ready light snapshot exists.
+
+Open the child normally and use existing `create_entity` for
+`light_environment`, `set_entity_properties`, `save_map` and instance
+operations. Preserve normal FGD scalar defaults/casing, including
+`_AmbientScaleHDR` and `SunSpreadAngle`. Required finite origin and every
+transformed position stay within ±16384; optional finite angles defaults to
+zero, explicit pitch is -90…90, legacy angle is absent/zero and pitch0 needs
+angles.x0. Both LDR/HDR sun/ambient/sentinel/scale/spread definitions validate
+even in Fullbright with the ordinary compiler parser, without viewport
+headroom limits. Runtime names/references/patterns must be exactly empty or
+absent, style/defaultstyle/spawnflags zero; brushes/I/O/opaque blocks/unknown
+fields/duplicates reject. Parent sky/material/world settings stay authoritative;
+there is no child viewport illumination, new tool or setting.
+
 The optional `stats.lighting_origins` follows the same pre-region and omit-zero
 convention, including unreferenced visible helpers. When nonzero,
 `lighting_origin_preview` returns `available:false` and the shared `reason`:

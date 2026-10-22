@@ -19,6 +19,7 @@ use super::{Actor, Session};
 mod terrain;
 
 pub const STATIC_PROP_PREVIEW_REASON: &str = "Child static-prop models are compiled but not shown in the reference preview; model bounds, picking and framing are unavailable.";
+pub const ENVIRONMENT_LIGHT_PREVIEW_REASON: &str = "Child lights, sun/sky illumination and icons are not shown in the reference or authored-lighting preview; child light bounds, picking and framing are unavailable.";
 pub const LIGHTING_ORIGIN_PREVIEW_REASON: &str = "Child lighting-origin helpers have no reference geometry or icons; helper bounds, picking and framing are unavailable.";
 pub const PLAYER_SPAWN_PREVIEW_REASON: &str = "Child player-spawn models and icons are not shown in the reference preview; spawn bounds, picking and framing are unavailable.";
 pub const VISCLUSTER_PREVIEW_REASON: &str = "Child visibility helpers have no reference geometry or icons; helper bounds, picking and framing are unavailable.";
@@ -1128,10 +1129,14 @@ impl Session {
             "policy":if has_terrain {"read_only_world_detail_terrain_root_owner_picking_no_material_loading"} else {"flat_read_only_world_detail_root_owner_picking_no_material_loading"},
             "authoring_bounds":"ordinary_root_objects_unchanged","limits":limits()
         });
-        if ready.is_some_and(|ready| ready.stats.point_lights > 0 || ready.stats.spot_lights > 0) {
+        let environment_lights = ready.map_or(0, |ready| ready.stats.environment_lights);
+        if environment_lights > 0
+            || ready
+                .is_some_and(|ready| ready.stats.point_lights > 0 || ready.stats.spot_lights > 0)
+        {
             report["static_light_preview"] = json!({
                 "available":false,
-                "reason":"Child lights, illumination and icons are not shown in the reference or authored-lighting preview."
+                "reason":if environment_lights > 0 { ENVIRONMENT_LIGHT_PREVIEW_REASON } else { "Child lights, illumination and icons are not shown in the reference or authored-lighting preview." }
             });
         }
         if ready.is_some_and(|ready| ready.stats.static_props > 0) {

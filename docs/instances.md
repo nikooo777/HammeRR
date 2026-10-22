@@ -3,7 +3,8 @@
 # Compile referenced assemblies
 
 Reuse saved VMFs' world and detail brushes, power 2–4 terrain, unnamed static
-point/spot lights, static props, scoped lighting-origin helpers, player spawns,
+point/spot and sun/sky lights, static props, scoped lighting-origin helpers,
+player spawns,
 visibility volumes, unnamed stationary occluders, ordinary unnamed overlays,
 cubemap samples with local face bindings and nested references at several
 positions and rotations.
@@ -24,10 +25,13 @@ from supported brushes already in the parent.
    World and detail brushes may carry supported power 2, 3 or 4 terrain. The
    child's world settings do not replace the parent's.
 2. To add a child light, open the child and click **Entity…**, then choose `light`
-   or `light_spot`. Use **Advanced properties** to check the strict static fields
-   below. A spotlight needs an explicit `pitch`, such as `-90` for downward or
-   `0` with the first `angles` component zero for horizontal. Save the child
-   before returning to the parent. Loaded FGD defaults do not bypass these checks.
+   or `light_spot`; choose `light_environment` for global sunlight and sky
+   ambient. Use **Advanced properties** to check the strict static fields below.
+   Spotlights and sun/sky helpers need an explicit **Pitch**, such as `-90` for
+   downward or `0` with the first `angles` component zero for horizontal. Save
+   the child before returning to the parent. Preserve the normal sun/ambient/
+   HDR/scale/spread defaults; loaded FGD defaults do not bypass source checks.
+   Only one visible root or child sun can contribute to baked lighting.
 3. To add child scenery, choose `prop_static` in **Entity…** and set **World Model**
    to a supported static model. In **Advanced properties**, choose
    **Collisions → Not Solid**, **Use Bounding Box** or **Use VPhysics**.
@@ -87,7 +91,11 @@ from supported brushes already in the parent.
    for the flat-color view, content bounds and picking. Clicking it selects the
    root helper; the child remains read-only. **Expanded static lights:** reports
    point/spot counts, but child lights and their illumination/icons are not
-   shown in this layer or the authored-lighting preview. **Expanded static props:**
+   shown in this layer or the authored-lighting preview. **Sun and sky lights:**
+   counts child `light_environment` helpers before regions; their illumination,
+   icons, bounds, picking and framing are unavailable here. Mixed references
+   keep their actual brush/terrain preview and Frame behavior.
+   **Expanded static props:**
    reports child prop counts. Child models are compiled but have no reference
    display, model bounds, picking or framing. **Expanded lighting origins:**
    reports helper counts; these points have no reference geometry or icons.
@@ -115,6 +123,9 @@ from supported brushes already in the parent.
    depth**, world/detail brush counts and each relative dependency's byte count
    and **SHA256**. **Expanded static lights:** counts all expanded point/spot
    lights before compile-region filtering, including lights outside the region.
+   **Sun and sky lights:** counts expanded child environment helpers before
+   regions, separately from point/spot counts and emitted SKY/SKY_AMBIENT
+   lighting records.
    **Expanded static props:** uses the same expansion count before filtering;
    **Static props** counts props emitted by the selected build region.
    **Expanded lighting origins:** counts visible expanded helpers before region
@@ -238,7 +249,23 @@ Limits:
   reject. No player model asset is read. Ordinary point-origin flood/leak
   diagnostics still apply; compilation does not verify native spawn selection,
   team balancing or player-hull clearance.
-- Child lights support only exact lowercase `light` and `light_spot` classes,
+- Child `light_environment` supports one unnamed static global baked sun/sky
+  source across root and children. It requires canonical `classname`/`origin`,
+  an explicit finite `pitch` from -90 to 90 and a finite origin within ±16384
+  at the source and every nested pose. Optional finite `angles` defaults to
+  zero, retaining the ordinary angular semantics; no coordinate bound applies
+  to angles. Legacy `angle` must be absent or zero; pitch 0 requires angles.x 0.
+  Preserve normal scalar spellings, including `_AmbientScaleHDR` and
+  `SunSpreadAngle`; both LDR/HDR sun, ambient, sentinels, scales and spread
+  validate even in **Fullbright**. Runtime names/references/patterns must be
+  absent or exactly empty (whitespace rejects), with zero style/defaultstyle/
+  spawnflags. Brushes, I/O, opaque blocks, unknown fields and duplicate case
+  aliases reject. Regions retain the global source independently of its
+  marker; repeated or root-plus-child suns fail the existing baked-light rule.
+  **Fullbright** keeps its existing no-bake behavior without a new eager cap.
+  Parent sky/material/world settings remain authoritative. See
+  [Sun and sky](compile-and-play.md#sun-and-sky).
+- Child point/spot lights support only exact lowercase `light` and `light_spot` classes,
   with an explicit finite `origin` inside Source compile bounds and valid
   brightness/attenuation data. Ordinary color, HDR, falloff and spotlight
   cone/focus fields are supported;
@@ -378,6 +405,12 @@ model-only, spawn-only or lighting-helper-only assembly can resolve ready with d
 reports but has
 no reference geometry to display, pick or frame. Optional `static_props` counts
 expanded child props before region filtering and is also omitted when zero.
+Optional `environment_lights` counts expanded visible child sun/sky helpers
+before regions and omits zero, separately from point/spot counts and native
+SKY/SKY_AMBIENT records. Their unavailable preview uses the existing
+`static_light_preview` with an explicit sun/sky reason; point/spot-only reason
+text remains unchanged. No parent reference or authored-lighting illumination
+is added.
 Optional `lighting_origins` counts expanded visible helpers before filtering,
 including unreferenced helpers, and is omitted when zero.
 Optional `player_spawns` counts both supported spawn classes before region

@@ -554,6 +554,21 @@ A `light_environment` adds sunlight and soft sky light:
 5. Leave **SunSpreadAngle** at `0` for hard shadows, or enter an angle in degrees to soften them; try `5` as a starting point. Open **Build settings…**, choose **Direct LDR** and select a **Sampling quality**.
 6. Click **Close**, then **Run Map** to inspect the baked result in CS:S.
 
+A sun/sky helper may also live in a saved [child assembly](instances.md).
+Open the child normally and use the same **Entity… → light_environment →
+Place entity** workflow. Keep it unnamed and static, preserve the normal FGD
+sun/ambient/HDR/scale/spread fields, set an explicit **Pitch**, then save and
+reference the child. Containing reference rotations transform its direction.
+The parent keeps its sky name, materials and world settings; this helper lights
+the assembled map globally rather than defining a local sky volume.
+
+**Build details…** and **Instance contents…** show **Sun and sky lights:** as
+expanded child helpers before regions. This differs from point/spot counts and
+native SKY/SKY_AMBIENT records. Parent reference and authored-lighting previews
+do not show the child's sun/sky illumination or icons; light-only references
+have no child light bounds, picking or framing. Actual brush preview/Frame and
+ordinary root drafts retain their existing behavior.
+
 ![Soft sun shadow on the floor in Counter-Strike: Source](images/soft-sun.png)
 
 Sunlight requires sky in the sampled sun directions, while ambient samples all visible sky directions. A closed room stays dark, and opaque brushes and terrain block both; static-prop meshes apply opaque, binary cutout or requested fractional alpha-texture visibility. Larger sun angles widen the transition from shadow to light; higher quality reduces stepping in that transition. The sun's central direction still determines surface brightness. Higher sky quality takes longer and can reach the compiler's lighting-work limit.
@@ -561,7 +576,7 @@ Sunlight requires sky in the sampled sun directions, while ambient samples all v
 #### Limits and errors
 
 - Up to 16 MiB of lighting data and 8,192 baked light records per channel; dual-channel builds allow 32 MiB total lighting data. One configurable, cancellable work allowance covers shared preparation and both channels.
-- One visible `light_environment` per map.
+- Baked lighting permits one visible `light_environment` across root and child occurrences. Repeated and root-plus-child suns reject; regions retain the global helper independently of marker position. **Fullbright** retains its existing no-bake semantics. Child source and both LDR/HDR channels still validate before compilation.
 - **SunSpreadAngle** must be finite and between 0 and 90 degrees. Zero uses one sun ray, regardless of sky quality; positive spread uses the chosen 32, 128 or 512 directions per sun sample.
 - Invalid styles, conflicting named-group states, invalid falloff values and invalid sun angles fail with actionable diagnostics.
 

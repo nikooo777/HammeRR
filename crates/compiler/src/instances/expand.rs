@@ -767,6 +767,7 @@ impl<'a> Expansion<'a> {
         match kind {
             entities::Kind::Point => self.stats.point_lights += 1,
             entities::Kind::Spot => self.stats.spot_lights += 1,
+            entities::Kind::Environment => self.stats.environment_lights += 1,
             entities::Kind::LightingOrigin => self.stats.lighting_origins += 1,
             entities::Kind::PlayerSpawn => self.stats.player_spawns += 1,
             entities::Kind::StaticProp => {

@@ -122,6 +122,14 @@ impl Controller {
                 "\nExpanded static lights: {points} point · {spots} spot · before compile-region filtering"
             ));
         }
+        if let Some(lights) = state["stats"]["environment_lights"]
+            .as_u64()
+            .filter(|&count| count > 0)
+        {
+            summary.push_str(&format!(
+                "\nSun and sky lights: {lights} · expanded before compile-region filtering"
+            ));
+        }
         if let Some(reason) = state["static_light_preview"]["reason"].as_str() {
             summary.push('\n');
             summary.push_str(reason);

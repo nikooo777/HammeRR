@@ -355,6 +355,8 @@ pub struct InstanceStats {
     #[serde(skip_serializing_if = "is_zero")]
     pub spot_lights: usize,
     #[serde(skip_serializing_if = "is_zero")]
+    pub environment_lights: usize,
+    #[serde(skip_serializing_if = "is_zero")]
     pub static_props: usize,
     #[serde(skip_serializing_if = "is_zero")]
     pub lighting_origins: usize,
@@ -658,7 +660,7 @@ fn child_admission(child: &Vmf, control: &Control) -> Result<(), String> {
             .is_some_and(|class| class.eq_ignore_ascii_case("func_detail"))
         {
             return Err(format!(
-                "Child entity {} ({}) is unsupported; only world/func_detail brushes, unnamed static lights, bounded static props, scoped info_lighting helpers, neutral player spawns, consumed func_viscluster volumes, unnamed stationary func_occluder helpers, bounded unnamed info_overlay projections, bounded env_cubemap samples and bounded func_instance helpers are supported",
+                "Child entity {} ({}) is unsupported; only world/func_detail brushes, unnamed static point/spot/environment lights, bounded static props, scoped info_lighting helpers, neutral player spawns, consumed func_viscluster volumes, unnamed stationary func_occluder helpers, bounded unnamed info_overlay projections, bounded env_cubemap samples and bounded func_instance helpers are supported",
                 entity.id,
                 entity.classname().unwrap_or("missing class")
             ));

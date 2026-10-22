@@ -2,6 +2,123 @@ use super::*;
 use std::sync::{Arc, Mutex};
 
 #[test]
+fn software_environment_lights_share_sun_counts_without_native_sky_or_reference_geometry() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: false,
+        },
+    )))
+    .unwrap();
+    let (_directory, game, parent, child) = crate::test_assets::instance_map(false);
+    let definitions = source_formats::fgd::Catalog::parse(
+        r#"
+@PointClass = light_environment [
+    angles(angle) : "Pitch Yaw Roll (Y Z X)" : "0 0 0"
+    pitch(integer) : "Pitch" : 0
+    _light(color255) : "Brightness" : "255 255 255 200"
+    _ambient(color255) : "Ambient" : "255 255 255 20"
+    _lightHDR(color255) : "BrightnessHDR" : "-1 -1 -1 1"
+    _lightscaleHDR(float) : "BrightnessScaleHDR" : "1"
+    _ambientHDR(color255) : "AmbientHDR" : "-1 -1 -1 1"
+    _AmbientScaleHDR(float) : "AmbientScaleHDR" : "1"
+    SunSpreadAngle(float) : "SunSpreadAngle" : 0
+]
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        &child,
+        map_core::Document::empty().vmf().write(&Default::default()),
+    )
+    .unwrap();
+    let mut session = Session::new(Ok(game));
+    session.set_definitions(Actor::User, definitions);
+    session.open(Actor::User, &child, true).unwrap();
+    session
+        .create_entity(
+            Actor::User,
+            "light_environment",
+            Some(DVec3::new(80.0, -16.0, 96.0)),
+            BTreeMap::new(),
+        )
+        .unwrap();
+    session.save(Actor::User, None).unwrap();
+    session.open(Actor::User, &parent, false).unwrap();
+    let owner = ObjectId::Entity(session.document().vmf().entities.last().unwrap().id);
+    session.select(&[owner], SelectMode::Replace).unwrap();
+    session.set_view(render::ViewOptions {
+        instance_contents: true,
+        ..session.view()
+    });
+    let memory = session.document().vmf().clone();
+    let history = session.history_snapshot();
+    let camera = session.camera();
+    let settings = session.compile_settings();
+    let parent_bytes = std::fs::read(&parent).unwrap();
+    let child_bytes = std::fs::read(&child).unwrap();
+    let result = session.begin_compile(Actor::User, None).unwrap().run();
+    let output = &result.as_ref().unwrap().output;
+    assert!(output.bsp.is_some(), "{:?}", output.report);
+    assert_eq!(
+        output.stats.instances.as_ref().unwrap().environment_lights,
+        1
+    );
+    assert_eq!(output.stats.instances.as_ref().unwrap().point_lights, 0);
+    assert_eq!(output.stats.instances.as_ref().unwrap().spot_lights, 0);
+    assert_eq!(output.stats.world_lights, 0);
+    session.finish_compile(Actor::User, &result);
+    let request = session
+        .begin_instance_contents_refresh(Actor::User)
+        .unwrap();
+    let report = session
+        .finish_instance_contents_refresh(Actor::User, request.run())
+        .unwrap();
+    assert_eq!(report["state"], "ready");
+    assert_eq!(report["stats"]["environment_lights"], 1);
+    assert!(report["stats"].get("point_lights").is_none());
+    assert!(report["stats"].get("spot_lights").is_none());
+    assert_eq!(report["static_light_preview"]["available"], false);
+    assert_eq!(report["available"], false);
+    assert_eq!(report["geometry"]["vertices"], 0);
+    assert!(report["owners"][0]["bounds"].is_null());
+    let shared = Arc::new(Mutex::new(session));
+    let contents = Controller::new(shared.clone()).unwrap();
+    let build = crate::compile_ui::Controller::new(&shared).unwrap();
+    build.refresh(&lock(&shared));
+    let count = "Sun and sky lights: 1 · expanded before compile-region filtering";
+    let reason = editor_core::session::instance_contents::ENVIRONMENT_LIGHT_PREVIEW_REASON;
+    assert_eq!(report["static_light_preview"]["reason"], reason);
+    assert!(contents.window.get_summary().contains(count));
+    assert!(contents.window.get_summary().contains(reason));
+    assert!(build.window.get_details().contains(count));
+    assert!(build.window.get_details().contains(reason));
+    assert!(
+        !contents
+            .window
+            .get_summary()
+            .contains("Expanded static lights:")
+    );
+    assert!(!contents.window.get_can_frame());
+    contents.window.invoke_frame_contents();
+    assert!(
+        contents
+            .window
+            .get_message()
+            .contains("no visible geometry")
+    );
+    let session = lock(&shared);
+    assert_eq!(session.document().vmf(), &memory);
+    assert_eq!(session.history_snapshot(), history);
+    assert_eq!(session.camera(), camera);
+    assert_eq!(session.compile_settings(), settings);
+    assert_eq!(session.selected_ids(), vec![owner]);
+    assert_eq!(std::fs::read(&parent).unwrap(), parent_bytes);
+    assert_eq!(std::fs::read(&child).unwrap(), child_bytes);
+}
+
+#[test]
 fn software_child_overlay_counts_keep_target_geometry_frame_and_root_drafts() {
     slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
         i_slint_backend_testing::TestingBackendOptions {

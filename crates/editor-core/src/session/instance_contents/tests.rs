@@ -3,6 +3,7 @@ use crate::session::{SelectMode, working_region};
 use map_core::edit;
 
 mod cubemaps;
+mod environment_lights;
 mod lighting_origins;
 mod occluders;
 mod overlays;

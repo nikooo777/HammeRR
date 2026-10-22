@@ -6,6 +6,7 @@ use super::*;
 pub(super) enum Kind {
     Point,
     Spot,
+    Environment,
     StaticProp,
     LightingOrigin,
     PlayerSpawn,
@@ -15,6 +16,7 @@ impl Kind {
     pub fn label(self) -> &'static str {
         match self {
             Self::Point | Self::Spot => "light",
+            Self::Environment => "environment light",
             Self::StaticProp => "prop",
             Self::LightingOrigin => "lighting origin",
             Self::PlayerSpawn => "player spawn",
@@ -26,6 +28,7 @@ pub(super) fn kind(entity: &Entity) -> Option<Kind> {
     match entity.classname()? {
         "light" => Some(Kind::Point),
         "light_spot" => Some(Kind::Spot),
+        "light_environment" => Some(Kind::Environment),
         "prop_static" => Some(Kind::StaticProp),
         "info_lighting" => Some(Kind::LightingOrigin),
         "info_player_terrorist" | "info_player_counterterrorist" => Some(Kind::PlayerSpawn),
@@ -68,21 +71,29 @@ pub(super) fn admit(entity: &Entity, kind: Kind) -> Result<(), String> {
                     ));
                 }
             }
-            "pitch" if matches!(kind, Kind::Spot) => {
+            "pitch" if matches!(kind, Kind::Spot | Kind::Environment) => {
                 if key != "pitch" {
-                    return Err("Static child spotlight requires canonical property pitch".into());
+                    let label = if matches!(kind, Kind::Environment) {
+                        "environment light"
+                    } else {
+                        "spotlight"
+                    };
+                    return Err(format!(
+                        "Static child {label} requires canonical property pitch"
+                    ));
                 }
             }
-            "_light"
-            | "_lighthdr"
-            | "_lightscalehdr"
-            | "_constant_attn"
+            "_light" | "_lighthdr" | "_lightscalehdr" => {}
+            "_ambient" | "_ambienthdr" | "_ambientscalehdr" | "sunspreadangle"
+                if matches!(kind, Kind::Environment) => {}
+            "_constant_attn"
             | "_linear_attn"
             | "_quadratic_attn"
             | "_distance"
             | "_fifty_percent_distance"
             | "_zero_percent_distance"
-            | "_hardfalloff" => {}
+            | "_hardfalloff"
+                if !matches!(kind, Kind::Environment) => {}
             "_inner_cone" | "_cone" | "_exponent" if matches!(kind, Kind::Spot) => {}
             "style" | "defaultstyle" | "spawnflags" => {
                 if value.trim().parse::<f64>().ok() != Some(0.0) {
@@ -113,6 +124,9 @@ pub(super) fn admit(entity: &Entity, kind: Kind) -> Result<(), String> {
         brushes: Vec::new(),
         origin: entity.origin(),
     };
+    if matches!(kind, Kind::Environment) {
+        return crate::lighting::validate_environment_light(&mapped);
+    }
     for lighting in [LightingKind::Ldr, LightingKind::Hdr] {
         let light = crate::lighting::PointLight::from_entity_kind(&mapped, -1, lighting)?;
         if matches!(kind, Kind::Spot) {
@@ -152,14 +166,109 @@ pub(super) fn check_pose(entity: &Entity, kind: Kind) -> Result<(), String> {
     if entity.properties.get("angle").is_some() && scalar(entity, "angle")? != 0.0 {
         return Err("Static child light legacy angle must be absent or zero".into());
     }
-    if matches!(kind, Kind::Spot) {
+    if matches!(kind, Kind::Spot | Kind::Environment) {
+        let label = if matches!(kind, Kind::Environment) {
+            "environment light"
+        } else {
+            "spotlight"
+        };
         let pitch = scalar(entity, "pitch")?;
         if !(-90.0..=90.0).contains(&pitch) {
-            return Err("Static child spotlight pitch must be between -90 and 90".into());
+            return Err(format!(
+                "Static child {label} pitch must be between -90 and 90"
+            ));
         }
         if pitch == 0.0 && angles.x != 0.0 {
-            return Err("Static child spotlight zero pitch requires angles.x 0".into());
+            return Err(format!(
+                "Static child {label} zero pitch requires angles.x 0"
+            ));
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn environment() -> Entity {
+        let mut entity = Entity::new(1000, "light_environment");
+        for (key, value) in [
+            ("origin", "16 24 128"),
+            ("angles", "0 0 0"),
+            ("pitch", "0"),
+            ("_light", "255 255 255 200"),
+            ("_ambient", "255 255 255 20"),
+            ("_lightHDR", "-1 -1 -1 1"),
+            ("_lightscaleHDR", "1"),
+            ("_ambientHDR", "-1 -1 -1 1"),
+            ("_AmbientScaleHDR", "1"),
+            ("SunSpreadAngle", "0"),
+        ] {
+            entity.properties.set(key, value);
+        }
+        entity
+    }
+
+    #[test]
+    fn environment_admission_preserves_fgd_scalars_and_existing_optional_angles() {
+        let mut entity = environment();
+        let before = entity.clone();
+        admit(&entity, Kind::Environment).unwrap();
+        assert_eq!(entity, before);
+        entity.properties.remove("angles");
+        admit(&entity, Kind::Environment).unwrap();
+        for (key, value) in [("_ambientscalehdr", "0.5"), ("SUNSPREADANGLE", "5")] {
+            entity.properties.remove(key);
+            entity.properties.set(key, value);
+        }
+        let before = entity.clone();
+        admit(&entity, Kind::Environment).unwrap();
+        assert_eq!(entity, before);
+        entity
+            .properties
+            .0
+            .push(("SunSpreadAngle".into(), "0".into()));
+        assert!(
+            admit(&entity, Kind::Environment)
+                .unwrap_err()
+                .contains("repeats property")
+        );
+    }
+
+    #[test]
+    fn environment_uses_both_root_channels_without_widening_point_light_fields() {
+        for (key, value) in [
+            ("_ambient", "invalid"),
+            ("_ambientHDR", "invalid"),
+            ("_AmbientScaleHDR", "-1"),
+            ("_lightHDR", "invalid"),
+            ("_lightscaleHDR", "-1"),
+            ("SunSpreadAngle", "91"),
+            ("_constant_attn", "0"),
+            ("_linear_attn", "0"),
+            ("_quadratic_attn", "0"),
+            ("_distance", "0"),
+            ("_inner_cone", "0"),
+        ] {
+            let mut entity = environment();
+            entity.properties.set(key, value);
+            assert!(admit(&entity, Kind::Environment).is_err(), "{key}={value}");
+        }
+        let mut point = Entity::new(1000, "light");
+        point.properties.set("origin", "16 24 128");
+        point.properties.set("_light", "255 255 255 200");
+        point.properties.set("_constant_attn", "1");
+        admit(&point, Kind::Point).unwrap();
+        for (key, value) in [
+            ("_ambient", "255 255 255 20"),
+            ("_ambientHDR", "-1 -1 -1 1"),
+            ("_AmbientScaleHDR", "1"),
+            ("SunSpreadAngle", "0"),
+        ] {
+            point.properties.set(key, value);
+            assert!(admit(&point, Kind::Point).is_err(), "{key}");
+            point.properties.remove(key);
+        }
+    }
 }

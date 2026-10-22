@@ -869,6 +869,12 @@ impl Controller {
                         "\nExpanded static lights: {points} point · {spots} spot · before compile-region filtering\nChild lights, illumination and icons are not shown in the reference or authored-lighting preview."
                     ));
                 }
+                if let Some(lights) = stats["environment_lights"].as_u64().filter(|&count| count > 0) {
+                    summary.push_str(&format!(
+                        "\nSun and sky lights: {lights} · expanded before compile-region filtering\n{}",
+                        editor_core::session::instance_contents::ENVIRONMENT_LIGHT_PREVIEW_REASON
+                    ));
+                }
                 if let Some(props) = stats["static_props"].as_u64().filter(|&count| count > 0) {
                     summary.push_str(&format!(
                         "\nExpanded static props: {props} · before compile-region filtering\n{}",

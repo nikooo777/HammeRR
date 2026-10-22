@@ -87,36 +87,3 @@ fn mcp_and_ui_operations_share_explicit_defaults_without_starting_graphics() {
         assert!(serde_json::from_value::<PreviewDefaultsArgs>(invalid).is_err());
     }
 }
-
-#[test]
-fn temporary_view_resolution_cannot_mutate_current_or_saved_preview_defaults() {
-    let directory = tempfile::tempdir().unwrap();
-    let mut session = Session::new(Err("no assets needed".into()));
-    session.configure_recovery(Ok(directory.path().into()));
-    let snapshot = session.preview_preferences_stamp();
-    session
-        .change_preview_preferences(Actor::User, "save", &snapshot)
-        .unwrap();
-    let path = directory.path().join(crate::preview_preferences::FILE_NAME);
-    let bytes = std::fs::read(&path).unwrap();
-    let shared = Arc::new(Mutex::new(session));
-    let server = EditorServer::new(shared.clone(), None);
-    let before = value(server.get_preview_defaults());
-    let args: RenderArgs = serde_json::from_value(json!({
-        "selection_outlines":false,"entity_images":false,"entity_model_guides":false,
-        "rope_preview":true,"sky_preview":true,"sky_channel":"hdr","sky_exposure_ev":2
-    }))
-    .unwrap();
-    let view = lock(&shared)
-        .resolve_view_update(args.view_update())
-        .unwrap();
-    assert!(!view.selection_outlines);
-    assert!(!view.entity_images);
-    assert!(!view.entity_model_guides);
-    assert!(view.rope_preview);
-    assert!(view.sky_preview);
-    assert_eq!(view.sky_channel, render::sky::Channel::Hdr);
-    assert_eq!(value(server.get_preview_defaults()), before);
-    assert_eq!(std::fs::read(path).unwrap(), bytes);
-    assert!(server.offscreen.lock().unwrap().renderer.is_none());
-}

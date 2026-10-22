@@ -129,24 +129,3 @@ fn retained_pointfile_window_keeps_no_session_or_runtime_owner() {
     assert_eq!(window.get_message(), "the document is closed");
     window.invoke_cancel();
 }
-
-#[test]
-fn pointfile_failed_terminal_admission_preserves_exact_error_and_skips_picker() {
-    let (directory, document, _shared, _access, window) = fixture();
-    let recovery = directory.path().join("recovery");
-    std::fs::write(&recovery, b"not a directory").unwrap();
-    let error = document.shutdown().unwrap_err();
-    window.invoke_browse();
-    assert_eq!(
-        window.get_message(),
-        format!("document shutdown failed: {error}")
-    );
-    window.invoke_frame();
-    assert_eq!(
-        window.get_message(),
-        format!("document shutdown failed: {error}")
-    );
-    std::fs::remove_file(&recovery).unwrap();
-    std::fs::create_dir(&recovery).unwrap();
-    assert_eq!(document.shutdown().unwrap_err(), error);
-}

@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 
 from validate_face_lighting import DEFAULT_BINARY, Client
+from validate_recovery_exit import require_clean_eof
 from validate_visibility import ROOM
 
 
@@ -42,9 +43,8 @@ def validate(binary, output):
         check(not client.call("get_map_info")["rendering"]["initialized"], "Editing, history, saving and compilation need no graphics initialization")
         client.call("create_entity", {"classname": "info_target", "origin": [0, 0, 64], "properties": {"targetname": "headless_exit_snapshot_marker"}})
     finally:
-        client.close()
+        check(require_clean_eof(client) == 0, "The MCP server exits cleanly after stdin closes")
 
-    check(client.process.returncode == 0, "The MCP server exits cleanly after stdin closes")
     snapshots = [json.loads(path.read_text()) for path in (output / "recovery").glob("*.json") if path.name != "settings.json"]
     snapshots = [entry for entry in snapshots if entry.get("kind") == "autosave"]
     check(any("headless_exit_snapshot_marker" in (output / "recovery" / f"{entry['id']}.vmf").read_text() for entry in snapshots), "Orderly shutdown captures the latest unsaved edit")

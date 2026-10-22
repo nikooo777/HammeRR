@@ -9,6 +9,7 @@ from validate_bump_lighting import texture
 from validate_compile_jobs import stopped_on_exit, wait_job
 from validate_direct_lighting import FACE_FORMAT
 from validate_face_lighting import DEFAULT_BINARY, ROOT, Client, detail, face_ref
+from validate_recovery_exit import require_clean_eof
 from validate_visibility import ROOM
 
 SHADERS = ["LightmappedGeneric", "WorldVertexTransition", "WorldTwoTextureBlend"]
@@ -202,8 +203,7 @@ def validate(args):
                     assert client.call("get_map_info")["undo"] == history
                     refusals.append({"shader": shader, "value": value, "patch": patch})
     finally:
-        client.close()
-    assert client.process.returncode == 0
+        require_clean_eof(client)
     (args.output / "results.json").write_text(json.dumps(results, indent=2) + "\n")
     (args.output / "refusals.json").write_text(json.dumps(refusals, indent=2) + "\n")
     return results

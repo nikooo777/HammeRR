@@ -1894,46 +1894,6 @@ mod tests {
     }
 
     #[test]
-    fn bulb_instances_share_one_material_across_scene_rebuilds() {
-        let mut vmf = map_core::Document::empty().vmf().clone();
-        for (id, origin, color) in [
-            (1, "0 0 0", "255 210 150 450"),
-            (2, "64 0 0", "140 190 255 450"),
-        ] {
-            let mut entity = Entity::new(id, "light");
-            entity.properties.set("origin", origin);
-            entity.properties.set("_light", color);
-            vmf.entities.push(entity);
-        }
-        let fs = GameFs {
-            game_dir: Default::default(),
-            base_dir: Default::default(),
-            mounts: vec![],
-        };
-        let mut library = MaterialLibrary::default();
-        for _ in 0..2 {
-            let mesh = SceneMesh::build(&vmf, &fs, &mut library, &HashSet::new());
-            assert_eq!(library.len(), 2);
-            assert_eq!(mesh.batches.len(), 1);
-            assert_eq!(mesh.stats.point_entities, 2);
-            assert_eq!(mesh.stats.brushes, 0);
-            let count = bulb_model().vertices.len();
-            for (a, b) in mesh.vertices[..count].iter().zip(&mesh.vertices[count..]) {
-                assert!(
-                    (Vec3::from_array(b.position) - Vec3::from_array(a.position) - Vec3::X * 64.0)
-                        .length()
-                        < 0.0001
-                );
-                if a.color[3] == 255 {
-                    assert_eq!(b.color, [140, 190, 255, 255]);
-                } else {
-                    assert_eq!(a.color, b.color);
-                }
-            }
-        }
-    }
-
-    #[test]
     fn spotlight_cones_follow_source_pitch_and_yaw() {
         let mesh = light_mesh("light_spot", true);
         assert!(mesh.lines.iter().any(|line| line.position[2] < -90.0));

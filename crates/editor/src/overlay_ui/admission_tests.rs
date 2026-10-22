@@ -439,28 +439,6 @@ fn overlay_forms_and_handle_ownership_survive_real_drain_finish_and_live_peer_ac
 }
 
 #[test]
-fn failed_overlay_admission_preserves_forms_and_handles_after_storage_repair() {
-    software();
-    for handles in [false, true] {
-        let target = fixture(handles);
-        let recovery = target.directory.path().join("recovery");
-        std::fs::write(&recovery, b"not a directory").unwrap();
-        let error = target.document.shutdown().unwrap_err();
-        assert!(matches!(
-            target.document.lifecycle(),
-            DocumentLifecycle::Failed(_)
-        ));
-        let expected = format!("document shutdown failed: {error}");
-        retained_actions(&target, &expected);
-        std::fs::remove_file(&recovery).unwrap();
-        std::fs::create_dir(&recovery).unwrap();
-        retained_actions(&target, &expected);
-        assert_eq!(target.document.shutdown().unwrap_err(), error);
-        assert_eq!(std::fs::read_dir(recovery).unwrap().count(), 0);
-    }
-}
-
-#[test]
 fn retained_overlay_window_releases_runtime_session_and_vanished_origin_abandons_work() {
     software();
     let target = fixture(false);

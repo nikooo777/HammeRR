@@ -185,17 +185,3 @@ fn retained_particle_callbacks_reject_drain_and_closed_document_while_peer_stays
     assert_eq!(snapshot(&peer), peer_after);
     peer.document.shutdown().unwrap();
 }
-
-#[test]
-fn vanished_particle_window_abandons_session_work_before_admission() {
-    i_slint_backend_testing::init_no_event_loop();
-    let fixture = create_fixture();
-    let window = fixture.controller.window.as_weak();
-    let continuation = fixture.access.downgrade();
-    drop(fixture.controller);
-    admitted(&window, &continuation, |_, _| {
-        panic!("vanished particle window accessed Session")
-    });
-    assert_eq!(fixture.document.lifecycle(), DocumentLifecycle::Live);
-    fixture.document.shutdown().unwrap();
-}

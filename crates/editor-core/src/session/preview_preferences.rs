@@ -35,17 +35,6 @@ impl Session {
         }
     }
 
-    #[cfg(test)]
-    fn accept_preview_publication(
-        &mut self,
-        value: Preview,
-        publication: crate::preference_file::Publication,
-    ) {
-        self.preview_preferences
-            .authority()
-            .accept(value, publication);
-    }
-
     fn preview_stamp(&self, saved: &Snapshot<Preview>) -> String {
         format!(
             "{}:{}:{}:{}:{}:{}",

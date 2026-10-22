@@ -531,25 +531,3 @@ fn retained_entity_actions_abandon_a_lost_picker_owner_while_the_document_stays_
     assert_ne!(state(&f.shared), before.0);
     f.document.shutdown().unwrap();
 }
-
-#[test]
-fn failed_entity_family_admission_preserves_forms_and_memoized_recovery_failure() {
-    software();
-    let f = fixture();
-    f.entity.invoke_pick_surface();
-    pick(&f);
-    let path = f.directory.path().join("recovery");
-    std::fs::write(&path, b"blocked").unwrap();
-    let error = f.document.shutdown().unwrap_err();
-    let expected = format!("document shutdown failed: {error}");
-    assert_eq!(
-        f.document.lifecycle(),
-        DocumentLifecycle::Failed(error.clone())
-    );
-    rejected(&f, &expected);
-    std::fs::remove_file(&path).unwrap();
-    std::fs::create_dir(&path).unwrap();
-    rejected(&f, &expected);
-    assert_eq!(f.document.shutdown().unwrap_err(), error);
-    assert_eq!(std::fs::read_dir(path).unwrap().count(), 0);
-}

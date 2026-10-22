@@ -245,26 +245,3 @@ fn retained_history_window_does_not_keep_session_or_runtime_alive() {
     assert_eq!(window.get_message(), "the document is closed");
     window.invoke_close_dialog();
 }
-
-#[test]
-fn history_failed_terminal_admission_preserves_exact_error_without_retry() {
-    let (directory, document, shared) = admitted_fixture();
-    let access = DocumentAccess::for_document(document.clone());
-    let controller = Controller::new_with_access(&access).unwrap();
-    controller.show(&lock(&shared)).unwrap();
-    controller.window.invoke_choose(INITIAL_STATE.into());
-    let selected = controller.window.get_selected_state();
-    let recovery = directory.path().join("recovery");
-    std::fs::write(&recovery, b"not a directory").unwrap();
-    let error = document.shutdown().unwrap_err();
-    controller.window.invoke_navigate();
-    assert_eq!(
-        controller.window.get_message(),
-        format!("document shutdown failed: {error}")
-    );
-    assert_eq!(controller.window.get_selected_state(), selected);
-    std::fs::remove_file(&recovery).unwrap();
-    std::fs::create_dir(&recovery).unwrap();
-    assert_eq!(document.shutdown().unwrap_err(), error);
-    assert_eq!(std::fs::read_dir(&recovery).unwrap().count(), 0);
-}

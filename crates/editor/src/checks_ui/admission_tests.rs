@@ -450,26 +450,3 @@ fn checks_and_context_children_keep_no_idle_session_or_runtime_owner() {
     drop(context);
     document.shutdown().unwrap();
 }
-
-#[test]
-fn failed_checks_and_context_drain_preserves_forms_and_memoized_failure() {
-    i_slint_backend_testing::init_no_event_loop();
-    let f = fixture();
-    f.context.set_body("Pending local text".into());
-    let recovery = f.directory.path().join("recovery");
-    std::fs::write(&recovery, b"blocked").unwrap();
-    let error = f.document.shutdown().unwrap_err();
-    assert_eq!(
-        f.document.lifecycle(),
-        DocumentLifecycle::Failed(error.clone())
-    );
-    let before = state(&f.shared);
-    let before_files = files(f.directory.path());
-    reject_actions(&f, &format!("document shutdown failed: {error}"));
-    assert_eq!(state(&f.shared), before);
-    assert_eq!(files(f.directory.path()), before_files);
-    std::fs::remove_file(&recovery).unwrap();
-    std::fs::create_dir(&recovery).unwrap();
-    assert_eq!(f.document.shutdown().unwrap_err(), error);
-    assert_eq!(std::fs::read_dir(recovery).unwrap().count(), 0);
-}

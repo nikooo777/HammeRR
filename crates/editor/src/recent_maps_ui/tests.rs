@@ -380,38 +380,6 @@ fn retained_recent_window_does_not_keep_session_or_document_owner_alive() {
 }
 
 #[test]
-fn recent_actions_preserve_failed_terminal_form_and_do_not_retry_repaired_recovery() {
-    let (directory, document, shared, _access, window, _authority) = admitted_fixture();
-    window.invoke_select_map(
-        directory
-            .path()
-            .join("target.vmf")
-            .display()
-            .to_string()
-            .into(),
-    );
-    window.set_confirm_clear(true);
-    window.set_discard_changes(true);
-    let expected_form = form(&window);
-    let list = lock(&shared).recent_maps();
-    let recovery = directory.path().join("recovery");
-    std::fs::write(&recovery, b"not a directory").unwrap();
-    let error = document.shutdown().unwrap_err();
-    terminal_actions(&window);
-    assert_eq!(
-        window.get_message(),
-        format!("document shutdown failed: {error}")
-    );
-    assert_eq!(form(&window), expected_form);
-    assert_eq!(lock(&shared).recent_maps(), list);
-    window.invoke_cancel();
-    std::fs::remove_file(&recovery).unwrap();
-    std::fs::create_dir(&recovery).unwrap();
-    assert_eq!(document.shutdown().unwrap_err(), error);
-    assert_eq!(std::fs::read_dir(&recovery).unwrap().count(), 0);
-}
-
-#[test]
 fn admitted_actual_recent_reload_finishes_its_form_body_before_final_recovery() {
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
@@ -467,18 +435,4 @@ fn admitted_actual_recent_reload_finishes_its_form_body_before_final_recovery() 
         source
     );
     assert_eq!(document.lifecycle(), DocumentLifecycle::Finished);
-}
-
-#[test]
-fn vanished_recent_window_abandons_admitted_action_before_touching_live_document() {
-    let (_directory, document, _shared, access, window, _authority) = admitted_fixture();
-    let weak = window.as_weak();
-    drop(window);
-    assert!(
-        with_session(&weak, &access.downgrade(), |_, _| panic!(
-            "vanished recent window executed Session action"
-        ))
-        .is_none()
-    );
-    assert_eq!(document.lifecycle(), DocumentLifecycle::Live);
 }

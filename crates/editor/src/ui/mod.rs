@@ -358,12 +358,6 @@ fn refresh_sky_preview_status(app: &AppWindow, session: &mut Session) {
     );
 }
 
-#[cfg(test)]
-fn bind_model_guide_reload(app: &AppWindow, shared: SharedSession) {
-    let weak = app.as_weak();
-    app.on_reload_model_guides(move || reload_model_guides(weak.unwrap(), &shared));
-}
-
 fn reload_model_guides(app: AppWindow, shared: &SharedSession) {
     let mut session = lock(shared);
     let cancelled = session.refresh_model_assets(Actor::User);
@@ -3375,17 +3369,8 @@ pub(crate) mod tests;
 mod surface_shading_tests;
 
 #[cfg(test)]
-mod frustum_tests;
-#[cfg(test)]
-mod projector_tests;
-
-#[cfg(test)]
-mod icon_tests;
-#[cfg(test)]
 mod viscluster_tests;
 
-#[cfg(test)]
-mod model_guide_tests;
 #[cfg(test)]
 mod model_scale_tests;
 

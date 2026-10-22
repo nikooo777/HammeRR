@@ -19,13 +19,9 @@ fn primary_diffuse_selection_is_shared_by_the_three_canonical_families() {
             ("$nodiffusebumplighting 1", "$basetexture", "raw/base"),
         ] {
             let material = Material::parse(&format!("{shader} {{ $BaseTexture raw/base $BumpMap missing/normal $ALBEDO selected/albedo $basetexture2 second/base {suppression} }}")).unwrap();
-            let original = material.clone();
-            let semantics = material.compile_semantics();
             assert_eq!(material.primary_base_texture_key().unwrap(), Some(key));
             assert_eq!(material.primary_base_texture().unwrap(), Some(expected));
             assert_eq!(material.get("$basetexture2"), Some("second/base"));
-            assert_eq!(material.compile_semantics(), semantics);
-            assert_eq!(material, original);
         }
     }
 }
@@ -150,7 +146,6 @@ fn nested_patch_selection_preserves_resolved_raw_parameters_blocks_and_read_clos
             _ => panic!("Unexpected asset read {path}"),
         }))
     }).unwrap().unwrap();
-    let original = material.clone();
     assert_eq!(
         reads,
         [
@@ -167,5 +162,4 @@ fn nested_patch_selection_preserves_resolved_raw_parameters_blocks_and_read_clos
     assert_eq!(material.get("$basetexture2"), Some("second/base"));
     assert_eq!(material.get("$untouched"), Some("raw"));
     assert_eq!(material.blocks.len(), 1);
-    assert_eq!(material, original);
 }

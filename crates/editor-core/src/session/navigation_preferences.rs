@@ -35,17 +35,6 @@ impl Session {
         }
     }
 
-    #[cfg(test)]
-    fn accept_navigation_publication(
-        &mut self,
-        value: Navigation,
-        publication: crate::preference_file::Publication,
-    ) {
-        self.navigation_preferences
-            .authority()
-            .accept(value, publication);
-    }
-
     fn navigation_stamp(&self, saved: &Snapshot<Navigation>) -> String {
         format!(
             "{}:{}:{}",

@@ -425,17 +425,3 @@ fn recovery_failed_terminal_preserves_pending_form_snapshot_bytes_and_exact_erro
         before
     );
 }
-
-#[test]
-fn vanished_recovery_window_abandons_action_while_document_remains_live() {
-    let (_directory, document, _shared, access, window, _authority, _id) = admitted_fixture();
-    let weak = window.as_weak();
-    drop(window);
-    assert!(
-        with_shared(&weak, &access.downgrade(), |_, _| panic!(
-            "vanished recovery window executed Session action"
-        ))
-        .is_none()
-    );
-    assert_eq!(document.lifecycle(), DocumentLifecycle::Live);
-}

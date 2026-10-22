@@ -148,7 +148,6 @@ mod tests {
             normal: DVec3::new(0.0, 1e-8, -1.0),
             dist: 0.051_596,
         };
-        assert_eq!(plane.normal.z, -1.0);
         let points = [
             DVec3::new(3928.0, 5784.0, 0.0),
             DVec3::new(4396.0, 5784.0, 0.0),

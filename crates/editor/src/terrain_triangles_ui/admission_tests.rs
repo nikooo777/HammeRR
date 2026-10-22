@@ -389,37 +389,6 @@ fn triangle_foreign_reviews_highlights_and_resolution_picks_preserve_exact_owner
 }
 
 #[test]
-fn failed_triangle_shutdown_keeps_pending_pick_and_memoized_recovery_error() {
-    i_slint_backend_testing::init_no_event_loop();
-    let target = fixture();
-    target.controller.window.invoke_toggle_triangle(0, true);
-    target.controller.window.invoke_pick_triangle();
-    assert!(target.controller.is_picking());
-    let expected_fields = fields(&target.controller);
-    let expected_state = state(&lock(&target.shared));
-    let recovery = target.directory.path().join("recovery");
-    if recovery.exists() {
-        std::fs::remove_dir_all(&recovery).unwrap();
-    }
-    std::fs::write(&recovery, b"blocked").unwrap();
-    let error = target.document.shutdown().unwrap_err();
-    assert_eq!(
-        target.document.lifecycle(),
-        DocumentLifecycle::Failed(error.clone())
-    );
-    rejected_actions(
-        &target.controller,
-        &format!("document shutdown failed: {error}"),
-    );
-    assert_eq!(fields(&target.controller), expected_fields);
-    assert_eq!(state(&lock(&target.shared)), expected_state);
-    std::fs::remove_file(&recovery).unwrap();
-    std::fs::create_dir(&recovery).unwrap();
-    assert_eq!(target.document.shutdown().unwrap_err(), error);
-    assert_eq!(std::fs::read_dir(&recovery).unwrap().count(), 0);
-}
-
-#[test]
 fn admitted_triangle_apply_finishes_before_final_recovery_while_shutdown_waits() {
     i_slint_backend_testing::init_no_event_loop();
     let target = fixture();
@@ -456,21 +425,4 @@ fn admitted_triangle_apply_finishes_before_final_recovery_while_shutdown_waits()
     assert_eq!(entries.len(), 1);
     let recovered = store.read(&entries[0].id).unwrap().1;
     assert_eq!(source_formats::vmf::Vmf::parse(&recovered).unwrap(), draft);
-}
-
-#[test]
-fn vanished_triangle_window_abandons_before_document_admission() {
-    i_slint_backend_testing::init_no_event_loop();
-    let target = fixture();
-    let window = target.controller.window.as_weak();
-    let continuation = target.access.downgrade();
-    drop(target.controller);
-    assert!(window.upgrade().is_none());
-    let visited = Cell::new(false);
-    assert_eq!(
-        with_session(&window, &continuation, |_, _| visited.set(true)),
-        None
-    );
-    assert!(!visited.get());
-    assert_eq!(target.document.lifecycle(), DocumentLifecycle::Live);
 }

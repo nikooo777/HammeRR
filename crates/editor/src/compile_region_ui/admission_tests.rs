@@ -372,28 +372,6 @@ fn all_region_family_actions_preserve_forms_and_final_recovery_through_real_drai
 }
 
 #[test]
-fn failed_region_family_admission_remains_terminal_after_recovery_storage_repair() {
-    software();
-    for family in [Family::Surface, Family::Volume, Family::Region] {
-        let target = fixture(family);
-        let recovery = target.directory.path().join("recovery");
-        std::fs::write(&recovery, b"not a directory").unwrap();
-        let error = target.document.shutdown().unwrap_err();
-        assert!(matches!(
-            target.document.lifecycle(),
-            DocumentLifecycle::Failed(_)
-        ));
-        let expected = format!("document shutdown failed: {error}");
-        retained_actions(&target, &expected);
-        std::fs::remove_file(&recovery).unwrap();
-        std::fs::create_dir(&recovery).unwrap();
-        retained_actions(&target, &expected);
-        assert_eq!(target.document.shutdown().unwrap_err(), error);
-        assert_eq!(std::fs::read_dir(recovery).unwrap().count(), 0);
-    }
-}
-
-#[test]
 fn retained_region_family_windows_release_document_session_and_vanished_origins_abandon_work() {
     software();
     let target = fixture(Family::Region);

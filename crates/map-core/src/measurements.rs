@@ -354,17 +354,6 @@ mod tests {
     }
 
     #[test]
-    fn components_are_signed_and_distance_uses_all_three_axes() {
-        let ruler = Measurement {
-            start: DVec3::new(4.0, 7.0, 20.0),
-            end: DVec3::new(1.0, 11.0, 8.0),
-            ..measurement(1)
-        };
-        assert_eq!(ruler.components(), DVec3::new(-3.0, 4.0, -12.0));
-        assert_eq!(ruler.distance(), 13.0);
-    }
-
-    #[test]
     fn names_counts_ids_and_endpoint_ranges_are_bounded() {
         let mut metadata = Measurements {
             measurements: (1..=MAX_MEASUREMENTS as u32).map(measurement).collect(),

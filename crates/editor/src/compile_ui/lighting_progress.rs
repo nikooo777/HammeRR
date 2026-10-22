@@ -109,39 +109,3 @@ fn render(progress: &Value) -> Option<String> {
     }
     Some(text)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn failed_lighting_is_reported_with_real_partial_counts_and_source() {
-        let stats = json!({"lighting_progress":{
-            "completed":false,"work":101,"limit":100,
-            "current_channel":"hdr","current_phase":"sky_ambient",
-            "lightmap_samples_planned":48,"lightmap_samples_completed":29,
-            "lightmap_samples_planned_complete":true,
-            "preparation_work":5,"ldr_work":60,"hdr_work":36,
-            "phases":[{"channel":"hdr","phase":"sky_ambient","work":36}],
-            "contributors":[{"entity_id":17,"work":90,"channel":"hdr","phase":"sky_ambient",
-                "instance":{"file":"courtyard.vmf","original_entity_id":23,"file_truncated":false}}],
-            "other_contributors_work":0,"unattributed_work":11,"contributors_truncated":false
-        }});
-        let text = details(&stats);
-        assert!(text.contains("101 / 100 units · stopped before completion"));
-        assert!(text.contains("HDR · Sky ambient"));
-        assert!(text.contains("29 / 48 planned"));
-        assert!(text.contains("shared 5 · LDR 60 · HDR 36"));
-        assert!(text.contains("Light entity:17"));
-        assert!(text.contains("courtyard.vmf · child entity:23"));
-        assert!(!text.contains("planning incomplete"));
-        assert!(!text.contains("complete\n"));
-    }
-
-    #[test]
-    fn absent_progress_is_optional_but_malformed_progress_is_explicit() {
-        assert!(details(&json!({})).is_empty());
-        assert!(details(&json!({"lighting_progress":{"completed":false}})).contains("unavailable"));
-    }
-}

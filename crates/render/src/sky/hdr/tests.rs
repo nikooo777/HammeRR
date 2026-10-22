@@ -52,23 +52,3 @@ fn integer_hdr_uses_linear_unorm_times_sixteen_without_srgb_or_eight_bit_clampin
     assert_eq!(values, [0.0, 4.0, 16.0, 1.0]);
     assert!(matches!(bytes, std::borrow::Cow::Owned(_)));
 }
-#[test]
-fn hdr_payload_identity_changes_even_for_same_family_after_cache_replacement() {
-    let faces = || {
-        super::super::SUFFIXES.map(|suffix| {
-            super::super::Face::hdr(
-                None,
-                suffix.into(),
-                None,
-                None,
-                None,
-                None,
-                Some("missing".into()),
-            )
-        })
-    };
-    let first = super::super::Skybox::hdr("family".into(), faces());
-    let second = super::super::Skybox::hdr("family".into(), faces());
-    assert_ne!(first.payload_id, second.payload_id);
-    assert!(!first.ready());
-}

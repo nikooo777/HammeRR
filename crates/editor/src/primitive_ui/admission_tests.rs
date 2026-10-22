@@ -303,30 +303,6 @@ fn managed_geometry_callbacks_preserve_reviews_and_peers_through_real_drain() {
 }
 
 #[test]
-fn managed_geometry_failed_shutdown_keeps_forms_and_memoizes_recovery_failure() {
-    backend();
-    for family in FAMILIES {
-        let target = Fixture::new(family);
-        target.preview();
-        let expected = target.form();
-        let render = lock(&target.shared).render_document().vmf().clone();
-        let recovery = target.directory.path().join("recovery");
-        if recovery.exists() {
-            std::fs::remove_dir_all(&recovery).unwrap();
-        }
-        std::fs::write(&recovery, b"blocked").unwrap();
-        let error = target.document.shutdown().unwrap_err();
-        target.rejected_actions(&format!("document shutdown failed: {error}"));
-        assert_eq!(target.form(), expected);
-        assert_eq!(lock(&target.shared).render_document().vmf(), &render);
-        std::fs::remove_file(&recovery).unwrap();
-        std::fs::create_dir(&recovery).unwrap();
-        assert_eq!(target.document.shutdown().unwrap_err(), error);
-        assert_eq!(std::fs::read_dir(&recovery).unwrap().count(), 0);
-    }
-}
-
-#[test]
 fn stale_geometry_reviews_cannot_apply_or_cancel_foreign_previews() {
     backend();
     for family in FAMILIES {

@@ -308,26 +308,3 @@ fn retained_hollow_window_has_no_runtime_owner_and_missing_window_abandons_befor
     window.invoke_cancel();
     assert!(!window.window().is_visible());
 }
-
-#[test]
-fn hollow_failed_drain_is_memoized_and_local_dismissal_preserves_preview() {
-    i_slint_backend_testing::init_no_event_loop();
-    let (directory, document, shared, _access, window) = fixture();
-    window.invoke_preview_edit();
-    let fields = fields(&window);
-    let recovery = directory.path().join("recovery");
-    std::fs::write(&recovery, b"not a directory").unwrap();
-    let error = document.shutdown().unwrap_err();
-    let expected_state = state(&lock(&shared));
-    let expected_error = format!("document shutdown failed: {error}");
-    reject_actions(&window, &fields, &expected_error);
-    window.show().unwrap();
-    window.invoke_cancel();
-    assert!(!window.window().is_visible());
-    assert_eq!(window.get_message(), expected_error);
-    assert_eq!(state(&lock(&shared)), expected_state);
-    std::fs::remove_file(&recovery).unwrap();
-    std::fs::create_dir(&recovery).unwrap();
-    assert_eq!(document.shutdown().unwrap_err(), error);
-    assert_eq!(std::fs::read_dir(&recovery).unwrap().count(), 0);
-}

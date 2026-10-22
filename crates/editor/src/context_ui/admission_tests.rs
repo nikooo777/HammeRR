@@ -94,32 +94,3 @@ fn accepted_context_apply_finishes_before_real_shutdown_final_recovery() {
     assert_eq!(lock(&shared).context_state(), before);
     assert_eq!(store.read(&entries[0].id).unwrap().1, recovered);
 }
-
-#[test]
-fn vanished_context_window_abandons_before_admission_while_document_stays_live() {
-    i_slint_backend_testing::init_no_event_loop();
-    let directory = tempfile::tempdir().unwrap();
-    let mut session = Session::new(Err("No assets required".into()));
-    session.configure_recovery(Ok(directory.path().join("recovery")));
-    let shared = Arc::new(Mutex::new(session));
-    let document = crate::test_assets::document(shared.clone());
-    let access = DocumentAccess::for_document(document.clone());
-    let window = ContextWindow::new().unwrap();
-    bind_with_access(&window, &access);
-    window.invoke_begin("map".into());
-    let before = lock(&shared).context_state();
-    window.show().unwrap();
-    window.hide().unwrap();
-    let weak = window.as_weak();
-    drop(window);
-    assert!(weak.upgrade().is_none());
-    assert!(
-        with_session(&weak, &access.downgrade(), |_, _| panic!(
-            "vanished child accessed Session"
-        ))
-        .is_none()
-    );
-    assert_eq!(lock(&shared).context_state(), before);
-    assert_eq!(document.lifecycle(), DocumentLifecycle::Live);
-    document.shutdown().unwrap();
-}

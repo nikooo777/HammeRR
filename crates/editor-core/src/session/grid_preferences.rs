@@ -35,15 +35,6 @@ impl Session {
         }
     }
 
-    #[cfg(test)]
-    fn accept_grid_publication(
-        &mut self,
-        value: Grid,
-        publication: crate::preference_file::Publication,
-    ) {
-        self.grid_preferences.authority().accept(value, publication);
-    }
-
     fn grid_stamp(&self, saved: &Snapshot<Grid>) -> String {
         format!(
             "{}:{}:{}:{}",

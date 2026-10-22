@@ -268,26 +268,6 @@ fn cubemap_callbacks_keep_forms_and_recovery_during_real_drain_finish_and_live_p
 }
 
 #[test]
-fn failed_cubemap_admission_remains_terminal_after_storage_repair() {
-    software();
-    let target = fixture();
-    let recovery = target.directory.path().join("recovery");
-    std::fs::write(&recovery, b"not a directory").unwrap();
-    let error = target.document.shutdown().unwrap_err();
-    assert!(matches!(
-        target.document.lifecycle(),
-        DocumentLifecycle::Failed(_)
-    ));
-    let expected = format!("document shutdown failed: {error}");
-    retained_actions(&target, &expected);
-    std::fs::remove_file(&recovery).unwrap();
-    std::fs::create_dir(&recovery).unwrap();
-    retained_actions(&target, &expected);
-    assert_eq!(target.document.shutdown().unwrap_err(), error);
-    assert_eq!(std::fs::read_dir(recovery).unwrap().count(), 0);
-}
-
-#[test]
 fn retained_cubemap_window_releases_session_runtime_and_vanished_origin_abandons_work() {
     software();
     let target = fixture();

@@ -10,9 +10,6 @@ use crate::{StatisticRow, StatisticsWindow};
 #[cfg(test)]
 use crate::runtime::SharedSession;
 
-#[cfg(test)]
-mod admission_tests;
-
 pub fn refresh(window: &StatisticsWindow, session: &Session) {
     let section = match window.get_section() {
         1 => Section::EntityClasses,

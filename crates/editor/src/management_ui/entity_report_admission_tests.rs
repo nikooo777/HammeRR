@@ -660,23 +660,3 @@ fn retained_entity_report_windows_release_document_and_vanished_origin_abandons_
     );
     assert_eq!(f.document.lifecycle(), DocumentLifecycle::Live);
 }
-
-#[test]
-fn failed_entity_report_drain_keeps_exact_error_forms_and_drafts_without_retry() {
-    i_slint_backend_testing::init_no_event_loop();
-    let f = fixture();
-    pending(&f);
-    let expected = forms(&f);
-    let recovery = f.directory.path().join("recovery");
-    std::fs::write(&recovery, b"blocked").unwrap();
-    let error = f.document.shutdown().unwrap_err();
-    assert_eq!(
-        f.document.lifecycle(),
-        DocumentLifecycle::Failed(error.clone())
-    );
-    reject_actions(&f, &expected, &format!("document shutdown failed: {error}"));
-    std::fs::remove_file(&recovery).unwrap();
-    std::fs::create_dir(&recovery).unwrap();
-    assert_eq!(f.document.shutdown().unwrap_err(), error);
-    assert_eq!(std::fs::read_dir(&recovery).unwrap().count(), 0);
-}

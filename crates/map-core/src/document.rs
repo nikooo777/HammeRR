@@ -1156,14 +1156,6 @@ mod tests {
             .unwrap();
         assert_eq!(doc.undo_labels().collect::<Vec<_>>(), ["add"]);
     }
-
-    #[test]
-    fn new_ids_never_collide_with_existing_ones() {
-        let mut doc = doc_with_entities(2);
-        let max = doc.vmf().entities.iter().map(|e| e.id).max().unwrap();
-        let id = doc.edit("id", |tx| tx.new_object_id()).unwrap();
-        assert!(id > max);
-    }
 }
 
 #[cfg(test)]

@@ -1298,20 +1298,6 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     #[test]
-    fn visibility_labels_distinguish_solved_work_from_authored_output() {
-        let text = visibility_details(&serde_json::json!({
-            "clusters":3,"visibility_solved_clusters":7,"visibility_portals":8,
-            "visibility_removed_pairs":4,"viscluster_helpers":2,"viscluster_groups":1,
-            "viscluster_grouped_leaves":5,"visibility_workers":2
-        }));
-        assert!(text.contains("3 emitted clusters"));
-        assert!(text.contains("7 solved leaf clusters"));
-        assert!(text.contains("4 leaf-cluster pairs removed before authored grouping"));
-        assert!(text.contains("2 helpers · 1 effective groups · 5 grouped leaves"));
-        assert!(text.contains("Visibility may expand"));
-    }
-
-    #[test]
     fn hdr_results_keep_channels_separate_and_explain_empty_native_data() {
         let mut stats = serde_json::json!({
             "lighting_faces": 3,

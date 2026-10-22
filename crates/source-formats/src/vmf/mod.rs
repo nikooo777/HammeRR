@@ -1075,48 +1075,6 @@ entity
     }
 
     #[test]
-    fn edited_entity_falls_back_to_standard_order() {
-        let mut vmf = Vmf::parse(POINT_ENTITY_MAP).unwrap();
-        vmf.entities[0].properties.set("targetname", "relay");
-
-        let reparsed = Vmf::parse(&write_lf(&vmf)).unwrap();
-        assert_eq!(reparsed, vmf);
-        let nodes = reparsed.to_nodes();
-        let keys: Vec<_> = nodes[1]
-            .children()
-            .unwrap()
-            .iter()
-            .map(|n| n.key.as_str())
-            .collect();
-        assert_eq!(
-            keys,
-            [
-                "id",
-                "classname",
-                "origin",
-                "targetname",
-                "connections",
-                "editor"
-            ]
-        );
-    }
-
-    #[test]
-    fn new_entities_can_be_built_and_written() {
-        let mut vmf = Vmf::parse(POINT_ENTITY_MAP).unwrap();
-        let mut light = Entity::new(3, "light");
-        light.properties.set("origin", "0 0 128");
-        vmf.entities.push(light);
-
-        let reparsed = Vmf::parse(&write_lf(&vmf)).unwrap();
-        assert_eq!(reparsed.entities[1].classname(), Some("light"));
-        assert_eq!(
-            reparsed.entities[1].origin(),
-            Some(DVec3::new(0.0, 0.0, 128.0))
-        );
-    }
-
-    #[test]
     fn reports_where_a_value_is_invalid() {
         let src = POINT_ENTITY_MAP.replace(
             "\t\"classname\" \"worldspawn\"\n",

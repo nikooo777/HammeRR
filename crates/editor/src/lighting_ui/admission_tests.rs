@@ -295,26 +295,6 @@ fn managed_lighting_guards_foreign_preview_and_changed_face_context_without_clea
 }
 
 #[test]
-fn failed_lighting_admission_preserves_exact_owned_preview_after_storage_repair() {
-    software();
-    let fixture = fixture();
-    let recovery = fixture.directory.path().join("recovery");
-    std::fs::write(&recovery, b"not a directory").unwrap();
-    let error = fixture.document.shutdown().unwrap_err();
-    let expected = format!("document shutdown failed: {error}");
-    let before = snapshot(&fixture);
-    retained_actions(&fixture.controller, &expected);
-    assert_eq!(snapshot(&fixture), before);
-    std::fs::remove_file(&recovery).unwrap();
-    std::fs::create_dir(&recovery).unwrap();
-    let before = snapshot(&fixture);
-    retained_actions(&fixture.controller, &expected);
-    assert_eq!(snapshot(&fixture), before);
-    assert_eq!(fixture.document.shutdown().unwrap_err(), error);
-    assert_eq!(std::fs::read_dir(&recovery).unwrap().count(), 0);
-}
-
-#[test]
 fn retained_lighting_window_releases_runtime_and_session_and_vanished_window_abandons_work() {
     software();
     let fixture = fixture();

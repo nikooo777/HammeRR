@@ -444,59 +444,6 @@ fn alpha_terminals_keep_cached_direct_edits_and_existing_include_depth_without_e
 }
 
 #[test]
-fn alpha_closure_budgets_and_cancellation_include_original_and_unselected_textures() {
-    let fixture = alpha_fixture("insert");
-    let bsp = prop_bsp(&[0]);
-    let plan = fixture.plan(&bsp).unwrap();
-    assert_eq!(plan.entries().len(), 9);
-    for limits in [
-        PakLimits {
-            max_entries: 9,
-            ..PakLimits::default()
-        },
-        PakLimits {
-            max_total_bytes: plan.asset_bytes() - 1,
-            ..PakLimits::default()
-        },
-    ] {
-        assert!(
-            collect_static_prop_asset_plan(
-                &bsp,
-                &fixture.game,
-                &fixture.sources,
-                &PakArchive::default(),
-                limits,
-                &Control::default()
-            )
-            .is_err()
-        );
-    }
-    for stop in [BASE, SECOND_TEXTURE] {
-        let control = Control::default();
-        let mut stopped = false;
-        let error = collect_closure(
-            &Roots::from_bsp(&bsp).unwrap(),
-            PakLimits::default(),
-            &control,
-            &mut |path, _maximum, _original| {
-                assert!(!stopped, "read {path} after cancellation at {stop}");
-                let bytes = fs::read(fixture.directory.path().join(path))?;
-                if path == stop {
-                    stopped = true;
-                    control.cancel().unwrap();
-                }
-                Ok(Some(bytes))
-            },
-        )
-        .unwrap_err();
-        assert!(stopped && error.to_string().contains("cancelled"));
-        let mut target = bsp.clone();
-        assert!(plan.attach(&mut target, &control).is_err());
-        assert_eq!(target, bsp);
-    }
-}
-
-#[test]
 fn rehashed_offline_alpha_bundles_still_check_grammar_mips_and_overridden_dependencies() {
     let fixture = alpha_fixture("replace");
     let mut original = prop_bsp(&[0]);

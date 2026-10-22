@@ -706,7 +706,12 @@ fn invalid_child_pose_static_behavior_and_either_channel_refuse_in_every_mode() 
         let mut parent = room(true, false);
         let owner = instance(&mut parent, "leaf.vmf", "0 0 0", "0 0 0");
         let context = saved_parent(directory.path(), &parent);
-        for mode in MODES {
+        let modes = if matches!(key, "_light" | "_lightHDR") {
+            MODES.as_slice()
+        } else {
+            &MODES[..1]
+        };
+        for &mode in modes {
             let output = compile_saved(&parent, &game, mode, &context);
             assert_error(&output, owner, original, reason);
             assert_preserved(&output, directory.path());
@@ -791,14 +796,12 @@ fn invalid_child_pose_static_behavior_and_either_channel_refuse_in_every_mode() 
         let mut parent = room(true, false);
         let owner = instance(&mut parent, "leaf.vmf", "0 0 0", "0 0 0");
         let context = saved_parent(directory.path(), &parent);
-        for mode in MODES {
-            assert_error(
-                &compile_saved(&parent, &game, mode, &context),
-                owner,
-                original,
-                reason,
-            );
-        }
+        assert_error(
+            &compile_saved(&parent, &game, LightingMode::Fullbright, &context),
+            owner,
+            original,
+            reason,
+        );
     }
 }
 

@@ -24,6 +24,7 @@ from reflection_validation import difference, ppm
 from validate_bump_lighting import texture
 from validate_face_lighting import DEFAULT_BINARY, ROOT, Client, detail
 from validate_hdr_reflections import MATERIAL_SYSTEM_SHA256, pak_entries
+from validate_recovery_exit import require_clean_eof
 from validate_visibility import ROOM
 from validate_water_bottom_native import runtime_diagnostics, verify_runtime_materials
 
@@ -230,8 +231,7 @@ def fixture(args):
         write_json(args.output / "fixture.json", report)
         return report
     finally:
-        client.close()
-        require(client.process.returncode == 0, "MCP fixture process did not exit cleanly on EOF")
+        require_clean_eof(client)
 
 
 def vpk_namespace_absence(path, namespace):

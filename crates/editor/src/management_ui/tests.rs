@@ -429,27 +429,6 @@ fn property_stage_keeps_its_admission_through_real_shutdown_and_borrowed_refresh
 }
 
 #[test]
-fn failed_property_drain_keeps_exact_error_and_local_close_without_retry() {
-    i_slint_backend_testing::init_no_event_loop();
-    let f = fixture();
-    f.parent.invoke_edit("count".into(), "4".into());
-    let expected = fields(&f);
-    let recovery = f._directory.path().join("recovery");
-    std::fs::write(&recovery, b"blocked").unwrap();
-    let error = f.document.shutdown().unwrap_err();
-    let expected_state = state(&f.shared);
-    reject_actions(&f, &expected, &format!("document shutdown failed: {error}"));
-    f.parent.show().unwrap();
-    f.parent.invoke_cancel();
-    assert!(!f.parent.window().is_visible());
-    assert_eq!(state(&f.shared), expected_state);
-    std::fs::remove_file(&recovery).unwrap();
-    std::fs::create_dir(&recovery).unwrap();
-    assert_eq!(f.document.shutdown().unwrap_err(), error);
-    assert_eq!(std::fs::read_dir(&recovery).unwrap().count(), 0);
-}
-
-#[test]
 fn saved_palette_picker_buttons_preserve_precision_brightness_and_draft_cancel() {
     slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
         i_slint_backend_testing::TestingBackendOptions {

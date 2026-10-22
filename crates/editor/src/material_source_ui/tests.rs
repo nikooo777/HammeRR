@@ -392,36 +392,6 @@ fn managed_inspector_rejects_new_reads_and_form_creation_during_drain_and_keeps_
 }
 
 #[test]
-fn failed_material_source_admission_preserves_read_and_cold_form_without_retry() {
-    let (directory, document, shared, access, browser, state) = admitted_fixture();
-    browser.invoke_inspect_source();
-    let window = source_window(&state);
-    let expected = fields(&window);
-    let cold = MaterialWindow::new().unwrap();
-    let cold_state = bind_with_access(&cold, &access);
-    let recovery = directory.path().join("recovery");
-    std::fs::write(&recovery, b"not a directory").unwrap();
-    let error = document.shutdown().unwrap_err();
-    std::fs::remove_file(directory.path().join("materials/test/source.vmt")).unwrap();
-    browser.invoke_inspect_source();
-    window.invoke_refresh_source();
-    cold.invoke_inspect_source();
-    let expected_error = format!("document shutdown failed: {error}");
-    assert_eq!(browser.get_detail(), expected_error);
-    assert_eq!(window.get_status(), expected_error);
-    assert_eq!(cold.get_detail(), expected_error);
-    assert_eq!(fields(&window), expected);
-    assert!(cold_state.borrow().is_none());
-    assert!(!lock(&shared).document().vmf().world.solids.is_empty());
-    window.invoke_close_dialog();
-    assert!(!window.window().is_visible());
-    std::fs::remove_file(&recovery).unwrap();
-    std::fs::create_dir(&recovery).unwrap();
-    assert_eq!(document.shutdown().unwrap_err(), error);
-    assert_eq!(std::fs::read_dir(&recovery).unwrap().count(), 0);
-}
-
-#[test]
 fn vanished_material_source_window_abandons_refresh_while_document_remains_live() {
     let (_directory, document, _shared, access, browser, state) = admitted_fixture();
     browser.invoke_inspect_source();

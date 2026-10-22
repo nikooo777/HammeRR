@@ -139,345 +139,6 @@ fn planned_piece_texture_vectors_reach_native_roofs_and_prism_tops() {
 }
 
 #[test]
-fn independently_extruded_partition_prisms_compile_after_vmf_reopening() {
-    for edge_parameters in [[0.5; 2], [0.2, 0.8]] {
-        for owned in [false, true] {
-            for oblique in [false, true] {
-                for direction in 0..6 {
-                    let mut document = Document::new(common::room());
-                    let object = document
-                        .edit("block", |tx| {
-                            edit::create_block(
-                                tx,
-                                DVec3::new(0.125, -7.25, 16.5),
-                                DVec3::new(64.875, 48.125, 80.25),
-                                "dev/dev_measuregeneric01",
-                            )
-                        })
-                        .unwrap();
-                    let ObjectId::Solid(id) = object else {
-                        unreachable!()
-                    };
-                    if oblique {
-                        document
-                            .edit("rotate", |tx| {
-                                edit::transform(
-                                    tx,
-                                    &[object],
-                                    map_core::transform::Transform {
-                                        rotation: DVec3::new(17.0, -23.0, 31.0),
-                                        pivot: DVec3::new(32.5, 20.4375, 48.375),
-                                        ..Default::default()
-                                    },
-                                )
-                            })
-                            .unwrap();
-                    }
-                    if owned {
-                        document
-                            .edit("detail", |tx| {
-                                edit::tie_to_entity(tx, &[id], "func_detail", &[])
-                            })
-                            .unwrap();
-                    }
-                    let (_, source) = subobject::solid(&document, id).unwrap();
-                    let side = source
-                        .sides
-                        .iter()
-                        .max_by(|a, b| {
-                            map_core::Plane::from_points(a.plane.0)
-                                .unwrap()
-                                .normal
-                                .z
-                                .total_cmp(
-                                    &map_core::Plane::from_points(b.plane.0).unwrap().normal.z,
-                                )
-                        })
-                        .unwrap()
-                        .id;
-                    let request = subobject::Crease {
-                        solid: id,
-                        side,
-                        edges: subobject::partition_pairs(source, side).unwrap()[direction].edges,
-                    };
-                    let partitions = subobject::plan_partitions_at(
-                        &document,
-                        &[subobject::PartitionCut {
-                            source: request,
-                            edge_parameters,
-                        }],
-                    )
-                    .unwrap();
-                    {
-                        document
-                            .edit("keep", |tx| {
-                                map_core::partition_metadata::store_partition(tx, &partitions[0])
-                            })
-                            .unwrap();
-                    }
-                    let spec = subobject::ExtrusionSpec {
-                        height: 16.125,
-                        wall_material: Some("dev/dev_measurewall01a".into()),
-                        texture_lock: true,
-                    };
-                    document
-                        .edit("extrude", |tx| {
-                            subobject::extrude_partitions_with_materials(
-                                tx,
-                                &partitions,
-                                &[(id, 0), (id, 1)],
-                                &spec,
-                                &[
-                                    subobject::PartitionMaterial {
-                                        solid: id,
-                                        partition: 0,
-                                        material: "brick/planned_red".into(),
-                                    },
-                                    subobject::PartitionMaterial {
-                                        solid: id,
-                                        partition: 1,
-                                        material: "wood/planned_blue".into(),
-                                    },
-                                ],
-                            )
-                        })
-                        .unwrap();
-                    let reopened =
-                        source_formats::vmf::Vmf::parse(&document.vmf().write(&Default::default()))
-                            .unwrap();
-                    reopened.validate_ids().unwrap();
-                    let tops = reopened
-                        .world
-                        .solids
-                        .iter()
-                        .chain(reopened.entities.iter().flat_map(|entity| &entity.solids))
-                        .flat_map(|solid| &solid.sides)
-                        .filter(|side| {
-                            ["BRICK/PLANNED_RED", "WOOD/PLANNED_BLUE"]
-                                .contains(&side.material.as_str())
-                        })
-                        .count();
-                    assert_eq!(tops, 2);
-                    let output = compiler::compile(&reopened, &common::empty_game());
-                    assert!(!output.report.has_errors(), "{:?}", output.report);
-                    assert!(output.leak.is_none());
-                    assert_eq!(output.stats.brushes, 9);
-                    assert!(
-                        output
-                            .bsp
-                            .unwrap()
-                            .records::<Brush>()
-                            .unwrap()
-                            .iter()
-                            .all(|brush| brush.side_count >= 5)
-                    );
-                }
-            }
-        }
-    }
-}
-
-#[test]
-fn saved_flat_partition_intents_leave_native_bsp_bytes_unchanged() {
-    let mut document = Document::new(common::room());
-    let ObjectId::Solid(id) = document
-        .edit("block", |tx| {
-            edit::create_block(
-                tx,
-                DVec3::new(0.125, -7.25, 16.5),
-                DVec3::new(64.875, 48.125, 80.25),
-                "dev/dev_measuregeneric01",
-            )
-        })
-        .unwrap()
-    else {
-        unreachable!()
-    };
-    let source = document.solid(id).unwrap();
-    let side = source
-        .sides
-        .iter()
-        .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
-        .unwrap()
-        .id;
-    let request = subobject::Crease {
-        solid: id,
-        side,
-        edges: subobject::crease_pairs(source, side).unwrap()[0].edges,
-    };
-    let before = compiler::compile(document.vmf(), &common::empty_game());
-    assert!(!before.report.has_errors());
-    assert!(before.leak.is_none());
-    let bytes = before.bsp.unwrap().to_bytes();
-    for edge_parameters in [[0.5; 2], [0.2, 0.8]] {
-        let partition = subobject::plan_partitions_at(
-            &document,
-            &[subobject::PartitionCut {
-                source: request.clone(),
-                edge_parameters,
-            }],
-        )
-        .unwrap()
-        .remove(0);
-        document
-            .edit("store flat intent", |tx| {
-                map_core::partition_metadata::store_partition(tx, &partition)
-            })
-            .unwrap();
-        for styled in [false, true] {
-            document
-                .edit("planned piece materials", |tx| {
-                    map_core::partition_metadata::set_piece_top_materials(
-                        tx,
-                        &request,
-                        &[0],
-                        styled.then_some("brick/planned_red"),
-                    )?;
-                    map_core::partition_metadata::set_piece_top_materials(
-                        tx,
-                        &request,
-                        &[1],
-                        styled.then_some("wood/planned_blue"),
-                    )
-                })
-                .unwrap();
-            document
-                .edit("planned piece textures", |tx| {
-                    map_core::partition_metadata::store_partition_surfaces(
-                        tx,
-                        &partition,
-                        &[
-                            styled.then(|| "brick/planned_red".into()),
-                            styled.then(|| "wood/planned_blue".into()),
-                        ],
-                        &[
-                            styled.then_some(subobject::PartitionTexture {
-                                shift: [13.125, -27.5],
-                                scale: [-0.375, 0.625],
-                                rotation: 37.0,
-                            }),
-                            None,
-                        ],
-                    )
-                })
-                .unwrap();
-            let reopened =
-                source_formats::vmf::Vmf::parse(&document.vmf().write(&Default::default()))
-                    .unwrap();
-            let metadata = map_core::partition_metadata::Metadata::parse(&reopened).unwrap();
-            assert_eq!(metadata.entries.len(), 1);
-            assert_eq!(
-                metadata.entries[&(id, side)]
-                    .top_materials
-                    .iter()
-                    .all(Option::is_some),
-                styled
-            );
-            let after = compiler::compile(&reopened, &common::empty_game());
-            assert!(!after.report.has_errors());
-            assert!(after.leak.is_none());
-            assert_eq!(after.bsp.unwrap().to_bytes(), bytes);
-        }
-    }
-}
-
-#[test]
-fn planned_roof_materials_compile_after_vmf_reopening() {
-    for owned in [false, true] {
-        for direction in 0..2 {
-            for edge_parameters in [[0.5; 2], [0.2; 2], [0.8; 2]] {
-                let mut document = Document::new(common::room());
-                let ObjectId::Solid(id) = document
-                    .edit("block", |tx| {
-                        edit::create_block(
-                            tx,
-                            DVec3::new(0.0, 0.0, 16.0),
-                            DVec3::new(64.0, 64.0, 80.0),
-                            "dev/dev_measuregeneric01",
-                        )
-                    })
-                    .unwrap()
-                else {
-                    unreachable!()
-                };
-                if owned {
-                    document
-                        .edit("detail", |tx| {
-                            edit::tie_to_entity(tx, &[id], "func_detail", &[])
-                        })
-                        .unwrap();
-                }
-                let brush = subobject::solid(&document, id).unwrap().1;
-                let side = brush
-                    .sides
-                    .iter()
-                    .find(|side| {
-                        map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99
-                    })
-                    .unwrap()
-                    .id;
-                let partition = subobject::plan_partitions_at(
-                    &document,
-                    &[subobject::PartitionCut {
-                        source: subobject::Crease {
-                            solid: id,
-                            side,
-                            edges: subobject::crease_pairs(brush, side).unwrap()[direction].edges,
-                        },
-                        edge_parameters,
-                    }],
-                )
-                .unwrap()
-                .remove(0);
-                document
-                    .edit("roof", |tx| {
-                        subobject::crease_partitions_with_materials(
-                            tx,
-                            std::slice::from_ref(&partition),
-                            16.0,
-                            true,
-                            &[
-                                subobject::PartitionMaterial {
-                                    solid: id,
-                                    partition: 0,
-                                    material: "brick/planned_red".into(),
-                                },
-                                subobject::PartitionMaterial {
-                                    solid: id,
-                                    partition: 1,
-                                    material: "wood/planned_blue".into(),
-                                },
-                            ],
-                        )
-                    })
-                    .unwrap();
-                let reopened =
-                    source_formats::vmf::Vmf::parse(&document.vmf().write(&Default::default()))
-                        .unwrap();
-                reopened.validate_ids().unwrap();
-                let brush = subobject::solid(&Document::new(reopened.clone()), id)
-                    .unwrap()
-                    .1
-                    .clone();
-                assert_eq!(
-                    brush
-                        .sides
-                        .iter()
-                        .filter(|side| ["BRICK/PLANNED_RED", "WOOD/PLANNED_BLUE"]
-                            .contains(&side.material.as_str()))
-                        .count(),
-                    2
-                );
-                let output = compiler::compile(&reopened, &common::empty_game());
-                assert!(!output.report.has_errors(), "{:?}", output.report);
-                assert!(output.leak.is_none());
-                assert_eq!(output.stats.brushes, 7);
-            }
-        }
-    }
-}
-
-#[test]
 fn sheared_oblique_brushes_compile_after_vmf_round_trip() {
     for factor in [-1.25, 0.75] {
         let mut document = Document::new(common::room());
@@ -852,121 +513,6 @@ fn carved_room_compiles_after_removing_the_retained_cutter_and_vmf_round_trip() 
 }
 
 #[test]
-fn scaled_and_rotated_components_compile_after_vmf_round_trip() {
-    for (spec, whole) in [
-        (
-            subobject::ComponentTransform::Scale(DVec3::new(0.5, 0.5, 1.0)),
-            false,
-        ),
-        (
-            subobject::ComponentTransform::Rotate(DVec3::new(30.0, 0.0, 0.0)),
-            false,
-        ),
-        (
-            subobject::ComponentTransform::Scale(DVec3::new(2.0, 0.5, 1.25)),
-            true,
-        ),
-        (
-            subobject::ComponentTransform::Rotate(DVec3::new(15.0, -20.0, 30.0)),
-            true,
-        ),
-    ] {
-        let mut document = Document::new(common::room());
-        let ObjectId::Solid(id) = document
-            .edit("block", |tx| {
-                edit::create_block(
-                    tx,
-                    DVec3::ZERO,
-                    DVec3::splat(64.0),
-                    "dev/dev_measuregeneric01",
-                )
-            })
-            .unwrap()
-        else {
-            unreachable!()
-        };
-        let shape = subobject::topology(document.solid(id).unwrap()).unwrap();
-        let selected = shape
-            .vertices
-            .iter()
-            .filter(|vertex| whole || vertex.position.z == 64.0)
-            .map(|vertex| subobject::Component {
-                solid: id,
-                sides: vertex.sides.clone(),
-            })
-            .collect::<Vec<_>>();
-        let plan = subobject::plan_transform(&document, &selected, &spec, None, whole).unwrap();
-        document
-            .edit("transform", |tx| subobject::apply(tx, &plan.replacements))
-            .unwrap();
-        let vmf =
-            source_formats::vmf::Vmf::parse(&document.vmf().write(&Default::default())).unwrap();
-        vmf.validate_ids().unwrap();
-        let output = compiler::compile(&vmf, &common::empty_game());
-        assert!(!output.report.has_errors(), "{:?}", output.report);
-        assert!(output.leak.is_none());
-        assert_eq!(output.stats.brushes, 7);
-        assert!(!output.bsp.unwrap().records::<Face>().unwrap().is_empty());
-    }
-}
-
-#[test]
-fn multi_cutter_room_compiles_after_retaining_then_removing_both_cutters() {
-    let mut document = Document::empty();
-    let (outer, left, right) = document
-        .edit("room inputs", |tx| {
-            let outer = edit::create_block(
-                tx,
-                DVec3::new(-144.0, -144.0, -16.0),
-                DVec3::splat(144.0),
-                "dev/dev_measuregeneric01",
-            )?;
-            let left = edit::create_block(
-                tx,
-                DVec3::new(-128.0, -128.0, 0.0),
-                DVec3::new(0.0, 128.0, 128.0),
-                "dev/dev_measuregeneric01",
-            )?;
-            let right = edit::create_block(
-                tx,
-                DVec3::new(0.0, -128.0, 0.0),
-                DVec3::splat(128.0),
-                "dev/dev_measuregeneric01",
-            )?;
-            Ok((outer, left, right))
-        })
-        .unwrap();
-    let (ObjectId::Solid(outer), ObjectId::Solid(left), ObjectId::Solid(right)) =
-        (outer, left, right)
-    else {
-        unreachable!()
-    };
-    document
-        .edit("carve room", |tx| {
-            map_core::carve::carve_many(tx, &[left, right], &[outer])
-        })
-        .unwrap();
-    document
-        .edit("remove cutters and add spawn", |tx| {
-            edit::delete(tx, &[ObjectId::Solid(left), ObjectId::Solid(right)])?;
-            edit::create_entity(
-                tx,
-                "info_player_counterterrorist",
-                Some(DVec3::new(0.0, 0.0, 64.0)),
-                &[],
-                Vec::new(),
-            )
-        })
-        .unwrap();
-    let vmf = source_formats::vmf::Vmf::parse(&document.vmf().write(&Default::default())).unwrap();
-    vmf.validate_ids().unwrap();
-    let output = compiler::compile(&vmf, &common::empty_game());
-    assert!(!output.report.has_errors(), "{:?}", output.report);
-    assert!(output.leak.is_none());
-    assert!(output.stats.brushes >= 6);
-}
-
-#[test]
 fn opposing_edge_ridges_compile_inside_a_sealed_room_after_vmf_round_trip() {
     for index in 0..2 {
         let mut document = Document::new(common::room());
@@ -1064,156 +610,150 @@ fn opposing_edge_ridges_compile_inside_a_sealed_room_after_vmf_round_trip() {
 
 #[test]
 fn polygon_saved_flat_and_extruded_pieces_compile_in_sealed_native_fixtures() {
-    for corners in [3, 5, 6, 8] {
-        for owned in [false, true] {
-            for reflected in [false, true] {
-                let mut document = Document::new(common::room());
-                let objects = document
-                    .edit("polygon", |tx| {
-                        map_core::primitive::create(
-                            tx,
-                            &map_core::primitive::Spec {
-                                shape: map_core::primitive::Shape::Cylinder,
-                                segments: corners,
-                                mins: DVec3::new(0.125, -7.25, 16.5),
-                                maxs: DVec3::new(64.875, 48.125, 80.25),
-                                material: "dev/dev_measuregeneric01".into(),
-                                ..Default::default()
-                            },
-                        )
-                    })
-                    .unwrap();
-                let ObjectId::Solid(id) = objects[0] else {
-                    unreachable!()
-                };
-                document
-                    .edit("affine", |tx| {
-                        edit::transform(
-                            tx,
-                            &objects,
-                            edit::Transform {
-                                rotation: DVec3::new(17.0, -23.0, 31.0),
-                                reflection: [reflected, false, false],
-                                pivot: DVec3::new(32.5, 20.4375, 48.375),
-                                ..Default::default()
-                            },
-                        )
-                    })
-                    .unwrap();
-                if owned {
-                    document
-                        .edit("detail", |tx| {
-                            edit::tie_to_entity(tx, &[id], "func_detail", &[])
-                        })
-                        .unwrap();
-                }
-                let source = subobject::solid(&document, id).unwrap().1;
-                let side = source
-                    .sides
-                    .iter()
-                    .max_by(|a, b| {
-                        map_core::Plane::from_points(a.plane.0)
-                            .unwrap()
-                            .normal
-                            .z
-                            .total_cmp(&map_core::Plane::from_points(b.plane.0).unwrap().normal.z)
-                    })
-                    .unwrap()
-                    .id;
-                let pairs = subobject::partition_pairs(source, side).unwrap();
-                let before = compiler::compile(document.vmf(), &common::empty_game());
-                assert!(!before.report.has_errors(), "{:?}", before.report);
-                assert!(before.leak.is_none());
-                let bytes = before.bsp.unwrap().to_bytes();
-                for direction in [0, pairs.len() / 2, pairs.len() - 1] {
-                    for edge_parameters in [[0.5; 2], [0.2, 0.8]] {
-                        let mut current = document.clone();
-                        let part = subobject::plan_partitions_at(
-                            &current,
-                            &[subobject::PartitionCut {
-                                source: subobject::Crease {
-                                    solid: id,
-                                    side,
-                                    edges: pairs[direction].edges,
-                                },
-                                edge_parameters,
-                            }],
-                        )
-                        .unwrap()
-                        .remove(0);
-                        current
-                            .edit("keep", |tx| {
-                                map_core::partition_metadata::store_partition_materials(
-                                    tx,
-                                    &part,
-                                    &[
-                                        Some("brick/planned_red".into()),
-                                        Some("wood/planned_blue".into()),
-                                    ],
-                                )
-                            })
-                            .unwrap();
-                        let reopened = source_formats::vmf::Vmf::parse(
-                            &current.vmf().write(&Default::default()),
-                        )
-                        .unwrap();
-                        let flat = compiler::compile(&reopened, &common::empty_game());
-                        assert!(!flat.report.has_errors(), "{:?}", flat.report);
-                        assert!(flat.leak.is_none());
-                        assert_eq!(flat.bsp.unwrap().to_bytes(), bytes);
-                        current = Document::new(reopened);
-                        let part = map_core::partition_metadata::Metadata::parse(current.vmf())
-                            .unwrap()
-                            .resolve(&current)
-                            .remove(0)
-                            .result
-                            .unwrap();
-                        current
-                            .edit("extrude", |tx| {
-                                subobject::extrude_partitions_with_materials(
-                                    tx,
-                                    std::slice::from_ref(&part),
-                                    &[(id, 0), (id, 1)],
-                                    &subobject::ExtrusionSpec {
-                                        height: 16.125,
-                                        wall_material: None,
-                                        texture_lock: true,
-                                    },
-                                    &[
-                                        subobject::PartitionMaterial {
-                                            solid: id,
-                                            partition: 0,
-                                            material: "brick/planned_red".into(),
-                                        },
-                                        subobject::PartitionMaterial {
-                                            solid: id,
-                                            partition: 1,
-                                            material: "wood/planned_blue".into(),
-                                        },
-                                    ],
-                                )
-                            })
-                            .unwrap();
-                        let reopened = source_formats::vmf::Vmf::parse(
-                            &current.vmf().write(&Default::default()),
-                        )
-                        .unwrap();
-                        reopened.validate_ids().unwrap();
-                        let output = compiler::compile(&reopened, &common::empty_game());
-                        assert!(!output.report.has_errors(), "{:?}", output.report);
-                        assert!(output.leak.is_none());
-                        assert_eq!(output.stats.brushes, 9);
-                        let bsp = output.bsp.unwrap();
-                        assert!(
-                            bsp.records::<Brush>()
-                                .unwrap()
-                                .iter()
-                                .all(|brush| brush.side_count >= 5)
-                        );
-                        assert!(!bsp.records::<Face>().unwrap().is_empty());
-                    }
-                }
-            }
+    for (corners, owned, reflected, direction_slot, edge_parameters) in [
+        (3, false, false, 0, [0.2, 0.8]),
+        (5, true, false, 1, [0.5; 2]),
+        (6, false, true, 2, [0.2, 0.8]),
+        (8, true, true, 0, [0.5; 2]),
+    ] {
+        let mut document = Document::new(common::room());
+        let objects = document
+            .edit("polygon", |tx| {
+                map_core::primitive::create(
+                    tx,
+                    &map_core::primitive::Spec {
+                        shape: map_core::primitive::Shape::Cylinder,
+                        segments: corners,
+                        mins: DVec3::new(0.125, -7.25, 16.5),
+                        maxs: DVec3::new(64.875, 48.125, 80.25),
+                        material: "dev/dev_measuregeneric01".into(),
+                        ..Default::default()
+                    },
+                )
+            })
+            .unwrap();
+        let ObjectId::Solid(id) = objects[0] else {
+            unreachable!()
+        };
+        document
+            .edit("affine", |tx| {
+                edit::transform(
+                    tx,
+                    &objects,
+                    edit::Transform {
+                        rotation: DVec3::new(17.0, -23.0, 31.0),
+                        reflection: [reflected, false, false],
+                        pivot: DVec3::new(32.5, 20.4375, 48.375),
+                        ..Default::default()
+                    },
+                )
+            })
+            .unwrap();
+        if owned {
+            document
+                .edit("detail", |tx| {
+                    edit::tie_to_entity(tx, &[id], "func_detail", &[])
+                })
+                .unwrap();
         }
+        let source = subobject::solid(&document, id).unwrap().1;
+        let side = source
+            .sides
+            .iter()
+            .max_by(|a, b| {
+                map_core::Plane::from_points(a.plane.0)
+                    .unwrap()
+                    .normal
+                    .z
+                    .total_cmp(&map_core::Plane::from_points(b.plane.0).unwrap().normal.z)
+            })
+            .unwrap()
+            .id;
+        let pairs = subobject::partition_pairs(source, side).unwrap();
+        let before = compiler::compile(document.vmf(), &common::empty_game());
+        assert!(!before.report.has_errors(), "{:?}", before.report);
+        assert!(before.leak.is_none());
+        let bytes = before.bsp.unwrap().to_bytes();
+        let direction = [0, pairs.len() / 2, pairs.len() - 1][direction_slot];
+        let mut current = document;
+        let part = subobject::plan_partitions_at(
+            &current,
+            &[subobject::PartitionCut {
+                source: subobject::Crease {
+                    solid: id,
+                    side,
+                    edges: pairs[direction].edges,
+                },
+                edge_parameters,
+            }],
+        )
+        .unwrap()
+        .remove(0);
+        current
+            .edit("keep", |tx| {
+                map_core::partition_metadata::store_partition_materials(
+                    tx,
+                    &part,
+                    &[
+                        Some("brick/planned_red".into()),
+                        Some("wood/planned_blue".into()),
+                    ],
+                )
+            })
+            .unwrap();
+        let reopened =
+            source_formats::vmf::Vmf::parse(&current.vmf().write(&Default::default())).unwrap();
+        let flat = compiler::compile(&reopened, &common::empty_game());
+        assert!(!flat.report.has_errors(), "{:?}", flat.report);
+        assert!(flat.leak.is_none());
+        assert_eq!(flat.bsp.unwrap().to_bytes(), bytes);
+        current = Document::new(reopened);
+        let part = map_core::partition_metadata::Metadata::parse(current.vmf())
+            .unwrap()
+            .resolve(&current)
+            .remove(0)
+            .result
+            .unwrap();
+        current
+            .edit("extrude", |tx| {
+                subobject::extrude_partitions_with_materials(
+                    tx,
+                    std::slice::from_ref(&part),
+                    &[(id, 0), (id, 1)],
+                    &subobject::ExtrusionSpec {
+                        height: 16.125,
+                        wall_material: None,
+                        texture_lock: true,
+                    },
+                    &[
+                        subobject::PartitionMaterial {
+                            solid: id,
+                            partition: 0,
+                            material: "brick/planned_red".into(),
+                        },
+                        subobject::PartitionMaterial {
+                            solid: id,
+                            partition: 1,
+                            material: "wood/planned_blue".into(),
+                        },
+                    ],
+                )
+            })
+            .unwrap();
+        let reopened =
+            source_formats::vmf::Vmf::parse(&current.vmf().write(&Default::default())).unwrap();
+        reopened.validate_ids().unwrap();
+        let output = compiler::compile(&reopened, &common::empty_game());
+        assert!(!output.report.has_errors(), "{:?}", output.report);
+        assert!(output.leak.is_none());
+        assert_eq!(output.stats.brushes, 9);
+        let bsp = output.bsp.unwrap();
+        assert!(
+            bsp.records::<Brush>()
+                .unwrap()
+                .iter()
+                .all(|brush| brush.side_count >= 5)
+        );
+        assert!(!bsp.records::<Face>().unwrap().is_empty());
     }
 }

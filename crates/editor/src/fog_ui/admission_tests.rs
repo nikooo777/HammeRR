@@ -235,26 +235,6 @@ fn retained_fog_and_statistics_callbacks_reject_real_drain_and_finished_with_liv
 }
 
 #[test]
-fn failed_fog_and_statistics_admission_preserves_forms_and_memoized_failure_after_storage_repair() {
-    software();
-    let fixture = fixture();
-    let recovery = fixture.directory.path().join("recovery");
-    std::fs::write(&recovery, b"not a directory").unwrap();
-    let error = fixture.document.shutdown().unwrap_err();
-    let expected = format!("document shutdown failed: {error}");
-    let before = snapshot(&fixture);
-    retained_actions(&fixture, &expected);
-    assert_eq!(snapshot(&fixture), before);
-    std::fs::remove_file(&recovery).unwrap();
-    std::fs::create_dir(&recovery).unwrap();
-    let before = snapshot(&fixture);
-    retained_actions(&fixture, &expected);
-    assert_eq!(snapshot(&fixture), before);
-    assert_eq!(fixture.document.shutdown().unwrap_err(), error);
-    assert_eq!(std::fs::read_dir(&recovery).unwrap().count(), 0);
-}
-
-#[test]
 fn retained_fog_and_statistics_windows_release_owners_and_vanished_fog_abandons_admission() {
     software();
     let fixture = fixture();

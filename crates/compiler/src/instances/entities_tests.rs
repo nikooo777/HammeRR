@@ -951,7 +951,13 @@ fn cancellation_after_a_real_child_light_rolls_back_the_detached_transaction() {
     let context = source(directory.path());
     let control = Control::default();
     let mut report = Report::default();
-    let mut expansion = expand::Expansion::new(&parent, &context, &control, &mut report);
+    let mut expansion = expand::Expansion::new(
+        &parent,
+        &context,
+        &control,
+        &mut report,
+        PreparationPurpose::Reference,
+    );
     let mut document = Document::new(parent);
     let error = document
         .edit("cancel generated static light", |tx| {

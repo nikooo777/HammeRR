@@ -24,6 +24,7 @@ pub(super) struct ExpandedSources {
     pub static_prop_poses: StaticPropPoses,
     pub static_prop_bindings: StaticPropBindings,
     pub files: Vec<(String, FileIdentity)>,
+    pub material_sources: Option<crate::asset_sources::BuildMaterialSources>,
 }
 
 pub(super) struct Expansion<'a> {
@@ -43,6 +44,9 @@ pub(super) struct Expansion<'a> {
     static_prop_bindings: StaticPropBindings,
     name_scopes: Vec<names::Scope>,
     name_registry: Option<names::Registry>,
+    purpose: PreparationPurpose<'a>,
+    materials: Option<crate::materials::Materials<'a>>,
+    material_sources: Option<crate::asset_sources::BuildMaterialSources>,
 }
 
 impl<'a> Expansion<'a> {
@@ -51,6 +55,7 @@ impl<'a> Expansion<'a> {
         source: &'a SourceContext,
         control: &'a Control,
         report: &'a mut Report,
+        purpose: PreparationPurpose<'a>,
     ) -> Self {
         Self {
             source,
@@ -69,6 +74,9 @@ impl<'a> Expansion<'a> {
             static_prop_bindings: BTreeMap::new(),
             name_scopes: Vec::new(),
             name_registry: None,
+            purpose,
+            materials: None,
+            material_sources: None,
         }
     }
 
@@ -621,10 +629,23 @@ impl<'a> Expansion<'a> {
         let work = transforms
             .len()
             .checked_mul(2)
-            .and_then(|poses| poses.checked_add(1))
+            .and_then(|poses| {
+                poses.checked_add(if matches!(self.purpose, PreparationPurpose::Compile(_)) {
+                    2
+                } else {
+                    1
+                })
+            })
             .and_then(|poses| shape.geometry_work.checked_mul(poses))
             .and_then(|geometry| {
-                let fields = property_bytes?.checked_mul(transforms.len() + 1)?;
+                let field_bytes = property_bytes?.checked_add(
+                    if matches!(self.purpose, PreparationPurpose::Compile(_)) {
+                        MAX_FIELD_BYTES
+                    } else {
+                        0
+                    },
+                )?;
+                let fields = field_bytes.checked_mul(transforms.len() + 1)?;
                 geometry.checked_add(fields)
             })
             .and_then(|work| self.work.checked_add(work));
@@ -639,9 +660,35 @@ impl<'a> Expansion<'a> {
             ));
         }
         self.work = work;
-        brush_models::check_pose(original, self.control).map_err(EditError::Invalid)?;
+        brush_models::check_source(original, self.control).map_err(EditError::Invalid)?;
+        let origins = if let PreparationPurpose::Compile(fs) = self.purpose {
+            if self.materials.is_none() {
+                let sources = crate::asset_sources::BuildMaterialSources::default();
+                self.materials = Some(crate::materials::Materials::with_build_sources(
+                    fs,
+                    crate::materials::Requirements::GeometrySemantics,
+                    &sources,
+                ));
+                self.material_sources = Some(sources);
+            }
+            Some(
+                brush_models::plan_origin(self.materials.as_mut().unwrap(), original, self.control)
+                    .map_err(EditError::Invalid)?,
+            )
+        } else {
+            None
+        };
         let mut entity = Entity::new(tx.new_object_id()?, "func_brush");
         entity.properties = original.properties.clone();
+        if let Some(origins) = &origins
+            && !origins.volumes.is_empty()
+        {
+            entity.properties.remove("origin");
+            entity.properties.set(
+                "origin",
+                source_formats::vmf::format_vec3(origins.position.unwrap()),
+            );
+        }
         entity
             .solids
             .try_reserve_exact(shape.brushes)
@@ -673,17 +720,54 @@ impl<'a> Expansion<'a> {
                     ),
                 );
             }
+            if origins
+                .as_ref()
+                .is_some_and(|origins| origins.volumes.contains(&original_solid.id))
+            {
+                let mut validation = Document::empty();
+                validation
+                    .edit("validate consumed instance origin", |tx| {
+                        let id = tx.add_solid(solid)?;
+                        for transform in transforms.iter().rev() {
+                            self.control.checkpoint().map_err(EditError::Invalid)?;
+                            edit::transform(tx, &[id], *transform)?;
+                            let ObjectId::Solid(id) = id else {
+                                unreachable!()
+                            };
+                            checked_solid_controlled(tx.solid_mut(id)?, self.control)
+                                .map_err(EditError::Invalid)?;
+                        }
+                        Ok(())
+                    })
+                    .map_err(|error| {
+                        EditError::Invalid(format!(
+                            "Consumed origin solid {}: {error}",
+                            original_solid.id
+                        ))
+                    })?;
+                continue;
+            }
             entity.solids.push(solid);
+        }
+        if origins.is_some() {
+            brush_models::check_pose(&entity, self.control).map_err(EditError::Invalid)?;
         }
         let generated = entity.id;
         let id = tx.add_entity(entity)?;
         for transform in transforms.iter().rev() {
             self.control.checkpoint().map_err(EditError::Invalid)?;
             edit::transform(tx, &[id], *transform)?;
-            brush_models::check_pose(tx.entity_mut(generated)?, self.control)
-                .map_err(EditError::Invalid)?;
+            let entity = tx.entity_mut(generated)?;
+            if origins.is_some() {
+                brush_models::check_pose(entity, self.control)
+            } else {
+                brush_models::check_source(entity, self.control)
+            }
+            .map_err(EditError::Invalid)?;
         }
         self.stats.brush_models += 1;
+        self.stats.consumed_origin_brushes +=
+            origins.as_ref().map_or(0, |origins| origins.volumes.len());
         Ok(())
     }
 
@@ -1012,6 +1096,7 @@ impl<'a> Expansion<'a> {
             provenance: self.provenance,
             static_prop_poses: self.static_prop_poses,
             static_prop_bindings: self.static_prop_bindings,
+            material_sources: self.material_sources,
             files: self
                 .files
                 .into_iter()
@@ -1079,7 +1164,13 @@ mod tests {
         for exceeded in 0..3 {
             let control = Control::default();
             let mut report = Report::default();
-            let mut expansion = Expansion::new(&vmf, &source, &control, &mut report);
+            let mut expansion = Expansion::new(
+                &vmf,
+                &source,
+                &control,
+                &mut report,
+                PreparationPurpose::Reference,
+            );
             expansion.objects = MAX_OBJECTS - (1 + shape.brushes) + usize::from(exceeded == 0);
             expansion.sides = MAX_SIDES - shape.sides + usize::from(exceeded == 1);
             expansion.work = MAX_GEOMETRY_WORK - cost + usize::from(exceeded == 2);
@@ -1102,7 +1193,13 @@ mod tests {
         }
         let control = Control::default();
         let mut report = Report::default();
-        let mut expansion = Expansion::new(&vmf, &source, &control, &mut report);
+        let mut expansion = Expansion::new(
+            &vmf,
+            &source,
+            &control,
+            &mut report,
+            PreparationPurpose::Reference,
+        );
         expansion.objects = MAX_OBJECTS - (1 + shape.brushes);
         expansion.sides = MAX_SIDES - shape.sides;
         expansion.work = MAX_GEOMETRY_WORK - cost;
@@ -1129,12 +1226,144 @@ mod tests {
     }
 
     #[test]
+    fn consumed_origins_keep_source_budgets_and_material_owner_before_cloning() {
+        use source_formats::gamefs::{Mount, MountedPath};
+
+        let (directory, vmf, mut helper, source) = fixture();
+        helper.properties.set("classname", "func_brush");
+        let mut origin = helper.solids[0].clone();
+        origin.id += 10_000;
+        for side in &mut origin.sides {
+            side.id += 10_000;
+            side.material = "pivot".into();
+        }
+        let origin_id = origin.id;
+        helper.solids.push(origin);
+        let original = helper.clone();
+        let materials = directory.path().join("materials");
+        std::fs::create_dir_all(materials.join("dev")).unwrap();
+        std::fs::write(
+            materials.join("dev/dev_measuregeneric01.vmt"),
+            "LightmappedGeneric {}",
+        )
+        .unwrap();
+        std::fs::write(
+            materials.join("pivot.vmt"),
+            "Patch { include materials/only.vmt }",
+        )
+        .unwrap();
+        std::fs::write(
+            materials.join("only.vmt"),
+            "LightmappedGeneric { %compileorigin 1 }",
+        )
+        .unwrap();
+        let mut game = crate::test_common::empty_game();
+        game.mounts.push(MountedPath {
+            ids: vec!["game".into()],
+            mount: Mount::Directory(directory.path().to_owned()),
+        });
+        let shape = brush_models::shape(&helper).unwrap().unwrap();
+        let transforms = [edit::Transform::default(); 2];
+        let fields: usize = helper
+            .properties
+            .iter()
+            .map(|(key, value)| key.len() + value.len())
+            .sum();
+        let cost = shape.geometry_work * (2 * transforms.len() + 2)
+            + (fields + MAX_FIELD_BYTES) * (transforms.len() + 1);
+        for exceeded in 0..4 {
+            let control = Control::default();
+            if exceeded == 3 {
+                control.cancel().unwrap();
+            }
+            let mut report = Report::default();
+            let mut expansion = Expansion::new(
+                &vmf,
+                &source,
+                &control,
+                &mut report,
+                PreparationPurpose::Compile(&game),
+            );
+            expansion.objects = MAX_OBJECTS - (1 + shape.brushes) + usize::from(exceeded == 0);
+            expansion.sides = MAX_SIDES - shape.sides + usize::from(exceeded == 1);
+            expansion.work = MAX_GEOMETRY_WORK - cost + usize::from(exceeded == 2);
+            let mut invalid = helper.clone();
+            invalid.solids[0].sides[0].plane.0 = [DVec3::ZERO; 3];
+            let mut document = Document::new(vmf.clone());
+            let error = document
+                .edit("bounded consumed origin", |tx| {
+                    expansion.brush_model(tx, &invalid, 2000, "child.vmf", &transforms)
+                })
+                .unwrap_err();
+            assert!(error.to_string().contains(if exceeded == 3 {
+                "cancelled"
+            } else {
+                "combined objects, sides or geometry-work limits"
+            }));
+            assert!(expansion.material_sources.is_none());
+            assert!(expansion.provenance.is_empty());
+            assert_eq!(expansion.stats.consumed_origin_brushes, 0);
+            assert_eq!(document.vmf(), &vmf);
+        }
+        let control = Control::default();
+        let mut report = Report::default();
+        let mut expansion = Expansion::new(
+            &vmf,
+            &source,
+            &control,
+            &mut report,
+            PreparationPurpose::Compile(&game),
+        );
+        expansion.objects = MAX_OBJECTS - (1 + shape.brushes);
+        expansion.sides = MAX_SIDES - shape.sides;
+        expansion.work = MAX_GEOMETRY_WORK - cost;
+        let mut document = Document::new(vmf.clone());
+        document
+            .edit("consume bounded origin", |tx| {
+                expansion.brush_model(tx, &helper, 2000, "child.vmf", &transforms)
+            })
+            .unwrap();
+        assert_eq!(
+            (expansion.objects, expansion.sides, expansion.work),
+            (MAX_OBJECTS, MAX_SIDES, MAX_GEOMETRY_WORK)
+        );
+        assert_eq!(expansion.stats.brush_models, 1);
+        assert_eq!(expansion.stats.consumed_origin_brushes, 1);
+        assert!(
+            expansion
+                .provenance
+                .values()
+                .any(|(_, file, original, _)| file == "child.vmf" && *original == origin_id)
+        );
+        let generated = document
+            .vmf()
+            .entities
+            .iter()
+            .find(|entity| entity.classname() == Some("func_brush"))
+            .unwrap();
+        assert_eq!(generated.origin(), Some(DVec3::new(0.0, 0.0, -8.0)));
+        assert_eq!(generated.solids.len(), 1);
+        assert_eq!(helper, original);
+        let sources = expansion.finish().material_sources.unwrap();
+        assert!(sources.is_observed("materials/only.vmt").unwrap());
+        sources.source_guard(&game, &control).unwrap();
+        std::fs::write(materials.join("only.vmt"), "LightmappedGeneric {}").unwrap();
+        assert!(sources.source_guard(&game, &control).is_err());
+    }
+
+    #[test]
     fn viscluster_work_is_reserved_for_every_pose_before_invalid_geometry_is_evaluated() {
         let (_directory, vmf, mut helper, source) = fixture();
         helper.solids[0].sides[0].plane.0 = [DVec3::ZERO; 3];
         let control = Control::default();
         let mut report = Report::default();
-        let mut expansion = Expansion::new(&vmf, &source, &control, &mut report);
+        let mut expansion = Expansion::new(
+            &vmf,
+            &source,
+            &control,
+            &mut report,
+            PreparationPurpose::Reference,
+        );
         expansion.work =
             MAX_GEOMETRY_WORK - crate::visclusters::hull_work(helper.solids[0].sides.len());
         let mut document = Document::new(vmf.clone());
@@ -1163,7 +1392,13 @@ mod tests {
         let (_directory, vmf, helper, source) = fixture();
         let control = Control::default();
         let mut report = Report::default();
-        let mut expansion = Expansion::new(&vmf, &source, &control, &mut report);
+        let mut expansion = Expansion::new(
+            &vmf,
+            &source,
+            &control,
+            &mut report,
+            PreparationPurpose::Reference,
+        );
         let sides = helper.solids[0].sides.len();
         let reserve = crate::visclusters::hull_work(sides) * 2 + sides.pow(3);
         expansion.work = MAX_GEOMETRY_WORK - reserve - 200_000;
@@ -1215,7 +1450,13 @@ mod tests {
         for exhausted in ["objects", "sides", "work"] {
             let control = Control::default();
             let mut report = Report::default();
-            let mut expansion = Expansion::new(&vmf, &source, &control, &mut report);
+            let mut expansion = Expansion::new(
+                &vmf,
+                &source,
+                &control,
+                &mut report,
+                PreparationPurpose::Reference,
+            );
             match exhausted {
                 "objects" => expansion.objects = MAX_OBJECTS - shape.brushes,
                 "sides" => expansion.sides = MAX_SIDES - shape.sides + 1,
@@ -1250,7 +1491,13 @@ mod tests {
         for exhausted in ["objects", "work", "overflow"] {
             let control = Control::default();
             let mut report = Report::default();
-            let mut expansion = Expansion::new(&vmf, &source, &control, &mut report);
+            let mut expansion = Expansion::new(
+                &vmf,
+                &source,
+                &control,
+                &mut report,
+                PreparationPurpose::Reference,
+            );
             match exhausted {
                 "objects" => expansion.objects = MAX_OBJECTS,
                 "work" => expansion.work = MAX_GEOMETRY_WORK - overlays::POSE_WORK * 3,
@@ -1302,7 +1549,13 @@ mod tests {
         for exhausted in [false, true] {
             let control = Control::default();
             let mut report = Report::default();
-            let mut expansion = Expansion::new(&vmf, &source, &control, &mut report);
+            let mut expansion = Expansion::new(
+                &vmf,
+                &source,
+                &control,
+                &mut report,
+                PreparationPurpose::Reference,
+            );
             if exhausted {
                 expansion.work = MAX_GEOMETRY_WORK - baseline_work - 1;
             }

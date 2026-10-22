@@ -474,7 +474,13 @@ fn accepted_cancellation_rolls_back_a_real_terrain_branch() {
     let before = parent.clone();
     let control = Control::default();
     let mut report = Report::default();
-    let mut expansion = expand::Expansion::new(&parent, &context, &control, &mut report);
+    let mut expansion = expand::Expansion::new(
+        &parent,
+        &context,
+        &control,
+        &mut report,
+        PreparationPurpose::Reference,
+    );
     let mut document = Document::new(parent.clone());
     let error = document
         .edit("cancel real terrain branch", |tx| {

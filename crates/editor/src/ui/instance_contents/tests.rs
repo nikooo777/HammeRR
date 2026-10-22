@@ -594,6 +594,11 @@ fn software_brush_model_counts_refuse_frame_without_reference_geometry() {
     )))
     .unwrap();
     let (directory, game) = crate::test_assets::game();
+    std::fs::write(
+        directory.path().join("materials/test/origin.vmt"),
+        "LightmappedGeneric { %compileorigin 1 }",
+    )
+    .unwrap();
     let parent = directory.path().join("parent.vmf");
     let child = directory.path().join("child.vmf");
     let mut session = Session::new(Ok(game));
@@ -608,15 +613,23 @@ fn software_brush_model_counts_refuse_frame_without_reference_geometry() {
                 .unwrap(),
         );
     }
+    blocks.push(
+        session
+            .create_block(
+                Actor::User,
+                DVec3::new(12.0, -4.0, 0.0),
+                DVec3::new(20.0, 20.0, 8.0),
+                "test/origin",
+                false,
+            )
+            .unwrap(),
+    );
     session
         .tie_to_entity(
             Actor::User,
             &blocks,
             "func_brush",
-            std::collections::BTreeMap::from([
-                ("origin".into(), "16 8 4".into()),
-                ("vrad_brush_cast_shadows".into(), "1".into()),
-            ]),
+            std::collections::BTreeMap::from([("vrad_brush_cast_shadows".into(), "1".into())]),
         )
         .unwrap();
     session.save(Actor::User, Some(&child)).unwrap();
@@ -640,6 +653,15 @@ fn software_brush_model_counts_refuse_frame_without_reference_geometry() {
     let output = &result.as_ref().unwrap().output;
     assert!(output.bsp.is_some(), "{:?}", output.report);
     assert_eq!(output.stats.instances.as_ref().unwrap().brush_models, 1);
+    assert_eq!(
+        output
+            .stats
+            .instances
+            .as_ref()
+            .unwrap()
+            .consumed_origin_brushes,
+        1
+    );
     assert_eq!(output.stats.brush_shadow_models, 0);
     session.finish_compile(Actor::User, &result);
     let request = session
@@ -649,6 +671,8 @@ fn software_brush_model_counts_refuse_frame_without_reference_geometry() {
         .finish_instance_contents_refresh(Actor::User, request.run())
         .unwrap();
     assert_eq!(report["brush_model_preview"]["available"], false);
+    assert_eq!(report["brush_model_preview"]["preparation"], "deferred");
+    assert!(report["brush_model_preview"]["consumed_origin_brushes"].is_null());
     let memory = session.document().vmf().clone();
     let history = session.history_snapshot();
     let camera = session.camera();
@@ -662,6 +686,11 @@ fn software_brush_model_counts_refuse_frame_without_reference_geometry() {
     assert!(contents.window.get_summary().contains(count));
     assert!(contents.window.get_summary().contains(reason));
     assert!(build.window.get_details().contains(count));
+    assert!(
+        build.window.get_details().contains(
+            "Consumed child origin brushes: 1 · expanded before compile-region filtering"
+        )
+    );
     assert!(build.window.get_details().contains(reason));
     assert!(build.window.get_details().contains(
         "Brush global shadows: 1 admitted Shadows Yes source request(s); not baked in Fullbright"

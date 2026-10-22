@@ -706,7 +706,6 @@ fn manual_targets_cannot_escape_direct_visible_ordinary_geometry_in_their_source
         let directory = tempfile::tempdir().unwrap();
         let mut child = leaf(false);
         let mut parent = room();
-        let mut reason = "same child";
         match case {
             "missing" => child
                 .vmf
@@ -759,7 +758,6 @@ fn manual_targets_cannot_escape_direct_visible_ordinary_geometry_in_their_source
                 child.vmf.entities[0]
                     .properties
                     .set("classname", "func_brush");
-                reason = "unsupported";
             }
             "descendant" | "ancestor" | "sibling" => {
                 let mut geometry = child.vmf.clone();
@@ -812,18 +810,16 @@ fn manual_targets_cannot_escape_direct_visible_ordinary_geometry_in_their_source
         .unwrap();
         assert_eq!(error.object, Some(format!("entity:{owner}")), "{case}");
         assert!(
-            error.message.contains("leaf.vmf") && error.message.contains(reason),
+            error.message.contains("leaf.vmf") && error.message.contains("same child"),
             "{case}: {error:?}"
         );
-        if case != "runtime model" {
-            assert!(
-                error
-                    .message
-                    .contains(&format!("Child cubemap {}", child.far)),
-                "{case}: {error:?}"
-            );
-            assert!(error.message.contains("side:"), "{case}: {error:?}");
-        }
+        assert!(
+            error
+                .message
+                .contains(&format!("Child cubemap {}", child.far)),
+            "{case}: {error:?}"
+        );
+        assert!(error.message.contains("side:"), "{case}: {error:?}");
         assert_eq!(parent, before);
     }
 }

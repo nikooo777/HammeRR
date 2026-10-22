@@ -350,6 +350,8 @@ pub struct InstanceStats {
     #[serde(skip_serializing_if = "is_zero")]
     pub brush_models: usize,
     #[serde(skip_serializing_if = "is_zero")]
+    pub consumed_origin_brushes: usize,
+    #[serde(skip_serializing_if = "is_zero")]
     pub terrain_patches: usize,
     #[serde(skip_serializing_if = "is_zero")]
     pub terrain_vertices: usize,
@@ -715,6 +717,21 @@ pub(crate) struct StaticPropMetadata<'a> {
     pub lighting_origins: Option<&'a StaticPropBindings>,
 }
 
+pub const BRUSH_MODEL_PREPARATION_DEFERRED: &str = "Child brush-model effective pivots and local bounds require material-aware Compile; reference preparation is deferred";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BrushModelPreparation {
+    Absent,
+    Deferred,
+    Resolved,
+}
+
+#[derive(Clone, Copy)]
+enum PreparationPurpose<'a> {
+    Reference,
+    Compile(&'a source_formats::gamefs::GameFs),
+}
+
 pub struct PreparedInstances<'a> {
     pub(crate) vmf: Cow<'a, Vmf>,
     pub(crate) dependencies: Option<DependencyGuard>,
@@ -722,6 +739,7 @@ pub struct PreparedInstances<'a> {
     pub(crate) static_prop_poses: StaticPropPoses,
     static_prop_bindings: StaticPropBindings,
     provenance: Provenance,
+    pub(crate) material_sources: Option<crate::asset_sources::BuildMaterialSources>,
 }
 
 pub(crate) type Prepared<'a> = PreparedInstances<'a>;
@@ -741,8 +759,27 @@ impl PreparedInstances<'_> {
             lighting_origins: Some(&self.static_prop_bindings),
         }
     }
+    /// Reference geometry and provenance; deferred model pivots are not compile-ready.
+    /// Use `compilation_vmf` when resolved model geometry is required.
     pub fn vmf(&self) -> &Vmf {
         self.vmf.as_ref()
+    }
+
+    pub fn brush_model_preparation(&self) -> BrushModelPreparation {
+        if !self.has_brush_models() {
+            BrushModelPreparation::Absent
+        } else if self.material_sources.is_some() {
+            BrushModelPreparation::Resolved
+        } else {
+            BrushModelPreparation::Deferred
+        }
+    }
+
+    pub fn compilation_vmf(&self) -> Result<&Vmf, &'static str> {
+        if self.brush_model_preparation() == BrushModelPreparation::Deferred {
+            return Err(BRUSH_MODEL_PREPARATION_DEFERRED);
+        }
+        Ok(self.vmf.as_ref())
     }
 
     pub fn dependencies(&self) -> Option<&DependencyGuard> {
@@ -834,11 +871,40 @@ impl PreparedInstances<'_> {
     }
 }
 
+/// Resolve material-free reference data. Brush-model pivot/local checks remain deferred.
 pub fn resolve<'a>(
     vmf: &'a Vmf,
     source: Option<&SourceContext>,
     control: &Control,
     report: &mut Report,
+) -> Result<PreparedInstances<'a>, Diagnostic> {
+    resolve_purpose(vmf, source, control, report, PreparationPurpose::Reference)
+}
+
+/// Resolve material-aware expanded geometry for inspection.
+/// Compile the original VMF with `compile_with_source_controlled` to retain publication custody.
+pub fn resolve_for_compile<'a>(
+    vmf: &'a Vmf,
+    source: Option<&SourceContext>,
+    fs: &source_formats::gamefs::GameFs,
+    control: &Control,
+    report: &mut Report,
+) -> Result<PreparedInstances<'a>, Diagnostic> {
+    resolve_purpose(
+        vmf,
+        source,
+        control,
+        report,
+        PreparationPurpose::Compile(fs),
+    )
+}
+
+fn resolve_purpose<'a>(
+    vmf: &'a Vmf,
+    source: Option<&SourceContext>,
+    control: &Control,
+    report: &mut Report,
+    purpose: PreparationPurpose<'_>,
 ) -> Result<PreparedInstances<'a>, Diagnostic> {
     if let Some(diagnostic) = vmf
         .entities
@@ -859,14 +925,41 @@ pub fn resolve<'a>(
             None,
         ));
     }
-    prepare(vmf, source, control, report)
+    prepare_purpose(vmf, source, control, report, purpose)
 }
 
+#[cfg(test)]
 pub(crate) fn prepare<'a>(
     vmf: &'a Vmf,
     source: Option<&SourceContext>,
     control: &Control,
     report: &mut Report,
+) -> Result<Prepared<'a>, Diagnostic> {
+    prepare_purpose(vmf, source, control, report, PreparationPurpose::Reference)
+}
+
+pub(crate) fn prepare_for_compile<'a>(
+    vmf: &'a Vmf,
+    source: Option<&SourceContext>,
+    fs: &source_formats::gamefs::GameFs,
+    control: &Control,
+    report: &mut Report,
+) -> Result<Prepared<'a>, Diagnostic> {
+    prepare_purpose(
+        vmf,
+        source,
+        control,
+        report,
+        PreparationPurpose::Compile(fs),
+    )
+}
+
+fn prepare_purpose<'a>(
+    vmf: &'a Vmf,
+    source: Option<&SourceContext>,
+    control: &Control,
+    report: &mut Report,
+    purpose: PreparationPurpose<'_>,
 ) -> Result<Prepared<'a>, Diagnostic> {
     let mut prepared = Prepared {
         vmf: Cow::Borrowed(vmf),
@@ -875,6 +968,7 @@ pub(crate) fn prepare<'a>(
         static_prop_poses: BTreeMap::new(),
         static_prop_bindings: BTreeMap::new(),
         provenance: BTreeMap::new(),
+        material_sources: None,
     };
     if !requires_source(vmf) {
         return Ok(prepared);
@@ -932,7 +1026,7 @@ pub(crate) fn prepare<'a>(
     }
     let mut document =
         Document::try_new(vmf.clone()).map_err(|error| failure(first, error.to_string()))?;
-    let mut expansion = expand::Expansion::new(vmf, source, control, report);
+    let mut expansion = expand::Expansion::new(vmf, source, control, report, purpose);
     for helper in &helpers {
         document
             .edit("expand brush instance", |tx| {
@@ -961,6 +1055,7 @@ pub(crate) fn prepare<'a>(
     prepared.provenance = expanded_sources.provenance;
     prepared.static_prop_poses = expanded_sources.static_prop_poses;
     prepared.static_prop_bindings = expanded_sources.static_prop_bindings;
+    prepared.material_sources = expanded_sources.material_sources;
     report.diagnostics.push(Diagnostic::info(
         format!(
             "Expanded {} brush instances from {} files: {} world brushes, {} detail brushes",
@@ -975,6 +1070,13 @@ pub(crate) fn prepare<'a>(
     });
     prepared.stats = Some(stats);
     prepared.vmf = Cow::Owned(expanded);
+    if prepared.brush_model_preparation() == BrushModelPreparation::Deferred {
+        report.diagnostics.push(Diagnostic::info(
+            BRUSH_MODEL_PREPARATION_DEFERRED,
+            None,
+            None,
+        ));
+    }
     Ok(prepared)
 }
 

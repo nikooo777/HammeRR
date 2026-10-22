@@ -1218,14 +1218,16 @@ fn targets_must_be_direct_visible_ordinary_sides_of_the_exact_child_occurrence()
                     .unwrap();
                 detail.properties.set("classname", "func_occluder");
             }
-            "runtime-model" => child
-                .vmf
-                .entities
-                .iter_mut()
-                .find(|entity| entity.classname() == Some("func_detail"))
-                .unwrap()
-                .properties
-                .set("classname", "func_brush"),
+            "runtime-model" => {
+                let model = child
+                    .vmf
+                    .entities
+                    .iter_mut()
+                    .find(|entity| entity.classname() == Some("func_detail"))
+                    .unwrap();
+                model.properties.set("classname", "func_brush");
+                model.properties.set("origin", "0 0 0");
+            }
             "transition" => helper_mut(&mut child.vmf, child.helpers[0])
                 .properties
                 .set("classname", "info_overlay_transition"),
@@ -1241,13 +1243,13 @@ fn targets_must_be_direct_visible_ordinary_sides_of_the_exact_child_occurrence()
         child_error(
             &output,
             owner,
-            if matches!(case, "runtime-model" | "transition") {
+            if case == "transition" {
                 None
             } else {
                 Some(child.helpers[0])
             },
             if case == "runtime-model" {
-                "func_brush"
+                "same child"
             } else if case == "transition" {
                 "info_overlay_transition"
             } else {

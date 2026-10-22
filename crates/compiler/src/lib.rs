@@ -1054,9 +1054,9 @@ fn build(
     options: Options,
     context: Option<&CompileContext>,
     control: &Control,
-    mut face_origins: Result<face_origins::FaceOrigins, String>,
 ) -> Result<(), String> {
-    let vmf = prepared_instances.vmf.as_ref();
+    let vmf = prepared_instances.compilation_vmf()?;
+    let mut face_origins = face_origins::FaceOrigins::prepare(vmf, prepared_instances);
     options.validate()?;
     let water_current = physics::current::from_world(vmf, options.physics)?;
     let water_damping = physics::damping::from_world(vmf, options.physics)?;
@@ -1083,12 +1083,14 @@ fn build(
             return Ok(());
         }
     };
-    let material_sources = (!caster_requests.is_empty()
-        || options.pack_water_assets
-        || options.pack_static_prop_assets
-        || options.brush_texture_shadows
-        || prepared_instances.has_brush_models())
-    .then(asset_sources::BuildMaterialSources::default);
+    let material_sources = prepared_instances.material_sources.clone().or_else(|| {
+        (!caster_requests.is_empty()
+            || options.pack_water_assets
+            || options.pack_static_prop_assets
+            || options.brush_texture_shadows
+            || prepared_instances.has_brush_models())
+        .then(asset_sources::BuildMaterialSources::default)
+    });
     if let Some(sources) = &material_sources
         && let Err(diagnostic) =
             brush_shadow_casters::validate(&caster_requests, fs, sources, control)
@@ -1865,7 +1867,9 @@ pub fn compile_with_source_controlled(
         };
         bindings
             .map_err(|message| Diagnostic::error(message, None, None))
-            .and_then(|()| instances::prepare(vmf, source, control, &mut output.report))
+            .and_then(|()| {
+                instances::prepare_for_compile(vmf, source, fs, control, &mut output.report)
+            })
     };
     match prepared {
         Err(diagnostic) => output.report.diagnostics.push(diagnostic),
@@ -1873,17 +1877,12 @@ pub fn compile_with_source_controlled(
             output.instance_dependencies = prepared.dependencies.clone();
             output.stats.instances = prepared.stats.clone();
             let diagnostics_before_build = output.report.diagnostics.len();
-            if let Err(message) = build(
-                &prepared,
-                fs,
-                &mut output,
-                options,
-                context,
-                control,
-                face_origins::FaceOrigins::prepare(prepared.vmf.as_ref(), &prepared),
-            ) && !output.report.diagnostics[diagnostics_before_build..]
-                .iter()
-                .any(|diagnostic| diagnostic.level == Level::Error && diagnostic.message == message)
+            if let Err(message) = build(&prepared, fs, &mut output, options, context, control)
+                && !output.report.diagnostics[diagnostics_before_build..]
+                    .iter()
+                    .any(|diagnostic| {
+                        diagnostic.level == Level::Error && diagnostic.message == message
+                    })
             {
                 output
                     .report

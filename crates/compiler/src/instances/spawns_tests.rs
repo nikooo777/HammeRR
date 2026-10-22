@@ -566,7 +566,13 @@ fn spawn_child_drift_and_cancellation_preserve_original_sources_and_publication(
     let helper = parent.entities.last().unwrap().clone();
     let control = Control::default();
     let mut report = Report::default();
-    let mut expansion = expand::Expansion::new(&parent, &context, &control, &mut report);
+    let mut expansion = expand::Expansion::new(
+        &parent,
+        &context,
+        &control,
+        &mut report,
+        PreparationPurpose::Reference,
+    );
     let mut document = Document::new(parent.clone());
     let error = document
         .edit("cancel after a real player spawn", |tx| {

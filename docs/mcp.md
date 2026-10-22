@@ -527,30 +527,43 @@ ordinary 16-helper limit; source/pose admission and expansion work are checked
 before regional omission. Author child volumes through existing `create_block`,
 `tie_to_entity` and `save_map` operations; see [Visibility clusters](visclusters.md).
 
-Child `func_brush` authoring uses `create_block`, `tie_to_entity` and
-`set_entity_properties` with explicit `origin`, then `save_map` and the existing
-`set_instance_reference` and compile operations. The human property label is
-**Origin (X Y Z)**. Keep source `angles` absent or checked zero, names/parenting/I/O
-empty and installed neutral defaults unchanged, including `Solidity:0`,
-`StartDisabled:0`, `InputFilter:0` and `spawnflags:2`; missing spawnflags preserves
-native 0 and explicit 0 also works. `vrad_brush_cast_shadows:"1"` explicitly
-requests opaque stationary global casting; absence or `"0"` retains isolated self
-shadows. Refresh remains source-only. Legacy `angle`, duplicate case aliases,
-unknown or non-neutral keys, opaque blocks, origin volumes, terrain and liquids
-reject. Source geometry, pivots, each nested transform and local hulls must fit
-±16384. Compilation requires resolved ordinary SOLID material semantics before
-region selection; custom origin/liquid/special contents reject without replacing
-output. Regions select the entire model by transformed pivot. Model sides remain
+Child `func_brush` authoring uses `create_block`, `edit_faces`, `tie_to_entity`
+and `set_entity_properties`, then `save_map` and the existing reference/compile
+operations. Set explicit `origin` (**Origin (X Y Z)**), or tie one convex origin
+volume together with at least one ordinary body brush. Compile resolves any
+ORIGIN side through its original material/Patch source, consumes the whole
+volume and uses its source bounds center before transforming the model. A volume
+overrides a valid explicit origin; missing origin is allowed only with a resolved
+visible volume. Present invalid origins, multiple visible origin volumes, models with no
+body, pivots supplied only by hidden volumes, and terrain reject. Material names alone do not identify origin volumes.
+
+Keep source `angles` absent or checked zero, names/parenting/I/O empty and installed
+neutral defaults unchanged, including `Solidity:0`, `StartDisabled:0`,
+`InputFilter:0` and `spawnflags:2`; missing spawnflags preserves native 0 and explicit
+0 also works. `vrad_brush_cast_shadows:"1"` requests opaque stationary global casting
+from the remaining body; absence or `"0"` retains isolated self shadows. Legacy
+`angle`, duplicate case aliases, unknown/non-neutral keys, opaque blocks, liquids
+and special body contents reject. Source and intermediate world bounds, including
+consumed volumes, and final model-local bounds must fit ±16384. Resolved ordinary
+SOLID body materials and effective pivots validate before region selection.
+Regions select the whole model by its transformed real pivot. Model sides remain
 outside child overlay/manual-cubemap world/detail bindings.
 
-`stats.instances.brush_models` counts whole visible expanded child model
-occurrences before regions and omits zero. Instance contents reports the same
-count plus `brush_model_preview:{available:false,reason:…}`. These models do not
-add fake detail/reference geometry. A model-only reference can be ready with
+`stats.instances.brush_models` counts whole visible expanded model occurrences
+before regions and omits zero. Compiled `stats.instances.consumed_origin_brushes`
+counts consumed volumes per expanded occurrence before regions and omits zero;
+**Build details…** shows **Consumed child origin brushes:**. Source-only Refresh
+cannot classify materials, so its stats omit that count and
+`brush_model_preview.consumed_origin_brushes` is explicitly null, not a known zero.
+The preview reports `available:false`, `preparation:"deferred"` and
+`deferred_checks:["effective_pivot","model_local_bounds","materials","native_compilation"]`.
+This applies even with an explicit origin, which a volume could override.
+
+Models add no detail/reference geometry. Model-only references can be ready with
 source identities/counts, zero geometry and null bounds; Frame refuses without
 moving the camera. Mixed world/detail preview is unchanged. Refresh checks source
-keys/geometry/bounds, not material or native compilation validity. No new tool or
-setting is required.
+keys/geometry/UV/world bounds without loading materials; readiness does not certify
+effective pivots, local bounds or compilation. No new tool or setting is required.
 
 `stats.instances.occluders` counts visible expanded child `func_occluder`
 entities before compile-region filtering and is omitted when zero. **Build
@@ -3403,11 +3416,12 @@ property **Advanced properties → Shadows → Yes**, not a new build option. Se
 `vrad_brush_cast_shadows:"1"` through `set_entity_properties` on an unnamed,
 unparented ordinary opaque `func_brush` with an explicit finite `origin` and
 admitted initial pose. Preserve neutral inherited fields and empty connections.
-Root initial rotations retain their existing strict pose rules; child source
-angles remain absent or zero. Source/material request validation precedes region
+Root initial rotations retain their existing strict pose rules. A child may
+resolve and consume one origin volume before this ordinary body check; its
+source angles remain absent or zero. Source/material request validation precedes region
 omission in every mode. Missing materials, alpha-test/translucent/additive
-opacity, terrain, liquid/origin volumes, unsupported classes and runtime
-behavior stop publication. Compilation reads no VTF solely to prove opaque
+opacity, terrain, liquid or unconsumed origin volumes, unsupported classes and
+runtime behavior stop publication. Compilation reads no VTF solely to prove opaque
 VMT semantics. Supported shaders are `LightmappedGeneric`, `UnlitGeneric` and
 unambiguous scalar `Patch` include/edit chains at the existing maximum depth
 of eight; unknown shaders, conditional/proxy blocks and duplicate raw fields

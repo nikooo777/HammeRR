@@ -953,7 +953,13 @@ fn cancellation_after_a_real_scoped_branch_rolls_back_names_and_points() {
     let context = source(directory.path());
     let control = Control::default();
     let mut report = Report::default();
-    let mut expansion = expand::Expansion::new(&parent, &context, &control, &mut report);
+    let mut expansion = expand::Expansion::new(
+        &parent,
+        &context,
+        &control,
+        &mut report,
+        PreparationPurpose::Reference,
+    );
     let mut document = Document::new(parent);
     let error = document
         .edit("cancel scoped lighting origin", |tx| {

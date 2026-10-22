@@ -903,7 +903,13 @@ fn accepted_cancellation_after_a_real_nested_branch_rolls_back_the_detached_tran
         .unwrap()
         .unwrap();
     let mut report = Report::default();
-    let mut expansion = expand::Expansion::new(&parent, &context, &control, &mut report);
+    let mut expansion = expand::Expansion::new(
+        &parent,
+        &context,
+        &control,
+        &mut report,
+        PreparationPurpose::Reference,
+    );
     let mut document = Document::new(parent.clone());
     let helpers = &parent.entities[parent.entities.len() - 2..];
     let result = document.edit("cancel real nested expansion", |tx| {

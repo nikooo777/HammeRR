@@ -90,12 +90,16 @@ its owner/dependency identities and counts, with no reference geometry to
 display, pick or frame. **Frame instance contents** is unavailable for that
 snapshot. Mixed assemblies retain their ordinary brush/terrain preview.
 
-Supported [ordinary child brush models](instances.md) resolve their source keys,
-convex geometry, explicit origin and nested bounds without material loading.
-Model-only references retain dependency identities and counts with null bounds;
-**Frame instance contents** is unavailable. Mixed world/detail reference meshes,
-picking and framing stay unchanged. Compile separately requires resolved ordinary
-SOLID materials and applies native geometry, lighting and collision checks.
+Supported [ordinary child brush models](instances.md) check source keys,
+convex geometry, attached UVs and nested world bounds without material loading.
+A child may supply an explicit origin or an origin volume. **Refresh instance
+contents** leaves the effective pivot, model-local bounds and consumed
+origin-volume count unknown: Compile must first resolve materials, consume the
+volume and transform its real source pivot. Even an explicit origin can be
+overridden. Model-only references retain dependency identities and model counts
+with null bounds; **Frame instance contents** is unavailable. Mixed world/detail
+reference meshes, picking and framing stay unchanged. Compile separately checks
+ordinary SOLID body materials and native geometry, lighting and collision.
 A ready Refresh does not certify those checks.
 
 Supported [child static props](instances.md) also resolve and count without

@@ -240,10 +240,11 @@ fn lit_room() -> Vmf {
     document.into_vmf()
 }
 
-fn resolve<'a>(vmf: &'a Vmf, context: &SourceContext) -> PreparedInstances<'a> {
+fn resolve<'a>(vmf: &'a Vmf, context: &SourceContext, game: &GameFs) -> PreparedInstances<'a> {
     let mut report = compiler::Report::default();
     let prepared =
-        instances::resolve(vmf, Some(context), &Control::default(), &mut report).unwrap();
+        instances::resolve_for_compile(vmf, Some(context), game, &Control::default(), &mut report)
+            .unwrap();
     assert!(!report.has_errors(), "{report:?}");
     prepared
 }
@@ -389,7 +390,7 @@ fn nested_compounds_match_literal_local_geometry_uvs_and_shared_lighting_consume
     ];
     let before = parent.clone();
     let context = saved(directory.path(), &parent);
-    let prepared = resolve(&parent, &context);
+    let prepared = resolve(&parent, &context, &game);
     let stats = prepared.stats().unwrap();
     assert_eq!(
         (stats.instances, stats.files, stats.max_expansion_depth),
@@ -405,7 +406,8 @@ fn nested_compounds_match_literal_local_geometry_uvs_and_shared_lighting_consume
     );
     assert_eq!(prepared.generated_brushes().count(), 0);
     let generated = prepared
-        .vmf()
+        .compilation_vmf()
+        .unwrap()
         .entities
         .iter()
         .filter(|entity| prepared.root_entity(entity.id).is_some())
@@ -612,9 +614,10 @@ fn nested_compounds_match_literal_local_geometry_uvs_and_shared_lighting_consume
         &Control::default(),
     )
     .unwrap();
-    let prepared = resolve(&mixed, &mixed_context);
+    let prepared = resolve(&mixed, &mixed_context, &game);
     let actual = prepared
-        .vmf()
+        .compilation_vmf()
+        .unwrap()
         .entities
         .iter()
         .find(|entity| entity.classname() == Some("func_brush"))
@@ -708,10 +711,11 @@ fn whole_model_region_selection_cannot_hide_source_intermediate_local_or_materia
         instance(&mut parent, "leaf.vmf", "1280 1024 1024", "0 0 0"),
     ];
     let context = saved(directory.path(), &parent);
-    let prepared = resolve(&parent, &context);
+    let prepared = resolve(&parent, &context, &game);
     let generated = owners.map(|owner| {
         prepared
-            .vmf()
+            .compilation_vmf()
+            .unwrap()
             .entities
             .iter()
             .find(|entity| prepared.root_entity(entity.id) == Some(owner))
@@ -833,7 +837,11 @@ fn whole_model_region_selection_cannot_hide_source_intermediate_local_or_materia
                 }
                 (
                     instance(&mut parent, "leaf.vmf", "0 0 0", "0 0 0"),
-                    "Child brush-model material",
+                    match material {
+                        "custom_origin" => "An origin brush requires compiled brush geometry",
+                        "missing" => "Origin brush solid",
+                        _ => "Child brush-model material",
+                    },
                 )
             }
         };
@@ -843,9 +851,11 @@ fn whole_model_region_selection_cannot_hide_source_intermediate_local_or_materia
         failed(&output, owner, reason);
         if case.starts_with("custom_") || case == "missing" {
             assert!(output.report.diagnostics.iter().any(|diagnostic| {
-                diagnostic
-                    .message
-                    .contains(&format!("child object {}", leaf.entities[0].solids[0].id))
+                diagnostic.message.contains(&if case == "custom_origin" {
+                    format!("Child brush model {}:", leaf.entities[0].id)
+                } else {
+                    format!("solid {}", leaf.entities[0].solids[0].id)
+                })
             }));
         }
         assert!(!output.write(&destination).unwrap());
@@ -908,13 +918,41 @@ fn native_engine_compound_child_matches_literal_physics() {
         "default { density 2000 }",
     )
     .unwrap();
-    write(directory.path(), "leaf.vmf", &child(&SOURCE, PIVOT));
+    std::fs::write(
+        directory
+            .path()
+            .join("game/materials/test/native_pivot.vmt"),
+        "UnlitGeneric { %compileorigin 1 }",
+    )
+    .unwrap();
+    let mut leaf = child(&SOURCE, DVec3::ZERO);
+    let mut volume = Document::empty();
+    volume
+        .edit("native consumed pivot", |tx| {
+            edit::create_block(
+                tx,
+                PIVOT - DVec3::splat(4.0),
+                PIVOT + DVec3::splat(4.0),
+                "test/native_pivot",
+            )
+        })
+        .unwrap();
+    let mut volume = volume.into_vmf().world.solids.pop().unwrap();
+    volume.id = leaf.object_ids().max().unwrap() + 1;
+    let first_side = leaf.side_ids().max().unwrap() + 1;
+    for (offset, side) in volume.sides.iter_mut().enumerate() {
+        side.id = first_side + u32::try_from(offset).unwrap();
+    }
+    leaf.entities[0].solids.push(volume);
+    write(directory.path(), "leaf.vmf", &leaf);
     let mut parent = room();
     instance(&mut parent, "leaf.vmf", "1024 1024 1152", "0 0 0");
     let context = saved(directory.path(), &parent);
-    let prepared = resolve(&parent, &context);
+    let prepared = resolve(&parent, &context, &game);
+    assert_eq!(prepared.stats().unwrap().consumed_origin_brushes, 1);
     let actual = prepared
-        .vmf()
+        .compilation_vmf()
+        .unwrap()
         .entities
         .iter()
         .find(|entity| prepared.root_entity(entity.id).is_some())

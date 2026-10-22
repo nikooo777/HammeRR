@@ -68,9 +68,15 @@ from supported brushes already in the parent.
    the default), or choose **No** (`0`). Save the child before returning to the
    parent. The brushes remain one helper; see [Occluders](occluders.md#occluders-in-referenced-assemblies)
    for the strict child fields.
-   To add a child brush model, select its ordinary convex brushes and use
-   **Tie to entity… → func_brush → Tie selected brushes to entity**. In
-   **Advanced properties**, explicitly set **Origin (X Y Z)**, such as `16 8 4`.
+   To add a child brush model, create its ordinary convex body brushes. For
+   a pivot set by a volume, use **Draw brush** to create one additional convex
+   brush. In **Objects** mode, type `tools/toolsorigin` in the material
+   inspector and click **Apply**. Select the
+   body and origin brushes together, then use **Tie to entity… → func_brush →
+   Tie selected brushes to entity**. The origin brush supplies its source
+   bounds center and is consumed during compilation. Without an origin brush,
+   set **Advanced properties → Origin (X Y Z)**, such as `16 8 4`. With one,
+   that property may be absent; a valid explicit value is overridden.
    Keep **Name** and **Parent** empty, **Solidity** at **Toggle** and the other
    inherited defaults unchanged. For stationary opaque global casting, set
    **Shadows → Yes**; **No** keeps isolated self shadows. Save and reopen the child
@@ -153,6 +159,8 @@ from supported brushes already in the parent.
    lighting records.
    **Expanded brush models:** counts whole expanded model occurrences before
    region filtering, independently of world/detail brush counts.
+   **Consumed child origin brushes:** counts resolved volumes per expanded
+   occurrence before filtering; these volumes add no runtime brushes.
    **Expanded static props:** uses the same expansion count before filtering;
    **Static props** counts props emitted by the selected build region.
    **Expanded lighting origins:** counts visible expanded helpers before region
@@ -195,16 +203,27 @@ Limits:
   parent first; an output BSP filename cannot establish its source directory.
 - Ancestor cycles reject, including aliases through hard links. Repeated siblings
   and shared descendants are allowed within the global limits.
-- Child `func_brush` models require an explicit finite `origin`, absent or
-  checked-zero `angles`, and ordinary convex solids. Legacy `angle`, nonzero
-  source rotation, runtime names/parenting/I/O, origin volumes, terrain and
-  liquids are unsupported. Geometry and attached UVs transform with the
-  containing reference, while entity angles stay absent or zero. Source,
-  every intermediate transform and model-local hulls must fit ±16384 units.
-  Region selection keeps or omits the whole model by its transformed pivot.
-  Materials must resolve to ordinary SOLID contents; nodraw is allowed, while
-  custom origin, liquid, window/grate and other special semantics reject before
-  region omission. Refresh does not load these materials or certify a build.
+- Child `func_brush` models require a finite explicit `origin` or one visible
+  origin volume, absent or checked-zero `angles`, and ordinary convex body
+  solids. Any side with resolved ORIGIN contents marks the whole volume;
+  material filenames alone do not. Custom material/Patch origin semantics work.
+  The volume's original bounds center overrides a valid explicit origin before
+  reference transforms; a present invalid origin still rejects. The consumed
+  volume adds no runtime geometry, collision or shadows. At least one body
+  brush must remain. Multiple visible origin volumes, hidden-only pivots,
+  origin-only models, terrain, liquids, legacy `angle`, nonzero source rotation
+  and runtime names/parenting/I/O are unsupported.
+  Geometry, attached UVs and the real pivot transform with the containing
+  reference, while entity angles stay absent or zero. Source and every
+  intermediate world bound, including consumed volumes, plus final model-local
+  hulls must fit ±16384 units. Regions select the whole model by its resolved,
+  transformed pivot. Remaining body materials must resolve to ordinary SOLID
+  contents; nodraw is allowed, while liquid, window/grate and other special
+  semantics reject before region omission. Refresh reads no materials and
+  defers effective-pivot, consumed-volume and local-bound checks to Compile,
+  even when an explicit origin is present. **Build details…** reports
+  **Consumed child origin brushes:** per expanded occurrence before region
+  filtering; the reference preview leaves that count unknown.
   Installed neutral FGD defaults retain their original key spelling, including
   `Solidity:0`, `StartDisabled:0` and `InputFilter:0`.
   `vrad_brush_cast_shadows:1` explicitly requests global baked shadows from an

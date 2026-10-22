@@ -67,7 +67,9 @@ pub(crate) fn prepare_origins(
     };
     for solid in entity.solids.iter().filter(|solid| !solid.hidden) {
         control.checkpoint()?;
-        if !origin_material(materials, solid, control)? {
+        if !origin_material(materials, solid, control)
+            .map_err(|error| format!("Origin brush solid {}: {error}", solid.id))?
+        {
             continue;
         }
         plan.volumes.insert(solid.id);

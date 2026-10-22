@@ -3,7 +3,9 @@ use std::mem::size_of;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use compiler::instances::{self, DependencyGuard, InstanceStats, SourceLocation};
+use compiler::instances::{
+    self, BrushModelPreparation, DependencyGuard, InstanceStats, SourceLocation,
+};
 use glam::DVec3;
 use map_core::query::{Hit, Ray};
 use map_core::surface::FaceId;
@@ -18,7 +20,7 @@ use super::{Actor, Session};
 
 mod terrain;
 
-pub const BRUSH_MODEL_PREVIEW_REASON: &str = "Child brush models have no reference geometry or icons; model bounds, picking and framing are unavailable. Refresh checks source geometry and properties, not material or native compilation validity.";
+pub const BRUSH_MODEL_PREVIEW_REASON: &str = "Child brush models have no reference geometry or icons; model bounds, picking and framing are unavailable. Refresh checks source geometry and properties, not material or native compilation validity. Refresh leaves effective pivots, model-local bounds and consumed origin-volume counts unknown until material-aware Compile.";
 pub const STATIC_PROP_PREVIEW_REASON: &str = "Child static-prop models are compiled but not shown in the reference preview; model bounds, picking and framing are unavailable.";
 pub const ENVIRONMENT_LIGHT_PREVIEW_REASON: &str = "Child lights, sun/sky illumination and icons are not shown in the reference or authored-lighting preview; child light bounds, picking and framing are unavailable.";
 pub const LIGHTING_ORIGIN_PREVIEW_REASON: &str = "Child lighting-origin helpers have no reference geometry or icons; helper bounds, picking and framing are unavailable.";
@@ -153,6 +155,7 @@ struct Ready {
     brushes: Vec<BrushRecord>,
     dependencies: Option<DependencyGuard>,
     stats: InstanceStats,
+    brush_model_preparation: BrushModelPreparation,
     diagnostics: Vec<Value>,
     diagnostics_truncated: bool,
     cpu_bytes: usize,
@@ -273,6 +276,7 @@ impl Request {
                 brushes: Vec::new(),
                 dependencies: None,
                 stats: InstanceStats::default(),
+                brush_model_preparation: BrushModelPreparation::Absent,
                 diagnostics: Vec::new(),
                 diagnostics_truncated: false,
                 cpu_bytes: 0,
@@ -637,6 +641,7 @@ impl Request {
             brushes: records,
             dependencies,
             stats: prepared.stats().cloned().unwrap_or_default(),
+            brush_model_preparation: prepared.brush_model_preparation(),
             diagnostics,
             diagnostics_truncated: report.diagnostics.len() > MAX_DIAGNOSTICS,
             cpu_bytes,
@@ -1140,10 +1145,19 @@ impl Session {
                 "reason":if environment_lights > 0 { ENVIRONMENT_LIGHT_PREVIEW_REASON } else { "Child lights, illumination and icons are not shown in the reference or authored-lighting preview." }
             });
         }
-        if ready.is_some_and(|ready| ready.stats.brush_models > 0) {
+        if let Some(ready) = ready.filter(|ready| ready.stats.brush_models > 0) {
             report["brush_model_preview"] = json!({
                 "available":false,
-                "reason":BRUSH_MODEL_PREVIEW_REASON
+                "reason":BRUSH_MODEL_PREVIEW_REASON,
+                "consumed_origin_brushes":if ready.brush_model_preparation == BrushModelPreparation::Deferred { None } else { Some(ready.stats.consumed_origin_brushes) },
+                "preparation":match ready.brush_model_preparation {
+                    BrushModelPreparation::Absent => "absent",
+                    BrushModelPreparation::Deferred => "deferred",
+                    BrushModelPreparation::Resolved => "resolved",
+                },
+                "deferred_checks":if ready.brush_model_preparation == BrushModelPreparation::Deferred {
+                    vec!["effective_pivot", "model_local_bounds", "materials", "native_compilation"]
+                } else { Vec::new() }
             });
         }
         if ready.is_some_and(|ready| ready.stats.static_props > 0) {

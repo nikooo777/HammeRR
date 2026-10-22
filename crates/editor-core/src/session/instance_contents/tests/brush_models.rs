@@ -138,7 +138,8 @@ fn installed_fgd_brush_models_keep_shared_authoring_source_identity_and_honest_p
         assert_eq!(report["stats"]["detail_brushes"], 0);
         assert_eq!(
             report["brush_model_preview"],
-            json!({"available":false,"reason":BRUSH_MODEL_PREVIEW_REASON})
+            json!({"available":false,"reason":BRUSH_MODEL_PREVIEW_REASON,"consumed_origin_brushes":null,
+                "preparation":"deferred","deferred_checks":["effective_pivot","model_local_bounds","materials","native_compilation"]})
         );
         assert_eq!(report["available"], false);
         assert_eq!(report["displayed"], false);
@@ -213,5 +214,162 @@ fn installed_fgd_brush_models_keep_shared_authoring_source_identity_and_honest_p
             json!([[96.0, 0.0, 16.0], [144.0, 16.0, 32.0]])
         );
         assert_eq!(mixed["available"], true);
+    }
+}
+
+#[test]
+fn origin_volume_references_defer_material_pivots_without_geometry_or_source_mutation() {
+    for actor in [Actor::User, Actor::Agent] {
+        let (_directory, _game, source, child) = crate::test_assets::instance_map(false);
+        let mut author = Session::new(Err("No material filesystem is available".into()));
+        author.set_definitions(
+            actor,
+            Catalog::parse("@SolidClass = func_brush []\n@SolidClass = func_detail []").unwrap(),
+        );
+        let mut blocks = Vec::new();
+        for (mins, maxs, material) in [
+            ([-48.0, -32.0, 16.0], [48.0, 32.0, 24.0], "missing/body"),
+            ([-8.0, -32.0, 32.0], [8.0, 32.0, 40.0], "missing/body"),
+            (
+                [12.0, -4.0, 0.0],
+                [20.0, 20.0, 8.0],
+                "missing/custom_origin",
+            ),
+        ] {
+            blocks.push(
+                author
+                    .create_block(actor, mins.into(), maxs.into(), material, false)
+                    .unwrap(),
+            );
+        }
+        let ObjectId::Entity(model) = author
+            .tie_to_entity(actor, &blocks, "func_brush", BTreeMap::new())
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        assert!(
+            author
+                .document()
+                .entity(model)
+                .unwrap()
+                .properties
+                .get("origin")
+                .is_none()
+        );
+        author.save(actor, Some(&child)).unwrap();
+        let mut session = Session::new(Err("No material filesystem is available".into()));
+        session.open(actor, &source, false).unwrap();
+        let owner = ObjectId::Entity(session.document().vmf().entities.last().unwrap().id);
+        session.select(&[owner], SelectMode::Replace).unwrap();
+        session
+            .begin_property_edit(crate::session::PropertyTarget::World)
+            .unwrap();
+        let token = session.property_draft().unwrap().token;
+        session
+            .append_property_change(
+                token,
+                crate::session::PropertyChange::Set {
+                    key: "message".into(),
+                    value: "Retained origin review".into(),
+                },
+            )
+            .unwrap();
+        let memory = session.document().vmf().clone();
+        let history = session.history_snapshot();
+        let camera = session.camera();
+        let settings = session.compile_settings();
+        let draft = json!(session.property_draft());
+        let source_bytes = std::fs::read(&source).unwrap();
+        for mixed in [false, true] {
+            if mixed {
+                author
+                    .set_entity_properties(
+                        actor,
+                        model,
+                        &[("origin".into(), Some("16384 0 0".into()))],
+                    )
+                    .unwrap();
+                author
+                    .create_block(
+                        actor,
+                        DVec3::new(96.0, 0.0, 16.0),
+                        DVec3::new(112.0, 16.0, 32.0),
+                        "missing/body",
+                        false,
+                    )
+                    .unwrap();
+                let detail = author
+                    .create_block(
+                        actor,
+                        DVec3::new(128.0, 0.0, 16.0),
+                        DVec3::new(144.0, 16.0, 32.0),
+                        "missing/body",
+                        false,
+                    )
+                    .unwrap();
+                author
+                    .tie_to_entity(actor, &[detail], "func_detail", BTreeMap::new())
+                    .unwrap();
+                author.save(actor, None).unwrap();
+                assert_eq!(
+                    session.inspect_instance_contents(0, 64).unwrap()["state"],
+                    "stale"
+                );
+            }
+            let child_bytes = std::fs::read(&child).unwrap();
+            let report = refresh(&mut session, actor);
+            assert_eq!(report["state"], "ready", "{report}");
+            assert_eq!(report["stats"]["brush_models"], 1);
+            assert!(report["stats"].get("consumed_origin_brushes").is_none());
+            assert_eq!(report["brush_model_preview"]["preparation"], "deferred");
+            assert!(report["brush_model_preview"]["consumed_origin_brushes"].is_null());
+            assert_eq!(
+                report["brush_model_preview"]["deferred_checks"],
+                json!([
+                    "effective_pivot",
+                    "model_local_bounds",
+                    "materials",
+                    "native_compilation"
+                ])
+            );
+            assert_eq!(
+                report["stats"]["dependencies"][0]["bytes"],
+                child_bytes.len()
+            );
+            assert_eq!(report["stats"]["world_brushes"], usize::from(mixed));
+            assert_eq!(report["stats"]["detail_brushes"], usize::from(mixed));
+            assert_eq!(report["brushes_total"], if mixed { 2 } else { 0 });
+            assert_eq!(report["face_provenance_total"], if mixed { 12 } else { 0 });
+            if mixed {
+                assert_eq!(
+                    report["owners"][0]["bounds"],
+                    json!([[96.0, 0.0, 16.0], [144.0, 16.0, 32.0]])
+                );
+                assert_eq!(report["available"], true);
+            } else {
+                assert!(report["owners"][0]["bounds"].is_null());
+                assert_eq!(report["geometry"]["vertices"], 0);
+                assert_eq!(report["available"], false);
+                assert!(
+                    session
+                        .frame_instance_contents(
+                            actor,
+                            report["token"].as_u64().unwrap(),
+                            &[owner],
+                            1.0
+                        )
+                        .unwrap_err()
+                        .contains("no visible geometry")
+                );
+            }
+            assert_eq!(session.document().vmf(), &memory);
+            assert_eq!(session.history_snapshot(), history);
+            assert_eq!(session.camera(), camera);
+            assert_eq!(session.compile_settings(), settings);
+            assert_eq!(json!(session.property_draft()), draft);
+            assert_eq!(std::fs::read(&source).unwrap(), source_bytes);
+            assert_eq!(std::fs::read(&child).unwrap(), child_bytes);
+        }
     }
 }

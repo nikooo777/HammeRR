@@ -79,10 +79,14 @@ fn zero_angles(raw: &str) -> Result<(), String> {
 }
 
 pub(super) fn admit(entity: &Entity) -> Result<(), String> {
-    admit_stationary(entity, false)
+    admit_fields(entity, false, false)
 }
 
 pub(crate) fn admit_stationary(entity: &Entity, rotation: bool) -> Result<(), String> {
+    admit_fields(entity, rotation, true)
+}
+
+fn admit_fields(entity: &Entity, rotation: bool, require_origin: bool) -> Result<(), String> {
     if shape(entity)?.is_none() {
         return Ok(());
     }
@@ -176,7 +180,10 @@ pub(crate) fn admit_stationary(entity: &Entity, rotation: bool) -> Result<(), St
     if entity.properties.get("classname") != Some("func_brush") {
         return Err("Child brush model requires canonical classname func_brush".into());
     }
-    origin(entity).map(|_| ())
+    if require_origin || entity.properties.get("origin").is_some() {
+        origin(entity)?;
+    }
+    Ok(())
 }
 
 pub(crate) fn origin(entity: &Entity) -> Result<DVec3, String> {
@@ -188,6 +195,56 @@ pub(crate) fn origin(entity: &Entity) -> Result<DVec3, String> {
         return Err("Child brush model origin exceeds finite Source compile bounds".into());
     }
     Ok(point)
+}
+
+pub(super) fn check_source(entity: &Entity, control: &Control) -> Result<(), String> {
+    for solid in entity.solids.iter().filter(|solid| !solid.hidden) {
+        control.checkpoint()?;
+        checked_solid_controlled(solid, control)?;
+    }
+    Ok(())
+}
+
+pub(super) fn plan_origin(
+    materials: &mut Materials<'_>,
+    entity: &Entity,
+    control: &Control,
+) -> Result<crate::map::origins::OriginPlan, String> {
+    let mut report = Report::default();
+    let plan = crate::map::origins::prepare_origins(materials, entity, &mut report, control)?;
+    if let Some(error) = report
+        .diagnostics
+        .iter()
+        .find(|error| error.level == crate::Level::Error)
+    {
+        return Err(format!(
+            "{}: {}",
+            error.object.as_deref().unwrap_or("entity"),
+            error.message
+        ));
+    }
+    if plan.position.is_none() {
+        return Err(
+            "Child brush model requires an explicit origin or one visible resolved origin brush"
+                .into(),
+        );
+    }
+    let mut remaining = 0;
+    for solid in entity
+        .solids
+        .iter()
+        .filter(|solid| !solid.hidden && !plan.volumes.contains(&solid.id))
+    {
+        remaining += 1;
+        validate_solid_materials(materials, solid, control)
+            .map_err(|error| format!("Child brush-model material: solid {}: {error}", solid.id))?;
+    }
+    if remaining == 0 {
+        return Err(
+            "An origin brush requires compiled brush geometry in the same runtime entity".into(),
+        );
+    }
+    Ok(plan)
 }
 
 pub(super) fn check_pose(entity: &Entity, control: &Control) -> Result<(), String> {
@@ -202,7 +259,7 @@ pub(super) fn check_pose(entity: &Entity, control: &Control) -> Result<(), Strin
             || mins.abs().max(maxs.abs()).max_element() > crate::map::MAX_COMPILE_COORD
         {
             return Err(format!(
-                "Child brush model solid {} local coordinates exceed finite Source compile bounds; move its explicit origin closer to the brushes",
+                "Child brush model solid {} local coordinates exceed finite Source compile bounds; move its effective origin closer to the brushes",
                 solid.id,
             ));
         }
@@ -219,6 +276,24 @@ pub(crate) fn ordinary(info: &MaterialInfo) -> bool {
         && info.unsupported_flags.is_empty()
 }
 
+fn validate_solid_materials(
+    materials: &mut Materials<'_>,
+    solid: &Solid,
+    control: &Control,
+) -> Result<(), String> {
+    for side in &solid.sides {
+        control.checkpoint()?;
+        let index = materials.load(&side.material)?;
+        if !ordinary(materials.get(index)) {
+            return Err(format!(
+                "{} requires ordinary SOLID contents without origin, liquid or special surface semantics",
+                side.material,
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn validate_materials<'a>(
     entities: impl Iterator<Item = &'a Entity>,
     fs: &GameFs,
@@ -228,19 +303,7 @@ pub(super) fn validate_materials<'a>(
     let mut materials = Materials::with_build_sources(fs, Requirements::GeometrySemantics, sources);
     for entity in entities {
         for solid in entity.solids.iter().filter(|solid| !solid.hidden) {
-            let result: Result<(), String> = (|| {
-                for side in &solid.sides {
-                    control.checkpoint()?;
-                    let index = materials.load(&side.material)?;
-                    if !ordinary(materials.get(index)) {
-                        return Err(format!(
-                            "{} requires ordinary SOLID contents without origin, liquid or special surface semantics",
-                            side.material,
-                        ));
-                    }
-                }
-                Ok(())
-            })();
+            let result = validate_solid_materials(&mut materials, solid, control);
             if let Err(message) = result {
                 return Err(Diagnostic::error(
                     format!("Child brush-model material: {message}"),
@@ -370,8 +433,9 @@ mod tests {
         }
         let mut entity = model();
         entity.properties.remove("origin");
+        admit(&entity).unwrap();
         assert!(
-            admit(&entity)
+            admit_stationary(&entity, true)
                 .unwrap_err()
                 .contains("explicit canonical origin")
         );

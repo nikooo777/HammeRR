@@ -770,11 +770,18 @@ fn translated_child_matches_complete_literal_bsp_and_retains_original_publicatio
     );
     let source = context(directory.path(), &parent);
     let mut report = compiler::Report::default();
-    let prepared =
-        instances::resolve(&parent, Some(&source), &Control::default(), &mut report).unwrap();
+    let prepared = instances::resolve_for_compile(
+        &parent,
+        Some(&source),
+        &game,
+        &Control::default(),
+        &mut report,
+    )
+    .unwrap();
     assert!(!report.has_errors(), "{report:?}");
     let generated = prepared
-        .vmf()
+        .compilation_vmf()
+        .unwrap()
         .entities
         .iter()
         .find(|item| prepared.root_entity(item.id) == Some(owner))

@@ -1,9 +1,10 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 
 use source_formats::bsp::{self, Bsp, PakLimits, StaticProps};
 use source_formats::gamefs::asset_relative;
 use source_formats::model::{self, HardwareCharge, HardwareLimits};
+use source_formats::vmt::MAX_PATCH_DEPTH;
 
 use super::manifest::StaticPropPackedUse;
 use super::{
@@ -107,7 +108,7 @@ pub(super) fn collect_closure(
 ) -> io::Result<BTreeSet<String>> {
     let mut paths = BTreeSet::new();
     let mut attempted = 0usize;
-    let mut material_paths = BTreeSet::new();
+    let mut material_depths = BTreeMap::<String, usize>::new();
     let mut texture_paths = BTreeSet::new();
     let mut material_bytes = 0usize;
     let mut charged = HardwareCharge::default();
@@ -206,7 +207,7 @@ pub(super) fn collect_closure(
             for candidate in model::material_candidates(name, &model.material_directories) {
                 let candidate = material::logical_path(&candidate, "vmt")?;
                 reserve_lookup(&candidate, &mut attempted, limits)?;
-                if material_paths.contains(&candidate) {
+                if material_depths.contains_key(&candidate) {
                     winner = Some((candidate, None));
                     break;
                 }
@@ -225,28 +226,72 @@ pub(super) fn collect_closure(
                     break;
                 }
             }
-            let (material_path, bytes) = winner.ok_or_else(|| {
+            let (mut material_path, bytes) = winner.ok_or_else(|| {
                 invalid(format!(
                     "Missing declared static-prop material: {name} in {path}"
                 ))
             })?;
-            let Some(bytes) = bytes else {
+            let Some(mut bytes) = bytes else {
                 continue;
             };
-            let texture_path = material::basetexture(&material_path, &bytes)?;
-            material_paths.insert(material_path);
-            if texture_paths.insert(texture_path.clone()) {
-                let bytes = required(
-                    &texture_path,
-                    limits.max_entry_bytes,
-                    false,
-                    &mut paths,
-                    &mut attempted,
-                    limits,
-                    control,
-                    read,
-                )?;
-                material::texture(&texture_path, bytes, control)?;
+            let mut chain = Vec::new();
+            let mut depth = loop {
+                checkpoint(control)?;
+                let dependency = material::dependency(&material_path, &bytes)?;
+                chain.push(material_path.clone());
+                match dependency {
+                    material::Dependency::Texture(texture_path) => {
+                        if texture_paths.insert(texture_path.clone()) {
+                            let bytes = required(
+                                &texture_path,
+                                limits.max_entry_bytes,
+                                false,
+                                &mut paths,
+                                &mut attempted,
+                                limits,
+                                control,
+                                read,
+                            )?;
+                            material::texture(&texture_path, bytes, control)?;
+                        }
+                        break 0;
+                    }
+                    material::Dependency::Include(include_path) => {
+                        if chain.contains(&include_path) {
+                            return Err(invalid(format!(
+                                "Static-prop Patch include cycle: {include_path}"
+                            )));
+                        }
+                        let included_depth = material_depths.get(&include_path).copied();
+                        if chain.len() + included_depth.unwrap_or(0) > MAX_PATCH_DEPTH {
+                            return Err(invalid(format!(
+                                "Static-prop Patch include depth exceeds {MAX_PATCH_DEPTH}: {include_path}"
+                            )));
+                        }
+                        if let Some(depth) = included_depth {
+                            break depth + 1;
+                        }
+                        let maximum = MAX_MATERIAL_BYTES
+                            .min(limits.max_entry_bytes)
+                            .min(MAX_MATERIAL_TOTAL_BYTES.saturating_sub(material_bytes));
+                        bytes = required(
+                            &include_path,
+                            maximum,
+                            false,
+                            &mut paths,
+                            &mut attempted,
+                            limits,
+                            control,
+                            read,
+                        )?;
+                        material_bytes += bytes.len();
+                        material_path = include_path;
+                    }
+                }
+            };
+            for path in chain.into_iter().rev() {
+                material_depths.insert(path, depth);
+                depth += 1;
             }
         }
     }

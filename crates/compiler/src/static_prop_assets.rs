@@ -31,4 +31,7 @@ mod build_tests;
 mod tests;
 
 #[cfg(test)]
+mod patch_tests;
+
+#[cfg(test)]
 mod reflection_tests;

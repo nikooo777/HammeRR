@@ -2056,8 +2056,12 @@ Dynamic and detail models are excluded.
 Accepted inputs are bounded static MDL 44/48, unit scale, body 0/root LOD 0 and
 one bodypart/model, with matching original VVD/DX90 VTX and required PHY. Every
 declared material across skins and LODs must resolve to a plain opaque
-`VertexLitGeneric` VMT with exactly one canonical `$basetexture`, and a complete
-supported static VTF 7.0–7.4 with one frame, one face and depth one. VTF 7.5,
+`VertexLitGeneric` VMT with exactly one canonical `$basetexture`, directly or
+through include-only Patch materials. Each Patch contains exactly one `include`
+with a canonical lowercase full `materials/...vmt` path; chains allow at most
+eight include edges. All original VMT bytes remain in the PAK and source guard.
+Insert/replace blocks, proxies and additional parameters reject. The terminal
+texture must be a complete supported static VTF 7.0–7.4 with one frame, one face and depth one. VTF 7.5,
 animated, cubemap and volume forms reject. PHY is consumed only if an
 emitted use has VPhysics collision; unused PHY remains outside the source guard.
 Included models, external/nontrivial animation, extended aliases, unsupported
@@ -2070,7 +2074,10 @@ The reserved `hammerr/packed-static-props.json` manifest binds the exact emitted
 static-prop bytes, model dictionary/uses and sorted original asset hashes. Packed
 readback reconstructs admitted dependencies from PAK bytes. Reflection finalization
 and Run staging verify and preserve original entries. Matching originals deduplicate
-within this producer; cross-producer path collisions reject. All PAK producers
+within this producer; cross-producer path collisions reject. The material graph
+shares 16,384 lookup attempts, 1 MiB per VMT and 4 MiB of unique VMT bytes,
+including Patch dependencies. Cyclic, missing or over-depth includes reject.
+All PAK producers
 share 4,096 entries, 16 MiB per entry, 64 MiB each encoded/decoded and a 512 MiB BSP
 limit. See [Static props](static-props.md#pack-static-prop-assets) for the human
 workflow and limits.

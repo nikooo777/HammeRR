@@ -375,13 +375,13 @@ fn resource_bearing_or_lenient_material_forms_are_refused() {
         "VertexLitGeneric { $basetexture test/one.vtf }",
     ] {
         assert!(
-            material::basetexture(FIRST, text.as_bytes()).is_err(),
+            material::dependency(FIRST, text.as_bytes()).is_err(),
             "accepted {text}"
         );
     }
     assert_eq!(
-        material::basetexture(FIRST, b"VertexLitGeneric { $basetexture test/one }").unwrap(),
-        FIRST_TEXTURE
+        material::dependency(FIRST, b"VertexLitGeneric { $basetexture test/one }").unwrap(),
+        material::Dependency::Texture(FIRST_TEXTURE.into())
     );
 }
 

@@ -34,7 +34,13 @@ pub(super) fn logical_path(name: &str, extension: &str) -> io::Result<String> {
     Ok(path)
 }
 
-pub(super) fn basetexture(path: &str, bytes: &[u8]) -> io::Result<String> {
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum Dependency {
+    Include(String),
+    Texture(String),
+}
+
+pub(super) fn dependency(path: &str, bytes: &[u8]) -> io::Result<Dependency> {
     if bytes.len() > MAX_MATERIAL_BYTES {
         return Err(invalid(format!(
             "Static-prop material exceeds its byte budget: {path}"
@@ -56,33 +62,48 @@ pub(super) fn basetexture(path: &str, bytes: &[u8]) -> io::Result<String> {
     };
     let [parameter] = children else {
         return Err(invalid(format!(
-            "Static-prop material requires only one $basetexture: {path}"
+            "Static-prop material requires only one $basetexture or Patch include: {path}"
         )));
     };
-    if !root.key.eq_ignore_ascii_case("VertexLitGeneric")
-        || !parameter.key.eq_ignore_ascii_case("$basetexture")
+    let patch = root.key.eq_ignore_ascii_case("Patch");
+    let key = if patch { "include" } else { "$basetexture" };
+    if (!patch && !root.key.eq_ignore_ascii_case("VertexLitGeneric"))
+        || !parameter.key.eq_ignore_ascii_case(key)
     {
         return Err(invalid(format!(
-            "Static-prop material supports only plain VertexLitGeneric and $basetexture: {path}"
+            "Static-prop material supports only plain VertexLitGeneric or include-only Patch: {path}"
         )));
     }
     let reference = parameter.as_str().ok_or_else(|| {
         invalid(format!(
-            "Static-prop $basetexture must be a scalar resource name: {path}"
+            "Static-prop {key} must be a scalar resource name: {path}"
         ))
     })?;
     let parsed = Material::parse(text)
         .map_err(|error| invalid(format!("Invalid static-prop material {path}: {error}")))?;
-    if parsed.shader != "vertexlitgeneric"
+    let shader = if patch { "patch" } else { "vertexlitgeneric" };
+    if parsed.shader != shader
         || parsed.params.len() != 1
         || !parsed.blocks.is_empty()
-        || parsed.params[0] != ("$basetexture".into(), reference.into())
+        || parsed.params[0] != (key.into(), reference.into())
     {
         return Err(invalid(format!(
             "Static-prop raw and parsed material disagree: {path}"
         )));
     }
-    logical_path(reference, "vtf")
+    if patch {
+        let name = reference
+            .strip_prefix("materials/")
+            .and_then(|name| name.strip_suffix(".vmt"))
+            .ok_or_else(|| {
+                invalid(format!(
+                    "Static-prop Patch include must use a canonical materials/...vmt path: {path}"
+                ))
+            })?;
+        Ok(Dependency::Include(logical_path(name, "vmt")?))
+    } else {
+        Ok(Dependency::Texture(logical_path(reference, "vtf")?))
+    }
 }
 
 pub(super) fn texture(path: &str, bytes: Vec<u8>, control: &Control) -> io::Result<()> {

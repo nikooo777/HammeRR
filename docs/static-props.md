@@ -46,14 +46,19 @@ shaders and surface/prop-data definitions remain installed runtime prerequisites
 Limits: unit-scale static MDL 44/48 models with body 0, root LOD 0 and one
 bodypart/model. Original MDL, VVD and DX90 VTX files must agree. Every declared
 material, including other skins and draw LODs, must resolve to a plain opaque
-**VertexLitGeneric** VMT containing only one canonical `$basetexture`, with a
+**VertexLitGeneric** VMT containing only one canonical `$basetexture`, directly
+or through include-only **Patch** materials. Each Patch contains only one
+`include` with a canonical lowercase full path such as
+`materials/models/props/cabinet_base.vmt`. Up to eight include edges are supported;
+the BSP retains every original VMT and VTF byte. The terminal texture must be a
 complete supported VTF 7.0–7.4 containing one frame, one face and depth one. VTF 7.5,
 animated, cubemap and volume textures are unsupported. The matching original PHY
 is included only when an emitted use needs **Collisions → Use VPhysics**;
 **Not Solid** and **Use Bounding Box** leave an unused PHY unread.
 
 Included models, external or nontrivial animation, attachments, flexes, eye
-forms, LOD material replacements, material proxies/Patch/conditions, additional
+forms, LOD material replacements, material proxies/conditions, Patch insert or
+replace blocks, additional
 texture parameters and unsupported textures reject packing. Metadata must be
 empty or exactly the supported `Metal.Medium` prop-data declaration. Standard
 installed CS:S shaders and surface/prop-data definitions, plus DX90 or newer,
@@ -64,7 +69,9 @@ and compile-region selection. Hidden and region-omitted props do not add packing
 dynamic and detail models are excluded. All producers share the final PAK limits:
 4,096 entries, 16 MiB per entry, 64 MiB each encoded and decoded, and a 512 MiB
 BSP. Conflicting archive paths, exceeded limits and changed original sources
-reject publication. Reflection generation and Run staging preserve the packed
+reject publication. Material collection allows 16,384 lookup attempts, 1 MiB
+per VMT and 4 MiB of unique VMT bytes, including Patch dependencies. Missing,
+cyclic or over-depth includes reject. Reflection generation and Run staging preserve the packed
 original model entries.
 
 Agents use `set_compile_settings {"pack_static_prop_assets":true}`; the CLI flag

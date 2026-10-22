@@ -13,8 +13,8 @@ use std::io;
 use crate::gamefs::{GameFs, asset_relative, normalize};
 use crate::keyvalues::{self, Node, Value};
 
-/// How many `patch` includes to follow before assuming a cycle.
-const MAX_PATCH_DEPTH: usize = 8;
+/// Maximum number of Patch include edges followed from a root material.
+pub const MAX_PATCH_DEPTH: usize = 8;
 const MAX_MATERIAL_DEPTH: usize = 64;
 const MAX_MATERIAL_NODES: usize = 4096;
 

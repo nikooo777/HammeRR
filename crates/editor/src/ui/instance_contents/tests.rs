@@ -582,3 +582,94 @@ fn instance_binders_preserve_failed_shutdown_error_and_timer_messages_without_re
     assert_eq!(document.shutdown().unwrap_err(), error);
     assert_eq!(std::fs::read_dir(&recovery).unwrap().count(), 0);
 }
+
+#[test]
+fn software_brush_model_counts_refuse_frame_without_reference_geometry() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: false,
+        },
+    )))
+    .unwrap();
+    let (directory, game) = crate::test_assets::game();
+    let parent = directory.path().join("parent.vmf");
+    let child = directory.path().join("child.vmf");
+    let mut session = Session::new(Ok(game));
+    let mut blocks = Vec::new();
+    for (mins, maxs) in [
+        ([-48.0, -32.0, 16.0], [48.0, 32.0, 24.0]),
+        ([-8.0, -32.0, 32.0], [8.0, 32.0, 40.0]),
+    ] {
+        blocks.push(
+            session
+                .create_block(Actor::User, mins.into(), maxs.into(), "test/checker", false)
+                .unwrap(),
+        );
+    }
+    session
+        .tie_to_entity(
+            Actor::User,
+            &blocks,
+            "func_brush",
+            std::collections::BTreeMap::from([("origin".into(), "16 8 4".into())]),
+        )
+        .unwrap();
+    session.save(Actor::User, Some(&child)).unwrap();
+    std::fs::write(
+        &parent,
+        crate::test_assets::room().write(&Default::default()),
+    )
+    .unwrap();
+    session.open(Actor::User, &parent, false).unwrap();
+    let owner = session
+        .create_entity(
+            Actor::User,
+            "func_instance",
+            Some(DVec3::ZERO),
+            std::collections::BTreeMap::from([("file".into(), "child.vmf".into())]),
+        )
+        .unwrap();
+    session.save(Actor::User, None).unwrap();
+    session.select(&[owner], SelectMode::Replace).unwrap();
+    let result = session.begin_compile(Actor::User, None).unwrap().run();
+    let output = &result.as_ref().unwrap().output;
+    assert!(output.bsp.is_some(), "{:?}", output.report);
+    assert_eq!(output.stats.instances.as_ref().unwrap().brush_models, 1);
+    session.finish_compile(Actor::User, &result);
+    let request = session
+        .begin_instance_contents_refresh(Actor::User)
+        .unwrap();
+    let report = session
+        .finish_instance_contents_refresh(Actor::User, request.run())
+        .unwrap();
+    assert_eq!(report["brush_model_preview"]["available"], false);
+    let memory = session.document().vmf().clone();
+    let history = session.history_snapshot();
+    let camera = session.camera();
+    let settings = session.compile_settings();
+    let shared = Arc::new(Mutex::new(session));
+    let contents = Controller::new(shared.clone()).unwrap();
+    let build = crate::compile_ui::Controller::new(&shared).unwrap();
+    build.refresh(&lock(&shared));
+    let count = "Expanded brush models: 1 · before compile-region filtering";
+    let reason = editor_core::session::instance_contents::BRUSH_MODEL_PREVIEW_REASON;
+    assert!(contents.window.get_summary().contains(count));
+    assert!(contents.window.get_summary().contains(reason));
+    assert!(build.window.get_details().contains(count));
+    assert!(build.window.get_details().contains(reason));
+    assert!(!contents.window.get_can_frame());
+    contents.window.invoke_frame_contents();
+    assert!(
+        contents
+            .window
+            .get_message()
+            .contains("no visible geometry")
+    );
+    let session = lock(&shared);
+    assert_eq!(session.document().vmf(), &memory);
+    assert_eq!(session.history_snapshot(), history);
+    assert_eq!(session.camera(), camera);
+    assert_eq!(session.compile_settings(), settings);
+}

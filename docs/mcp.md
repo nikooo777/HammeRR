@@ -527,6 +527,29 @@ ordinary 16-helper limit; source/pose admission and expansion work are checked
 before regional omission. Author child volumes through existing `create_block`,
 `tie_to_entity` and `save_map` operations; see [Visibility clusters](visclusters.md).
 
+Child `func_brush` authoring uses `create_block`, `tie_to_entity` and
+`set_entity_properties` with explicit `origin`, then `save_map` and the existing
+`set_instance_reference` and compile operations. The human property label is
+**Origin (X Y Z)**. Keep source `angles` absent or checked zero, names/parenting/I/O
+empty and installed neutral defaults unchanged, including `Solidity:0`,
+`StartDisabled:0`, `InputFilter:0` and `spawnflags:2`; missing spawnflags preserves
+native 0 and explicit 0 also works. Legacy `angle`, duplicate case aliases,
+unknown or non-neutral keys, opaque blocks, origin volumes, terrain and liquids
+reject. Source geometry, pivots, each nested transform and local hulls must fit
+±16384. Compilation requires resolved ordinary SOLID material semantics before
+region selection; custom origin/liquid/special contents reject without replacing
+output. Regions select the entire model by transformed pivot. Model sides remain
+outside child overlay/manual-cubemap world/detail bindings.
+
+`stats.instances.brush_models` counts whole visible expanded child model
+occurrences before regions and omits zero. Instance contents reports the same
+count plus `brush_model_preview:{available:false,reason:…}`. These models do not
+add fake detail/reference geometry. A model-only reference can be ready with
+source identities/counts, zero geometry and null bounds; Frame refuses without
+moving the camera. Mixed world/detail preview is unchanged. Refresh checks source
+keys/geometry/bounds, not material or native compilation validity. No new tool or
+setting is required.
+
 `stats.instances.occluders` counts visible expanded child `func_occluder`
 entities before compile-region filtering and is omitted when zero. **Build
 details…** shows **Occluder helpers:** with **expanded before compile-region

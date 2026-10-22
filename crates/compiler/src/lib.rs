@@ -1067,8 +1067,21 @@ fn build(
     }
     let material_sources = (options.pack_water_assets
         || options.pack_static_prop_assets
-        || options.brush_texture_shadows)
-        .then(asset_sources::BuildMaterialSources::default);
+        || options.brush_texture_shadows
+        || prepared_instances.has_brush_models())
+    .then(asset_sources::BuildMaterialSources::default);
+    if prepared_instances.has_brush_models()
+        && let Err(diagnostic) = prepared_instances.validate_brush_model_materials(
+            fs,
+            material_sources
+                .as_ref()
+                .ok_or("Child brush models require original material sources")?,
+            control,
+        )
+    {
+        output.report.diagnostics.push(diagnostic);
+        return Ok(());
+    }
     let prepared = cordons::prepare_with_material_sources(
         vmf,
         fs,

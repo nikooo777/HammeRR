@@ -32,7 +32,7 @@ pub struct InstanceReferenceArgs {
 #[tool_router(router = instance_reference_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
-        description = "Inspect the shared owned Instance reference… authoring form. Reports raw file/origin/angles, component strings when valid, owner/token, saved parent directory, validity/errors and metadata-only file-presence status. Opening and editing this form never loads child bytes or initializes graphics. contents_validation is always not_checked: only explicit Refresh instance contents or Compile checks child syntax/semantics, aggregate budgets and transformed geometry. No child editing or automatic refresh.",
+        description = "Inspect the shared owned Instance reference… authoring form. Reports raw file/origin/angles, component strings when valid, owner/token, saved parent directory, validity/errors and metadata-only file-presence status. Opening and editing this form never loads child bytes or initializes graphics. contents_validation is always not_checked: explicit Refresh instance contents or Compile checks child syntax, source keys, aggregate budgets and transformed geometry; only Compile checks child brush-model materials and native validity. No child editing or automatic refresh.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_instance_reference(&self) -> ToolResult {

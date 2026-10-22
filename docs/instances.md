@@ -2,7 +2,8 @@
 
 # Compile referenced assemblies
 
-Reuse saved VMFs' world and detail brushes, power 2–4 terrain, unnamed point/spot
+Reuse saved VMFs' world and detail brushes, stationary ordinary brush models,
+power 2–4 terrain, unnamed point/spot
 lights with built-in appearances, static sun/sky lights and props, scoped
 lighting-origin helpers, player spawns,
 visibility volumes, unnamed stationary occluders, unnamed overlays on ordinary
@@ -17,7 +18,8 @@ from supported brushes already in the parent.
 
 1. Save the parent map. Save a child VMF inside the same directory tree, such as
    `parts/arch.vmf`. Keep the child's visible contents to world brushes,
-   ordinary `func_detail` brushes, supported lights/static props, `info_lighting`
+   ordinary `func_detail` brushes, unnamed stationary `func_brush` models,
+   supported lights/static props, `info_lighting`
    helpers, `info_player_terrorist` / `info_player_counterterrorist` spawns,
    `func_viscluster` volumes, unnamed stationary `func_occluder` helpers,
    unnamed `info_overlay` projections on ordinary or actual terrain faces,
@@ -66,6 +68,14 @@ from supported brushes already in the parent.
    the default), or choose **No** (`0`). Save the child before returning to the
    parent. The brushes remain one helper; see [Occluders](occluders.md#occluders-in-referenced-assemblies)
    for the strict child fields.
+   To add a child brush model, select its ordinary convex brushes and use
+   **Tie to entity… → func_brush → Tie selected brushes to entity**. In
+   **Advanced properties**, explicitly set **Origin (X Y Z)**, such as `16 8 4`.
+   Keep **Name** and **Parent** empty, **Solidity** at **Toggle** and the other
+   inherited defaults unchanged. Save and reopen the child before returning to
+   the parent. One compound entity stays one model; rotate its containing
+   instance instead of adding source entity angles.
+
 7. To add a child reflection sample, open **Entity…**, choose `env_cubemap`,
    then click **Place entity**. Set **Position** and **Advanced properties →
    Cubemap Size**. Keep **Brush faces** empty for automatic assignment. For manual
@@ -105,6 +115,10 @@ from supported brushes already in the parent.
    counts child `light_environment` helpers before regions; their illumination,
    icons, bounds, picking and framing are unavailable here. Mixed references
    keep their actual brush/terrain preview and Frame behavior.
+   **Expanded brush models:** counts whole child models before compile-region
+   filtering. Their geometry, icons, bounds, picking and framing are unavailable
+   in the reference layer. Refresh checks source shapes and properties; only
+   Compile checks their material and native validity.
    **Expanded static props:**
    reports child prop counts. Child models are compiled but have no reference
    display, model bounds, picking or framing. **Expanded lighting origins:**
@@ -136,6 +150,8 @@ from supported brushes already in the parent.
    **Sun and sky lights:** counts expanded child environment helpers before
    regions, separately from point/spot counts and emitted SKY/SKY_AMBIENT
    lighting records.
+   **Expanded brush models:** counts whole expanded model occurrences before
+   region filtering, independently of world/detail brush counts.
    **Expanded static props:** uses the same expansion count before filtering;
    **Static props** counts props emitted by the selected build region.
    **Expanded lighting origins:** counts visible expanded helpers before region
@@ -178,6 +194,21 @@ Limits:
   parent first; an output BSP filename cannot establish its source directory.
 - Ancestor cycles reject, including aliases through hard links. Repeated siblings
   and shared descendants are allowed within the global limits.
+- Child `func_brush` models require an explicit finite `origin`, absent or
+  checked-zero `angles`, and ordinary convex solids. Legacy `angle`, nonzero
+  source rotation, runtime names/parenting/I/O, origin volumes, terrain and
+  liquids are unsupported. Geometry and attached UVs transform with the
+  containing reference, while entity angles stay absent or zero. Source,
+  every intermediate transform and model-local hulls must fit ±16384 units.
+  Region selection keeps or omits the whole model by its transformed pivot.
+  Materials must resolve to ordinary SOLID contents; nodraw is allowed, while
+  custom origin, liquid, window/grate and other special semantics reject before
+  region omission. Refresh does not load these materials or certify a build.
+  Installed neutral FGD defaults retain their original key spelling, including
+  `Solidity:0`, `StartDisabled:0` and `InputFilter:0`. Missing `spawnflags` keeps
+  native 0; explicit 0 or the FGD default 2 is admitted. Other non-neutral values,
+  unknown fields, duplicate case aliases and opaque blocks reject. Model sides
+  cannot become child overlay or manual cubemap world/detail targets.
 - Child `func_viscluster` volumes are consumed by the compiler. They require one
   visible convex brush, at most 64 sides, no terrain or origin materials and no
   runtime parent or nonzero entity angles. Transform the containing instance
@@ -423,7 +454,12 @@ Optional `point_lights` and `spot_lights` count expanded point/spot lights,
 including patterned lamps, before compile-region filtering and are omitted
 individually when zero. A light-only, model-only, spawn-only or lighting-helper-only
 assembly can resolve ready with dependency/count reports but has no reference
-geometry to display, pick or frame. Optional `static_props` counts
+geometry to display, pick or frame. Optional `brush_models` counts whole visible
+child `func_brush` occurrences before region filtering and omits zero. Nonzero counts add
+`brush_model_preview:{available:false,reason:…}`. Model-only references retain
+identities/counts with zero geometry and null bounds; Frame refuses without moving
+its camera. Mixed world/detail previews keep their existing mesh and bounds.
+Optional `static_props` counts
 expanded child props before region filtering and is also omitted when zero.
 Optional `environment_lights` counts expanded visible child sun/sky helpers
 before regions and omits zero, separately from point/spot counts and native

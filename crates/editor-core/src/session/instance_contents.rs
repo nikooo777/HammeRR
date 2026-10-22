@@ -18,6 +18,7 @@ use super::{Actor, Session};
 
 mod terrain;
 
+pub const BRUSH_MODEL_PREVIEW_REASON: &str = "Child brush models have no reference geometry or icons; model bounds, picking and framing are unavailable. Refresh checks source geometry and properties, not material or native compilation validity.";
 pub const STATIC_PROP_PREVIEW_REASON: &str = "Child static-prop models are compiled but not shown in the reference preview; model bounds, picking and framing are unavailable.";
 pub const ENVIRONMENT_LIGHT_PREVIEW_REASON: &str = "Child lights, sun/sky illumination and icons are not shown in the reference or authored-lighting preview; child light bounds, picking and framing are unavailable.";
 pub const LIGHTING_ORIGIN_PREVIEW_REASON: &str = "Child lighting-origin helpers have no reference geometry or icons; helper bounds, picking and framing are unavailable.";
@@ -1137,6 +1138,12 @@ impl Session {
             report["static_light_preview"] = json!({
                 "available":false,
                 "reason":if environment_lights > 0 { ENVIRONMENT_LIGHT_PREVIEW_REASON } else { "Child lights, illumination and icons are not shown in the reference or authored-lighting preview." }
+            });
+        }
+        if ready.is_some_and(|ready| ready.stats.brush_models > 0) {
+            report["brush_model_preview"] = json!({
+                "available":false,
+                "reason":BRUSH_MODEL_PREVIEW_REASON
             });
         }
         if ready.is_some_and(|ready| ready.stats.static_props > 0) {

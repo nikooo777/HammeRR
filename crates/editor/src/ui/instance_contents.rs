@@ -134,6 +134,18 @@ impl Controller {
             summary.push('\n');
             summary.push_str(reason);
         }
+        if let Some(models) = state["stats"]["brush_models"]
+            .as_u64()
+            .filter(|&count| count > 0)
+        {
+            summary.push_str(&format!(
+                "\nExpanded brush models: {models} · before compile-region filtering"
+            ));
+        }
+        if let Some(reason) = state["brush_model_preview"]["reason"].as_str() {
+            summary.push('\n');
+            summary.push_str(reason);
+        }
         if let Some(props) = state["stats"]["static_props"]
             .as_u64()
             .filter(|&count| count > 0)

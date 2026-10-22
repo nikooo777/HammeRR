@@ -2,12 +2,14 @@ import argparse
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 from unittest.mock import patch
 
 from validate_authored_planes import records
 from validate_compile_jobs import wait_job
-from validate_face_lighting import DEFAULT_BINARY, Client, detail
+from validate_direct_lighting import FACE_FORMAT
+from validate_face_lighting import DEFAULT_BINARY, Client, detail, face_ref
 from validate_normal_map_preview import fixture
 from validate_visibility import ROOM
 
@@ -21,6 +23,9 @@ SOURCE_FIELDS = (
     "brush_entities", "worldspawn", "undo", "redo", "selection",
     "face_selection", "camera", "view",
 )
+MODEL_MATERIAL = "audit/model"
+MODEL_SOURCE_BOUNDS = (((-48, -32, 16), (48, 32, 24)), ((-8, -32, 32), (8, 32, 40)))
+MODEL_LITERAL_BOUNDS = (((32, 0, 16), (128, 64, 24)), ((72, 0, 32), (88, 64, 40)))
 
 
 def digest(path):
@@ -77,6 +82,189 @@ def geometry(path):
         "brushes": brushes,
         "model_bounds": [row[:6] for row in records(data, 14, "<9f3i")],
     }
+
+
+def brush_model(client, literal=False):
+    blocks = []
+    for low, high in MODEL_LITERAL_BOUNDS if literal else MODEL_SOURCE_BOUNDS:
+        identifier = client.call("create_block", {"mins": low, "maxs": high, "material": MODEL_MATERIAL})["id"]
+        blocks.append(identifier)
+        shape = detail(client, [identifier])[0]
+        for face in shape["faces"]:
+            normal = face["normal"]
+            assert sum(abs(value) for value in normal) == 1 and set(normal) <= {-1, 0, 1}
+            if normal[0]:
+                u, v, shift = [0, 1, 0], [0, 0, -1], [-128, 0]
+            elif normal[1]:
+                u, v, shift = [1, 0, 0], [0, 0, -1], [-320, 0]
+            else:
+                u, v, shift = [1, 0, 0], [0, -1, 0], [-320, 128]
+            client.call("edit_faces", {"faces": [face_ref(shape, face)], "u_axis": u, "v_axis": v,
+                                       "scale_u": 0.25, "scale_v": 0.25, "shift_u": shift[0] if literal else 0,
+                                       "shift_v": shift[1] if literal else 0, "lightmap_scale": 16})
+    model = client.call("tie_to_entity", {"ids": blocks, "classname": "func_brush"})["id"]
+    definition = client.call("get_entity_class", {"classname": "func_brush"})
+    origin = next(row for row in definition["properties"] if row["name"] == "origin")
+    assert origin["label"] == "Origin (X Y Z)" and not origin["read_only"] and origin["default"] is None
+    authored = dict(detail(client, [model])[0]["properties"])
+    assert authored == {"classname": "func_brush", **definition["defaults"]}
+    assert authored["spawnflags"] == "2" and authored["Solidity"] == authored["StartDisabled"] == authored["InputFilter"] == "0"
+    assert "origin" not in authored and "angles" not in authored
+    client.call("set_entity_properties", {"id": model, "set": {"origin": "96 40 4" if literal else "16 8 4"}})
+    return model, blocks, definition
+
+
+def model_parent(client, path, child, literal=False):
+    sealed_parent(client)
+    client.call("create_entity", {"classname": "light", "origin": [80, 32, 160], "properties": {
+        "_light": "255 128 64 200", "_lightHDR": "64 255 128 400", "_constant_attn": "1",
+        "_linear_attn": "0", "_quadratic_attn": "0"}})
+    client.call("save_map", {"path": str(path)})
+    token = client.call("set_instance_reference", {"action": "begin"})["token"]
+    client.call("set_instance_reference", {"action": "update", "token": token, "file": child.name,
+                                            "origin": "80 32 0", "angles": "0 0 0"})
+    checked = client.call("set_instance_reference", {"action": "check", "token": token})
+    assert checked["valid"] and checked["presence_checked"] and checked["contents_validation"] == "not_checked"
+    owner = client.call("set_instance_reference", {"action": "apply", "token": token})["id"]
+    assert owner == "entity:10", "Independent model identity reservation changed"
+    if literal:
+        model, blocks, _ = brush_model(client, literal=True)
+        assert model == "entity:13" and blocks == ["solid:11", "solid:12"]
+        client.call("delete_objects", {"ids": [owner]})
+    client.call("save_map", {"path": str(path)})
+    if literal:
+        raw = path.read_bytes()
+        assert raw.count(b'\n\t"id" "13"') == 1
+        raw = raw.replace(b'\n\t"id" "13"', b'\n\t"id" "11"')
+        raw, count = re.subn(rb'(\n\t\t"id" ")(11|12)(")',
+                             lambda match: match[1] + {b"11": b"12", b"12": b"13"}[match[2]] + match[3], raw)
+        assert count == 2, "Literal object-ID alignment did not cover exactly two model solids"
+        path.write_bytes(raw)
+    saved = path.read_bytes()
+    client.call("open_map", {"path": str(path)})
+    assert path.read_bytes() == saved
+    return owner, client.call("get_map_info")["worldspawn"]
+
+
+def validate_brush_models(client, output, gameinfo, result):
+    from validate_instance_lighting import entity_rows
+
+    retained = {path: path.read_bytes() for pattern in ("*.bsp", "*.lin") for path in output.rglob(pattern)}
+    output = output / "brush-models"
+    output.mkdir()
+    material = gameinfo.parent / f"materials/{MODEL_MATERIAL}.vmt"
+    assert not material.exists()
+    material.write_text("LightmappedGeneric { $basetexture audit/base }\n")
+    material_bytes = material.read_bytes()
+    client.call("new_map", {"discard_changes": True})
+    _, _, definition = brush_model(client)
+    child = output / "model-child.vmf"
+    client.call("save_map", {"path": str(child)})
+    child_bytes = child.read_bytes()
+    client.call("open_map", {"path": str(child)})
+    assert child.read_bytes() == child_bytes
+    parent, literal = output / "parent.vmf", output / "literal.vmf"
+    owner, world = model_parent(client, parent, child)
+    _, literal_world = model_parent(client, literal, child, literal=True)
+    assert world == literal_world, "Normal-save world metadata differs between child and literal"
+    receipt = {"cases": {}, "fgd": definition, "physics": "none", "native_exercised": False,
+               "literal_origin": [96, 40, 4], "literal_local_bounds": [-64, -40, 12, 32, 24, 36],
+               "identity_alignment": {"entity:13": "entity:11", "solid:11": "solid:12", "solid:12": "solid:13"}}
+    result["brush_models"] = receipt
+
+    def preview():
+        report = client.call("set_instance_contents", {"action": "refresh"})
+        assert report["state"] == "ready" and report["stats"]["brush_models"] == 1
+        assert report["stats"]["world_brushes"] == report["stats"]["detail_brushes"] == 0
+        assert not report["available"] and not report["displayed"] and report["owners"][0]["bounds"] is None
+        assert report["brush_model_preview"]["available"] is False and "material or native" in report["brush_model_preview"]["reason"]
+        assert report["brushes_total"] == report["face_provenance_total"] == report["geometry"]["vertices"] == 0
+        assert report["stats"]["dependencies"] == [{"path": child.name, "bytes": len(child_bytes), "sha256": hashlib.sha256(child_bytes).hexdigest()}]
+        camera = client.call("get_camera")
+        error = client.call("set_instance_contents", {"action": "frame", "token": str(report["token"]), "ids": [owner]}, error=True)
+        assert "no visible geometry" in text(error) and client.call("get_camera") == camera
+        return report
+
+    def pair(source, label, mode, failure=False):
+        client.call("set_compile_settings", {"lighting": mode, "physics": "none", "bounces": 0})
+        token = client.call("begin_property_edit", {"world": True})["draft"]["token"]
+        client.call("update_property_edit", {"token": token, "changes": [{"action": "set", "key": "message", "value": "Retained child-model review"}]})
+        before = (source_state(client, source), client.call("get_compile_settings"), client.call("get_property_edit"), game_files(gameinfo.parent))
+        outputs, jobs = [], []
+        try:
+            for background in (False, True):
+                path = output / f"{label}{'-background' if background else ''}.bsp"
+                if not path.exists():
+                    path.write_bytes(b"previous child-model BSP")
+                pointfile = path.with_suffix(".lin")
+                pointfile.write_bytes(b"retained child-model pointfile\n")
+                old = path.read_bytes()
+                if background:
+                    submitted = client.call("start_compile", {"path": str(path)})["job"]
+                    job = wait_job(client)
+                    assert job["token"] == submitted["token"]
+                    built = job["result"]
+                else:
+                    response = client.call("compile_map", {"path": str(path)}, error=failure)
+                    built = json.loads(text(response)) if failure else response
+                    job = client.call("get_compile_status")["job"]
+                assert built["success"] is not failure and job["status"] == ("failed" if failure else "completed")
+                assert job["settings"]["lighting"] == mode and job["settings"]["physics"] == "none"
+                assert job["result"]["published"] is not failure
+                if failure:
+                    assert path.read_bytes() == old and built["bsp"] is None
+                    assert any(row["level"] == "error" and row["object"] == owner and "Child brush-model material:" in row["message"] for row in built["diagnostics"]), built
+                else:
+                    assert not job["stale"] and built["bsp"] == str(path) and built["leak"] is None
+                    assert built["stats"]["lighting_mode"] == mode
+                assert pointfile.read_bytes() == b"retained child-model pointfile\n"
+                assert (source_state(client, source), client.call("get_compile_settings"), client.call("get_property_edit"), game_files(gameinfo.parent)) == before
+                assert child.read_bytes() == child_bytes
+                outputs.append(path.read_bytes())
+                jobs.append(job)
+            assert outputs[0] == outputs[1], "Foreground/background complete model BSP differs"
+            receipt["cases"][label + ("-refusal" if failure else "")] = jobs
+            return outputs[0]
+        finally:
+            client.call("cancel_property_edit", {"token": token})
+
+    try:
+        with patch.object(client, "call", wraps=client.call) as calls:
+            for mode in ("fullbright", "direct_ldr_hdr"):
+                compiled = []
+                for label, source in (("child", parent), ("literal", literal)):
+                    client.call("open_map", {"path": str(source)})
+                    if label == "child":
+                        receipt["preview"] = preview()
+                    data = pair(source, f"{label}-{mode}", mode)
+                    stats = client.call("get_compile_status")["job"]["result"]["stats"]
+                    if label == "child":
+                        assert stats["instances"]["brush_models"] == 1
+                    else:
+                        assert "instances" not in stats
+                    models = records(data, 14, "<9f3i")
+                    assert len(models) == 2 and models[1][:9] == (-64, -40, 12, 32, 24, 36, 0, 0, 0)
+                    rows = [row for row in entity_rows(data) if row.get("classname") == "func_brush"]
+                    assert len(rows) == 1 and rows[0]["model"] == "*1" and rows[0]["origin"] == "96 40 4"
+                    assert rows[0]["hammerid"] == "11" and "angles" not in rows[0]
+                    faces, infos = records(data, 7, FACE_FORMAT), records(data, 6, "<16f2i")
+                    first, count = models[1][10:12]
+                    assert {infos[face[5]][:8] for face in faces[first:first + count]} == {
+                        (0, 4, 0, 32, 0, 0, -4, -16), (4, 0, 0, 64, 0, 0, -4, -16), (4, 0, 0, 64, 0, -4, 0, -32)}
+                    compiled.append(data)
+                assert compiled[0] == compiled[1], f"{mode}: complete BSP differs from independently authored translated compound model"
+            client.call("open_map", {"path": str(parent)})
+            material.write_text("LightmappedGeneric { $basetexture audit/base %compileorigin 1 }\n")
+            receipt["material_is_not_certified_by_refresh"] = preview()
+            pair(parent, "child-direct_ldr_hdr", "direct_ldr_hdr", failure=True)
+            dispatches = [call.args[0] for call in calls.call_args_list if call.args[0] in ("compile_map", "start_compile")]
+            assert dispatches == ["compile_map", "start_compile"] * 5
+            receipt["compile_dispatches"] = dispatches
+    finally:
+        material.write_bytes(material_bytes)
+    assert all(path.read_bytes() == data for path, data in retained.items())
+    assert child.read_bytes() == child_bytes and not client.call("get_map_info")["rendering"]["initialized"]
+    result["checks"].append("Compound child models preserve exact translated root BSP/local UVs, honest reference counts and material-refusal custody through both compile paths")
 
 
 def validate(client, output, gameinfo, result):
@@ -250,6 +438,7 @@ def main():
     parser = argparse.ArgumentParser(description="Validate private brush-instance compilation through stdio MCP without game or graphics execution.")
     parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--brush-model-control", action="store_true", help="Add ten compile calls for one installed-FGD compound func_brush child, explicit Origin, shared saved reference/Refresh with unavailable model preview, exact translated root-literal BSP and local UV parity in Fullbright and LDR+HDR, plus a custom-origin material refusal preserving output/source/draft. Uses No physics; no Engine or native pixel claim. Existing six-call controls remain unchanged.")
     args = parser.parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
@@ -276,6 +465,8 @@ def main():
         }):
             client = Client(None, binary, output, gameinfo=gameinfo)
         validate(client, output, gameinfo, result)
+        if args.brush_model_control:
+            validate_brush_models(client, output, gameinfo, result)
         result["status"] = "passed"
     except Exception as error:
         result["status"] = "failed"

@@ -10,7 +10,8 @@ content bounds and camera framing use the displayed geometry. Child files and
 parent map objects remain unchanged; no terrain switch is required. Supported
 unnamed static child point/spot lights are counted for compilation, with no
 child-light display or illumination preview. Supported child static
-props are also counted for compilation, with model preview explicitly unavailable.
+props and ordinary child `func_brush` models are also counted for compilation,
+with model preview explicitly unavailable.
 Scoped child lighting-origin helpers are counted without reference geometry or
 icons.
 Supported child player spawns are counted without model/icon display, reference
@@ -27,7 +28,9 @@ source identities and counts without sample geometry or icons.
    content bounds and checked dependency identities. **Expanded static lights:**
    reports point/spot counts before compile-region filtering. **Expanded static
    props:** reports child props before that filtering and explains the unavailable
-   model preview. **Expanded lighting origins:** counts visible helpers,
+   model preview. **Expanded brush models:** counts whole child brush models
+   before filtering; their solids do not add detail/reference surfaces or bounds.
+   **Expanded lighting origins:** counts visible helpers,
    including unreferenced helpers, before region filtering. **Expanded player
    spawns:** counts both supported team-spawn classes before region filtering
    and explains their unavailable model/icon geometry. **Visibility helpers:**
@@ -86,6 +89,14 @@ authored-lighting preview. A light-only assembly is ready and retains
 its owner/dependency identities and counts, with no reference geometry to
 display, pick or frame. **Frame instance contents** is unavailable for that
 snapshot. Mixed assemblies retain their ordinary brush/terrain preview.
+
+Supported [ordinary child brush models](instances.md) resolve their source keys,
+convex geometry, explicit origin and nested bounds without material loading.
+Model-only references retain dependency identities and counts with null bounds;
+**Frame instance contents** is unavailable. Mixed world/detail reference meshes,
+picking and framing stay unchanged. Compile separately requires resolved ordinary
+SOLID materials and applies native geometry, lighting and collision checks.
+A ready Refresh does not certify those checks.
 
 Supported [child static props](instances.md) also resolve and count without
 loading model assets. A model-only assembly can be ready with checked VMF

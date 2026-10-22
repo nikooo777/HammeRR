@@ -9,6 +9,7 @@ use source_formats::vmf::{Entity, Solid, Vmf, parse_vec3};
 
 use crate::{Control, Diagnostic, FileIdentity, FileStamp, Report};
 
+mod brush_models;
 mod cubemaps;
 mod entities;
 mod expand;
@@ -347,6 +348,8 @@ pub struct InstanceStats {
     pub world_brushes: usize,
     pub detail_brushes: usize,
     #[serde(skip_serializing_if = "is_zero")]
+    pub brush_models: usize,
+    #[serde(skip_serializing_if = "is_zero")]
     pub terrain_patches: usize,
     #[serde(skip_serializing_if = "is_zero")]
     pub terrain_vertices: usize,
@@ -631,6 +634,11 @@ fn child_admission(child: &Vmf, control: &Control) -> Result<(), String> {
                 .map_err(|error| format!("Child {} {}: {error}", kind.label(), entity.id))?;
             continue;
         }
+        if brush_models::is_model(entity) {
+            brush_models::admit(entity)
+                .map_err(|error| format!("Child brush model {}: {error}", entity.id))?;
+            continue;
+        }
         if visclusters::is_helper(entity) {
             visclusters::admit(entity)
                 .map_err(|error| format!("Child viscluster {}: {error}", entity.id))?;
@@ -660,7 +668,7 @@ fn child_admission(child: &Vmf, control: &Control) -> Result<(), String> {
             .is_some_and(|class| class.eq_ignore_ascii_case("func_detail"))
         {
             return Err(format!(
-                "Child entity {} ({}) is unsupported; only world/func_detail brushes, unnamed static point/spot/environment lights, bounded static props, scoped info_lighting helpers, neutral player spawns, consumed func_viscluster volumes, unnamed stationary func_occluder helpers, bounded unnamed info_overlay projections, bounded env_cubemap samples and bounded func_instance helpers are supported",
+                "Child entity {} ({}) is unsupported; only world/func_detail brushes, bounded unnamed ordinary func_brush models, unnamed static point/spot/environment lights, bounded static props, scoped info_lighting helpers, neutral player spawns, consumed func_viscluster volumes, unnamed stationary func_occluder helpers, bounded unnamed info_overlay projections, bounded env_cubemap samples and bounded func_instance helpers are supported",
                 entity.id,
                 entity.classname().unwrap_or("missing class")
             ));
@@ -756,6 +764,24 @@ impl PreparedInstances<'_> {
         Some((*owner, file, *original))
     }
 
+    pub(crate) fn has_brush_models(&self) -> bool {
+        self.stats
+            .as_ref()
+            .is_some_and(|stats| stats.brush_models > 0)
+    }
+
+    pub(crate) fn validate_brush_model_materials(
+        &self,
+        fs: &source_formats::gamefs::GameFs,
+        sources: &crate::asset_sources::BuildMaterialSources,
+        control: &Control,
+    ) -> Result<(), Diagnostic> {
+        let entities = self.vmf.entities.iter().filter(|entity| {
+            brush_models::is_model(entity) && self.root_entity(entity.id).is_some()
+        });
+        brush_models::validate_materials(entities, fs, sources, control)
+    }
+
     pub fn generated_brushes(&self) -> impl Iterator<Item = InstanceBrush<'_>> {
         self.vmf
             .world
@@ -767,7 +793,9 @@ impl PreparedInstances<'_> {
                     .entities
                     .iter()
                     .filter(|entity| {
-                        !visclusters::is_helper(entity) && !occluders::is_helper(entity)
+                        !visclusters::is_helper(entity)
+                            && !occluders::is_helper(entity)
+                            && !brush_models::is_model(entity)
                     })
                     .flat_map(|entity| entity.solids.iter().map(|solid| (solid, true))),
             )

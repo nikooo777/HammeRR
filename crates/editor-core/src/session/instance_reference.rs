@@ -242,7 +242,7 @@ impl Session {
             "source_admitted":form.location.is_some(),"presence_checked":checked.as_ref().is_some_and(Result::is_ok),
             "presence_error":presence_error,"bytes":form.checked.as_ref().map(ReferencePath::bytes),
             "contents_validation":"not_checked",
-            "limits":"Path and file presence only: explicit relative .vmf inside the saved referring parent tree, no child symlinks/search/substitution, at most 4 MiB. Full child semantics and aggregate/transformed geometry limits are checked only by explicit Refresh instance contents or Compile. Nested world/detail helpers support four levels with all paths relative to the saved root; child editing, runtime entities and replacements remain unsupported.",
+            "limits":"Path and file presence only: explicit relative .vmf inside the saved referring parent tree, no child symlinks/search/substitution, at most 4 MiB. Child keys and aggregate/transformed geometry limits are checked by explicit Refresh instance contents or Compile; material and native validity are checked only by Compile. Nested assemblies support four levels with all paths relative to the saved root, including unnamed unparented ordinary func_brush children with explicit finite origins and absent or zero angles. Child model preview, in-context editing, other unsupported runtime entities and replacements remain unavailable.",
         })
     }
 

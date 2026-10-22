@@ -2,6 +2,7 @@ use super::*;
 use crate::session::{SelectMode, working_region};
 use map_core::edit;
 
+mod brush_models;
 mod cubemaps;
 mod environment_lights;
 mod light_appearances;

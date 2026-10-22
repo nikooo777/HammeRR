@@ -284,6 +284,11 @@ impl<'a> Expansion<'a> {
                     .is_some_and(|class| class.eq_ignore_ascii_case("func_instance"))
                 {
                     self.helper(tx, entity, owner, transforms, ancestors)?;
+                } else if brush_models::is_model(entity) {
+                    self.brush_model(tx, entity, owner.id, &relative, transforms)
+                        .map_err(|error| {
+                            EditError::Invalid(format!("Child brush model {}: {error}", entity.id))
+                        })?;
                 } else if visclusters::is_helper(entity) {
                     self.viscluster(tx, entity, owner.id, &relative, transforms)
                         .map_err(|error| {
@@ -590,6 +595,95 @@ impl<'a> Expansion<'a> {
                 .map_err(EditError::Invalid)?;
         }
         self.stats.occluders += 1;
+        Ok(())
+    }
+
+    fn brush_model(
+        &mut self,
+        tx: &mut Transaction<'_>,
+        original: &Entity,
+        owner: u32,
+        relative: &str,
+        transforms: &[edit::Transform],
+    ) -> Result<(), EditError> {
+        self.control.checkpoint().map_err(EditError::Invalid)?;
+        let Some(shape) = brush_models::shape(original).map_err(EditError::Invalid)? else {
+            return Ok(());
+        };
+        self.objects = self.objects.saturating_add(1 + shape.brushes);
+        self.sides = self.sides.saturating_add(shape.sides);
+        let property_bytes = original
+            .properties
+            .iter()
+            .try_fold(0_usize, |bytes, (key, value)| {
+                bytes.checked_add(key.len())?.checked_add(value.len())
+            });
+        let work = transforms
+            .len()
+            .checked_mul(2)
+            .and_then(|poses| poses.checked_add(1))
+            .and_then(|poses| shape.geometry_work.checked_mul(poses))
+            .and_then(|geometry| {
+                let fields = property_bytes?.checked_mul(transforms.len() + 1)?;
+                geometry.checked_add(fields)
+            })
+            .and_then(|work| self.work.checked_add(work));
+        let Some(work) = work else {
+            return Err(EditError::Invalid(
+                "Instance expansion geometry-work overflow".into(),
+            ));
+        };
+        if self.objects > MAX_OBJECTS || self.sides > MAX_SIDES || work > MAX_GEOMETRY_WORK {
+            return Err(EditError::Invalid(
+                "Instance expansion exceeds combined objects, sides or geometry-work limits".into(),
+            ));
+        }
+        self.work = work;
+        brush_models::check_pose(original, self.control).map_err(EditError::Invalid)?;
+        let mut entity = Entity::new(tx.new_object_id()?, "func_brush");
+        entity.properties = original.properties.clone();
+        entity
+            .solids
+            .try_reserve_exact(shape.brushes)
+            .map_err(|_| EditError::Invalid("Cannot reserve child brush-model solids".into()))?;
+        self.provenance.insert(
+            format!("entity:{}", entity.id),
+            (owner, relative.to_owned(), original.id, None),
+        );
+        for original_solid in original.solids.iter().filter(|solid| !solid.hidden) {
+            self.control.checkpoint().map_err(EditError::Invalid)?;
+            let mut solid = original_solid.clone();
+            solid.id = tx.new_object_id()?;
+            solid.editor = None;
+            self.provenance.insert(
+                format!("solid:{}", solid.id),
+                (owner, relative.to_owned(), original_solid.id, None),
+            );
+            for side in &mut solid.sides {
+                self.control.checkpoint().map_err(EditError::Invalid)?;
+                let original_side = side.id;
+                side.id = tx.new_side_id()?;
+                self.provenance.insert(
+                    format!("side:{}", side.id),
+                    (
+                        owner,
+                        relative.to_owned(),
+                        original_side,
+                        Some(original_solid.id),
+                    ),
+                );
+            }
+            entity.solids.push(solid);
+        }
+        let generated = entity.id;
+        let id = tx.add_entity(entity)?;
+        for transform in transforms.iter().rev() {
+            self.control.checkpoint().map_err(EditError::Invalid)?;
+            edit::transform(tx, &[id], *transform)?;
+            brush_models::check_pose(tx.entity_mut(generated)?, self.control)
+                .map_err(EditError::Invalid)?;
+        }
+        self.stats.brush_models += 1;
         Ok(())
     }
 
@@ -956,6 +1050,82 @@ mod tests {
         let mut helper = Entity::new(1000, "func_viscluster");
         helper.solids.push(vmf.world.solids[0].clone());
         (directory, vmf, helper, source)
+    }
+
+    #[test]
+    fn compound_model_reserves_entity_solids_sides_and_every_pose_before_geometry() {
+        let (_directory, vmf, mut helper, source) = fixture();
+        helper.properties.set("classname", "func_brush");
+        helper.properties.set("origin", "0 0 0");
+        let mut second = helper.solids[0].clone();
+        second.id += 10_000;
+        for side in &mut second.sides {
+            side.id += 10_000;
+        }
+        helper.solids.push(second);
+        let mut hidden = helper.solids[0].clone();
+        hidden.hidden = true;
+        hidden.sides[0].plane.0 = [DVec3::ZERO; 3];
+        helper.solids.push(hidden);
+        let shape = brush_models::shape(&helper).unwrap().unwrap();
+        let transforms = [edit::Transform::default(); 2];
+        let fields: usize = helper
+            .properties
+            .iter()
+            .map(|(key, value)| key.len() + value.len())
+            .sum();
+        let cost =
+            shape.geometry_work * (2 * transforms.len() + 1) + fields * (transforms.len() + 1);
+        for exceeded in 0..3 {
+            let control = Control::default();
+            let mut report = Report::default();
+            let mut expansion = Expansion::new(&vmf, &source, &control, &mut report);
+            expansion.objects = MAX_OBJECTS - (1 + shape.brushes) + usize::from(exceeded == 0);
+            expansion.sides = MAX_SIDES - shape.sides + usize::from(exceeded == 1);
+            expansion.work = MAX_GEOMETRY_WORK - cost + usize::from(exceeded == 2);
+            let mut invalid = helper.clone();
+            invalid.solids[0].sides[0].plane.0 = [DVec3::ZERO; 3];
+            let mut document = Document::new(vmf.clone());
+            let error = document
+                .edit("bounded whole model", |tx| {
+                    expansion.brush_model(tx, &invalid, 2000, "child.vmf", &transforms)
+                })
+                .unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("combined objects, sides or geometry-work limits")
+            );
+            assert!(expansion.provenance.is_empty());
+            assert_eq!(expansion.stats.brush_models, 0);
+            assert_eq!(document.vmf(), &vmf);
+        }
+        let control = Control::default();
+        let mut report = Report::default();
+        let mut expansion = Expansion::new(&vmf, &source, &control, &mut report);
+        expansion.objects = MAX_OBJECTS - (1 + shape.brushes);
+        expansion.sides = MAX_SIDES - shape.sides;
+        expansion.work = MAX_GEOMETRY_WORK - cost;
+        let mut document = Document::new(vmf);
+        document
+            .edit("exact whole-model budget", |tx| {
+                expansion.brush_model(tx, &helper, 2000, "child.vmf", &transforms)
+            })
+            .unwrap();
+        assert_eq!(
+            (expansion.objects, expansion.sides, expansion.work),
+            (MAX_OBJECTS, MAX_SIDES, MAX_GEOMETRY_WORK)
+        );
+        assert_eq!(expansion.stats.brush_models, 1);
+        assert_eq!(expansion.stats.detail_brushes, 0);
+        let generated = document
+            .vmf()
+            .entities
+            .iter()
+            .find(|entity| entity.classname() == Some("func_brush"))
+            .unwrap();
+        assert_eq!(generated.solids.len(), 2);
+        assert!(generated.properties.get("angles").is_none());
     }
 
     #[test]

@@ -878,6 +878,12 @@ impl Controller {
                         editor_core::session::instance_contents::ENVIRONMENT_LIGHT_PREVIEW_REASON
                     ));
                 }
+                if let Some(models) = stats["brush_models"].as_u64().filter(|&count| count > 0) {
+                    summary.push_str(&format!(
+                        "\nExpanded brush models: {models} · before compile-region filtering\n{}",
+                        editor_core::session::instance_contents::BRUSH_MODEL_PREVIEW_REASON
+                    ));
+                }
                 if let Some(props) = stats["static_props"].as_u64().filter(|&count| count > 0) {
                     summary.push_str(&format!(
                         "\nExpanded static props: {props} · before compile-region filtering\n{}",

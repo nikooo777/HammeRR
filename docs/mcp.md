@@ -501,6 +501,20 @@ ordinary 16-helper limit; source/pose admission and expansion work are checked
 before regional omission. Author child volumes through existing `create_block`,
 `tie_to_entity` and `save_map` operations; see [Visibility clusters](visclusters.md).
 
+`stats.instances.occluders` counts visible expanded child `func_occluder`
+entities before compile-region filtering and is omitted when zero. **Build
+details…** shows **Occluder helpers:** with **expanded before compile-region
+filtering**. Each occurrence keeps its 1–16 visible brushes as one consumed
+helper, excluded from generated physical detail and reference geometry.
+Top-level `stats.occluders`, `occluder_polygons` and `occluder_vertex_refs`
+count the retained root and child output. The assembled map shares the ordinary
+1,024-helper, union, native-output and area limits after whole-helper region
+selection. Source and every intermediate pose validate before regional omission;
+diagnostics retain the containing root reference, leaf file and original child
+entity, solid or side. Use existing `create_block`, `set_material`,
+`tie_to_entity`, `set_entity_properties` and `save_map` operations while the
+child is open as a normal map; no extra setting is required.
+
 `stats.instances.cubemaps` counts expanded visible child samples before
 transformed-origin region filtering and is omitted when zero. **Build details…**
 shows **Cubemap samples:** with **expanded before compile-region filtering**.
@@ -644,6 +658,20 @@ is ready with source identities, zero geometry, no face provenance and null owne
 content bounds. Mixed references keep their actual brush/terrain mesh. Ready
 inspection checks supported source/pose rules; leaf membership, retained-helper
 limits, liquids and area crossings are checked during compilation.
+
+The optional `stats.occluders` counts whole visible expanded child occluder
+entities before regions and omits zero. When nonzero, `occluder_preview` returns
+`available:false` with the shared reason: “Child occluder helpers have no
+reference geometry or icons; helper bounds, picking and framing are unavailable.”
+**Instance contents…** shows **Occluder helpers:** with its pre-filter meaning.
+An occluder-only reference can be `state:"ready"` with dependency identities and
+counts, zero geometry, no face provenance and null owner content bounds.
+`set_instance_contents` with `action:"frame"` refuses without moving the camera.
+Mixed references
+keep their actual physical brush/terrain mesh, bounds and picking. Refresh
+checks source fields, grouped geometry and every nested pose; materials, union
+boundaries, visibility areas and retained limits remain compile checks.
+The field is omitted for zero counts and stale/cancelled results.
 
 The optional `stats.cubemaps` counts visible expanded child samples before
 regions and omits zero. When nonzero, `cubemap_preview` returns
@@ -3289,7 +3317,25 @@ Cutouts retain barycentric UVs, nearest mip-0 alpha, VTF wrap/clamp and their in
 
 Textures support finite center, scale, rotation in degrees and translation (each authored value within ±1024), applied as scale about center, rotation, then translation. Negative scale mirrors; nearest-texel clamp/repeat rules follow the transformed coordinates. They retain one frame/face/depth, at most 4096 pixels per axis and 64 MiB total decoded alpha. Mixed translucent+alpha-test, `$alphatestreference` in fractional mode, scalar alpha modulation, additive/vertex/distance alpha, unsupported shaders/effects, malformed or duplicated transforms, animation/conditional blocks and missing/corrupt required assets fail without replacing prior BSP. World/terrain translucency, tint/refraction, filtered edges, physical-sheet deduplication, animated props and per-texel baking remain unavailable. Translucent materials still cannot receive optional prop vertex lighting; use the existing `disablevertexlighting: "1"` property on such casters when that option is enabled. See [Static-prop shadows](prop-shadows.md).
 
-Create `func_occluder` through the existing brush-entity operations, set `StartActive`, and author its Activate/Deactivate/Toggle connections through the existing entity tools. Compiles report `occluders`, `occluder_polygons` and `occluder_vertex_refs` with the same entity-linked diagnostics as the human build panel. Each helper supports 1–16 visible convex brushes in one unambiguous visibility area. Separated brushes, exact face contacts and overlapping volumes produce a bounded union boundary; gaps and concave outlines remain. Edge-only/point-only contacts, thin or ambiguous contacts and collapsed fragments reject with diagnostics. Combined inputs are bounded to 256 sides and 4096 polygon vertices; boundary output and total union work have separate limits. Native records, activation indices and Activate/Deactivate/Toggle control runtime culling. See [Occluders](occluders.md).
+Create root-map `func_occluder` helpers through the existing brush-entity operations, set `StartActive`, and author their Activate/Deactivate/Toggle connections through the existing entity tools. Compiles report `occluders`, `occluder_polygons` and `occluder_vertex_refs` with the same entity-linked diagnostics as the human build panel. Each helper supports 1–16 visible convex brushes in one unambiguous visibility area. Separated brushes, exact face contacts and overlapping volumes produce a bounded union boundary; gaps and concave outlines remain. Edge-only/point-only contacts, thin or ambiguous contacts and collapsed fragments reject with diagnostics. Combined inputs are bounded to 256 sides and 4096 polygon vertices; boundary output and total union work have separate limits. Native records, activation indices and Activate/Deactivate/Toggle control runtime culling. See [Occluders](occluders.md).
+
+For a referenced child, open its VMF as a normal map, create 1–16 ordinary
+convex brushes, apply `tools/toolsoccluder`, tie them to `func_occluder` and
+save. Normal installed-FGD authoring stores `StartActive:"1"`; preserve that
+spelling and use 0 or 1 when supplied. Optional `angles` must be `0 0 0`;
+`angle`, `spawnflags`, `mindxlevel` and `maxdxlevel` must be zero. Optional
+`targetname`, `target`, `parentname`, `name`, `globalname`, `killtarget`
+and `lightingorigin` must be exactly empty; whitespace rejects. Keys must
+be unique and canonical lowercase except `StartActive`. Unknown properties,
+connections and opaque blocks reject. Absent origins and angles stay absent.
+Optional origins and brush geometry must be finite and within ±16384 units
+at the source and every
+intermediate pose. Hidden helpers and helpers with only hidden brushes are
+omitted; an empty child helper rejects. Compile regions retain a helper only
+when all visible brush bounds fit, omit disjoint helpers and reject crossing
+helpers. Source and pose checks still run before region selection. Parent
+reference inspection cannot display, pick,
+frame or edit these helper brushes; open the child as a normal map to edit them.
 
 ### Cut, copy and paste
 

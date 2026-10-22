@@ -893,6 +893,12 @@ impl Controller {
                         editor_core::session::instance_contents::VISCLUSTER_PREVIEW_REASON
                     ));
                 }
+                if let Some(helpers) = stats["occluders"].as_u64().filter(|&count| count > 0) {
+                    summary.push_str(&format!(
+                        "\nOccluder helpers: {helpers} · expanded before compile-region filtering\n{}",
+                        editor_core::session::instance_contents::OCCLUDER_PREVIEW_REASON
+                    ));
+                }
                 if let Some(samples) = stats["cubemaps"].as_u64().filter(|&count| count > 0) {
                     summary.push_str(&format!(
                         "\nCubemap samples: {samples} · expanded before compile-region filtering\n{}",

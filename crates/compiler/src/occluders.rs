@@ -13,9 +13,9 @@ use crate::tree::Tree;
 use crate::winding::{Side, Winding};
 use crate::{Control, Diagnostic, Report};
 
-const MAX_BRUSHES_PER_OCCLUDER: usize = 16;
-const MAX_POLYGONS_PER_OCCLUDER: usize = 256;
-const MAX_VERTICES_PER_OCCLUDER: usize = 4096;
+pub(crate) const MAX_BRUSHES_PER_OCCLUDER: usize = 16;
+pub(crate) const MAX_POLYGONS_PER_OCCLUDER: usize = 256;
+pub(crate) const MAX_VERTICES_PER_OCCLUDER: usize = 4096;
 const MAX_AREA_WORK: usize = 4_000_000;
 
 #[path = "occluders/csg.rs"]

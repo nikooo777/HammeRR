@@ -278,6 +278,11 @@ impl<'a> Expansion<'a> {
                         .map_err(|error| {
                             EditError::Invalid(format!("Child viscluster {}: {error}", entity.id))
                         })?;
+                } else if occluders::is_helper(entity) {
+                    self.occluder(tx, entity, owner.id, &relative, transforms)
+                        .map_err(|error| {
+                            EditError::Invalid(format!("Child occluder {}: {error}", entity.id))
+                        })?;
                 } else if cubemaps::is_helper(entity) {
                     let generated = self
                         .cubemap(tx, entity, owner.id, &relative, transforms)
@@ -413,6 +418,100 @@ impl<'a> Expansion<'a> {
         tx.add_entity(entity)?;
         self.stats.cubemaps += 1;
         Ok(generated)
+    }
+
+    fn occluder(
+        &mut self,
+        tx: &mut Transaction<'_>,
+        original: &Entity,
+        owner: u32,
+        relative: &str,
+        transforms: &[edit::Transform],
+    ) -> Result<(), EditError> {
+        self.control.checkpoint().map_err(EditError::Invalid)?;
+        let Some(shape) = occluders::shape(original).map_err(EditError::Invalid)? else {
+            return Ok(());
+        };
+        self.objects = self.objects.saturating_add(1 + shape.brushes);
+        self.sides = self.sides.saturating_add(shape.sides);
+        let property_bytes = original
+            .properties
+            .iter()
+            .try_fold(0_usize, |bytes, (key, value)| {
+                bytes.checked_add(key.len())?.checked_add(value.len())
+            });
+        let work = original
+            .solids
+            .iter()
+            .filter(|solid| !solid.hidden)
+            .try_fold(0_usize, |work, solid| {
+                let geometry_work = solid
+                    .sides
+                    .len()
+                    .checked_pow(3)?
+                    .checked_mul(transforms.len().checked_mul(2)?.checked_add(1)?)?;
+                work.checked_add(geometry_work)
+            })
+            .and_then(|work| {
+                let field_work = property_bytes?.checked_mul(transforms.len() + 1)?;
+                work.checked_add(field_work)
+            })
+            .and_then(|work| self.work.checked_add(work));
+        let Some(work) = work else {
+            return Err(EditError::Invalid(
+                "Instance expansion geometry-work overflow".into(),
+            ));
+        };
+        if self.objects > MAX_OBJECTS || self.sides > MAX_SIDES || work > MAX_GEOMETRY_WORK {
+            return Err(EditError::Invalid(
+                "Instance expansion exceeds combined objects, sides or geometry-work limits".into(),
+            ));
+        }
+        self.work = work;
+        occluders::check_pose(original, self.control).map_err(EditError::Invalid)?;
+        let mut entity = original.clone();
+        entity.id = tx.new_object_id()?;
+        entity.editor = None;
+        entity.solids.clear();
+        self.provenance.insert(
+            format!("entity:{}", entity.id),
+            (owner, relative.to_owned(), original.id, None),
+        );
+        for original_solid in original.solids.iter().filter(|solid| !solid.hidden) {
+            self.control.checkpoint().map_err(EditError::Invalid)?;
+            let mut solid = original_solid.clone();
+            solid.id = tx.new_object_id()?;
+            solid.editor = None;
+            self.provenance.insert(
+                format!("solid:{}", solid.id),
+                (owner, relative.to_owned(), original_solid.id, None),
+            );
+            for side in &mut solid.sides {
+                self.control.checkpoint().map_err(EditError::Invalid)?;
+                let original_side = side.id;
+                side.id = tx.new_side_id()?;
+                self.provenance.insert(
+                    format!("side:{}", side.id),
+                    (
+                        owner,
+                        relative.to_owned(),
+                        original_side,
+                        Some(original_solid.id),
+                    ),
+                );
+            }
+            entity.solids.push(solid);
+        }
+        let generated = entity.id;
+        let id = tx.add_entity(entity)?;
+        for transform in transforms.iter().rev() {
+            self.control.checkpoint().map_err(EditError::Invalid)?;
+            edit::transform(tx, &[id], *transform)?;
+            occluders::check_pose(tx.entity_mut(generated)?, self.control)
+                .map_err(EditError::Invalid)?;
+        }
+        self.stats.occluders += 1;
+        Ok(())
     }
 
     fn viscluster(
@@ -829,5 +928,51 @@ mod tests {
                 .count(),
             32,
         );
+    }
+
+    #[test]
+    fn occluders_reserve_combined_objects_sides_and_every_pose_before_geometry() {
+        let (_directory, vmf, mut helper, source) = fixture();
+        helper.properties.set("classname", "func_occluder");
+        let mut second = helper.solids[0].clone();
+        second.id += 100;
+        for side in &mut second.sides {
+            side.id += 100;
+        }
+        helper.solids.push(second);
+        let mut hidden = helper.solids[0].clone();
+        hidden.hidden = true;
+        hidden.sides.clear();
+        helper.solids.push(hidden);
+        helper.solids[0].sides[0].plane.0 = [DVec3::ZERO; 3];
+        let shape = occluders::shape(&helper).unwrap().unwrap();
+        let transforms = [edit::Transform::default(); 2];
+        for exhausted in ["objects", "sides", "work"] {
+            let control = Control::default();
+            let mut report = Report::default();
+            let mut expansion = Expansion::new(&vmf, &source, &control, &mut report);
+            match exhausted {
+                "objects" => expansion.objects = MAX_OBJECTS - shape.brushes,
+                "sides" => expansion.sides = MAX_SIDES - shape.sides + 1,
+                "work" => {
+                    expansion.work = MAX_GEOMETRY_WORK
+                        - helper.solids[0].sides.len().pow(3) * shape.brushes * transforms.len();
+                }
+                _ => unreachable!(),
+            }
+            let mut document = Document::new(vmf.clone());
+            let error = document
+                .edit("reserved occluder work", |tx| {
+                    expansion.occluder(tx, &helper, 2000, "child.vmf", &transforms)
+                })
+                .unwrap_err();
+            assert!(
+                error.to_string().contains("geometry-work limits"),
+                "{exhausted}: {error}"
+            );
+            assert!(expansion.provenance.is_empty());
+            assert_eq!(expansion.stats.occluders, 0);
+            assert_eq!(document.vmf(), &vmf);
+        }
     }
 }

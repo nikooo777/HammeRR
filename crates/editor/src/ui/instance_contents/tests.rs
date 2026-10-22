@@ -2,6 +2,155 @@ use super::*;
 use std::sync::{Arc, Mutex};
 
 #[test]
+fn software_occluder_helpers_keep_expanded_counts_separate_from_retained_and_reference_geometry() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: false,
+        },
+    )))
+    .unwrap();
+    let (_directory, mut game, parent, child) = crate::test_assets::instance_map(false);
+    let tools = game.game_dir.join("materials/tools");
+    std::fs::create_dir_all(&tools).unwrap();
+    for (name, material) in [
+        ("toolsblack", "LightmappedGeneric {}"),
+        (
+            "toolsoccluder",
+            "UnlitGeneric { $translucent 1 %compilenolight 1 }",
+        ),
+    ] {
+        std::fs::write(tools.join(format!("{name}.vmt")), material).unwrap();
+    }
+    game.mounts.push(source_formats::gamefs::MountedPath {
+        ids: vec!["game".into()],
+        mount: source_formats::gamefs::Mount::Directory(game.game_dir.clone()),
+    });
+    let definitions = crate::steam::find_css_fgd(&game)
+        .map_or_else(
+            || source_formats::fgd::Catalog::parse(
+                "@SolidClass = func_occluder [ StartActive(choices) : \"Start Active\" : 1 = [ 0 : \"No\" 1 : \"Yes\" ] ]",
+            ),
+            |path| source_formats::fgd::Catalog::load(&path),
+        )
+        .unwrap();
+    std::fs::write(
+        &child,
+        map_core::Document::empty().vmf().write(&Default::default()),
+    )
+    .unwrap();
+    let mut session = Session::new(Ok(game));
+    session.set_definitions(Actor::User, definitions);
+    session.open(Actor::User, &child, true).unwrap();
+    for x in [-96.0, 192.0] {
+        let brush = session
+            .create_block(
+                Actor::User,
+                DVec3::new(x, -32.0, 32.0),
+                DVec3::new(x + 16.0, 32.0, 128.0),
+                "tools/toolsoccluder",
+                false,
+            )
+            .unwrap();
+        session
+            .tie_to_entity(Actor::User, &[brush], "func_occluder", BTreeMap::new())
+            .unwrap();
+    }
+    session.save(Actor::User, None).unwrap();
+    session.open(Actor::User, &parent, false).unwrap();
+    let stamp = session.compile_region_stamp();
+    let token = session
+        .preview_compile_region(
+            Actor::User,
+            Some(map_core::compile_region::Definition {
+                enabled: true,
+                bounds: map_core::compile_region::Bounds {
+                    mins: DVec3::new(-128.0, -128.0, 0.0),
+                    maxs: DVec3::new(128.0, 128.0, 192.0),
+                },
+            }),
+            &stamp,
+        )
+        .unwrap()["draft"]["token"]
+        .as_u64()
+        .unwrap();
+    session.apply_compile_region(Actor::User, token).unwrap();
+    session
+        .begin_property_edit(session::PropertyTarget::World)
+        .unwrap();
+    let token = session.property_draft().unwrap().token;
+    session
+        .append_property_change(
+            token,
+            session::PropertyChange::Set {
+                key: "message".into(),
+                value: "Keep the occluder review".into(),
+            },
+        )
+        .unwrap();
+    let memory = session.document().vmf().clone();
+    let history = session.history_snapshot();
+    let camera = session.camera();
+    let settings = session.compile_settings();
+    let draft = serde_json::json!(session.property_draft());
+    let parent_bytes = std::fs::read(&parent).unwrap();
+    let child_bytes = std::fs::read(&child).unwrap();
+    let result = session.begin_compile(Actor::User, None).unwrap().run();
+    let output = &result.as_ref().unwrap().output;
+    assert!(output.bsp.is_some(), "{:?}", output.report);
+    assert_eq!(output.stats.instances.as_ref().unwrap().occluders, 2);
+    assert_eq!(output.stats.occluders, 1);
+    session.finish_compile(Actor::User, &result);
+    let request = session
+        .begin_instance_contents_refresh(Actor::User)
+        .unwrap();
+    let report = session
+        .finish_instance_contents_refresh(Actor::User, request.run())
+        .unwrap();
+    assert_eq!(report["state"], "ready");
+    assert_eq!(report["stats"]["occluders"], 2);
+    assert_eq!(report["occluder_preview"]["available"], false);
+    assert_eq!(report["available"], false);
+    assert_eq!(report["geometry"]["vertices"], 0);
+    assert_eq!(report["face_provenance_total"], 0);
+    assert!(report["owners"][0]["bounds"].is_null());
+    let shared = Arc::new(Mutex::new(session));
+    let contents = Controller::new(shared.clone()).unwrap();
+    let build = crate::compile_ui::Controller::new(&shared).unwrap();
+    build.refresh(&lock(&shared));
+    let count = "Occluder helpers: 2 · expanded before compile-region filtering";
+    let reason = editor_core::session::instance_contents::OCCLUDER_PREVIEW_REASON;
+    assert_eq!(report["occluder_preview"]["reason"], reason);
+    assert!(contents.window.get_summary().contains(count));
+    assert!(contents.window.get_summary().contains(reason));
+    assert!(build.window.get_details().contains(count));
+    assert!(build.window.get_details().contains(reason));
+    assert!(
+        build
+            .window
+            .get_details()
+            .contains("Occluders: 1 · Polygons:")
+    );
+    assert!(!contents.window.get_can_frame());
+    contents.window.invoke_frame_contents();
+    assert!(
+        contents
+            .window
+            .get_message()
+            .contains("no visible geometry")
+    );
+    let session = lock(&shared);
+    assert_eq!(session.document().vmf(), &memory);
+    assert_eq!(session.history_snapshot(), history);
+    assert_eq!(session.camera(), camera);
+    assert_eq!(session.compile_settings(), settings);
+    assert_eq!(serde_json::json!(session.property_draft()), draft);
+    assert_eq!(std::fs::read(&parent).unwrap(), parent_bytes);
+    assert_eq!(std::fs::read(&child).unwrap(), child_bytes);
+}
+
+#[test]
 fn software_cubemap_samples_distinguish_expanded_and_retained_counts_without_reference_geometry() {
     slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
         i_slint_backend_testing::TestingBackendOptions {

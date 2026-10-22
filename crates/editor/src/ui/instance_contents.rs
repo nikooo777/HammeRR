@@ -174,6 +174,18 @@ impl Controller {
             summary.push('\n');
             summary.push_str(reason);
         }
+        if let Some(helpers) = state["stats"]["occluders"]
+            .as_u64()
+            .filter(|&count| count > 0)
+        {
+            summary.push_str(&format!(
+                "\nOccluder helpers: {helpers} · expanded before compile-region filtering"
+            ));
+        }
+        if let Some(reason) = state["occluder_preview"]["reason"].as_str() {
+            summary.push('\n');
+            summary.push_str(reason);
+        }
         if let Some(samples) = state["stats"]["cubemaps"]
             .as_u64()
             .filter(|&count| count > 0)

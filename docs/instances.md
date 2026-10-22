@@ -4,8 +4,8 @@
 
 Reuse saved VMFs' world and detail brushes, power 2–4 terrain, unnamed static
 point/spot lights, static props, scoped lighting-origin helpers, player spawns,
-visibility volumes, cubemap samples with local face bindings and nested
-references at several positions and rotations.
+visibility volumes, unnamed stationary occluders, cubemap samples with local
+face bindings and nested references at several positions and rotations.
 Compilation expands the supported contents without an extra switch. The editor
 can resolve a separate, explicitly refreshed
 [reference preview](instance-contents.md) with actual displaced terrain surfaces
@@ -17,8 +17,8 @@ from supported brushes already in the parent.
    `parts/arch.vmf`. Keep the child's visible contents to world brushes,
    ordinary `func_detail` brushes, supported static lights/props, `info_lighting`
    helpers, `info_player_terrorist` / `info_player_counterterrorist` spawns,
-   `func_viscluster` volumes, supported `env_cubemap` samples and nested
-   `func_instance` references.
+   `func_viscluster` volumes, unnamed stationary `func_occluder` helpers,
+   supported `env_cubemap` samples and nested `func_instance` references.
    World and detail brushes may carry supported power 2, 3 or 4 terrain. The
    child's world settings do not replace the parent's.
 2. To add a child light, open the child and click **Entity…**, then choose `light`
@@ -48,6 +48,14 @@ from supported brushes already in the parent.
    click **Tie to entity…**. Choose `func_viscluster`, then click **Tie selected
    brushes to entity** and save the child. See [Visibility clusters](visclusters.md)
    for membership and region rules.
+
+   To add a child occluder, open the child as a normal map and create 1–16
+   ordinary convex brushes. Apply `tools/toolsoccluder`, select the brushes and
+   use **Tie to entity… → func_occluder → Tie selected brushes to entity**.
+   Keep **Name** empty and **Start Active** at **Yes** (stored `StartActive:1`,
+   the default), or choose **No** (`0`). Save the child before returning to the
+   parent. The brushes remain one helper; see [Occluders](occluders.md#occluders-in-referenced-assemblies)
+   for the strict child fields.
 7. To add a child reflection sample, open **Entity…**, choose `env_cubemap`,
    then click **Place entity**. Set **Position** and **Advanced properties →
    Cubemap Size**. Keep **Brush faces** empty for automatic assignment. For manual
@@ -78,8 +86,12 @@ from supported brushes already in the parent.
    **Expanded player spawns:** counts child spawns and explains that their
    models, icons, bounds, picking and framing are unavailable in this layer.
    **Visibility helpers:** counts consumed child volumes; they add no reference
-   surfaces, icons, bounds, picking or framing. **Cubemap samples:** counts child
-   samples, with the same unavailable display, bounds, picking and framing.
+   surfaces, icons, bounds, picking or framing. **Occluder helpers:** counts whole
+   child occluder entities before region filtering, with the same unavailable
+   geometry, icons, bounds, picking and framing. A helper-only reference cannot
+   be framed; mixed references keep their real brush/terrain preview.
+   **Cubemap samples:** counts child samples, with the same unavailable display,
+   bounds, picking and framing.
 10. Move or rotate the helper with the ordinary transform controls. Its origin
    places the child's origin. The `angles` property uses Source pitch, yaw, roll;
    brushes, terrain, static props, player-spawn poses, light positions/spot
@@ -97,8 +109,11 @@ from supported brushes already in the parent.
    filtering, including unreferenced helpers. **Expanded player spawns:** counts
    both supported spawn classes before transformed-origin region filtering.
    **Visibility helpers:** also counts expansion before filtering; the visibility
-   summary counts helpers retained by the selected build region. The instance
-   **Cubemap samples:** count also describes expansion before filtering; the
+   summary counts helpers retained by the selected build region.
+   **Occluder helpers:** counts expanded child helpers before filtering;
+   **Occluders**, **Polygons** and **Vertex references** count retained root and
+   child occlusion geometry. The instance **Cubemap samples:** count also
+   describes expansion before filtering; the
    ordinary cubemap summary counts retained root and child samples together.
 12. Recompile after changing any child or descendant. Changed, missing or
     retargeted dependencies make the completed build stale and disable **Play
@@ -137,6 +152,21 @@ Limits:
   root and all retained child occurrences after region selection. Child source
   and intermediate geometry still validate before regional omission and spend
   the separate instance expansion work budget.
+- Child `func_occluder` helpers retain one entity with 1–16 visible ordinary
+  convex brushes, rather than becoming physical detail geometry. Hidden helpers
+  and helpers with only hidden brushes are omitted; a truly empty helper rejects.
+  Use canonical lowercase keys except the installed FGD spelling `StartActive`,
+  which accepts only 0 or 1 when present. Optional `angles` must be `0 0 0`;
+  `angle`, `spawnflags`, `mindxlevel` and `maxdxlevel` must be zero.
+  `targetname`, `target`, `parentname`, `name`, `globalname`, `killtarget`
+  and `lightingorigin` must be absent or exactly empty; whitespace rejects.
+  Connections, opaque blocks, duplicate case aliases and unknown fields reject.
+  Optional origins and all brush geometry must be finite and within ±16384
+  units at the source and every nested pose. Absent origins and angles stay
+  absent. The source and every transformed pose are checked before regional
+  omission and share the instance expansion budgets. The retained assembled
+  map shares the ordinary 1,024-helper, union, native-output and area limits in
+  [Occluders](occluders.md).
 - Other runtime entities, parameter helpers, replacements, active child compile
   regions and unknown semantic metadata reject. Ordinary hidden child objects
   remain excluded; hidden helpers never load their files.
@@ -287,7 +317,9 @@ Limits:
 - Expansion happens before parent compile-region selection. Geometry intersecting
   the region remains eligible even when its instance marker is outside. Ordinary
   region geometry restrictions still apply; child lights, props and spawns are selected
-  by transformed origin, as are child cubemap samples.
+  by transformed origin, as are child cubemap samples. A child occluder is
+  retained only when its combined visible brush bounds fit wholly inside;
+  disjoint helpers are omitted and crossing helpers reject.
   Keep lights inside sealing boundaries: a retained light on a generated wall
   can be unavailable for baking, with an explicit diagnostic. Region-omitted
   child props do not read their model assets. Models remain external game
@@ -323,6 +355,11 @@ including unreferenced helpers, and is omitted when zero.
 Optional `player_spawns` counts both supported spawn classes before region
 filtering and is omitted when zero. A spawn-only ready assembly has no child
 model/icon, content bounds, picking or framing geometry.
+Optional `occluders` counts visible expanded child occluder entities before
+region filtering and is omitted when zero. Inspection returns
+`occluder_preview:{available:false,reason:…}` for a nonzero count, with no
+child helper geometry, icons, content bounds, picking or framing. Opening the
+child as a normal map retains ordinary brush authoring.
 Optional `cubemaps` counts visible expanded child samples before region filtering
 and is omitted when zero. A sample-only assembly can be ready with source
 identities and counts, zero geometry, null content bounds and unavailable

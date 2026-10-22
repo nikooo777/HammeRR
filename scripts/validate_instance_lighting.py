@@ -2,12 +2,14 @@ import argparse
 import json
 import math
 import re
+from functools import partial
 from pathlib import Path
 
 import validate_cubemap_capture_probe as probe
 from validate_authored_planes import records
 from validate_compile_jobs import stopped_on_exit
 from validate_compile_regions import apply as apply_region
+from validate_direct_lighting import FACE_FORMAT
 from validate_face_lighting import DEFAULT_BINARY, ROOT, detail
 from validate_instance_contents import refresh
 from validate_instance_terrain import (
@@ -22,6 +24,7 @@ from validate_material_albedo import (
     fixture_texture,
     floor_base,
     identities,
+    payload,
     require,
     settings,
 )
@@ -29,6 +32,11 @@ from validate_nested_brush_instances import assets, room, source_state
 from validate_recovery_exit import require_clean_eof
 
 MODES = (("fullbright", 0), ("direct_ldr", 0), ("direct_ldr_hdr", 0))
+EXPECTED_COMPILE_CALLS = 40
+STYLED_POSITIONS = (((-24, 24, 140), (88, -8, 172)), ((-120, 88, 140), (-8, 56, 172)))
+APPEARANCES = ((0, "Normal"), (10, "Fluorescent flicker"), (2, "Slow, strong pulse"),
+               (11, "Slow pulse, noblack"), (5, "Gentle pulse"), (1, "Flicker A"), (6, "Flicker B"),
+               (3, "Candle A"), (7, "Candle B"), (8, "Candle C"), (4, "Fast strobe"), (9, "Slow strobe"))
 POINTFILE = b"13 17 19\n23 29 31\n"
 POINT = {"_light": "255 0 0 80", "_lightHDR": "0 0 255 120"}
 SPOT = {"_light": "0 255 0 96", "_lightHDR": "255 0 0 160", "pitch": "-45", "_inner_cone": "20", "_cone": "60", "_exponent": "2"}
@@ -41,7 +49,20 @@ FGD = '''
  _constant_attn(float) : "Constant attenuation" : "1"
  _linear_attn(float) : "Linear attenuation" : "0"
  _quadratic_attn(float) : "Quadratic attenuation" : "0"
- style(integer) : "Style" : "0"
+ style(choices) : "Appearance" : "0" = [
+  0 : "Normal"
+  10 : "Fluorescent flicker"
+  2 : "Slow, strong pulse"
+  11 : "Slow pulse, noblack"
+  5 : "Gentle pulse"
+  1 : "Flicker A"
+  6 : "Flicker B"
+  3 : "Candle A"
+  7 : "Candle B"
+  8 : "Candle C"
+  4 : "Fast strobe"
+  9 : "Slow strobe"
+ ]
  defaultstyle(integer) : "Default style" : "0"
  targetname(string) : "Name" : ""
  target(string) : "Target" : ""
@@ -55,6 +76,18 @@ FGD = '''
  _exponent(float) : "Exponent" : "2"
 ]
 '''
+
+
+def counted_call(call, report, name, arguments=None, error=False):
+    if name in ("compile_map", "start_compile"):
+        report["compile_calls"] += 1
+    return call(name, arguments, error=error)
+
+
+def counted_client(binary, output, game, temporary, report):
+    client = private_client(binary, output, game, temporary)
+    client.call = partial(counted_call, client.call, report)
+    return client
 
 
 def setup(client, mode):
@@ -169,11 +202,11 @@ def counts(receipt, sources, doubled=False):
         require(stats["dependencies"] == dependencies, "Child-light source receipts differ from the actual saved files")
 
 
-def preview(client):
+def preview(client, copies=1):
     source = Path(client.call("get_map_info")["path"])
     before = (source_state(client, source), client.call("get_compile_settings"), property_state(client))
     report = refresh(client, background=True)
-    require(report["state"] == "ready" and report["stats"]["point_lights"] == 1 and report["stats"]["spot_lights"] == 1
+    require(report["state"] == "ready" and report["stats"]["point_lights"] == copies and report["stats"]["spot_lights"] == copies
             and report["geometry"]["vertices"] == report["geometry"]["indices"] == report["geometry"]["triangles"] == 0
             and not report["available"] and report["owners"][0]["bounds"] is None and report["face_provenance_total"] == 0
             and report["static_light_preview"]["available"] is False
@@ -193,6 +226,149 @@ def entity_rows(data):
         require(len(dict(pairs)) == len(pairs), "Native entity contains duplicate property names")
         result.append(dict(pairs))
     return result
+
+
+def styled_fixture(client, output, fgd):
+    output.mkdir()
+    client.call("new_map", {"discard_changes": True})
+    leaf, middle, ids = fixture(client, output, fgd)
+    client.call("open_map", {"path": str(leaf)})
+    choices = {}
+    for classname, identifier in zip(("light", "light_spot"), ids, strict=True):
+        definition = client.call("get_entity_class", {"classname": classname})
+        appearance = next(row for row in definition["properties"] if row["name"] == "style")
+        require(appearance["type"] == "choices" and appearance["default"] == "0" and not appearance["read_only"]
+                and [(row["value"], row["label"]) for row in appearance["choices"]] == [(str(value), label) for value, label in APPEARANCES],
+                "Light pattern choices differ from the installed Source FGD's offered 0–11 values")
+        for value, _label in APPEARANCES:
+            client.call("set_entity_properties", {"id": identifier, "set": {"style": str(value)}})
+            require(dict(detail(client, [identifier])[0]["properties"])["style"] == str(value), "Offered Light pattern edit was not retained")
+        choices[classname] = appearance
+    client.call("set_entity_properties", {"id": ids[0], "set": {"style": "1"}})
+    client.call("set_entity_properties", {"id": ids[1], "set": {"style": "11", "angles": "45 0 0"}})
+    client.call("save_map")
+    saved = leaf.read_bytes()
+    client.call("open_map", {"path": str(leaf)})
+    require(leaf.read_bytes() == saved and [dict(row["properties"])["style"] for row in detail(client, ids)] == ["1", "11"],
+            "Styled source properties did not survive ordinary Save/Open")
+    token = stage_property(client)
+    before = source_state(client, leaf), client.call("get_compile_settings"), property_state(client)
+    refusals = []
+    for identifier in ids:
+        refusal = client.call("set_entity_properties", {"id": identifier, "set": {"style": "12"}}, error=True)
+        require("style expects choices" in json.dumps(refusal), "Unoffered style 12 did not fail FGD choice validation")
+        require((source_state(client, leaf), client.call("get_compile_settings"), property_state(client)) == before,
+                "Unoffered style edit changed the document, source, history, camera, settings or populated draft")
+        refusals.append(refusal)
+    client.call("cancel_property_edit", {"token": token})
+    client.call("open_map", {"path": str(middle)})
+    client.call("create_entity", {"classname": "func_instance", "origin": [-88, 80, 4], "properties": {"file": leaf.name, "angles": "0 0 0"}})
+    client.call("save_map")
+    return leaf, middle, {"choices": choices, "style_12_edit_refusals": refusals, "source_properties": before[0]["objects"]}
+
+
+def styled_parent(client, path, middle, literal=False):
+    client.call("new_map", {"discard_changes": True})
+    ids = room(client)
+    owner = client.call("create_entity", {"classname": "func_instance", "origin": [16, -8, 8],
+                                             "properties": {"file": middle.name, "angles": "0 0 0"}})["id"]
+    require(owner == "entity:10", "Styled fixture no longer reserves the independent literal's source identity")
+    if literal:
+        for positions in STYLED_POSITIONS:
+            for index, (classname, properties) in enumerate((("light", POINT), ("light_spot", SPOT))):
+                properties = {**properties, "style": "1" if index == 0 else "11", "angles": "0 0 0" if index == 0 else "45 0 0"}
+                ids.append(client.call("create_entity", {"classname": classname, "origin": positions[index], "properties": properties})["id"])
+        require(ids[-4:] == ["entity:11", "entity:12", "entity:13", "entity:14"], "Literal emitter identities changed")
+        client.call("delete_objects", {"ids": [owner]})
+    else:
+        ids.append(owner)
+    client.call("select", {"ids": ids[:1] if literal else [owner]})
+    client.call("save_map", {"path": str(path)})
+    saved = path.read_bytes()
+    client.call("open_map", {"path": str(path)})
+    require(path.read_bytes() == saved, "Styled parent Save/Open changed its source bytes")
+    return ids, client.call("get_map_info")["worldspawn"]
+
+
+def styled_native(data, mode):
+    entities = entity_rows(data)
+    lights = [row for row in entities if row.get("classname") in ("light", "light_spot")]
+    require(len(lights) == 5 and not any(row.get("classname") == "func_instance" for row in entities),
+            "Styled BSP lost an emitter or retained an instance helper")
+    expected = {"9": ((-64, -96, 192), 1, 0)}
+    for identifier, (position, kind) in enumerate(((position, index + 1) for positions in STYLED_POSITIONS for index, position in enumerate(positions)), 11):
+        expected[str(identifier)] = (position, kind, 1 if kind == 1 else 11)
+    require({row["hammerid"] for row in lights} == set(expected), "Styled native emitter identities differ from the independent literal")
+    for row in lights:
+        position, kind, style = expected[row["hammerid"]]
+        require(tuple(float(value) for value in row["origin"].split()) == position
+                and row["classname"] == ("light" if kind == 1 else "light_spot") and row["style"] == str(style),
+                "Styled native origin, class or appearance differs from the declared fixture")
+        if style:
+            properties = POINT if kind == 1 else SPOT
+            require(all(row[key] == value for key, value in properties.items())
+                    and row["angles"] == ("0 0 0" if kind == 1 else "45 0 0"), "Styled native channel or explicit spotlight pose changed")
+    channels = {}
+    for channel, world_lump, face_lump, sample_lump in (("ldr", 15, 7, 8), ("hdr", 54, 58, 53)):
+        world = records(data, world_lump, "<9f3i7f3i")
+        if mode == "fullbright":
+            require(not world, "Fullbright unexpectedly emitted styled world lights")
+            continue
+        require(len(world) == 5 and {(row[:3], row[10], row[11]) for row in world} == set(expected.values())
+                and all(math.isfinite(value) for row in world for value in row), "Styled world lights lost a repeated emitter, pose or appearance")
+        for row in world:
+            if row[11]:
+                component = ({1: 0, 11: 1} if channel == "ldr" else {1: 2, 11: 0})[row[11]]
+                require(row[3 + component] > 0 and all(value == 0 for index, value in enumerate(row[3:6]) if index != component),
+                        "Styled native world light lost its independently authored channel color")
+        faces = records(data, face_lump, FACE_FORMAT, expected_version=0 if channel == "ldr" else 1)
+        styles = [tuple(value for value in face[8:12] if value != 255) for face in faces]
+        require(styles and all(len(set(row)) == len(row) and set(row) <= {0, 1, 11} for row in styles)
+                and any(set(row) == {0, 1, 11} for row in styles), "Repeated appearances were duplicated, lost or merged with Normal in face styles")
+        require(payload(data, sample_lump), "Styled channel has no native lightmap samples")
+        channels[channel] = {"world_lights": world, "face_styles": styles, "lightmap_sha256": digest(payload(data, sample_lump))}
+    if mode == "direct_ldr_hdr":
+        require(payload(data, 8) != payload(data, 53), "Styled HDR reused LDR despite distinct explicit colors")
+    return {"entities": lights, "channels": channels}
+
+
+def styled_cases(client, args, game, fgd, report):
+    output = args.output / "appearances"
+    leaf, middle, authored = styled_fixture(client, output, fgd)
+    nested, flat = output / "parent.vmf", output / "literal.vmf"
+    ids, world = styled_parent(client, nested, middle)
+    literal_ids, literal_world = styled_parent(client, flat, middle, literal=True)
+    require(world == literal_world, "Styled child and literal normal-save world metadata differ")
+    report["styled"] = {"authoring": authored, "cases": {}, "worldspawn": world}
+    dependencies = [{"path": path.name, "bytes": len(path.read_bytes()), "sha256": digest(path.read_bytes())} for path in sorted((leaf, middle))]
+    for mode in (MODES[0], MODES[2]):
+        result = report["styled"]["cases"][mode[0]] = {}
+        outputs = []
+        for label, source, objects in (("child", nested, ids), ("literal", flat, literal_ids)):
+            client.call("open_map", {"path": str(source)})
+            setup(client, mode)
+            token = stage_property(client)
+            if label == "child":
+                result["reference_preview"] = preview(client, copies=2)
+                reference = result["reference_preview"]["stats"]
+                require([reference[key] for key in ("instances", "files", "max_expansion_depth", "world_brushes", "detail_brushes")]
+                        == [3, 2, 2, 0, 0], "Styled reference counts omitted repeated/nested lights or fabricated brushes")
+            data, receipt = pair(client, args.output, f"styled-{mode[0]}-{label}", source, objects, game, [leaf, middle], prior=b"Previous styled BSP\n")
+            result[label] = receipt
+            if label == "child":
+                for compiled in (receipt["result"], receipt["background"]["result"]):
+                    stats = compiled["stats"]["instances"]
+                    require([stats[key] for key in ("instances", "files", "max_expansion_depth", "world_brushes", "detail_brushes", "point_lights", "spot_lights")]
+                            == [3, 2, 2, 0, 0, 2, 2] and stats["dependencies"] == dependencies,
+                            "Styled repeated/nested expansion counts or saved dependency receipts differ")
+            client.call("cancel_property_edit", {"token": token})
+            outputs.append(data)
+        require(outputs[0] == outputs[1], f"Styled {mode[0]} complete BSP differs from its independent translated literal")
+        result["native"] = styled_native(outputs[0], mode[0])
+        result["complete_bsp_exact"] = True
+    custody = {str(path): digest(path.read_bytes()) for path in (*output.glob("*.vmf"), *args.output.glob("styled-*.bsp"), *args.output.glob("styled-*.lin"), fgd)}
+    report["styled"]["custody"] = custody
+    return custody
 
 
 def emitters_check(data, mode, placement, boundary=False):
@@ -341,7 +517,7 @@ def refusals(client, author, args, game, leaf, middle, light_ids, retained, cont
     original = leaf.read_bytes()
     for label, target, values, remove, reason in (
         ("named-child", light_ids[0], {"targetname": "unsupported_child_name"}, [], "empty targetname"),
-        ("styled-child", light_ids[0], {"style": "1"}, [], "requires style 0"),
+        ("initially-dark", light_ids[0], {"spawnflags": "1"}, [], "requires spawnflags 0"),
         ("missing-pitch", light_ids[1], {}, ["pitch"], "pitch must be finite"),
     ):
         author.call("open_map", {"path": str(leaf), "discard_changes": True})
@@ -377,7 +553,8 @@ def validate(args):
     game, leaf = args.output / "game", None
     report = {"status": "failed", "binary": str(args.binary), "binary_sha256": digest(args.binary.read_bytes()),
               "script_sha256": digest(Path(__file__).read_bytes()), "native_game_exercised": False,
-              "graphics_initialized": False, "desktop_input": False, "compile_calls": 32, "positive": {}, "negative": {}}
+              "graphics_initialized": False, "desktop_input": False, "compile_calls": 0,
+              "expected_compile_calls": EXPECTED_COMPILE_CALLS, "positive": {}, "negative": {}}
     try:
         temporary = args.output / "tmp"
         temporary.mkdir()
@@ -388,18 +565,20 @@ def validate(args):
         (tools / "toolsblack.vmt").write_text('LightmappedGeneric { $basetexture "tools/toolsblack" }\n')
         fgd = args.output / "static-lights.fgd"
         fgd.write_text(FGD)
-        client = private_client(args.binary, args.output / "client", game, temporary)
+        client = counted_client(args.binary, args.output / "client", game, temporary, report)
         clients.append(client)
+        styled_custody = styled_cases(client, args, game, fgd, report)
+        client.call("new_map", {"discard_changes": True})
         leaf, middle, light_ids = fixture(client, args.output, fgd)
         original = leaf.read_bytes()
         retained, controls = positive(client, args, game, leaf, middle, report)
-        author = private_client(args.binary, args.output / "author", game, temporary)
+        author = counted_client(args.binary, args.output / "author", game, temporary, report)
         clients.append(author)
         author.call("load_entity_definitions", {"path": str(fgd)})
         refusals(client, author, args, game, leaf, middle, light_ids, retained, controls, report)
         report["author_clean_eof"] = require_clean_eof(author)
         report["clean_eof"] = require_clean_eof(client)
-        restarted = private_client(args.binary, args.output / "restart", game, temporary)
+        restarted = counted_client(args.binary, args.output / "restart", game, temporary, report)
         clients.append(restarted)
         restarted.call("load_entity_definitions", {"path": str(fgd)})
         restarted.call("open_map", {"path": str(controls["source"])})
@@ -411,6 +590,13 @@ def validate(args):
         report["restart_clean_eof"] = require_clean_eof(restarted)
         require(leaf.read_bytes() == original and identities(game) == mounted
                 and all(digest(Path(path).read_bytes()) == identity for path, identity in inputs.items()), "EOF changed authored sources or materials")
+        require(all(digest(Path(path).read_bytes()) == identity for path, identity in styled_custody.items()),
+                "Later controls or EOF changed styled sources, FGD, BSP or LIN evidence")
+        require(report["compile_calls"] == EXPECTED_COMPILE_CALLS and len(report["positive"]) == 5
+                and set(report["negative"]) == {"named-child", "initially-dark", "missing-pitch"}
+                and set(report["styled"]["cases"]) == {"fullbright", "direct_ldr_hdr"}
+                and all(case["complete_bsp_exact"] for case in report["styled"]["cases"].values()),
+                "Actual compile count or completed fixture coverage differs from the declared 40-call matrix")
         report["sources"] = inputs
         report["assets"] = mounted
         report["status"] = "accepted"
@@ -430,7 +616,7 @@ def validate(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Validate static child point/explicit-pitch spot lights using private production MCP and independent literal flattened emitter/lightmap controls; no graphics, native game or desktop input.")
+    parser = argparse.ArgumentParser(description="Validate child point/explicit-pitch spot Light pattern choices 0–11 through private production MCP: 40 foreground/background compile calls, including exact translated repeated/nested styled BSP literals and existing Normal-light controls; no graphics, native game or desktop input.")
     parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY, help="hammerr-headless or editor, launched with --headless")
     parser.add_argument("--output", type=Path, required=True, help="New private artifact directory below target/validation; no installed game or external FGD required")
     args = parser.parse_args()

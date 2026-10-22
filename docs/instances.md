@@ -2,9 +2,9 @@
 
 # Compile referenced assemblies
 
-Reuse saved VMFs' world and detail brushes, power 2–4 terrain, unnamed static
-point/spot and sun/sky lights, static props, scoped lighting-origin helpers,
-player spawns,
+Reuse saved VMFs' world and detail brushes, power 2–4 terrain, unnamed point/spot
+lights with built-in appearances, static sun/sky lights and props, scoped
+lighting-origin helpers, player spawns,
 visibility volumes, unnamed stationary occluders, unnamed overlays on ordinary
 or actual terrain faces, cubemap samples with local face bindings and nested
 references at several positions and rotations.
@@ -17,7 +17,7 @@ from supported brushes already in the parent.
 
 1. Save the parent map. Save a child VMF inside the same directory tree, such as
    `parts/arch.vmf`. Keep the child's visible contents to world brushes,
-   ordinary `func_detail` brushes, supported static lights/props, `info_lighting`
+   ordinary `func_detail` brushes, supported lights/static props, `info_lighting`
    helpers, `info_player_terrorist` / `info_player_counterterrorist` spawns,
    `func_viscluster` volumes, unnamed stationary `func_occluder` helpers,
    unnamed `info_overlay` projections on ordinary or actual terrain faces,
@@ -26,11 +26,15 @@ from supported brushes already in the parent.
    child's world settings do not replace the parent's.
 2. To add a child light, open the child and click **Entity…**, then choose `light`
    or `light_spot`; choose `light_environment` for global sunlight and sky
-   ambient. Use **Advanced properties** to check the strict static fields below.
+   ambient. For point/spot lights, choose **Light pattern**, such as **Normal**,
+   **Fluorescent flicker** or **Slow pulse, noblack**. The offered built-in
+   choices use IDs 0–11. Keep **Name** empty and **Initially dark** off; under
+   **Advanced properties**, keep **Custom Appearance** empty. Sun/sky lights
+   remain Normal-only. Use **Advanced properties** to check the fields below.
    Spotlights and sun/sky helpers need an explicit **Pitch**, such as `-90` for
    downward or `0` with the first `angles` component zero for horizontal. Save
-   the child before returning to the parent. Preserve the normal sun/ambient/
-   HDR/scale/spread defaults; loaded FGD defaults do not bypass source checks.
+   and reopen the child before returning to the parent. Preserve the normal
+   sun/ambient/HDR/scale/spread defaults; loaded FGD defaults do not bypass source checks.
    Only one visible root or child sun can contribute to baked lighting.
 3. To add child scenery, choose `prop_static` in **Entity…** and set **World Model**
    to a supported static model. In **Advanced properties**, choose
@@ -95,8 +99,9 @@ from supported brushes already in the parent.
    and click **Refresh instance contents**. Terrain uses its displaced surface
    for the flat-color view, content bounds and picking. Clicking it selects the
    root helper; the child remains read-only. **Expanded static lights:** reports
-   point/spot counts, but child lights and their illumination/icons are not
-   shown in this layer or the authored-lighting preview. **Sun and sky lights:**
+   point/spot counts including patterned lamps, but child lights and their
+   illumination/icons are not shown in this layer or the authored-lighting preview.
+   **Sun and sky lights:**
    counts child `light_environment` helpers before regions; their illumination,
    icons, bounds, picking and framing are unavailable here. Mixed references
    keep their actual brush/terrain preview and Frame behavior.
@@ -280,9 +285,17 @@ Limits:
   cannot contain brushes, I/O connections, unknown properties or opaque blocks.
   Repeated property names, including case aliases, reject.
 - Light names, targets, parents, patterns and runtime references must be absent
-  or empty; whitespace is not empty. `style`, `defaultstyle` and `spawnflags`
-  must be absent or zero. Legacy `angle` must be absent or zero. Use canonical
-  lowercase `classname`, `origin`, `angles` and `angle` keys when present.
+  or empty; whitespace is not empty. Child point/spot `style` accepts the
+  installed FGD's offered IDs 0–11, with absent style using Normal. Empty style
+  text rejects. `defaultstyle` and `spawnflags` must be absent or zero;
+  **Initially dark** remains unavailable. Legacy `angle` must be absent or zero.
+  Use canonical lowercase `classname`, `origin`, `angles` and `angle` keys when present.
+- Repeated root and child lamps with the same numeric style share a global
+  lighting channel. Each face keeps the existing limit of four contributing
+  styles including Normal; reflected light also uses those channels.
+  **Bake static-prop vertex lighting** retains its Normal-only light restriction.
+  Child illumination, icons and animated previews remain unavailable in the
+  parent. See [Light appearances](compile-and-play.md#built-in-patterns-in-referenced-assemblies).
 - Each child `light_spot` requires canonical `pitch` from -90 to 90 degrees.
   Its ordinary `pitch:-90` default is admitted; a zero `pitch` requires the first
   `angles` component zero to avoid legacy fallback. Missing `angles` means zero
@@ -406,11 +419,11 @@ MCP uses the same `create_entity`, `set_entity_properties`, transforms,
 is required. Build reports expose optional `stats.instances`, with nonzero
 `terrain_patches` and `terrain_vertices` for generated terrain. These vertex
 counts describe the original power grids before neighbor density adjustments.
-Optional `point_lights` and `spot_lights` count expanded static lights before
-compile-region filtering and are omitted individually when zero. A light-only,
-model-only, spawn-only or lighting-helper-only assembly can resolve ready with dependency/count
-reports but has
-no reference geometry to display, pick or frame. Optional `static_props` counts
+Optional `point_lights` and `spot_lights` count expanded point/spot lights,
+including patterned lamps, before compile-region filtering and are omitted
+individually when zero. A light-only, model-only, spawn-only or lighting-helper-only
+assembly can resolve ready with dependency/count reports but has no reference
+geometry to display, pick or frame. Optional `static_props` counts
 expanded child props before region filtering and is also omitted when zero.
 Optional `environment_lights` counts expanded visible child sun/sky helpers
 before regions and omits zero, separately from point/spot counts and native

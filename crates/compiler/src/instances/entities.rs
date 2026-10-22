@@ -2,6 +2,8 @@ use source_formats::bsp::LightingKind;
 
 use super::*;
 
+const MAX_CHILD_LIGHT_APPEARANCE: u8 = 11;
+
 #[derive(Clone, Copy)]
 pub(super) enum Kind {
     Point,
@@ -56,6 +58,7 @@ pub(super) fn admit(entity: &Entity, kind: Kind) -> Result<(), String> {
         return Err("Static child lights cannot have brushes, connections or opaque blocks".into());
     }
     let mut keys = BTreeSet::new();
+    let mut validate_appearance = false;
     for (key, value) in entity.properties.iter() {
         field(key)?;
         field(value)?;
@@ -95,6 +98,9 @@ pub(super) fn admit(entity: &Entity, kind: Kind) -> Result<(), String> {
             | "_hardfalloff"
                 if !matches!(kind, Kind::Environment) => {}
             "_inner_cone" | "_cone" | "_exponent" if matches!(kind, Kind::Spot) => {}
+            "style" if matches!(kind, Kind::Point | Kind::Spot) => {
+                validate_appearance = value.trim().parse::<f64>().ok() != Some(0.0);
+            }
             "style" | "defaultstyle" | "spawnflags" => {
                 if value.trim().parse::<f64>().ok() != Some(0.0) {
                     return Err(format!("Static child light requires {key} 0"));
@@ -126,6 +132,14 @@ pub(super) fn admit(entity: &Entity, kind: Kind) -> Result<(), String> {
     };
     if matches!(kind, Kind::Environment) {
         return crate::lighting::validate_environment_light(&mapped);
+    }
+    if validate_appearance {
+        let appearance = crate::lighting::styles::appearance(&mapped, "style")?;
+        if !(1..=MAX_CHILD_LIGHT_APPEARANCE).contains(&appearance) {
+            return Err(format!(
+                "Static child light requires style from 0 to {MAX_CHILD_LIGHT_APPEARANCE}"
+            ));
+        }
     }
     for lighting in [LightingKind::Ldr, LightingKind::Hdr] {
         let light = crate::lighting::PointLight::from_entity_kind(&mapped, -1, lighting)?;
@@ -245,6 +259,7 @@ mod tests {
             ("_lightHDR", "invalid"),
             ("_lightscaleHDR", "-1"),
             ("SunSpreadAngle", "91"),
+            ("style", "1"),
             ("_constant_attn", "0"),
             ("_linear_attn", "0"),
             ("_quadratic_attn", "0"),

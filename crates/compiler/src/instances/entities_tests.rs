@@ -178,6 +178,89 @@ fn fgd_neutral_defaults_and_hdr_fallback_are_admitted_with_exact_static_identity
 }
 
 #[test]
+fn child_appearances_preserve_offered_ids_scalar_case_and_neutral_spellings() {
+    for class in ["light", "light_spot"] {
+        for value in (0..=11)
+            .map(|value| value.to_string())
+            .chain(["+1", "01", " 11 "].map(str::to_owned))
+        {
+            for key in ["style", "Style", "STYLE"] {
+                let mut light = static_light(20, class, "0 0 96");
+                light.properties.remove("style");
+                light.properties.set(key, value.clone());
+                let before = light.clone();
+                let result = entities::admit(&light, entities::kind(&light).unwrap());
+                assert!(result.is_ok(), "{class} {key}={value:?}: {result:?}");
+                assert_eq!(light, before);
+            }
+        }
+        let mut absent = static_light(20, class, "0 0 96");
+        absent.properties.remove("style");
+        let before = absent.clone();
+        entities::admit(&absent, entities::kind(&absent).unwrap()).unwrap();
+        assert_eq!(absent, before);
+        for key in ["style", "DefaultStyle", "SpawnFlags"] {
+            for value in ["0", "+0", "00", "-0", "0.0", "0e0", " -0.0 ", "1e-9999"] {
+                let mut light = static_light(20, class, "0 0 96");
+                light.properties.set("style", "11");
+                light.properties.remove(key);
+                light.properties.set(key, value);
+                let before = light.clone();
+                let result = entities::admit(&light, entities::kind(&light).unwrap());
+                assert!(result.is_ok(), "{class} {key}={value:?}: {result:?}");
+                assert_eq!(light, before);
+            }
+        }
+    }
+}
+
+#[test]
+fn child_appearances_reject_unoffered_values_and_non_neutral_runtime_fields() {
+    for class in ["light", "light_spot"] {
+        for value in [
+            "", " ", "12", "31", "32", "255", "256", "-1", "1.0", "1e0", "NaN", "inf",
+        ] {
+            let mut light = static_light(20, class, "0 0 96");
+            light.properties.set("style", value);
+            let before = light.clone();
+            let error = entities::admit(&light, entities::kind(&light).unwrap()).unwrap_err();
+            assert!(error.contains("style"), "{class} style={value:?}: {error}");
+            assert_eq!(light, before);
+        }
+        for (key, value) in [
+            ("defaultstyle", ""),
+            ("defaultstyle", "1"),
+            ("spawnflags", " "),
+            ("spawnflags", "1"),
+            ("pattern", "az"),
+            ("targetname", "lamp"),
+            ("pattern", " "),
+            ("targetname", " "),
+        ] {
+            let mut light = static_light(20, class, "0 0 96");
+            light.properties.set("style", "11");
+            light.properties.set(key, value);
+            assert!(
+                entities::admit(&light, entities::kind(&light).unwrap()).is_err(),
+                "{class} {key}={value:?}"
+            );
+        }
+        for key in ["STYLE", "DefaultStyle", "SpawnFlags"] {
+            let mut light = static_light(20, class, "0 0 96");
+            light.properties.set("style", "11");
+            light.properties.set("defaultstyle", "0");
+            light.properties.0.push((key.into(), "0".into()));
+            assert!(
+                entities::admit(&light, entities::kind(&light).unwrap())
+                    .unwrap_err()
+                    .contains("repeats property"),
+                "{class} {key}"
+            );
+        }
+    }
+}
+
+#[test]
 fn translated_child_emitters_and_terrain_match_literal_fullbright_ldr_and_hdr_bsp() {
     let (directory, parent, child, game) = emitter_fixture(vec![
         static_light(20, "light", "-48 16 128"),
@@ -582,6 +665,7 @@ fn child_light_refusals_are_mode_independent_and_preserve_previous_files() {
         "target",
         "parentname",
         "style",
+        "reserved style",
         "defaultstyle",
         "pattern",
         "spawnflags",
@@ -618,7 +702,8 @@ fn child_light_refusals_are_mode_independent_and_preserve_previous_files() {
             "whitespace target" => light.properties.set("target", " "),
             "target" => light.properties.set("target", "aim"),
             "parentname" => light.properties.set("parentname", "mover"),
-            "style" => light.properties.set("style", "1"),
+            "style" => light.properties.set("style", "12"),
+            "reserved style" => light.properties.set("style", "32"),
             "defaultstyle" => light.properties.set("defaultstyle", "2"),
             "pattern" => light.properties.set("pattern", "az"),
             "spawnflags" => light.properties.set("spawnflags", "1"),

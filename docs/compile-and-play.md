@@ -337,6 +337,9 @@ Limits: direct point/spot styles and sun/sky lighting at the authored pose, with
 
 #### Switchable lights and appearances
 
+These steps describe root-map lights. Child maps use the
+[built-in pattern steps below](#built-in-patterns-in-referenced-assemblies).
+
 1. Use **Place entity** to add a `light` or `light_spot`. Set **Brightness**.
 2. Give it a **Name**, such as `room_lights`, to control it in game. To make a group, duplicate the named light with Ctrl+D and move the copies. Lights sharing that name switch together and must share their initial pattern and **Initially dark** state; colors and brightness may differ.
 3. Choose **Light pattern**, for example **Normal** or **Fluorescent flicker**. For a custom pattern, enable **Advanced properties** and set **Custom Appearance** to lowercase letters `a`–`z`: `a` is dark, `m` is normal brightness, and `z` is brighter. A custom pattern overrides the built-in appearance. A custom pattern needs a named light.
@@ -349,6 +352,33 @@ Limits: direct point/spot styles and sun/sky lighting at the authored pose, with
 | ![The shadowed brush model while its light group is off](images/styled-bounce-off.png) | ![The same model receiving its switched reflected light](images/styled-bounce-on.png) |
 
 Limits: at most 32 named light groups and four contributing styles per face, including the always-present Normal channel. Named style IDs are assigned only in compiled output; VMF properties and undo history stay fixed. Authored appearance values must be whole numbers from 0 to 31, and custom patterns use at most 64 letters. Unnamed lights can use built-in appearances; custom patterns and **Initially dark** need a name. Hidden lights are excluded. Styled lights receive direct and reflected world/detail/terrain and brush-model lightmaps, plus detail model/sprite extras within their separate receiver and record limits above. Reflections can introduce a style on a face beyond its direct reach, and still count toward the four-style limit. Switching model-ambient cubes, sun/sky styles and baked prop lightmaps remain unfinished. The common lighting allocation/work limits apply.
+
+#### Built-in patterns in referenced assemblies
+
+Unnamed child `light` and `light_spot` entities can use the installed FGD's
+**Light pattern** choices 0–11 through the same property controls.
+
+1. Open the child VMF as a normal map. Add or select a `light` or `light_spot`.
+   Choose **Light pattern**, such as **Normal**, **Fluorescent flicker** or
+   **Slow pulse, noblack**.
+2. Keep **Name** empty and **Initially dark** off. Under **Advanced properties**,
+   keep **Custom Appearance** empty. Preserve the supported
+   [child light fields and spotlight pitch](instances.md).
+3. Save and reopen the child. Open the parent and create or refresh its
+   reference with **Instance contents… → Refresh instance contents**.
+4. Choose **Build settings… → Build lighting → Direct LDR** or **Direct LDR + HDR**,
+   then **Compile**. **Build details… → Expanded static lights:** includes the
+   patterned point/spot lamps before compile-region filtering.
+
+![Expanded child light counts in Build details](images/build-instance-lights.png)
+
+Limits: child names, custom patterns, **Initially dark**, runtime references
+and I/O remain unsupported. Child sun/sky lights remain Normal-only. Root and
+child lamps with the same numeric style share a global channel; each face
+allows four contributing styles including Normal, with the same limit for
+reflected light. **Bake static-prop vertex lighting** still requires Normal
+lights. Child illumination, icons and animated previews remain unavailable in
+the parent reference and authored-lighting views.
 
 #### Bounced light
 

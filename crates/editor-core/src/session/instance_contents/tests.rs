@@ -4,6 +4,7 @@ use map_core::edit;
 
 mod cubemaps;
 mod environment_lights;
+mod light_appearances;
 mod lighting_origins;
 mod occluders;
 mod overlays;

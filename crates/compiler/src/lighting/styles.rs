@@ -14,7 +14,7 @@ const MAX_PATTERN_BYTES: usize = 64;
 const MAX_FACE_STYLES: usize = 4;
 pub(super) type SampleColors = [[DVec3; super::bump::MAPS]; MAX_FACE_STYLES];
 
-fn appearance(entity: &MapEntity, key: &str) -> Result<u8, String> {
+pub(crate) fn appearance(entity: &MapEntity, key: &str) -> Result<u8, String> {
     let value = property(entity, key)
         .map(str::trim)
         .filter(|value| !value.is_empty())

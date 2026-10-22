@@ -301,7 +301,7 @@ manual-game discovery. Lower capture preflight retains its existing
 same-installation running-client rejection.
 
 A saved parent can compile nested world/detail brush instances, including power
-2–4 terrain, strictly admitted unnamed static point/spot lights,
+2–4 terrain, strictly admitted unnamed point/spot lights with built-in appearances,
 static props, player spawns, consumed visibility volumes and supported cubemap
 samples, through four helper levels, counting a root helper as level one; see
 [Referenced brush assemblies](instances.md). `create_entity` uses
@@ -330,11 +330,22 @@ Child lights support only exact lowercase `light` and `light_spot` classes, with
 canonical `classname` and explicit finite `origin`. Canonical `angles` and
 legacy `angle` are optional; `angle` must be zero when present. Brightness,
 ordinary attenuation, HDR and spotlight cone/focus fields use existing compiler
-parsing, with both LDR and HDR definitions checked even in Fullbright. Neutral
-FGD defaults are accepted: `style`, `defaultstyle` and `spawnflags` absent or
-zero, and names, targets, parents, patterns and runtime references absent or
-empty. Whitespace is not empty. Brushes, connections, duplicate case aliases,
-unknown properties/blocks and other child runtime entities reject.
+parsing, with both LDR and HDR definitions checked even in Fullbright.
+`style` admits the installed FGD's offered **Light pattern** IDs 0–11; absent
+style uses Normal, while explicit empty text rejects. `defaultstyle` and
+`spawnflags` remain absent or zero. Names, targets, parents, custom `pattern`
+and runtime references stay absent or exactly empty; whitespace is not empty.
+**Initially dark** remains unavailable. Brushes, connections, duplicate case
+aliases, unknown properties/blocks and other child runtime entities reject.
+
+Open the child normally, use `create_entity` and `set_entity_properties` to set
+`style` (for example `"10"` for **Fluorescent flicker** or `"11"` for **Slow
+pulse, noblack**), then `save_map`, reopen and reference it from the parent.
+Repeated root/child lights with the same numeric style share a global channel.
+The four-style face limit includes Normal and reflected-light styles; optional
+static-prop vertex baking still requires style 0. Environment lights remain
+Normal-only. Parent reference illumination, icons and animated previews remain
+unavailable.
 
 Each child `light_spot` requires an explicit canonical `pitch` in `[-90,90]`;
 the usual `-90` downward default is accepted. A zero `pitch` requires the first
@@ -473,8 +484,9 @@ neighbor density adjustments. **Build details…** reports these as **Instance
 terrain patches:** and **Authored grid vertices:**.
 
 `stats.instances.point_lights` and `spot_lights` are omitted individually when
-zero. They count expanded static lights before compile-region filtering;
-enabled regions select emitted child lights by transformed origin. **Build
+zero. They count expanded point/spot lights, including built-in appearances,
+before compile-region filtering; enabled regions select emitted child lights
+by transformed origin. **Build
 details…** shows **Expanded static lights:** with point/spot counts and
 **before compile-region filtering**.
 
@@ -648,8 +660,9 @@ triangles.
 The same inspection `stats` reports optional `point_lights` and `spot_lights`,
 omitting each when zero and counting expansion before compile-region filtering.
 **Instance contents…** shows these under **Expanded static lights:**. Child
-lights, illumination and icons are not shown in the reference or authored-lighting
-preview. Lights add no reference bounds, pick surfaces or face-provenance rows.
+lights with built-in appearances use these same counts. Child lights,
+illumination, icons and animated previews are not shown in the reference or
+authored-lighting preview. Lights add no reference bounds, pick surfaces or face-provenance rows.
 When expanded lights are present, `static_light_preview` explicitly reports
 `available:false` and the same explanatory `reason` shown by the inspector.
 A light-only assembly can report `state:"ready"` with its owner/dependency
@@ -1089,7 +1102,7 @@ work, compressed size or native float parity. See [Visibility clusters](visclust
 - `edit_faces` (including `preview: true`), `commit_face_preview` and `cancel_face_preview` drive the same authored brush smoothing as **Face lighting…**. Shared groups 1–24 blend; shared groups 25–32 keep hard edges and take priority. Both lit modes apply checked world/detail and brush-model corner normals, including eligible corners inside neighboring source edges. Original fan centers and source fans remain stable across lightmap subdivision. Stats expose `smoothed_faces`, `smoothed_corners` and `normal_work` (construction work; receiver interpolation also counts toward `lighting_work`). Unassigned faces stay flat at angle zero; terrain, world coordinates and each model's local coordinates remain separate. Source/corner limits and the shared lighting budget preserve prior output on rejection.
 - `smoothing_angle` defaults to `0` (disabled). Positive values blend only two unassigned source faces within one world/model scope whose normal angle meets the threshold. Explicit smooth/hard masks retain precedence; terrain and individual model/world scopes stay separate. `get_compile_settings.smoothing_angle_range` reports bounds/unit. Each job captures the angle; changing it stales previous output. Actual stats expose `smoothing_angle` and the same `smoothed_faces`, `smoothed_corners` and `normal_work`. Fullbright retains the setting but reports zero actual angle/work; no VMF/history edits occur.
 - `edit_faces` and object material edits select VMT `$surfaceprop` values for world, terrain and brush-model collision. Terrain chooses `$surfaceprop2` when the three emitted collision-triangle `f32` alpha values sum strictly above `382.5`; equality or a missing secondary property keeps the primary. Existing terrain blend tools supply these weights. With `physics: engine`, native triangle mappings use a shared table of at most 127 names including default; a material without `$surfaceprop` uses default. `compile_map` and background results expose `physics_surface_properties`, shown as **Surface properties** in **Build details…**; it counts distinct shared names. Names use 1–127 ASCII letters, digits, underscores, dots or dashes. Uniform models additionally record the body property; mixed models keep per-face contact properties. Brush-model base mass uses the property with the greatest emitted face area: solid materials use collision volume and density, while shells use emitted area, thickness and density, capped at 50,000 kg. Surface definitions load through the existing game mounts; invalid or missing definitions, native property indices or mappings fail before publication. Entity diagnostics report the base mass and selected property. Existing `set_entity_properties` calls retain runtime `func_physbox` mass-scale/override and `phys_convert` mass-override fields. Custom density controls and broader moving-body behavior remain unfinished. See [Physics and brush-model mass](physics.md).
-- `create_entity` and `set_entity_properties` author point/spot `style` (Appearance `0`–`31`), `targetname`, `pattern` (up to 64 lowercase letters), and `spawnflags` bit `1` (Initially dark). Named groups get compiler-only IDs `32`–`63`; authored nonzero appearances become `defaultstyle`, and matching names share an initial pattern/state. `begin_connection_edit`, `update_connection_draft` and `commit_connection_edit` author relay outputs targeting `TurnOn`, `TurnOff`, `Toggle` or `SetPattern`. Both compile paths emit up to four face channels including Normal, with actual `switchable_light_groups`, `light_styles`, `styled_faces` and `light_style_maps` stats. Compilation keeps VMF/history fixed. Invalid fields, conflicting groups and exceeded limits preserve previous output. With `bounces: 1`–`4`, reflected light follows the same styles and can add a channel beyond direct reach; the four-style face limit still applies. Switching model-ambient cubes remain unfinished.
+- Root-map `create_entity` and `set_entity_properties` author point/spot `style` (Appearance `0`–`31`), `targetname`, `pattern` (up to 64 lowercase letters), and `spawnflags` bit `1` (Initially dark). Named groups get compiler-only IDs `32`–`63`; authored nonzero appearances become `defaultstyle`, and matching names share an initial pattern/state. `begin_connection_edit`, `update_connection_draft` and `commit_connection_edit` author relay outputs targeting `TurnOn`, `TurnOff`, `Toggle` or `SetPattern`. Both compile paths emit up to four face channels including Normal, with actual `switchable_light_groups`, `light_styles`, `styled_faces` and `light_style_maps` stats. Compilation keeps VMF/history fixed. Invalid fields, conflicting groups and exceeded limits preserve previous output. With `bounces: 1`–`4`, reflected light follows the same styles and can add a channel beyond direct reach; the four-style face limit still applies. Switching model-ambient cubes remain unfinished.
 - `compile_map`, `start_compile` and `run_map` admit up to two disjoint [stationary invisible water](#stationary-invisible-water) cuboids with engine physics. Unsupported `func_water_analog` geometry, materials or properties fail with an entity-owned error. Hidden or region-omitted entities are excluded.
 - `tie_to_entity` and `set_entity_properties` author rendered brush models and pivots. Both lit modes compile model-local faces with world-space lighting positions, isolated self shadows, and the same point/spot style channels and sky sampling. Stats expose `lit_brush_models`, `model_lighting_faces`, `model_bounce_faces` (processed receiver faces) and `model_bounce_samples` (samples with positive reflected energy). Local geometry, UVs and collision stay fixed; direct and bounced lightmaps remain attached in game. Models do not cast permanent world shadows or supply reflected light. They can receive world bounce; unparented `func_brush` initial rotations use the same checked world pose for sample positions, smooth/flat normals, directional bases and own shadow hulls. Dynamic relighting remains unfinished. Both compile paths share the checked emitted model-to-entity bindings and common budgets.
 - `edit_faces` material/projection edits feed automatic directional lightmaps for lit VMTs declaring `$bumpmap`. Both lit modes emit base plus three direction maps per style on world/detail/model/terrain receivers, including the optional world-source bounce. Stats expose `bump_faces` and `bump_lightmaps` (auxiliary directional maps); `light_style_maps` includes base and directional maps. `lightmap_samples` counts receiver positions, while bytes/work include every map. Base averages, style IDs, geometric shadow bias and source/history remain shared. For LightmappedGeneric, WorldVertexTransition and WorldTwoTextureBlend, trimmed literal `$nodiffusebumplighting 1` selects one ordinary diffuse map per style and zero auxiliary-map counters; the normal texture remains available for other shader effects. Other provided spellings on these lit primary-normal materials fail compilation; use absent or trimmed literal `0`/`1`. WorldVertexTransition secondary normal mapping requires a primary `$bumpmap`. Brush/terrain or colored transmission and baked prop maps remain unfinished; viewport previews stay diffuse.

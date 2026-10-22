@@ -277,6 +277,12 @@ fn install_build(session: &mut Session, path: &Path, source: &Path) {
         prop_lighting_guard: None,
         static_prop_sources: None,
         claim: None,
+        output_identity: super::super::baked_build::capture_output_identity(
+            path,
+            Some(&fixture()),
+            source_formats::bsp::PakLimits::default().max_bsp_bytes as u64,
+            "Run",
+        ),
         face_origins: Err("Fixture has no retained source mapping".into()),
         instance_dependencies: None,
         instance_source_path: None,

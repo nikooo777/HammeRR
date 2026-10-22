@@ -347,7 +347,7 @@ impl EditorServer {
             };
             (camera, view)
         };
-        let mut fog_preview = {
+        let fog_preview = {
             let session = self.session();
             let controller = match fog_controller_id(args.fog_controller.as_deref()) {
                 Ok(controller) => controller,
@@ -365,35 +365,7 @@ impl EditorServer {
             Ok(rendered) => rendered,
             Err(error) => return fail(error),
         };
-        let data = base64::engine::general_purpose::STANDARD.encode(rendered.png);
-        let skybox = self.session().sky_preview_state(view, camera);
-        let sky3d_preview = rendered.sky3d_preview;
-        fog_preview["applied"] = json!(
-            view.fog
-                .is_some_and(|fog| fog.enabled() && fog.max_density() > 0.0)
-                && view.surface == render::SurfaceView::Textured
-                && camera.projection == Projection::Perspective
-        );
-        let material_reload = self.session().material_reload_report().cloned();
-        let preview_issues = rendered.issues.iter().map(|issue| json!({"face":{"solid":issue.face.solid,"side":issue.face.side},"message":issue.message})).collect::<Vec<_>>();
-        let working_region = self.session().working_region_summary();
-        let rope_preview = self.session().rope_preview_report(view.rope_preview);
-        let mut rendered_view = view_state(view);
-        let extra = json!({"grid_visible": view.grid_visible, "grid_size": view.grid_size,
-                "grid_elevation": view.grid_elevation,
-                "block_preview": view.block_preview.map(|bounds| bounds.map(|point| point.to_array())),
-                "clip_preview": view.clip_preview.map(|guide| json!({"normal": guide.normal.to_array(), "distance": guide.distance, "bounds": guide.bounds.map(|point| point.to_array())})),
-                "transform_handles": view.transform_handles.map(|guide| json!({"mode": transform_mode_name(Some(guide.mode)), "origin": guide.origin.to_array(), "axes": guide.axes.map(|axis| axis.to_array()), "active": guide.active.map(render::handles::Handle::name)})),
-                "area_preview": view.area_preview.map(|guide| json!({"ndc": guide.corners.map(|point| point.to_array()), "contained": guide.contained, "aspect": guide.aspect, "camera": camera_json(&guide.camera)}))});
-        rendered_view
-            .as_object_mut()
-            .unwrap()
-            .extend(extra.as_object().unwrap().clone());
-        let info = json!({ "working_region":working_region, "camera": camera_json(&camera), "width": size.0, "height": size.1, "skybox":skybox, "sky3d_preview":sky3d_preview, "fog_preview":fog_preview, "rope_preview":rope_preview, "sprite_guides":rendered.sprite_guides, "instance_contents":rendered.instance_contents, "preview_issues":preview_issues, "normal_maps":{"report":rendered.normal_maps,"limits":render::normal_maps::limits()}, "lighting_preview":{"report":rendered.lighting,"limits":render::lighting::limits()}, "material_reload":material_reload, "view": rendered_view });
-        Ok(CallToolResult::success(vec![
-            ContentBlock::image(data, "image/png"),
-            ContentBlock::text(info.to_string()),
-        ]))
+        rendered.into_tool_result(camera, size, view, fog_preview)
     }
 
     #[tool(

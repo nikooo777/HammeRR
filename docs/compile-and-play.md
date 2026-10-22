@@ -915,6 +915,10 @@ To follow a leak, open **Pointfile…**:
 - Each run uses its own uniquely named copy of the BSP, which is removed when the game exits. Its logs stay until the next run or until the editor closes.
 - Closing the editor stops the game it started. Your other maps and game processes are never touched.
 - BSP reads are limited to 512 MiB and verify the opened regular file and aliases.
+  The staged bytes must match the successful build. Changed output requires a
+  new compile; unavailable output identity disables Play. Referenced child VMFs
+  and consumed static-prop sources are rechecked through the last staging
+  checkpoint before the client starts.
   Cancellation is checked while reading and before starting the client. These
   checks cannot interrupt a filesystem call stalled in the kernel.
 
@@ -929,6 +933,10 @@ edits within the same map do not cancel a launch already admitted.
 ```sh
 ./target/release/hammerr-compile map.vmf --game /path/to/cstrike/gameinfo.txt
 ```
+
+The BSP and matching `.lin` output must be distinct from the source map,
+including source symlinks and aliased directories. Where an output link is
+admitted, publication replaces its directory entry and preserves its former target.
 
 | Option | Purpose |
 | --- | --- |

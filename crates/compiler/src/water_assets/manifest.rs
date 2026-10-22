@@ -291,38 +291,6 @@ fn verify_bsp_size(
     limits: PakLimits,
     control: &Control,
 ) -> io::Result<()> {
-    if bsp.lumps.len() != bsp::LUMP_COUNT {
-        return Err(invalid("BSP must have exactly 64 lump slots"));
-    }
-    let mut size = 8usize + bsp::LUMP_COUNT * 16 + 4;
-    for (index, lump) in bsp.lumps.iter().enumerate() {
-        checkpoint(control)?;
-        size = size
-            .checked_add(3)
-            .map(|value| value & !3)
-            .ok_or_else(|| invalid("Packed Water BSP size overflow"))?;
-        let bytes = if index == bsp::lump::PAKFILE {
-            pak_bytes
-        } else if index == bsp::lump::GAME_LUMP {
-            let directory = bsp
-                .game_lumps
-                .len()
-                .checked_mul(16)
-                .and_then(|value| value.checked_add(4))
-                .ok_or_else(|| invalid("Packed Water game-lump size overflow"))?;
-            bsp.game_lumps
-                .iter()
-                .try_fold(directory, |size, lump| size.checked_add(lump.data.len()))
-                .ok_or_else(|| invalid("Packed Water game-lump size overflow"))?
-        } else {
-            lump.data.len()
-        };
-        size = size
-            .checked_add(bytes)
-            .ok_or_else(|| invalid("Packed Water BSP size overflow"))?;
-        if size > limits.max_bsp_bytes {
-            return Err(invalid("Packed Water BSP exceeds its byte limit"));
-        }
-    }
-    Ok(())
+    crate::bsp_size::verify(bsp, pak_bytes, None, limits.max_bsp_bytes, control)
+        .map_err(|error| error.into_io("Packed Water"))
 }

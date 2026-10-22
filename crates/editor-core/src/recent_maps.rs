@@ -26,13 +26,20 @@ pub use crate::build_settings::BuildSettings;
 #[serde(deny_unknown_fields)]
 pub struct Entry {
     pub path: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reopen_path: Option<PathBuf>,
     pub game_directory: Option<PathBuf>,
     pub build_settings: BuildSettings,
 }
 
 impl Entry {
+    pub fn reopen_path(&self) -> &Path {
+        self.reopen_path.as_deref().unwrap_or(&self.path)
+    }
+
     fn validate(&self) -> Result<(), String> {
         validate_path(&self.path)?;
+        validate_path(self.reopen_path())?;
         if let Some(path) = &self.game_directory {
             validate_path(path)?;
         }
@@ -78,6 +85,21 @@ pub fn absolute_path(path: &Path) -> Result<PathBuf, String> {
     let path = fs::canonicalize(path).map_err(|error| format!("{}: {error}", path.display()))?;
     validate_path(&path)?;
     Ok(path)
+}
+
+pub(crate) fn source_paths(path: &Path) -> Result<(PathBuf, Option<PathBuf>), String> {
+    use source_formats::file_publication::{BoundDestination, Policy};
+
+    let destination = BoundDestination::capture(path, Policy::FollowSource)
+        .map_err(|error| format!("{}: {error}", path.display()))?;
+    let physical = destination.physical_path();
+    let authored = destination.authored_path();
+    validate_path(physical)?;
+    validate_path(authored)?;
+    Ok((
+        physical.to_owned(),
+        (authored != physical).then(|| authored.to_owned()),
+    ))
 }
 
 impl Store {
@@ -186,6 +208,7 @@ mod tests {
     fn entry(path: PathBuf) -> Entry {
         Entry {
             path,
+            reopen_path: None,
             game_directory: None,
             build_settings: BuildSettings::from_options(compiler::Options::default()),
         }
@@ -255,6 +278,12 @@ mod tests {
         ];
         store.save(&entries).unwrap();
         assert_eq!(store.load().unwrap(), entries);
+        let legacy = fs::read(store.path()).unwrap();
+        assert!(!String::from_utf8_lossy(&legacy).contains("reopen_path"));
+        let loaded = store.load().unwrap();
+        assert_eq!(loaded[0].reopen_path(), entries[0].path);
+        store.save(&loaded).unwrap();
+        assert_eq!(fs::read(store.path()).unwrap(), legacy);
     }
 
     #[cfg(target_os = "linux")]
@@ -594,6 +623,9 @@ mod tests {
                 .is_err()
         );
         assert!(store.save(&[valid.clone(), valid.clone()]).is_err());
+        let mut invalid = valid.clone();
+        invalid.reopen_path = Some(PathBuf::from("relative.vmf"));
+        assert!(store.save(&[invalid]).is_err());
         let mut invalid = valid;
         invalid.build_settings.smoothing_angle = 91;
         assert!(store.save(&[invalid]).is_err());

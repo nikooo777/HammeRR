@@ -68,12 +68,20 @@ pub fn refresh(window: &RecentMapsWindow, session: &Session) {
         });
         if selected.as_str() == path {
             selected_available = available;
+            let reopen_path = entry["reopen_path"]
+                .as_str()
+                .expect("recent map reopen path is a string");
+            let source = if reopen_path == path {
+                path.to_owned()
+            } else {
+                format!("Open: {reopen_path}\nFile: {path}")
+            };
             let settings = &entry["build_settings"];
             let game = entry["game_directory"]
                 .as_str()
                 .unwrap_or("No mounted game");
             selected_detail = Some(format!(
-                "{path}\nGame: {game}\nBuild: {} lighting · {} physics · {} sky · {} visibility · {} bounces · {}° smoothing · static-prop vertex lighting {} · reflections {} · sky packing {} · water packing {} · static-prop packing {}\n{}",
+                "{source}\nGame: {game}\nBuild: {} lighting · {} physics · {} sky · {} visibility · {} bounces · {}° smoothing · static-prop vertex lighting {} · reflections {} · sky packing {} · water packing {} · static-prop packing {}\n{}",
                 settings["lighting"].as_str().unwrap_or_default(),
                 settings["physics"].as_str().unwrap_or_default(),
                 settings["sky_quality"].as_str().unwrap_or_default(),

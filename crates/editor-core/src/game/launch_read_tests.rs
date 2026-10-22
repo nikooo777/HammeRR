@@ -9,6 +9,29 @@ use crate::test_assets::game_process as fixture;
 
 const DEADLINE: Duration = Duration::from_secs(3);
 
+#[test]
+fn published_bytes_are_checked_before_decoding_or_creating_staging_files() {
+    let (_directory, game, bsp) = fixture(true);
+    let install = Install::from_game(&game).unwrap();
+    let expected = compiler::FileIdentity::capture(&bsp, &compiler::Control::default()).unwrap();
+    let mut changed = std::fs::read(&bsp).unwrap();
+    changed[..4].copy_from_slice(b"NOPE");
+    std::fs::write(&bsp, &changed).unwrap();
+    let error = Run::launch_published(&install, &bsp, &expected, None, |_| Ok(()))
+        .err()
+        .unwrap();
+    assert!(error.contains("Compiled BSP bytes changed"), "{error}");
+    assert_eq!(std::fs::read(&bsp).unwrap(), changed);
+    assert_eq!(std::fs::read_dir(&install.game).unwrap().count(), 1);
+    assert_eq!(
+        std::fs::read_dir(install.game.join("maps"))
+            .unwrap()
+            .count(),
+        1
+    );
+    assert!(!install.game.join("downloadlists").exists());
+}
+
 fn files(directory: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     let mut result = BTreeMap::new();
     for entry in std::fs::read_dir(directory).unwrap() {

@@ -8,6 +8,8 @@ use serde_json::{Value, json};
 use super::{Actor, Session};
 
 #[cfg(test)]
+mod reload_selection_tests;
+#[cfg(test)]
 mod scale_tests;
 #[cfg(test)]
 mod tests;
@@ -237,6 +239,7 @@ impl Session {
     }
 
     pub fn refresh_model_assets(&mut self, actor: Actor) -> bool {
+        self.cancel_selection_previews();
         self.advance_content_epoch();
         let snap_preview_cancelled = self
             .transform_preview()

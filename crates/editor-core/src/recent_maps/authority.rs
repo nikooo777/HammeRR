@@ -122,7 +122,7 @@ impl Authority {
 
     pub(crate) fn remember(
         &self,
-        entry: Entry,
+        mut entry: Entry,
         reorder: bool,
         preserve_incompatible: bool,
         compiling: bool,
@@ -138,13 +138,15 @@ impl Authority {
         if !reorder && existing.is_none() {
             return Ok(());
         }
-        let entry = if let Some(existing) = existing.filter(|existing| {
+        if let Some(existing) = existing.filter(|_| !reorder) {
+            entry.reopen_path = existing.reopen_path.clone();
+        }
+        if let Some(existing) = existing.filter(|existing| {
             compiling || (preserve_incompatible && existing.game_directory != entry.game_directory)
         }) {
-            existing.clone()
-        } else {
-            entry
-        };
+            entry.game_directory = existing.game_directory.clone();
+            entry.build_settings = existing.build_settings.clone();
+        }
         let mut entries = state.entries.clone();
         if reorder {
             entries.retain(|existing| existing.path != entry.path);

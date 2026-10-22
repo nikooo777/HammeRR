@@ -41,10 +41,17 @@ existing entry without changing its recency or making the map dirty. Failed open
 and primary-file saves leave the list unchanged. A history-storage failure appears
 in this window and Activity; a successful primary-file save remains successful.
 
+Symbolic-link entries retain the path used by the latest successful Open or Save,
+so relative instance paths resolve from the same directory when reopened.
+Details show **Open:** for this path and **File:** for its physical target when
+they differ. A missing or retargeted alias refuses to open; use **Open** to
+choose the intended map again.
+
 The equivalent MCP calls are `get_recent_maps`, `reload_recent_maps`,
 `open_recent_map`, `remove_recent_map` and `clear_recent_maps`. Inspection does
 not reload storage automatically. Pass the exact `path` returned by
 `get_recent_maps`. Opening uses the normal `discard_changes` guard.
+The response's `reopen_path` identifies the retained source path.
 
 ## Limits
 

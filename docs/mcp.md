@@ -182,7 +182,7 @@ draft ownership and do not replace source snapshots/stamps. Terrain drawing
 reports its `terrain_stroke` handle while active; finishing closes that handle
 and exposes the resulting `face_preview` handle for commit/cancel. Existing
 getters that reject a closed draft keep that behavior.
-- **Checking work**: `render_view` returns a PNG from any camera without moving yours, `pick_at_pixel` identifies the object and face at a pixel, and `raycast` finds the first surface along a ray.
+- **Checking work**: `render_view` returns a PNG from any camera without moving yours. Its sky, rope, working-region and material-reload metadata describe the captured frame even if another edit completes during readback. `pick_at_pixel` identifies the object and face at a pixel, and `raycast` finds the first surface along a ray.
 
 Each tool's description lists its parameters.
 
@@ -265,6 +265,11 @@ Recompile after changing those assets or reloading content. `launch_game` and
 `run_map` also recheck the retained sources before starting the game. Unused PHY
 payloads remain outside these guards. Optional [static-prop asset packing](#static-prop-asset-packing)
 retains the admitted original model/material closure in the BSP.
+
+Both launch paths require the original successful BSP identity and compare it
+with the actual staged bytes before decoding. Changed output or unavailable
+identity requires a new compile. Original child-VMF dependencies are rechecked
+during staging and at the last checkpoint before process startup.
 
 Standalone launch captures its exact Session, map generation and build before
 worker scheduling. Queued work cannot choose a replacement map later. Abandoned
@@ -3322,6 +3327,13 @@ this preview. See [Fog preview](fog.md).
 `get_recent_maps` returns up to 20 entries in most-recent-first order with exact `path`, file availability, retained game directory, a `build_settings` snapshot for every option (including `generate_reflections`, `pack_sky_assets`, `pack_water_assets`, `pack_static_prop_assets` and `bake_static_prop_vertices`) and `context_compatible`. Missing booleans default to false; disabled opt-in packing/prop fields may be omitted. It also reports persistence, storage errors and bounds. Pass a listed `path` to `open_recent_map`, optionally with `discard_changes: true` when discarding the current edits is intended. It uses normal map validation and restores retained build values only while idle and with matching mounted game content. Game content and custom FGD files do not switch automatically.
 
 `remove_recent_map {path}` and `clear_recent_maps {}` change only the retained list. Successful opens/saves update recency; changing build settings updates an existing entry without reordering it. Missing files remain listed. Failed primary opens/saves preserve the list; an auxiliary history-write failure is reported without failing an otherwise successful map operation.
+
+Each entry also returns `reopen_path`, the absolute source path retained from
+the latest successful Open or Save. It preserves symbolic-link referring
+directories for relative instances; `path` remains the canonical deduplication
+identity and exact action selector. Missing or retargeted reopen aliases refuse
+without replacing the document. Older entries without a separate reopen path
+use their stored `path`.
 
 Preferences use `recent-maps.json` in recovery storage. `HAMMERR_RECENT_MAPS_DIR` selects an absolute directory; otherwise `HAMMERR_RECOVERY_DIR` also isolates this list. Paths are bounded to 4096 UTF-8 bytes and storage to 192 KiB. Exact-source checks reject stale list publication. `reload_recent_maps {}` reloads a valid saved list through the same operation as **Reload saved list**, clears its error and preserves the document, current build settings, history, selection, camera and owned drafts. Invalid Reload retains the last valid local list and blocks writes until repaired. Participating Linux writers coordinate through a stable advisory lock; contention is retryable. Older/manual writers that ignore the lock remain outside that guarantee. Post-publication verification failure reports that the list was written, adopts it locally and requires Reload. See [Recent maps](recent-maps.md).
 

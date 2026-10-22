@@ -106,6 +106,7 @@ fn prepared_assets(
         prop_lighting_guard: None,
         static_prop_sources: None,
         claim: None,
+        output_identity: Err("Fixture has no successful BSP identity".into()),
         face_origins: Err("Fixture has no retained source mapping".into()),
         path: destination.clone(),
         snapshot: Snapshot {

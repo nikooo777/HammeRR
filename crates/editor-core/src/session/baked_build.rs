@@ -16,6 +16,49 @@ pub(super) struct BuildIdentity {
     pub(super) source: Result<Option<compiler::FileIdentity>, String>,
 }
 
+pub(super) fn capture_output_identity(
+    output: &Path,
+    expected: Option<&Bsp>,
+    maximum_bytes: u64,
+    purpose: &str,
+) -> Result<compiler::FileIdentity, String> {
+    let expected = expected.ok_or("Compiler BSP bytes are unavailable")?;
+    let overhead = expected
+        .game_lumps
+        .len()
+        .checked_mul(GAME_LUMP_DIRECTORY_BYTES)
+        .and_then(|bytes| bytes.checked_add(BSP_HEADER_AND_PADDING_BYTES));
+    let upper_bound = expected
+        .lumps
+        .iter()
+        .map(|lump| lump.data.len())
+        .chain(expected.game_lumps.iter().map(|lump| lump.data.len()))
+        .try_fold(overhead.unwrap_or(usize::MAX), usize::checked_add);
+    if upper_bound.is_none_or(|bytes| bytes as u64 > maximum_bytes)
+        || std::fs::metadata(output)
+            .map_err(|error| error.to_string())?
+            .len()
+            > maximum_bytes
+    {
+        return Err(format!(
+            "BSP exceeds the {maximum_bytes}-byte {purpose} budget"
+        ));
+    }
+    let identity = compiler::FileIdentity::capture_bounded(
+        output,
+        maximum_bytes,
+        &compiler::Control::default(),
+    )
+    .map_err(|error| error.to_string())?;
+    identity
+        .verify_bytes(&expected.to_bytes())
+        .map_err(|error| error.to_string())?;
+    identity
+        .verify_metadata()
+        .map_err(|error| error.to_string())?;
+    Ok(identity)
+}
+
 impl BuildIdentity {
     pub(super) fn source(
         path: &Path,
@@ -37,39 +80,7 @@ impl BuildIdentity {
         source: Result<Option<compiler::FileIdentity>, String>,
         expected: Option<&Bsp>,
     ) -> Self {
-        let identity = (|| {
-            let expected = expected.ok_or("Compiler BSP bytes are unavailable")?;
-            let overhead = expected
-                .game_lumps
-                .len()
-                .checked_mul(GAME_LUMP_DIRECTORY_BYTES)
-                .and_then(|bytes| bytes.checked_add(BSP_HEADER_AND_PADDING_BYTES));
-            let upper_bound = expected
-                .lumps
-                .iter()
-                .map(|lump| lump.data.len())
-                .chain(expected.game_lumps.iter().map(|lump| lump.data.len()))
-                .try_fold(overhead.unwrap_or(usize::MAX), usize::checked_add);
-            if upper_bound.is_none_or(|bytes| bytes as u64 > MAX_BSP_BYTES)
-                || std::fs::metadata(output)
-                    .map_err(|error| error.to_string())?
-                    .len()
-                    > MAX_BSP_BYTES
-            {
-                return Err(format!(
-                    "BSP exceeds the {MAX_BSP_BYTES}-byte inspection budget"
-                ));
-            }
-            let identity = compiler::FileIdentity::capture(output, &compiler::Control::default())
-                .map_err(|error| error.to_string())?;
-            identity
-                .verify_bytes(&expected.to_bytes())
-                .map_err(|error| error.to_string())?;
-            identity
-                .verify_metadata()
-                .map_err(|error| error.to_string())?;
-            Ok(identity)
-        })();
+        let identity = capture_output_identity(output, expected, MAX_BSP_BYTES, "inspection");
         Self {
             token,
             output: identity,

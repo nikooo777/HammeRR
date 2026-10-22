@@ -1,4 +1,5 @@
 use super::*;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 fn nested_opened(actor: Actor) -> (tempfile::TempDir, Session, PathBuf, PathBuf, PathBuf) {
     let (directory, session, source, middle) = opened(actor, false);
@@ -160,6 +161,104 @@ fn change_child(path: &Path) {
     let newline = bytes.iter().position(|byte| *byte == b'\n').unwrap();
     bytes[newline] = b' ';
     std::fs::write(path, bytes).unwrap();
+}
+
+fn launch_logs_exist(game: &Path) -> bool {
+    std::fs::read_dir(game).unwrap().any(|entry| {
+        entry
+            .unwrap()
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.starts_with("hammerr_console_"))
+    })
+}
+
+#[test]
+fn final_launch_checkpoint_rejects_child_and_grandchild_drift_and_cleans_staging() {
+    for actor in [Actor::User, Actor::Agent] {
+        for nested in [false, true] {
+            for change in ["bytes", "replacement", "missing"] {
+                let (directory, mut session, source, dependency) = if nested {
+                    let (directory, session, source, _middle, leaf) = nested_opened(actor);
+                    (directory, session, source, leaf)
+                } else {
+                    opened(actor, false)
+                };
+                let game = session.game.game_dir.clone();
+                let result = session.begin_compile(actor, None).unwrap().run();
+                session.finish_compile(actor, &result);
+                assert!(result.as_ref().unwrap().published());
+                let output = std::fs::read(source.with_extension("bsp")).unwrap();
+                let pointfile = std::fs::read(source.with_extension("lin")).unwrap();
+                let disk = std::fs::read(&source).unwrap();
+                let history = session.history_snapshot();
+                let memory = session.document().vmf().clone();
+                let camera = session.camera();
+                let selection = session.selected_ids();
+                let replacement = directory.path().join("replacement.vmf");
+                std::fs::copy(&dependency, &replacement).unwrap();
+                let mut request = session.begin_launch(actor).unwrap();
+                let origin = request.origin();
+                let invoked = Arc::new(AtomicBool::new(false));
+                let seen = invoked.clone();
+                let checked_game = game.clone();
+                request.before_checkpoint = Some(Box::new(move || {
+                    if launch_logs_exist(&checked_game) && !seen.swap(true, Ordering::AcqRel) {
+                        match change {
+                            "bytes" => change_child(&dependency),
+                            "replacement" => std::fs::rename(&replacement, &dependency).unwrap(),
+                            "missing" => std::fs::remove_file(&dependency).unwrap(),
+                            _ => unreachable!(),
+                        }
+                    }
+                }));
+                let launch = request.run();
+                assert!(invoked.load(Ordering::Acquire), "{nested}/{change}");
+                let error = launch.as_ref().err().unwrap();
+                assert!(
+                    error.contains("Instance source/dependencies changed"),
+                    "{error}"
+                );
+                assert!(session.finish_launch(actor, &origin, launch).is_err());
+                assert!(!session.launching() && !session.game_running());
+                assert!(!game.join("downloadlists").exists());
+                assert_eq!(std::fs::read_dir(&game).unwrap().count(), 1);
+                assert_eq!(std::fs::read_dir(game.join("maps")).unwrap().count(), 1);
+                assert_eq!(std::fs::read(source.with_extension("bsp")).unwrap(), output);
+                assert_eq!(
+                    std::fs::read(source.with_extension("lin")).unwrap(),
+                    pointfile
+                );
+                assert_eq!(std::fs::read(&source).unwrap(), disk);
+                assert_eq!(session.document().vmf(), &memory);
+                assert_eq!(session.history_snapshot(), history);
+                assert_eq!(session.camera(), camera);
+                assert_eq!(session.selected_ids(), selection);
+            }
+        }
+    }
+}
+
+#[test]
+fn unchanged_nested_dependencies_remain_launchable_through_owned_staging() {
+    for actor in [Actor::User, Actor::Agent] {
+        let (_directory, mut session, source, _middle, leaf) = nested_opened(actor);
+        let result = session.begin_compile(actor, None).unwrap().run();
+        session.finish_compile(actor, &result);
+        assert!(result.as_ref().unwrap().published());
+        let output = std::fs::read(source.with_extension("bsp")).unwrap();
+        let child = std::fs::read(&leaf).unwrap();
+        let history = session.history_snapshot();
+        let request = session.begin_launch(actor).unwrap();
+        let origin = request.origin();
+        let run = request.run().unwrap();
+        session.finish_launch(actor, &origin, Ok(run)).unwrap();
+        session.stop_game(actor).unwrap();
+        assert_eq!(std::fs::read(source.with_extension("bsp")).unwrap(), output);
+        assert_eq!(std::fs::read(&leaf).unwrap(), child);
+        assert_eq!(session.history_snapshot(), history);
+        assert!(session.launch_readiness().is_ok());
+    }
 }
 
 #[test]

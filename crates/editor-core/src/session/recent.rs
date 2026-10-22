@@ -93,7 +93,8 @@ impl Session {
             "entries": snapshot.entries.iter().map(|entry| json!({
                 "path": entry.path,
                 "title": entry.path.file_name().map(|name| name.to_string_lossy()),
-                "available": entry.path.is_file(),
+                "reopen_path": entry.reopen_path(),
+                "available": entry.reopen_path().is_file(),
                 "game_directory": entry.game_directory,
                 "context_compatible": entry.game_directory == game_directory,
                 "build_settings": entry.build_settings.report(),
@@ -125,8 +126,8 @@ impl Session {
         if self.recent_maps.authority().blocked() {
             return;
         }
-        let path = match recent_maps::absolute_path(path) {
-            Ok(path) => path,
+        let (path, reopen_path) = match recent_maps::source_paths(path) {
+            Ok(paths) => paths,
             Err(error) => {
                 self.recent_map_error(error);
                 return;
@@ -134,6 +135,7 @@ impl Session {
         };
         let entry = Entry {
             path,
+            reopen_path,
             game_directory: self.recent_game_directory(),
             build_settings: BuildSettings::from_options(self.compile_options()),
         };
@@ -193,7 +195,13 @@ impl Session {
             .authority()
             .entry(path)
             .ok_or("This map is no longer in Recent maps; refresh the list")?;
-        self.open(actor, &entry.path, discard_changes)
+        self.open_inner(
+            actor,
+            entry.reopen_path(),
+            discard_changes,
+            true,
+            Some(&entry.path),
+        )
     }
 
     pub fn remove_recent_map(&mut self, path: &Path) -> Result<(), String> {
@@ -852,3 +860,6 @@ mod tests {
 
 #[cfg(test)]
 mod authority_tests;
+
+#[cfg(all(test, unix))]
+mod alias_tests;

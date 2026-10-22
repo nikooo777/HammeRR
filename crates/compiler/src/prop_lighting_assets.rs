@@ -931,38 +931,19 @@ where
 }
 
 fn verify_bsp_size(bsp: &Bsp, pak_bytes: usize, control: &Control) -> io::Result<()> {
-    check_lumps(bsp)?;
-    let mut size = 8_usize + bsp::LUMP_COUNT * 16 + 4;
-    for (index, lump) in bsp.lumps.iter().enumerate() {
-        checkpoint(control)?;
-        size = size
-            .checked_add(3)
-            .map(|value| value & !3)
-            .ok_or_else(|| invalid("Prop lighting BSP size overflow"))?;
-        let bytes = if index == bsp::lump::PAKFILE {
-            pak_bytes
-        } else if index == bsp::lump::MAP_FLAGS {
-            4
-        } else if index == bsp::lump::GAME_LUMP {
-            let directory = bsp
-                .game_lumps
-                .len()
-                .checked_mul(16)
-                .and_then(|value| value.checked_add(4))
-                .ok_or_else(|| invalid("Prop lighting game-lump size overflow"))?;
-            bsp.game_lumps
-                .iter()
-                .try_fold(directory, |size, lump| size.checked_add(lump.data.len()))
-                .ok_or_else(|| invalid("Prop lighting game-lump size overflow"))?
-        } else {
-            lump.data.len()
-        };
-        size = size
-            .checked_add(bytes)
-            .filter(|&size| size <= PakLimits::default().max_bsp_bytes)
-            .ok_or_else(|| invalid("Prop lighting BSP exceeds its byte budget"))?;
-    }
-    Ok(())
+    crate::bsp_size::verify(
+        bsp,
+        pak_bytes,
+        Some(size_of::<u32>()),
+        PakLimits::default().max_bsp_bytes,
+        control,
+    )
+    .map_err(|error| match error {
+        crate::bsp_size::SizeError::Exceeded | crate::bsp_size::SizeError::PayloadOverflow => {
+            invalid("Prop lighting BSP exceeds its byte budget")
+        }
+        error => error.into_io("Prop lighting"),
+    })
 }
 
 fn checkpoint(control: &Control) -> io::Result<()> {

@@ -5,6 +5,7 @@ use compiler::{
     CompileContext, Control, FileIdentity, Level, LightingMode, Options, OutputLease, PhysicsMode,
     WriteReservation, compile_with_source_controlled, finalize_reflections, instances,
 };
+use source_formats::file_publication::{BoundDestination, Policy};
 use source_formats::gamefs::GameFs;
 use source_formats::vmf::Vmf;
 
@@ -96,7 +97,22 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
         return Err("output must be a .bsp file distinct from the source map".into());
     }
     options.validate()?;
-    let source_text = std::fs::read_to_string(&map)?;
+    let source = BoundDestination::capture(&map, Policy::FollowSource)?;
+    let destination = BoundDestination::capture(&path, Policy::ReplaceEntry)?;
+    let pointfile = BoundDestination::capture(&path.with_extension("lin"), Policy::ReplaceEntry)?;
+    let source_slots = source.claim_slots();
+    if [&destination, &pointfile].iter().any(|output| {
+        output
+            .claim_slots()
+            .iter()
+            .any(|slot| source_slots.contains(slot))
+    }) {
+        return Err("BSP and pointfile outputs must be distinct from the source map".into());
+    }
+    let source_bytes = source.read_existing()?.ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::NotFound, "source map is missing")
+    })?;
+    let source_text = String::from_utf8(source_bytes)?;
     let vmf = Vmf::parse(&source_text)?;
     let has_instances = instances::requires_source(&vmf);
     let guarded = options.requires_guarded_publication_for(&vmf);
@@ -107,7 +123,9 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
         .then(|| FileIdentity::capture(&map, control))
         .transpose()?;
     let reservation = guarded
-        .then(|| WriteReservation::new(&path, control))
+        .then(|| {
+            WriteReservation::for_destinations(destination.clone(), pointfile.clone(), control)
+        })
         .transpose()?;
     let path = lease
         .as_ref()
@@ -188,6 +206,7 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
             compiler::asset_sources::capture_output_asset_source_guard(&output, &fs, control)?;
         lease.verify(control)?;
         let validate = || {
+            source.verify()?;
             if let Some(identity) = &source_identity {
                 identity.verify_metadata()?;
             }
@@ -204,7 +223,14 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
             None => false,
         }
     } else {
-        output.write_controlled(&path, control)?
+        let reservation = WriteReservation::for_destinations(destination, pointfile, control)?;
+        match output.prepare_write_reserved(reservation, control)? {
+            Some(prepared) => {
+                source.verify()?;
+                prepared.commit(control)?
+            }
+            None => false,
+        }
     };
     if !published {
         return Err("compilation failed; no BSP written".into());

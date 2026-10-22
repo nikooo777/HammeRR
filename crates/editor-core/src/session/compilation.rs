@@ -1361,6 +1361,12 @@ impl Session {
                     prop_lighting_guard,
                     static_prop_sources: result.static_prop_sources.clone(),
                     claim: result.take_artifact_claim(),
+                    output_identity: baked_build::capture_output_identity(
+                        &result.path,
+                        result.output.bsp.as_ref(),
+                        source_formats::bsp::PakLimits::default().max_bsp_bytes as u64,
+                        "Run",
+                    ),
                     face_origins: result.output.face_origins.clone(),
                     path: result.path.clone(),
                     snapshot,

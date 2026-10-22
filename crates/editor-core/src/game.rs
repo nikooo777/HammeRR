@@ -339,6 +339,12 @@ pub fn stage_map_bytes(bytes: &[u8], map: &str) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LaunchCheckpoint {
+    Progress,
+    Boundary,
+}
+
 impl Run {
     pub(crate) fn close_identity(&self) -> serde_json::Value {
         serde_json::json!({"pid": self.pid, "map": self.map, "status": self.status().label()})
@@ -365,11 +371,42 @@ impl Run {
         Self::launch_with_monitor(install, bsp, permit, checkpoint, spawn_monitor)
     }
 
+    pub(crate) fn launch_published(
+        install: &Install,
+        bsp: &Path,
+        expected: &compiler::FileIdentity,
+        permit: Option<Permit>,
+        checkpoint: impl FnMut(LaunchCheckpoint) -> Result<(), String>,
+    ) -> Result<Self, String> {
+        Self::launch_expected_with_monitor(
+            install,
+            bsp,
+            Some(expected),
+            permit,
+            checkpoint,
+            spawn_monitor,
+        )
+    }
+
     fn launch_with_monitor(
         install: &Install,
         bsp: &Path,
         permit: Option<Permit>,
         mut checkpoint: impl FnMut() -> Result<(), String>,
+        monitor: impl FnOnce(
+            Arc<Mutex<Process>>,
+            Arc<Mutex<Status>>,
+        ) -> std::io::Result<std::thread::JoinHandle<()>>,
+    ) -> Result<Self, String> {
+        Self::launch_expected_with_monitor(install, bsp, None, permit, |_| checkpoint(), monitor)
+    }
+
+    fn launch_expected_with_monitor(
+        install: &Install,
+        bsp: &Path,
+        expected: Option<&compiler::FileIdentity>,
+        permit: Option<Permit>,
+        mut checkpoint: impl FnMut(LaunchCheckpoint) -> Result<(), String>,
         monitor: impl FnOnce(
             Arc<Mutex<Process>>,
             Arc<Mutex<Status>>,
@@ -381,7 +418,14 @@ impl Run {
             permit,
             cleanup: None,
         };
-        let result = Self::launch_prepared(install, bsp, &mut startup, &mut checkpoint, monitor);
+        let result = Self::launch_prepared(
+            install,
+            bsp,
+            expected,
+            &mut startup,
+            &mut checkpoint,
+            monitor,
+        );
         match result {
             Ok(run) => Ok(run),
             Err(error) => match startup.cleanup() {
@@ -399,23 +443,34 @@ impl Run {
     fn launch_prepared(
         install: &Install,
         bsp: &Path,
+        expected: Option<&compiler::FileIdentity>,
         startup: &mut Startup,
-        checkpoint: &mut impl FnMut() -> Result<(), String>,
+        checkpoint: &mut impl FnMut(LaunchCheckpoint) -> Result<(), String>,
         monitor: impl FnOnce(
             Arc<Mutex<Process>>,
             Arc<Mutex<Status>>,
         ) -> std::io::Result<std::thread::JoinHandle<()>>,
     ) -> Result<Self, String> {
-        checkpoint()?;
+        checkpoint(LaunchCheckpoint::Progress)?;
         install.verify()?;
         let source =
             crate::bounded_file::Source::capture(bsp, PakLimits::default().max_bsp_bytes as u64)
                 .map_err(|error| format!("{}: {error}", bsp.display()))?;
         let bytes = source
-            .read_controlled(|| checkpoint().map_err(std::io::Error::other))
+            .read_controlled(|| {
+                checkpoint(LaunchCheckpoint::Progress).map_err(std::io::Error::other)
+            })
             .map_err(|error| format!("{}: {error}", bsp.display()))?;
+        if let Some(expected) = expected {
+            expected.verify_bytes(&bytes).map_err(|error| {
+                format!("Compiled BSP bytes changed; compile again before launching: {error}")
+            })?;
+            expected.verify_metadata().map_err(|error| {
+                format!("Compiled BSP changed; compile again before launching: {error}")
+            })?;
+        }
         Bsp::parse(&bytes).map_err(|e| format!("{}: {e}", bsp.display()))?;
-        checkpoint()?;
+        checkpoint(LaunchCheckpoint::Progress)?;
         let maps = install.game.join("maps");
         std::fs::create_dir_all(&maps).map_err(|e| e.to_string())?;
         startup.map = Some(temporary(&maps, "hammerr_", ".bsp")?);
@@ -427,7 +482,7 @@ impl Run {
             .ok_or("invalid temporary map filename")?
             .to_owned();
         let bytes = stage_map_bytes(&bytes, &map)?;
-        checkpoint()?;
+        checkpoint(LaunchCheckpoint::Progress)?;
         map_file.write_all(&bytes).map_err(|e| e.to_string())?;
         map_file.flush().map_err(|e| e.to_string())?;
         let console = Arc::new(temporary(&install.game, "hammerr_console_", ".log")?);
@@ -441,7 +496,7 @@ impl Run {
             library_paths.extend(std::env::split_paths(&paths));
         }
         let libraries = std::env::join_paths(library_paths).map_err(|e| e.to_string())?;
-        checkpoint()?;
+        checkpoint(LaunchCheckpoint::Boundary)?;
         install.verify()?;
         let child = Command::new(&install.executable)
             .current_dir(&install.root)

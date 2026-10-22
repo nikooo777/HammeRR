@@ -30,6 +30,8 @@ pub mod baked_prop_vertices;
 mod buffer_replacement;
 mod document_close;
 #[cfg(test)]
+mod launch_custody_tests;
+#[cfg(test)]
 mod launch_origin_tests;
 mod save_all;
 pub use buffer_replacement::BufferReplacementReview;
@@ -157,6 +159,7 @@ struct Snapshot {
 
 struct CompiledMap {
     claim: Option<crate::path_claims::Claim>,
+    output_identity: Result<compiler::FileIdentity, String>,
     face_origins: Result<std::sync::Arc<compiler::face_origins::FaceOrigins>, String>,
     path: PathBuf,
     snapshot: Snapshot,
@@ -356,6 +359,7 @@ pub struct LaunchRequest {
     before_checkpoint: Option<Box<dyn FnMut() + Send>>,
     native: Option<crate::runtime::native_activity::Permit>,
     artifact_claim: Option<crate::path_claims::Claim>,
+    output_identity: compiler::FileIdentity,
     origin: LaunchOrigin,
     install: game::Install,
     bsp: PathBuf,
@@ -425,8 +429,17 @@ impl LaunchRequest {
     }
 
     fn verify_instance_dependencies(&self) -> Result<(), String> {
+        self.check_instance_dependencies(true)
+    }
+
+    fn check_instance_dependencies(&self, full: bool) -> Result<(), String> {
         if let Some(dependencies) = &self.instance_dependencies {
-            dependencies.verify(&compiler::Control::default()).map_err(|error|format!("Instance source/dependencies changed since compilation; compile again before launching: {error}"))?;
+            let result = if full {
+                dependencies.verify(&compiler::Control::default())
+            } else {
+                dependencies.verify_metadata()
+            };
+            result.map_err(|error|format!("Instance source/dependencies changed since compilation; compile again before launching: {error}"))?;
         }
         Ok(())
     }
@@ -436,34 +449,53 @@ impl LaunchRequest {
             .verify_static_prop_sources(self.static_prop_sources.as_ref())
     }
 
+    fn checkpoint(&self, phase: game::LaunchCheckpoint) -> Result<(), String> {
+        if self.origin.cancelled() {
+            return Err("game launch cancelled".into());
+        }
+        if let Some(claim) = &self.artifact_claim {
+            claim.destination().verify().map_err(|error| {
+                format!("Compiled output binding changed; compile again before launching: {error}")
+            })?;
+        }
+        self.output_identity.verify_metadata().map_err(|error| {
+            format!("Compiled BSP changed; compile again before launching: {error}")
+        })?;
+        if phase == game::LaunchCheckpoint::Boundary {
+            self.verify_instance_dependencies()?;
+        } else {
+            self.check_instance_dependencies(false)?;
+        }
+        self.verify_static_prop_sources()?;
+        if self.origin.cancelled() {
+            return Err("game launch cancelled".into());
+        }
+        Ok(())
+    }
+
     pub fn run(self) -> Result<game::Run, String> {
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.run_inner()))
             .unwrap_or_else(|_| Err("game launch panicked".into()))
     }
 
     fn run_inner(mut self) -> Result<game::Run, String> {
-        if let Some(claim) = &self.artifact_claim {
-            claim.destination().verify().map_err(|error| {
-                format!("Compiled output binding changed; compile again before launching: {error}")
-            })?;
-        }
-        self.verify_instance_dependencies()?;
-        self.verify_static_prop_sources()?;
-        let origin = &self.origin;
-        let sources = self.static_prop_sources.as_ref();
+        self.checkpoint(game::LaunchCheckpoint::Boundary)?;
+        let native = self.native.take();
         #[cfg(test)]
         let mut before_checkpoint = self.before_checkpoint.take();
-        game::Run::launch_admitted(&self.install, &self.bsp, self.native.take(), || {
-            #[cfg(test)]
-            if let Some(hook) = &mut before_checkpoint {
-                hook();
-            }
-            if origin.cancelled() {
-                Err("game launch cancelled".into())
-            } else {
-                origin.verify_static_prop_sources(sources)
-            }
-        })
+        game::Run::launch_published(
+            &self.install,
+            &self.bsp,
+            &self.output_identity,
+            native,
+            |phase| {
+                #[cfg(test)]
+                if let Some(hook) = &mut before_checkpoint {
+                    hook();
+                }
+                self.checkpoint(phase)
+            },
+        )
     }
 }
 
@@ -1513,7 +1545,7 @@ impl Session {
         path: &Path,
         discard_changes: bool,
     ) -> Result<String, String> {
-        self.open_inner(actor, path, discard_changes, true)
+        self.open_inner(actor, path, discard_changes, true, None)
     }
 
     pub(crate) fn open_workspace_candidate(
@@ -1521,7 +1553,7 @@ impl Session {
         actor: Actor,
         path: &Path,
     ) -> Result<String, String> {
-        self.open_inner(actor, path, true, false)
+        self.open_inner(actor, path, true, false, None)
     }
 
     fn open_inner(
@@ -1530,6 +1562,7 @@ impl Session {
         path: &Path,
         discard_changes: bool,
         remember: bool,
+        expected_physical: Option<&Path>,
     ) -> Result<String, String> {
         self.ensure_discardable(discard_changes)?;
         let start = Instant::now();
@@ -1538,6 +1571,9 @@ impl Session {
             source_formats::file_publication::Policy::FollowSource,
         )
         .map_err(|error| format!("{}: {error}", path.display()))?;
+        if expected_physical.is_some_and(|expected| destination.physical_path() != expected) {
+            return Err("Recent map alias changed its destination; open the intended map explicitly before remembering it again".into());
+        }
         let recovery_path = recovery::PathMetadata::from_destination(&destination)?;
         let claim = self.file_claims.source(destination.clone())?;
         let bytes = destination
@@ -2206,6 +2242,18 @@ impl Session {
                 format!("Compiled output binding changed; compile again before launching: {error}")
             })?;
         }
+        compiled
+            .output_identity
+            .as_ref()
+            .map_err(|error| {
+                format!(
+                    "Compiled BSP identity is unavailable; compile again before launching: {error}"
+                )
+            })?
+            .verify_metadata()
+            .map_err(|error| {
+                format!("Compiled BSP changed; compile again before launching: {error}")
+            })?;
         if !compiled.path.is_file() {
             return Err("the compiled BSP is missing; compile the map again".into());
         }
@@ -2261,6 +2309,14 @@ impl Session {
                 .compiled
                 .as_ref()
                 .and_then(|compiled| compiled.claim.clone()),
+            output_identity: self
+                .compiled
+                .as_ref()
+                .ok_or("compile the map before launching CS:S")?
+                .output_identity
+                .as_ref()
+                .map_err(|error| format!("Compiled BSP identity is unavailable: {error}"))?
+                .clone(),
             origin,
             install,
             bsp,

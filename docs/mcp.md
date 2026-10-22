@@ -2101,11 +2101,16 @@ Accepted inputs are bounded static MDL 44/48, unit scale, body 0/root LOD 0 and
 one bodypart/model, with matching original VVD/DX90 VTX and required PHY. Every
 declared material across skins and LODs must resolve to a plain opaque
 `VertexLitGeneric` VMT with exactly one canonical `$basetexture`, directly or
-through include-only Patch materials. Each Patch contains exactly one `include`
-with a canonical lowercase full `materials/...vmt` path; chains allow at most
-eight include edges. All original VMT bytes remain in the PAK and source guard.
-Insert/replace blocks, proxies and additional parameters reject. The terminal
-texture must be a complete supported static VTF 7.0–7.4 with one frame, one face and depth one. VTF 7.5,
+through include-only Patch chains of at most eight include edges. Each Patch
+contains exactly one `include` with a canonical lowercase full
+`materials/...vmt` path. A single Patch directly including that plain terminal may
+also contain exactly one `insert` or `replace` block with only one `$basetexture`.
+That key must already exist in the terminal; both operations overwrite its value.
+All original VMTs and both base and replacement VTFs remain byte-for-byte in the
+PAK and source guard, including the overridden base texture. Nested edited chains,
+combined or repeated edit sections, proxies, extra material parameters and
+`$envmap` reject. Every declared texture must be a complete supported static VTF
+7.0–7.4 with one frame, one face and depth one. VTF 7.5,
 animated, cubemap and volume forms reject. PHY is consumed only if an
 emitted use has VPhysics collision; unused PHY remains outside the source guard.
 Included models, external/nontrivial animation, extended aliases, unsupported

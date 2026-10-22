@@ -37,6 +37,7 @@ pub(super) fn logical_path(name: &str, extension: &str) -> io::Result<String> {
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum Dependency {
     Include(String),
+    EditedInclude { include: String, texture: String },
     Texture(String),
 }
 
@@ -48,7 +49,7 @@ pub(super) fn dependency(path: &str, bytes: &[u8]) -> io::Result<Dependency> {
     }
     let text = std::str::from_utf8(bytes)
         .map_err(|_| invalid(format!("Static-prop material is not UTF-8: {path}")))?;
-    let nodes = keyvalues::parse_static_material_bounded(text, 2, 3)
+    let nodes = keyvalues::parse_static_material_bounded(text, 2, 4)
         .map_err(|error| invalid(format!("Unsupported static-prop material {path}: {error}")))?;
     let [root] = nodes.as_slice() else {
         return Err(invalid(format!(
@@ -60,18 +61,52 @@ pub(super) fn dependency(path: &str, bytes: &[u8]) -> io::Result<Dependency> {
             "Static-prop material requires a shader block: {path}"
         )));
     };
-    let [parameter] = children else {
-        return Err(invalid(format!(
-            "Static-prop material requires only one $basetexture or Patch include: {path}"
-        )));
-    };
     let patch = root.key.eq_ignore_ascii_case("Patch");
-    let key = if patch { "include" } else { "$basetexture" };
-    if (!patch && !root.key.eq_ignore_ascii_case("VertexLitGeneric"))
-        || !parameter.key.eq_ignore_ascii_case(key)
-    {
+    if !patch && !root.key.eq_ignore_ascii_case("VertexLitGeneric") {
         return Err(invalid(format!(
-            "Static-prop material supports only plain VertexLitGeneric or include-only Patch: {path}"
+            "Unsupported static-prop material {path}: requires VertexLitGeneric or Patch"
+        )));
+    }
+    let (parameter, edit) = match children {
+        [parameter] => (parameter, None),
+        [first, second] if patch => {
+            let (parameter, section) = if first.key.eq_ignore_ascii_case("include") {
+                (first, second)
+            } else {
+                (second, first)
+            };
+            if !section.key.eq_ignore_ascii_case("insert")
+                && !section.key.eq_ignore_ascii_case("replace")
+            {
+                return Err(invalid(format!(
+                    "Unsupported static-prop material {path}: requires one insert or replace block"
+                )));
+            }
+            let Some([texture]) = section.children() else {
+                return Err(invalid(format!(
+                    "Unsupported static-prop material {path}: Patch edit requires one scalar $basetexture"
+                )));
+            };
+            let reference = texture
+                .as_str()
+                .filter(|_| texture.key.eq_ignore_ascii_case("$basetexture"))
+                .ok_or_else(|| {
+                    invalid(format!(
+                        "Unsupported static-prop material {path}: Patch edit requires one scalar $basetexture"
+                    ))
+                })?;
+            (parameter, Some((section, reference)))
+        }
+        _ => {
+            return Err(invalid(format!(
+                "Unsupported static-prop material {path}: requires one $basetexture or Patch include with at most one edit"
+            )));
+        }
+    };
+    let key = if patch { "include" } else { "$basetexture" };
+    if !parameter.key.eq_ignore_ascii_case(key) {
+        return Err(invalid(format!(
+            "Unsupported static-prop material {path}: requires one scalar {key}"
         )));
     }
     let reference = parameter.as_str().ok_or_else(|| {
@@ -82,9 +117,13 @@ pub(super) fn dependency(path: &str, bytes: &[u8]) -> io::Result<Dependency> {
     let parsed = Material::parse(text)
         .map_err(|error| invalid(format!("Invalid static-prop material {path}: {error}")))?;
     let shader = if patch { "patch" } else { "vertexlitgeneric" };
+    let blocks_agree = match edit {
+        Some((section, _)) => parsed.blocks.as_slice() == std::slice::from_ref(section),
+        None => parsed.blocks.is_empty(),
+    };
     if parsed.shader != shader
         || parsed.params.len() != 1
-        || !parsed.blocks.is_empty()
+        || !blocks_agree
         || parsed.params[0] != (key.into(), reference.into())
     {
         return Err(invalid(format!(
@@ -100,7 +139,15 @@ pub(super) fn dependency(path: &str, bytes: &[u8]) -> io::Result<Dependency> {
                     "Static-prop Patch include must use a canonical materials/...vmt path: {path}"
                 ))
             })?;
-        Ok(Dependency::Include(logical_path(name, "vmt")?))
+        let include = logical_path(name, "vmt")?;
+        if let Some((_, reference)) = edit {
+            Ok(Dependency::EditedInclude {
+                include,
+                texture: logical_path(reference, "vtf")?,
+            })
+        } else {
+            Ok(Dependency::Include(include))
+        }
     } else {
         Ok(Dependency::Texture(logical_path(reference, "vtf")?))
     }

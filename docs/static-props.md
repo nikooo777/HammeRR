@@ -47,19 +47,25 @@ Limits: unit-scale static MDL 44/48 models with body 0, root LOD 0 and one
 bodypart/model. Original MDL, VVD and DX90 VTX files must agree. Every declared
 material, including other skins and draw LODs, must resolve to a plain opaque
 **VertexLitGeneric** VMT containing only one canonical `$basetexture`, directly
-or through include-only **Patch** materials. Each Patch contains only one
-`include` with a canonical lowercase full path such as
-`materials/models/props/cabinet_base.vmt`. Up to eight include edges are supported;
-the BSP retains every original VMT and VTF byte. The terminal texture must be a
-complete supported VTF 7.0–7.4 containing one frame, one face and depth one. VTF 7.5,
+or through include-only **Patch** chains of up to eight include edges. Each Patch
+contains exactly one `include` with a canonical lowercase full path such as
+`materials/models/props/cabinet_base.vmt`.
+
+A single Patch directly including that plain terminal may also contain one
+`insert` or `replace` block containing only one `$basetexture`. The key must
+already exist in the terminal; either operation overwrites its value. The BSP
+packs every original VMT and both the terminal and replacement VTFs with their
+original bytes, including the overridden base texture. Every declared texture
+must be a complete supported VTF 7.0–7.4 containing one frame, one face and depth
+one. VTF 7.5,
 animated, cubemap and volume textures are unsupported. The matching original PHY
 is included only when an emitted use needs **Collisions → Use VPhysics**;
 **Not Solid** and **Use Bounding Box** leave an unused PHY unread.
 
 Included models, external or nontrivial animation, attachments, flexes, eye
-forms, LOD material replacements, material proxies/conditions, Patch insert or
-replace blocks, additional
-texture parameters and unsupported textures reject packing. Metadata must be
+forms, LOD material replacements, material proxies/conditions, nested edited
+Patch chains, combined or repeated edit sections, extra material parameters
+(including `$envmap`) and unsupported textures reject packing. Metadata must be
 empty or exactly the supported `Metal.Medium` prop-data declaration. Standard
 installed CS:S shaders and surface/prop-data definitions, plus DX90 or newer,
 remain runtime requirements. Authored DX visibility bounds are preserved.

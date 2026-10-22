@@ -83,6 +83,17 @@ surface definitions, stops the build and preserves the previous BSP.
 An incomplete or inconsistent world collision body, fluid controller or surface
 material table stops the build and preserves the previous BSP.
 
+## Stationary invisible water
+
+Create up to two separate nodraw cuboids through the
+[stationary invisible water](water.md#stationary-invisible-water) workflow.
+Each volume has its own inline model and nonempty collision body. Both require
+**Physics bodies → CS:S engine physics** and dry, conservatively disjoint space.
+
+Touching or overlapping volumes, other retained WATER/SLIME geometry, authored
+world current/damping, movement, parenting and rendered surfaces are unsupported.
+A failed ownership, body or contents check stops publication.
+
 ## Physical water current
 
 Supported structural-world water can carry a map-wide steady velocity for

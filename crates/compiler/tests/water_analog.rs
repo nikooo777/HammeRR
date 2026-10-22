@@ -409,25 +409,72 @@ fn region_omitted_carrier_does_not_require_engine_physics() {
 }
 
 #[test]
-fn multiple_carriers_are_rejected_before_native_work() {
+fn third_retained_carrier_is_rejected_before_native_work() {
     let (_directory, game) = game();
     let (mut vmf, id) = fixture();
-    let mut second = vmf
+    let template = vmf
         .entities
         .iter()
         .find(|entity| entity.id == id)
         .unwrap()
         .clone();
-    second.id += 1000;
-    for solid in &mut second.solids {
-        solid.id += 1000;
-        for side in &mut solid.sides {
-            side.id += 1000;
+    for index in 1..=2 {
+        let mut entity = template.clone();
+        entity.id += index * 1000;
+        for solid in &mut entity.solids {
+            solid.id += index * 1000;
+            for side in &mut solid.sides {
+                side.id += index * 1000;
+            }
         }
+        edit::translate_entity(&mut entity, DVec3::X * f64::from(index * 80), true);
+        vmf.entities.push(entity);
     }
-    let id = second.id;
-    vmf.entities.push(second);
-    refuses(&vmf, &game, id, PhysicsMode::Engine, "only one retained");
+    refuses(
+        &vmf,
+        &game,
+        template.id + 2000,
+        PhysicsMode::Engine,
+        "at most 2 retained",
+    );
+}
+
+#[test]
+fn stationary_carriers_refuse_other_liquids_and_authored_world_water_controls() {
+    let (_directory, game) = game();
+    for (key, value) in [
+        (compiler::WATER_CURRENT_VELOCITY_KEY, "0 0 0"),
+        (compiler::WATER_DAMPING_KEY, "0"),
+    ] {
+        let (mut vmf, id) = fixture();
+        vmf.world.properties.set(key, value);
+        refuses(
+            &vmf,
+            &game,
+            id,
+            PhysicsMode::Engine,
+            "authored world water current or damping",
+        );
+    }
+    let (vmf, id) = fixture();
+    let mut document = Document::new(vmf);
+    document
+        .edit("separate world water", |tx| {
+            edit::create_block(
+                tx,
+                DVec3::new(-160.0, -160.0, 16.0),
+                DVec3::new(-96.0, -96.0, 48.0),
+                "water",
+            )
+        })
+        .unwrap();
+    refuses(
+        document.vmf(),
+        &game,
+        id,
+        PhysicsMode::Engine,
+        "other WATER or SLIME brush geometry",
+    );
 }
 
 fn installed_game() -> PathBuf {

@@ -179,7 +179,7 @@ Limits: structural-world water with a visible horizontal top; inward faces cover
 
 ## Stationary invisible water
 
-Create one submerged volume without a rendered water surface.
+Create up to two separate submerged volumes without rendered water surfaces.
 
 1. Use **Draw brush** or **Add brush** to make one axis-aligned box in dry,
    open space inside a sealed room. Leave a gap from other brushes and terrain.
@@ -188,14 +188,16 @@ Create one submerged volume without a rendered water surface.
 3. Enter `func_water_analog` in **Classname (custom classes are supported)** and
    click **Tie selected brushes to entity**. Creation sets the origin to the
    selected box's center and initializes zero rotation, start position and flags.
-4. Open **Build settings…**, choose **Physics bodies → CS:S engine physics**,
+4. For a second volume, repeat steps 1–3. Keep a gap between both volumes and
+   other geometry; do not combine them into one entity.
+5. Open **Build settings…**, choose **Physics bodies → CS:S engine physics**,
    click **Close**, then **Compile** or **Run Map**. Read entity-owned errors in
    **Build details… → Diagnostics** if the build is refused.
 
 ![Material browser for choosing the volume's nodraw material](images/material-browser.png)
 
-Limits: one retained entity with one closed, six-sided cuboid and one uniform,
-mounted ordinary solid nodraw material. Imported entities need an explicit
+Limits: at most two retained root entities, each with one closed, six-sided
+cuboid and one uniform, mounted ordinary solid nodraw material. Imported entities need an explicit
 finite origin. Rotation, start position and flags must be zero; omitted values
 use zero. Empty entities, multiple brushes, terrain, origin brushes, hidden
 children and outputs are unsupported. Only the class, origin, stationary pose/flags,
@@ -206,8 +208,9 @@ must occupy dry open world space. Hidden or region-omitted entities are excluded
 The volume has no rendered surface, fog, reflections, player current or per-pool
 pressure/current controls. Keep it stationary and unparented. Runtime movement,
 parenting, scripted changes, removal and save/restore are unsupported. This
-volume does not satisfy the structural-world-water requirement of the separate
-world current and damping settings. Unsupported variants fail compilation and
+volume cannot be combined with retained WATER or SLIME brush geometry or
+authored world current/damping settings, including explicitly stored zero.
+Hidden and region-omitted volumes and liquids remain excluded. Unsupported variants fail compilation and
 preserve previous output; importing and editing them remains available.
 
 MCP uses the same `create_block`, `tie_to_entity`, `set_entity_properties`,

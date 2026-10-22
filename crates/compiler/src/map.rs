@@ -173,7 +173,7 @@ pub struct Map<'a> {
     pub(crate) water_bottom_texinfos: HashMap<usize, usize>,
     pub(crate) water_current: Option<[f32; 3]>,
     pub(crate) water_damping: Option<f32>,
-    pub(crate) water_analog: Option<crate::water_analog::Carrier>,
+    pub(crate) water_analogs: Vec<crate::water_analog::Carrier>,
     pub brushes: Vec<MapBrush>,
     /// Entity 0 is worldspawn.
     pub entities: Vec<MapEntity>,
@@ -222,7 +222,7 @@ impl<'a> Map<'a> {
             water_bottom_texinfos: HashMap::new(),
             water_current: None,
             water_damping: None,
-            water_analog: None,
+            water_analogs: Vec::new(),
             brushes: Vec::new(),
             entities: Vec::new(),
             cubemaps: Vec::new(),

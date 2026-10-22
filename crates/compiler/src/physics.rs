@@ -514,10 +514,12 @@ fn plan(
     if request.surface_data.is_empty() && request.models.iter().any(|model| model.index > 0) {
         request.surface_data = surface_data::load(fs, control)?;
     }
-    if let Some(index) = crate::water_analog::model_index(map, models)? {
-        let carrier = map
-            .water_analog
-            .ok_or("Stationary water carrier is missing")?;
+    for &carrier in &map.water_analogs {
+        let index = crate::water_analog::model_index(carrier, models).inspect_err(|message| {
+            report
+                .diagnostics
+                .push(crate::water_analog::error(map, carrier, message));
+        })?;
         let actual = request.models.iter().find(|model| model.index == index);
         let valid = actual.is_some_and(|model| {
             let [body] = model.bodies.as_slice() else {
@@ -1079,9 +1081,10 @@ pub(crate) fn bake(
                     .ok_or_else(|| format!("Physics worker solid is missing {key}"))
             };
             let property = field("surfaceprop")?;
-            if map
-                .water_analog
-                .is_some_and(|carrier| carrier.entity == models[actual.index].entity)
+            if let Some(&carrier) = map
+                .water_analogs
+                .iter()
+                .find(|carrier| carrier.entity == models[actual.index].entity)
                 && (fields
                     .iter()
                     .filter(|field| field.key.eq_ignore_ascii_case("index"))
@@ -1089,9 +1092,6 @@ pub(crate) fn bake(
                     != 1
                     || field("index")? != "0")
             {
-                let carrier = map
-                    .water_analog
-                    .ok_or("Stationary water carrier is missing")?;
                 report.diagnostics.push(crate::water_analog::error(
                     map,
                     carrier,

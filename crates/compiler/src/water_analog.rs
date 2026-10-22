@@ -18,6 +18,7 @@ pub const WATER_ANALOG_DEFAULTS: [(&str, &str); 3] = [
 
 const GEOMETRY_EPSILON: f64 = 1e-6;
 const MAX_FIELD_BYTES: usize = 128;
+const MAX_CARRIERS: usize = 2;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Carrier {
@@ -179,8 +180,10 @@ pub(crate) fn admit_source(entity: &Entity, report: &mut Report) -> bool {
 pub(crate) fn admit_carrier(map: &mut Map, entity: usize, report: &mut Report) {
     let owner = &map.entities[entity];
     let result: Result<Carrier, String> = (|| {
-        if map.water_analog.is_some() {
-            return Err("only one retained stationary water volume is supported".into());
+        if map.water_analogs.len() >= MAX_CARRIERS {
+            return Err(format!(
+                "at most {MAX_CARRIERS} retained stationary water volumes are supported"
+            ));
         }
         let &[brush] = owner.brushes.as_slice() else {
             return Err("one compiled ordinary SOLID cuboid is required".into());
@@ -218,7 +221,7 @@ pub(crate) fn admit_carrier(map: &mut Map, entity: usize, report: &mut Report) {
         Ok(Carrier { entity, brush })
     })();
     match result {
-        Ok(carrier) => map.water_analog = Some(carrier),
+        Ok(carrier) => map.water_analogs.push(carrier),
         Err(message) => report
             .diagnostics
             .push(diagnostic(owner.id, owner.origin, message)),
@@ -226,12 +229,19 @@ pub(crate) fn admit_carrier(map: &mut Map, entity: usize, report: &mut Report) {
 }
 
 pub(crate) fn admit_mode(map: &Map, physics: PhysicsMode, report: &mut Report) {
-    if let Some(carrier) = map.water_analog
-        && physics != PhysicsMode::Engine
-    {
-        report
-            .diagnostics
-            .push(error(map, carrier, "CS:S engine physics is required"));
+    for &carrier in &map.water_analogs {
+        if physics != PhysicsMode::Engine {
+            report
+                .diagnostics
+                .push(error(map, carrier, "CS:S engine physics is required"));
+        }
+        if map.water_current.is_some() || map.water_damping.is_some() {
+            report.diagnostics.push(error(
+                map,
+                carrier,
+                "authored world water current or damping cannot be combined with stationary water volumes",
+            ));
+        }
     }
 }
 
@@ -259,9 +269,20 @@ pub(crate) fn admit_world(
     report: &mut Report,
     control: &Control,
 ) -> Result<(), String> {
-    let Some(carrier) = map.water_analog else {
-        return Ok(());
-    };
+    for &carrier in &map.water_analogs {
+        control.checkpoint()?;
+        admit_carrier_world(map, carrier, tree, report, control)?;
+    }
+    Ok(())
+}
+
+fn admit_carrier_world(
+    map: &Map,
+    carrier: Carrier,
+    tree: &crate::tree::Tree,
+    report: &mut Report,
+    control: &Control,
+) -> Result<(), String> {
     let brush = &map.brushes[carrier.brush];
     let Some(origin) = map.entities[carrier.entity].origin else {
         report.diagnostics.push(error(
@@ -290,6 +311,17 @@ pub(crate) fn admit_world(
         control.checkpoint()?;
         if index == carrier.brush {
             continue;
+        }
+        if other.contents & (contents::WATER | contents::SLIME) != 0 {
+            report.diagnostics.push(error(
+                map,
+                carrier,
+                format!(
+                    "other WATER or SLIME brush geometry solid:{} cannot be combined with stationary water volumes",
+                    other.id
+                ),
+            ));
+            return Ok(());
         }
         let other_bounds = if other.entity == 0 {
             conservative_bounds(
@@ -385,50 +417,67 @@ pub(crate) fn admit_world(
     Ok(())
 }
 
-pub(crate) fn model_index(map: &Map, models: &[Model]) -> Result<Option<usize>, String> {
-    let Some(carrier) = map.water_analog else {
-        return Ok(None);
-    };
-    models
+pub(crate) fn model_index(carrier: Carrier, models: &[Model]) -> Result<usize, String> {
+    let mut indices = models
         .iter()
-        .position(|model| model.entity == carrier.entity)
-        .filter(|&index| index != 0)
-        .map(Some)
-        .ok_or_else(|| "stationary water volume is missing its inline model".into())
+        .enumerate()
+        .filter(|(_, model)| model.entity == carrier.entity);
+    let (index, _) = indices
+        .next()
+        .ok_or("stationary water volume is missing its inline model")?;
+    if index == 0 || indices.next().is_some() {
+        return Err(
+            "stationary water volume requires one uniquely owned non-world inline model".into(),
+        );
+    }
+    Ok(index)
 }
 
 pub(crate) fn admit_models(map: &Map, models: &[Model], report: &mut Report) {
-    let Some(carrier) = map.water_analog else {
-        return;
-    };
-    let result = model_index(map, models).and_then(|index| {
-        let model = &models[index.ok_or("stationary water volume has no model")?];
-        if !model.faces.is_empty() { return Err("stationary water volume must have no rendered faces".into()); }
-        let mut occupied = Vec::new();
-        for index in model.tree.preorder() {
-            let node = &model.tree.nodes[index];
-            if node.split.is_some() { continue; }
-            if node.contents == contents::SOLID && node.brushes == [carrier.brush] {
-                occupied.push(index);
-            } else if node.contents != contents::EMPTY || !node.brushes.is_empty() {
-                return Err("stationary water volume requires uniquely owned ordinary solid interior and empty exterior leaves".into());
-            }
+    for &carrier in &map.water_analogs {
+        if let Err(message) = check_model(map, carrier, models) {
+            report.diagnostics.push(error(map, carrier, message));
         }
-        if occupied.len() != 1 { return Err("stationary water volume requires exactly one occupied inline leaf".into()); }
-        if model.tree.brush_leaves(&map.brushes[carrier.brush], &map.planes) != occupied {
-            return Err("stationary water brush references must belong only to its occupied inline leaf".into());
-        }
-        Ok(())
-    });
-    if let Err(message) = result {
-        report.diagnostics.push(error(map, carrier, message));
     }
+}
+
+fn check_model(map: &Map, carrier: Carrier, models: &[Model]) -> Result<(), String> {
+    let model = &models[model_index(carrier, models)?];
+    if !model.faces.is_empty() {
+        return Err("stationary water volume must have no rendered faces".into());
+    }
+    let mut occupied = Vec::new();
+    for index in model.tree.preorder() {
+        let node = &model.tree.nodes[index];
+        if node.split.is_some() {
+            continue;
+        }
+        if node.contents == contents::SOLID && node.brushes == [carrier.brush] {
+            occupied.push(index);
+        } else if node.contents != contents::EMPTY || !node.brushes.is_empty() {
+            return Err("stationary water volume requires uniquely owned ordinary solid interior and empty exterior leaves".into());
+        }
+    }
+    if occupied.len() != 1 {
+        return Err("stationary water volume requires exactly one occupied inline leaf".into());
+    }
+    if model
+        .tree
+        .brush_leaves(&map.brushes[carrier.brush], &map.planes)
+        != occupied
+    {
+        return Err(
+            "stationary water brush references must belong only to its occupied inline leaf".into(),
+        );
+    }
+    Ok(())
 }
 
 pub(crate) fn leaf_contents(map: &Map, entity: usize, contents: i32) -> i32 {
     if map
-        .water_analog
-        .is_some_and(|carrier| carrier.entity == entity)
+        .water_analogs
+        .iter()
+        .any(|carrier| carrier.entity == entity)
         && contents == contents::SOLID
     {
         contents::WATER
@@ -439,8 +488,9 @@ pub(crate) fn leaf_contents(map: &Map, entity: usize, contents: i32) -> i32 {
 
 pub(crate) fn brush_contents(map: &Map, brush: usize, contents: i32) -> i32 {
     if map
-        .water_analog
-        .is_some_and(|carrier| carrier.brush == brush)
+        .water_analogs
+        .iter()
+        .any(|carrier| carrier.brush == brush)
     {
         contents::WATER
     } else {
@@ -451,6 +501,34 @@ pub(crate) fn brush_contents(map: &Map, brush: usize, contents: i32) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn model(entity: usize) -> Model {
+        Model {
+            entity,
+            tree: crate::tree::Tree { nodes: Vec::new() },
+            faces: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn carrier_models_require_unique_non_world_owners() {
+        let mut models = vec![model(0), model(7), model(3), model(11)];
+        let first = Carrier {
+            entity: 3,
+            brush: 14,
+        };
+        let second = Carrier {
+            entity: 11,
+            brush: 8,
+        };
+        assert_eq!(model_index(first, &models), Ok(2));
+        assert_eq!(model_index(second, &models), Ok(3));
+        assert!(model_index(Carrier { entity: 9, ..first }, &models).is_err());
+        assert!(model_index(Carrier { entity: 0, ..first }, &models).is_err());
+        models.push(model(first.entity));
+        assert!(model_index(first, &models).is_err());
+        assert_eq!(model_index(second, &models), Ok(3));
+    }
 
     #[test]
     fn native_offset_rounding_cannot_turn_a_source_gap_into_unchecked_contact() {

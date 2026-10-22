@@ -1,0 +1,16 @@
+[package]
+name = "editor-app-ui"
+version = "0.1.0"
+description = "Generated Slint bindings for the HammeRR editor windows"
+edition.workspace = true
+rust-version.workspace = true
+
+[lib]
+test = false
+doctest = false
+
+[dependencies]
+slint.workspace = true
+
+[build-dependencies]
+slint-build = "1.18"

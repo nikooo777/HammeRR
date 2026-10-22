@@ -16,7 +16,7 @@ for argument in "$@"; do
 done
 
 case "$crate_name" in
-    editor_ui|editor_core|editor|compiler|render|map_core|source_formats|native_runtime)
+    editor_app_ui|editor_build_ui|editor_core|editor|compiler|render|map_core|source_formats|native_runtime)
         script_path="$(realpath -- "$0")"
         exec flock --no-fork "${script_path%/*}/../target/hammerr-rustc-heavy.lock" "$@"
         ;;

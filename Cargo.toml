@@ -34,6 +34,26 @@ opt-level = 0
 debug = 0
 incremental = false
 
+[profile.dev.package.editor-app-ui]
+opt-level = 0
+debug = 0
+incremental = false
+
+[profile.test.package.editor-app-ui]
+opt-level = 0
+debug = 0
+incremental = false
+
+[profile.dev.package.editor-build-ui]
+opt-level = 0
+debug = 0
+incremental = false
+
+[profile.test.package.editor-build-ui]
+opt-level = 0
+debug = 0
+incremental = false
+
 [profile.dev.package.editor-core]
 debug = "line-tables-only"
 incremental = false
@@ -52,4 +72,10 @@ debug = "line-tables-only"
 debug = "line-tables-only"
 
 [profile.test.package.render]
+debug = "line-tables-only"
+
+[profile.dev.package.editor]
+debug = "line-tables-only"
+
+[profile.test.package.editor]
 debug = "line-tables-only"

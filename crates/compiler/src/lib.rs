@@ -1397,6 +1397,7 @@ fn build(
         revision,
         control,
         face_origins,
+        &mut output.report,
     )?;
     let mut bsp = emission.bsp;
     if let Some(data) = bsp.occlusion().map_err(|error| error.to_string())? {

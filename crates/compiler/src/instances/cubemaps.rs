@@ -76,11 +76,22 @@ pub(super) fn charge_bindings(
     amount: usize,
     control: &Control,
 ) -> Result<(), String> {
+    charge_side_bindings(work, amount, control, "cubemap")
+}
+
+pub(super) fn charge_side_bindings(
+    work: &mut usize,
+    amount: usize,
+    control: &Control,
+    helper: &str,
+) -> Result<(), String> {
     control.checkpoint()?;
     *work = work
         .checked_add(amount)
         .filter(|value| *value <= MAX_GEOMETRY_WORK)
-        .ok_or("Instance cubemap bindings exceed the shared geometry-work limit")?;
+        .ok_or_else(|| {
+            format!("Instance {helper} bindings exceed the shared geometry-work limit")
+        })?;
     Ok(())
 }
 
@@ -95,27 +106,36 @@ pub(super) fn remap_sides(
         original.properties.get("sides").map_or(0, str::len),
         control,
     )?;
-    let mut sides = side_ids(original)?;
+    remap_side_ids(side_ids(original)?, local_sides, work, control, "cubemap")
+}
+
+pub(super) fn remap_side_ids(
+    mut sides: Vec<u32>,
+    local_sides: &BTreeMap<u32, u32>,
+    work: &mut usize,
+    control: &Control,
+    helper: &str,
+) -> Result<String, String> {
     let mut bytes = 0usize;
     for (index, id) in sides.iter_mut().enumerate() {
-        charge_bindings(work, 1, control)?;
+        charge_side_bindings(work, 1, control, helper)?;
         *id = local_sides
             .get(id)
             .copied()
             .filter(|id| *id != 0)
             .ok_or_else(|| {
                 format!(
-                    "cubemap sides target side:{id} must name a visible ordinary world or func_detail side in the same child"
+                    "{helper} sides target side:{id} must name a visible ordinary world or func_detail side in the same child"
                 )
             })?;
         bytes = bytes
             .checked_add(id.ilog10() as usize + 1 + usize::from(index != 0))
             .filter(|bytes| *bytes <= MAX_FIELD_BYTES)
             .ok_or_else(|| {
-                format!("Child cubemap rewritten sides exceed {MAX_FIELD_BYTES} bytes")
+                format!("Child {helper} rewritten sides exceed {MAX_FIELD_BYTES} bytes")
             })?;
     }
-    charge_bindings(work, bytes, control)?;
+    charge_side_bindings(work, bytes, control, helper)?;
     let mut rewritten = String::with_capacity(bytes);
     for (index, id) in sides.into_iter().enumerate() {
         control.checkpoint()?;

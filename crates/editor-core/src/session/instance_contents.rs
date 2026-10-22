@@ -23,6 +23,7 @@ pub const LIGHTING_ORIGIN_PREVIEW_REASON: &str = "Child lighting-origin helpers 
 pub const PLAYER_SPAWN_PREVIEW_REASON: &str = "Child player-spawn models and icons are not shown in the reference preview; spawn bounds, picking and framing are unavailable.";
 pub const VISCLUSTER_PREVIEW_REASON: &str = "Child visibility helpers have no reference geometry or icons; helper bounds, picking and framing are unavailable.";
 pub const OCCLUDER_PREVIEW_REASON: &str = "Child occluder helpers have no reference geometry or icons; helper bounds, picking and framing are unavailable.";
+pub const OVERLAY_PREVIEW_REASON: &str = "Child overlay projections and icons are not shown in the reference preview; overlay bounds, picking, framing and editing drafts are unavailable. Underlying brush preview is unchanged.";
 pub const CUBEMAP_PREVIEW_REASON: &str = "Child cubemap samples have no reference geometry or icons; sample bounds, picking and framing are unavailable.";
 
 const MAX_DIAGNOSTICS: usize = 64;
@@ -1161,6 +1162,12 @@ impl Session {
             report["occluder_preview"] = json!({
                 "available":false,
                 "reason":OCCLUDER_PREVIEW_REASON
+            });
+        }
+        if ready.is_some_and(|ready| ready.stats.overlays > 0) {
+            report["overlay_preview"] = json!({
+                "available":false,
+                "reason":OVERLAY_PREVIEW_REASON
             });
         }
         if ready.is_some_and(|ready| ready.stats.cubemaps > 0) {

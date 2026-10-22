@@ -5,6 +5,7 @@ use map_core::edit;
 mod cubemaps;
 mod lighting_origins;
 mod occluders;
+mod overlays;
 mod player_spawns;
 mod static_props;
 mod terrain;

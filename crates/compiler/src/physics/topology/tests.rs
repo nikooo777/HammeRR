@@ -307,3 +307,174 @@ fn request_schema_requires_explicit_faces_and_bounds_topology_before_work() {
     budget.charge(0, MAX_REQUEST_WORK).unwrap();
     assert!(budget.charge(0, 1).is_err());
 }
+
+fn near_zero_shape() -> Shape {
+    Shape {
+        brush: 6,
+        corners: vec![
+            [2.0, -96.0, 192.0],
+            [2.0, -96.0, 0.0],
+            [2.0, -24.0, 0.0],
+            [2.0, -24.0, 192.0],
+            [-2.0, -24.0, 192.0],
+            [-2.0, -24.0, 0.0],
+            [-2.0, -96.0, f32::from_bits(0x2900_0000)],
+            [-2.0, -96.0, 192.0],
+        ],
+        planes: vec![
+            [1.0, 0.0, 2.220446e-16, 2.0],
+            [-1.0, 0.0, -2.220446e-16, 2.0],
+            [-9.8607613e-32, -1.0, 2.220446e-16, 96.0],
+            [1.5777218e-30, 1.0, -2.220446e-16, -24.0],
+            [-7.1054274e-15, 0.0, 1.0, 192.0],
+            [0.0, -1.9737298e-16, -1.0, -2.3684759e-15],
+        ],
+        faces: vec![
+            vec![0, 1, 2, 3],
+            vec![4, 5, 6, 7],
+            vec![7, 6, 1, 0],
+            vec![3, 2, 5, 4],
+            vec![0, 3, 4, 7],
+            vec![2, 1, 6, 5],
+        ],
+        materials: Vec::new(),
+    }
+}
+
+#[test]
+fn captured_near_zero_merge_residue_keeps_geometry_bits_and_refuses_real_warps_at_each_scale() {
+    for scale in [2.0_f32.powi(-20), 1.0, 32.0] {
+        let mut captured = near_zero_shape();
+        for corner in &mut captured.corners {
+            for value in corner {
+                *value *= scale;
+            }
+        }
+        for plane in &mut captured.planes {
+            plane[3] *= scale;
+        }
+        let before = serde_json::to_vec(&captured).unwrap();
+        validate(&captured).unwrap();
+        crate::physics::validate(&request(captured.clone())).unwrap();
+        assert_eq!(serde_json::to_vec(&captured).unwrap(), before);
+        for warp in [-0.000_001, 0.000_001] {
+            let mut invalid = captured.clone();
+            invalid.corners[6][2] = warp * scale;
+            let error = validate(&invalid).unwrap_err();
+            assert!(
+                error.contains("not planar") || error.contains("not a convex boundary"),
+                "scale {scale}, warp {warp}: {error}"
+            );
+        }
+    }
+}
+
+#[test]
+fn actual_cardinal_nested_thin_brush_builds_and_revalidates_without_geometry_substitution() {
+    let mut document = map_core::Document::empty();
+    document
+        .edit("nested thin brush", |tx| {
+            let id = map_core::edit::create_block(
+                tx,
+                DVec3::new(-36.0, 0.0, -2.0),
+                DVec3::new(36.0, 192.0, 2.0),
+                "dev/dev_measuregeneric01",
+            )?;
+            for (rotation, translation) in [
+                (DVec3::new(0.0, 0.0, 90.0), DVec3::new(8.0, 16.0, 64.0)),
+                (DVec3::new(0.0, 90.0, 0.0), DVec3::new(-64.0, -76.0, 8.0)),
+            ] {
+                map_core::edit::transform(
+                    tx,
+                    &[id],
+                    map_core::edit::Transform {
+                        rotation,
+                        translation,
+                        ..Default::default()
+                    },
+                )?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    let geometry = BrushGeometry::from_solid(&document.vmf().world.solids[0]).unwrap();
+    let actual = shape(&geometry);
+    assert_eq!(actual.corners, near_zero_shape().corners);
+    assert_eq!(actual.faces, near_zero_shape().faces);
+    crate::physics::validate(&request(actual)).unwrap();
+}
+
+#[test]
+fn numerical_extension_refuses_unresolved_normals_and_over_budget_or_nonfinite_work() {
+    let products = f64::from(f32::EPSILON) / (8.0 * gamma(8));
+    assert!(normal_roundoff(DVec3::Z, products, 2).is_some());
+    assert!(normal_roundoff(DVec3::Z, products * 4.0, 2).is_none());
+    for (area, products) in [
+        (DVec3::ZERO, 1.0),
+        (DVec3::splat(f64::INFINITY), 1.0),
+        (DVec3::Z, f64::NAN),
+        (DVec3::Z, f64::INFINITY),
+        (DVec3::Z, -1.0),
+    ] {
+        assert!(normal_roundoff(area, products, 2).is_none());
+    }
+    let ceiling = SOURCE_CORNER_ROUNDOFF;
+    assert!(within_roundoff(ceiling, 0.0, Some(ceiling), 1.0, ceiling));
+    assert!(!within_roundoff(
+        ceiling * 1.5,
+        0.0,
+        Some(ceiling),
+        2.0,
+        ceiling
+    ));
+    for (uncertainty, radius) in [
+        (None, 1.0),
+        (Some(f64::NAN), 1.0),
+        (Some(f64::INFINITY), 1.0),
+        (Some(ceiling), f64::INFINITY),
+        (Some(ceiling), f64::NAN),
+    ] {
+        assert!(!within_roundoff(ceiling, 0.0, uncertainty, radius, ceiling));
+    }
+    assert!(within_roundoff(1.0, 1.0, None, f64::NAN, 0.0));
+}
+
+#[test]
+fn convex_point_and_edge_extensions_use_their_own_distances_and_area_units() {
+    let uncertainty = normal_roundoff(DVec3::Z, 1.0, 2).unwrap();
+    let distant = DVec3::new(1000.0, 0.0, 0.000_000_000_001);
+    assert!(within_roundoff(
+        distant.z,
+        0.0,
+        Some(uncertainty),
+        distant.length(),
+        SOURCE_CORNER_ROUNDOFF
+    ));
+    assert!(!within_roundoff(
+        distant.z,
+        0.0,
+        Some(uncertainty),
+        1.0,
+        SOURCE_CORNER_ROUNDOFF
+    ));
+    let direction = DVec3::new(1000.0, 1000.0, 0.0);
+    let relative = DVec3::new(1000.0, 1000.0 - 1e-12, 0.0);
+    let residual = -direction.cross(relative).dot(DVec3::Z);
+    let uncertainty = Some(uncertainty + 2.0 * gamma(PROJECTION_ROUNDOFF_OPS));
+    let budget = SOURCE_CORNER_ROUNDOFF * direction.length();
+    assert!(residual > 0.0);
+    assert!(within_roundoff(
+        residual,
+        0.0,
+        uncertainty,
+        direction.length() * relative.length(),
+        budget
+    ));
+    assert!(!within_roundoff(
+        residual,
+        0.0,
+        uncertainty,
+        relative.length(),
+        budget
+    ));
+}

@@ -72,6 +72,57 @@ keep the complete imported projection independently of its marker position.
 Include every target surface; an omitted or buried target stops the build
 without replacing the previous BSP.
 
+## Overlays in referenced assemblies
+
+Use ordinary unnamed overlays on direct visible world/detail brushes in a
+saved [child assembly](instances.md). Their projections compile with the
+transformed target surfaces; parent reference inspection shows the target
+brushes without the projected overlay.
+
+1. Open the child VMF as a normal map. Select an ordinary world/detail quad in
+   **Faces · materials & textures**, open **Overlay…** and choose **Material**.
+2. Keep **Name** empty. Set the ordinary render order, texture ranges and fades,
+   then click **Fit / Preview → Apply overlay**. Existing **Review current
+   draft**, refit, rebind and corner operations remain available within their
+   usual single-quad limits while the child is open normally.
+3. Save the child and return to its parent. Use **Instance contents… → Refresh
+   instance contents**, then **Compile**. **Overlay helpers:** counts expanded
+   child helpers before compile-region filtering; **Overlays** and **Surface
+   references** describe the emitted root and child output.
+
+Child imported bindings allow 1–64 distinct positive side IDs from visible
+ordinary world or `func_detail` brushes directly in that same occurrence.
+Authored and rewritten lists each fit 512 bytes. Terrain-bearing solids,
+runtime-model/helper sides and parent/descendant/sibling/repeated/root/generated
+IDs cannot supply a missing local target. Child transitions are unsupported.
+The assembled map shares the ordinary regular-overlay and binding limits below.
+
+Keep the shared writer's canonical fields, including `BasisOrigin`,
+`BasisNormal`, `BasisU`, `BasisV`, `uv0`–`uv3`, `RenderOrder`,
+`StartU`, `EndU`, `StartV`, `EndV`, `fademindist` and `fademaxdist`.
+Optional `angles` must be `0 0 0`; `angle`, `spawnflags`, `mindxlevel`
+and `maxdxlevel` must be zero. `targetname`, `target`, `parentname`,
+`name`, `globalname`, `killtarget` and `lightingorigin` must be absent
+or exactly empty; whitespace rejects. Unknown keys, duplicate case aliases,
+connections and opaque blocks reject.
+
+The projection frame and optional marker origin validate at the source and
+every nested pose within the ordinary finite/native bounds and ±16384 units.
+An absent marker origin stays absent. Containing references translate/rotate
+`BasisOrigin` and the marker, rotate the basis axes, and preserve local corner
+coordinates, texture ranges, material, render order and fades. Regions keep
+the complete projection independently of its marker; omitted or buried targets
+stop compilation. Individual child errors identify the containing root
+reference, true leaf file and original helper.
+
+**Instance contents…** reports child projections/icons and overlay-specific
+bounds, picking, framing and editing drafts as unavailable. The target brushes
+keep their actual reference mesh, owner bounds, picking and **Frame instance
+contents** behavior. Existing root-face overlay drafts stay available in the
+parent. Open the child as a normal map to edit its overlay; a ready reference
+does not certify retained target emission, material availability or final
+surface budgets.
+
 ## Build imported water transitions
 
 Imported `info_overlay_transition` helpers describe explicit material projections

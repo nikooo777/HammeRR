@@ -226,6 +226,7 @@ pub fn build(
     revision: i32,
     control: &crate::Control,
     mut face_origins: Result<crate::face_origins::FaceOrigins, String>,
+    report: &mut crate::Report,
 ) -> Result<Emission, String> {
     let mut source_faces = 0usize;
     let mut source_bytes = 0usize;
@@ -321,7 +322,7 @@ pub fn build(
                 let start = faces.len();
                 for face in groups.remove(&Some(node_index)).unwrap_or_default() {
                     let id = index(faces.len(), "leaf face")?;
-                    overlay_bindings.add(&face.source_sides, id, &map.overlays)?;
+                    overlay_bindings.add(&face.source_sides, id, &map.overlays, report)?;
                     let emitted = geometry.face(face, map, faces.len(), model, water)?;
                     face_origins = face_origins.and_then(|mut origins| {
                         origins.push(&emitted, model_index, &face.source_sides)?;
@@ -403,7 +404,7 @@ pub fn build(
         }
         for face in groups.remove(&None).unwrap_or_default() {
             let id = index(faces.len(), "leaf face")?;
-            overlay_bindings.add(&face.source_sides, id, &map.overlays)?;
+            overlay_bindings.add(&face.source_sides, id, &map.overlays, report)?;
             let emitted = geometry.face(face, map, faces.len(), model, water)?;
             face_origins = face_origins.and_then(|mut origins| {
                 origins.push(&emitted, model_index, &face.source_sides)?;
@@ -505,7 +506,7 @@ pub fn build(
     bsp.set_records(&nodes);
     bsp.set_records(&leaves);
     bsp.set_records(&faces);
-    bsp.set_overlay_data(&map.overlays.data(&overlay_bindings, control)?)
+    bsp.set_overlay_data(&map.overlays.data(&overlay_bindings, report, control)?)
         .map_err(|error| error.to_string())?;
     bsp.set_water_overlay_data(&map.overlays.water_data(&overlay_bindings, control)?)
         .map_err(|error| error.to_string())?;

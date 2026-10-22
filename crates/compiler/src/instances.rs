@@ -14,6 +14,7 @@ mod entities;
 mod expand;
 mod names;
 mod occluders;
+mod overlays;
 mod props;
 mod spawns;
 mod terrain;
@@ -364,6 +365,8 @@ pub struct InstanceStats {
     #[serde(skip_serializing_if = "is_zero")]
     pub occluders: usize,
     #[serde(skip_serializing_if = "is_zero")]
+    pub overlays: usize,
+    #[serde(skip_serializing_if = "is_zero")]
     pub cubemaps: usize,
     pub dependencies: Vec<DependencyInfo>,
 }
@@ -636,6 +639,11 @@ fn child_admission(child: &Vmf, control: &Control) -> Result<(), String> {
                 .map_err(|error| format!("Child occluder {}: {error}", entity.id))?;
             continue;
         }
+        if overlays::is_helper(entity) {
+            overlays::admit(entity)
+                .map_err(|error| format!("Child overlay {}: {error}", entity.id))?;
+            continue;
+        }
         if cubemaps::is_helper(entity) {
             cubemaps::admit(entity)
                 .map_err(|error| format!("Child cubemap {}: {error}", entity.id))?;
@@ -650,7 +658,7 @@ fn child_admission(child: &Vmf, control: &Control) -> Result<(), String> {
             .is_some_and(|class| class.eq_ignore_ascii_case("func_detail"))
         {
             return Err(format!(
-                "Child entity {} ({}) is unsupported; only world/func_detail brushes, unnamed static lights, bounded static props, scoped info_lighting helpers, neutral player spawns, consumed func_viscluster volumes, unnamed stationary func_occluder helpers, bounded env_cubemap samples and bounded func_instance helpers are supported",
+                "Child entity {} ({}) is unsupported; only world/func_detail brushes, unnamed static lights, bounded static props, scoped info_lighting helpers, neutral player spawns, consumed func_viscluster volumes, unnamed stationary func_occluder helpers, bounded unnamed info_overlay projections, bounded env_cubemap samples and bounded func_instance helpers are supported",
                 entity.id,
                 entity.classname().unwrap_or("missing class")
             ));

@@ -515,6 +515,18 @@ entity, solid or side. Use existing `create_block`, `set_material`,
 `tie_to_entity`, `set_entity_properties` and `save_map` operations while the
 child is open as a normal map; no extra setting is required.
 
+`stats.instances.overlays` counts visible expanded ordinary child overlays
+before compile-region filtering and is omitted when zero. **Build details…**
+shows **Overlay helpers:** with that expanded-before-filtering meaning.
+Top-level `stats.overlays` and `overlay_face_refs` keep their emitted totals,
+including root overlays and imported root water transitions. Retained regular
+root and child overlays share the ordinary 1,024-record/64-source-side and
+65,536-reference bounds; compiled-face subdivision has its own 64-reference
+per-regular-overlay cap. Regions retain the projection independently of marker
+position; missing or non-emitting targets fail. Source/frame/target admission
+and all-pose instance work checks run before region planning. Individual child
+errors retain the root reference owner, true leaf file and original helper.
+
 `stats.instances.cubemaps` counts expanded visible child samples before
 transformed-origin region filtering and is omitted when zero. **Build details…**
 shows **Cubemap samples:** with **expanded before compile-region filtering**.
@@ -672,6 +684,19 @@ keep their actual physical brush/terrain mesh, bounds and picking. Refresh
 checks source fields, grouped geometry and every nested pose; materials, union
 boundaries, visibility areas and retained limits remain compile checks.
 The field is omitted for zero counts and stale/cancelled results.
+
+The optional `stats.overlays` counts expanded visible child overlays before
+regions and omits zero. A nonzero current ready count adds `overlay_preview`
+with `available:false` and the shared reason: “Child overlay projections and
+icons are not shown in the reference preview; overlay bounds, picking, framing
+and editing drafts are unavailable. Underlying brush preview is unchanged.”
+**Instance contents…** shows **Overlay helpers:**. This flag describes only
+the child projection: target-brush mesh, content bounds, owner picking and
+`set_instance_contents` with `action:"frame"` retain their existing behavior.
+Ordinary root-face overlay drafts stay available. The field is omitted when
+zero or no current ready snapshot exists, including stale/cancelled/failed
+refreshes. Refresh uses shared source/frame/direct-local binding checks; it
+does not certify materials, retained target emission or compiled-face limits.
 
 The optional `stats.cubemaps` counts visible expanded child samples before
 regions and omits zero. When nonzero, `cubemap_preview` returns
@@ -3466,6 +3491,22 @@ before returning PNGs. The operation preserves the map, clipboard, camera,
 selection, placement review and history. It renders no other library pages.
 
 ### Overlay authoring
+
+For a child assembly, open its VMF as a normal map and use the same
+`preview_overlay`/`review_overlay`/`apply_overlay` operations with no
+`targetname`, then `save_map` and refresh its parent. Refitting, rebinding and
+corner editing retain their existing single-quad limits. Child imported
+`info_overlay` bindings require 1–64 positive distinct side IDs from direct
+visible ordinary world/detail brushes in the same occurrence; authored and
+rewritten lists each fit 512 bytes. Terrain-bearing solids, runtime-model/
+helper/foreign targets and child transitions reject. Preserve the normal
+writer's canonical field casing; optional names/reference fields must be
+exactly empty (whitespace rejects), angles/runtime flags neutral, and unknown
+keys, case aliases, connections and opaque blocks absent. Source and every
+intermediate frame/marker use the ordinary projection/native compile bounds.
+Parent inspection has no child projection/editing draft; its actual target
+brush preview and ordinary root overlay operations are unchanged. See
+[Overlays](overlays.md#overlays-in-referenced-assemblies).
 
 | Tool | Inputs and result |
 | --- | --- |

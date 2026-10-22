@@ -208,9 +208,13 @@ impl<'a> Expansion<'a> {
                 .vmf
                 .entities
                 .iter()
-                .any(|entity| !entity.hidden && cubemaps::has_manual_bindings(entity))
+                .any(|entity| {
+                    !entity.hidden
+                        && (cubemaps::has_manual_bindings(entity) || overlays::is_helper(entity))
+                })
                 .then(BTreeMap::new);
             let mut manual_cubemaps = Vec::new();
+            let mut overlay_bindings = Vec::new();
             for entity in child
                 .vmf
                 .entities
@@ -283,6 +287,13 @@ impl<'a> Expansion<'a> {
                         .map_err(|error| {
                             EditError::Invalid(format!("Child occluder {}: {error}", entity.id))
                         })?;
+                } else if overlays::is_helper(entity) {
+                    let generated = self
+                        .overlay(tx, entity, owner.id, &relative, transforms)
+                        .map_err(|error| {
+                            EditError::Invalid(format!("Child overlay {}: {error}", entity.id))
+                        })?;
+                    overlay_bindings.push((entity, generated));
                 } else if cubemaps::is_helper(entity) {
                     let generated = self
                         .cubemap(tx, entity, owner.id, &relative, transforms)
@@ -361,12 +372,71 @@ impl<'a> Expansion<'a> {
                 })?;
                 tx.entity_mut(generated)?.properties.set("sides", rewritten);
             }
+            for (original, generated) in overlay_bindings {
+                let rewritten = overlays::remap_sides(
+                    original,
+                    local_sides.as_ref().unwrap(),
+                    &mut self.work,
+                    self.control,
+                )
+                .map_err(|error| {
+                    EditError::Invalid(format!("Child overlay {}: {error}", original.id))
+                })?;
+                tx.entity_mut(generated)?.properties.set("sides", rewritten);
+            }
             Ok(())
         })();
         ancestors.pop();
         transforms.pop();
         self.name_scopes.pop();
         result.map_err(|error| EditError::Invalid(format!("Instance {relative}: {error}")))
+    }
+
+    fn overlay(
+        &mut self,
+        tx: &mut Transaction<'_>,
+        original: &Entity,
+        owner: u32,
+        relative: &str,
+        transforms: &[edit::Transform],
+    ) -> Result<u32, EditError> {
+        self.control.checkpoint().map_err(EditError::Invalid)?;
+        self.objects = self.objects.saturating_add(1);
+        let property_bytes = original
+            .properties
+            .iter()
+            .try_fold(0_usize, |bytes, (key, value)| {
+                bytes.checked_add(key.len())?.checked_add(value.len())
+            });
+        let work = property_bytes
+            .and_then(|bytes| bytes.checked_add(overlays::POSE_WORK))
+            .and_then(|work| work.checked_mul(transforms.len() + 2))
+            .and_then(|work| self.work.checked_add(work));
+        let Some(work) = work else {
+            return Err(EditError::Invalid("Instance overlay-work overflow".into()));
+        };
+        if self.objects > MAX_OBJECTS || work > MAX_GEOMETRY_WORK {
+            return Err(EditError::Invalid(
+                "Instance expansion exceeds combined objects or geometry-work limits".into(),
+            ));
+        }
+        self.work = work;
+        overlays::check_pose(original).map_err(EditError::Invalid)?;
+        let mut entity = original.clone();
+        entity.id = tx.new_object_id()?;
+        entity.editor = None;
+        for transform in transforms.iter().rev() {
+            self.control.checkpoint().map_err(EditError::Invalid)?;
+            overlays::transform(&mut entity, *transform)?;
+        }
+        self.provenance.insert(
+            format!("entity:{}", entity.id),
+            (owner, relative.to_owned(), original.id, None),
+        );
+        let generated = entity.id;
+        tx.add_entity(entity)?;
+        self.stats.overlays += 1;
+        Ok(generated)
     }
 
     fn cubemap(
@@ -972,6 +1042,42 @@ mod tests {
             );
             assert!(expansion.provenance.is_empty());
             assert_eq!(expansion.stats.occluders, 0);
+            assert_eq!(document.vmf(), &vmf);
+        }
+    }
+
+    #[test]
+    fn overlays_reserve_objects_and_all_pose_and_fixup_work_before_invalid_projection() {
+        let (_directory, vmf, _, source) = fixture();
+        let mut helper = Entity::new(1000, "info_overlay");
+        helper.properties.set("BasisOrigin", "NaN 0 0");
+        let transforms = [edit::Transform::default(); 2];
+        for exhausted in ["objects", "work", "overflow"] {
+            let control = Control::default();
+            let mut report = Report::default();
+            let mut expansion = Expansion::new(&vmf, &source, &control, &mut report);
+            match exhausted {
+                "objects" => expansion.objects = MAX_OBJECTS,
+                "work" => expansion.work = MAX_GEOMETRY_WORK - overlays::POSE_WORK * 3,
+                "overflow" => expansion.work = usize::MAX,
+                _ => unreachable!(),
+            }
+            let mut document = Document::new(vmf.clone());
+            let error = document
+                .edit("reserved overlay work", |tx| {
+                    expansion
+                        .overlay(tx, &helper, 2000, "child.vmf", &transforms)
+                        .map(|_| ())
+                })
+                .unwrap_err();
+            let expected = if exhausted == "overflow" {
+                "Instance overlay-work overflow"
+            } else {
+                "combined objects or geometry-work limits"
+            };
+            assert!(error.to_string().contains(expected), "{exhausted}: {error}");
+            assert!(expansion.provenance.is_empty());
+            assert_eq!(expansion.stats.overlays, 0);
             assert_eq!(document.vmf(), &vmf);
         }
     }

@@ -2,6 +2,156 @@ use super::*;
 use std::sync::{Arc, Mutex};
 
 #[test]
+fn software_child_overlay_counts_keep_target_geometry_frame_and_root_drafts() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: false,
+        },
+    )))
+    .unwrap();
+    fn preview(session: &mut Session, source: map_core::surface::FaceId) -> u64 {
+        session
+            .preview_overlay(
+                Actor::User,
+                session::overlay::Request {
+                    source,
+                    options: map_core::overlay::Options {
+                        material: "test/checker".into(),
+                        ..Default::default()
+                    },
+                },
+                &session.overlay_stamp(),
+            )
+            .unwrap()["draft"]["token"]
+            .as_u64()
+            .unwrap()
+    }
+    fn top(solid: &source_formats::vmf::Solid) -> map_core::surface::FaceId {
+        map_core::surface::FaceId {
+            solid: solid.id,
+            side: solid
+                .sides
+                .iter()
+                .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+                .unwrap()
+                .id,
+        }
+    }
+    let (directory, game) = crate::test_assets::game();
+    let parent = directory.path().join("parent.vmf");
+    let child = directory.path().join("child.vmf");
+    let mut session = Session::new(Ok(game));
+    session
+        .create_block(
+            Actor::User,
+            DVec3::new(0.0, 0.0, 32.0),
+            DVec3::new(16.0, 16.0, 48.0),
+            "test/checker",
+            false,
+        )
+        .unwrap();
+    let face = top(&session.document().vmf().world.solids[0]);
+    let token = preview(&mut session, face);
+    let reviewed = session.review_overlay(Actor::User, token).unwrap()["draft"]["token"]
+        .as_u64()
+        .unwrap();
+    session.apply_overlay(Actor::User, reviewed).unwrap();
+    session.save(Actor::User, Some(&child)).unwrap();
+    std::fs::write(
+        &parent,
+        crate::test_assets::room().write(&Default::default()),
+    )
+    .unwrap();
+    session.open(Actor::User, &parent, false).unwrap();
+    let owner = session
+        .create_entity(
+            Actor::User,
+            "func_instance",
+            Some(DVec3::ZERO),
+            BTreeMap::from([("file".into(), "child.vmf".into())]),
+        )
+        .unwrap();
+    let root = top(&session.document().vmf().world.solids[0]);
+    let token = preview(&mut session, root);
+    session.apply_overlay(Actor::User, token).unwrap();
+    session.save(Actor::User, None).unwrap();
+    session.select(&[owner], SelectMode::Replace).unwrap();
+    session.set_view(render::ViewOptions {
+        instance_contents: true,
+        ..session.view()
+    });
+    preview(&mut session, root);
+    let draft = session.get_overlay_state();
+    let memory = session.document().vmf().clone();
+    let history = session.history_snapshot();
+    let camera = session.camera();
+    let settings = session.compile_settings();
+    let parent_bytes = std::fs::read(&parent).unwrap();
+    let child_bytes = std::fs::read(&child).unwrap();
+    let result = session.begin_compile(Actor::User, None).unwrap().run();
+    let output = &result.as_ref().unwrap().output;
+    assert!(output.bsp.is_some(), "{:?}", output.report);
+    assert_eq!(output.stats.instances.as_ref().unwrap().overlays, 1);
+    assert_eq!(output.stats.overlays, 2);
+    session.finish_compile(Actor::User, &result);
+    let request = session
+        .begin_instance_contents_refresh(Actor::User)
+        .unwrap();
+    let report = session
+        .finish_instance_contents_refresh(Actor::User, request.run())
+        .unwrap();
+    assert_eq!(report["state"], "ready");
+    assert_eq!(report["stats"]["overlays"], 1);
+    assert_eq!(report["overlay_preview"]["available"], false);
+    assert_eq!(report["available"], true);
+    assert_eq!(report["displayed"], true);
+    assert_eq!(report["brushes_total"], 1);
+    assert_eq!(report["face_provenance_total"], 6);
+    assert_eq!(
+        report["owners"][0]["bounds"],
+        serde_json::json!([[0.0, 0.0, 32.0], [16.0, 16.0, 48.0]])
+    );
+    let shared = Arc::new(Mutex::new(session));
+    let contents = Controller::new(shared.clone()).unwrap();
+    let build = crate::compile_ui::Controller::new(&shared).unwrap();
+    build.refresh(&lock(&shared));
+    let count = "Overlay helpers: 1 · expanded before compile-region filtering";
+    let reason = editor_core::session::instance_contents::OVERLAY_PREVIEW_REASON;
+    assert_eq!(report["overlay_preview"]["reason"], reason);
+    assert!(contents.window.get_summary().contains(count));
+    assert!(contents.window.get_summary().contains(reason));
+    assert!(build.window.get_details().contains(count));
+    assert!(build.window.get_details().contains(reason));
+    assert!(
+        build
+            .window
+            .get_details()
+            .contains("Overlays: 2 · Surface references:")
+    );
+    assert!(contents.window.get_can_frame());
+    {
+        let session = lock(&shared);
+        assert_eq!(session.document().vmf(), &memory);
+        assert_eq!(session.history_snapshot(), history);
+        assert_eq!(session.camera(), camera);
+        assert_eq!(session.compile_settings(), settings);
+        assert_eq!(session.get_overlay_state(), draft);
+        assert_eq!(session.selected_ids(), vec![owner]);
+    }
+    contents.window.invoke_frame_contents();
+    let session = lock(&shared);
+    assert_ne!(session.camera(), camera);
+    assert_eq!(session.document().vmf(), &memory);
+    assert_eq!(session.history_snapshot(), history);
+    assert_eq!(session.compile_settings(), settings);
+    assert_eq!(session.get_overlay_state(), draft);
+    assert_eq!(std::fs::read(&parent).unwrap(), parent_bytes);
+    assert_eq!(std::fs::read(&child).unwrap(), child_bytes);
+}
+
+#[test]
 fn software_occluder_helpers_keep_expanded_counts_separate_from_retained_and_reference_geometry() {
     slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
         i_slint_backend_testing::TestingBackendOptions {

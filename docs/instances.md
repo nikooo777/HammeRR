@@ -4,8 +4,9 @@
 
 Reuse saved VMFs' world and detail brushes, power 2–4 terrain, unnamed static
 point/spot lights, static props, scoped lighting-origin helpers, player spawns,
-visibility volumes, unnamed stationary occluders, cubemap samples with local
-face bindings and nested references at several positions and rotations.
+visibility volumes, unnamed stationary occluders, ordinary unnamed overlays,
+cubemap samples with local face bindings and nested references at several
+positions and rotations.
 Compilation expands the supported contents without an extra switch. The editor
 can resolve a separate, explicitly refreshed
 [reference preview](instance-contents.md) with actual displaced terrain surfaces
@@ -18,7 +19,8 @@ from supported brushes already in the parent.
    ordinary `func_detail` brushes, supported static lights/props, `info_lighting`
    helpers, `info_player_terrorist` / `info_player_counterterrorist` spawns,
    `func_viscluster` volumes, unnamed stationary `func_occluder` helpers,
-   supported `env_cubemap` samples and nested `func_instance` references.
+   ordinary unnamed `info_overlay` projections, supported `env_cubemap` samples
+   and nested `func_instance` references.
    World and detail brushes may carry supported power 2, 3 or 4 terrain. The
    child's world settings do not replace the parent's.
 2. To add a child light, open the child and click **Entity…**, then choose `light`
@@ -66,6 +68,12 @@ from supported brushes already in the parent.
    size uses `cubemapsize:0`; rotate the containing reference to reposition samples.
    A child with visible nested references keeps the binding-window restriction;
    use its raw **Brush faces** property for direct local IDs instead.
+
+   To add a child overlay, open the child normally and select a visible ordinary
+   world/detail quad in **Faces · materials & textures**. Open **Overlay…**,
+   choose **Material**, keep **Name** empty, then click **Fit / Preview → Apply
+   overlay** and save the child. See [Overlays](overlays.md#overlays-in-referenced-assemblies)
+   for local bindings and projection limits.
 8. Click **Instance reference…**. Set **VMF reference** to `parts/arch.vmf`,
    choose **Position** and **Rotation**, then click **Create**. **Cancel** leaves
    the map unchanged. For a child with lighting-origin helpers, set every
@@ -90,6 +98,10 @@ from supported brushes already in the parent.
    child occluder entities before region filtering, with the same unavailable
    geometry, icons, bounds, picking and framing. A helper-only reference cannot
    be framed; mixed references keep their real brush/terrain preview.
+   **Overlay helpers:** counts child overlays before regions. Their projections,
+   icons and overlay-specific bounds, picking, framing and editing drafts are
+   unavailable here; their real target brushes keep the ordinary reference
+   mesh, bounds, picking and **Frame instance contents** behavior.
    **Cubemap samples:** counts child samples, with the same unavailable display,
    bounds, picking and framing.
 10. Move or rotate the helper with the ordinary transform controls. Its origin
@@ -110,6 +122,9 @@ from supported brushes already in the parent.
    both supported spawn classes before transformed-origin region filtering.
    **Visibility helpers:** also counts expansion before filtering; the visibility
    summary counts helpers retained by the selected build region.
+   **Overlay helpers:** counts expanded child overlays before filtering;
+   **Overlays** and **Surface references** describe emitted root/child output,
+   including imported root water transitions.
    **Occluder helpers:** counts expanded child helpers before filtering;
    **Occluders**, **Polygons** and **Vertex references** count retained root and
    child occlusion geometry. The instance **Cubemap samples:** count also
@@ -167,6 +182,19 @@ Limits:
   omission and share the instance expansion budgets. The retained assembled
   map shares the ordinary 1,024-helper, union, native-output and area limits in
   [Occluders](occluders.md).
+- Child `info_overlay` supports ordinary unnamed projections with 1–64 distinct
+  positive side IDs from direct visible ordinary world/detail brushes in the
+  same child occurrence. Both authored and rewritten lists fit 512 bytes.
+  Terrain-bearing solids, runtime models, consumed helpers and foreign
+  occurrence IDs cannot supply targets. Use the canonical shared overlay
+  writer fields; names/reference fields must be absent or exactly empty,
+  orientation/runtime flags must be neutral, and connections, opaque blocks,
+  duplicate case aliases and unknown keys reject. Source and every transformed
+  frame/marker must satisfy the ordinary finite projection/compile bounds.
+  Regions preserve the whole projection independently of marker position;
+  omitted or non-emitting targets fail rather than dropping the overlay.
+  Root and child regular overlays share the ordinary 1,024-record, 64-target
+  and 65,536-reference limits. See [Overlays](overlays.md#overlays-in-referenced-assemblies).
 - Other runtime entities, parameter helpers, replacements, active child compile
   regions and unknown semantic metadata reject. Ordinary hidden child objects
   remain excluded; hidden helpers never load their files.
@@ -360,6 +388,11 @@ region filtering and is omitted when zero. Inspection returns
 `occluder_preview:{available:false,reason:…}` for a nonzero count, with no
 child helper geometry, icons, content bounds, picking or framing. Opening the
 child as a normal map retains ordinary brush authoring.
+Optional `overlays` counts expanded visible child overlays before region
+filtering and is omitted when zero. Inspection adds
+`overlay_preview:{available:false,reason:…}` for the unavailable child projection
+and overlay interaction. Underlying target-brush geometry, bounds, picking and
+overall Frame remain available through their existing rules.
 Optional `cubemaps` counts visible expanded child samples before region filtering
 and is omitted when zero. A sample-only assembly can be ready with source
 identities and counts, zero geometry, null content bounds and unavailable

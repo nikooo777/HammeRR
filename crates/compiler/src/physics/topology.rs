@@ -11,6 +11,7 @@ pub(super) const MAX_REQUEST_WORK: usize = 50_000_000;
 const SOURCE_CORNER_ROUNDOFF: f64 = 512.0 * f64::EPSILON * 131_072.0;
 const SUPPORT_EPSILON: f64 = 0.02;
 const PLANAR_ROUNDOFF_ULPS: f64 = 4.0;
+const PROJECTION_ROUNDOFF_OPS: usize = 8;
 
 #[derive(Default)]
 pub(super) struct Budget {
@@ -208,6 +209,47 @@ fn roundoff(value: [f32; 3], normal: DVec3) -> f64 {
     normal.abs().dot(DVec3::from_array(radius))
 }
 
+fn gamma(operations: usize) -> f64 {
+    let error = operations as f64 * f64::EPSILON;
+    error / (1.0 - error)
+}
+
+fn normal_roundoff(area: DVec3, products: f64, triangles: usize) -> Option<f64> {
+    let length = area.length();
+    let error = 2.0 * gamma(triangles + 6) * products;
+    if !length.is_finite() || products < 0.0 || !error.is_finite() || error >= length {
+        return None;
+    }
+    let uncertainty = 2.0 * error / (length - error) + gamma(PROJECTION_ROUNDOFF_OPS);
+    (uncertainty.is_finite() && uncertainty < f64::from(f32::EPSILON)).then_some(uncertainty)
+}
+
+fn within_roundoff(
+    residual: f64,
+    epsilon: f64,
+    uncertainty: Option<f64>,
+    radius: f64,
+    budget: f64,
+) -> bool {
+    if residual <= epsilon {
+        return true;
+    }
+    let Some(uncertainty) = uncertainty else {
+        return false;
+    };
+    if !uncertainty.is_finite()
+        || uncertainty < 0.0
+        || !radius.is_finite()
+        || radius < 0.0
+        || !budget.is_finite()
+        || budget < 0.0
+    {
+        return false;
+    }
+    let extra = uncertainty * radius;
+    extra.is_finite() && extra <= budget && residual <= epsilon + extra
+}
+
 pub(super) fn validate(shape: &Shape) -> Result<(), String> {
     let (indices, _) = counts(shape)?;
     let points = shape.corners.iter().copied().map(point).collect::<Vec<_>>();
@@ -269,10 +311,12 @@ pub(super) fn validate(shape: &Shape) -> Result<(), String> {
         }
         let first = points[usize::from(face[0])];
         let mut area = DVec3::ZERO;
+        let mut products = 0.0;
         for pair in face[1..].windows(2) {
             let a = points[usize::from(pair[0])];
             let b = points[usize::from(pair[1])];
             area += (a - first).cross(b - first);
+            products += (a - first).length() * (b - first).length();
             volume += (first - origin).dot((a - origin).cross(b - origin)) / 6.0;
         }
         if !area.is_finite() || area.length_squared() == 0.0 || area.dot(normal) <= 0.0 {
@@ -282,27 +326,37 @@ pub(super) fn validate(shape: &Shape) -> Result<(), String> {
             ));
         }
         let geometric_normal = area.normalize();
+        let uncertainty = normal_roundoff(area, products, face.len() - 2);
         let epsilon = PLANAR_ROUNDOFF_ULPS
             * face
                 .iter()
                 .map(|&index| roundoff(shape.corners[usize::from(index)], geometric_normal))
                 .fold(0.0_f64, f64::max);
         for &index in face {
-            if geometric_normal
-                .dot(points[usize::from(index)] - first)
-                .abs()
-                > epsilon
-            {
+            let relative = points[usize::from(index)] - first;
+            if !within_roundoff(
+                geometric_normal.dot(relative).abs(),
+                epsilon,
+                uncertainty,
+                relative.length(),
+                SOURCE_CORNER_ROUNDOFF,
+            ) {
                 return Err(error(
                     shape.brush,
                     format!("face {face_index} is not planar"),
                 ));
             }
         }
-        if points
-            .iter()
-            .any(|&point| geometric_normal.dot(point - first) > epsilon)
-        {
+        if points.iter().any(|&point| {
+            let relative = point - first;
+            !within_roundoff(
+                geometric_normal.dot(relative),
+                epsilon,
+                uncertainty,
+                relative.length(),
+                SOURCE_CORNER_ROUNDOFF,
+            )
+        }) {
             return Err(error(
                 shape.brush,
                 format!("face {face_index} is not a convex boundary"),
@@ -311,11 +365,16 @@ pub(super) fn validate(shape: &Shape) -> Result<(), String> {
         for (&a, &b) in face.iter().zip(face.iter().cycle().skip(1)) {
             let start = points[usize::from(a)];
             let direction = points[usize::from(b)] - start;
+            let length = direction.length();
             if face.iter().any(|&index| {
-                direction
-                    .cross(points[usize::from(index)] - start)
-                    .dot(geometric_normal)
-                    < -epsilon * direction.length()
+                let relative = points[usize::from(index)] - start;
+                !within_roundoff(
+                    -direction.cross(relative).dot(geometric_normal),
+                    epsilon * length,
+                    uncertainty.map(|error| error + 2.0 * gamma(PROJECTION_ROUNDOFF_OPS)),
+                    length * relative.length(),
+                    SOURCE_CORNER_ROUNDOFF * length,
+                )
             }) {
                 return Err(error(
                     shape.brush,

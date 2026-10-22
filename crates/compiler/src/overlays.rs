@@ -35,16 +35,23 @@ impl Plan {
             .unwrap_or_default()
     }
 
-    pub fn data(&self, bindings: &Bindings, control: &Control) -> Result<OverlayData, String> {
+    pub fn data(
+        &self,
+        bindings: &Bindings,
+        report: &mut Report,
+        control: &Control,
+    ) -> Result<OverlayData, String> {
         let mut data = OverlayData::default();
         for definition in &self.definitions {
             control.checkpoint()?;
-            let targets =
-                bindings.targets(&definition.sides, definition.entity, bsp::MAX_OVERLAY_FACES)?;
+            let targets = bindings
+                .targets(&definition.sides, definition.entity, bsp::MAX_OVERLAY_FACES)
+                .inspect_err(|message| helper_error(report, definition, message))?;
             let mut record = definition
                 .record
                 .with_face_count(targets.len())
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| error.to_string())
+                .inspect_err(|message| helper_error(report, definition, message))?;
             for (slot, target) in record.faces.iter_mut().zip(targets) {
                 *slot = i32::from(target);
             }
@@ -53,6 +60,14 @@ impl Plan {
         }
         Ok(data)
     }
+}
+
+fn helper_error(report: &mut Report, definition: &Definition, message: &str) {
+    report.diagnostics.push(Diagnostic::error(
+        message,
+        Some(format!("entity:{}", definition.entity)),
+        Some(DVec3::from_array(definition.record.origin.map(f64::from))),
+    ));
 }
 
 #[derive(Default)]
@@ -80,7 +95,13 @@ impl Bindings {
         Ok(targets)
     }
 
-    pub fn add(&mut self, sources: &[u32], face: u16, plan: &Plan) -> Result<(), String> {
+    pub fn add(
+        &mut self,
+        sources: &[u32],
+        face: u16,
+        plan: &Plan,
+        report: &mut Report,
+    ) -> Result<(), String> {
         for source in sources {
             let Some(membership) = plan.membership.get(source) else {
                 continue;
@@ -96,10 +117,18 @@ impl Bindings {
                 bsp::MAX_OVERLAY_FACES
             };
             if faces.len() >= maximum {
-                return Err(format!(
+                let message = format!(
                     "Overlay side {source} exceeds its {} compiled-face budget; increase its lightmap scale",
                     maximum
-                ));
+                );
+                if maximum == bsp::MAX_OVERLAY_FACES
+                    && let Some(definition) = membership
+                        .iter()
+                        .find_map(|&index| plan.definitions.get(index))
+                {
+                    helper_error(report, definition, &message);
+                }
+                return Err(message);
             }
             faces.push(face);
         }
@@ -256,4 +285,81 @@ fn parse(
         sides: projection.sides,
         accessor,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn plan() -> Plan {
+        Plan {
+            definitions: vec![Definition {
+                entity: 700,
+                record: Overlay {
+                    origin: [4.0, 5.0, 6.0],
+                    ..Default::default()
+                },
+                fade: OverlayFade::default(),
+                sides: vec![42],
+                accessor: None,
+            }],
+            membership: BTreeMap::from([(42, Arc::from([0]))]),
+            ..Default::default()
+        }
+    }
+
+    fn assert_owned(report: &Report, message: &str) {
+        assert_eq!(report.diagnostics.len(), 1);
+        assert_eq!(report.diagnostics[0].message, message);
+        assert_eq!(report.diagnostics[0].object.as_deref(), Some("entity:700"));
+        assert_eq!(
+            report.diagnostics[0].position,
+            Some(DVec3::new(4.0, 5.0, 6.0))
+        );
+    }
+
+    #[test]
+    fn missing_and_excessive_final_targets_keep_the_exact_helper_owner() {
+        let plan = plan();
+        for faces in [None, Some((0..=bsp::MAX_OVERLAY_FACES as u16).collect())] {
+            let mut bindings = Bindings::default();
+            if let Some(faces) = faces {
+                bindings.faces.insert(42, faces);
+            }
+            let mut report = Report::default();
+            let error = plan
+                .data(&bindings, &mut report, &Control::default())
+                .unwrap_err();
+            assert!(
+                error.contains("has no emitted world face")
+                    || error.contains("exceeds its 64 compiled-face budget"),
+                "{error}"
+            );
+            assert_owned(&report, &error);
+        }
+    }
+
+    #[test]
+    fn per_side_exhaustion_is_owned_but_the_shared_reference_failure_stays_global() {
+        let plan = plan();
+        let mut bindings = Bindings {
+            faces: BTreeMap::from([(42, (0..bsp::MAX_OVERLAY_FACES as u16).collect())]),
+            references: 0,
+        };
+        let mut report = Report::default();
+        let error = bindings.add(&[42], 99, &plan, &mut report).unwrap_err();
+        assert!(error.contains("Overlay side 42 exceeds its 64 compiled-face budget"));
+        assert_owned(&report, &error);
+        let mut bindings = Bindings {
+            references: MAX_SOURCE_REFERENCES,
+            ..Default::default()
+        };
+        let mut report = Report::default();
+        let error = bindings.add(&[42], 99, &plan, &mut report).unwrap_err();
+        assert_eq!(
+            error,
+            "Overlay face bindings exceed their 65,536-reference budget"
+        );
+        assert!(report.diagnostics.is_empty());
+    }
 }

@@ -72,8 +72,9 @@ from supported brushes already in the parent.
    **Tie to entity… → func_brush → Tie selected brushes to entity**. In
    **Advanced properties**, explicitly set **Origin (X Y Z)**, such as `16 8 4`.
    Keep **Name** and **Parent** empty, **Solidity** at **Toggle** and the other
-   inherited defaults unchanged. Save and reopen the child before returning to
-   the parent. One compound entity stays one model; rotate its containing
+   inherited defaults unchanged. For stationary opaque global casting, set
+   **Shadows → Yes**; **No** keeps isolated self shadows. Save and reopen the child
+   before returning to the parent. One compound entity stays one model; rotate its containing
    instance instead of adding source entity angles.
 
 7. To add a child reflection sample, open **Entity…**, choose `env_cubemap`,
@@ -205,8 +206,13 @@ Limits:
   custom origin, liquid, window/grate and other special semantics reject before
   region omission. Refresh does not load these materials or certify a build.
   Installed neutral FGD defaults retain their original key spelling, including
-  `Solidity:0`, `StartDisabled:0` and `InputFilter:0`. Missing `spawnflags` keeps
-  native 0; explicit 0 or the FGD default 2 is admitted. Other non-neutral values,
+  `Solidity:0`, `StartDisabled:0` and `InputFilter:0`.
+  `vrad_brush_cast_shadows:1` explicitly requests global baked shadows from an
+  opaque stationary model; alpha-test/translucent/additive global casters reject.
+  The request validates before regions in every mode; Fullbright reports source
+  admission without baking, including region-omitted requests. `brush_shadow_models` counts retained prepared casters in lit
+  builds, separately from the expanded source-model count. Missing `spawnflags`
+  keeps native 0; explicit 0 or the FGD default 2 is admitted. Other non-neutral values,
   unknown fields, duplicate case aliases and opaque blocks reject. Model sides
   cannot become child overlay or manual cubemap world/detail targets.
 - Child `func_viscluster` volumes are consumed by the compiler. They require one

@@ -25,7 +25,10 @@ pub(super) fn admit_initial_poses(
     }
     for (scope, &receiver) in scopes.iter_mut().zip(receivers) {
         budget.consume(0)?;
-        if scope.entity == 0 || !receiver {
+        if scope.entity == 0
+            || (!receiver
+                && !crate::brush_shadow_casters::enabled(&map.entities[scope.entity].properties))
+        {
             continue;
         }
         let entity = &map.entities[scope.entity];

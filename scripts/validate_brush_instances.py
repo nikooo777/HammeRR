@@ -84,7 +84,7 @@ def geometry(path):
     }
 
 
-def brush_model(client, literal=False):
+def brush_model(client, literal=False, shadow_caster=False):
     blocks = []
     for low, high in MODEL_LITERAL_BOUNDS if literal else MODEL_SOURCE_BOUNDS:
         identifier = client.call("create_block", {"mins": low, "maxs": high, "material": MODEL_MATERIAL})["id"]
@@ -111,13 +111,19 @@ def brush_model(client, literal=False):
     assert authored["spawnflags"] == "2" and authored["Solidity"] == authored["StartDisabled"] == authored["InputFilter"] == "0"
     assert "origin" not in authored and "angles" not in authored
     client.call("set_entity_properties", {"id": model, "set": {"origin": "96 40 4" if literal else "16 8 4"}})
+    if shadow_caster:
+        shadows = next(row for row in definition["properties"] if row["name"] == "vrad_brush_cast_shadows")
+        assert shadows["label"] == "Shadows" and not shadows["read_only"] and shadows["default"] == "0"
+        assert [(choice["value"], choice["label"]) for choice in shadows["choices"]] == [("0", "No"), ("1", "Yes")]
+        client.call("set_entity_properties", {"id": model, "set": {"vrad_brush_cast_shadows": "1"}})
     return model, blocks, definition
 
 
-def model_parent(client, path, child, literal=False):
+def model_parent(client, path, child, literal=False, shadow_caster=False):
     sealed_parent(client)
     client.call("create_entity", {"classname": "light", "origin": [80, 32, 160], "properties": {
-        "_light": "255 128 64 200", "_lightHDR": "64 255 128 400", "_constant_attn": "1",
+        "_light": "255 0 0 200" if shadow_caster else "255 128 64 200",
+        "_lightHDR": "0 0 255 400" if shadow_caster else "64 255 128 400", "_constant_attn": "1",
         "_linear_attn": "0", "_quadratic_attn": "0"}})
     client.call("save_map", {"path": str(path)})
     token = client.call("set_instance_reference", {"action": "begin"})["token"]
@@ -128,7 +134,7 @@ def model_parent(client, path, child, literal=False):
     owner = client.call("set_instance_reference", {"action": "apply", "token": token})["id"]
     assert owner == "entity:10", "Independent model identity reservation changed"
     if literal:
-        model, blocks, _ = brush_model(client, literal=True)
+        model, blocks, _ = brush_model(client, literal=True, shadow_caster=shadow_caster)
         assert model == "entity:13" and blocks == ["solid:11", "solid:12"]
         client.call("delete_objects", {"ids": [owner]})
     client.call("save_map", {"path": str(path)})
@@ -146,31 +152,31 @@ def model_parent(client, path, child, literal=False):
     return owner, client.call("get_map_info")["worldspawn"]
 
 
-def validate_brush_models(client, output, gameinfo, result):
+def validate_brush_models(client, output, gameinfo, result, shadow_caster=False):
     from validate_instance_lighting import entity_rows
 
     retained = {path: path.read_bytes() for pattern in ("*.bsp", "*.lin") for path in output.rglob(pattern)}
-    output = output / "brush-models"
+    output = output / ("brush-casters" if shadow_caster else "brush-models")
     output.mkdir()
     material = gameinfo.parent / f"materials/{MODEL_MATERIAL}.vmt"
     assert not material.exists()
     material.write_text("LightmappedGeneric { $basetexture audit/base }\n")
     material_bytes = material.read_bytes()
     client.call("new_map", {"discard_changes": True})
-    _, _, definition = brush_model(client)
+    model, _, definition = brush_model(client)
     child = output / "model-child.vmf"
     client.call("save_map", {"path": str(child)})
     child_bytes = child.read_bytes()
     client.call("open_map", {"path": str(child)})
     assert child.read_bytes() == child_bytes
     parent, literal = output / "parent.vmf", output / "literal.vmf"
-    owner, world = model_parent(client, parent, child)
-    _, literal_world = model_parent(client, literal, child, literal=True)
+    owner, world = model_parent(client, parent, child, shadow_caster=shadow_caster)
+    _, literal_world = model_parent(client, literal, child, literal=True, shadow_caster=shadow_caster)
     assert world == literal_world, "Normal-save world metadata differs between child and literal"
     receipt = {"cases": {}, "fgd": definition, "physics": "none", "native_exercised": False,
                "literal_origin": [96, 40, 4], "literal_local_bounds": [-64, -40, 12, 32, 24, 36],
                "identity_alignment": {"entity:13": "entity:11", "solid:11": "solid:12", "solid:12": "solid:13"}}
-    result["brush_models"] = receipt
+    result["brush_casters" if shadow_caster else "brush_models"] = receipt
 
     def preview():
         report = client.call("set_instance_contents", {"action": "refresh"})
@@ -187,6 +193,8 @@ def validate_brush_models(client, output, gameinfo, result):
 
     def pair(source, label, mode, failure=False):
         client.call("set_compile_settings", {"lighting": mode, "physics": "none", "bounces": 0})
+        settings = client.call("get_compile_settings")
+        assert settings["lighting"] == mode and settings["physics"] == "none" and settings["bounces"] == 0
         token = client.call("begin_property_edit", {"world": True})["draft"]["token"]
         client.call("update_property_edit", {"token": token, "changes": [{"action": "set", "key": "message", "value": "Retained child-model review"}]})
         before = (source_state(client, source), client.call("get_compile_settings"), client.call("get_property_edit"), game_files(gameinfo.parent))
@@ -213,10 +221,17 @@ def validate_brush_models(client, output, gameinfo, result):
                 assert job["result"]["published"] is not failure
                 if failure:
                     assert path.read_bytes() == old and built["bsp"] is None
-                    assert any(row["level"] == "error" and row["object"] == owner and "Child brush-model material:" in row["message"] for row in built["diagnostics"]), built
+                    assert any(row["level"] == "error" and row["object"] == owner and ("Brush global shadows:" if shadow_caster else "Child brush-model material:") in row["message"] for row in built["diagnostics"]), built
                 else:
                     assert not job["stale"] and built["bsp"] == str(path) and built["leak"] is None
                     assert built["stats"]["lighting_mode"] == mode
+                    if shadow_caster:
+                        expected_casters = 0 if mode == "fullbright" or label == "child-shadows-off" else 1
+                        assert built["stats"]["brush_shadow_models"] == expected_casters
+                        if mode == "fullbright":
+                            assert any(row["level"] == "info" and row["message"] ==
+                                       "Brush global shadows: 1 admitted Shadows Yes source request(s); not baked in Fullbright"
+                                       for row in built["diagnostics"]), built
                 assert pointfile.read_bytes() == b"retained child-model pointfile\n"
                 assert (source_state(client, source), client.call("get_compile_settings"), client.call("get_property_edit"), game_files(gameinfo.parent)) == before
                 assert child.read_bytes() == child_bytes
@@ -230,6 +245,22 @@ def validate_brush_models(client, output, gameinfo, result):
 
     try:
         with patch.object(client, "call", wraps=client.call) as calls:
+            if shadow_caster:
+                from validate_prop_shadows import brush_samples
+
+                client.call("open_map", {"path": str(parent)})
+                off = pair(parent, "child-shadows-off", "direct_ldr_hdr")
+                off_samples = brush_samples(off, (80, 32))
+                assert off_samples == {"ldr": ["c8000000"], "hdr": ["0000c801"]}, off_samples
+                receipt["off_samples"] = off_samples
+                (output / "model-child-off.vmf").write_bytes(child_bytes)
+                client.call("open_map", {"path": str(child)})
+                shadows = next(row for row in definition["properties"] if row["name"] == "vrad_brush_cast_shadows")
+                assert shadows["label"] == "Shadows" and not shadows["read_only"] and shadows["default"] == "0"
+                assert [(choice["value"], choice["label"]) for choice in shadows["choices"]] == [("0", "No"), ("1", "Yes")]
+                client.call("set_entity_properties", {"id": model, "set": {"vrad_brush_cast_shadows": "1"}})
+                client.call("save_map", {"path": str(child)})
+                child_bytes = child.read_bytes()
             for mode in ("fullbright", "direct_ldr_hdr"):
                 compiled = []
                 for label, source in (("child", parent), ("literal", literal)):
@@ -251,20 +282,29 @@ def validate_brush_models(client, output, gameinfo, result):
                     first, count = models[1][10:12]
                     assert {infos[face[5]][:8] for face in faces[first:first + count]} == {
                         (0, 4, 0, 32, 0, 0, -4, -16), (4, 0, 0, 64, 0, 0, -4, -16), (4, 0, 0, 64, 0, -4, 0, -32)}
+                    if shadow_caster:
+                        assert rows[0]["vrad_brush_cast_shadows"] == "1"
+                    if shadow_caster and mode == "direct_ldr_hdr":
+                        samples = brush_samples(data, (80, 32))
+                        assert samples == {"ldr": ["00000000"], "hdr": ["00000000"]}, samples
+                        receipt["cases"][f"{label}-{mode}-world_samples"] = samples
                     compiled.append(data)
                 assert compiled[0] == compiled[1], f"{mode}: complete BSP differs from independently authored translated compound model"
             client.call("open_map", {"path": str(parent)})
-            material.write_text("LightmappedGeneric { $basetexture audit/base %compileorigin 1 }\n")
+            material.write_text("LightmappedGeneric { $basetexture audit/base " +
+                                ("$alphatest 1" if shadow_caster else "%compileorigin 1") + " }\n")
             receipt["material_is_not_certified_by_refresh"] = preview()
             pair(parent, "child-direct_ldr_hdr", "direct_ldr_hdr", failure=True)
             dispatches = [call.args[0] for call in calls.call_args_list if call.args[0] in ("compile_map", "start_compile")]
-            assert dispatches == ["compile_map", "start_compile"] * 5
+            assert dispatches == ["compile_map", "start_compile"] * (6 if shadow_caster else 5)
             receipt["compile_dispatches"] = dispatches
     finally:
         material.write_bytes(material_bytes)
     assert all(path.read_bytes() == data for path, data in retained.items())
     assert child.read_bytes() == child_bytes and not client.call("get_map_info")["rendering"]["initialized"]
     result["checks"].append("Compound child models preserve exact translated root BSP/local UVs, honest reference counts and material-refusal custody through both compile paths")
+    if shadow_caster:
+        result["checks"].append("Installed Shadows No/Yes changes exact world LDR/HDR luxels; actual baked counts and Fullbright admitted-source/not-baked status agree with complete child/root BSP parity")
 
 
 def validate(client, output, gameinfo, result):
@@ -438,7 +478,9 @@ def main():
     parser = argparse.ArgumentParser(description="Validate private brush-instance compilation through stdio MCP without game or graphics execution.")
     parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--brush-model-control", action="store_true", help="Add ten compile calls for one installed-FGD compound func_brush child, explicit Origin, shared saved reference/Refresh with unavailable model preview, exact translated root-literal BSP and local UV parity in Fullbright and LDR+HDR, plus a custom-origin material refusal preserving output/source/draft. Uses No physics; no Engine or native pixel claim. Existing six-call controls remain unchanged.")
+    controls = parser.add_mutually_exclusive_group()
+    controls.add_argument("--brush-model-control", action="store_true", help="Add ten compile calls for one installed-FGD compound func_brush child, explicit Origin, shared saved reference/Refresh with unavailable model preview, exact translated root-literal BSP and local UV parity in Fullbright and LDR+HDR, plus a custom-origin material refusal preserving output/source/draft. Uses No physics; no Engine or native pixel claim. Existing six-call controls remain unchanged.")
+    controls.add_argument("--brush-caster-control", action="store_true", help="Add twelve compile calls for installed-FGD Shadows No/Yes on an ordinary compound func_brush child: exact red/blue world-luxel change, complete child/root literal BSP parity in Fullbright and LDR+HDR, actual baked count versus Fullbright not-baked status, and an alpha-material refusal preserving source/draft/BSP/LIN. No physics or native pixel claim. Original six-call controls remain unchanged; alternative to --brush-model-control.")
     args = parser.parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
@@ -465,8 +507,8 @@ def main():
         }):
             client = Client(None, binary, output, gameinfo=gameinfo)
         validate(client, output, gameinfo, result)
-        if args.brush_model_control:
-            validate_brush_models(client, output, gameinfo, result)
+        if args.brush_model_control or args.brush_caster_control:
+            validate_brush_models(client, output, gameinfo, result, shadow_caster=args.brush_caster_control)
         result["status"] = "passed"
     except Exception as error:
         result["status"] = "failed"

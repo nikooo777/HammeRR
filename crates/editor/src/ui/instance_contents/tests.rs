@@ -613,7 +613,10 @@ fn software_brush_model_counts_refuse_frame_without_reference_geometry() {
             Actor::User,
             &blocks,
             "func_brush",
-            std::collections::BTreeMap::from([("origin".into(), "16 8 4".into())]),
+            std::collections::BTreeMap::from([
+                ("origin".into(), "16 8 4".into()),
+                ("vrad_brush_cast_shadows".into(), "1".into()),
+            ]),
         )
         .unwrap();
     session.save(Actor::User, Some(&child)).unwrap();
@@ -637,6 +640,7 @@ fn software_brush_model_counts_refuse_frame_without_reference_geometry() {
     let output = &result.as_ref().unwrap().output;
     assert!(output.bsp.is_some(), "{:?}", output.report);
     assert_eq!(output.stats.instances.as_ref().unwrap().brush_models, 1);
+    assert_eq!(output.stats.brush_shadow_models, 0);
     session.finish_compile(Actor::User, &result);
     let request = session
         .begin_instance_contents_refresh(Actor::User)
@@ -659,6 +663,10 @@ fn software_brush_model_counts_refuse_frame_without_reference_geometry() {
     assert!(contents.window.get_summary().contains(reason));
     assert!(build.window.get_details().contains(count));
     assert!(build.window.get_details().contains(reason));
+    assert!(build.window.get_details().contains(
+        "Brush global shadows: 1 admitted Shadows Yes source request(s); not baked in Fullbright"
+    ));
+    assert!(!build.window.get_details().contains("baked models"));
     assert!(!contents.window.get_can_frame());
     contents.window.invoke_frame_contents();
     assert!(
@@ -672,4 +680,31 @@ fn software_brush_model_counts_refuse_frame_without_reference_geometry() {
     assert_eq!(session.history_snapshot(), history);
     assert_eq!(session.camera(), camera);
     assert_eq!(session.compile_settings(), settings);
+    drop(session);
+    lock(&shared)
+        .set_compile_settings(Actor::User, "direct_ldr")
+        .unwrap();
+    let request = lock(&shared).begin_compile(Actor::User, None).unwrap();
+    let result = request.run();
+    let output = &result.as_ref().unwrap().output;
+    assert!(output.bsp.is_some(), "{:?}", output.report);
+    assert_eq!(output.stats.brush_shadow_models, 1);
+    lock(&shared).finish_compile(Actor::User, &result);
+    build.refresh(&lock(&shared));
+    assert!(
+        build
+            .window
+            .get_details()
+            .contains("Brush global shadows: 1 baked models")
+    );
+    assert!(
+        !build
+            .window
+            .get_details()
+            .contains("not baked in Fullbright")
+    );
+    let session = lock(&shared);
+    assert_eq!(session.document().vmf(), &memory);
+    assert_eq!(session.history_snapshot(), history);
+    assert_eq!(session.camera(), camera);
 }

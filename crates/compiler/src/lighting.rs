@@ -491,6 +491,7 @@ pub struct Occluder {
 
 #[derive(Debug, Clone)]
 struct OpticalHull {
+    global_caster: bool,
     faces: Vec<Option<brush_alpha::Face>>,
     pose: Option<crate::brush_model_pose::Pose>,
 }
@@ -578,15 +579,37 @@ impl Occluder {
             return Err("Brush texture shadow boundaries must match hull planes".into());
         }
         if faces.iter().any(Option::is_some) {
-            self.optical = Some(Box::new(OpticalHull { faces, pose }));
+            self.optical = Some(Box::new(OpticalHull {
+                faces,
+                pose,
+                global_caster: false,
+            }));
         }
         Ok(self)
+    }
+
+    fn into_global_caster(mut self) -> Self {
+        self.optical = Some(Box::new(OpticalHull {
+            faces: Vec::new(),
+            pose: None,
+            global_caster: true,
+        }));
+        self
+    }
+
+    fn occupies_world(&self) -> bool {
+        self.optical
+            .as_ref()
+            .is_none_or(|optical| !optical.global_caster)
     }
 
     fn optical_entry(&self, start: DVec3, end: DVec3) -> Result<Option<(f64, bool)>, String> {
         let Some(optical) = &self.optical else {
             return self.entry(start, end);
         };
+        if optical.global_caster {
+            return self.entry(start, end);
+        }
         let Some(interval) = self.interval(start, end)? else {
             return Ok(None);
         };

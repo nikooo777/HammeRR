@@ -14,6 +14,18 @@ fn installed_fgd_brush_models_keep_shared_authoring_source_identity_and_honest_p
         assert!(class.property("origin").unwrap().default.is_none());
         assert!(!class.property("origin").unwrap().read_only);
         assert!(class.property("angles").is_none());
+        let shadows = class.property("vrad_brush_cast_shadows").unwrap();
+        assert_eq!(shadows.label, "Shadows");
+        assert_eq!(shadows.default.as_deref(), Some("0"));
+        assert!(!shadows.read_only);
+        assert_eq!(
+            shadows
+                .choices
+                .iter()
+                .map(|choice| (choice.value.as_str(), choice.label.as_str()))
+                .collect::<Vec<_>>(),
+            [("0", "No"), ("1", "Yes")]
+        );
         let defaults = class.defaults();
         for (key, value) in [
             ("spawnflags", "2"),
@@ -65,6 +77,26 @@ fn installed_fgd_brush_models_keep_shared_authoring_source_identity_and_honest_p
         session
             .set_entity_properties(actor, model, &[("origin".into(), Some("16 8 4".into()))])
             .unwrap();
+        session
+            .set_entity_properties(
+                actor,
+                model,
+                &[("vrad_brush_cast_shadows".into(), Some("1".into()))],
+            )
+            .unwrap();
+        let authored = session.document().vmf().clone();
+        let history = session.history_snapshot();
+        assert!(
+            session
+                .set_entity_properties(
+                    actor,
+                    model,
+                    &[("vrad_brush_cast_shadows".into(), Some("2".into()))]
+                )
+                .is_err()
+        );
+        assert_eq!(session.document().vmf(), &authored);
+        assert_eq!(session.history_snapshot(), history);
         session.save(actor, None).unwrap();
         let child_bytes = std::fs::read(&child).unwrap();
         session.open(actor, &child, false).unwrap();
@@ -78,6 +110,15 @@ fn installed_fgd_brush_models_keep_shared_authoring_source_identity_and_honest_p
             Some("16 8 4")
         );
         assert_eq!(std::fs::read(&child).unwrap(), child_bytes);
+        assert_eq!(
+            session
+                .document()
+                .entity(model)
+                .unwrap()
+                .properties
+                .get("vrad_brush_cast_shadows"),
+            Some("1")
+        );
         session.open(actor, &source, false).unwrap();
         let owner = ObjectId::Entity(session.document().vmf().entities.last().unwrap().id);
         session.select(&[owner], SelectMode::Replace).unwrap();

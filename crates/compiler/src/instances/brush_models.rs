@@ -5,7 +5,7 @@ use super::*;
 use crate::asset_sources::BuildMaterialSources;
 use crate::materials::{MaterialInfo, Materials, Requirements};
 
-pub(super) struct Shape {
+pub(crate) struct Shape {
     pub brushes: usize,
     pub sides: usize,
     pub geometry_work: usize,
@@ -17,7 +17,7 @@ pub(super) fn is_model(entity: &Entity) -> bool {
         .is_some_and(|class| class.eq_ignore_ascii_case("func_brush"))
 }
 
-pub(super) fn shape(entity: &Entity) -> Result<Option<Shape>, String> {
+pub(crate) fn shape(entity: &Entity) -> Result<Option<Shape>, String> {
     let mut shape = Shape {
         brushes: 0,
         sides: 0,
@@ -79,6 +79,10 @@ fn zero_angles(raw: &str) -> Result<(), String> {
 }
 
 pub(super) fn admit(entity: &Entity) -> Result<(), String> {
+    admit_stationary(entity, false)
+}
+
+pub(crate) fn admit_stationary(entity: &Entity, rotation: bool) -> Result<(), String> {
     if shape(entity)?.is_none() {
         return Ok(());
     }
@@ -141,7 +145,9 @@ pub(super) fn admit(entity: &Entity) -> Result<(), String> {
             "classname" => value == "func_brush",
             "origin" => true,
             "angles" => {
-                zero_angles(value)?;
+                if !rotation {
+                    zero_angles(value)?;
+                }
                 true
             }
             "spawnflags" => matches!(value.trim().parse::<u32>(), Ok(0 | 2)),
@@ -149,7 +155,6 @@ pub(super) fn admit(entity: &Entity) -> Result<(), String> {
             | "StartDisabled"
             | "solidbsp"
             | "invert_exclusion"
-            | "vrad_brush_cast_shadows"
             | "InputFilter"
             | "renderfx"
             | "rendermode"
@@ -157,6 +162,7 @@ pub(super) fn admit(entity: &Entity) -> Result<(), String> {
             | "disablereceiveshadows"
             | "mindxlevel"
             | "maxdxlevel" => value.trim().parse::<u32>() == Ok(0),
+            "vrad_brush_cast_shadows" => matches!(value.trim().parse::<u32>(), Ok(0 | 1)),
             "renderamt" => value.trim().parse::<u32>() == Ok(255),
             "rendercolor" => vector(entity, "rendercolor")? == DVec3::splat(255.0),
             "excludednpc" | "targetname" | "target" | "parentname" | "name" | "globalname"
@@ -173,7 +179,7 @@ pub(super) fn admit(entity: &Entity) -> Result<(), String> {
     origin(entity).map(|_| ())
 }
 
-fn origin(entity: &Entity) -> Result<DVec3, String> {
+pub(crate) fn origin(entity: &Entity) -> Result<DVec3, String> {
     if entity.properties.get("origin").is_none() {
         return Err("Child brush model requires explicit canonical origin".into());
     }
@@ -204,7 +210,7 @@ pub(super) fn check_pose(entity: &Entity, control: &Control) -> Result<(), Strin
     Ok(())
 }
 
-fn ordinary(info: &MaterialInfo) -> bool {
+pub(crate) fn ordinary(info: &MaterialInfo) -> bool {
     info.found
         && info.contents == contents::SOLID
         && info.surface & !(surf::NODRAW | surf::NOLIGHT | surf::BUMPLIGHT) == 0
@@ -300,7 +306,7 @@ mod tests {
             ("InputFilter", "8"),
             ("renderamt", "254"),
             ("rendercolor", "255 255 0"),
-            ("vrad_brush_cast_shadows", "1"),
+            ("vrad_brush_cast_shadows", "2"),
             ("parentname", "parent"),
             ("targetname", " "),
             ("excludednpc", "npc_test"),
@@ -322,6 +328,28 @@ mod tests {
         );
         entity.properties.0.push(("solidity".into(), "0".into()));
         assert!(admit(&entity).unwrap_err().contains("repeats property"));
+    }
+
+    #[test]
+    fn stationary_global_request_shares_neutral_fields_but_keeps_child_source_zero() {
+        let mut entity = model();
+        entity.properties.set("vrad_brush_cast_shadows", "1");
+        let original = entity.clone();
+        admit(&entity).unwrap();
+        assert_eq!(entity, original);
+        entity.properties.set("angles", "15 90 -30");
+        assert!(admit(&entity).is_err());
+        admit_stationary(&entity, true).unwrap();
+        for (key, value) in [
+            ("targetname", "moving"),
+            ("parentname", "parent"),
+            ("StartDisabled", "1"),
+            ("Solidity", "1"),
+        ] {
+            let mut invalid = entity.clone();
+            invalid.properties.set(key, value);
+            assert!(admit_stationary(&invalid, true).is_err(), "{key}");
+        }
     }
 
     #[test]

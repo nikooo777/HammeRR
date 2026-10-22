@@ -21,11 +21,26 @@ fn brush_texture_shadows_share_atomic_settings_without_document_or_draft_changes
     let camera = lock(&shared).camera();
     let schema = serde_json::to_value(schemars::schema_for!(CompileSettingsArgs)).unwrap();
     assert!(schema["properties"]["brush_texture_shadows"].is_object());
+    assert!(schema["properties"]["refine_ambient_probes"].is_object());
     assert!(
         serde_json::from_value::<CompileSettingsArgs>(json!({"brush_texture_shadows":1})).is_err()
     );
     let initial = lock(&shared).compile_settings();
     assert_eq!(initial["brush_texture_shadows"], false);
+    assert!(schema["properties"].get("brush_model_shadowing").is_none());
+    assert_eq!(initial["brush_model_shadowing"]["available"], false);
+    assert_eq!(
+        initial["brush_model_shadowing"]["property"],
+        "vrad_brush_cast_shadows"
+    );
+    assert_eq!(
+        initial["brush_model_shadowing"]["fullbright"],
+        "admit_and_preserve_without_baking"
+    );
+    assert_eq!(
+        initial["brush_model_shadowing"]["baked_count"],
+        "stats.brush_shadow_models"
+    );
     assert_eq!(initial["brush_texture_shadowing"]["available"], false);
     assert_eq!(
         initial["brush_texture_shadowing"]["limits"]["model_scope"],
@@ -66,6 +81,7 @@ fn brush_texture_shadows_share_atomic_settings_without_document_or_draft_changes
         .unwrap();
         assert_eq!(lock(&shared).compile_options(), user.compile_options());
         let retained = lock(&shared).compile_settings();
+        assert_eq!(retained["brush_model_shadowing"]["available"], true);
         let failed = server
             .set_compile_settings(Parameters(
                 serde_json::from_value(json!({"lighting":"fullbright"})).unwrap(),
@@ -85,6 +101,24 @@ fn brush_texture_shadows_share_atomic_settings_without_document_or_draft_changes
         lock(&shared).compile_options(),
         compiler::Options::default()
     );
+    let refinement = server
+        .set_compile_settings(Parameters(
+            serde_json::from_value(json!({
+                "lighting":"direct_ldr_hdr","sky_quality":"balanced","refine_ambient_probes":true
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+    assert!(!refinement.is_error.unwrap_or(false));
+    assert!(lock(&shared).compile_options().refine_ambient_probes);
+    let retained = lock(&shared).compile_settings();
+    let failed = server
+        .set_compile_settings(Parameters(
+            serde_json::from_value(json!({"sky_quality":"fast"})).unwrap(),
+        ))
+        .unwrap();
+    assert!(failed.is_error.unwrap_or(false));
+    assert_eq!(lock(&shared).compile_settings(), retained);
     assert_eq!(lock(&shared).document().vmf(), &source);
     assert_eq!(lock(&shared).history_snapshot(), history);
     assert_eq!(json!(lock(&shared).property_draft()), draft);

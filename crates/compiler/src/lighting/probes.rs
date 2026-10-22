@@ -10,9 +10,12 @@ use crate::map::Map;
 use crate::tree::Tree;
 use crate::{Diagnostic, Report};
 
+mod refinement;
+
 const MIN_PROBE_SPACING: f64 = 128.0;
 const MAX_AMBIENT_SAMPLES: usize = u16::MAX as usize + 1;
 const CANDIDATE_FRACTIONS: [u8; 4] = [64, 128, 192, 224];
+const MAX_CANDIDATES: usize = 1 + CANDIDATE_FRACTIONS.len().pow(3);
 const CUBE_AXES: [DVec3; 6] = [
     DVec3::X,
     DVec3::NEG_X,
@@ -21,6 +24,8 @@ const CUBE_AXES: [DVec3; 6] = [
     DVec3::Z,
     DVec3::NEG_Z,
 ];
+const EXTRA_DIRECTION_WORK: usize = CUBE_AXES.len() * 16;
+const EXTRA_CUBE_WORK: usize = CUBE_AXES.len() * 32;
 
 pub(super) struct Context<'a> {
     pub brush_textures: Option<&'a super::brush_alpha::Prepared>,
@@ -36,6 +41,7 @@ pub(super) struct Context<'a> {
     pub directions: &'a [DVec3],
     pub quality: crate::SkyQuality,
     pub sky_radiance: DVec3,
+    pub refine: bool,
 }
 
 pub(super) struct Stats {
@@ -47,6 +53,7 @@ fn candidates(
     ctx: &Context<'_>,
     node: usize,
     leaf: &Leaf,
+    limit: usize,
     budget: &mut Budget<'_>,
 ) -> Result<Vec<LeafAmbientSample>, String> {
     let volume = &ctx.tree.nodes[node].volume;
@@ -84,12 +91,12 @@ fn candidates(
                     % CANDIDATE_FRACTIONS.len()]
             })
         }));
-    let limit = match ctx.quality {
-        crate::SkyQuality::Fast => 1,
-        crate::SkyQuality::Balanced => 4,
-        crate::SkyQuality::Detailed => 8,
-    };
     let mut valid = Vec::new();
+    if ctx.refine {
+        valid
+            .try_reserve_exact(MAX_CANDIDATES)
+            .map_err(|_| "Cannot reserve ambient refinement candidates")?;
+    }
     for position in candidates {
         budget.consume(volume.sides.len() + 1)?;
         let sample = LeafAmbientSample {
@@ -113,7 +120,12 @@ fn candidates(
                 point,
                 point,
                 &mut |work| budget.consume(work),
-                &mut |hull| Ok(hull.entry(point, point)?.map(|hit| (hit.0, ()))),
+                &mut |hull| {
+                    if !hull.occupies_world() {
+                        return Ok(None);
+                    }
+                    Ok(hull.entry(point, point)?.map(|hit| (hit.0, ())))
+                },
             )?
             .is_some();
         if blocked
@@ -146,7 +158,15 @@ fn candidates(
         }
     }
     let mut selected = Vec::new();
+    if ctx.refine {
+        selected
+            .try_reserve_exact(limit)
+            .map_err(|_| "Cannot reserve ambient refinement pool")?;
+    }
     if !valid.is_empty() {
+        if ctx.refine {
+            budget.consume(valid.len())?;
+        }
         selected.push(valid.remove(0));
     }
     while selected.len() < limit {
@@ -164,7 +184,19 @@ fn candidates(
             }
         }
         let Some(index) = best else { break };
+        if ctx.refine {
+            budget.consume(valid.len() - index)?;
+        }
         selected.push(valid.remove(index));
+    }
+    if ctx.refine {
+        let mut probes = Vec::new();
+        probes
+            .try_reserve_exact(limit)
+            .map_err(|_| "Cannot reserve ambient refinement records")?;
+        budget.consume(selected.len())?;
+        probes.extend(selected.into_iter().map(|(sample, _)| sample));
+        return Ok(probes);
     }
     Ok(selected.into_iter().map(|(sample, _)| sample).collect())
 }
@@ -190,6 +222,14 @@ fn gather(
         *color /= total;
     }
     Ok(colors)
+}
+
+fn reserve_refinement(budget: &Budget<'_>) -> Result<super::bake::Allocation, String> {
+    budget.reserve_bytes(
+        (MAX_CANDIDATES + refinement::MAX_POOL) * size_of::<(LeafAmbientSample, DVec3)>()
+            + refinement::MAX_POOL * size_of::<LeafAmbientSample>()
+            + refinement::SCRATCH_BYTES,
+    )
 }
 
 pub(super) fn bake(
@@ -236,21 +276,37 @@ pub(super) fn bake(
                     && !ctx.tree.nodes[node].solid()
             })
             .ok_or("Model ambient leaf has no exact world volume")?;
-        let probes = candidates(ctx, node, leaf, budget)?;
+        let limit = match ctx.quality {
+            crate::SkyQuality::Fast => 1,
+            crate::SkyQuality::Balanced => 4,
+            crate::SkyQuality::Detailed => 8,
+        };
+        let _refinement_allocation = ctx.refine.then(|| reserve_refinement(budget)).transpose()?;
+        let mut probes = candidates(
+            ctx,
+            node,
+            leaf,
+            if ctx.refine { limit * 2 } else { limit },
+            budget,
+        )?;
         if probes.is_empty() {
             missing += 1;
             continue;
         }
-        if samples.len() + probes.len() > MAX_AMBIENT_SAMPLES {
+        let emitted = probes.len().min(limit);
+        if samples.len() + emitted > MAX_AMBIENT_SAMPLES {
             return Err("Model ambient sample count exceeds the bounded Source index limit".into());
         }
         indices[index] = LeafAmbientIndex {
-            sample_count: probes.len() as u16,
+            sample_count: emitted as u16,
             first_sample: u16::try_from(samples.len())
                 .map_err(|_| "Model ambient sample offset exceeds Source limits")?,
         };
         budget.plan_samples(probes.len())?;
-        for mut sample in probes {
+        for (probe_index, sample) in probes.iter_mut().enumerate() {
+            if ctx.refine && probe_index >= emitted {
+                budget.consume(ctx.directions.len() * EXTRA_DIRECTION_WORK + EXTRA_CUBE_WORK)?;
+            }
             let point = DVec3::from_array(
                 sample
                     .world_position(leaf)
@@ -271,9 +327,15 @@ pub(super) fn bake(
             for (slot, color) in sample.cube.iter_mut().zip(colors) {
                 *slot = encode_color(color)?;
             }
-            samples.push(sample);
             budget.finish_sample();
         }
+        if ctx.refine && probes.len() > emitted {
+            let replacement = refinement::choose(leaf, &probes, emitted, budget)?;
+            budget.consume(1)?;
+            probes.swap(emitted - 1, replacement);
+            probes.truncate(emitted);
+        }
+        samples.extend(probes);
     }
     budget.samples_planned_complete();
     if missing != 0 {
@@ -286,13 +348,44 @@ pub(super) fn bake(
     };
     bsp.set_leaf_ambient(ctx.kind, &LeafAmbient::Indexed { indices, samples })
         .map_err(|error| error.to_string())?;
-    report.diagnostics.push(Diagnostic::info("Model ambient uses up to 1/4/8 separated probes per open world leaf at Fast/Balanced/Detailed quality, sampled from filtered local world/terrain lightmaps and sky radiance. Static-prop opaque, cutout and requested translucent meshes attenuate probe rays; adaptive refinement and reflected prop sources remain unfinished", None, None));
+    let message = if ctx.refine {
+        "Model ambient refinement evaluates up to 8/16 separated probes per open world leaf at Balanced/Detailed quality and retains up to 4/8. At the full 4/8-probe count, each channel keeps its first 3/7 anchors and replaces only the final probe when the candidate-pool maximum native reconstruction error strictly decreases. Probes sample filtered local world/terrain lightmaps and sky radiance, with static-prop opaque, cutout and requested translucent attenuation; reflected prop sources remain unfinished"
+    } else {
+        "Model ambient uses up to 1/4/8 separated probes per open world leaf at Fast/Balanced/Detailed quality, sampled from filtered local world/terrain lightmaps and sky radiance. Static-prop opaque, cutout and requested translucent meshes attenuate probe rays; adaptive refinement and reflected prop sources remain unfinished"
+    };
+    report
+        .diagnostics
+        .push(Diagnostic::info(message, None, None));
     Ok(stats)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn refinement_scratch_reservation_obeys_prepaid_live_budget_and_releases_on_exit() {
+        let control = crate::Control::default();
+        let budget = Budget::new(&control);
+        let allocation = reserve_refinement(&budget).unwrap();
+        let bytes = budget.live_bytes();
+        assert!(bytes > refinement::SCRATCH_BYTES);
+        drop(allocation);
+        assert_eq!(budget.live_bytes(), 0);
+        let limit = super::super::bake::MAX_LIGHTING_LIVE_BYTES;
+        let prepaid = budget.reserve_bytes(limit - bytes).unwrap();
+        let allocation = reserve_refinement(&budget).unwrap();
+        assert_eq!(budget.live_bytes(), limit);
+        assert!(budget.reserve_bytes(1).is_err());
+        drop(allocation);
+        let extra = budget.reserve_bytes(1).unwrap();
+        let error = reserve_refinement(&budget).err().unwrap();
+        assert!(error.contains("512 MiB live channel-allocation budget"));
+        assert_eq!(budget.live_bytes(), limit - bytes + 1);
+        drop(extra);
+        drop(prepaid);
+        assert_eq!(budget.live_bytes(), 0);
+    }
+
     #[test]
     fn leaf_cube_gathers_transmitted_source_color() {
         let control = crate::Control::default();

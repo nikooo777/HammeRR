@@ -714,6 +714,7 @@ pub struct BuildSettingsUpdate<'a> {
     pub pack_static_prop_assets: Option<bool>,
     pub bake_static_prop_vertices: Option<bool>,
     pub brush_texture_shadows: Option<bool>,
+    pub refine_ambient_probes: Option<bool>,
 }
 
 impl Session {
@@ -791,11 +792,41 @@ impl Session {
         settings["lighting_work_description"] = "One aggregate allowance for preparation, LDR and HDR lighting. Raising it preserves sampling quality and all independent allocation, sample, light, probe and geometry limits.".into();
         settings["bake_static_prop_vertices"] =
             self.compilation.options.bake_static_prop_vertices.into();
+        settings["brush_model_shadowing"] = json!({
+            "available":self.compilation.options.lighting.performs_lighting(),
+            "property":"vrad_brush_cast_shadows","enabled_value":"1","default_value":"0",
+            "fullbright":"admit_and_preserve_without_baking",
+            "baked_count":"stats.brush_shadow_models",
+            "description":"Advanced properties → Shadows → Yes requests opaque global baked shadows from an unnamed, unparented ordinary func_brush at its admitted stationary initial pose. Use an explicit finite Origin (X Y Z). Root and child requests validate before region omission in every lighting mode; Fullbright reports admitted source requests without baking; this count includes requests omitted by compile regions. Child source angles remain absent or zero. No new build setting is required.",
+            "limits":{
+                "classname":"func_brush","origin":"explicit_finite",
+                "runtime_names_parenting_io":false,"source_materials":"resolved_opaque_ordinary_solid",
+                "material_shaders":["LightmappedGeneric","UnlitGeneric","Patch"],
+                "patch_form":"unambiguous_scalar_include_edit",
+                "alpha_translucent_additive":false,"terrain_liquid_origin_volumes":false,
+                "radiance_source":false,"dynamic_relighting":false,
+                "geometry_collision_pvs_probe_placement":"unchanged",
+                "child_refresh":"source_keys_geometry_bounds_only",
+                "lighting_work_limit":"shared_aggregate"
+            }
+        });
+        settings["refine_ambient_probes"] = self.compilation.options.refine_ambient_probes.into();
+        let refinement_available = self.compilation.options.lighting.performs_lighting()
+            && self.compilation.options.sky_quality != compiler::SkyQuality::Fast;
+        settings["ambient_probe_refinement"] = json!({
+            "available":refinement_available,
+            "unavailable_reason":if refinement_available { None } else { Some("Choose Direct LDR or Direct LDR + HDR and Balanced or Detailed sampling.") },
+            "description":"Tries more positions for ambient lighting samples while keeping the sample count and spacing. Evaluates up to twice as many positions and can take longer.",
+            "limits":{"lighting_modes":["direct_ldr","direct_ldr_hdr"],"sampling":["balanced","detailed"],
+                "probe_cap":{"balanced":4,"detailed":8},"candidate_gather_factor_max":2,
+                "replaced_slots_max":1,"uniform_and_ties":"retain_baseline","work":"shared_checked_budget",
+                "quality_guarantee":false,"native_pixel_qualification":false}
+        });
         settings["brush_texture_shadows"] = self.compilation.options.brush_texture_shadows.into();
         settings["brush_texture_shadowing"] = json!({
             "available":self.compilation.options.lighting.performs_lighting(),
             "unavailable_reason":if self.compilation.options.lighting.performs_lighting() { None } else { Some("Choose Direct LDR or Direct LDR + HDR before enabling brush texture shadows.") },
-            "description":"Use binary base-texture alpha on plain LightmappedGeneric world/detail faces and within the same brush model at its admitted initial baked pose. Model cutouts affect only that model's own lit receivers; models do not cast permanent shadows into the world or other models and do not supply reflected radiance. Default off; independent of native model-requested prop texture shadows. Geometry, collision and sealing remain unchanged. Requested unsupported materials, model scopes or missing textures stop publication.",
+            "description":"Use binary base-texture alpha on plain LightmappedGeneric world/detail faces and within the same brush model at its admitted initial baked pose. Model cutouts affect only that model's own lit receivers. Opaque func_brush global casting uses the separate entity Shadows property; model surfaces never supply reflected radiance. Default off; independent of native model-requested prop texture shadows. Geometry, collision and sealing remain unchanged. Requested unsupported materials, model scopes or missing textures stop publication.",
             "limits":{
                 "lighting_modes":["direct_ldr","direct_ldr_hdr"],
                 "casters":["world","func_detail","brush_model_self"],
@@ -820,7 +851,7 @@ impl Session {
                 "transform_absolute_max":compiler::MAX_BRUSH_SHADOW_TRANSFORM,
                 "frames":1,"faces":1,"depth":1,
                 "alpha_reference":{"default":0.5,"min":0,"max":1,"zero_uses_default":true},
-                "unsupported":["fractional translucency","terrain alpha casters","unadmitted model poses or models without lit receivers","permanent model-to-world or other-model shadows","model radiance sources","conditional or animated materials"]
+                "unsupported":["fractional translucency","terrain alpha casters","unadmitted model poses or models without lit receivers","cutout model-to-world or other-model shadows","model radiance sources","conditional or animated materials"]
             }
         });
         settings["pack_water_assets"] = self.compilation.options.pack_water_assets.into();
@@ -917,9 +948,12 @@ impl Session {
             pack_static_prop_assets,
             bake_static_prop_vertices,
             brush_texture_shadows,
+            refine_ambient_probes,
         } = update;
         let bounces = bounces.unwrap_or(self.compilation.options.bounces);
         let options = compiler::Options {
+            refine_ambient_probes: refine_ambient_probes
+                .unwrap_or(self.compilation.options.refine_ambient_probes),
             brush_texture_shadows: brush_texture_shadows
                 .unwrap_or(self.compilation.options.brush_texture_shadows),
             bake_static_prop_vertices: bake_static_prop_vertices
@@ -971,13 +1005,14 @@ impl Session {
             self.log(
                 actor,
                 format!(
-                    "Build settings: {} · {} · {} visibility · {} diffuse bounces · {}° brush smoothing · {} lighting work units · brush texture shadows {} · static-prop vertex lighting {} · reflections {} · sky packing {} · water packing {} · static-prop packing {}",
+                    "Build settings: {} · {} · {} visibility · {} diffuse bounces · {}° brush smoothing · {} lighting work units · ambient probe refinement {} · brush texture shadows {} · static-prop vertex lighting {} · reflections {} · sky packing {} · water packing {} · static-prop packing {}",
                     options.lighting.label(),
                     options.physics.label(),
                     options.visibility.label(),
                     options.bounces,
                     options.smoothing_angle,
                     options.lighting_work_limit,
+                    if options.refine_ambient_probes { "on" } else { "off" },
                     if options.brush_texture_shadows { "on" } else { "off" },
                     if options.bake_static_prop_vertices { "on" } else { "off" },
                     if options.generate_reflections { "on" } else { "off" },
@@ -1519,6 +1554,7 @@ impl Session {
                 "stale":!self.current_snapshot(&job.snapshot) || job.options != self.compilation.options || (job.guarded && job.content_epoch != self.content_epoch) || dependency_issue.is_some() || static_prop_source_issue.is_some(),"static_prop_source_issue":static_prop_source_issue,"result":job.result()});
             status["settings"]["lighting_work_limit"] = job.options.lighting_work_limit.into();
             status["settings"]["brush_texture_shadows"] = job.options.brush_texture_shadows.into();
+            status["settings"]["refine_ambient_probes"] = job.options.refine_ambient_probes.into();
             if let Some(queue) = &job.queue { status["queue"] = queue.snapshot(); }
             if job.instance_dependencies.is_some() { status["instance_dependencies"]=json!({"current":dependency_issue.is_none(),"error":dependency_issue}); }
             status

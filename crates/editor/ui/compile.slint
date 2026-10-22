@@ -71,6 +71,10 @@ export component CompileWindow inherits Window {
     in-out property <string> selected-sky-quality <=> sky-selector.current-value;
     in property <bool> sky-enabled;
     callback change-sky-quality(int);
+    in property <bool> refine-ambient-probes;
+    in property <bool> ambient-probe-refinement-enabled;
+    in property <string> ambient-probe-refinement-description;
+    callback change-refine-ambient-probes(bool);
     in property <[string]> visibility-modes;
     in-out property <string> selected-visibility <=> visibility-selector.current-value;
     in property <string> visibility-description;
@@ -206,6 +210,8 @@ export component CompileWindow inherits Window {
                     sky-selector := ComboBox { model: root.sky-qualities; enabled: root.sky-enabled; selected(value) => { root.change-sky-quality(self.current-index); } }
                 }
                 Text { text: "More directions improve soft sun shadows, sky/model ambient and bounced light, and take longer. Used by Direct LDR and Direct LDR + HDR."; wrap: word-wrap; color: #bac2ce; }
+                CheckBox { text: "Refine ambient probes"; checked: root.refine-ambient-probes; enabled: root.ambient-probe-refinement-enabled; toggled => { root.change-refine-ambient-probes(self.checked); } }
+                Text { text: root.ambient-probe-refinement-description; wrap: word-wrap; color: #bac2ce; }
                 HorizontalLayout {
                     spacing: 12px;
                     Text { text: "Lighting work limit (millions)"; vertical-alignment: center; }

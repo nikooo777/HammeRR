@@ -470,6 +470,37 @@ mod tests {
     }
 
     #[test]
+    fn global_opaque_hulls_block_light_and_sky_but_not_world_occupancy() {
+        let caster = cube(DVec3::ZERO, 1.0).into_global_caster();
+        let sky = cube(DVec3::X * 4.0, 1.0).with_sky(vec![true; 6]).unwrap();
+        let index = ShadowIndex::new(vec![caster, sky], &mut |_| Ok(())).unwrap();
+        let start = DVec3::NEG_X * 2.0;
+        let end = DVec3::X * 6.0;
+        assert!(index.optical_blocked(start, end, &mut |_| Ok(())).unwrap());
+        assert!(
+            index
+                .optical_sky_fraction(start, end, &mut |_| Ok(()))
+                .unwrap()
+                .is_none()
+        );
+        let occupancy = index
+            .nearest(DVec3::ZERO, DVec3::ZERO, &mut |_| Ok(()), &mut |hull| {
+                if !hull.occupies_world() {
+                    return Ok(None);
+                }
+                Ok(hull.entry(DVec3::ZERO, DVec3::ZERO)?.map(|hit| (hit.0, ())))
+            })
+            .unwrap();
+        assert!(occupancy.is_none());
+        assert!(
+            index
+                .optical_sky_fraction(DVec3::X * 2.0, end, &mut |_| Ok(()))
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
     fn brush_cutouts_sample_both_boundaries_without_changing_occupancy() {
         let face = super::super::brush_alpha::test_face([0, 255, 0, 255]);
         let mut faces = vec![None; 6];

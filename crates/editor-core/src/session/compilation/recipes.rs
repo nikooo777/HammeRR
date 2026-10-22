@@ -841,6 +841,134 @@ mod tests {
     }
 
     #[test]
+    fn ambient_refinement_settings_recipes_and_refusals_preserve_source_and_draft() {
+        for actor in [Actor::User, Actor::Agent] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join(FILE_NAME);
+            let mut current = session();
+            current.configure_build_recipes_at(Ok(path.clone()));
+            current
+                .begin_property_edit(crate::session::PropertyTarget::World)
+                .unwrap();
+            let token = current.property_draft().unwrap().token;
+            current
+                .append_property_change(
+                    token,
+                    crate::session::PropertyChange::Set {
+                        key: "message".into(),
+                        value: "Retained ambient review".into(),
+                    },
+                )
+                .unwrap();
+            let before = map_state(&current);
+            let draft = json!(current.property_draft());
+            let camera = current.camera();
+            assert!(!current.compile_options().refine_ambient_probes);
+            assert_eq!(
+                current.compile_settings()["ambient_probe_refinement"]["available"],
+                false
+            );
+            for (lighting, quality) in [
+                ("fullbright", "balanced"),
+                ("fullbright", "detailed"),
+                ("direct_ldr", "fast"),
+                ("direct_ldr_hdr", "fast"),
+            ] {
+                let settings = current.compile_settings();
+                assert!(
+                    current
+                        .update_build_settings(
+                            actor,
+                            BuildSettingsUpdate {
+                                lighting: Some(lighting),
+                                sky_quality: Some(quality),
+                                refine_ambient_probes: Some(true),
+                                visibility: Some("detailed"),
+                                ..Default::default()
+                            }
+                        )
+                        .unwrap_err()
+                        .contains("Balanced or Detailed")
+                );
+                assert_eq!(current.compile_settings(), settings);
+            }
+            for lighting in ["direct_ldr", "direct_ldr_hdr"] {
+                for quality in ["balanced", "detailed"] {
+                    current
+                        .update_build_settings(
+                            actor,
+                            BuildSettingsUpdate {
+                                lighting: Some(lighting),
+                                sky_quality: Some(quality),
+                                refine_ambient_probes: Some(true),
+                                ..Default::default()
+                            },
+                        )
+                        .unwrap();
+                    assert!(current.compile_options().refine_ambient_probes);
+                    assert_eq!(
+                        current.compile_settings()["ambient_probe_refinement"]["available"],
+                        true
+                    );
+                    let settings = current.compile_settings();
+                    for update in [
+                        BuildSettingsUpdate {
+                            lighting: Some("fullbright"),
+                            ..Default::default()
+                        },
+                        BuildSettingsUpdate {
+                            sky_quality: Some("fast"),
+                            ..Default::default()
+                        },
+                    ] {
+                        assert!(current.update_build_settings(actor, update).is_err());
+                        assert_eq!(current.compile_settings(), settings);
+                    }
+                }
+            }
+            current
+                .save_build_recipe(actor, "Refined ambient", None, None)
+                .unwrap();
+            let bytes = fs::read(&path).unwrap();
+            assert_eq!(
+                serde_json::from_slice::<Value>(&bytes).unwrap()["recipes"][0]["settings"]["refine_ambient_probes"],
+                true
+            );
+            let mut restarted = session();
+            restarted.configure_build_recipes_at(Ok(path.clone()));
+            assert!(!restarted.compile_options().refine_ambient_probes);
+            restarted
+                .apply_build_recipe(actor, "custom:1", None)
+                .unwrap();
+            assert_eq!(restarted.compile_options(), current.compile_options());
+            restarted.apply_build_recipe(actor, "fast", None).unwrap();
+            assert!(!restarted.compile_options().refine_ambient_probes);
+            restarted
+                .save_build_recipe(actor, "Refined ambient", Some("custom:1"), None)
+                .unwrap();
+            assert!(
+                !String::from_utf8(fs::read(&path).unwrap())
+                    .unwrap()
+                    .contains("refine_ambient_probes")
+            );
+            current
+                .update_build_settings(
+                    actor,
+                    BuildSettingsUpdate {
+                        lighting: Some("fullbright"),
+                        sky_quality: Some("fast"),
+                        refine_ambient_probes: Some(false),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            assert_eq!(map_state(&current), before);
+            assert_eq!(json!(current.property_draft()), draft);
+            assert_eq!(current.camera(), camera);
+        }
+    }
+
+    #[test]
     fn asset_packing_custom_recipes_restart_restore_replace_and_freeze() {
         for actor in [Actor::User, Actor::Agent] {
             let directory = tempfile::tempdir().unwrap();
@@ -865,6 +993,7 @@ mod tests {
                         pack_static_prop_assets: Some(true),
                         bake_static_prop_vertices: Some(false),
                         brush_texture_shadows: Some(false),
+                        refine_ambient_probes: Some(false),
                     },
                 )
                 .unwrap();

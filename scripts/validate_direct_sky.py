@@ -474,6 +474,140 @@ def local_ambient_checks(client, output):
     assert samples[0] != samples[1]
 
 
+
+def refinement_control(args):
+    import hashlib
+    import shutil
+    from unittest.mock import patch
+
+    from validate_brush_instances import game_files, source_state, text
+    from validate_material_albedo import payload
+
+    output = args.output.resolve()
+    assert "target" in output.parts, "Use a fresh output directory under target/"
+    output.mkdir(parents=True, exist_ok=False)
+    original_source, original_game = args.refine_ambient_control.resolve(), args.game.resolve()
+    originals = [original_source, original_game, *sorted((original_game.parent / "materials").rglob("*"))]
+    originals = {path: path.read_bytes() for path in originals if path.is_file()}
+    source = output / "scene.vmf"
+    source.write_bytes(originals[original_source])
+    game = output / "game"
+    game.mkdir()
+    gameinfo = game / "gameinfo.txt"
+    gameinfo.write_bytes(originals[original_game])
+    shutil.copytree(original_game.parent / "materials", game / "materials")
+    for path in [source, *game.rglob("*")]:
+        if path.is_file():
+            path.chmod(0o444)
+    receipt = {"status": "running", "cases": {}, "native_exercised": False,
+               "fixture_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+               "binary_sha256": hashlib.sha256(args.binary.resolve().read_bytes()).hexdigest()}
+    client = None
+    calls = None
+    try:
+        client = Client(None, args.binary.resolve(), output, gameinfo=gameinfo, environment={
+            "HAMMERR_RECENT_MAPS_DIR": str(output / "recent"), "HAMMERR_BUILD_RECIPES": str(output / "recipes.json"),
+            "XDG_CONFIG_HOME": str(output / "config"), "XDG_STATE_HOME": str(output / "state")})
+        data_by_option = []
+        with patch.object(client, "call", wraps=client.call) as calls:
+            for enabled in (False, True):
+                client.call("open_map", {"path": str(source)})
+                settings = client.call("set_compile_settings", {"lighting": "direct_ldr_hdr", "physics": "none",
+                    "sky_quality": "balanced", "bounces": 0, "refine_ambient_probes": enabled})
+                assert settings["refine_ambient_probes"] is enabled and settings["ambient_probe_refinement"]["available"]
+                assert settings["lighting"] == "direct_ldr_hdr" and settings["sky_quality"] == "balanced" and settings["physics"] == "none"
+                token = client.call("begin_property_edit", {"world": True})["draft"]["token"]
+                client.call("update_property_edit", {"token": token, "changes": [{"action": "set", "key": "message", "value": "Retained ambient review"}]})
+                before = (source_state(client, source), client.call("get_compile_settings"), client.call("get_property_edit"), game_files(game))
+                outputs, jobs = [], []
+                try:
+                    for background in (False, True):
+                        path = output / f"{'on' if enabled else 'off'}{'-background' if background else ''}.bsp"
+                        path.write_bytes(b"retained previous ambient BSP")
+                        pointfile = path.with_suffix(".lin")
+                        pointfile.write_bytes(b"retained ambient pointfile\n")
+                        if background:
+                            submitted = client.call("start_compile", {"path": str(path)})["job"]
+                            job = wait_job(client)
+                            assert job["token"] == submitted["token"]
+                            built = job["result"]
+                        else:
+                            built = client.call("compile_map", {"path": str(path)})
+                            job = client.call("get_compile_status")["job"]
+                        assert built["success"] and job["result"]["published"] and built["leak"] is None and built["bsp"] == str(path)
+                        assert job["status"] == "completed" and not job["stale"]
+                        assert all(settings[key] == value for key, value in job["settings"].items()), "Frozen job settings differ"
+                        assert job["settings"]["refine_ambient_probes"] is enabled
+                        assert job["settings"]["lighting"] == built["stats"]["lighting_mode"] == "direct_ldr_hdr"
+                        assert job["settings"]["sky_quality"] == "balanced" and job["settings"]["physics"] == "none"
+                        assert pointfile.read_bytes() == b"retained ambient pointfile\n"
+                        assert (source_state(client, source), client.call("get_compile_settings"), client.call("get_property_edit"), game_files(game)) == before
+                        outputs.append(path.read_bytes())
+                        jobs.append(job)
+                    assert outputs[0] == outputs[1], "Foreground/background complete BSP mismatch"
+                    if enabled:
+                        accepted = {path: path.read_bytes() for pattern in ("*.bsp", "*.lin") for path in output.glob(pattern)}
+                        for update in ({"lighting": "fullbright"}, {"sky_quality": "fast"}):
+                            rejected = client.call("set_compile_settings", update, error=True)
+                            assert "Balanced or Detailed" in text(rejected)
+                            assert (source_state(client, source), client.call("get_compile_settings"), client.call("get_property_edit"), game_files(game)) == before
+                            assert all(path.read_bytes() == raw for path, raw in accepted.items())
+                    receipt["cases"]["on" if enabled else "off"] = jobs
+                    data_by_option.append(outputs[0])
+                finally:
+                    client.call("cancel_property_edit", {"token": token})
+            dispatches = [call.args[0] for call in calls.call_args_list if call.args[0] in ("compile_map", "start_compile")]
+            assert dispatches == ["compile_map", "start_compile"] * 2
+            receipt["compile_dispatches"] = dispatches
+        baseline, refined = data_by_option
+        assert baseline[:1036] == refined[:1036], "Refinement changed BSP header or lump descriptors"
+        assert all(payload(baseline, slot) == payload(refined, slot) for slot in range(64) if slot not in (55, 56)), "Refinement changed a non-ambient lump"
+        changed = {}
+        for channel, index_slot, sample_slot in (("ldr", 52, 56), ("hdr", 51, 55)):
+            indices = records(baseline, index_slot, "<2H")
+            old = records(baseline, sample_slot, "<24s4B", expected_version=1)
+            new = records(refined, sample_slot, "<24s4B", expected_version=1)
+            assert len(old) == len(new) > 0
+            differences = []
+            for leaf, (count, first) in enumerate(indices):
+                if not count:
+                    continue
+                assert 1 <= count <= 4 and first + count <= len(old)
+                assert old[first:first + count - 1] == new[first:first + count - 1], "An earlier anchor changed"
+                if old[first + count - 1] != new[first + count - 1]:
+                    assert old[first + count - 1][1:4] != new[first + count - 1][1:4], "Changed color without a new final location"
+                    differences.append(leaf)
+            assert differences, f"The supplied contrast fixture did not exercise {channel} final-slot replacement"
+            for name, records_ in (("off", old), ("on", new)):
+                stats = receipt["cases"][name][0]["result"]["stats"]
+                if channel == "hdr":
+                    stats = stats["hdr"]
+                assert stats["ambient_samples"] == len(records_)
+            changed[channel] = differences
+        receipt["changed_final_slot_leaves"] = changed
+        assert not client.call("get_map_info")["rendering"]["initialized"]
+        assert all(path.read_bytes() == raw for path, raw in originals.items())
+        receipt["status"] = "passed"
+    except BaseException as error:
+        receipt["status"] = "failed"
+        receipt["error"] = f"{type(error).__name__}: {error}"
+        raise
+    finally:
+        try:
+            if client is not None:
+                client.close()
+        except BaseException as error:
+            receipt["status"] = "failed"
+            receipt["cleanup_error"] = f"{type(error).__name__}: {error}"
+            raise
+        finally:
+            if calls is not None:
+                receipt["compile_dispatches"] = [call.args[0] for call in calls.call_args_list if call.args[0] in ("compile_map", "start_compile")]
+            receipt["artifacts"] = [{"path": str(path.relative_to(output)), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+                                    for path in sorted(output.rglob("*")) if path.is_file() and path.suffix in (".vmf", ".bsp", ".lin")]
+            (output / "validation.json").write_text(json.dumps(receipt, indent=2) + "\n")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
@@ -496,7 +630,17 @@ def main():
         action="store_true",
         help="Check local model-ambient quality on a point-light gradient without changing world lightmaps",
     )
+    parser.add_argument("--refine-ambient-control", type=Path, metavar="VMF", help="Run only four No physics MCP compiles (off/on LDR+HDR Balanced, foreground/background) using a frozen contrast VMF that changes each channel's final probe slot. Requires --game and fresh --output under target/. Copies private inputs, checks exact non-ambient lumps/earlier anchors/counts and source/draft/output custody; does not rerun held-out quality proof or claim native pixels.")
+    parser.add_argument("--game", type=Path, help="Private contrast fixture gameinfo.txt for --refine-ambient-control; its local materials tree is copied read-only into the output game.")
     args = parser.parse_args()
+    if args.refine_ambient_control:
+        if args.game is None or args.reference or args.quality_tests or args.soft_sun_tests or args.local_ambient_tests:
+            parser.error("--refine-ambient-control requires --game and excludes the ordinary sky-test options")
+        refinement_control(args)
+        print(json.dumps({"output": str(args.output), "compile_calls": 4, "status": "passed"}))
+        return
+    if args.game:
+        parser.error("--game is used only with --refine-ambient-control")
     args.output.mkdir(parents=True, exist_ok=True)
     client = Client(None, args.binary, args.output)
     try:

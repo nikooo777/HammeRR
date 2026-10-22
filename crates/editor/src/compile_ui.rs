@@ -144,6 +144,20 @@ fn refresh_current_settings(window: &CompileWindow, session: &Session) {
     static_prop_packing::refresh(window, session);
     prop_vertex_lighting::refresh(window, session);
     brush_texture_shadows::refresh(window, session);
+    window.set_refine_ambient_probes(settings["refine_ambient_probes"] == true);
+    let refinement = &settings["ambient_probe_refinement"];
+    window.set_ambient_probe_refinement_enabled(
+        settings["editable"] == true && refinement["available"] == true,
+    );
+    let mut description = refinement["description"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    if let Some(reason) = refinement["unavailable_reason"].as_str() {
+        description.push(' ');
+        description.push_str(reason);
+    }
+    window.set_ambient_probe_refinement_description(description.into());
     window.set_generate_reflections(settings["generate_reflections"] == true);
     window.set_reflection_description(
         settings["reflection_description"]
@@ -658,6 +672,26 @@ impl Controller {
                 });
             }
         });
+        window.on_change_refine_ambient_probes({
+            let (target, window, recipes) = (access.downgrade(), window.as_weak(), recipes.clone());
+            move |enabled| {
+                admitted(&window, &target, |window, shared| {
+                    let mut session = lock(shared);
+                    let result = session.update_build_settings(
+                        Actor::User,
+                        crate::session::compilation::BuildSettingsUpdate {
+                            refine_ambient_probes: Some(enabled),
+                            ..Default::default()
+                        },
+                    );
+                    refresh_recipes(&window, &session, &recipes);
+                    window.set_message(match result {
+                        Ok(_) => "Ambient probe refinement updated for the next build.".into(),
+                        Err(error) => error.into(),
+                    });
+                });
+            }
+        });
         window.on_change_sky_quality({
             let (target, window, recipes) = (access.downgrade(), window.as_weak(), recipes.clone());
             move |choice| {
@@ -1023,6 +1057,28 @@ impl Controller {
                 )
             })
             .unwrap_or_default();
+        let brush_global_shadows = if job["status"] == "completed" && result["published"] == true {
+            match result["stats"]["brush_shadow_models"].as_u64() {
+                Some(count) if count > 0 => {
+                    format!("\nBrush global shadows: {count} baked models")
+                }
+                _ if result["stats"]["lighting_mode"] == "fullbright" => result["diagnostics"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|row| row["level"] == "info")
+                    .filter_map(|row| row["message"].as_str())
+                    .find(|message| {
+                        message.starts_with("Brush global shadows:")
+                            && message.ends_with("not baked in Fullbright")
+                    })
+                    .map(|message| format!("\n{message}"))
+                    .unwrap_or_default(),
+                _ => String::new(),
+            }
+        } else {
+            String::new()
+        };
         let styles = result["stats"]["light_styles"]
             .as_u64()
             .filter(|&count| count > 0)
@@ -1231,7 +1287,7 @@ impl Controller {
         };
         self.window.set_details(
             format!(
-                "Output: {}\nRecipe at build start: {}\nCompile scope at build start: {region_label}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nIndirect light: {} · Brush smoothing angle: {}°\nStage: {} · {:.2}s elapsed{queue_details}{instances}{packed_sky}{packed_water}{packed_static_props}{samples}{reflections}{props}{prop_vertex_lighting}{details}{visibility}{hints}{bounce}{areas}{occluders}{terrain}{overlays}{water}{sky}{lighting}{bumps}{model_maps}{styles}{hdr}{lighting_progress}{smoothing}{physics}\n{}",
+                "Output: {}\nRecipe at build start: {}\nCompile scope at build start: {region_label}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nIndirect light: {} · Brush smoothing angle: {}°\nStage: {} · {:.2}s elapsed{queue_details}{instances}{packed_sky}{packed_water}{packed_static_props}{samples}{reflections}{props}{prop_vertex_lighting}{details}{visibility}{hints}{bounce}{areas}{occluders}{terrain}{overlays}{water}{sky}{lighting}{bumps}{model_maps}{brush_global_shadows}{styles}{hdr}{lighting_progress}{smoothing}{physics}\n{}",
                 job["path"].as_str().unwrap_or_default(),
                 job["recipe"]["name"].as_str().unwrap_or("Custom settings"),
                 compiler::LightingMode::parse(job["settings"]["lighting"].as_str().unwrap_or_default()).unwrap_or_default().label(),
@@ -1365,6 +1421,10 @@ mod tests {
         );
         assert!(!controller.window.get_custom_recipe_selected());
         assert!(!controller.window.get_sky_enabled());
+        assert!(!controller.window.get_refine_ambient_probes());
+        assert!(!controller.window.get_ambient_probe_refinement_enabled());
+        controller.window.invoke_change_refine_ambient_probes(true);
+        assert!(!lock(&shared).compile_options().refine_ambient_probes);
         controller.window.invoke_change_lighting(2);
         controller.refresh(&lock(&shared));
         assert_eq!(
@@ -1395,6 +1455,17 @@ mod tests {
         controller.window.invoke_change_lighting(2);
         controller.refresh(&lock(&shared));
         assert!(controller.window.get_sky_enabled());
+        assert!(controller.window.get_ambient_probe_refinement_enabled());
+        controller.window.invoke_change_refine_ambient_probes(true);
+        assert!(lock(&shared).compile_options().refine_ambient_probes);
+        controller.window.invoke_change_sky_quality(0);
+        assert_eq!(lock(&shared).compile_settings()["sky_quality"], "detailed");
+        assert!(
+            controller
+                .window
+                .get_message()
+                .contains("Balanced or Detailed")
+        );
         controller.window.set_recipe_name("Evening lighting".into());
         controller.window.invoke_save_recipe();
         let id = lock(&shared).build_recipes()["active"]["id"]
@@ -1419,8 +1490,10 @@ mod tests {
         controller.window.invoke_choose_recipe(0);
         controller.window.invoke_apply_recipe();
         assert_eq!(lock(&shared).compile_settings()["lighting"], "fullbright");
+        assert!(!lock(&shared).compile_options().refine_ambient_probes);
         controller.window.invoke_choose_recipe(2);
         controller.window.invoke_apply_recipe();
+        assert!(controller.window.get_refine_ambient_probes());
         assert_eq!(
             lock(&shared).compile_settings()["lighting"],
             "direct_ldr_hdr"
@@ -1466,9 +1539,28 @@ mod tests {
         }
         crate::ui::tests::save_ui_snapshot(controller.window.window(), "build-recipes");
         crate::ui::tests::save_ui_snapshot(controller.window.window(), "build-hdr-controls");
+        let refinement = crate::ui::tests::scroll_inspector_to_control(
+            &controller.window,
+            "Refine ambient probes",
+        );
+        crate::ui::tests::assert_dialog_button_visible(&controller.window, "Refine ambient probes");
+        refinement.invoke_accessible_default_action();
+        assert!(!lock(&shared).compile_options().refine_ambient_probes);
+        refinement.invoke_accessible_default_action();
+        assert!(lock(&shared).compile_options().refine_ambient_probes);
+        crate::ui::tests::save_ui_snapshot(controller.window.window(), "build-ambient-probes");
+        controller.window.invoke_apply_recipe();
+        assert_eq!(lock(&shared).build_recipes()["active"]["id"], id);
         let request = lock(&shared).begin_compile(Actor::Agent, None).unwrap();
         controller.refresh(&lock(&shared));
         assert!(!controller.window.get_custom_recipes_enabled());
+        assert!(!controller.window.get_ambient_probe_refinement_enabled());
+        assert_eq!(
+            lock(&shared).compile_status()["job"]["settings"]["refine_ambient_probes"],
+            true
+        );
+        controller.window.invoke_change_refine_ambient_probes(false);
+        assert!(lock(&shared).compile_options().refine_ambient_probes);
         assert!(!controller.window.get_lighting_enabled());
         assert!(!controller.window.get_sky_enabled());
         assert_eq!(

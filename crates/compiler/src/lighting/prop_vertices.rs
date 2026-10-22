@@ -414,6 +414,9 @@ fn validate_point(
         point,
         &mut |work| budget.consume(work),
         &mut |hull| {
+            if !hull.occupies_world() {
+                return Ok(None);
+            }
             for plane in &hull.planes {
                 let distance = plane.distance_to(point) / plane.normal.length();
                 if !distance.is_finite() {

@@ -9,7 +9,7 @@ use source_formats::vmf::{Entity, Solid, Vmf, parse_vec3};
 
 use crate::{Control, Diagnostic, FileIdentity, FileStamp, Report};
 
-mod brush_models;
+pub(crate) mod brush_models;
 mod cubemaps;
 mod entities;
 mod expand;
@@ -545,7 +545,7 @@ fn checked_solid_controlled(solid: &Solid, control: &Control) -> Result<(), Stri
     checked_solid_geometry_controlled(solid, control).map(|_| ())
 }
 
-fn checked_solid_geometry_controlled(
+pub(crate) fn checked_solid_geometry_controlled(
     solid: &Solid,
     control: &Control,
 ) -> Result<BrushGeometry, String> {

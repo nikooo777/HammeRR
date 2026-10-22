@@ -11,7 +11,7 @@ use source_formats::vmf::Vmf;
 
 const MAX_PRINTED_LIGHTING_CONTRIBUTORS: usize = 8;
 
-const USAGE: &str = "usage: hammerr-compile <map.vmf> --game <gameinfo.txt> [-o <map.bsp>] [--lighting fullbright|direct_ldr|direct_ldr_hdr] [--physics none|engine] [--sky-quality fast|balanced|detailed] [--lighting-work-limit <units>] [--visibility fast|detailed] [--bounces 0..4] [--smoothing-angle 0..90] [--pack-sky-assets] [--pack-water-assets] [--pack-static-prop-assets] [--bake-static-prop-vertices] [--brush-texture-shadows] [--generate-reflections] [--reflection-engine-root <directory>] [--reflection-steam-root <directory>]";
+const USAGE: &str = "usage: hammerr-compile <map.vmf> --game <gameinfo.txt> [-o <map.bsp>] [--lighting fullbright|direct_ldr|direct_ldr_hdr] [--physics none|engine] [--sky-quality fast|balanced|detailed] [--lighting-work-limit <units>] [--visibility fast|detailed] [--bounces 0..4] [--smoothing-angle 0..90] [--pack-sky-assets] [--pack-water-assets] [--pack-static-prop-assets] [--bake-static-prop-vertices] [--brush-texture-shadows] [--refine-ambient-probes] [--generate-reflections] [--reflection-engine-root <directory>] [--reflection-steam-root <directory>]";
 
 fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args_os().skip(1);
@@ -29,6 +29,7 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
             Some("--pack-static-prop-assets") => options.pack_static_prop_assets = true,
             Some("--bake-static-prop-vertices") => options.bake_static_prop_vertices = true,
             Some("--brush-texture-shadows") => options.brush_texture_shadows = true,
+            Some("--refine-ambient-probes") => options.refine_ambient_probes = true,
             Some("--reflection-engine-root") => {
                 reflection_engine = Some(PathBuf::from(args.next().ok_or(USAGE)?))
             }

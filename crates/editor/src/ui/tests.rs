@@ -5116,8 +5116,8 @@ pub(crate) fn recovery_controls_guard_settings_and_restore_and_share_snapshot_op
     assert_eq!(lock(&shared).recovery_settings().interval_seconds, 90);
 }
 
-pub(crate) fn scroll_inspector_to_control(
-    app: &AppWindow,
+pub(crate) fn scroll_inspector_to_control<C: ComponentHandle>(
+    app: &C,
     label: &str,
 ) -> i_slint_backend_testing::ElementHandle {
     let size = app.window().size();

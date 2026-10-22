@@ -348,37 +348,244 @@ fn soft_sun_bakes_a_penumbra_without_changing_native_light_direction() {
 }
 
 #[test]
-fn local_model_ambient_changes_with_quality_without_rebaking_point_lightmaps() {
+fn local_model_ambient_quality_and_refinement_preserve_lightmaps_anchors_and_sources() {
+    use compiler::lighting::{LightingChannel, LightingPhase};
+    use source_formats::bsp::{Leaf, LeafAmbient};
+    use source_formats::gamefs::{Mount, MountedPath};
+
     let document = room(
         DVec3::new(0.0, 0.0, 100.0),
-        &[("_light", "255 0 0 200"), ("_quadratic_attn", "1")],
+        &[
+            ("_light", "255 0 0 200"),
+            ("_lightHDR", "0 0 255 400"),
+            ("_quadratic_attn", "1"),
+        ],
     );
-    let mut maps = Vec::new();
-    for quality in [compiler::SkyQuality::Fast, compiler::SkyQuality::Detailed] {
+    let source = document.vmf().clone();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/validation/777");
+    std::fs::create_dir_all(&root).unwrap();
+    let directory = tempfile::tempdir_in(root).unwrap();
+    let game_root = directory.path().join("game");
+    let material = game_root.join("materials/dev/dev_measuregeneric01.vmt");
+    std::fs::create_dir_all(material.parent().unwrap()).unwrap();
+    std::fs::write(&material, "LightmappedGeneric {}").unwrap();
+    let mut game = common::empty_game();
+    game.mounts.push(MountedPath {
+        ids: vec!["game".into()],
+        mount: Mount::Directory(game_root),
+    });
+    let mut outputs = Vec::new();
+    for (quality, refine) in [
+        (compiler::SkyQuality::Fast, false),
+        (compiler::SkyQuality::Detailed, false),
+        (compiler::SkyQuality::Detailed, true),
+    ] {
         let output = compiler::compile_with_options(
             document.vmf(),
-            &common::empty_game(),
+            &game,
             Options {
+                lighting: LightingMode::DirectLdrHdr,
                 sky_quality: quality,
+                brush_texture_shadows: true,
+                refine_ambient_probes: refine,
                 ..options()
             },
         );
         assert!(!output.report.has_errors(), "{:?}", output.report);
         assert!(output.stats.ambient_samples > 0);
-        maps.push(output.bsp.unwrap());
+        assert!(output.material_sources.is_some());
+        outputs.push(output);
     }
-    assert_eq!(
-        maps[0].lumps[bsp::lump::LIGHTING],
-        maps[1].lumps[bsp::lump::LIGHTING]
-    );
-    assert_eq!(
-        maps[0].lumps[bsp::lump::WORLDLIGHTS],
-        maps[1].lumps[bsp::lump::WORLDLIGHTS]
-    );
+    let maps: Vec<_> = outputs
+        .iter()
+        .map(|output| output.bsp.as_ref().unwrap())
+        .collect();
+    for (index, lump) in maps[0].lumps.iter().enumerate() {
+        if !matches!(
+            index,
+            bsp::lump::LEAF_AMBIENT_LIGHTING
+                | bsp::lump::LEAF_AMBIENT_LIGHTING_HDR
+                | bsp::lump::LEAF_AMBIENT_INDEX
+                | bsp::lump::LEAF_AMBIENT_INDEX_HDR
+        ) {
+            assert_eq!(lump, &maps[1].lumps[index], "quality lump {index}");
+        }
+    }
     assert_ne!(
-        maps[0].lumps[bsp::lump::LEAF_AMBIENT_LIGHTING].data,
-        maps[1].lumps[bsp::lump::LEAF_AMBIENT_LIGHTING].data
+        maps[0].lumps[bsp::lump::LEAF_AMBIENT_LIGHTING],
+        maps[1].lumps[bsp::lump::LEAF_AMBIENT_LIGHTING]
     );
+    for (index, lump) in maps[1].lumps.iter().enumerate() {
+        if !matches!(
+            index,
+            bsp::lump::LEAF_AMBIENT_LIGHTING | bsp::lump::LEAF_AMBIENT_LIGHTING_HDR
+        ) {
+            assert_eq!(lump, &maps[2].lumps[index], "refinement lump {index}");
+        }
+    }
+    let leaves = maps[2].records::<Leaf>().unwrap();
+    for (kind, channel) in [
+        (LightingKind::Ldr, LightingChannel::Ldr),
+        (LightingKind::Hdr, LightingChannel::Hdr),
+    ] {
+        let LeafAmbient::Indexed {
+            indices: original_indices,
+            samples: original,
+        } = maps[1].leaf_ambient(kind).unwrap().unwrap()
+        else {
+            unreachable!()
+        };
+        let LeafAmbient::Indexed { indices, samples } =
+            maps[2].leaf_ambient(kind).unwrap().unwrap()
+        else {
+            unreachable!()
+        };
+        assert_eq!(indices, original_indices);
+        assert_eq!(samples.len(), original.len());
+        assert!(indices.iter().any(|index| index.sample_count == 8));
+        for (leaf, index) in leaves
+            .iter()
+            .zip(&indices)
+            .filter(|(_, index)| index.sample_count != 0)
+        {
+            let first = usize::from(index.first_sample);
+            let count = usize::from(index.sample_count);
+            assert!(count <= 8);
+            assert_eq!(
+                &samples[first..first + count - 1],
+                &original[first..first + count - 1]
+            );
+            let selected = &samples[first..first + count];
+            let native_point = |sample: &bsp::LeafAmbientSample| {
+                DVec3::from_array(std::array::from_fn(|axis| {
+                    let center = (f32::from(leaf.mins[axis]) + f32::from(leaf.maxs[axis])) * 0.5;
+                    let half = f32::from(leaf.maxs[axis]) - center;
+                    f64::from(
+                        (f32::from(sample.position[axis]) * (f32::from_bits(0x3c008081) * half)
+                            - half)
+                            + center,
+                    )
+                }))
+            };
+            for (slot, sample) in selected.iter().enumerate() {
+                let point = native_point(sample);
+                assert!(
+                    point
+                        .cmpge(DVec3::from_array(leaf.mins.map(f64::from)))
+                        .all()
+                );
+                assert!(
+                    point
+                        .cmple(DVec3::from_array(leaf.maxs.map(f64::from)))
+                        .all()
+                );
+                for earlier in &selected[..slot] {
+                    assert!(point.distance(native_point(earlier)) > 128.0);
+                }
+            }
+        }
+        let progress = outputs[2].stats.lighting_progress.as_ref().unwrap();
+        let phase = progress
+            .phases
+            .iter()
+            .find(|phase| phase.channel == channel && phase.phase == LightingPhase::AmbientProbes)
+            .unwrap();
+        assert!(phase.samples_planned_complete);
+        assert_eq!(phase.samples_planned, phase.samples_completed);
+        assert!(phase.samples_completed > samples.len() as u64);
+        assert!(phase.samples_completed <= (samples.len() * 2) as u64);
+    }
+    assert!(outputs[2].report.diagnostics.iter().any(|diagnostic| {
+        diagnostic
+            .message
+            .contains("refinement evaluates up to 8/16")
+    }));
+    assert_eq!(*document.vmf(), source);
+    let path = directory.path().join("published.bsp");
+    assert!(outputs[2].write(&path).unwrap());
+    let published = std::fs::read(&path).unwrap();
+    std::fs::write(
+        &material,
+        "LightmappedGeneric { $reflectivity \"[0 0 0]\" }",
+    )
+    .unwrap();
+    assert!(outputs[2].write(&path).is_err());
+    assert_eq!(std::fs::read(path).unwrap(), published);
+}
+
+#[test]
+fn sparse_ambient_leaves_keep_exact_bytes_without_fabricated_candidates() {
+    use source_formats::bsp::LeafAmbient;
+
+    let mut source = common::room();
+    for side in source
+        .world
+        .solids
+        .iter_mut()
+        .flat_map(|solid| &mut solid.sides)
+    {
+        for point in &mut side.plane.0 {
+            *point *= 0.125;
+        }
+    }
+    source.entities.clear();
+    let mut document = Document::new(source);
+    document
+        .edit("small ambient room", |tx| {
+            edit::create_entity(
+                tx,
+                "info_player_terrorist",
+                Some(DVec3::new(0.0, 0.0, 8.0)),
+                &[],
+                Vec::new(),
+            )?;
+            edit::create_entity(
+                tx,
+                "light",
+                Some(DVec3::new(0.0, 0.0, 24.0)),
+                &[("_light".into(), "255 160 80 200".into())],
+                Vec::new(),
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    let source = document.vmf().clone();
+    for quality in [
+        compiler::SkyQuality::Balanced,
+        compiler::SkyQuality::Detailed,
+    ] {
+        let mut maps = Vec::new();
+        for refine in [false, true] {
+            let output = compiler::compile_with_options(
+                document.vmf(),
+                &common::empty_game(),
+                Options {
+                    sky_quality: quality,
+                    refine_ambient_probes: refine,
+                    ..options()
+                },
+            );
+            assert!(!output.report.has_errors(), "{:?}", output.report);
+            let map = output.bsp.unwrap();
+            let LeafAmbient::Indexed { indices, samples } =
+                map.leaf_ambient(LightingKind::Ldr).unwrap().unwrap()
+            else {
+                unreachable!()
+            };
+            assert_eq!(samples.len(), 1);
+            assert_eq!(
+                indices
+                    .iter()
+                    .filter(|index| index.sample_count == 1)
+                    .count(),
+                1
+            );
+            assert!(indices.iter().all(|index| index.sample_count <= 1));
+            maps.push(map);
+        }
+        assert_eq!(maps[0].to_bytes(), maps[1].to_bytes());
+    }
+    assert_eq!(*document.vmf(), source);
 }
 
 #[test]

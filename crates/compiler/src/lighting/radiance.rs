@@ -688,7 +688,11 @@ impl SurfaceIndex {
                         return Ok(None);
                     }
                 }
-                if hull.optical.is_none() {
+                if hull
+                    .optical
+                    .as_ref()
+                    .is_none_or(|optical| optical.global_caster)
+                {
                     Ok(Some((interval.entering, ())))
                 } else {
                     Ok(hull

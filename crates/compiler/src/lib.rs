@@ -3,6 +3,7 @@
 mod areas;
 pub mod asset_sources;
 mod brush_model_pose;
+mod brush_shadow_casters;
 mod bsp_size;
 pub mod control;
 mod cordons;
@@ -186,6 +187,7 @@ pub struct Options {
     pub pack_static_prop_assets: bool,
     pub bake_static_prop_vertices: bool,
     pub brush_texture_shadows: bool,
+    pub refine_ambient_probes: bool,
 }
 
 pub const MAX_BRUSH_SHADOW_SIDES: usize = 65_536;
@@ -225,6 +227,7 @@ impl Default for Options {
             pack_static_prop_assets: false,
             bake_static_prop_vertices: false,
             brush_texture_shadows: false,
+            refine_ambient_probes: false,
         }
     }
 }
@@ -268,6 +271,13 @@ impl Options {
 
     pub fn validate(self) -> Result<Self, String> {
         validate_lighting_work_limit(self.lighting_work_limit)?;
+        if self.refine_ambient_probes
+            && (!self.lighting.performs_lighting() || self.sky_quality == SkyQuality::Fast)
+        {
+            return Err(
+                "Ambient probe refinement requires Direct LDR or Direct LDR + HDR lighting and Balanced or Detailed sampling".into(),
+            );
+        }
         if self.brush_texture_shadows && !self.lighting.performs_lighting() {
             return Err(
                 "Brush texture shadows requires Direct LDR or Direct LDR + HDR lighting".into(),
@@ -474,6 +484,7 @@ pub struct HdrLightingStats {
 
 #[derive(Debug, Default, serde::Serialize)]
 pub struct Stats {
+    pub brush_shadow_models: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub instances: Option<instances::InstanceStats>,
     pub compile_region: Option<RegionSummary>,
@@ -1065,11 +1076,26 @@ fn build(
     if options.generate_reflections {
         cubemap_assets::binding::capture_preflight(vmf)?;
     }
-    let material_sources = (options.pack_water_assets
+    let caster_requests = match brush_shadow_casters::requests(vmf, control) {
+        Ok(requests) => requests,
+        Err(diagnostic) => {
+            output.report.diagnostics.push(diagnostic);
+            return Ok(());
+        }
+    };
+    let material_sources = (!caster_requests.is_empty()
+        || options.pack_water_assets
         || options.pack_static_prop_assets
         || options.brush_texture_shadows
         || prepared_instances.has_brush_models())
     .then(asset_sources::BuildMaterialSources::default);
+    if let Some(sources) = &material_sources
+        && let Err(diagnostic) =
+            brush_shadow_casters::validate(&caster_requests, fs, sources, control)
+    {
+        output.report.diagnostics.push(diagnostic);
+        return Ok(());
+    }
     if prepared_instances.has_brush_models()
         && let Err(diagnostic) = prepared_instances.validate_brush_model_materials(
             fs,
@@ -1081,6 +1107,12 @@ fn build(
     {
         output.report.diagnostics.push(diagnostic);
         return Ok(());
+    }
+    if !caster_requests.is_empty() && !options.lighting.performs_lighting() {
+        output.report.diagnostics.push(Diagnostic::info(
+            format!("Brush global shadows: {} admitted Shadows Yes source request(s); not baked in Fullbright", caster_requests.len()),
+            None, None,
+        ));
     }
     let prepared = cordons::prepare_with_material_sources(
         vmf,
@@ -1604,6 +1636,7 @@ fn build(
         output.stats.light_style_maps = stats.light_style_maps;
         output.stats.lighting_faces = stats.faces;
         output.stats.lit_brush_models = stats.models;
+        output.stats.brush_shadow_models = stats.brush_shadow_models;
         output.stats.model_lighting_faces = stats.model_faces;
         output.stats.lightmap_samples = stats.samples;
         output.stats.lighting_bytes = stats.bytes;

@@ -28,6 +28,7 @@ pub(super) const SAMPLE_BIAS: f64 = 0.5;
 
 #[derive(Debug, Default)]
 pub(crate) struct BakeStats {
+    pub brush_shadow_models: usize,
     pub prop_lighting_assets: Option<crate::prop_lighting_assets::PropLightingPlan>,
     pub prop_vertex_lighting: Option<crate::PropVertexLightingStats>,
     pub hdr: Option<crate::HdrLightingStats>,
@@ -700,6 +701,63 @@ fn posed_occluders(
     Ok(result)
 }
 
+fn global_casters(
+    map: &Map,
+    scopes: &[super::models::Scope],
+    hulls: &mut Vec<Occluder>,
+    report: &mut Report,
+    budget: &mut Budget<'_>,
+) -> Result<(usize, Option<Allocation>), String> {
+    let caster_brushes = scopes
+        .iter()
+        .filter(|scope| {
+            scope.entity != 0
+                && crate::brush_shadow_casters::enabled(&map.entities[scope.entity].properties)
+        })
+        .try_fold(0usize, |count, scope| {
+            count.checked_add(map.entities[scope.entity].brushes.len())
+        })
+        .ok_or("Brush global shadows hull count overflow")?;
+    let allocation = if caster_brushes == 0 {
+        None
+    } else {
+        Some(
+            budget.reserve_bytes(
+                caster_brushes
+                    .checked_mul(4 * size_of::<Occluder>() + size_of::<super::OpticalHull>())
+                    .ok_or("Brush global shadows allocation overflow")?,
+            )?,
+        )
+    };
+    let mut brush_shadow_models = 0;
+    if caster_brushes != 0 {
+        budget.consume(caster_brushes)?;
+        hulls
+            .try_reserve_exact(caster_brushes)
+            .map_err(|error| format!("Brush global shadows hull allocation: {error}"))?;
+        for scope in scopes.iter().filter(|scope| scope.entity != 0) {
+            budget.consume(1)?;
+            if !crate::brush_shadow_casters::enabled(&map.entities[scope.entity].properties) {
+                continue;
+            }
+            let prepared = posed_occluders(map, scope.entity, scope.pose, report, budget, None)?;
+            if prepared.len() != map.entities[scope.entity].brushes.len() || prepared.is_empty() {
+                return Err(
+                    "Brush global shadows: requested model has no complete opaque caster hull set"
+                        .into(),
+                );
+            }
+            for hull in prepared {
+                budget.consume(1)?;
+                hulls.push(hull.into_global_caster());
+            }
+            brush_shadow_models += 1;
+        }
+        report.diagnostics.push(Diagnostic::info(format!("Brush global shadows: {brush_shadow_models} stationary opaque brush models cast into global baked lighting; world occupancy and model radiance sources are unchanged"), None, None));
+    }
+    Ok((brush_shadow_models, allocation))
+}
+
 fn plans(
     map: &Map,
     bsp: &Bsp,
@@ -1045,7 +1103,7 @@ fn bake_inner(
     if options.brush_texture_shadows && brush_textures.is_none() {
         return Err("Brush texture shadows is missing original material sources".into());
     }
-    let world_hulls = posed_occluders(
+    let mut visibility_hulls = posed_occluders(
         map,
         0,
         Pose {
@@ -1136,9 +1194,14 @@ fn bake_inner(
                 .map_err(|error| format!("entity:{}: {error}", map.entities[scope.entity].id))?;
         }
     }
+    let (brush_shadow_models, _caster_allocation) =
+        global_casters(map, &scopes, &mut visibility_hulls, report, budget)?;
     let mut model_shadows = Vec::with_capacity(scopes.len());
     for (model, scope) in scopes.iter().enumerate() {
-        let shadows = if model != 0 && has_receivers[model] {
+        let shadows = if model != 0
+            && has_receivers[model]
+            && !crate::brush_shadow_casters::enabled(&map.entities[scope.entity].properties)
+        {
             Some(ShadowIndex::new(
                 posed_occluders(
                     map,
@@ -1161,8 +1224,13 @@ fn bake_inner(
     if !map.terrains.is_empty() {
         report.diagnostics.push(Diagnostic::warning("Direct LDR shares terrain border normals across verified full/half edges, using each surface’s Automatic, hard-border or angle-limit choice; other fractional spans remain unfinished", None, None));
     }
-    report.diagnostics.push(Diagnostic::info("Direct LDR bakes native directional normal-map channels and static, switchable and animated point/spot styles, sampled soft sun, sky ambient and model ambient with indexed opaque brush/terrain shadows; up to four style-preserving diffuse world-light bounces are supported; brush entities receive pivot-aware direct and bounced maps with isolated self shadows; reflected model sources and prop lightmaps remain unfinished", None, None));
-    let shadows = ShadowIndex::new(world_hulls, &mut |amount| budget.consume(amount))?;
+    let model_shadow_scope = if brush_shadow_models == 0 {
+        "isolated self shadows"
+    } else {
+        "self shadows and explicitly requested opaque global casters"
+    };
+    report.diagnostics.push(Diagnostic::info(format!("Direct LDR bakes native directional normal-map channels and static, switchable and animated point/spot styles, sampled soft sun, sky ambient and model ambient with indexed opaque brush/terrain shadows; up to four style-preserving diffuse world-light bounces are supported; brush entities receive pivot-aware direct and bounced maps with {model_shadow_scope}; reflected model sources and prop lightmaps remain unfinished"), None, None));
+    let shadows = ShadowIndex::new(visibility_hulls, &mut |amount| budget.consume(amount))?;
     let terrain_shadows = terrain_shadows(map, budget)?;
     budget.phase(LightingPhase::PropShadows);
     let mut prop_assets = if options.bake_static_prop_vertices {
@@ -1364,6 +1432,7 @@ fn bake_inner(
         hdr.lighting_work = budget.progress.hdr_work as usize;
     }
     stats.total_work = budget.work;
+    stats.brush_shadow_models = brush_shadow_models;
     Ok(stats)
 }
 
@@ -1813,6 +1882,7 @@ fn bake_channel(
             directions: &ambient_directions,
             quality: sky_quality,
             sky_radiance,
+            refine: options.refine_ambient_probes,
         },
         bsp,
         report,
@@ -1996,6 +2066,70 @@ mod tests {
                 .contains("cancelled")
         );
         assert_eq!(budget.work(), 0);
+    }
+
+    #[test]
+    fn global_no_receiver_hulls_prepay_memory_work_and_keep_source_identity() {
+        let game = crate::test_common::empty_game();
+        let mut map =
+            Map::load(&crate::test_common::room(), &game, &mut Report::default()).unwrap();
+        let entity = map.entities.len();
+        map.entities.push(crate::map::MapEntity {
+            id: 901,
+            classname: "func_brush".into(),
+            properties: vec![("vrad_brush_cast_shadows".into(), "1".into())],
+            brushes: vec![0],
+            origin: Some(DVec3::ZERO),
+        });
+        map.brushes[0].entity = entity;
+        map.entities[0].brushes.retain(|&brush| brush != 0);
+        let scopes = [super::super::models::Scope {
+            entity,
+            pose: Pose {
+                offset: DVec3::ZERO,
+                rotation: None,
+            },
+            faces: 0..0,
+        }];
+        let control = Control::default();
+        let mut budget = Budget::new(&control);
+        let required = 4 * size_of::<Occluder>() + size_of::<super::super::OpticalHull>();
+        let hold = budget
+            .reserve_bytes(MAX_LIGHTING_LIVE_BYTES - required + 1)
+            .unwrap();
+        let mut hulls = Vec::new();
+        let mut report = Report::default();
+        assert!(global_casters(&map, &scopes, &mut hulls, &mut report, &mut budget).is_err());
+        assert!(hulls.is_empty());
+        assert_eq!(budget.work(), 0);
+        drop(hold);
+        let (count, allocation) =
+            global_casters(&map, &scopes, &mut hulls, &mut report, &mut budget).unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(hulls.len(), 1);
+        assert_eq!(hulls[0].source.as_ref().unwrap().brush, 0);
+        assert!(!hulls[0].occupies_world());
+        assert_eq!(budget.live_bytes(), required);
+        drop(hulls);
+        drop(allocation);
+        assert_eq!(budget.live_bytes(), 0);
+        let mut exhausted = Budget::with_limit(&control, 1);
+        let mut rejected = Vec::new();
+        assert!(
+            global_casters(&map, &scopes, &mut rejected, &mut report, &mut exhausted)
+                .err()
+                .unwrap()
+                .contains("work-unit limit")
+        );
+        assert!(rejected.is_empty());
+        control.cancel().unwrap();
+        assert!(
+            global_casters(&map, &scopes, &mut rejected, &mut report, &mut budget)
+                .err()
+                .unwrap()
+                .contains("cancelled")
+        );
+        assert!(rejected.is_empty());
     }
 
     #[test]

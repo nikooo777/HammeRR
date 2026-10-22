@@ -181,6 +181,15 @@ Visibility quality applies to every lighting mode. It is separate from the light
 
 - **Fast (32 directions)** (default), **Balanced (128 directions)** or **Detailed (512 directions)**: how many directions are sampled for [sky ambient and soft sun](#sun-and-sky), [model ambient](#model-ambient-lighting) and [bounced light](#bounced-light). More directions improve visibility sampling near narrow openings and make sun shadows less stepped, and take longer. Set **SunSpreadAngle** above zero to soften the sun's shadows.
 
+**Refine ambient probes** (default off)
+
+- Available with either lit mode and **Balanced** or **Detailed** sampling.
+  It can replace one final probe per leaf after evaluating up to twice the
+  candidate gathers. Earlier anchors, emitted probe counts and spacing stay
+  unchanged; additional gathers and scoring consume the shared work budget.
+- Disable it before choosing **Fullbright** or **Fast** sampling. Invalid
+  combinations retain all current settings. Build recipes preserve the option.
+
 A previous build counts as out of date once its settings differ from the current ones.
 
 ## Pack portable sky assets
@@ -288,7 +297,7 @@ With **Direct LDR** or **Direct LDR + HDR**:
 
 - `light` and `light_spot` support static, switchable and animated appearances. `light_environment` remains static. All are baked in color.
 - Opaque world brushes, detail brushes, terrain and [static-prop meshes](prop-shadows.md) cast shadows. **Brush texture shadows** adds binary cutouts for supported world/detail materials. Models authored with `$casttextureshadows` independently support cutout and translucent texture shadows.
-- Rendered brush entities receive pivot-aware direct lightmaps that move with the model. Their own brushes can shadow one another; they do not cast permanent shadows into the world.
+- Rendered brush entities receive pivot-aware direct lightmaps that move with the model. Their own brushes can shadow one another. Stationary opaque **func_brush** models can explicitly request global shadows with **Advanced properties → Shadows → Yes**.
 - Each face uses its [lightmap scale and assigned smoothing groups](textures.md#face-lighting). World/detail brush smoothing retains the same fan across lightmap subdivisions.
 - Terrain is lit using its real raised surface, with smooth normals within patches and across matching equal-power full edges. The viewport uses the same normal construction.
 - Point/spot lights outside a sample's conservative visibility or exact falloff range are skipped automatically. **Build details…** shows a **Light culling** row with **evaluated**, **hidden** and **beyond range** counts. Unknown or boundary sample clusters retain every light; approximate near-zero distances keep their soft tails.
@@ -334,9 +343,10 @@ the default is 0.5, values from 0 to 1 are supported, and explicit zero uses 0.5
 Direct, sky, reflected and ambient rays share this cutout behavior. Brush
 geometry, collision, sealing and visibility remain unchanged.
 
-Model cutouts affect only that model's own lit receivers. An opaque or cutout
-model does not cast permanent shadows into the world or another model, and
-model surfaces do not supply reflected radiance. Nonzero rotations retain the
+Model cutouts affect only that model's own lit receivers. Global casting uses
+the separate **Shadows → Yes** property on strictly admitted opaque
+**func_brush** models; requested global cutout casters reject. Model surfaces
+do not supply reflected radiance. Nonzero rotations retain the
 existing unparented **func_brush** admission rules; the other supported
 zero-rotation receiver scopes are unchanged. A requested model cutout without
 an admitted lit receiver scope fails explicitly. This does not provide runtime
@@ -375,11 +385,32 @@ Limits: this is an experimental compiler mode. A successful compile or an **HDR 
 2. Set **Origin (X Y Z)** or use an [origin brush](#brush-entities-and-pivots) for its pivot. Fractional pivots are supported.
 3. Place lights around its authored position and choose its materials and face lightmap scales.
 4. Open **Build settings…**, choose **Build lighting → Direct LDR**, then **Close** and **Compile** or **Run Map**. **Build details…** reports **Brush entity lightmaps**, models and faces.
-5. Use [Connections](entities.md#connections-inputs-and-outputs) to move a door. Its baked lightmap stays attached while it moves.
+5. For global shadows from a stationary opaque **func_brush**, explicitly set
+   **Origin (X Y Z)** and **Advanced properties → Shadows → Yes**. Keep **Name**
+   and **Parent** empty, inherited runtime defaults neutral and **Connections**
+   empty. Compile with either lit mode. **Build details… → Brush global shadows**
+   reports the actual retained baked model count; **Fullbright** reports admitted
+   source requests as admitted but not baked, including region-omitted requests.
+6. Use [Connections](entities.md#connections-inputs-and-outputs) to move a door. Its baked lightmap stays attached while it moves.
 
 ![Pivot-aware direct lighting on moving brush entities](images/compiled-brush-models.png)
 
 Limits: direct point/spot styles and sun/sky lighting at the authored pose, with scoped authored/angle brush smoothing and isolated self-shadow hulls. Choose **Indirect light → One diffuse bounce** to receive reflected world/detail/terrain light. Moving models do not add permanent world shadows or supply reflected light. Bounded initial `func_brush` rotations are supported as described in [Initial brush-model rotation](#initial-brush-model-rotation); other initial brush rotations, dynamic relighting and prop lightmaps remain unfinished. Local geometry, UVs, pivots and collision remain fixed during compilation; source properties and undo history are preserved. Models share the lighting allocation/work budgets.
+
+**Shadows → Yes** requires resolved opaque ordinary SOLID materials, including
+nondrawing boundaries. Supported shaders are **LightmappedGeneric** and
+**UnlitGeneric**, with unambiguous scalar **Patch** include/edit chains up to
+the existing depth of eight. Unknown shaders, conditional/proxy blocks, duplicate
+parameters, alpha-test, translucent or additive materials, terrain,
+liquids, origin volumes, other entity classes and runtime behavior reject before
+compile-region omission. Source and admitted initial-pose coordinates must stay
+finite and within the existing bounds. Requests validate in Fullbright too;
+only lit builds prepare global casters, including models without lit receivers.
+The same opaque blockers apply to direct, sky, reflected and ambient visibility.
+They do not change geometric occupancy, probe placement, PVS, collision or
+reflected-light sources. Absent or **Shadows → No** retains isolated self shadows.
+[Referenced children](instances.md) use the same property but keep source angles
+absent or zero; **Refresh instance contents** does not certify material validity.
 
 #### Switchable lights and appearances
 
@@ -441,7 +472,7 @@ the parent reference and authored-lighting views.
 | --- | --- |
 | ![One reflected styled-light pass on the shadowed model](images/styled-bounce-on.png) | ![Four reflected styled-light passes on the same model](images/four-bounce-on.png) |
 
-Limits: up to four diffuse bounces from world/detail/terrain lightmaps, preserving each static, switchable or animated light style, using average base-texture reflectivity. Source reflectivity must be between zero and one. Sky is handled by direct sky lighting and is excluded from the bounce gather. Translucent world surfaces cast opaque shadows. Opaque nodraw brushes also block reflected paths, including when they sit close to a lit surface. Brush entities receive world bounce and block it with their own geometry; separate brush models do not cast permanent bounce shadows or supply reflected light. Static-prop meshes apply the same opaque, alpha-test or requested translucent coverage to reflected rays but do not supply reflected light. More than four bounces, emissive materials and per-texel prop lightmaps remain unfinished. Baked model lighting moves with the model and does not relight as it moves. Unparented `func_brush` models can bake bounded initial rotations; see [Initial brush-model rotation](#initial-brush-model-rotation). Other classes still require absent or exact-zero initial angles. Malformed or ambiguous pose fields stop lit builds with an entity diagnostic. Hidden models and models without lightmap receivers are unaffected. The configured shared lighting-work allowance and 16 MiB lightmap budget per channel apply; exceeded limits keep the previous BSP. Use fewer bounces, lower sampling, larger lightmap scales or **Direct only** to reduce work. **Fullbright** retains this setting but performs no lighting work.
+Limits: up to four diffuse bounces from world/detail/terrain lightmaps, preserving each static, switchable or animated light style, using average base-texture reflectivity. Source reflectivity must be between zero and one. Sky is handled by direct sky lighting and is excluded from the bounce gather. Translucent world surfaces cast opaque shadows. Opaque nodraw brushes also block reflected paths, including when they sit close to a lit surface. Brush entities receive world bounce and block it with their own geometry; strict stationary opaque models with **Shadows → Yes** also block reflected paths globally. Model surfaces never supply reflected light. Static-prop meshes apply the same opaque, alpha-test or requested translucent coverage to reflected rays but do not supply reflected light. More than four bounces, emissive materials and per-texel prop lightmaps remain unfinished. Baked model lighting moves with the model and does not relight as it moves. Unparented `func_brush` models can bake bounded initial rotations; see [Initial brush-model rotation](#initial-brush-model-rotation). Other classes still require absent or exact-zero initial angles. Malformed or ambiguous pose fields stop lit builds with an entity diagnostic. Hidden models remain omitted. Models without lightmap receivers still validate and prepare an explicit **Shadows → Yes** request. The configured shared lighting-work allowance and 16 MiB lightmap budget per channel apply; exceeded limits keep the previous BSP. Use fewer bounces, lower sampling, larger lightmap scales or **Direct only** to reduce work. **Fullbright** retains this setting but performs no lighting work.
 
 #### Required material texture metrics
 
@@ -663,7 +694,10 @@ Not yet: other light types, world/terrain opacity or colored/refraction transmis
 Ambient probes let models pick up reflected light from world surfaces and the sky.
 
 1. Set up point lights, spotlights or a sun and sky as above.
-2. Open **Build settings…**, choose **Direct LDR**, and choose **Sampling quality**.
+2. Open **Build settings…**, choose **Direct LDR** or **Direct LDR + HDR**, and
+   choose **Sampling quality**. With **Balanced** or **Detailed**, optionally
+   enable **Refine ambient probes**. Use **Save current as new** to retain the
+   choice in a build recipe.
 3. Click **Close**, then **Run Map**. Models receive the compiled ambient light; the editor's model previews do not display this baked ambient lighting.
 4. Open **Build details…** to see **Model ambient** probe counts and diagnostics.
 
@@ -673,7 +707,14 @@ Fast keeps one probe per open world leaf. Balanced and Detailed select up to fou
 
 Probes avoid detail solids and space below terrain. They gather reflected world and terrain lightmap colors and visible sky radiance, without adding direct point/spot lights twice. Nearby rays interpolate local lightmap samples; distant rays blend toward face averages. Terrain follows its displaced surface, including rotated patch origins. Static-prop meshes use the same opaque or supported alpha-test blockers for probe rays to lightmaps and sky. Probe positions still avoid each prop's mesh bounds conservatively. Diagnostics report leaves without a safe probe.
 
-Limits: adaptive refinement, switching ambient cubes, reflected prop sources and baked prop lightmaps remain unfinished. Probes below terrain sheets, including ceiling-like patches, can be omitted. Each channel is capped at 65,536 probes and uses the shared lighting work limit; exceeding either preserves the previous build. These probes read the baked world lightmaps, including the optional diffuse bounce; they do not produce additional world bounces.
+**Refine ambient probes** keeps the first three/seven anchors when a leaf has
+four/eight probes and compares replacements for the final slot. Uniform cubes
+and tied scores keep the original placement. LDR and HDR choose independently.
+This bounded comparison does not guarantee improvement at every position or
+establish native rendered quality. It does not add probes or switch ambient
+cubes when a light changes.
+
+Limits: broader adaptive placement, switching ambient cubes, reflected prop sources and baked prop lightmaps remain unfinished. Probes below terrain sheets, including ceiling-like patches, can be omitted. Each channel is capped at 65,536 probes and uses the shared lighting work limit; exceeding either preserves the previous build. These probes read the baked world lightmaps, including the optional diffuse bounce; they do not produce additional world bounces.
 
 ### Physics
 

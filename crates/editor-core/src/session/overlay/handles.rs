@@ -11,6 +11,7 @@ const PLANE_EPSILON: f64 = 1e-5;
 
 pub(super) struct Handles {
     context: Context,
+    sources: Vec<FaceId>,
     original: Definition,
     drag: Option<Drag>,
 }
@@ -142,7 +143,11 @@ impl Session {
                 "Scene, view or camera changed; cancel viewport handles and start again".into(),
             );
         }
-        if !self.working_solid_visible(self.render_document(), draft.source.solid) {
+        if handles
+            .sources
+            .iter()
+            .any(|source| !self.working_solid_visible(self.render_document(), source.solid))
+        {
             return Err("The bound overlay face is outside the working region".into());
         }
         Ok(handles)
@@ -226,12 +231,19 @@ impl Session {
                 "Finish the active viewport tool before starting overlay corner handles".into(),
             );
         }
-        if !self.working_solid_visible(self.render_document(), draft.source.solid) {
+        let sources = std::iter::once(draft.source)
+            .chain(draft.additional_sources.iter().copied())
+            .collect::<Vec<_>>();
+        if sources
+            .iter()
+            .any(|source| !self.working_solid_visible(self.render_document(), source.solid))
+        {
             return Err("The bound overlay face is outside the working region".into());
         }
         let context = Context::capture(self, camera, size, "Overlay corner handles")?;
         let handles = Handles {
             context,
+            sources,
             original: draft.definition.clone(),
             drag: None,
         };
@@ -304,7 +316,7 @@ impl Session {
         let position = drag.base + (local_position(&draft.definition, ray)? - drag.initial);
         let mut corners = draft.definition.uv_points.map(|point| [point[0], point[1]]);
         corners[drag.corner] = position.to_array();
-        let (_, definition) = overlay::with_corners(self.document.vmf(), id, corners)?;
+        let (_, definition) = overlay::with_corner_faces(self.document.vmf(), id, corners)?;
         self.overlay.draft.as_mut().unwrap().definition = definition;
         Ok(self.advance_overlay_corner_handles())
     }

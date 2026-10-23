@@ -43,10 +43,12 @@ Refit and rebind preserve the existing overlay identity, settings and connection
 1. Select one eligible `info_overlay`.
 2. Open **Overlay… → Edit selected corners**.
 3. Edit **Corner 0** through **Corner 3** in the displayed local U/V frame.
-4. Click **Preview corners**, then **Apply corners**.
+4. Click **Preview corners** and inspect the outline and bound-face count.
+5. Click **Apply corners**.
 
-Use **Viewport handles** to drag supported corners directly.
-**Cancel handles** discards that interaction. Crossed or collapsed corners reject.
+This works with one or up to 64 visible coplanar world/detail bindings, including an eligible quad. Corner editing uses the stored projection axes and keeps every original side binding; it requires no reference choice. Only the four projection corners change. Moved sources need an explicit refit first.
+
+After **Preview corners**, choose **Viewport handles** to drag a cyan corner directly. Release to review, then use **Apply corners**. **Cancel handles** restores the exact pre-handle draft. Crossed, collapsed or unsupported corners reject. **Undo** restores the previous projection.
 
 ## Compile imported overlays
 
@@ -68,7 +70,8 @@ The parent contents preview shows target geometry, not the projected material.
 
 - Multi-face creation requires flat coplanar faces facing the same direction and an eligible quad to anchor the projection.
 - Multi-face refit requires an explicit eligible quad reference from the existing bindings and the same source limits as creation.
-- Rebind and corner tools require one eligible visible ordinary quad binding.
+- Numeric and viewport corners require the same bounded flat coplanar source set and a valid stored projection on its plane.
+- Rebind requires one eligible visible ordinary quad binding.
 - Terrain and brush-model targets are unavailable for fitted authoring.
 - Compiled imported overlays support broader world/detail and terrain targets.
 - Corners may extend beyond a bound face; native rendering clips the projection to that face.

@@ -438,7 +438,8 @@ fn refresh(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
             && form.snapshot == snapshot,
     );
     window.set_can_preview(!form.refit && form.source.is_some() && form.snapshot == snapshot);
-    let reference_required = state["selected_overlay"]["reference_required"] == true;
+    let reference_required =
+        !form.corners && state["selected_overlay"]["reference_required"] == true;
     let references = state["selected_overlay"]["references"].as_array();
     let reference_valid = form.reference.is_some_and(|reference| {
         references.is_some_and(|references| {
@@ -473,6 +474,7 @@ fn refresh(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
     });
     window.set_can_refit(
         !state["selected_overlay"].is_null()
+            && !form.corners
             && form.snapshot == snapshot
             && (!reference_required || reference_valid),
     );
@@ -492,11 +494,20 @@ fn refresh(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
     } else if draft["valid"] != true {
         "The shared draft is stale · reopen Overlay to preview the current source".into()
     } else if matches && draft["operation"] == "corners" {
-        format!(
-            "Corner edit {} · Apply corners changes this existing projection",
-            draft["entity"].as_str().unwrap_or("overlay")
-        )
-        .into()
+        if form.additional_sources.is_empty() {
+            format!(
+                "Corner edit {} · Apply corners changes this existing projection",
+                draft["entity"].as_str().unwrap_or("overlay")
+            )
+            .into()
+        } else {
+            format!(
+                "Corner edit {} · {} bound faces · stored projection axes",
+                draft["entity"].as_str().unwrap_or("overlay"),
+                form.additional_sources.len() + 1
+            )
+            .into()
+        }
     } else if matches && draft["operation"] == "rebind" {
         format!(
             "Rebind {} · Apply rebind moves this existing overlay to the destination",
@@ -535,6 +546,8 @@ fn refresh(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
     });
     let display_source = if matches && draft["valid"] == true && form.reviewed.is_some() {
         &draft["source"]
+    } else if form.corners {
+        &state["selected_corners"]["source"]
     } else if form.rebind {
         &state["selected_source"]
     } else if !state["selected_overlay"].is_null() {
@@ -544,6 +557,10 @@ fn refresh(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
     };
     let source_count = if matches && draft["valid"] == true && form.reviewed.is_some() {
         draft["source_count"].as_u64().unwrap_or(1)
+    } else if form.corners {
+        state["selected_corners"]["source_count"]
+            .as_u64()
+            .unwrap_or(1)
     } else {
         display_source["source_count"]
             .as_u64()
@@ -553,7 +570,18 @@ fn refresh(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
     window.set_source_count(source_count as i32);
     window.set_source_label(if let Some(source) = source(display_source) {
         if source_count > 1 {
-            format!("Sources · {source_count} coplanar world / detail faces · first quad: brush {} · face {}", source.solid, source.side).into()
+            if form.corners {
+                format!(
+                    "Bound sources · {source_count} coplanar world / detail faces · stored projection axes"
+                )
+                .into()
+            } else {
+                format!(
+                    "Sources · {source_count} coplanar world / detail faces · first quad: brush {} · face {}",
+                    source.solid, source.side
+                )
+                .into()
+            }
         } else {
             format!(
                 "Source · brush {} · face {} · world / detail quad",
@@ -734,7 +762,8 @@ fn edit_selected_corners(window: &OverlayWindow, session: &Session, form: &RefCe
     current.rebind = false;
     current.target = Some(id);
     current.source = source(&selected["source"]);
-    current.additional_sources.clear();
+    current.additional_sources = additional_sources(selected);
+    current.reference = None;
     current.reviewed = None;
     current.reviewed_corners = None;
     current.serial += 1;
@@ -1111,7 +1140,7 @@ impl Controller {
         refresh_choices(&self.window, session, &self.form);
         load(&self.window, &Value::Null);
         self.window.set_material(material.into());
-        self.window.set_message(if state["selected_overlay"]["reference_required"] == true { "Choose a reference face. Its current edges set the projection axes; Refit selected overlay fits all existing bound faces." } else if !state["selected_overlay"].is_null() { "Edit selected corners adjusts the current projection; Refit selected overlay fits its full bound face." } else { state[if session.face_mode() { "selection_error" } else { "refit_error" }].as_str().unwrap_or("Choose a material, then Fit / Preview. Review current draft loads a shared overlay preview.") }.into());
+        self.window.set_message(if state["selected_overlay"]["reference_required"] == true { "Edit selected corners uses the stored projection axes. For Refit selected overlay, choose a reference face whose current edges set the new axes." } else if !state["selected_overlay"].is_null() { "Edit selected corners adjusts the current projection; Refit selected overlay fits its full bound face." } else { state[if session.face_mode() { "selection_error" } else { "refit_error" }].as_str().unwrap_or("Choose a material, then Fit / Preview. Review current draft loads a shared overlay preview.") }.into());
         refresh_material(&self.window, session);
         refresh(&self.window, session, &self.form);
         self.window.show()
@@ -1286,6 +1315,76 @@ mod tests {
         controller.window.invoke_apply();
         assert_eq!(lock(&shared).selected_ids(), [ObjectId::Entity(overlay_id)]);
         assert_eq!(lock(&shared).document().undo_labels().count(), history + 2);
+        lock(&shared).undo(Actor::User).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &after);
+        controller.show(&mut lock(&shared), "test/checker").unwrap();
+        assert!(controller.window.get_can_edit_corners());
+        controller.window.invoke_edit_corners();
+        assert!(controller.window.get_corners_mode());
+        assert!(!controller.window.get_reference_required());
+        assert_eq!(controller.window.get_source_count(), 2);
+        assert!(
+            controller
+                .window
+                .get_source_label()
+                .contains("stored projection axes")
+        );
+        assert!(controller.form.borrow().reference.is_none());
+        let first_u = controller.window.get_corner_0_u().parse::<f64>().unwrap();
+        controller
+            .window
+            .set_corner_0_u((first_u - 4.0).to_string().into());
+        controller.window.invoke_corners_edited();
+        controller.window.invoke_preview_corners();
+        assert!(
+            controller.window.get_ready(),
+            "{}",
+            controller.window.get_message()
+        );
+        let state = lock(&shared).get_overlay_state();
+        assert_eq!(state["draft"]["source_count"], 2);
+        assert!(state["draft"].get("reference").is_none());
+        let origin =
+            serde_json::from_value::<[f64; 3]>(state["draft"]["basis_origin"].clone()).unwrap();
+        lock(&shared).set_camera(render::Camera::planar(
+            render::Projection::Top,
+            DVec3::from_array(origin).as_vec3(),
+            300.0,
+        ));
+        controller.set_viewport((900, 700));
+        controller.window.invoke_handle_corners();
+        assert!(!controller.window.window().is_visible());
+        let state = lock(&shared).get_overlay_state();
+        let start = Pointer {
+            position: DVec2::new(
+                state["draft"]["handles"]["pixels"][0][0].as_f64().unwrap(),
+                state["draft"]["handles"]["pixels"][0][1].as_f64().unwrap(),
+            ),
+            size: (900, 700),
+        };
+        controller.pick_handle(&mut lock(&shared), start).unwrap();
+        controller
+            .move_handle(
+                &mut lock(&shared),
+                Pointer {
+                    position: start.position + DVec2::new(-8.0, 5.0),
+                    ..start
+                },
+            )
+            .unwrap();
+        controller.finish_handles(&mut lock(&shared)).unwrap();
+        assert!(controller.window.get_ready());
+        assert_eq!(controller.window.get_source_count(), 2);
+        controller.window.invoke_apply();
+        assert_eq!(lock(&shared).selected_ids(), [ObjectId::Entity(overlay_id)]);
+        assert_eq!(lock(&shared).document().undo_labels().count(), history + 2);
+        let mut retained = lock(&shared).document().entity(overlay_id).unwrap().clone();
+        for key in ["uv0", "uv1", "uv2", "uv3"] {
+            retained
+                .properties
+                .set(key, overlays[0].properties.get(key).unwrap());
+        }
+        assert_eq!(&retained, overlays[0]);
         lock(&shared).undo(Actor::User).unwrap();
         assert_eq!(lock(&shared).document().vmf(), &after);
         lock(&shared).undo(Actor::User).unwrap();

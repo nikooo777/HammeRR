@@ -84,7 +84,7 @@ export component OverlayWindow inherits Window {
             spacing: 10px;
             Text { text: root.corners-mode ? "Edit overlay corners" : root.rebind-mode ? "Rebind existing overlay" : root.refit-mode ? "Refit existing overlay" : "Fit an overlay to faces"; font-size: 24px; font-weight: 600; }
             Text { text: root.source-label; wrap: word-wrap; color: #bac2ce; }
-            if root.source-count > 1: Text { text: "One projection spans the bound faces. Native rendering clips it to each face and leaves gaps clear. Multi-face refit requires an explicit reference quad. Rebind and corner tools require a single binding."; wrap: word-wrap; color: #bac2ce; }
+            if root.source-count > 1: Text { text: "One projection spans the bound faces. Native rendering clips it to each face and leaves gaps clear. Corner editing keeps the stored axes and every binding. Multi-face refit requires an explicit reference quad; rebind requires a single binding."; wrap: word-wrap; color: #bac2ce; }
             ScrollView {
                 vertical-stretch: 1;
                 VerticalLayout {

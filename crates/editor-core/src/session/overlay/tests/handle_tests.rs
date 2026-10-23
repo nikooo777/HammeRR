@@ -93,6 +93,141 @@ fn pointer(state: &Value, corner: usize) -> Pointer {
 }
 
 #[test]
+fn multiface_corner_handles_capture_secondary_visibility_and_share_owned_review_apply() {
+    let (_directory, mut session, faces) = multiface_fixture(Actor::User, true);
+    let state = session
+        .preview_overlay_faces(
+            Actor::User,
+            request(faces[1]),
+            &faces[..1],
+            &session.overlay_stamp(),
+        )
+        .unwrap();
+    let applied = session.apply_overlay(Actor::User, token(&state)).unwrap();
+    let ObjectId::Entity(id) =
+        crate::identity::parse_id(applied["created"].as_str().unwrap()).unwrap()
+    else {
+        unreachable!()
+    };
+    let (_, original) = overlay::editable_corner_faces(session.document.vmf(), id).unwrap();
+    let corners = original.uv_points.map(|point| [point[0], point[1]]);
+    session
+        .preview_overlay_corners(Actor::User, id, corners, &session.overlay_stamp())
+        .unwrap();
+    let before = session.document.vmf().clone();
+    let history = session.document.undo_labels().count();
+    let state = begin(&mut session, Actor::User, camera(&original, false));
+    let start = pointer(&state, 0);
+    let state = session
+        .pick_overlay_corner_handle(Actor::User, token(&state), start)
+        .unwrap();
+    let end = Pointer {
+        position: start.position + DVec2::new(-12.0, 8.0),
+        ..start
+    };
+    let state = session
+        .move_overlay_corner_handle(Actor::User, token(&state), end)
+        .unwrap();
+    assert_eq!(state["draft"]["sources"], sources_json(&faces));
+    let owner = session.document.owner_of_solid(faces[1].solid).unwrap();
+    session
+        .set_editor_visibility(
+            Actor::User,
+            crate::session::editor_visibility::Action::Hide(vec![owner]),
+            &session.working_region_stamp(),
+        )
+        .unwrap();
+    assert!(session.working_solid_visible(&session.document, faces[0].solid));
+    assert!(!session.working_solid_visible(&session.document, faces[1].solid));
+    let stale = session.overlay_corner_handle_state();
+    assert!(
+        session
+            .preview_overlay_corners(Actor::User, id, corners, &session.overlay_stamp())
+            .is_err()
+    );
+    assert!(
+        session
+            .move_overlay_corner_handle(Actor::User, token(&state), end)
+            .is_err()
+    );
+    assert!(
+        session
+            .finish_overlay_corner_handles(Actor::User, token(&state))
+            .is_err()
+    );
+    assert!(session.apply_overlay(Actor::User, token(&state)).is_err());
+    assert_eq!(session.overlay_corner_handle_state(), stale);
+    let cancelled = session
+        .cancel_overlay_corner_handles(Actor::User, token(&state))
+        .unwrap();
+    assert!(cancelled["draft"]["handles"].is_null());
+    assert_eq!(session.overlay.draft.as_ref().unwrap().definition, original);
+    assert_eq!(session.document.vmf(), &before);
+    session
+        .set_editor_visibility(
+            Actor::User,
+            crate::session::editor_visibility::Action::ShowAll,
+            &session.working_region_stamp(),
+        )
+        .unwrap();
+    session
+        .preview_overlay_corners(Actor::User, id, corners, &session.overlay_stamp())
+        .unwrap();
+    let state = begin(&mut session, Actor::User, camera(&original, false));
+    let start = pointer(&state, 0);
+    let state = session
+        .pick_overlay_corner_handle(Actor::User, token(&state), start)
+        .unwrap();
+    let end = Pointer {
+        position: start.position + DVec2::new(-12.0, 8.0),
+        ..start
+    };
+    assert!(
+        session
+            .move_overlay_corner_handle(Actor::Agent, token(&state), end)
+            .is_err()
+    );
+    let state = session
+        .move_overlay_corner_handle(Actor::User, token(&state), end)
+        .unwrap();
+    let moved = session.overlay.draft.as_ref().unwrap().definition.clone();
+    assert_ne!(moved.uv_points, original.uv_points);
+    assert_eq!(moved.basis_origin, original.basis_origin);
+    assert_eq!(moved.basis_u, original.basis_u);
+    assert_eq!(moved.basis_v, original.basis_v);
+    let state = session
+        .finish_overlay_corner_handles(Actor::User, token(&state))
+        .unwrap();
+    assert_eq!(session.document.vmf(), &before);
+    assert_eq!(session.document.undo_labels().count(), history);
+    let state = session.review_overlay(Actor::Agent, token(&state)).unwrap();
+    let applied = session.apply_overlay(Actor::Agent, token(&state)).unwrap();
+    assert_eq!(applied["updated"], format!("entity:{id}"));
+    assert_eq!(
+        overlay::parse(session.document.entity(id).unwrap()).unwrap(),
+        moved
+    );
+    let mut retained = session.document.entity(id).unwrap().clone();
+    let original = before
+        .entities
+        .iter()
+        .find(|entity| entity.id == id)
+        .unwrap();
+    for key in ["uv0", "uv1", "uv2", "uv3"] {
+        retained
+            .properties
+            .set(key, original.properties.get(key).unwrap());
+    }
+    assert_eq!(&retained, original);
+    assert_eq!(session.document.undo_labels().count(), history + 1);
+    let after = session.document.vmf().clone();
+    session.undo(Actor::Agent).unwrap();
+    assert_eq!(session.document.vmf(), &before);
+    session.redo(Actor::Agent).unwrap();
+    assert_eq!(session.document.vmf(), &after);
+}
+
+#[test]
 fn viewport_corner_drags_share_plane_motion_preservation_and_one_atomic_apply() {
     for actor in [Actor::User, Actor::Agent] {
         for detail in [false, true] {

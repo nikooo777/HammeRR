@@ -1219,10 +1219,28 @@ fn corner_drafts_share_review_atomic_apply_and_exact_undo_without_refitting() {
         [32.25, -20.125],
     ];
     for actor in [Actor::User, Actor::Agent] {
-        for detail in [false, true] {
-            let (_directory, mut session, source) = fixture(actor, detail);
-            let token = preview(&mut session, actor, source);
-            let result = session.apply_overlay(actor, token).unwrap();
+        for case in 0..3 {
+            let (_directory, mut session, sources) = if case == 2 {
+                let (directory, session, sources) = multiface_fixture(actor, true);
+                (directory, session, vec![sources[1], sources[0]])
+            } else {
+                let (directory, session, source) = fixture(actor, case == 1);
+                (directory, session, vec![source])
+            };
+            let preview = session
+                .preview_overlay_faces(
+                    actor,
+                    request(sources[0]),
+                    &sources[1..],
+                    &session.overlay_stamp(),
+                )
+                .unwrap();
+            let result = session
+                .apply_overlay(actor, preview["draft"]["token"].as_u64().unwrap())
+                .unwrap();
+            let mut sources = sources;
+            sources.sort();
+            let source = sources[0];
             let ObjectId::Entity(id) =
                 crate::identity::parse_id(result["created"].as_str().unwrap()).unwrap()
             else {
@@ -1231,6 +1249,16 @@ fn corner_drafts_share_review_atomic_apply_and_exact_undo_without_refitting() {
             let initial = session.get_overlay_state();
             assert_eq!(initial["selected_corners"]["id"], id);
             assert!(initial["selected_corners"]["local_corners"].is_array());
+            if sources.len() > 1 {
+                assert_eq!(initial["selected_corners"]["source_count"], 2);
+                assert_eq!(
+                    initial["selected_corners"]["sources"],
+                    sources_json(&sources)
+                );
+            } else {
+                assert!(initial["selected_corners"].get("sources").is_none());
+                assert!(initial["selected_corners"].get("source_count").is_none());
+            }
             let before = session.document.vmf().clone();
             let history = session.document.undo_labels().count();
             let state = session
@@ -1238,6 +1266,11 @@ fn corner_drafts_share_review_atomic_apply_and_exact_undo_without_refitting() {
                 .unwrap();
             assert_eq!(state["draft"]["operation"], "corners");
             assert_eq!(state["draft"]["local_corners"], json!(corners));
+            if sources.len() > 1 {
+                assert_eq!(state["draft"]["sources"], sources_json(&sources));
+                assert_eq!(state["draft"]["source_count"], 2);
+                assert!(state["draft"].get("reference").is_none());
+            }
             assert_eq!(
                 state["draft"]["source"],
                 json!({"solid":source.solid,"side":source.side})

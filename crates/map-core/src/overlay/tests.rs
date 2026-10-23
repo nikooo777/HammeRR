@@ -971,10 +971,16 @@ fn rebind_rejects_an_unsupported_existing_binding_or_hidden_destination_atomical
 #[test]
 fn corner_edits_keep_the_imported_frame_binding_settings_and_metadata() {
     use source_formats::{keyvalues::Node, vmf::Connection};
-    for detail in [false, true] {
-        let (mut document, face) = fixture(detail);
+    let fixtures = [false, true].map(|detail| {
+        let (document, face) = fixture(detail);
+        (document, vec![face])
+    });
+    let (document, faces) = coplanar_fixture(48.0, true);
+    for (mut document, faces) in fixtures.into_iter().chain([(document, faces.to_vec())]) {
+        let face = faces[0];
+        let anchor_first = faces.iter().rev().copied().collect::<Vec<_>>();
         let ObjectId::Entity(id) = document
-            .edit("overlay", |tx| create(tx, face, options()))
+            .edit("overlay", |tx| create_faces(tx, &anchor_first, options()))
             .unwrap()
         else {
             unreachable!()
@@ -986,7 +992,32 @@ fn corner_edits_keep_the_imported_frame_binding_settings_and_metadata() {
                     .properties
                     .set("material", "Materials/Decals/marking.VMT");
                 entity.properties.set("StartU", "01.0000");
-                entity.properties.set("sides", format!("  {}  ", face.side));
+                entity.properties.set(
+                    "sides",
+                    format!(
+                        "  {}  ",
+                        faces
+                            .iter()
+                            .rev()
+                            .map(|face| face.side.to_string())
+                            .collect::<Vec<_>>()
+                            .join("  ")
+                    ),
+                );
+                if faces.len() > 1 {
+                    let definition = parse(entity).unwrap();
+                    let u = DVec3::from_array(definition.basis_u);
+                    let v = DVec3::from_array(definition.basis_v);
+                    let angle = 0.4f64;
+                    entity.properties.set(
+                        "BasisU",
+                        format!(" {} ", format_vec3(u * angle.cos() + v * angle.sin())),
+                    );
+                    entity.properties.set(
+                        "BasisV",
+                        format!(" {} ", format_vec3(u * angle.sin() - v * angle.cos())),
+                    );
+                }
                 entity.properties.set("origin", "999.000 888.000 777.000");
                 entity.properties.set("custom", "keep me");
                 for index in 0..4 {
@@ -1010,6 +1041,7 @@ fn corner_edits_keep_the_imported_frame_binding_settings_and_metadata() {
         let before = document.vmf().clone();
         let (bound, existing) = editable_corners(&before, id).unwrap();
         assert_eq!(bound, face);
+        assert_eq!(editable_corner_faces(&before, id).unwrap().0, faces);
         let corners = [
             [-24.5, -16.25],
             [-20.0, 24.75],
@@ -1022,6 +1054,12 @@ fn corner_edits_keep_the_imported_frame_binding_settings_and_metadata() {
         assert_eq!(expected.basis_origin, existing.basis_origin);
         assert_eq!(expected.basis_u, existing.basis_u);
         assert_eq!(expected.basis_v, existing.basis_v);
+        for (corner, world) in corners.into_iter().zip(expected.corners()) {
+            let point = DVec3::from_array(existing.basis_origin)
+                + DVec3::from_array(existing.basis_u) * corner[0]
+                + DVec3::from_array(existing.basis_v) * corner[1];
+            assert!(point.abs_diff_eq(DVec3::from_array(world), 1e-10));
+        }
         assert_eq!(
             document
                 .edit("Edit overlay corners", |tx| edit_corners(tx, id, corners))
@@ -1060,6 +1098,231 @@ fn corner_edits_keep_the_imported_frame_binding_settings_and_metadata() {
         assert_eq!(document.vmf(), &before);
         document.redo().unwrap();
         assert_eq!(document.vmf(), &after);
+    }
+}
+
+#[test]
+fn multiface_corners_keep_valid_boundary_frame_when_another_reference_envelope_exceeds_limits() {
+    let mut document = Document::empty();
+    let faces: [FaceId; 2] = document
+        .edit("boundary source quads", |tx| {
+            let mut faces = Vec::new();
+            for y in [0.0, 1000.0] {
+                let ObjectId::Solid(solid) = edit::create_block(
+                    tx,
+                    DVec3::new(15936.0, y - 64.0, 0.0),
+                    DVec3::new(16064.0, y + 64.0, 16.0),
+                    "dev/dev_measuregeneric01",
+                )?
+                else {
+                    unreachable!()
+                };
+                let side = tx
+                    .solid_mut(solid)?
+                    .sides
+                    .iter()
+                    .find(|side| Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+                    .unwrap()
+                    .id;
+                if faces.is_empty() {
+                    edit::transform(
+                        tx,
+                        &[ObjectId::Solid(solid)],
+                        edit::Transform {
+                            rotation: DVec3::new(0.0, 0.0, 45.0),
+                            pivot: DVec3::new(16000.0, 0.0, 16.0),
+                            ..Default::default()
+                        },
+                    )?;
+                }
+                faces.push(FaceId { solid, side });
+            }
+            Ok(faces.try_into().unwrap())
+        })
+        .unwrap();
+    for face in faces {
+        assert!(
+            crate::surface::face_vertices(&document, face)
+                .unwrap()
+                .iter()
+                .all(|point| point.abs().max_element() < SOURCE_COORDINATE_LIMIT)
+        );
+    }
+    assert!(
+        fit_faces(document.vmf(), &faces, options())
+            .unwrap_err()
+            .contains("projected corners")
+    );
+    let reference_first = [faces[1], faces[0]];
+    let ObjectId::Entity(id) = document
+        .edit("valid stored boundary projection", |tx| {
+            create_faces(tx, &reference_first, options())
+        })
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    let before = document.vmf().clone();
+    let stored = parse(document.entity(id).unwrap()).unwrap();
+    assert_eq!(
+        checked_bound_sources(&before, id).unwrap().references,
+        faces
+    );
+    assert_eq!(
+        editable_corner_faces(&before, id).unwrap(),
+        (faces.to_vec(), stored.clone())
+    );
+    assert!(fit_existing_refit(&before, id, Some(faces[0])).is_err());
+    assert!(fit_existing_refit(&before, id, Some(faces[1])).is_ok());
+    let mut corners = stored.uv_points.map(|point| [point[0], point[1]]);
+    corners[0][0] -= 4.0;
+    document
+        .edit("edit retained boundary frame", |tx| {
+            edit_corners(tx, id, corners)
+        })
+        .unwrap();
+    let edited = parse(document.entity(id).unwrap()).unwrap();
+    assert_eq!(edited.basis_origin, stored.basis_origin);
+    assert_eq!(edited.basis_normal, stored.basis_normal);
+    assert_eq!(edited.basis_u, stored.basis_u);
+    assert_eq!(edited.basis_v, stored.basis_v);
+    assert!(
+        edited
+            .corners()
+            .iter()
+            .all(|point| DVec3::from_array(*point).abs().max_element() < SOURCE_COORDINATE_LIMIT)
+    );
+    let original = before
+        .entities
+        .iter()
+        .find(|entity| entity.id == id)
+        .unwrap();
+    let mut retained = document.entity(id).unwrap().clone();
+    for key in ["uv0", "uv1", "uv2", "uv3"] {
+        retained
+            .properties
+            .set(key, original.properties.get(key).unwrap());
+    }
+    assert_eq!(&retained, original);
+    document.undo().unwrap();
+    assert_eq!(document.vmf(), &before);
+    document
+        .edit("out-of-bounds secondary quad", |tx| {
+            edit::translate(
+                tx,
+                &[ObjectId::Solid(faces[1].solid)],
+                DVec3::X * 1000.0,
+                true,
+            )
+        })
+        .unwrap();
+    assert!(
+        crate::surface::face_vertices(&document, faces[1])
+            .unwrap()
+            .iter()
+            .any(|point| point.x > SOURCE_COORDINATE_LIMIT)
+    );
+    let out_of_bounds = document.vmf().clone();
+    let history = document.undo_labels().count();
+    assert!(
+        with_corner_faces(&out_of_bounds, id, corners)
+            .unwrap_err()
+            .contains("source vertices")
+    );
+    assert!(
+        fit_faces(&out_of_bounds, &faces, options())
+            .unwrap_err()
+            .contains("source vertices")
+    );
+    assert!(
+        document
+            .edit("reject out-of-bounds bound source", |tx| edit_corners(
+                tx, id, corners
+            ))
+            .is_err()
+    );
+    assert_eq!(document.vmf(), &out_of_bounds);
+    assert_eq!(document.undo_labels().count(), history);
+}
+
+#[test]
+fn multiface_corner_edits_reject_secondary_source_changes_and_invalid_native_corners_atomically() {
+    let (mut document, faces) = coplanar_fixture(48.0, true);
+    let ObjectId::Entity(id) = document
+        .edit("overlay", |tx| create_faces(tx, &faces, options()))
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    let before = document.vmf().clone();
+    let corners = [[-24.0, -16.0], [-20.0, 24.0], [28.0, 16.0], [32.0, -20.0]];
+    assert!(with_corner_faces(&before, id, corners).is_ok());
+    assert!(fit_rebind(&before, id, faces[0]).is_err());
+    for invalid in [
+        [[0.0; 2]; 4],
+        [[-1.0, -1.0], [1.0, 1.0], [-1.0, 1.0], [1.0, -1.0]],
+        [[-1e100, -1.0], [-1.0, 1.0], [1.0, 1.0], [1.0, -1.0]],
+    ] {
+        assert!(
+            document
+                .edit("invalid corners", |tx| edit_corners(tx, id, invalid))
+                .is_err()
+        );
+        assert_eq!(document.vmf(), &before);
+    }
+    let owner = document.owner_of_solid(faces[1].solid).unwrap();
+    for change in ["plane", "hidden", "missing", "ambiguous"] {
+        let mut invalid = before.clone();
+        match change {
+            "plane" => {
+                let mut moved = Document::new(invalid);
+                moved
+                    .edit("move secondary detail", |tx| {
+                        edit::translate(tx, &[owner], DVec3::Z, true)
+                    })
+                    .unwrap();
+                invalid = moved.into_vmf();
+            }
+            "hidden" => {
+                invalid
+                    .entities
+                    .iter_mut()
+                    .find(|entity| ObjectId::Entity(entity.id) == owner)
+                    .unwrap()
+                    .hidden = true
+            }
+            "missing" => invalid
+                .entities
+                .iter_mut()
+                .find(|entity| entity.id == id)
+                .unwrap()
+                .properties
+                .set("sides", format!("{} {}", faces[0].side, u32::MAX)),
+            "ambiguous" => {
+                invalid
+                    .entities
+                    .iter_mut()
+                    .find(|entity| entity.id != id)
+                    .unwrap()
+                    .solids[0]
+                    .sides[0]
+                    .id = faces[1].side
+            }
+            _ => unreachable!(),
+        }
+        let mut invalid = Document::new(invalid);
+        let before = invalid.vmf().clone();
+        let history = invalid.undo_labels().count();
+        assert!(
+            invalid
+                .edit("rejected secondary source", |tx| edit_corners(
+                    tx, id, corners
+                ))
+                .is_err(),
+            "{change}"
+        );
+        assert_eq!(invalid.vmf(), &before);
+        assert_eq!(invalid.undo_labels().count(), history);
     }
 }
 

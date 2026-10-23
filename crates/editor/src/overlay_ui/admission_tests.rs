@@ -85,7 +85,44 @@ fn fixture(handles: bool) -> Fixture {
     };
     if handles {
         fixture.controller.window.invoke_apply();
+        {
+            let mut session = lock(&fixture.shared);
+            let overlay = session.selected_ids()[0];
+            let ObjectId::Entity(id) = overlay else {
+                unreachable!()
+            };
+            let ObjectId::Solid(solid) = session
+                .create_block(
+                    Actor::User,
+                    DVec3::new(224.0, 0.0, 0.0),
+                    DVec3::new(288.0, 128.0, 16.0),
+                    "test/checker",
+                    false,
+                )
+                .unwrap()
+            else {
+                unreachable!()
+            };
+            let side = session
+                .document()
+                .solid(solid)
+                .unwrap()
+                .sides
+                .iter()
+                .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal == DVec3::Z)
+                .unwrap()
+                .id;
+            session
+                .set_entity_properties(
+                    Actor::User,
+                    id,
+                    &[("sides".into(), Some(format!("{} {side}", source.side)))],
+                )
+                .unwrap();
+            session.select(&[overlay], SelectMode::Replace).unwrap();
+        }
         corners(&fixture);
+        assert_eq!(fixture.controller.window.get_source_count(), 2);
         fixture.controller.window.invoke_handle_corners();
         assert!(lock(&fixture.shared).overlay_corner_handles_active());
         assert!(!fixture.controller.window.window().is_visible());

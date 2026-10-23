@@ -310,13 +310,31 @@ fn source_face(vmf: &Vmf, face: FaceId) -> Result<(DVec3, Vec<DVec3>), String> {
     {
         return Err("Overlay fitting requires one convex planar quad face".into());
     }
+    if target
+        .vertices
+        .iter()
+        .any(|point| point.abs().max_element() > SOURCE_COORDINATE_LIMIT)
+    {
+        return Err(format!(
+            "Overlay source vertices must fit ±{SOURCE_COORDINATE_LIMIT} units"
+        ));
+    }
     Ok((target.plane.normal, target.vertices.clone()))
 }
 
-pub fn fit(vmf: &Vmf, face: FaceId, mut options: Options) -> Result<Definition, String> {
+pub fn fit(vmf: &Vmf, face: FaceId, options: Options) -> Result<Definition, String> {
     vmf.validate_ids().map_err(|error| error.to_string())?;
     let (normal, vertices) = source_face(vmf, face)?;
-    let [a, b, c, d] = vertices.as_slice() else {
+    fit_source(face, normal, &vertices, options)
+}
+
+fn fit_source(
+    face: FaceId,
+    normal: DVec3,
+    vertices: &[DVec3],
+    mut options: Options,
+) -> Result<Definition, String> {
+    let [a, b, c, d] = vertices else {
         return Err("Overlay fitting requires one convex planar quad face".into());
     };
     let origin = (*a + *b + *c + *d) * 0.25;
@@ -348,13 +366,40 @@ pub fn fit_faces(vmf: &Vmf, faces: &[FaceId], options: Options) -> Result<Defini
     let first = *faces
         .first()
         .ok_or("Overlay fitting requires at least one source face")?;
-    let mut definition = fit(vmf, first, options)?;
+    let definition = fit(vmf, first, options)?;
+    fit_sources(vmf, faces, definition)
+}
+
+fn fit_sources(
+    vmf: &Vmf,
+    faces: &[FaceId],
+    mut definition: Definition,
+) -> Result<Definition, String> {
     if faces.len() == 1 {
         return Ok(definition);
     }
     if faces.iter().copied().collect::<BTreeSet<_>>().len() != faces.len() {
         return Err("Overlay fitting requires distinct source faces".into());
     }
+    let (mins, maxs) = coplanar_bounds(vmf, faces, &definition)?;
+    definition.sides = faces.iter().map(|face| face.side).collect();
+    definition.sides.sort_unstable();
+    definition.uv_points = [
+        [mins[0], mins[1], 0.0],
+        [mins[0], maxs[1], 0.0],
+        [maxs[0], maxs[1], 0.0],
+        [maxs[0], mins[1], 0.0],
+    ];
+    definition.validate()?;
+    validate_editable_projection(&definition, &definition)?;
+    Ok(definition)
+}
+
+fn coplanar_bounds(
+    vmf: &Vmf,
+    faces: &[FaceId],
+    definition: &Definition,
+) -> Result<([f64; 2], [f64; 2]), String> {
     let origin = DVec3::from_array(definition.basis_origin);
     let normal = DVec3::from_array(definition.basis_normal);
     let u = DVec3::from_array(definition.basis_u);
@@ -382,17 +427,7 @@ pub fn fit_faces(vmf: &Vmf, faces: &[FaceId], options: Options) -> Result<Defini
             }
         }
     }
-    definition.sides = faces.iter().map(|face| face.side).collect();
-    definition.sides.sort_unstable();
-    definition.uv_points = [
-        [mins[0], mins[1], 0.0],
-        [mins[0], maxs[1], 0.0],
-        [maxs[0], maxs[1], 0.0],
-        [maxs[0], mins[1], 0.0],
-    ];
-    definition.validate()?;
-    validate_editable_projection(&definition, &definition)?;
-    Ok(definition)
+    Ok((mins, maxs))
 }
 
 fn existing_definition(vmf: &Vmf, id: u32) -> Result<Definition, String> {
@@ -430,7 +465,12 @@ fn existing_definition(vmf: &Vmf, id: u32) -> Result<Definition, String> {
 
 pub fn refit_sources(vmf: &Vmf, id: u32) -> Result<(Vec<FaceId>, Definition), String> {
     let existing = existing_definition(vmf, id)?;
-    let faces = existing
+    let faces = resolve_sources(vmf, &existing)?;
+    Ok((faces, existing))
+}
+
+fn resolve_sources(vmf: &Vmf, existing: &Definition) -> Result<Vec<FaceId>, String> {
+    existing
         .sides
         .iter()
         .map(|side| {
@@ -443,8 +483,42 @@ pub fn refit_sources(vmf: &Vmf, id: u32) -> Result<(Vec<FaceId>, Definition), St
                 side: *side,
             })
         })
-        .collect::<Result<Vec<_>, String>>()?;
-    Ok((faces, existing))
+        .collect()
+}
+
+pub struct BoundSources {
+    pub faces: Vec<FaceId>,
+    pub references: Vec<FaceId>,
+    definition: Definition,
+    plane: Definition,
+}
+
+pub fn checked_bound_sources(vmf: &Vmf, id: u32) -> Result<BoundSources, String> {
+    checked_bound_definition(vmf, existing_definition(vmf, id)?)
+}
+
+fn checked_bound_definition(vmf: &Vmf, definition: Definition) -> Result<BoundSources, String> {
+    let faces = resolve_sources(vmf, &definition)?;
+    let mut references = Vec::new();
+    let mut plane = None;
+    for &face in &faces {
+        let (normal, vertices) = source_face(vmf, face)
+            .map_err(|error| format!("Overlay brush {} face {}: {error}", face.solid, face.side))?;
+        if let Ok(candidate) = fit_source(face, normal, &vertices, definition.options.clone()) {
+            references.push(face);
+            if plane.is_none() {
+                plane = Some(candidate);
+            }
+        }
+    }
+    let plane = plane.ok_or("Overlay editing requires an eligible bound quad")?;
+    coplanar_bounds(vmf, &faces, &plane)?;
+    Ok(BoundSources {
+        faces,
+        references,
+        definition,
+        plane,
+    })
 }
 
 pub fn fit_existing(vmf: &Vmf, id: u32) -> Result<(FaceId, Definition), String> {
@@ -491,11 +565,36 @@ pub fn fit_existing_refit(
 }
 
 pub fn editable_corners(vmf: &Vmf, id: u32) -> Result<(FaceId, Definition), String> {
+    let (faces, definition) = editable_corner_faces(vmf, id)?;
+    Ok((faces[0], definition))
+}
+
+fn single_corner_sources(vmf: &Vmf, id: u32) -> Result<BoundSources, String> {
     let (face, fitted) = fit_existing(vmf, id)?;
     let entity = vmf.entities.iter().find(|entity| entity.id == id).unwrap();
     let existing = parse(entity)?;
     validate_editable_projection(&existing, &fitted)?;
-    Ok((face, existing))
+    Ok(BoundSources {
+        faces: vec![face],
+        references: vec![face],
+        definition: existing,
+        plane: fitted,
+    })
+}
+
+fn corner_sources(vmf: &Vmf, id: u32) -> Result<BoundSources, String> {
+    let definition = existing_definition(vmf, id)?;
+    if definition.sides.len() == 1 {
+        return single_corner_sources(vmf, id);
+    }
+    let sources = checked_bound_definition(vmf, definition)?;
+    validate_editable_projection(&sources.definition, &sources.plane)?;
+    Ok(sources)
+}
+
+pub fn editable_corner_faces(vmf: &Vmf, id: u32) -> Result<(Vec<FaceId>, Definition), String> {
+    let sources = corner_sources(vmf, id)?;
+    Ok((sources.faces, sources.definition))
 }
 
 fn validate_editable_projection(
@@ -563,15 +662,24 @@ pub fn with_corners(
     id: u32,
     corners: [[f64; 2]; 4],
 ) -> Result<(FaceId, Definition), String> {
-    let (face, mut definition) = editable_corners(vmf, id)?;
+    let (faces, definition) = with_corner_faces(vmf, id, corners)?;
+    Ok((faces[0], definition))
+}
+
+pub fn with_corner_faces(
+    vmf: &Vmf,
+    id: u32,
+    corners: [[f64; 2]; 4],
+) -> Result<(Vec<FaceId>, Definition), String> {
+    let sources = corner_sources(vmf, id)?;
+    let mut definition = sources.definition;
     for (point, corner) in definition.uv_points.iter_mut().zip(corners) {
         point[0] = corner[0];
         point[1] = corner[1];
     }
     definition.validate()?;
-    let fitted = fit(vmf, face, definition.options.clone())?;
-    validate_editable_projection(&definition, &fitted)?;
-    Ok((face, definition))
+    validate_editable_projection(&definition, &sources.plane)?;
+    Ok((sources.faces, definition))
 }
 
 pub fn edit_corners(

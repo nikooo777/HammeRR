@@ -148,6 +148,35 @@ fn prepare_for(
     budget: &mut Budget<'_>,
     brush: bool,
 ) -> Result<Option<Arc<Material>>, String> {
+    let Some(Parameters {
+        path,
+        transform,
+        reference,
+        fractional,
+    }) = parameters(material, brush)?
+    else {
+        return Ok(None);
+    };
+    prepare_texture(
+        path, transform, reference, fractional, assets, budget, brush,
+    )
+    .map(Some)
+}
+
+struct Parameters {
+    path: String,
+    transform: [[f64; 3]; 2],
+    reference: f64,
+    fractional: bool,
+}
+
+pub(in crate::lighting) fn validate_brush(material: &vmt::Material) -> Result<(), String> {
+    parameters(material, true)?
+        .ok_or_else(|| "Brush texture shadows requires $alphatest 1".to_string())?;
+    Ok(())
+}
+
+fn parameters(material: &vmt::Material, brush: bool) -> Result<Option<Parameters>, String> {
     if brush {
         if material.shader != "lightmappedgeneric"
             || scalar(material, "$alphatest", 0.0)? != 1.0
@@ -309,6 +338,23 @@ fn prepare_for(
         .filter(|value| !value.trim().is_empty())
         .ok_or("alpha-texture shadows require $basetexture")?;
     let path = vmt::texture_path(path);
+    Ok(Some(Parameters {
+        path,
+        transform,
+        reference,
+        fractional,
+    }))
+}
+
+fn prepare_texture(
+    path: String,
+    transform: [[f64; 3]; 2],
+    reference: f64,
+    fractional: bool,
+    assets: &mut Assets<'_, '_>,
+    budget: &mut Budget<'_>,
+    brush: bool,
+) -> Result<Arc<Material>, String> {
     let texture = match assets.textures.get(&path) {
         Some(texture) => Arc::clone(texture),
         None => {
@@ -365,12 +411,12 @@ fn prepare_for(
     let material_allocation =
         budget.reserve_bytes(size_of::<Material>() + 2 * size_of::<usize>())?;
     assets.allocations.push(material_allocation);
-    Ok(Some(Arc::new(Material {
+    Ok(Arc::new(Material {
         texture,
         transform,
         reference,
         fractional,
-    })))
+    }))
 }
 
 #[cfg(test)]

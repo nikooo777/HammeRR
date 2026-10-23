@@ -12,7 +12,7 @@ use map_core::{Document, ObjectId, Plane, edit};
 use source_formats::bsp::{self, Bsp, LeafAmbient, LightingKind, Model, RgbExp32, TexInfo};
 use source_formats::gamefs::{GameFs, Mount, MountedPath};
 use source_formats::keyvalues::Node;
-use source_formats::vmf::{Entity, Vmf, format_vec3};
+use source_formats::vmf::{Entity, UvAxis, Vmf, format_vec3};
 
 type Bounds = ([f64; 3], [f64; 3]);
 const FLAG: &str = "vrad_brush_cast_shadows";
@@ -70,6 +70,70 @@ fn fixture() -> (tempfile::TempDir, GameFs) {
         mount: Mount::Directory(directory.path().to_owned()),
     });
     (directory, game)
+}
+
+fn cutout_assets(directory: &Path) {
+    for (name, alpha) in [
+        ("mask", [0, 255, 255, 255]),
+        ("clear", [0; 4]),
+        ("covered", [255; 4]),
+    ] {
+        let material = format!("LightmappedGeneric {{ $basetexture test/{name} $alphatest 1 }}");
+        if name == "mask" {
+            std::fs::write(directory.join("materials/test/mask_base.vmt"), &material).unwrap();
+        }
+        std::fs::write(
+            directory.join(format!("materials/test/{name}.vmt")),
+            if name == "mask" {
+                "Patch { include materials/test/mask_base.vmt }"
+            } else {
+                &material
+            },
+        )
+        .unwrap();
+        let mut bytes = vec![0_u8; 80];
+        bytes[..4].copy_from_slice(b"VTF\0");
+        for (offset, value) in [(4, 7_u32), (8, 2), (12, 80), (20, 0x1000)] {
+            bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        for (offset, value) in [(16, 2_u16), (18, 2), (24, 1), (63, 1)] {
+            bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
+        }
+        for offset in [32, 36, 40] {
+            bytes[offset..offset + 4].copy_from_slice(&0.25_f32.to_le_bytes());
+        }
+        bytes[56] = 1;
+        bytes[57..61].copy_from_slice(&(-1_i32).to_le_bytes());
+        for alpha in alpha {
+            bytes.extend_from_slice(&[255, 255, 255, alpha]);
+        }
+        std::fs::write(directory.join(format!("materials/test/{name}.vtf")), bytes).unwrap();
+    }
+}
+
+fn mask(vmf: &Vmf, name: &str) -> Vmf {
+    let mut result = vmf.clone();
+    let mut replaced = 0;
+    for side in result
+        .entities
+        .iter_mut()
+        .flat_map(|entity| &mut entity.solids)
+        .flat_map(|solid| &mut solid.sides)
+    {
+        if side.material.eq_ignore_ascii_case("test/mask") {
+            side.material = format!("test/{name}");
+            replaced += 1;
+        }
+    }
+    assert!(replaced > 0, "control did not replace any mask faces");
+    result
+}
+
+fn cutout_options(bounces: u8) -> Options {
+    Options {
+        brush_texture_shadows: true,
+        ..options(bounces)
+    }
 }
 
 fn room() -> Vmf {
@@ -193,6 +257,18 @@ fn sample(
     kind: LightingKind,
     style: u8,
 ) -> RgbExp32 {
+    sample_style(bsp, model, target, normal, kind, style)
+        .expect("fixed receiver lost its native style")
+}
+
+fn sample_style(
+    bsp: &Bsp,
+    model: usize,
+    target: DVec3,
+    normal: DVec3,
+    kind: LightingKind,
+    style: u8,
+) -> Option<RgbExp32> {
     let model = bsp.records::<Model>().unwrap()[model];
     let faces = bsp.lighting_faces(kind).unwrap();
     let planes = bsp.records::<bsp::Plane>().unwrap();
@@ -222,12 +298,8 @@ fn sample(
             for s in 0..width {
                 if frame.position(s, t).unwrap().distance(target) <= 1e-6 {
                     let data = lighting.face(face, info).unwrap().unwrap();
-                    let index = data
-                        .styles()
-                        .iter()
-                        .position(|&value| value == style)
-                        .expect("fixed receiver lost its native style");
-                    return data.samples(index, 0).unwrap()[t * width + s];
+                    let index = data.styles().iter().position(|&value| value == style)?;
+                    return Some(data.samples(index, 0).unwrap()[t * width + s]);
                 }
             }
         }
@@ -342,6 +414,271 @@ fn literal_local_vertices(bsp: &Bsp) {
         }
     }
     assert_eq!(actual, expected);
+}
+
+#[test]
+fn requested_root_cutouts_use_literal_posed_uvs_for_world_other_model_and_self() {
+    let (directory, game) = fixture();
+    cutout_assets(directory.path());
+    let pivot = DVec3::new(64.0, -32.0, 96.0);
+    let mut document = Document::new(room());
+    let caster = model(
+        &mut document,
+        &[
+            ([-80.0, -80.0, 64.0], [80.0, 80.0, 80.0]),
+            ([-112.0, -112.0, 128.0], [112.0, 112.0, 136.0]),
+        ],
+        pivot,
+        "test/white",
+    );
+    let receiver = model(
+        &mut document,
+        &[([-192.0, -240.0, 8.0], [192.0, 64.0, 24.0])],
+        DVec3::ZERO,
+        "test/white",
+    );
+    let mut source = document.into_vmf();
+    entity(&mut source, receiver).properties.remove(FLAG);
+    let item = entity(&mut source, caster);
+    item.properties.set("angles", "0 90 0");
+    for side in &mut item.solids[1].sides {
+        side.material = "test/mask".into();
+        if Plane::from_points(side.plane.0).unwrap().normal.z.abs() > 0.99 {
+            side.u_axis = UvAxis {
+                axis: DVec3::X,
+                offset: 0.0,
+                scale: 64.0,
+            };
+            side.v_axis = UvAxis {
+                axis: DVec3::Y,
+                offset: 0.0,
+                scale: 64.0,
+            };
+        }
+    }
+    lights(&mut source);
+    for light in source
+        .entities
+        .iter_mut()
+        .filter(|entity| entity.solids.is_empty())
+    {
+        light.properties.set("origin", "32 -96 224");
+    }
+    let mut off = source.clone();
+    entity(&mut off, caster).properties.set(FLAG, "0");
+    let mut literal = source.clone();
+    let item = entity(&mut literal, caster);
+    item.properties.set("origin", "0 0 0");
+    item.properties.set("angles", "0 0 0");
+    for side in item.solids.iter_mut().flat_map(|solid| &mut solid.sides) {
+        for point in &mut side.plane.0 {
+            *point = DVec3::new(32.0 - point.y, point.x - 96.0, point.z);
+        }
+        for axis in [&mut side.u_axis, &mut side.v_axis] {
+            axis.axis = DVec3::new(-axis.axis.y, axis.axis.x, axis.axis.z);
+            axis.offset -= axis.axis.dot(DVec3::new(32.0, -96.0, 0.0)) / axis.scale;
+        }
+    }
+    let actual = built(&source, &game, cutout_options(0));
+    let clear = built(&mask(&source, "clear"), &game, cutout_options(0));
+    let covered = built(&mask(&source, "covered"), &game, cutout_options(0));
+    let isolated = built(&off, &game, cutout_options(0));
+    let expected = built(&literal, &game, cutout_options(0));
+    assert_eq!(actual.stats.brush_shadow_models, 1);
+    geometry_and_probe_locations(successful(&actual), successful(&isolated));
+    for kind in [LightingKind::Ldr, LightingKind::Hdr] {
+        for (x, y, transparent) in [
+            (128.0, 128.0, true),
+            (-128.0, 128.0, false),
+            (128.0, -128.0, false),
+        ] {
+            for (model, z) in [(0, 0.0), (2, 24.0)] {
+                let target = DVec3::new(32.0 - y, x - 96.0, z);
+                for style in [0, 1] {
+                    let lit = sample(successful(&clear), model, target, DVec3::Z, kind, style);
+                    assert!(lit.linear().into_iter().any(|value| value > 0.0));
+                    let dark =
+                        sample_style(successful(&covered), model, target, DVec3::Z, kind, style);
+                    assert!(dark.is_none_or(|color| color.linear() == [0.0; 3]));
+                    let color =
+                        sample_style(successful(&actual), model, target, DVec3::Z, kind, style);
+                    if transparent {
+                        assert_eq!(color, Some(lit));
+                    } else {
+                        assert!(color.is_none_or(|color| color.linear() == [0.0; 3]));
+                    }
+                    assert_eq!(
+                        color,
+                        sample_style(successful(&expected), model, target, DVec3::Z, kind, style)
+                    );
+                    assert_eq!(
+                        sample(successful(&isolated), model, target, DVec3::Z, kind, style),
+                        lit
+                    );
+                }
+            }
+            let local = DVec3::new(x / 2.0, y / 2.0, 80.0) - pivot;
+            let lit = sample(successful(&clear), 1, local, DVec3::Z, kind, 0);
+            assert!(lit.linear().into_iter().any(|value| value > 0.0));
+            assert_eq!(
+                sample(successful(&actual), 1, local, DVec3::Z, kind, 0),
+                if transparent {
+                    lit
+                } else {
+                    RgbExp32::default()
+                }
+            );
+        }
+    }
+}
+
+#[test]
+fn root_cutouts_filter_sky_ambient_and_reflected_global_segments() {
+    let (directory, game) = fixture();
+    cutout_assets(directory.path());
+    let mut sky_room = room();
+    for side in sky_room
+        .world
+        .solids
+        .iter_mut()
+        .flat_map(|solid| &mut solid.sides)
+    {
+        side.material = "test/black".into();
+    }
+    for side in &mut sky_room.world.solids[1].sides {
+        side.material = "tools/toolsskybox".into();
+    }
+    let mut document = Document::new(sky_room);
+    model(
+        &mut document,
+        &[([-256.0, -256.0, 112.0], [256.0, 256.0, 144.0])],
+        DVec3::new(48.0, -32.0, 64.0),
+        "test/mask",
+    );
+    let mut sky = document.into_vmf();
+    point(
+        &mut sky,
+        "light_environment",
+        "0 0 224",
+        &[
+            ("angles", "0 0 0"),
+            ("pitch", "-90"),
+            ("_light", "255 0 0 100"),
+            ("_ambient", "0 0 255 100"),
+            ("_lightHDR", "0 255 0 80"),
+            ("_ambientHDR", "255 0 0 60"),
+        ],
+    );
+    let clear = built(&mask(&sky, "clear"), &game, cutout_options(1));
+    let covered = built(&mask(&sky, "covered"), &game, cutout_options(1));
+    assert_eq!(
+        (
+            clear.stats.brush_shadow_models,
+            covered.stats.brush_shadow_models
+        ),
+        (1, 1)
+    );
+    geometry_and_probe_locations(successful(&clear), successful(&covered));
+    for kind in [LightingKind::Ldr, LightingKind::Hdr] {
+        let color = sample(successful(&clear), 0, DVec3::ZERO, DVec3::Z, kind, 0).linear();
+        assert!(color[0] > 0.0 && color[if kind == LightingKind::Ldr { 2 } else { 1 }] > 0.0);
+        assert_eq!(
+            sample(successful(&covered), 0, DVec3::ZERO, DVec3::Z, kind, 0).linear(),
+            [0.0; 3]
+        );
+        let LeafAmbient::Indexed { samples: a, .. } =
+            successful(&clear).leaf_ambient(kind).unwrap().unwrap()
+        else {
+            panic!()
+        };
+        let LeafAmbient::Indexed { samples: b, .. } =
+            successful(&covered).leaf_ambient(kind).unwrap().unwrap()
+        else {
+            panic!()
+        };
+        assert!(
+            a.iter()
+                .flat_map(|sample| sample.cube)
+                .any(|color| color.linear().into_iter().any(|value| value > 0.0))
+        );
+        assert!(
+            b.iter()
+                .flat_map(|sample| sample.cube)
+                .all(|color| color.linear() == [0.0; 3])
+        );
+    }
+
+    let mut bounce_room = room();
+    for side in bounce_room
+        .world
+        .solids
+        .iter_mut()
+        .skip(1)
+        .flat_map(|solid| &mut solid.sides)
+    {
+        side.material = "test/black".into();
+    }
+    let mut document = Document::new(bounce_room);
+    let source = model(
+        &mut document,
+        &[([-128.0, -128.0, 128.0], [128.0, 128.0, 144.0])],
+        DVec3::ZERO,
+        "test/white",
+    );
+    model(
+        &mut document,
+        &[([-256.0, -256.0, 16.0], [256.0, 256.0, 24.0])],
+        DVec3::ZERO,
+        "test/mask",
+    );
+    let mut bounce = document.into_vmf();
+    let item = entity(&mut bounce, source);
+    item.properties.set("classname", "func_detail");
+    item.properties.remove(FLAG);
+    point(
+        &mut bounce,
+        "light_spot",
+        "0 0 32",
+        &[
+            ("angles", "90 0 0"),
+            ("_inner_cone", "15"),
+            ("_cone", "20"),
+            ("_light", "255 0 0 160"),
+            ("_lightHDR", "0 0 255 96"),
+            ("_constant_attn", "1"),
+            ("_linear_attn", "0"),
+            ("_quadratic_attn", "0"),
+        ],
+    );
+    let clear = built(&mask(&bounce, "clear"), &game, cutout_options(1));
+    let covered = built(&mask(&bounce, "covered"), &game, cutout_options(1));
+    let mut model_source = mask(&bounce, "clear");
+    let item = entity(&mut model_source, source);
+    item.properties.set("classname", "func_brush");
+    item.properties.set(FLAG, "1");
+    for side in item.solids.iter_mut().flat_map(|solid| &mut solid.sides) {
+        side.material = "test/covered".into();
+    }
+    let model_source = built(&model_source, &game, cutout_options(1));
+    for (kind, channel) in [(LightingKind::Ldr, 0), (LightingKind::Hdr, 2)] {
+        assert!(
+            sample(successful(&clear), 0, DVec3::ZERO, DVec3::Z, kind, 0).linear()[channel] > 0.0
+        );
+        assert_eq!(
+            sample(successful(&covered), 0, DVec3::ZERO, DVec3::Z, kind, 0).linear(),
+            [0.0; 3]
+        );
+        assert!(
+            model_colors(successful(&model_source), 1, kind)
+                .iter()
+                .flat_map(|(_, colors)| colors)
+                .any(|color| color.linear()[channel] > 0.0)
+        );
+        assert_eq!(
+            sample(successful(&model_source), 0, DVec3::ZERO, DVec3::Z, kind, 0).linear(),
+            [0.0; 3]
+        );
+    }
 }
 
 #[test]
@@ -745,6 +1082,124 @@ fn from_source(
     successful(&output);
     assert_eq!(vmf, &before);
     output
+}
+
+#[test]
+fn root_cutout_requests_keep_explicit_refusals_child_limits_and_texture_publication_guard() {
+    let (directory, game) = fixture();
+    cutout_assets(directory.path());
+    let mut document = Document::new(room());
+    let caster = model(
+        &mut document,
+        &[([-112.0, -112.0, 128.0], [112.0, 112.0, 136.0])],
+        PIVOT,
+        "test/mask",
+    );
+    let mut source = document.into_vmf();
+    lights(&mut source);
+    for options in [
+        options(0),
+        Options {
+            brush_texture_shadows: true,
+            ..Default::default()
+        },
+    ] {
+        let output = compiler::compile_with_options(&source, &game, options);
+        assert!(output.report.has_errors() && output.bsp.is_none());
+    }
+    let mut omitted = source.clone();
+    for point in entity(&mut omitted, caster)
+        .solids
+        .iter_mut()
+        .flat_map(|solid| &mut solid.sides)
+        .flat_map(|side| &mut side.plane.0)
+    {
+        point.x += 1024.0;
+    }
+    region(&mut omitted);
+    for material in [
+        "LightmappedGeneric { $basetexture test/mask $alphatest 1 $translucent 1 }",
+        "LightmappedGeneric { $basetexture test/mask $alphatest 1 %compilenodraw 1 }",
+        "LightmappedGeneric { $basetexture test/mask $alphatest 1 $alpha 0.5 }",
+        "LightmappedGeneric { $basetexture test/mask $alphatest 1 $alphatestreference NaN }",
+    ] {
+        std::fs::write(directory.path().join("materials/test/mask.vmt"), material).unwrap();
+        let output = compiler::compile_with_options(&omitted, &game, cutout_options(0));
+        assert!(
+            output.report.has_errors() && output.bsp.is_none(),
+            "{material}: {:?}",
+            output.report
+        );
+        assert!(output.report.diagnostics.iter().any(|item| {
+            item.message.contains("Brush global shadows:")
+                && item
+                    .object
+                    .as_ref()
+                    .is_some_and(|owner| owner.starts_with("solid:"))
+        }));
+    }
+    cutout_assets(directory.path());
+    let mut child = Document::empty().into_vmf();
+    child.entities.push(
+        source
+            .entities
+            .iter()
+            .find(|entity| entity.id == caster)
+            .unwrap()
+            .clone(),
+    );
+    save(directory.path(), "cutout-child.vmf", &child);
+    let mut parent = room();
+    point(
+        &mut parent,
+        "func_instance",
+        "0 0 0",
+        &[("file", "cutout-child.vmf"), ("angles", "0 0 0")],
+    );
+    let child_context = context(directory.path(), &parent);
+    let output = compiler::compile_with_source_controlled(
+        &parent,
+        &game,
+        cutout_options(0),
+        None,
+        Some(&child_context),
+        &Control::default(),
+    );
+    assert!(output.report.has_errors() && output.bsp.is_none());
+    assert!(
+        output
+            .report
+            .diagnostics
+            .iter()
+            .any(|item| item.message.contains("ordinary SOLID")),
+        "{:?}",
+        output.report
+    );
+    std::fs::remove_file(directory.path().join("materials/test/mask.vtf")).unwrap();
+    let output = compiler::compile_with_options(&source, &game, cutout_options(0));
+    assert!(output.report.has_errors() && output.bsp.is_none());
+    cutout_assets(directory.path());
+    let source_context = context(directory.path(), &source);
+    let destination = directory.path().join("published/cutout.bsp");
+    std::fs::write(&destination, b"previous BSP").unwrap();
+    std::fs::write(destination.with_extension("lin"), b"previous LIN").unwrap();
+    let output = from_source(&source, &game, &source_context, cutout_options(0));
+    let publication = output
+        .prepare_write_controlled(&destination, &Control::default())
+        .unwrap()
+        .unwrap();
+    drop(output);
+    std::fs::write(
+        directory.path().join("materials/test/mask.vtf"),
+        b"changed texture",
+    )
+    .unwrap();
+    assert!(publication.commit(&Control::default()).is_err());
+    assert_eq!(std::fs::read(&destination).unwrap(), b"previous BSP");
+    assert_eq!(
+        std::fs::read(destination.with_extension("lin")).unwrap(),
+        b"previous LIN"
+    );
 }
 
 #[test]

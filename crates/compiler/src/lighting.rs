@@ -586,6 +586,12 @@ struct OpticalHull {
     pose: Option<crate::brush_model_pose::Pose>,
 }
 
+pub(crate) fn validate_brush_cutout_material(
+    material: &source_formats::vmt::Material,
+) -> Result<(), String> {
+    props::alpha::validate_brush(material)
+}
+
 #[derive(Debug, Clone)]
 struct HullSource {
     brush: usize,
@@ -679,11 +685,15 @@ impl Occluder {
     }
 
     fn into_global_caster(mut self) -> Self {
-        self.optical = Some(Box::new(OpticalHull {
-            faces: Vec::new(),
-            pose: None,
-            global_caster: true,
-        }));
+        if let Some(optical) = &mut self.optical {
+            optical.global_caster = true;
+        } else {
+            self.optical = Some(Box::new(OpticalHull {
+                faces: Vec::new(),
+                pose: None,
+                global_caster: true,
+            }));
+        }
         self
     }
 
@@ -697,7 +707,7 @@ impl Occluder {
         let Some(optical) = &self.optical else {
             return self.entry(start, end);
         };
-        if optical.global_caster {
+        if optical.faces.is_empty() {
             return self.entry(start, end);
         }
         let Some(interval) = self.interval(start, end)? else {

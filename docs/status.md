@@ -36,12 +36,12 @@ The integrated compiler is experimental. File operations, BSP publication and ga
 | --- | --- | --- |
 | [World and visibility](compile-and-play.md) | Structural/detail geometry, Fast and Detailed visibility, hints, portals and fading windows. | General unsupported portal/model combinations. |
 | [Lighting](compile-and-play.md#lighting) | LDR/HDR, styles, point/spot/sun/sky, soft sun, ambient probes and up to four diffuse bounces. | Material emission, per-texel prop lightmaps and general shader transport. |
-| [Material lighting](compile-and-play.md#normal-map-lighting) | Checked normal maps, albedo, reflectivity and [alpha texture shadows](brush-texture-shadows.md). | Unsupported effects reject explicitly. |
+| [Material lighting](compile-and-play.md#normal-map-lighting) | Checked normal maps, albedo, reflectivity and [binary texture shadows](brush-texture-shadows.md), including explicitly requested stationary root brush models. | Child cutout models and general translucent effects remain unsupported. |
 | [Physics](physics.md) | Engine world, terrain and supported brush-model collision, contact materials and derived mass. | Custom density and broader moving-body behavior. |
 | [Brush entities](compile-and-play.md#brush-entities-and-pivots) | Checked pivots, initial rotation, moving models and attached lightmaps. | General parenting, arbitrary model classes and initial poses. |
 | [Terrain](terrain.md) | Mixed-grid full/half neighbors, LOD snapping, lighting and collision. | Holes and runtime brush-model terrain. |
 | [Water](water.md) | Flat world pools, inward surfaces, depth, fluid physics, current and damping. | Sloped inward surfaces, slime, per-pool current and moving rendered water. |
-| [Static props](static-props.md) | Models, checked collision choices, shadows, ambient/vertex lighting and packing with nested material edits. | Exact hull leaf membership and general materials/bodygroups. |
+| [Static props](static-props.md) | Models, checked collision choices, shadows, ambient/vertex lighting and nested material edits for packing and cutout receivers. | Exact hull leaf membership and general materials/bodygroups. |
 | [Detail props](material-detail-scattering.md) | Explicit and generated decorative models, cards, cross/tri shapes and supported lighting. | Editor display of final generated details. |
 | [Reflections](reflections.md) | Private LDR or paired LDR/HDR captures and verified packing. | Recursive reflection bounces and unsupported capture scenes. |
 | [Overlays](overlays.md) | Coplanar face-group fitting and refit, native projections, face splitting, supported terrain targets and water transitions. | Full projected-material viewport preview and multi-face corner editing. |

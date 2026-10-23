@@ -691,7 +691,7 @@ impl SurfaceIndex {
                 if hull
                     .optical
                     .as_ref()
-                    .is_none_or(|optical| optical.global_caster)
+                    .is_none_or(|optical| optical.faces.is_empty())
                 {
                     Ok(Some((interval.entering, ())))
                 } else {

@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, btree_map::Entry},
+    collections::{BTreeMap, BTreeSet, btree_map::Entry},
     sync::Arc,
 };
 
@@ -36,6 +36,7 @@ impl Face {
 pub(super) struct Prepared {
     materials: BTreeMap<usize, Option<Arc<alpha::Material>>>,
     model_alpha: bool,
+    global_alpha: BTreeSet<usize>,
     _allocations: Vec<Allocation>,
 }
 
@@ -46,6 +47,18 @@ impl Prepared {
 
     pub(super) fn has_model_alpha(&self) -> bool {
         self.model_alpha
+    }
+
+    pub(super) fn has_global_alpha(
+        &self,
+        entity: usize,
+        budget: &mut Budget<'_>,
+    ) -> Result<bool, String> {
+        if self.global_alpha.is_empty() {
+            return Ok(false);
+        }
+        budget.consume(self.global_alpha.len().checked_ilog2().unwrap_or(0) as usize + 1)?;
+        Ok(self.global_alpha.contains(&entity))
     }
 
     pub(super) fn face(&self, material: usize, projection: [[f32; 4]; 2]) -> Option<Face> {
@@ -76,7 +89,8 @@ impl Prepared {
         let mut admitted = vec![false; map.entities.len()];
         for (scope, &receiver) in scopes.iter().zip(receivers) {
             budget.consume(1)?;
-            admitted[scope.entity] = receiver;
+            admitted[scope.entity] = receiver
+                || crate::brush_shadow_casters::enabled(&map.entities[scope.entity].properties);
         }
         for brush in map.brushes.iter().filter(|brush| brush.entity != 0) {
             for side in brush
@@ -91,7 +105,7 @@ impl Prepared {
                             == 0)
                 {
                     return Err(format!(
-                        "Brush texture shadows entity:{} solid:{} material {} has no applicable baked self-shadow scope",
+                        "Brush texture shadows entity:{} solid:{} material {} has no applicable baked self-shadow or requested global scope",
                         map.entities[brush.entity].id,
                         brush.id,
                         map.materials.get(side.material).name
@@ -170,8 +184,11 @@ pub(super) fn prepare(
     budget.consume(sides)?;
     let mut materials = BTreeMap::new();
     let mut model_alpha = false;
+    let mut global_alpha = BTreeSet::new();
+    let mut global_allocations = Vec::new();
     let mut assets = Assets::for_brushes(fs, sources);
     for brush in &map.brushes {
+        let mut brush_alpha = false;
         for side in brush
             .sides
             .iter()
@@ -203,15 +220,30 @@ pub(super) fn prepare(
                 };
                 entry.insert(alpha);
             }
-            model_alpha |= brush.entity != 0 && materials[&side.material].is_some();
+            let model_alpha_side = brush.entity != 0 && materials[&side.material].is_some();
+            model_alpha |= model_alpha_side;
+            brush_alpha |= model_alpha_side;
+        }
+        if brush_alpha {
+            let properties = &map.entities[brush.entity].properties;
+            budget.consume(properties.len())?;
+            if crate::brush_shadow_casters::enabled(properties) {
+                budget.consume(global_alpha.len().checked_ilog2().unwrap_or(0) as usize + 1)?;
+                if !global_alpha.contains(&brush.entity) {
+                    global_allocations.push(budget.reserve_bytes(16 * size_of::<usize>())?);
+                    global_alpha.insert(brush.entity);
+                }
+            }
         }
     }
     let mut allocations = assets.into_allocations();
+    allocations.extend(global_allocations);
     allocations.push(allocation);
     allocations.push(_read_metadata);
     Ok(Prepared {
         materials,
         model_alpha,
+        global_alpha,
         _allocations: allocations,
     })
 }
@@ -255,6 +287,7 @@ mod tests {
         let mut prepared = Prepared {
             materials: BTreeMap::from([(material, Some(alpha::test_cutout([0; 4])))]),
             model_alpha: true,
+            global_alpha: BTreeSet::new(),
             _allocations: Vec::new(),
         };
         let scope = Scope {
@@ -271,7 +304,8 @@ mod tests {
             .qualify_models(&map, &[], &[], &mut budget)
             .unwrap_err();
         assert!(
-            error.contains("entity:777") && error.contains("no applicable baked self-shadow scope")
+            error.contains("entity:777")
+                && error.contains("no applicable baked self-shadow or requested global scope")
         );
         assert_eq!(budget.live_bytes(), 0);
         assert!(
@@ -283,6 +317,13 @@ mod tests {
             .qualify_models(&map, std::slice::from_ref(&scope), &[true], &mut budget)
             .unwrap();
         assert_eq!(budget.live_bytes(), 0);
+        map.entities[entity]
+            .properties
+            .push(("vrad_brush_cast_shadows".into(), "1".into()));
+        prepared
+            .qualify_models(&map, std::slice::from_ref(&scope), &[false], &mut budget)
+            .unwrap();
+        map.entities[entity].properties.clear();
         map.brushes[0].contents = contents::WATER;
         assert!(
             prepared

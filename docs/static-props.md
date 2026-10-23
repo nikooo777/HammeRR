@@ -39,7 +39,10 @@ Deeper edits win within the same edit type; replacements apply after all inserts
 4. Compile, then inspect **Static-prop vertex lighting** and **Prop vertex lighting bytes**.
 
 Vertex lighting requires a stricter model/material subset than ordinary prop placement.
-Unsupported declared effects reject; they are not replaced with invented vertex colors.
+Unsupported model or material effects stop the build.
+Default-alpha-test receivers accept the supported nested basetexture Patch edits.
+Every hardware vertex keeps its lighting colors; receiver textures are read only
+when shadow casting or packing needs them.
 Use [baked prop inspection](baked-prop-vertices.md) to read the emitted samples.
 
 ## Visibility and lighting options
@@ -69,8 +72,9 @@ Inspect **Instance contents…** before building. Child source files must remain
 - Models must be built as static props, with supported companion files and body 0.
 - Static props retain unit scale, white tint and normal render-mode restrictions.
 - Leaf membership uses conservative rotated header bounds, not exact model hulls.
-- Runtime appearance, collision, mesh shadows, vertex lighting and packing have separate acceptance rules.
+- Packing does not change vertex lighting or shadow settings.
 - Packed chains must end at `VertexLitGeneric` with one canonical `$basetexture`. Optional `$alphatest 1` uses the default cutoff.
 - Other terminal parameters, authored alpha references and proxies remain unsupported.
-- Cutout vertex-lighting receivers retain the one-direct-edit Patch limit.
+- Cutout vertex-lighting receivers require one canonical basetexture and literal `$alphatest 1` at the default cutoff, with the same bounded Patch grammar as packing.
+- Cutout vertex lighting is experimental.
 - Missing or unsupported required data fails rather than substituting another asset.

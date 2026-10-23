@@ -20,6 +20,26 @@ mod spherical_indirect;
 
 const CUTOUT_RECEIVER: &str = "VertexLitGeneric { $basetexture test $alphatest 1 }";
 
+fn nested_cutout(directory: &std::path::Path, outer: &str, inner: &str) {
+    for (path, text) in [
+        (
+            "materials/one.vmt",
+            format!(
+                "Patch {{ include materials/shared/middle.vmt {outer} {{ $basetexture test_outer }} }}"
+            ),
+        ),
+        (
+            "materials/shared/middle.vmt",
+            format!(
+                "Patch {{ include materials/shared/base.vmt {inner} {{ $basetexture test_inner }} }}"
+            ),
+        ),
+        ("materials/shared/base.vmt", CUTOUT_RECEIVER.to_owned()),
+    ] {
+        std::fs::write(directory.join(path), text).unwrap();
+    }
+}
+
 fn options(dual: bool) -> Options {
     Options {
         lighting: if dual {
@@ -189,17 +209,16 @@ fn dual_channels_preserve_emitted_ordinals_duplicates_and_unused_group_vertices(
 }
 
 #[test]
-fn cutout_receivers_preserve_all_lod_colors_without_reading_unrequested_alpha() {
+fn nested_cutout_receivers_preserve_all_lod_colors_without_reading_unrequested_textures() {
     let (directory, game) = fixtures::game();
     fixtures::add_lod(directory.path());
     let texture = directory.path().join("materials/test.vtf");
     std::fs::write(&texture, fixtures::caster_texture(0)).unwrap();
     let opaque = compile(&fixtures::scene(false), &game, true);
-    std::fs::write(
-        directory.path().join("materials/shared/base.vmt"),
-        CUTOUT_RECEIVER,
-    )
-    .unwrap();
+    nested_cutout(directory.path(), "replace", "insert");
+    for name in ["test_outer.vtf", "test_inner.vtf"] {
+        assert!(!directory.path().join("materials").join(name).exists());
+    }
     let output = compile(&fixtures::scene(false), &game, true);
     assert_eq!(
         output.prop_lighting_assets.as_ref().unwrap().entries(),
@@ -246,21 +265,21 @@ fn cutout_receivers_preserve_all_lod_colors_without_reading_unrequested_alpha() 
     }
     assert_eq!(output.stats.prop_shadow_alpha_triangles, 0);
     let manifest = output.prop_lighting_assets.as_ref().unwrap().manifest();
-    for path in ["materials/one.vmt", "materials/shared/base.vmt"] {
+    for path in [
+        "materials/one.vmt",
+        "materials/shared/middle.vmt",
+        "materials/shared/base.vmt",
+    ] {
         assert!(manifest.sources.iter().any(|source| source.path == path));
     }
-    assert!(
-        !manifest
-            .sources
-            .iter()
-            .any(|source| source.path == "materials/test.vtf")
-    );
-    assert!(
-        !manifest
-            .missing_sources
-            .iter()
-            .any(|path| path == "materials/test.vtf")
-    );
+    for path in [
+        "materials/test.vtf",
+        "materials/test_inner.vtf",
+        "materials/test_outer.vtf",
+    ] {
+        assert!(!manifest.sources.iter().any(|source| source.path == path));
+        assert!(!manifest.missing_sources.iter().any(|source| source == path));
+    }
     let output_directory = tempfile::tempdir_in(directory.path().parent().unwrap()).unwrap();
     let destination = output_directory.path().join("previous.bsp");
     std::fs::write(&destination, b"previous complete output").unwrap();
@@ -521,14 +540,10 @@ fn unsupported_flags_styles_and_selected_skin_fail_with_source_diagnostics() {
 }
 
 #[test]
-fn prepared_write_rejects_changed_cutout_patch_or_new_candidate_after_output_drop() {
-    for change_patch in [true, false] {
+fn prepared_write_rejects_changed_nested_cutout_sources_or_new_candidate_after_output_drop() {
+    for changed in ["middle", "base", "candidate"] {
         let (directory, game) = fixtures::game();
-        std::fs::write(
-            directory.path().join("materials/shared/base.vmt"),
-            CUTOUT_RECEIVER,
-        )
-        .unwrap();
+        nested_cutout(directory.path(), "insert", "replace");
         let output_directory = tempfile::tempdir_in(directory.path().parent().unwrap()).unwrap();
         let destination = output_directory.path().join("previous.bsp");
         std::fs::write(&destination, b"previous complete output").unwrap();
@@ -538,18 +553,23 @@ fn prepared_write_rejects_changed_cutout_patch_or_new_candidate_after_output_dro
             .prepare_write_controlled(&destination, &control)
             .unwrap()
             .unwrap();
-        if change_patch {
-            std::fs::write(
+        match changed {
+            "middle" => std::fs::write(
+                directory.path().join("materials/shared/middle.vmt"),
+                "Patch { include materials/shared/base.vmt replace { $basetexture changed } }",
+            )
+            .unwrap(),
+            "base" => std::fs::write(
                 directory.path().join("materials/shared/base.vmt"),
                 "VertexLitGeneric { $basetexture replacement }",
             )
-            .unwrap();
-        } else {
-            std::fs::write(
+            .unwrap(),
+            "candidate" => std::fs::write(
                 directory.path().join("materials/models/test/one.vmt"),
                 "VertexLitGeneric { $basetexture appeared }",
             )
-            .unwrap();
+            .unwrap(),
+            _ => unreachable!(),
         }
         drop(output);
         assert!(prepared.commit(&control).is_err());

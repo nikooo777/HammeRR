@@ -548,6 +548,49 @@ mod tests {
     }
 
     #[test]
+    fn global_cutouts_retain_coverage_pose_and_exclude_world_occupancy() {
+        let face = super::super::brush_alpha::test_face([0, 255, 0, 255]);
+        let pose = crate::brush_model_pose::Pose {
+            offset: DVec3::Y * 0.5,
+            rotation: None,
+        };
+        let hull = cube(pose.offset, 1.0)
+            .with_optical(vec![Some(face); 6], Some(pose))
+            .unwrap()
+            .into_global_caster();
+        assert!(!hull.occupies_world());
+        let ray = |y| (DVec3::new(-2.0, y, 0.25), DVec3::new(2.0, y, 0.25));
+        let (clear_start, clear_end) = ray(0.75);
+        assert!(
+            hull.optical_entry(clear_start, clear_end)
+                .unwrap()
+                .is_none()
+        );
+        let (opaque_start, opaque_end) = ray(1.25);
+        assert!(
+            hull.optical_entry(opaque_start, opaque_end)
+                .unwrap()
+                .is_some()
+        );
+        let sky = cube(DVec3::X * 4.0, 1.0).with_sky(vec![true; 6]).unwrap();
+        let index = ShadowIndex::new(vec![hull.clone(), sky], &mut |_| Ok(())).unwrap();
+        let sky_end = DVec3::new(6.0, 0.75, 0.25);
+        assert!(
+            index
+                .optical_sky_fraction(clear_start, sky_end, &mut |_| Ok(()))
+                .unwrap()
+                .is_some()
+        );
+        let opaque = cube(pose.offset, 1.0).into_global_caster();
+        let index = ShadowIndex::new(vec![hull, opaque], &mut |_| Ok(())).unwrap();
+        assert!(
+            index
+                .optical_blocked(clear_start, clear_end, &mut |_| Ok(()))
+                .unwrap()
+        );
+    }
+
+    #[test]
     fn model_cutouts_use_each_hulls_inverse_pose_and_preserve_geometric_hits() {
         use crate::brush_model_pose::Pose;
         use glam::DMat3;

@@ -1104,8 +1104,13 @@ fn build(
         .then(asset_sources::BuildMaterialSources::default)
     });
     if let Some(sources) = &material_sources
-        && let Err(diagnostic) =
-            brush_shadow_casters::validate(&caster_requests, fs, sources, control)
+        && let Err(diagnostic) = brush_shadow_casters::validate(
+            &caster_requests,
+            fs,
+            sources,
+            control,
+            options.brush_texture_shadows,
+        )
     {
         output.report.diagnostics.push(diagnostic);
         return Ok(());

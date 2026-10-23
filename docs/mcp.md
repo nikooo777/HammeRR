@@ -163,6 +163,7 @@ Save records current filters; Apply affects only the selected document. Reload a
 `compile_map` waits for the build. `run_map` builds and launches through the same job system.
 Use `cancel_compile` to stop owned build work.
 Set `brush_texture_shadows:true` for [brush cutout shadows](brush-texture-shadows.md).
+For an eligible stationary root `func_brush`, set `vrad_brush_cast_shadows:"1"` through `set_entity_properties` to cast supported binary cutouts globally. This uses the same **Shadows → Yes** property and build option as the UI. Child cutout models remain refused; unrequested model cutouts keep their same-model lit-receiver scope.
 Game launches use `-insecure` and private validation uses `sv_lan 1`.
 Reflection capture also needs a ready `get_native_capture_runtime` result.
 See [Compile and play](compile-and-play.md).
@@ -183,7 +184,7 @@ The reference form preserves bindings. Extraction with parameters and general re
 
 Static-prop packing accepts up to eight Patch include edges with one basetexture edit per Patch.
 All original materials and declared textures stay packed. Deeper edits win within each type; replacements apply after all inserts.
-Cutout vertex-lighting receivers keep their separate direct-edit limit.
+Cutout vertex-lighting receivers accept the same bounded nested basetexture edits; their receiver-only textures stay unread unless casting or packing needs them.
 
 ## Tool reference
 

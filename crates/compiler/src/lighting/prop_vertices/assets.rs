@@ -5,9 +5,7 @@ use source_formats::{model::Model, vmt::Material};
 use super::super::asset_tracking::Tracker;
 use super::super::bake::{Allocation, Budget};
 use crate::prop_lighting_assets::SourceAsset;
-use crate::static_prop_assets::{
-    MaterialDependency, material_dependency, validate_material_edit_chain,
-};
+use crate::static_prop_assets::{MaterialDependency, material_dependency};
 
 const MAX_MATERIAL_BYTES: usize = 64 * 1024;
 
@@ -17,8 +15,6 @@ pub(super) struct Assets<'a> {
 
 #[derive(Default)]
 struct CutoutProof {
-    depth: usize,
-    edited: bool,
     terminal: bool,
     failure: Option<io::Error>,
 }
@@ -31,18 +27,11 @@ impl CutoutProof {
         budget
             .consume(bytes.len().div_ceil(64) + 1)
             .map_err(io::Error::other)?;
-        let result = material_dependency(path, bytes).and_then(|dependency| {
-            match dependency {
-                MaterialDependency::Texture(_) => self.terminal = true,
-                MaterialDependency::Include(_) => self.depth += 1,
-                MaterialDependency::EditedInclude { .. } => {
-                    self.depth += 1;
-                    self.edited = true;
-                }
-            }
-            validate_material_edit_chain(self.depth, self.edited)
-        });
-        self.failure = result.err();
+        match material_dependency(path, bytes) {
+            Ok(MaterialDependency::Texture(_)) => self.terminal = true,
+            Ok(_) => {}
+            Err(error) => self.failure = Some(error),
+        }
         Ok(())
     }
 
@@ -154,7 +143,7 @@ mod tests {
     const ROOT: &str = "materials/test/root.vmt";
     const TERMINAL: &str = "VertexLitGeneric { $basetexture test/mask $alphatest 1 }";
 
-    fn resolve(sources: &[(&str, &str)]) -> Result<(), String> {
+    fn resolve(sources: &[(&str, &str)]) -> Result<Material, String> {
         let control = Control::default();
         let mut budget = Budget::new(&control);
         let mut proof = CutoutProof::default();
@@ -168,7 +157,8 @@ mod tests {
         })
         .map_err(|error| error.to_string())?
         .ok_or("missing root")?;
-        proof.validate(&material)
+        proof.validate(&material)?;
+        Ok(material)
     }
 
     #[test]
@@ -210,7 +200,7 @@ mod tests {
     }
 
     #[test]
-    fn cutout_patch_proof_reuses_the_packing_edit_and_depth_limits() {
+    fn cutout_patch_proof_reuses_packing_grammar_and_shared_nested_resolution() {
         for operation in ["insert", "replace"] {
             let patch = format!(
                 "Patch {{ include materials/test/base.vmt {operation} {{ $basetexture test/replacement }} }}"
@@ -222,8 +212,7 @@ mod tests {
                     ("materials/test/middle.vmt", &patch),
                     ("materials/test/base.vmt", TERMINAL),
                 ])
-                .unwrap_err()
-                .contains("direct plain VertexLitGeneric")
+                .is_ok()
             );
             assert!(
                 resolve(&[
@@ -234,9 +223,29 @@ mod tests {
                     ),
                     ("materials/test/terminal.vmt", TERMINAL),
                 ])
-                .unwrap_err()
-                .contains("direct plain VertexLitGeneric")
+                .is_ok()
             );
+        }
+        for (outer, inner, expected) in [
+            ("insert", "replace", "test/inner"),
+            ("replace", "insert", "test/outer"),
+            ("insert", "insert", "test/inner"),
+            ("replace", "replace", "test/inner"),
+        ] {
+            let outer = format!(
+                "Patch {{ include materials/test/middle.vmt {outer} {{ $basetexture test/outer }} }}"
+            );
+            let inner = format!(
+                "Patch {{ include materials/test/base.vmt {inner} {{ $basetexture test/inner }} }}"
+            );
+            let material = resolve(&[
+                (ROOT, &outer),
+                ("materials/test/middle.vmt", &inner),
+                ("materials/test/base.vmt", TERMINAL),
+            ])
+            .unwrap();
+            assert_eq!(material.get("$basetexture"), Some(expected));
+            assert_eq!(material.get("$alphatest"), Some("1"));
         }
         for depth in [8, 9] {
             let mut files = vec![(
@@ -247,7 +256,10 @@ mod tests {
                 let text = if index + 1 == depth {
                     TERMINAL.to_owned()
                 } else {
-                    format!("Patch {{ include materials/test/{}.vmt }}", index + 1)
+                    format!(
+                        "Patch {{ include materials/test/{}.vmt replace {{ $basetexture test/inner }} }}",
+                        index + 1
+                    )
                 };
                 files.push((format!("materials/test/{index}.vmt"), text));
             }
@@ -270,6 +282,39 @@ mod tests {
             ])
             .is_err()
         );
+        for middle in [
+            "Patch { include materials/test/base.vmt replace { $basetexture test/inner $BaseTexture test/duplicate } }",
+            "Patch { include materials/test/base.vmt replace { $basetexture test/inner } insert { $basetexture test/other } }",
+            "Patch { include materials/test/base.vmt insert { $alphatest 1 } }",
+            "Patch { include materials/test/base.vmt replace { $basetexture test/inner } Proxies {} }",
+            "Patch { include materials/test/base.vmt replace { $basetexture test/inner } [$WIN32] }",
+            "Patch { include materials/test/base.vmt replace { $basetexture Test/Inner } }",
+        ] {
+            assert!(
+                resolve(&[
+                    (ROOT, "Patch { include materials/test/middle.vmt insert { $basetexture test/outer } }"),
+                    ("materials/test/middle.vmt", middle),
+                    ("materials/test/base.vmt", TERMINAL),
+                ])
+                .is_err(),
+                "accepted {middle}"
+            );
+        }
+        for include in [
+            ROOT,
+            "materials/test/middle.vmt",
+            "materials/test/missing.vmt",
+        ] {
+            let middle =
+                format!("Patch {{ include {include} replace {{ $basetexture test/inner }} }}");
+            assert!(
+                resolve(&[
+                    (ROOT, "Patch { include materials/test/middle.vmt insert { $basetexture test/outer } }"),
+                    ("materials/test/middle.vmt", &middle),
+                ])
+                .is_err()
+            );
+        }
     }
 
     #[test]
@@ -289,6 +334,14 @@ mod tests {
                     "Patch { include materials/test/base.vmt insert { $nocull 1 } }"
                 ),
                 ("materials/test/base.vmt", "VertexLitGeneric {}"),
+            ])
+            .is_ok()
+        );
+        assert!(
+            resolve(&[
+                (ROOT, "Patch { include materials/test/middle.vmt insert { $nocull 1 } }"),
+                ("materials/test/middle.vmt", "Patch { include materials/test/base.vmt replace { $basetexture test/ignored } }"),
+                ("materials/test/base.vmt", "VertexLitGeneric { $surfaceprop metal }"),
             ])
             .is_ok()
         );

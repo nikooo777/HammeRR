@@ -707,6 +707,7 @@ fn global_casters(
     hulls: &mut Vec<Occluder>,
     report: &mut Report,
     budget: &mut Budget<'_>,
+    textures: Option<&super::brush_alpha::Prepared>,
 ) -> Result<(usize, Option<Allocation>), String> {
     let caster_brushes = scopes
         .iter()
@@ -740,11 +741,18 @@ fn global_casters(
             if !crate::brush_shadow_casters::enabled(&map.entities[scope.entity].properties) {
                 continue;
             }
-            let prepared = posed_occluders(map, scope.entity, scope.pose, report, budget, None)?;
+            let textures = if let Some(textures) = textures
+                && textures.has_global_alpha(scope.entity, budget)?
+            {
+                Some(textures)
+            } else {
+                None
+            };
+            let prepared =
+                posed_occluders(map, scope.entity, scope.pose, report, budget, textures)?;
             if prepared.len() != map.entities[scope.entity].brushes.len() || prepared.is_empty() {
                 return Err(
-                    "Brush global shadows: requested model has no complete opaque caster hull set"
-                        .into(),
+                    "Brush global shadows: requested model has no complete caster hull set".into(),
                 );
             }
             for hull in prepared {
@@ -753,7 +761,7 @@ fn global_casters(
             }
             brush_shadow_models += 1;
         }
-        report.diagnostics.push(Diagnostic::info(format!("Brush global shadows: {brush_shadow_models} stationary opaque brush models cast into global baked lighting; world occupancy and model radiance sources are unchanged"), None, None));
+        report.diagnostics.push(Diagnostic::info(format!("Brush global shadows: {brush_shadow_models} stationary brush models cast into global baked lighting; supported binary cutouts use brush texture shadows, world occupancy and model radiance sources are unchanged"), None, None));
     }
     Ok((brush_shadow_models, allocation))
 }
@@ -1185,7 +1193,7 @@ fn bake_inner(
     }
     if let Some(textures) = &brush_textures {
         textures.qualify_models(map, &scopes, &has_receivers, budget)?;
-        report.diagnostics.push(Diagnostic::info("Brush texture shadows samples binary alpha-test world/detail boundaries and admitted initial-pose same-model self shadows; geometry and occupancy remain unchanged, with no model-to-world/other-model shadows or model radiance sources", None, None));
+        report.diagnostics.push(Diagnostic::info("Brush texture shadows samples binary alpha-test world/detail boundaries, admitted initial-pose same-model self shadows and explicitly requested stationary root global casters; geometry, occupancy and model radiance sources remain unchanged", None, None));
     }
     for plan in &mut plans {
         let scope = &scopes[plan.model];
@@ -1194,8 +1202,14 @@ fn bake_inner(
                 .map_err(|error| format!("entity:{}: {error}", map.entities[scope.entity].id))?;
         }
     }
-    let (brush_shadow_models, _caster_allocation) =
-        global_casters(map, &scopes, &mut visibility_hulls, report, budget)?;
+    let (brush_shadow_models, _caster_allocation) = global_casters(
+        map,
+        &scopes,
+        &mut visibility_hulls,
+        report,
+        budget,
+        brush_textures.as_ref(),
+    )?;
     let mut model_shadows = Vec::with_capacity(scopes.len());
     for (model, scope) in scopes.iter().enumerate() {
         let shadows = if model != 0
@@ -1227,7 +1241,7 @@ fn bake_inner(
     let model_shadow_scope = if brush_shadow_models == 0 {
         "isolated self shadows"
     } else {
-        "self shadows and explicitly requested opaque global casters"
+        "self shadows and explicitly requested stationary global casters"
     };
     report.diagnostics.push(Diagnostic::info(format!("Direct LDR bakes native directional normal-map channels and static, switchable and animated point/spot styles, sampled soft sun, sky ambient and model ambient with indexed opaque brush/terrain shadows; up to four style-preserving diffuse world-light bounces are supported; brush entities receive pivot-aware direct and bounced maps with {model_shadow_scope}; reflected model sources and prop lightmaps remain unfinished"), None, None));
     let shadows = ShadowIndex::new(visibility_hulls, &mut |amount| budget.consume(amount))?;
@@ -2099,12 +2113,12 @@ mod tests {
             .unwrap();
         let mut hulls = Vec::new();
         let mut report = Report::default();
-        assert!(global_casters(&map, &scopes, &mut hulls, &mut report, &mut budget).is_err());
+        assert!(global_casters(&map, &scopes, &mut hulls, &mut report, &mut budget, None).is_err());
         assert!(hulls.is_empty());
         assert_eq!(budget.work(), 0);
         drop(hold);
         let (count, allocation) =
-            global_casters(&map, &scopes, &mut hulls, &mut report, &mut budget).unwrap();
+            global_casters(&map, &scopes, &mut hulls, &mut report, &mut budget, None).unwrap();
         assert_eq!(count, 1);
         assert_eq!(hulls.len(), 1);
         assert_eq!(hulls[0].source.as_ref().unwrap().brush, 0);
@@ -2116,15 +2130,22 @@ mod tests {
         let mut exhausted = Budget::with_limit(&control, 1);
         let mut rejected = Vec::new();
         assert!(
-            global_casters(&map, &scopes, &mut rejected, &mut report, &mut exhausted)
-                .err()
-                .unwrap()
-                .contains("work-unit limit")
+            global_casters(
+                &map,
+                &scopes,
+                &mut rejected,
+                &mut report,
+                &mut exhausted,
+                None
+            )
+            .err()
+            .unwrap()
+            .contains("work-unit limit")
         );
         assert!(rejected.is_empty());
         control.cancel().unwrap();
         assert!(
-            global_casters(&map, &scopes, &mut rejected, &mut report, &mut budget)
+            global_casters(&map, &scopes, &mut rejected, &mut report, &mut budget, None)
                 .err()
                 .unwrap()
                 .contains("cancelled")

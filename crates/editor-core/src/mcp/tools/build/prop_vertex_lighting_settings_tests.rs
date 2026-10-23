@@ -62,7 +62,7 @@ fn prop_vertex_lighting_mcp_schema_forwarding_and_atomic_validation_use_shared_s
     );
     assert_eq!(
         enabled["prop_vertex_lighting"]["limits"]["cutout_material"],
-        json!({"terminal_parameters":{"$basetexture":"canonical_path","$alphatest":"1"},"alpha_test_reference":0.5,"authored_reference":false,"include_edges_max":8,"patch_edit":"one_direct_basetexture_insert_or_replace","extra_parameters":false,"selected_skin_only":true,"all_hardware_vertices":true,"vhv_alpha":255,"receiver_texture_read":false,"texture_shadow_request":"original_mdl_flag","packing_required":false})
+        json!({"terminal_parameters":{"$basetexture":"canonical_path","$alphatest":"1"},"alpha_test_reference":0.5,"authored_reference":false,"include_edges_max":8,"patch_edit":"one_basetexture_insert_or_replace_per_patch","extra_parameters":false,"selected_skin_only":true,"all_hardware_vertices":true,"vhv_alpha":255,"receiver_texture_read":false,"texture_shadow_request":"original_mdl_flag","packing_required":false})
     );
     assert_eq!(enabled, lock(&shared).compile_settings());
     for bounces in 1..=compiler::MAX_LIGHT_BOUNCES {

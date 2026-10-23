@@ -51,6 +51,17 @@ fn brush_texture_shadows_share_atomic_settings_without_document_or_draft_changes
             "casts_into_world":false,"casts_into_other_models":false,"radiance_source":false
         })
     );
+    assert_eq!(
+        initial["brush_texture_shadowing"]["limits"]["global_root_model_scope"],
+        json!({
+            "property":"vrad_brush_cast_shadows","enabled_value":"1",
+            "requires_brush_texture_shadows":true,"requires_lit_mode":true,
+            "classname":"func_brush","pose":"existing_admitted_stationary_initial_pose",
+            "requires_lit_receiver_scope":false,"child_models":false,
+            "casts_into_world":true,"casts_into_other_models":true,
+            "radiance_source":false,"world_occupancy":false
+        })
+    );
     let source = lock(&shared).document().vmf().clone();
     let history = lock(&shared).history_snapshot();
     let failed = server

@@ -1,6 +1,7 @@
 use std::{collections::BTreeSet, io};
 
 use source_formats::{
+    bsp::contents,
     gamefs::GameFs,
     keyvalues,
     vmf::{Entity, Vmf},
@@ -138,7 +139,7 @@ fn opaque_raw(path: &str, bytes: &[u8]) -> io::Result<()> {
             .any(|shader| root.key.eq_ignore_ascii_case(shader))
     {
         return Err(invalid(
-            "requires opaque LightmappedGeneric, UnlitGeneric or Patch",
+            "requires LightmappedGeneric, UnlitGeneric or Patch",
         ));
     }
     fn scalars(nodes: &[keyvalues::Node]) -> bool {
@@ -189,7 +190,12 @@ fn opaque_raw(path: &str, bytes: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
-fn opaque(name: &str, sources: &BuildMaterialSources, control: &Control) -> Result<(), String> {
+fn validate_material(
+    name: &str,
+    sources: &BuildMaterialSources,
+    control: &Control,
+    cutout: bool,
+) -> Result<(), String> {
     let material = vmt::Material::load_with_reader(&vmt::material_path(name), &mut |path| {
         control.checkpoint().map_err(io::Error::other)?;
         let asset = sources
@@ -200,7 +206,11 @@ fn opaque(name: &str, sources: &BuildMaterialSources, control: &Control) -> Resu
     })
     .map_err(|error| error.to_string())?
     .ok_or("material is unavailable")?;
-    opaque_parameters(name, &material)
+    if cutout {
+        crate::lighting::validate_brush_cutout_material(&material)
+    } else {
+        opaque_parameters(name, &material)
+    }
 }
 
 fn opaque_parameters(name: &str, material: &vmt::Material) -> Result<(), String> {
@@ -244,6 +254,7 @@ pub(crate) fn validate(
     fs: &GameFs,
     sources: &BuildMaterialSources,
     control: &Control,
+    brush_texture_shadows: bool,
 ) -> Result<(), Diagnostic> {
     let mut materials = Materials::with_build_sources(fs, Requirements::GeometrySemantics, sources);
     let mut checked = BTreeSet::new();
@@ -254,17 +265,27 @@ pub(crate) fn validate(
                 let result = (|| {
                     control.checkpoint()?;
                     let index = materials.load(&side.material)?;
-                    if !instances::brush_models::ordinary(materials.get(index)) {
+                    let info = materials.get(index);
+                    let cutout = brush_texture_shadows
+                        && info.found
+                        && info.draws
+                        && info.contents == (contents::WINDOW | contents::TRANSLUCENT)
+                        && info.surface == 0
+                        && !info.hint
+                        && !info.skip
+                        && info.unsupported_flags.is_empty();
+                    if !instances::brush_models::ordinary(info) && !cutout {
                         return Err(format!(
-                            "{} requires ordinary SOLID contents without origin, liquid or special surface semantics",
+                            "{} requires ordinary SOLID contents, or a supported binary cutout with brush texture shadows enabled, without origin, liquid or special surface semantics",
                             side.material
                         ));
                     }
                     if checked.insert(index) {
-                        opaque(
+                        validate_material(
                             &side.material.trim().replace('\\', "/").to_ascii_lowercase(),
                             sources,
                             control,
+                            cutout,
                         )?;
                     }
                     Ok(())

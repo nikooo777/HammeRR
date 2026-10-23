@@ -798,14 +798,15 @@ impl Session {
             "property":"vrad_brush_cast_shadows","enabled_value":"1","default_value":"0",
             "fullbright":"admit_and_preserve_without_baking",
             "baked_count":"stats.brush_shadow_models",
-            "description":"Advanced properties → Shadows → Yes requests opaque global baked shadows from an unnamed, unparented ordinary func_brush at its admitted stationary initial pose. Root requests use an explicit finite Origin (X Y Z). Child models may instead resolve and consume one origin volume before the ordinary body check. Root and child requests validate before region omission in every lighting mode; Fullbright reports admitted source requests without baking; this count includes requests omitted by compile regions. Admitted child initial poses are baked before containing transforms; emitted child angles are zero. No new build setting is required.",
+            "description":"Advanced properties → Shadows → Yes requests global baked shadows from an unnamed, unparented stationary func_brush. Opaque root and child requests keep their ordinary SOLID material scope. Root requests may also use the supported plain LightmappedGeneric binary cutout material when Brush texture shadows is enabled in a lit mode; child cutout models remain unsupported. Root requests use an explicit finite Origin (X Y Z). Child models may instead resolve and consume one origin volume before the ordinary body check. Root and child requests validate before region omission; Fullbright reports admitted opaque source requests without baking, including requests omitted by compile regions. Admitted child initial poses are baked before containing transforms; emitted child angles are zero. Model surfaces never supply reflected radiance.",
             "limits":{
                 "classname":"func_brush","origin":"resolved_finite",
                 "root_origin":"explicit_finite","child_origin":"explicit_or_one_consumed_volume",
-                "runtime_names_parenting_io":false,"source_materials":"resolved_opaque_ordinary_solid",
+                "runtime_names_parenting_io":false,"source_materials":"resolved_opaque_ordinary_solid_or_opted_in_root_binary_cutout",
                 "material_shaders":["LightmappedGeneric","UnlitGeneric","Patch"],
                 "patch_form":"unambiguous_scalar_include_edit",
-                "alpha_translucent_additive":false,"terrain_liquid_origin_volumes":false,
+                "root_binary_cutout_requires":"brush_texture_shadows_and_lit_mode",
+                "child_binary_cutout":false,"fractional_translucent_additive":false,"terrain_liquid_origin_volumes":false,
                 "child_origin_volumes":"one_resolved_consumed_before_body_validation",
                 "radiance_source":false,"dynamic_relighting":false,
                 "geometry_collision_pvs_probe_placement":"unchanged",
@@ -829,16 +830,24 @@ impl Session {
         settings["brush_texture_shadowing"] = json!({
             "available":self.compilation.options.lighting.performs_lighting(),
             "unavailable_reason":if self.compilation.options.lighting.performs_lighting() { None } else { Some("Choose Direct LDR or Direct LDR + HDR before enabling brush texture shadows.") },
-            "description":"Use binary base-texture alpha on plain LightmappedGeneric world/detail faces and within the same brush model at its admitted initial baked pose. Model cutouts affect only that model's own lit receivers. Opaque func_brush global casting uses the separate entity Shadows property; model surfaces never supply reflected radiance. Default off; independent of native model-requested prop texture shadows. Geometry, collision and sealing remain unchanged. Requested unsupported materials, model scopes or missing textures stop publication.",
+            "description":"Use binary base-texture alpha on plain LightmappedGeneric world/detail faces and admitted initial-pose brush-model self shadows. An eligible stationary root func_brush with Advanced properties → Shadows → Yes also casts these cutouts into global baked lighting, including world and other-model receivers. Unrequested model cutouts stay within their own lit receiver scope; child cutout models remain unsupported. Model surfaces never supply reflected radiance. Default off; independent of native model-requested prop texture shadows. Geometry, collision and sealing remain unchanged. Requested unsupported materials, model scopes or missing textures stop publication.",
             "limits":{
                 "lighting_modes":["direct_ldr","direct_ldr_hdr"],
-                "casters":["world","func_detail","brush_model_self"],
+                "casters":["world","func_detail","brush_model_self","requested_stationary_root_func_brush"],
                 "model_scope":{
                     "receivers":"same_model_only",
                     "pose":"existing_admitted_initial_pose",
                     "nonzero_rotation":{"classname":"func_brush","parented":false},
                     "requires_lit_receiver_scope":true,
                     "casts_into_world":false,"casts_into_other_models":false,"radiance_source":false
+                },
+                "global_root_model_scope":{
+                    "property":"vrad_brush_cast_shadows","enabled_value":"1",
+                    "requires_brush_texture_shadows":true,"requires_lit_mode":true,
+                    "classname":"func_brush","pose":"existing_admitted_stationary_initial_pose",
+                    "requires_lit_receiver_scope":false,"child_models":false,
+                    "casts_into_world":true,"casts_into_other_models":true,
+                    "radiance_source":false,"world_occupancy":false
                 },
                 "material":"plain LightmappedGeneric",
                 "coverage":"binary_alpha_test",
@@ -854,13 +863,13 @@ impl Session {
                 "transform_absolute_max":compiler::MAX_BRUSH_SHADOW_TRANSFORM,
                 "frames":1,"faces":1,"depth":1,
                 "alpha_reference":{"default":0.5,"min":0,"max":1,"zero_uses_default":true},
-                "unsupported":["fractional translucency","terrain alpha casters","unadmitted model poses or models without lit receivers","cutout model-to-world or other-model shadows","model radiance sources","conditional or animated materials"]
+                "unsupported":["fractional translucency","terrain alpha casters","unadmitted model poses","unrequested cutout models without lit receivers","child cutout models","model radiance sources","conditional or animated materials"]
             }
         });
         settings["pack_water_assets"] = self.compilation.options.pack_water_assets.into();
         settings["pack_static_prop_assets"] =
             self.compilation.options.pack_static_prop_assets.into();
-        settings["static_prop_packing_description"] = "Pack original model, companion, all declared skin/LOD materials and basetexture files for emitted static props during Compile or Run Map. Default off; independent of vertex lighting and available in every lighting mode. Requires bounded static MDL 44/48, body 0/root LOD 0, trivial local animation and VertexLitGeneric terminals. Terminals allow only one canonical $basetexture, optionally plus literal $alphatest 1 at the default 0.5 cutoff; authored $alphatestreference is unsupported. Patch chains allow at most eight include edges, with one basetexture insert or replace block per Patch. Deeper edits win within each type; replacements apply after all inserts. All original VMT bytes and every declared VTF remain packed, including overridden textures. Extra keys, combined edit sections, proxies and $envmap reject. Matching PHY is included only for VPhysics props. Missing or unsupported dependencies stop publication. Packing preserves model flags. Compiler texture shadows require the original MDL CAST_TEXTURE_SHADOWS request; without it, enabled prop shadows remain opaque mesh shadows with the existing warning. Selected default-alpha-test vertex-lighting receivers separately require include-only chains or one direct basetexture edit; nested edited receiver chains remain unsupported. Every hardware vertex is retained with VHV alpha 255; receiver-only textures are read only if casting or packing needs them. Runtime requires standard CS:S shaders and surface/prop-data definitions with DX90 or newer.".into();
+        settings["static_prop_packing_description"] = "Pack original model, companion, all declared skin/LOD materials and basetexture files for emitted static props during Compile or Run Map. Default off; independent of vertex lighting and available in every lighting mode. Requires bounded static MDL 44/48, body 0/root LOD 0, trivial local animation and VertexLitGeneric terminals. Terminals allow only one canonical $basetexture, optionally plus literal $alphatest 1 at the default 0.5 cutoff; authored $alphatestreference is unsupported. Patch chains allow at most eight include edges, with one basetexture insert or replace block per Patch. Deeper edits win within each type; replacements apply after all inserts. All original VMT bytes and every declared VTF remain packed, including overridden textures. Extra keys, combined edit sections, proxies and $envmap reject. Matching PHY is included only for VPhysics props. Missing or unsupported dependencies stop publication. Packing preserves model flags. Compiler texture shadows require the original MDL CAST_TEXTURE_SHADOWS request; without it, enabled prop shadows remain opaque mesh shadows with the existing warning. Selected default-alpha-test vertex-lighting receivers accept the same bounded nested Patch basetexture edits and terminal contract. Every hardware vertex is retained with VHV alpha 255; receiver-only textures are read only if casting or packing needs them. Runtime requires standard CS:S shaders and surface/prop-data definitions with DX90 or newer.".into();
         settings["water_packing_description"] = "Pack original files for the complete supported static Water material/Patch/texture closure during Compile or Run Map. Default off. Every reachable Water material requires an explicit static cubemap and its original VTF 7.4 LDR/HDR siblings. Missing or unsupported assets, including runtime/default env_cubemap, stop publication. Available in every lighting mode; no native capture is required.".into();
         settings["prop_vertex_lighting"] = json!({
             "available":unavailable_reason.is_none(),
@@ -870,7 +879,7 @@ impl Session {
                 "lighting_modes":["direct_ldr","direct_ldr_hdr"],
                 "bounces":{"min":0,"max":compiler::MAX_LIGHT_BOUNCES},"indirect_sources":["world","terrain"],"indirect_reflectivity":"texture_header_or_authored_material","indirect_dimensions":"header_or_native_no_preview","indirect_dimension_sources":["diffuse_vtf_header","tool_vtf_header","native_no_preview_convention"],"receiver":{"body":0,"root_lod":0,"bodyparts":1,"models":1,"lods":{"min":1,"max":8,"all_required":true},"hardware_meshes_max":compiler::prop_lighting_assets::MAX_RECEIVER_MESHES,"scale":1,"sample_origin":"original_vertex","lighting_origin":{"property":"lightingorigin","baked_samples":"actual_vertices","embedded_recovery":false},"support_contacts":"opaque_world_brush","self_shadowing":{"default":true,"disable_property":"disableselfshadowing","disable_value":1,"disabled_scope":"receiver_owned_triangles","retained_blockers":["other_props","world","terrain"]},"ignore_normals":{"property":"ignorenormals","enabled_value":1,"bounces":{"min":0,"max":compiler::MAX_LIGHT_BOUNCES},"direct_factor":compiler::lighting::IGNORE_NORMALS_FACTOR,"sky_ambient":"full_sphere_visibility_mean","indirect":"spherical_sdk_normalization","keeps_shadows":true}},
                 "material":"plain opaque or strict default-alpha-test selected VertexLitGeneric",
-                "cutout_material":{"terminal_parameters":{"$basetexture":"canonical_path","$alphatest":"1"},"alpha_test_reference":0.5,"authored_reference":false,"include_edges_max":8,"patch_edit":"one_direct_basetexture_insert_or_replace","extra_parameters":false,"selected_skin_only":true,"all_hardware_vertices":true,"vhv_alpha":255,"receiver_texture_read":false,"texture_shadow_request":"original_mdl_flag","packing_required":false},
+                "cutout_material":{"terminal_parameters":{"$basetexture":"canonical_path","$alphatest":"1"},"alpha_test_reference":0.5,"authored_reference":false,"include_edges_max":8,"patch_edit":"one_basetexture_insert_or_replace_per_patch","extra_parameters":false,"selected_skin_only":true,"all_hardware_vertices":true,"vhv_alpha":255,"receiver_texture_read":false,"texture_shadow_request":"original_mdl_flag","packing_required":false},
                 "light_styles":[0],
                 "unsupported":["buried vertices","terrain/other-prop support contacts","specialized materials","per-texel prop lightmaps","reflected prop sources"]
             }

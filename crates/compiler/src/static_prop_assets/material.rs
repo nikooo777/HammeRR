@@ -170,15 +170,6 @@ pub(crate) fn dependency(path: &str, bytes: &[u8]) -> io::Result<Dependency> {
     }
 }
 
-pub(crate) fn validate_edit_chain(depth: usize, edited: bool) -> io::Result<()> {
-    if edited && depth > 1 {
-        return Err(invalid(
-            "Static-prop Patch edits require a direct plain VertexLitGeneric include",
-        ));
-    }
-    Ok(())
-}
-
 pub(super) fn texture(path: &str, bytes: Vec<u8>, control: &Control) -> io::Result<()> {
     checkpoint(control)?;
     let parsed = Vtf::parse(bytes.clone())

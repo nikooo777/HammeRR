@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use editor_core::session::atlas_texturing::Rectangle;
+use editor_core::session::atlas_texturing::{FitRegion, Rectangle};
 use serde_json::Value;
 use slint::ComponentHandle;
 
@@ -40,12 +40,13 @@ impl Target {
 
 fn fields(window: &AtlasWindow) -> String {
     format!(
-        "{}|{}|{}|{}|{}",
+        "{}|{}|{}|{}|{}|{}",
         window.get_material(),
         window.get_region_x(),
         window.get_region_y(),
         window.get_region_pixels_wide(),
-        window.get_region_pixels_high()
+        window.get_region_pixels_high(),
+        window.get_region_padding()
     )
 }
 
@@ -69,6 +70,17 @@ fn rectangle(window: &AtlasWindow) -> Result<Rectangle, String> {
     })
 }
 
+fn region(window: &AtlasWindow) -> Result<FitRegion, String> {
+    Ok(FitRegion {
+        rectangle: rectangle(window)?,
+        padding: window
+            .get_region_padding()
+            .trim()
+            .parse()
+            .map_err(|_| "Enter nonnegative whole-pixel padding")?,
+    })
+}
+
 fn show_rectangle(window: &AtlasWindow) {
     let size = [
         window.get_texture_width() as u32,
@@ -84,6 +96,33 @@ fn show_rectangle(window: &AtlasWindow) {
         window.set_valid_region(true);
     } else {
         window.set_valid_region(false);
+    }
+    match region(window).and_then(|region| {
+        region
+            .usable_rectangle(size)
+            .map(|usable| (region.padding, usable))
+            .map_err(|error| error.to_string())
+    }) {
+        Ok((padding, usable)) => {
+            let bounds = usable.uv_bounds(size).expect("validated usable rectangle");
+            window.set_usable_u(bounds[0][0] as f32);
+            window.set_usable_v(bounds[0][1] as f32);
+            window.set_usable_width((bounds[1][0] - bounds[0][0]) as f32);
+            window.set_usable_height((bounds[1][1] - bounds[0][1]) as f32);
+            window.set_usable_details(
+                format!(
+                    "Usable area · source image pixels\nX {} · Y {} · {} × {}",
+                    usable.x, usable.y, usable.width, usable.height
+                )
+                .into(),
+            );
+            window.set_has_padding(padding != 0);
+            window.set_valid_usable_region(true);
+        }
+        Err(error) => {
+            window.set_valid_usable_region(false);
+            window.set_usable_details(error.into());
+        }
     }
 }
 
@@ -111,6 +150,7 @@ fn inspect(window: &AtlasWindow, target: &mut Target, session: &mut Session) -> 
         window.set_region_y("0".into());
         window.set_region_pixels_wide(width.to_string().into());
         window.set_region_pixels_high(height.to_string().into());
+        window.set_region_padding("0".into());
     }
     window.set_details(
         format!(
@@ -131,11 +171,11 @@ fn inspect(window: &AtlasWindow, target: &mut Target, session: &mut Session) -> 
 fn preview(window: &AtlasWindow, target: &mut Target, session: &mut Session) -> Result<(), String> {
     target.check(session)?;
     let atlas = target.atlas.as_ref().ok_or("Inspect the material first")?;
-    let state = session.preview_atlas_fit(
+    let state = session.preview_atlas_fit_region(
         Actor::User,
         &target.context.faces,
         &window.get_material(),
-        rectangle(window)?,
+        region(window)?,
         atlas["snapshot"].as_str().unwrap(),
         target.token,
     )?;
@@ -144,7 +184,7 @@ fn preview(window: &AtlasWindow, target: &mut Target, session: &mut Session) -> 
     window.set_ready(true);
     window.set_message(
         format!(
-            "Preview covers UV {}. Apply to keep exactly this fit in one Undo step.",
+            "Preview fits usable UV {}. Apply to keep exactly this fit in one Undo step.",
             state["preview"]["uv_bounds"]
         )
         .into(),

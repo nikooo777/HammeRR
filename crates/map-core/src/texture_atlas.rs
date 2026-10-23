@@ -11,6 +11,34 @@ pub struct Rectangle {
     pub height: u32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FitRegion {
+    pub rectangle: Rectangle,
+    pub padding: u32,
+}
+
+impl FitRegion {
+    pub fn usable_rectangle(self, size: [u32; 2]) -> Result<Rectangle, EditError> {
+        self.rectangle.validate(size)?;
+        let inset = self
+            .padding
+            .checked_mul(2)
+            .filter(|inset| *inset < self.rectangle.width && *inset < self.rectangle.height)
+            .ok_or_else(|| {
+                EditError::Invalid(
+                    "Atlas padding must leave a positive usable width and height inside the rectangle"
+                        .into(),
+                )
+            })?;
+        Ok(Rectangle {
+            x: self.rectangle.x + self.padding,
+            y: self.rectangle.y + self.padding,
+            width: self.rectangle.width - inset,
+            height: self.rectangle.height - inset,
+        })
+    }
+}
+
 impl Rectangle {
     pub fn validate(self, size: [u32; 2]) -> Result<(), EditError> {
         if self.width == 0
@@ -53,7 +81,24 @@ pub fn fit_projection(
     rectangle: Rectangle,
     size: [u32; 2],
 ) -> Result<Projection, EditError> {
-    rectangle.validate(size)?;
+    fit_region_projection(
+        projection,
+        points,
+        FitRegion {
+            rectangle,
+            padding: 0,
+        },
+        size,
+    )
+}
+
+pub fn fit_region_projection(
+    projection: &Projection,
+    points: &[DVec3],
+    region: FitRegion,
+    size: [u32; 2],
+) -> Result<Projection, EditError> {
+    let rectangle = region.usable_rectangle(size)?;
     let mut fitted = placed_projection(
         projection,
         points,
@@ -147,6 +192,137 @@ mod tests {
             },
         ] {
             assert!(rectangle.validate([128, 256]).is_err());
+        }
+    }
+
+    #[test]
+    fn padded_atlas_fit_has_literal_skewed_mirrored_corners_and_zero_padding_parity() {
+        let points = [
+            DVec3::new(0.0, 0.0, 4.0),
+            DVec3::new(4.0, 0.0, 4.0),
+            DVec3::new(4.0, 2.0, 4.0),
+            DVec3::new(0.0, 2.0, 4.0),
+        ];
+        let original = Projection {
+            u: UvAxis {
+                axis: DVec3::new(1.0, 1.0, 0.0),
+                offset: 3.0,
+                scale: -0.25,
+            },
+            v: UvAxis {
+                axis: DVec3::new(-1.0, 2.0, 0.0),
+                offset: -7.0,
+                scale: 0.5,
+            },
+            rotation: 37.0,
+        };
+        let rectangle = Rectangle {
+            x: 16,
+            y: 32,
+            width: 48,
+            height: 64,
+        };
+        let fitted = fit_region_projection(
+            &original,
+            &points,
+            FitRegion {
+                rectangle,
+                padding: 4,
+            },
+            [128, 256],
+        )
+        .unwrap();
+        assert_eq!(fitted.u.axis, original.u.axis);
+        assert_eq!(fitted.v.axis, original.v.axis);
+        assert_eq!(fitted.rotation, original.rotation);
+        assert!(fitted.u.scale.is_sign_negative());
+        assert!(fitted.v.scale.is_sign_positive());
+        for (point, expected) in points.into_iter().zip([
+            DVec2::new(60.0, 64.0),
+            DVec2::new(100.0 / 3.0, 36.0),
+            DVec2::new(20.0, 64.0),
+            DVec2::new(140.0 / 3.0, 92.0),
+        ]) {
+            let actual = DVec2::new(
+                point.dot(fitted.u.axis) / fitted.u.scale + fitted.u.offset,
+                point.dot(fitted.v.axis) / fitted.v.scale + fitted.v.offset,
+            );
+            assert!(
+                actual.abs_diff_eq(expected, 1e-10),
+                "{actual} != {expected}"
+            );
+        }
+        assert_eq!(
+            fit_region_projection(
+                &original,
+                &points,
+                FitRegion {
+                    rectangle,
+                    padding: 0,
+                },
+                [128, 256],
+            )
+            .unwrap(),
+            fit_projection(&original, &points, rectangle, [128, 256]).unwrap()
+        );
+    }
+
+    #[test]
+    fn atlas_padding_checks_outer_image_bounds_and_positive_usable_area() {
+        let rectangle = Rectangle {
+            x: 16,
+            y: 32,
+            width: 7,
+            height: 5,
+        };
+        assert_eq!(
+            FitRegion {
+                rectangle,
+                padding: 2,
+            }
+            .usable_rectangle([128, 256])
+            .unwrap(),
+            Rectangle {
+                x: 18,
+                y: 34,
+                width: 3,
+                height: 1,
+            }
+        );
+        for region in [
+            FitRegion {
+                rectangle,
+                padding: 3,
+            },
+            FitRegion {
+                rectangle,
+                padding: u32::MAX,
+            },
+            FitRegion {
+                rectangle: Rectangle {
+                    height: 4,
+                    ..rectangle
+                },
+                padding: 2,
+            },
+            FitRegion {
+                rectangle: Rectangle {
+                    width: 0,
+                    ..rectangle
+                },
+                padding: 0,
+            },
+            FitRegion {
+                rectangle: Rectangle {
+                    x: 122,
+                    y: 0,
+                    width: 8,
+                    height: 8,
+                },
+                padding: 2,
+            },
+        ] {
+            assert!(region.usable_rectangle([128, 256]).is_err(), "{region:?}");
         }
     }
 }

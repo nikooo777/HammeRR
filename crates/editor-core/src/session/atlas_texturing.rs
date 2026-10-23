@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use map_core::surface::{self, FaceId, SurfaceEdit};
-pub use map_core::texture_atlas::Rectangle;
+pub use map_core::texture_atlas::{FitRegion, Rectangle};
 use render::materials::{material_identity, resolved_material_limited};
 use serde_json::{Value, json};
 use source_formats::gamefs::asset_relative;
@@ -30,7 +30,7 @@ pub(super) struct PreviewGuard {
     owner: Actor,
     material: String,
     snapshot: String,
-    rectangle: Rectangle,
+    region: FitRegion,
     dimensions: [u32; 2],
 }
 
@@ -189,6 +189,28 @@ impl Session {
         snapshot: &str,
         token: Option<u64>,
     ) -> Result<Value, String> {
+        self.preview_atlas_fit_region(
+            actor,
+            faces,
+            material,
+            FitRegion {
+                rectangle,
+                padding: 0,
+            },
+            snapshot,
+            token,
+        )
+    }
+
+    pub fn preview_atlas_fit_region(
+        &mut self,
+        actor: Actor,
+        faces: &[FaceId],
+        material: &str,
+        region: FitRegion,
+        snapshot: &str,
+        token: Option<u64>,
+    ) -> Result<Value, String> {
         if let Some(preview) = &self.geometry.face_preview {
             if token != Some(preview.token)
                 || preview
@@ -220,8 +242,8 @@ impl Session {
             atlas.report["width"].as_u64().unwrap() as u32,
             atlas.report["height"].as_u64().unwrap() as u32,
         ];
-        rectangle
-            .validate(dimensions)
+        region
+            .usable_rectangle(dimensions)
             .map_err(|error| error.to_string())?;
         let material = atlas.report["material"].as_str().unwrap().to_owned();
         let mut edits = Vec::with_capacity(faces.len());
@@ -233,10 +255,10 @@ impl Session {
                     "Atlas fit supports flat brush polygons; terrain faces are unsupported".into(),
                 );
             }
-            let projection = map_core::texture_atlas::fit_projection(
+            let projection = map_core::texture_atlas::fit_region_projection(
                 &sample.projection,
                 &sample.vertices,
-                rectangle,
+                region,
                 dimensions,
             )
             .map_err(|error| error.to_string())?;
@@ -258,7 +280,7 @@ impl Session {
             owner: actor,
             material,
             snapshot: snapshot.to_owned(),
-            rectangle,
+            region,
             dimensions,
         });
         Ok(self.atlas_fit_state())
@@ -271,10 +293,19 @@ impl Session {
         let Some(guard) = &preview.atlas else {
             return json!({"preview":null});
         };
-        json!({"preview":{"token":preview.token.to_string(),"owner":guard.owner.label(),"material":guard.material,
-            "snapshot":guard.snapshot,"rectangle":rectangle_json(guard.rectangle),"dimensions":guard.dimensions,
-            "uv_bounds":guard.rectangle.uv_bounds(guard.dimensions).expect("validated rectangle"),
-            "faces":preview.edits.iter().map(|(face,_)|json!({"solid":face.solid,"side":face.side})).collect::<Vec<_>>()}})
+        let usable = guard
+            .region
+            .usable_rectangle(guard.dimensions)
+            .expect("validated atlas region");
+        let mut state = json!({"preview":{"token":preview.token.to_string(),"owner":guard.owner.label(),"material":guard.material,
+            "snapshot":guard.snapshot,"rectangle":rectangle_json(guard.region.rectangle),"dimensions":guard.dimensions,
+            "uv_bounds":usable.uv_bounds(guard.dimensions).expect("validated rectangle"),
+            "faces":preview.edits.iter().map(|(face,_)|json!({"solid":face.solid,"side":face.side})).collect::<Vec<_>>()}});
+        if guard.region.padding != 0 {
+            state["preview"]["padding"] = json!(guard.region.padding);
+            state["preview"]["usable_rectangle"] = rectangle_json(usable);
+        }
+        state
     }
 
     pub(super) fn check_atlas_face_commit(&mut self, actor: Actor) -> Result<(), String> {

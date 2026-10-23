@@ -27,7 +27,7 @@ The browser includes **Used in this map**, **Recently applied** and **Favorites*
 
 Blank mixed fields preserve each face's value. Fit uses the material's actual image size.
 For direct projection control, enable **Advanced U/V world vectors** under **Edit texture settings**.
-See [atlas-region texturing](atlas-texturing.md) for a pixel rectangle.
+See [atlas-region texturing](atlas-texturing.md) for a pixel rectangle with optional padding inside its edges.
 
 ## Sample and wrap
 

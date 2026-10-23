@@ -130,6 +130,12 @@ An old Cancel cannot discard another actor's replacement draft.
 Applying a map edit creates one Undo step. Cancel leaves the source unchanged.
 Saving does not apply a preview.
 
+For [atlas fitting](atlas-texturing.md), pass the snapshot from `inspect_material_atlas` to `preview_atlas_fit`.
+Its optional integer `padding` defaults to `0` and insets all four rectangle edges in original source image pixels.
+Nonzero padding returns `padding` and `usable_rectangle`; `uv_bounds` describes the usable area.
+The outer rectangle must fit the actual image, and padding must leave positive width and height.
+Invalid updates preserve the current draft. Apply or cancel with its exact token through `commit_face_preview` or `cancel_face_preview`.
+
 ## Selection defaults
 
 Selection defaults use `get_selection_defaults` and `set_selection_defaults`.

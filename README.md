@@ -55,6 +55,11 @@ See the [tool index and setup](docs/mcp.md).
 | ![Different materials on one brush](docs/images/face-materials.png) | ![Normal-map surface detail on brick](docs/images/normal-maps-on.png) |
 | Apply, paint, wrap and fit native materials. | Inspect supported surface detail before compiling. |
 
+| [Atlas texturing](docs/atlas-texturing.md) |
+| --- |
+| ![Equal faces show full-image mapping and a padded atlas region](docs/images/atlas-padding.png) |
+| Fit faces inside source-image regions with pixel padding. |
+
 | [Terrain](docs/terrain.md) | [Compiled terrain](docs/terrain.md#compile-split-borders) |
 | --- | --- |
 | ![Sculpted terrain with painted blends](docs/images/terrain-blended.png) | ![Terrain running in CS:S](docs/images/terrain-native.png) |

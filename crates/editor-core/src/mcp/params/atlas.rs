@@ -20,6 +20,8 @@ pub(in crate::mcp) struct AtlasRectangleArgs {
 pub(in crate::mcp) struct PreviewAtlasFitArgs {
     pub material: String,
     pub rectangle: AtlasRectangleArgs,
+    #[serde(default)]
+    pub padding: u32,
     pub snapshot: String,
     pub faces: Option<Vec<FaceRef>>,
     pub token: Option<String>,

@@ -66,6 +66,10 @@ fn form(controller: &Controller) -> (Value, Vec<u8>) {
             "width": window.get_texture_width(), "height": window.get_texture_height(),
             "valid": window.get_valid_region(), "u": window.get_region_u(), "v": window.get_region_v(),
             "region_width": window.get_region_width(), "region_height": window.get_region_height(),
+            "valid_usable": window.get_valid_usable_region(), "has_padding": window.get_has_padding(),
+            "usable_u": window.get_usable_u(), "usable_v": window.get_usable_v(),
+            "usable_width": window.get_usable_width(), "usable_height": window.get_usable_height(),
+            "usable_details": window.get_usable_details().to_string(),
             "atlas": target.atlas, "token": target.token, "reviewed": target.reviewed,
         }),
         window.get_preview().to_rgba8().unwrap().as_bytes().to_vec(),
@@ -101,6 +105,7 @@ fn managed_atlas_retains_report_review_and_peer_during_draining_finished_and_own
     let peer = fixture();
     let original = lock(&target.shared).document().vmf().clone();
     target.controller.window.set_region_pixels_wide("32".into());
+    target.controller.window.set_region_padding("2".into());
     target.controller.window.invoke_edited();
     target.controller.window.invoke_preview_fit();
     assert!(target.controller.window.get_ready());
@@ -112,8 +117,11 @@ fn managed_atlas_retains_report_review_and_peer_during_draining_finished_and_own
         .access
         .with_session(|session| target.controller.initialize(session, "test/checker"))
         .unwrap();
+    target.controller.window.set_region_padding("2".into());
+    target.controller.window.invoke_edited();
     target.controller.window.invoke_preview_fit();
     assert!(target.controller.window.get_ready());
+    assert!(target.controller.window.get_has_padding());
     let expected = form(&target.controller);
     let preview = lock(&target.shared).face_preview_token();
     let render = lock(&target.shared).render_document().vmf().clone();

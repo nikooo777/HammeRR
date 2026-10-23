@@ -3,7 +3,7 @@ import { Button, LineEdit } from "std-widgets.slint";
 export component AtlasWindow inherits Window {
     title: "Fit atlas region - HammeRR";
     preferred-width: 720px;
-    preferred-height: 710px;
+    preferred-height: 770px;
     in property <string> selection-label;
     in property <string> details;
     in property <string> message;
@@ -18,11 +18,19 @@ export component AtlasWindow inherits Window {
     in property <float> region-width;
     in property <float> region-height;
     in property <bool> valid-region;
+    in property <float> usable-u;
+    in property <float> usable-v;
+    in property <float> usable-width;
+    in property <float> usable-height;
+    in property <bool> valid-usable-region;
+    in property <bool> has-padding;
+    in property <string> usable-details;
     in-out property <string> material;
     in-out property <string> region-x: "0";
     in-out property <string> region-y: "0";
     in-out property <string> region-pixels-wide: "1";
     in-out property <string> region-pixels-high: "1";
+    in-out property <string> region-padding: "0";
     callback edited();
     callback inspect-material();
     callback browse();
@@ -69,12 +77,21 @@ export component AtlasWindow inherits Window {
                             border-color: #58dfff;
                             background: #45cfff22;
                         }
+                        if root.loaded && root.valid-usable-region && root.has-padding: Rectangle {
+                            x: parent.width * root.usable-u;
+                            y: parent.height * root.usable-v;
+                            width: parent.width * root.usable-width;
+                            height: parent.height * root.usable-height;
+                            border-width: 2px;
+                            border-color: #ffd66e;
+                            background: #ffd66e22;
+                        }
                     }
                     if !root.loaded: Text { text: "Inspect a supported material"; horizontal-alignment: center; vertical-alignment: center; color: #bac2ce; }
                 }
                 VerticalLayout {
                     spacing: 10px;
-                    Text { text: "Rectangle · texture pixels"; font-weight: 600; }
+                    Text { text: "Rectangle · source image pixels"; font-weight: 600; }
                     HorizontalLayout {
                         Text { text: "X"; width: 54px; vertical-alignment: center; }
                         LineEdit { text <=> root.region-x; input-type: number; accessible-label: "Atlas X"; edited => { root.edited(); } }
@@ -91,11 +108,17 @@ export component AtlasWindow inherits Window {
                         Text { text: "Height"; width: 54px; vertical-alignment: center; }
                         LineEdit { text <=> root.region-pixels-high; input-type: number; accessible-label: "Atlas height"; edited => { root.edited(); } }
                     }
-                    Text { text: "Texture edges start at the top-left corner. X grows right; Y grows down. Enter a rectangle within the original image."; wrap: word-wrap; color: #bac2ce; }
+                    HorizontalLayout {
+                        Text { text: "Padding"; width: 54px; vertical-alignment: center; }
+                        LineEdit { text <=> root.region-padding; input-type: number; accessible-label: "Atlas padding in source image pixels"; edited => { root.edited(); } }
+                    }
+                    Text { text: "Padding insets all four edges in whole source image pixels. Zero uses the entire rectangle."; wrap: word-wrap; color: #bac2ce; }
+                    Text { text: root.usable-details; wrap: word-wrap; color: root.valid-usable-region ? #ffd66e : #ffb4a8; }
                     Rectangle { vertical-stretch: 1; }
                 }
             }
-            Text { text: "Each face fits its projected bounds into this rectangle, keeping its texture direction, rotation and mirroring. Polygon corners can leave parts of the rectangle unused."; wrap: word-wrap; color: #bac2ce; }
+            Text { text: "Cyan: rectangle. Yellow: usable area after padding. Image edges start at the top-left corner; X grows right and Y grows down."; wrap: word-wrap; color: #bac2ce; }
+            Text { text: "Each face fits its projected bounds into the usable area, keeping its texture direction, rotation and mirroring. Polygon corners can leave parts unused."; wrap: word-wrap; color: #bac2ce; }
             Text { text: root.message; wrap: word-wrap; }
             Rectangle { vertical-stretch: 1; }
             HorizontalLayout {

@@ -117,6 +117,145 @@ fn atlas_fit_shared_preview_preserves_metadata_and_applies_exactly_one_undo_step
 }
 
 #[test]
+fn atlas_padding_preserves_zero_state_and_owned_draft_through_rejection_cancel_and_undo() {
+    let (directory, mut session, face) = fixture(Actor::Agent);
+    let original = session.document().vmf().clone();
+    let history = session.history_snapshot();
+    let undo_count = session.document().undo_labels().count();
+    let snapshot = session
+        .inspect_material_atlas("test/checker")
+        .unwrap()
+        .report["snapshot"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let zero_state = session
+        .preview_atlas_fit(
+            Actor::Agent,
+            &[face],
+            "test/checker",
+            region(),
+            &snapshot,
+            None,
+        )
+        .unwrap();
+    let zero_preview = session.render_document().vmf().clone();
+    let mut explicit_zero_state = session
+        .preview_atlas_fit_region(
+            Actor::Agent,
+            &[face],
+            "test/checker",
+            FitRegion {
+                rectangle: region(),
+                padding: 0,
+            },
+            &snapshot,
+            session.face_preview_token(),
+        )
+        .unwrap();
+    explicit_zero_state["preview"]["token"] = zero_state["preview"]["token"].clone();
+    assert_eq!(explicit_zero_state, zero_state);
+    assert_eq!(session.render_document().vmf(), &zero_preview);
+    let padded = FitRegion {
+        rectangle: region(),
+        padding: 2,
+    };
+    let state = session
+        .preview_atlas_fit_region(
+            Actor::Agent,
+            &[face],
+            "test/checker",
+            padded,
+            &snapshot,
+            session.face_preview_token(),
+        )
+        .unwrap();
+    assert_eq!(state["preview"]["padding"], 2);
+    assert_eq!(state["preview"]["rectangle"], rectangle_json(region()));
+    assert_eq!(
+        state["preview"]["usable_rectangle"],
+        json!({"x":18,"y":10,"width":28,"height":12})
+    );
+    assert_eq!(
+        state["preview"]["uv_bounds"],
+        json!([[0.28125, 0.3125], [0.71875, 0.6875]])
+    );
+    let (low, high) = bounds(&session, face, true);
+    assert!(low.abs_diff_eq(DVec2::new(18.0, 10.0), 1e-8));
+    assert!(high.abs_diff_eq(DVec2::new(46.0, 22.0), 1e-8));
+    let preview = session.render_document().vmf().clone();
+    let token = session.face_preview_token();
+    for invalid in [
+        FitRegion {
+            padding: 8,
+            ..padded
+        },
+        FitRegion {
+            padding: u32::MAX,
+            ..padded
+        },
+        FitRegion {
+            rectangle: Rectangle {
+                x: 40,
+                y: 0,
+                width: 32,
+                height: 32,
+            },
+            padding: 8,
+        },
+    ] {
+        assert!(
+            session
+                .preview_atlas_fit_region(
+                    Actor::Agent,
+                    &[face],
+                    "test/checker",
+                    invalid,
+                    &snapshot,
+                    token,
+                )
+                .is_err()
+        );
+        assert_eq!(session.atlas_fit_state(), state);
+        assert_eq!(session.face_preview_token(), token);
+        assert_eq!(session.render_document().vmf(), &preview);
+    }
+    let material_path = directory.path().join("materials/test/checker.vmt");
+    let material_source = std::fs::read_to_string(&material_path).unwrap();
+    std::fs::write(
+        &material_path,
+        "LightmappedGeneric { $basetexture test/checker $color \"[1 0 0]\" }",
+    )
+    .unwrap();
+    assert!(session.commit_face_preview(Actor::Agent).is_err());
+    assert_eq!(session.atlas_fit_state(), state);
+    assert_eq!(session.render_document().vmf(), &preview);
+    session
+        .cancel_owned_face_preview(Actor::Agent, token)
+        .unwrap();
+    assert_eq!(session.render_document().vmf(), &original);
+    assert_eq!(session.history_snapshot(), history);
+    std::fs::write(material_path, material_source).unwrap();
+    session
+        .preview_atlas_fit_region(
+            Actor::Agent,
+            &[face],
+            "test/checker",
+            padded,
+            &snapshot,
+            None,
+        )
+        .unwrap();
+    session.commit_face_preview(Actor::Agent).unwrap();
+    assert_eq!(session.document().vmf(), &preview);
+    assert_eq!(session.document().undo_labels().count(), undo_count + 1);
+    session.undo(Actor::Agent).unwrap();
+    assert_eq!(session.document().vmf(), &original);
+    session.redo(Actor::Agent).unwrap();
+    assert_eq!(session.document().vmf(), &preview);
+}
+
+#[test]
 fn atlas_fit_failed_requests_foreign_actors_and_stale_tokens_preserve_valid_preview() {
     let (_directory, mut session, face) = fixture(Actor::User);
     let original = session.document().vmf().clone();

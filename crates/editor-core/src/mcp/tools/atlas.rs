@@ -38,7 +38,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Preview fitting each flat brush face independently into one material-atlas rectangle. Pass material, latest inspect_material_atlas snapshot and integer rectangle {x,y,width,height} in original texture-edge pixels (top-left origin). Omitted faces use selected faces; 1–256 world/brush-entity faces. Reuses texture-fit math and preserves axes, rotation, mirroring, geometry and lighting metadata. Terrain, invalid/zero/outside rectangles and collapsed mappings reject atomically without replacing a valid preview. Pass token to revise your own atlas draft; foreign previews reject. Review returned UV bounds and get_face_selection.atlas; finish with commit_face_preview/cancel_face_preview and the exact token. Apply adds one Undo step. Stale assets block commit; the owner can still Cancel. Foreign actors cannot commit or cancel. No texture-file or shader edits."
+        description = "Preview fitting each flat brush face independently into one material-atlas rectangle. Pass material, latest inspect_material_atlas snapshot and integer rectangle {x,y,width,height} in original source-image edge pixels (top-left origin). Optional nonnegative integer padding (default 0) insets all four edges in the same source-image pixels; it must leave a positive usable width and height. The outer rectangle must remain within the actual image. Omitted faces use selected faces; 1–256 world/brush-entity faces. Reuses texture-fit math and preserves axes, rotation, mirroring, geometry and lighting metadata. Terrain, invalid/zero/outside/exhausted regions and collapsed mappings reject atomically without replacing a valid preview. Pass token to revise your own atlas draft; foreign previews reject. Review returned usable UV bounds and get_face_selection.atlas; nonzero padding also returns padding and usable_rectangle. Finish with commit_face_preview/cancel_face_preview and the exact token. Apply adds one Undo step. Stale assets block commit; the owner can still Cancel. Foreign actors cannot commit or cancel. No texture-file or shader edits."
     )]
     pub(in crate::mcp) fn preview_atlas_fit(
         &self,
@@ -50,17 +50,20 @@ impl EditorServer {
                 || session.selected_faces(),
                 |faces| faces.iter().map(face_id).collect(),
             );
-            let rectangle = crate::session::atlas_texturing::Rectangle {
-                x: args.rectangle.x,
-                y: args.rectangle.y,
-                width: args.rectangle.width,
-                height: args.rectangle.height,
+            let region = crate::session::atlas_texturing::FitRegion {
+                rectangle: crate::session::atlas_texturing::Rectangle {
+                    x: args.rectangle.x,
+                    y: args.rectangle.y,
+                    width: args.rectangle.width,
+                    height: args.rectangle.height,
+                },
+                padding: args.padding,
             };
-            let state = session.preview_atlas_fit(
+            let state = session.preview_atlas_fit_region(
                 Actor::Agent,
                 &faces,
                 &args.material,
-                rectangle,
+                region,
                 &args.snapshot,
                 args.token.as_deref().map(parse_token).transpose()?,
             )?;

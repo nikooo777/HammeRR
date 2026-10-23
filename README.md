@@ -80,9 +80,9 @@ See the [tool index and setup](docs/mcp.md).
 | ![Distance fog in the courtyard](docs/images/fog-on.png) | ![A height guide at a doorway](docs/images/doorway-measurement.png) |
 | Inspect an authored static fog controller. | Save rulers and attach endpoints to entity frames. |
 
-| [Overlays](docs/overlays.md) | [Assemblies](docs/instance-contents.md) |
+| [Overlays](docs/overlays.md) | [Assemblies](docs/instances.md) |
 | --- | --- |
-| ![A projected material on the compiled wall](docs/images/overlay-native.png) | ![Three references to one brush assembly](docs/images/instance-assemblies.png) |
-| Fit, rebind and adjust native material projections. | Reuse saved brush assemblies with checked transforms. |
+| ![A projected material on the compiled wall](docs/images/overlay-native.png) | ![Stationary brush assemblies with different initial poses in game](docs/images/stationary-child-poses.png) |
+| Fit, rebind and adjust native material projections. | Reuse saved assemblies with checked transforms and stationary brush poses. |
 
 Counter-Strike: Source and its assets are not included.

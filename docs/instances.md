@@ -45,6 +45,10 @@ Compilation resolves and consumes any origin brush first.
 It rotates the stationary body and attached texture coordinates before applying containing reference transforms.
 The compiled body has zero entity angles; the child VMF keeps its authored values.
 
+![Stationary brush assemblies with different initial poses in game](images/stationary-child-poses.png)
+
+The foreground assembly combines initial pitch, yaw and roll with a containing reference rotation.
+
 This does not enable moving models, parenting, named child endpoints or script-visible authored-angle preservation.
 The parent reference preview remains unavailable for child models.
 

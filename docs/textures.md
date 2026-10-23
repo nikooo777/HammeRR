@@ -44,7 +44,7 @@ Terrain is excluded from wrapping.
 1. Sample a face, then choose **Paint texture** in the viewport toolbar.
 2. Choose **Material only** or **Copy projection**.
 3. Set **Radius** and drag over visible faces.
-4. Release, or click **Apply textures**, to apply.
+4. Release to apply the stroke.
 
 Escape or **Cancel** discards the stroke. Each face is painted once per stroke.
 Sampling another face cancels an open stroke.

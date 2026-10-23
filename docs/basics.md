@@ -16,7 +16,7 @@ Use the viewport to inspect the map. Use the inspector to change the selection.
 | Change projection | **Perspective**, **Top · XY**, **Front · XZ**, **Side · YZ**. |
 | Frame the selection | **F** or **Frame · F**. With no selection, frame the map. |
 | Select / toggle | Click / Ctrl+click. |
-| Select an area | Drag on empty space. |
+| Select an area | Drag on empty space; release to select. |
 | Duplicate / delete | Ctrl+D / Del. |
 | Undo / redo | Ctrl+Z / Ctrl+Y. |
 | Cancel an active tool | Escape. |
@@ -33,7 +33,7 @@ Use **Fly speed** or scroll while flying to change speed.
 5. Inspect the result.
 6. Click **Apply** to keep it, or **Cancel** to discard it.
 
-Apply creates one Undo step. A conflicting edit invalidates the preview.
+Applied map edits create one Undo step. A conflicting edit invalidates the preview.
 Users and agents share the selection, previews and Undo history.
 
 ## Grid and snapping
@@ -108,7 +108,7 @@ A write-verification error can mean the file was written. Reload before retrying
 
 Save or apply anything you need before Close.
 Changed state requires another review. Busy work can require waiting or cancellation.
-Closing stops owned game/audio work. Cleanup errors remain visible.
+Closing stops game launches and sound previews started by the editor. Cleanup errors remain visible.
 See [Open documents](open-documents.md) for multiple maps.
 
 ## Limits

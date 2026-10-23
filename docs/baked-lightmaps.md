@@ -2,7 +2,7 @@
 
 # Baked lightmaps
 
-Inspect actual face-lighting samples from the last successful owned build.
+Inspect face-lighting samples from the last successful build.
 
 1. Compile with **Direct LDR** or **Direct LDR + HDR**.
 2. Open **Build details… → Inspect baked lightmaps…**.
@@ -16,7 +16,7 @@ Use page controls for long match and contributor lists.
 
 ## Limits
 
-- Reads the owned BSP; it does not estimate lighting from the editor view.
+- Reads that build's BSP; it does not estimate lighting from the editor view.
 - Compiled face numbers belong to one build and can change after rebuilding.
 - Stale intact output remains historical. Missing, replaced or corrupt output is unavailable.
 - Channel, style and directional-map availability depend on the build.

@@ -42,7 +42,7 @@ Inspection does not pack assets.
 3. Compile and inspect **Water assets** in **Build details…**.
 
 Packing supports a checked static subset, not every animated stock Water shader.
-Static envmaps require the admitted LDR and HDR cubemap files. Unsupported closures fail explicitly.
+Static envmaps require matching supported LDR and HDR cubemap files. Unsupported dependencies fail explicitly.
 Assets outside the packed closure must remain mounted in the game.
 
 ## Steady physical current

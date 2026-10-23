@@ -10,8 +10,8 @@ Align a selection with a floor, ceiling or picked surface.
 4. Enter **Offset**.
 5. Enable **Align local up to surface** if rotation is required.
 6. Choose **Keep textures attached** for brushes.
-7. Click **Preview placement**.
-8. For picked placement, click **Pick surface**, then the target surface.
+7. For **Floor** or **Ceiling**, click **Preview placement**.
+8. For **Pick surface**, click **Pick surface**, then click the target.
 9. Inspect the yellow target mark and movement.
 10. Click **Apply placement**.
 

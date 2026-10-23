@@ -35,7 +35,7 @@ The integrated compiler is experimental. File operations, BSP publication and ga
 | Area | Works | Not yet / limits |
 | --- | --- | --- |
 | [World and visibility](compile-and-play.md) | Structural/detail geometry, Fast and Detailed visibility, hints, portals and fading windows. | General unsupported portal/model combinations. |
-| [Lighting](compile-and-play.md#lighting) | LDR/HDR, styles, point/spot/sun/sky, soft sun, ambient probes and up to four diffuse bounces. | General native shader transport and per-texel prop lightmaps. |
+| [Lighting](compile-and-play.md#lighting) | LDR/HDR, styles, point/spot/sun/sky, soft sun, ambient probes and up to four diffuse bounces. | Material emission, per-texel prop lightmaps and general shader transport. |
 | [Material lighting](compile-and-play.md#normal-map-lighting) | Checked normal maps, albedo, reflectivity and alpha texture shadows. | Unsupported effects reject explicitly. |
 | [Physics](physics.md) | Engine world, terrain and supported brush-model collision, contact materials and derived mass. | Custom density and broader moving-body behavior. |
 | [Brush entities](compile-and-play.md#brush-entities-and-pivots) | Checked pivots, initial rotation, moving models and attached lightmaps. | General parenting, arbitrary model classes and initial poses. |
@@ -45,10 +45,10 @@ The integrated compiler is experimental. File operations, BSP publication and ga
 | [Detail props](material-detail-scattering.md) | Explicit and generated decorative models, cards, cross/tri shapes and supported lighting. | Editor display of final generated details. |
 | [Reflections](reflections.md) | Private LDR or paired LDR/HDR captures and verified packing. | Recursive reflection bounces and unsupported capture scenes. |
 | [Overlays](overlays.md) | Native projections, face splitting, supported terrain targets and water transitions. | Full projected-material viewport preview. |
-| [Assemblies](instances.md) | Checked nested transforms, stationary child initial poses and admitted geometry/entities. | General runtime entities, scripting and name fixups. |
+| [Assemblies](instances.md) | Checked nested transforms, stationary child initial poses and supported geometry/entities. | General runtime entities, scripting and name fixups. |
 | [Visibility helpers](occluders.md) | Occluders and eligible visibility-cluster volumes. | Unsupported memberships and dynamic child control. |
 | [Inspection](baked-lightmaps.md) | Owned face lightmaps, prop vertex bytes and native light records. | Full baked-output viewport rendering. |
-| [Publication](compile-regions.md) | Captured build scope, cancellation, guarded publication and private game launch. | General cross-platform file/runtime support. |
+| [Publication](compile-regions.md) | Captured build scope, cancellation, checked output writes and private game launch. | General cross-platform file/runtime support. |
 
 Unsupported input and exceeded resource budgets fail explicitly.
 A failed build preserves the previous published output.

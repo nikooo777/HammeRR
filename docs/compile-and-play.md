@@ -92,7 +92,9 @@ Set **SunSpreadAngle** for soft sun shadows. Only sky-visible rays admit the sky
 ### Bounced light
 
 Choose one to four diffuse bounces under **Indirect light**.
-Supported world, terrain, brush-model and static-prop surfaces contribute according to their admitted materials.
+World and terrain surfaces reflect light using their material properties.
+Brush-model lightmaps can receive these bounces.
+Enable **Bake static-prop vertex lighting** for static-prop receivers.
 More bounces increase work. Unsupported material effects report diagnostics rather than fabricated reflectance.
 
 ### Normal-map lighting
@@ -168,7 +170,7 @@ See [overlays](overlays.md).
 
 ## Referenced assemblies
 
-Saved child VMFs compile through checked instance transforms and supported parameter replacement.
+Saved child VMFs compile through checked instance transforms.
 Keep child sources available, then inspect dependency errors before building.
 See [instances](instances.md) for supported entities and limitations.
 

@@ -48,9 +48,10 @@ Choose **World axes** or **Local axes** for handle orientation.
 1. Enable **Transform selection**.
 2. Choose **Move**, **Rotate**, **Scale**, **Mirror** or **Shear**.
 3. Enter the values.
-4. Choose **Selection center**, **World origin** or **Custom** under **Pivot**.
-5. Inspect the preview.
-6. Click **Apply transform**, or **Cancel**.
+4. For rotation, scale, mirror or shear, choose **Selection center**, **World origin** or **Custom** under **Pivot**.
+5. Click **Move selection**, **Rotate selection**, **Scale selection**, **Mirror selection** or **Shear selection**.
+
+These buttons apply immediately. Use **Undo** to reverse the edit.
 
 Numeric transforms do not round to the grid.
 Scale factors must be positive. Whole-object scaling changes point-entity spacing, not model size.
@@ -97,6 +98,7 @@ Choose different **Shift coordinate** and **By coordinate** axes.
 Set **Factor** to the required proportional shift.
 For example, X by Y at 0.5 shifts X by half the Y distance from the pivot.
 Use **Keep textures attached while shearing** when required.
+Click **Shear selection** to apply.
 
 ## Limits
 

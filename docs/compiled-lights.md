@@ -2,7 +2,7 @@
 
 # Compiled lights
 
-Read native light records from the last successful owned build.
+Read native light records from the last successful build.
 
 1. Compile with **Direct LDR** or **Direct LDR + HDR**.
 2. Open **Build details… → Inspect compiled lights…**.
@@ -12,7 +12,7 @@ Read native light records from the last successful owned build.
 6. Use **Previous lights** and **Next lights** to change pages.
 
 Use **Refresh inspection** after changing sources or building again.
-The inspector is also available from **Build settings…** and explains when no owned output exists.
+The inspector is also available from **Build settings…** and explains when no build output is available.
 
 ## Limits
 

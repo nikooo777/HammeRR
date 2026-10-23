@@ -19,5 +19,5 @@ Use **Refresh inspection** after a new build or source change.
 - Prop ordinals and hardware sections belong to one build, not authored entity IDs.
 - Packed values are not an editor appearance preview or a screen-brightness measurement.
 - Missing channels remain unavailable; they do not substitute another channel.
-- Intact stale output is marked historical. Missing, replaced or corrupt owned output is unavailable.
+- Intact stale output is marked historical. Missing, replaced or corrupt build output is unavailable.
 - Inspection does not alter the map or build settings.

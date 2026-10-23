@@ -21,7 +21,7 @@ Use [surface placement](placement.md) to put the model on a floor or slope.
 1. Select a supported dynamic model entity.
 2. Set **Model scale** from 0.015625 to 64.
 3. Open **Tint** and choose a color.
-4. Click **Apply** to keep the color, or **Cancel** to discard it.
+4. Click **Apply color** to keep the color, or **Cancel** to discard it.
 
 ![The same crate at three model scales](images/model-scales.png)
 
@@ -53,7 +53,7 @@ X is red, Y is green and Z is blue. Positions follow the displayed reference pos
 1. Choose **Textured** and enable **Unshadowed authored lighting**.
 2. Choose **Detail · per-fragment lighting** or **Fast · vertex lighting**.
 3. Adjust **Lighting exposure (EV)**.
-4. Check admitted and excluded model counts.
+4. Check which models receive preview lighting.
 
 Supported opaque, single-base `VertexLitGeneric` meshes receive light.
 One unsupported selected material excludes the complete model and reports a reason.

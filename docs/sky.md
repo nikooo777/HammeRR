@@ -47,7 +47,7 @@ Use **Reload material assets** to refresh cached sky display images.
 ## Compiled HDR skies
 
 Choose **Direct LDR + HDR** for native HDR map data.
-Enable **Pack sky assets** to embed the admitted original sky dependencies.
+Enable **Pack sky assets** to embed the supported original sky files.
 The game must enable full HDR to display its HDR channel.
 
 ![A mounted sky family behind the compiled courtyard arch](images/courtyard-native-arch.png)

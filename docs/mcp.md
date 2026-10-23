@@ -127,7 +127,7 @@ Tokens identify one specific draft. Snapshots identify the state that was inspec
 Use returned values exactly; they are not interchangeable.
 Changes to sources or relevant settings can invalidate a draft.
 An old Cancel cannot discard another actor's replacement draft.
-Apply makes one Undo step. Cancel leaves the source unchanged.
+Applying a map edit creates one Undo step. Cancel leaves the source unchanged.
 Saving does not apply a preview.
 
 ## Compile and play

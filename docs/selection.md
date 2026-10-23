@@ -15,10 +15,13 @@ Alt+click cycles overlapping object hits. **Bypass groups** selects individual m
 
 ## Area selection
 
-1. Drag a selection rectangle in a viewport.
-2. Choose **Intersects** or **Fully inside**.
-3. Choose **Replace**, **Add**, **Remove** or **Toggle**.
-4. Review the highlighted result.
+1. Choose **Intersects** or **Fully inside** under **Area**.
+2. Choose **Replace**, **Add**, **Remove** or **Toggle**.
+3. Drag a selection rectangle from empty viewport space.
+4. Review the highlighted result while dragging.
+5. Release to select the matches.
+
+Escape cancels the drag. Changing the area controls discards any pending preview.
 
 ## Volume selection
 
@@ -37,7 +40,9 @@ For terrain samples, retain the volume and use **Terrain triangles… → Select
 1. Enable **Paint selection**.
 2. Set **Radius**.
 3. Paint over visible targets.
-4. Click **Apply selection**, or cancel the draft.
+4. Release to apply the selection.
+
+Escape cancels an active stroke.
 
 ## Temporary editor visibility
 

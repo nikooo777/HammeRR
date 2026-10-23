@@ -20,7 +20,7 @@ Compile supported contents of saved child VMFs into a parent map.
 | Point, spot and sun lights | Checked static or supported built-in appearance settings. |
 | Static props | Supported models, skins, transforms and scoped lighting origins. |
 | Player spawns | Supported CS:S spawn classes. |
-| Stationary brush models | Strictly admitted classes, pivots and initial poses. |
+| Stationary brush models | `func_brush` with supported pivots and initial poses. |
 | Overlays | Supported unnamed projections bound to direct child world/detail or terrain faces. |
 | Cubemap samples | Supported positions and direct ordinary world/detail manual bindings. |
 | Visibility helpers and occluders | Checked static helper classes and supported geometry. |
@@ -49,7 +49,8 @@ The compiled body has zero entity angles; the child VMF keeps its authored value
 
 The foreground assembly combines initial pitch, yaw and roll with a containing reference rotation.
 
-This does not enable moving models, parenting, named child endpoints or script-visible authored-angle preservation.
+Moving brush models, parenting and named brush models remain unsupported.
+The compiled entity does not retain the child's original angle value.
 The parent reference preview remains unavailable for child models.
 
 ## Names and parameters

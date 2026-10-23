@@ -13,7 +13,7 @@ Compile decorative models without collision or runtime entities.
 7. Play the built map to inspect the decoration.
 
 For example, the installed `models/props/de_inferno/bushgreensmall.mdl` uses the supported decorative model path.
-Use **Baked lighting tint · linear RGB** for admitted lighting attenuation.
+Use **Baked lighting tint · linear RGB** to reduce the baked lighting.
 
 ## Choose a lighting origin
 

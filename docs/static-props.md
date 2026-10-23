@@ -12,10 +12,11 @@ Compile static scenery models with visibility, collision options and lighting.
 4. Set **Position**, **Rotation** and **Skin**.
 5. Compile and inspect **Static props**, **Model assets**, **Leaf references** and **Diagnostics**.
 
-![Static flower barrels and potted models in the compiled courtyard](images/showcase-native-arch.png)
+![A static barrel beside brush-built crates in the compiled courtyard](images/showcase-native-arch.png)
 
 Use **Not Solid**, **Use Bounding Box** or **Use VPhysics** under **Collisions**, as supported.
-VPhysics requires engine physics and compatible model collision data.
+VPhysics needs compatible model collision data from a matching `.phy` file.
+The **Physics bodies** setting controls compiled brush and terrain bodies separately.
 
 ## Pack static prop assets
 
@@ -23,7 +24,7 @@ VPhysics requires engine physics and compatible model collision data.
 2. Compile.
 3. Check **Static-prop assets** and diagnostics in **Build details…**.
 
-Packing includes the checked model companions and admitted material dependencies.
+Packing includes the checked model companions and supported material dependencies.
 Unsupported materials or missing required assets stop publication.
 
 ## Bake vertex lighting

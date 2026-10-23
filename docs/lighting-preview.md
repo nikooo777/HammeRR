@@ -10,7 +10,7 @@ Inspect point, spot and sun lighting before a build.
 4. Enable **Unshadowed authored lighting**.
 5. Select **Detail · per-fragment lighting** for small light pools and normal maps.
 6. Set **Lighting exposure (EV)** from −8 to 8.
-7. Check the admitted and excluded light and surface counts.
+7. Check which lights and surfaces are included or excluded.
 
 ![Warm and blue light pools on brick and concrete](images/authored-lighting.png)
 

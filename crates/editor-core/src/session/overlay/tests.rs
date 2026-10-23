@@ -66,6 +66,236 @@ fn preview(session: &mut Session, actor: Actor, source: FaceId) -> u64 {
         .unwrap()
 }
 
+fn planar_terrain_fixture(actor: Actor) -> (tempfile::TempDir, Session, FaceId) {
+    let (directory, mut session, face) = fixture(actor, false);
+    session
+        .edit(actor, "isolated elevated terrain", |tx| {
+            map_core::displacement::edit::create(tx, &[face], 2, 0)?;
+            let info = tx
+                .solid_mut(face.solid)?
+                .sides
+                .iter_mut()
+                .find(|side| side.id == face.side)
+                .unwrap()
+                .displacement
+                .as_mut()
+                .unwrap();
+            info.elevation = 24.0;
+            info.offsets = Some(vec![vec![DVec3::new(7.0, 11.0, 0.0); 5]; 5]);
+            Ok(())
+        })
+        .unwrap();
+    (directory, session, face)
+}
+
+#[test]
+fn planar_terrain_creation_refit_corners_and_rebind_share_owned_session_lifecycle() {
+    let (_directory, mut session, source) = planar_terrain_fixture(Actor::Agent);
+    let before = session.document.vmf().clone();
+    let history = session.document.undo_labels().count();
+    let token = preview(&mut session, Actor::Agent, source);
+    let valid = session.get_overlay_state();
+    assert!(valid["selection_error"].is_null());
+    assert!(
+        session
+            .preview_overlay_faces(
+                Actor::Agent,
+                request(source),
+                &[source],
+                &session.overlay_stamp()
+            )
+            .is_err()
+    );
+    assert_eq!(session.get_overlay_state(), valid);
+    assert!(session.cancel_overlay(Actor::User, token).is_err());
+    session.cancel_overlay(Actor::Agent, token).unwrap();
+    assert_eq!(session.document.vmf(), &before);
+    assert_eq!(session.document.undo_labels().count(), history);
+    let token = preview(&mut session, Actor::Agent, source);
+    let reviewed = session.review_overlay(Actor::User, token).unwrap();
+    let applied = session
+        .apply_overlay(Actor::User, reviewed["draft"]["token"].as_u64().unwrap())
+        .unwrap();
+    let ObjectId::Entity(id) =
+        crate::identity::parse_id(applied["created"].as_str().unwrap()).unwrap()
+    else {
+        unreachable!()
+    };
+    assert_eq!(
+        overlay::parse(session.document.entity(id).unwrap())
+            .unwrap()
+            .sides,
+        [source.side]
+    );
+    let after = session.document.vmf().clone();
+    session.undo(Actor::User).unwrap();
+    assert_eq!(session.document.vmf(), &before);
+    session.redo(Actor::User).unwrap();
+    assert_eq!(session.document.vmf(), &after);
+    session
+        .edit(Actor::User, "raise terrain without changing cage", |tx| {
+            tx.entity_mut(id)?.properties.set("StartU", "-00.2500");
+            tx.solid_mut(source.solid)?
+                .sides
+                .iter_mut()
+                .find(|side| side.id == source.side)
+                .unwrap()
+                .displacement
+                .as_mut()
+                .unwrap()
+                .elevation += 8.0;
+            Ok(())
+        })
+        .unwrap();
+    let old = overlay::parse(session.document.entity(id).unwrap()).unwrap();
+    assert!(
+        session
+            .preview_overlay_corners(
+                Actor::Agent,
+                id,
+                old.uv_points.map(|point| [point[0], point[1]]),
+                &session.overlay_stamp()
+            )
+            .is_err()
+    );
+    let state = session
+        .preview_overlay_refit(Actor::Agent, id, &session.overlay_stamp())
+        .unwrap();
+    let token = state["draft"]["token"].as_u64().unwrap();
+    session.apply_overlay(Actor::Agent, token).unwrap();
+    let current = overlay::parse(session.document.entity(id).unwrap()).unwrap();
+    assert_ne!(current.basis_origin, old.basis_origin);
+    assert_eq!(
+        session
+            .document
+            .entity(id)
+            .unwrap()
+            .properties
+            .get("StartU"),
+        Some("-00.2500")
+    );
+    let corners = current
+        .uv_points
+        .map(|point| [point[0] * 0.75, point[1] * 0.75]);
+    let state = session
+        .preview_overlay_corners(Actor::Agent, id, corners, &session.overlay_stamp())
+        .unwrap();
+    session
+        .apply_overlay(Actor::Agent, state["draft"]["token"].as_u64().unwrap())
+        .unwrap();
+    assert_eq!(
+        overlay::parse(session.document.entity(id).unwrap())
+            .unwrap()
+            .basis_origin,
+        current.basis_origin
+    );
+    let destination = session
+        .edit(Actor::Agent, "flat destination", |tx| {
+            let ObjectId::Solid(solid) = edit::create_block(
+                tx,
+                DVec3::new(512.0, 512.0, 0.0),
+                DVec3::new(640.0, 640.0, 16.0),
+                "test/checker",
+            )?
+            else {
+                unreachable!()
+            };
+            Ok(FaceId {
+                solid,
+                side: tx.solid_mut(solid)?.sides[0].id,
+            })
+        })
+        .unwrap();
+    let state = session
+        .preview_overlay_rebind(Actor::Agent, id, destination, &session.overlay_stamp())
+        .unwrap();
+    let token = state["draft"]["token"].as_u64().unwrap();
+    let before = session.document.vmf().clone();
+    session.set_view(render::ViewOptions {
+        tool_textures: !session.view().tool_textures,
+        ..session.view()
+    });
+    assert_eq!(session.get_overlay_state()["draft"]["valid"], false);
+    assert!(session.apply_overlay(Actor::Agent, token).is_err());
+    session.cancel_overlay(Actor::Agent, token).unwrap();
+    assert_eq!(session.document.vmf(), &before);
+    for destination in [destination, source] {
+        let state = session
+            .preview_overlay_rebind(Actor::Agent, id, destination, &session.overlay_stamp())
+            .unwrap();
+        let before = session.document.vmf().clone();
+        session
+            .apply_overlay(Actor::Agent, state["draft"]["token"].as_u64().unwrap())
+            .unwrap();
+        assert_eq!(
+            overlay::parse(session.document.entity(id).unwrap())
+                .unwrap()
+                .sides,
+            [destination.side]
+        );
+        let after = session.document.vmf().clone();
+        session.undo(Actor::Agent).unwrap();
+        assert_eq!(session.document.vmf(), &before);
+        session.redo(Actor::Agent).unwrap();
+        assert_eq!(session.document.vmf(), &after);
+    }
+}
+
+#[test]
+fn planar_terrain_material_and_working_visibility_rejections_preserve_the_draft() {
+    let (directory, mut session, source) = planar_terrain_fixture(Actor::User);
+    std::fs::write(
+        directory.path().join("materials/test/nonterrain.vmt"),
+        "LightmappedGeneric { %compilewater 1 }",
+    )
+    .unwrap();
+    let token = preview(&mut session, Actor::User, source);
+    session
+        .set_editor_visibility(
+            Actor::User,
+            crate::session::editor_visibility::Action::Hide(vec![ObjectId::Solid(source.solid)]),
+            &session.working_region_stamp(),
+        )
+        .unwrap();
+    let before = session.get_overlay_state();
+    assert!(
+        session
+            .preview_overlay(Actor::Agent, request(source), &session.overlay_stamp())
+            .is_err()
+    );
+    assert!(session.apply_overlay(Actor::User, token).is_err());
+    assert_eq!(session.get_overlay_state(), before);
+    session.cancel_overlay(Actor::User, token).unwrap();
+    session
+        .set_editor_visibility(
+            Actor::User,
+            crate::session::editor_visibility::Action::ShowAll,
+            &session.working_region_stamp(),
+        )
+        .unwrap();
+    session
+        .edit(Actor::User, "unsupported terrain material", |tx| {
+            tx.solid_mut(source.solid)?
+                .sides
+                .iter_mut()
+                .find(|side| side.id == source.side)
+                .unwrap()
+                .material = "test/nonterrain".into();
+            Ok(())
+        })
+        .unwrap();
+    let before = session.document.vmf().clone();
+    let history = session.history_snapshot();
+    assert!(
+        session
+            .preview_overlay(Actor::Agent, request(source), &session.overlay_stamp())
+            .unwrap_err()
+            .contains("ordinary solid material")
+    );
+    assert_eq!(session.document.vmf(), &before);
+    assert_eq!(session.history_snapshot(), history);
+}
+
 fn multiface_fixture(actor: Actor, triangle: bool) -> (tempfile::TempDir, Session, [FaceId; 2]) {
     let (directory, game) = crate::test_assets::game();
     let mut session = Session::new(Ok(game));

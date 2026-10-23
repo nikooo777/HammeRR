@@ -5,6 +5,107 @@ use map_core::{Document, ObjectId, Plane, edit, overlay, surface::FaceId};
 use source_formats::vmf::Vmf;
 
 #[test]
+fn fitted_planar_terrain_matches_literal_native_projection_and_original_displacement_binding() {
+    let mut document = Document::new(common::room());
+    let source = document
+        .edit("isolated displaced target", |tx| {
+            let ObjectId::Solid(solid) = edit::create_block(
+                tx,
+                DVec3::new(-64.0, -64.0, 0.0),
+                DVec3::new(64.0, 64.0, 32.0),
+                "dev/dev_measuregeneric01",
+            )?
+            else {
+                unreachable!()
+            };
+            let source = FaceId {
+                solid,
+                side: tx.solid_mut(solid)?.sides[0].id,
+            };
+            map_core::displacement::edit::create(tx, &[source], 2, 0)?;
+            let info = tx.solid_mut(solid)?.sides[0].displacement.as_mut().unwrap();
+            info.start_position = DVec3::new(-64.0, -64.0, 32.0);
+            info.offsets = Some(vec![vec![DVec3::new(3.0, 4.0, 12.0); 5]; 5]);
+            Ok(source)
+        })
+        .unwrap();
+    let base = document.vmf().clone();
+    document
+        .edit("fitted terrain overlay", |tx| {
+            overlay::create(
+                tx,
+                source,
+                overlay::Options {
+                    material: "decals/decalgraffiti001a".into(),
+                    targetname: Some("terrain_mark".into()),
+                    ..Default::default()
+                },
+            )
+        })
+        .unwrap();
+    let authored = document.vmf().clone();
+    let output = compiler::compile(&authored, &common::empty_game());
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    let bsp = output.bsp.unwrap();
+    let data = bsp.overlay_data().unwrap().unwrap();
+    assert_eq!(data.overlays.len(), 1);
+    let record = data.overlays[0];
+    assert_eq!(record.origin, [3.0, 4.0, 44.0]);
+    assert_eq!(record.basis_normal, [0.0, 0.0, 1.0]);
+    assert_eq!(
+        record.uv_points,
+        [
+            [-64.0, -64.0, 1.0],
+            [-64.0, 64.0, 0.0],
+            [64.0, 64.0, 0.0],
+            [64.0, -64.0, 0.0]
+        ]
+    );
+    let terrain = bsp.displacements().unwrap().unwrap();
+    assert_eq!(terrain.infos.len(), 1);
+    assert_eq!(record.face_count(), 1);
+    assert_eq!(record.faces[0], i32::from(terrain.infos[0].face));
+    let points = terrain
+        .positions(0, bsp.displacement_quad(0).unwrap())
+        .unwrap();
+    assert_eq!(points[0], [-61.0, -60.0, 44.0]);
+    assert_eq!(points[12], [3.0, 4.0, 44.0]);
+    assert_eq!(points[24], [67.0, 68.0, 44.0]);
+    let mut literal = Document::new(base);
+    literal
+        .edit("literal imported projection", |tx| {
+            edit::create_entity(
+                tx,
+                "info_overlay",
+                Some(DVec3::new(3.0, 4.0, 44.0)),
+                &[
+                    ("material".into(), "decals/decalgraffiti001a".into()),
+                    ("targetname".into(), "terrain_mark".into()),
+                    ("sides".into(), source.side.to_string()),
+                    ("BasisOrigin".into(), "3 4 44".into()),
+                    ("BasisNormal".into(), "0 0 1".into()),
+                    ("BasisU".into(), "1 0 0".into()),
+                    ("BasisV".into(), "0 1 0".into()),
+                    ("uv0".into(), "-64 -64 0".into()),
+                    ("uv1".into(), "-64 64 0".into()),
+                    ("uv2".into(), "64 64 0".into()),
+                    ("uv3".into(), "64 -64 0".into()),
+                ],
+                Vec::new(),
+            )
+        })
+        .unwrap();
+    let expected = compiler::compile(literal.vmf(), &common::empty_game());
+    assert!(!expected.report.has_errors(), "{:?}", expected.report);
+    assert_eq!(expected.bsp.unwrap().to_bytes(), bsp.to_bytes());
+    assert_eq!(document.vmf(), &authored);
+    let reopened = Vmf::parse(&authored.write(&Default::default())).unwrap();
+    let repeated = compiler::compile(&reopened, &common::empty_game());
+    assert!(!repeated.report.has_errors(), "{:?}", repeated.report);
+    assert_eq!(repeated.bsp.unwrap().to_bytes(), bsp.to_bytes());
+}
+
+#[test]
 fn coplanar_multiface_authoring_binds_only_selected_native_faces_across_a_gap() {
     for gap in [0.0, 64.0] {
         let mut document = Document::new(common::room());

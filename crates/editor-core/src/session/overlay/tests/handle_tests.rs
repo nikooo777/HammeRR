@@ -93,6 +93,80 @@ fn pointer(state: &Value, corner: usize) -> Pointer {
 }
 
 #[test]
+fn planar_terrain_handles_keep_actual_plane_and_restore_stale_owned_drafts() {
+    let (_directory, mut session, source) = planar_terrain_fixture(Actor::User);
+    let created = preview(&mut session, Actor::User, source);
+    let state = session.apply_overlay(Actor::User, created).unwrap();
+    let ObjectId::Entity(id) =
+        crate::identity::parse_id(state["created"].as_str().unwrap()).unwrap()
+    else {
+        unreachable!()
+    };
+    let original = overlay::parse(session.document.entity(id).unwrap()).unwrap();
+    let corners = original.uv_points.map(|point| [point[0], point[1]]);
+    let before = session.document.vmf().clone();
+    for stale in [true, false] {
+        session
+            .preview_overlay_corners(Actor::User, id, corners, &session.overlay_stamp())
+            .unwrap();
+        let state = begin(&mut session, Actor::User, camera(&original, false));
+        let start = pointer(&state, 0);
+        let state = session
+            .pick_overlay_corner_handle(Actor::User, token(&state), start)
+            .unwrap();
+        let end = Pointer {
+            position: start.position + DVec2::new(-12.0, 8.0),
+            ..start
+        };
+        let state = session
+            .move_overlay_corner_handle(Actor::User, token(&state), end)
+            .unwrap();
+        let definition = &session.overlay.draft.as_ref().unwrap().definition;
+        let normal = DVec3::from_array(original.basis_normal);
+        let origin = DVec3::from_array(original.basis_origin);
+        assert!(
+            definition
+                .corners()
+                .iter()
+                .all(|point| normal.dot(DVec3::from_array(*point) - origin).abs() < 1e-8)
+        );
+        assert_eq!(definition.sides, [source.side]);
+        if stale {
+            session.set_view(render::ViewOptions {
+                tool_textures: !session.view().tool_textures,
+                ..session.view()
+            });
+            assert!(
+                session
+                    .finish_overlay_corner_handles(Actor::User, token(&state))
+                    .is_err()
+            );
+            assert!(
+                session
+                    .cancel_overlay_corner_handles(Actor::Agent, token(&state))
+                    .is_err()
+            );
+            session
+                .cancel_overlay_corner_handles(Actor::User, token(&state))
+                .unwrap();
+            assert_eq!(session.overlay.draft.as_ref().unwrap().definition, original);
+            assert_eq!(session.document.vmf(), &before);
+        } else {
+            let state = session
+                .finish_overlay_corner_handles(Actor::User, token(&state))
+                .unwrap();
+            let state = session.apply_overlay(Actor::User, token(&state)).unwrap();
+            assert_eq!(state["updated"], format!("entity:{id}"));
+            let after = session.document.vmf().clone();
+            session.undo(Actor::User).unwrap();
+            assert_eq!(session.document.vmf(), &before);
+            session.redo(Actor::User).unwrap();
+            assert_eq!(session.document.vmf(), &after);
+        }
+    }
+}
+
+#[test]
 fn multiface_corner_handles_capture_secondary_visibility_and_share_owned_review_apply() {
     let (_directory, mut session, faces) = multiface_fixture(Actor::User, true);
     let state = session

@@ -67,13 +67,26 @@ Supported imported water transitions use their own checked native records.
 Supported unnamed child overlays can target direct visible world/detail and displacement faces in the same occurrence.
 The parent contents preview shows target geometry, not the projected material.
 
+## Fit on planar terrain
+
+1. Select one isolated planar terrain face in face mode.
+2. Open **Overlay…**. Check that the source says **isolated planar terrain quad**.
+3. Choose **Material**, then click **Fit / Preview** and **Apply overlay**.
+4. Use the same corner, refit and rebind controls described above.
+
+The fit uses the displaced surface, including its elevation and offsets. It keeps the original terrain-side binding.
+After moving that plane, use **Refit selected overlay** before editing its corners.
+Rebind can move the projection between eligible flat and terrain faces.
+
 ## Limits
 
 - Multi-face creation requires flat coplanar faces facing the same direction and an eligible quad to anchor the projection.
 - Multi-face refit requires an explicit eligible quad reference from the existing bindings and the same source limits as creation.
 - Numeric and viewport corners require the same bounded flat coplanar source set and a valid stored projection on its plane.
-- Rebind requires valid existing ordinary world/detail bindings and a different bounded coplanar destination set with an eligible quad for the new frame.
-- Terrain and brush-model targets are unavailable for fitted authoring.
+- Rebind requires valid world/detail bindings or one eligible planar terrain binding, and a different eligible destination. Terrain stays limited to a single isolated patch.
+- Terrain fitting requires one planar quad with straight borders and valid native samples. Sculpted, folded and multiple-terrain targets reject.
+- The terrain base bounds must be separate from every other terrain base, including corner contacts. Visible instance references also reject; hide them in saved map visibility or use an imported overlay. Temporary editor hiding does not qualify.
+- Terrain cage faces and brush-model targets are unavailable for fitted authoring.
 - Compiled imported overlays support broader world/detail and terrain targets.
 - Corners may extend beyond a bound face; native rendering clips the projection to that face.
 - Moving geometry does not automatically refit or rebind an overlay.

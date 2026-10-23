@@ -4,7 +4,7 @@ use map_core::displacement::DisplacementMesh;
 use source_formats::bsp::{
     self, DisplacementInfo, DisplacementTriangle, DisplacementVertex, contents, surf,
 };
-use source_formats::vmf::{DispInfo, Solid};
+use source_formats::vmf::Solid;
 
 use super::{Map, support};
 use crate::emit::stored_vertex;
@@ -14,45 +14,8 @@ use crate::winding::Winding;
 use crate::{Control, Diagnostic, Report};
 
 const MAX_LEAF_WORK: usize = 16_000_000;
-const GEOMETRY_EPSILON: f64 = 0.02;
-
-pub(crate) fn checked_mesh(
-    face: &map_core::brush::Face,
-    disp: &DispInfo,
-) -> Result<([DVec3; 4], DisplacementMesh), String> {
-    if disp.flags.unwrap_or(0) & !14 != 0 {
-        return Err("Bumped/unknown displacement flags are not supported yet".into());
-    }
-    let base: [DVec3; 4] = face
-        .vertices
-        .as_slice()
-        .try_into()
-        .map_err(|_| "Displacements need a convex quad base face")?;
-    if !disp.start_position.is_finite()
-        || base
-            .iter()
-            .all(|point| point.distance(disp.start_position) > GEOMETRY_EPSILON)
-    {
-        return Err("Displacement start position must match a base corner".into());
-    }
-    let mesh = DisplacementMesh::build(face, disp).map_err(|error| error.to_string())?;
-    if mesh
-        .positions
-        .iter()
-        .any(|point| !point.is_finite() || point.abs().max_element() > super::MAX_COMPILE_COORD)
-    {
-        return Err("Displacement positions must fit Source compile bounds".into());
-    }
-    if mesh.triangles().any(|[a, b, c]| {
-        (mesh.positions[b] - mesh.positions[a])
-            .cross(mesh.positions[c] - mesh.positions[a])
-            .length_squared()
-            < 1e-12
-    }) {
-        return Err("Displacement contains collapsed triangles".into());
-    }
-    Ok((base, mesh))
-}
+use map_core::displacement::native::GEOMETRY_EPSILON;
+pub(crate) use map_core::displacement::native::checked_mesh;
 #[path = "terrain/lod.rs"]
 mod lod;
 
@@ -85,17 +48,7 @@ pub struct Terrain {
 
 impl Terrain {
     pub(crate) fn native_positions(&self) -> Result<Vec<[f32; 3]>, String> {
-        let data = bsp::Displacements {
-            infos: vec![self.info],
-            vertices: self.vertices.clone(),
-            triangles: self.triangles.clone(),
-        };
-        data.positions(
-            0,
-            self.base
-                .map(|point| stored_vertex(point).as_vec3().to_array()),
-        )
-        .map_err(|error| error.to_string())
+        map_core::displacement::native::positions(self.base, self.info, self.vertices.clone())
     }
 }
 
@@ -155,14 +108,11 @@ impl Map<'_> {
             let (base, mesh) = checked_mesh(face, disp)?;
             let material = self.materials.load(&side.material)?;
             let material_info = self.materials.get(material);
-            if !material_info.draws
-                || material_info.contents & !contents::DETAIL != contents::SOLID
-                || material_info.surface & (surf::SKY | surf::SKY2D | surf::WARP) != 0
-            {
-                return Err(
-                    "Displacements currently require a visible ordinary solid material".into(),
-                );
-            }
+            map_core::displacement::native::validate_material(
+                material_info.draws,
+                material_info.contents,
+                material_info.surface,
+            )?;
             let terrain_contents = material_info.contents | extra_contents;
             let plane = support::find_authored(&mut self.planes, geometry, face, control)?
                 .ok_or("Cannot preserve displacement base plane support")?;
@@ -180,25 +130,7 @@ impl Map<'_> {
                 contents: terrain_contents,
                 ..Default::default()
             };
-            let vertices = mesh
-                .positions
-                .iter()
-                .zip(&mesh.base_positions)
-                .zip(&mesh.alphas)
-                .map(|((&point, &base), &alpha)| {
-                    let offset = point - base;
-                    let distance = offset.length();
-                    DisplacementVertex {
-                        direction: if distance == 0.0 {
-                            [0.0; 3]
-                        } else {
-                            (offset / distance).as_vec3().to_array()
-                        },
-                        distance: distance as f32,
-                        alpha: alpha as f32,
-                    }
-                })
-                .collect::<Vec<_>>();
+            let vertices = map_core::displacement::native::vertices(&mesh);
             let indices = info.triangle_indices().map_err(|error| error.to_string())?;
             let triangles = map_core::displacement::triangles::native_tags(disp, &mesh)
                 .map_err(|error| error.to_string())?

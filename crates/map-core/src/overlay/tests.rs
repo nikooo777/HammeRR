@@ -56,6 +56,222 @@ fn fixture(detail: bool) -> (Document, FaceId) {
     (document, face)
 }
 
+fn terrain_fixture(detail: bool) -> (Document, FaceId) {
+    let (mut document, face) = fixture(false);
+    document
+        .edit("planar displaced surface", |tx| {
+            displacement::edit::create(tx, &[face], 2, 1)?;
+            let geometry = BrushGeometry::from_solid(tx.document().solid(face.solid).unwrap())
+                .map_err(|error| EditError::Invalid(error.to_string()))?;
+            let target = geometry
+                .faces
+                .iter()
+                .find(|target| {
+                    tx.document().solid(face.solid).unwrap().sides[target.side].id == face.side
+                })
+                .unwrap();
+            let info = tx
+                .solid_mut(face.solid)?
+                .sides
+                .iter_mut()
+                .find(|side| side.id == face.side)
+                .unwrap()
+                .displacement
+                .as_mut()
+                .unwrap();
+            let mesh = displacement::DisplacementMesh::build(target, info).unwrap();
+            info.elevation = 24.0;
+            info.offsets = Some(
+                mesh.base_positions
+                    .chunks(mesh.size)
+                    .map(|row| {
+                        row.iter()
+                            .map(|point| DVec3::new(7.0, 11.0, point.x * 0.125))
+                            .collect()
+                    })
+                    .collect(),
+            );
+            if detail {
+                edit::tie_to_entity(tx, &[face.solid], "func_detail", &[])?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    (document, face)
+}
+
+#[test]
+fn isolated_planar_terrain_fit_uses_displaced_surface_and_roundtrips_original_side() {
+    for detail in [false, true] {
+        let (mut document, face) = terrain_fixture(detail);
+        let before = document.vmf().clone();
+        let prepared = displacement::surface::prepare(&before);
+        let mesh = prepared.get(&face).unwrap();
+        let expected = [0, 20, 24, 4].map(|index| mesh.positions[index]);
+        let definition = fit(&before, face, options()).unwrap();
+        for (actual, expected) in definition.corners().into_iter().zip(expected) {
+            assert!(DVec3::from_array(actual).abs_diff_eq(expected, 1e-8));
+        }
+        let cage = crate::surface::face_vertices(&document, face).unwrap();
+        assert!(definition.corners().iter().all(|point| {
+            cage.iter()
+                .all(|cage| cage.distance(DVec3::from_array(*point)) > 1.0)
+        }));
+        let ObjectId::Entity(id) = document
+            .edit("terrain overlay", |tx| create(tx, face, options()))
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        assert_eq!(parse(document.entity(id).unwrap()).unwrap(), definition);
+        let after = document.vmf().clone();
+        let reopened = Vmf::parse(&after.write(&Default::default())).unwrap();
+        assert_eq!(
+            parse(
+                reopened
+                    .entities
+                    .iter()
+                    .find(|entity| entity.id == id)
+                    .unwrap()
+            )
+            .unwrap()
+            .sides,
+            [face.side]
+        );
+        document.undo().unwrap();
+        assert_eq!(document.vmf(), &before);
+        document.redo().unwrap();
+        assert_eq!(document.vmf(), &after);
+    }
+}
+
+#[test]
+fn planar_terrain_refuses_sculpted_boundaries_cage_faces_and_nonisolated_sources_atomically() {
+    let (document, face) = terrain_fixture(false);
+    let original = document.vmf().clone();
+    let mut cases = Vec::new();
+    let mut assembled = original.clone();
+    let mut reference = source_formats::vmf::Entity::new(
+        assembled.object_ids().max().unwrap() + 1,
+        "func_instance",
+    );
+    reference.properties.set("file", "child.vmf");
+    assembled.entities.push(reference);
+    cases.push((assembled.clone(), face));
+    assembled.entities.last_mut().unwrap().hidden = true;
+    assert!(fit(&assembled, face, options()).is_ok());
+    for mode in 0..4 {
+        let mut vmf = original.clone();
+        let info = vmf.world.solids[0]
+            .sides
+            .iter_mut()
+            .find(|side| side.id == face.side)
+            .unwrap()
+            .displacement
+            .as_mut()
+            .unwrap();
+        match mode {
+            0 => info.offsets.as_mut().unwrap()[2][2].z += 1.0,
+            1 => {
+                info.offsets.as_mut().unwrap()[0][1] +=
+                    DVec3::from_array(fit(&original, face, options()).unwrap().basis_v)
+            }
+            2 => {
+                let prepared = displacement::surface::prepare(&original);
+                let mesh = prepared.get(&face).unwrap();
+                info.offsets.as_mut().unwrap()[2][2] += mesh.positions[0] - mesh.positions[12];
+            }
+            _ => info.offsets.as_mut().unwrap()[2][2] = DVec3::splat(SOURCE_COORDINATE_LIMIT),
+        }
+        cases.push((vmf, face));
+    }
+    let cage = FaceId {
+        solid: face.solid,
+        side: original.world.solids[0]
+            .sides
+            .iter()
+            .find(|side| side.id != face.side)
+            .unwrap()
+            .id,
+    };
+    cases.push((original.clone(), cage));
+    let mut joined = Document::new(original.clone());
+    joined
+        .edit("touching terrain cage", |tx| {
+            let ObjectId::Solid(id) = edit::create_block(
+                tx,
+                DVec3::new(50.0, 150.0, -64.0),
+                DVec3::new(150.0, 250.0, 64.0),
+                "test/checker",
+            )?
+            else {
+                unreachable!()
+            };
+            let side = tx.solid_mut(id)?.sides[0].id;
+            displacement::edit::create(tx, &[FaceId { solid: id, side }], 2, 0)?;
+            Ok(())
+        })
+        .unwrap();
+    cases.push((joined.into_vmf(), face));
+    for (vmf, source) in cases {
+        let mut invalid = Document::new(vmf);
+        let before = invalid.vmf().clone();
+        assert!(fit(&before, source, options()).is_err());
+        assert!(
+            invalid
+                .edit("invalid terrain overlay", |tx| create(
+                    tx,
+                    source,
+                    options()
+                ))
+                .is_err()
+        );
+        assert_eq!(invalid.vmf(), &before);
+        assert_eq!(invalid.revision(), 0);
+    }
+}
+
+#[test]
+fn planar_terrain_and_flat_rebinding_share_same_entity_and_undo() {
+    let (mut document, terrain) = terrain_fixture(false);
+    let flat = document
+        .edit("separate flat destination", |tx| {
+            let ObjectId::Solid(solid) = edit::create_block(
+                tx,
+                DVec3::new(512.0, 512.0, 0.0),
+                DVec3::new(640.0, 640.0, 16.0),
+                "test/checker",
+            )?
+            else {
+                unreachable!()
+            };
+            Ok(FaceId {
+                solid,
+                side: tx.solid_mut(solid)?.sides[0].id,
+            })
+        })
+        .unwrap();
+    let ObjectId::Entity(id) = document
+        .edit("overlay", |tx| create(tx, flat, options()))
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    for destination in [terrain, flat] {
+        let before = document.vmf().clone();
+        let expected = fit_rebind(&before, id, destination).unwrap();
+        document
+            .edit("rebind", |tx| rebind_faces(tx, id, &[destination]))
+            .unwrap();
+        assert_eq!(parse(document.entity(id).unwrap()).unwrap(), expected);
+        let after = document.vmf().clone();
+        document.undo().unwrap();
+        assert_eq!(document.vmf(), &before);
+        document.redo().unwrap();
+        assert_eq!(document.vmf(), &after);
+    }
+}
+
 fn coplanar_fixture(gap: f64, detail: bool) -> (Document, [FaceId; 2]) {
     let mut document = Document::empty();
     let faces = document
@@ -302,7 +518,7 @@ fn fitted_world_and_detail_trapezoids_roundtrip_with_one_undoable_creation() {
 }
 
 #[test]
-fn fitting_rejects_hidden_model_terrain_and_nonquad_targets_without_editing() {
+fn fitting_rejects_hidden_model_sculpted_terrain_and_nonquad_targets_without_editing() {
     let (document, face) = fixture(false);
     let mut hidden = document.vmf().clone();
     hidden.world.solids[0].hidden = true;
@@ -317,14 +533,26 @@ fn fitting_rejects_hidden_model_terrain_and_nonquad_targets_without_editing() {
     let mut terrain = Document::new(document.vmf().clone());
     terrain
         .edit("terrain", |tx| {
-            displacement::edit::create(tx, &[face], 2, 0)
+            displacement::edit::create(tx, &[face], 2, 0)?;
+            tx.solid_mut(face.solid)?
+                .sides
+                .iter_mut()
+                .find(|side| side.id == face.side)
+                .unwrap()
+                .displacement
+                .as_mut()
+                .unwrap()
+                .distances
+                .as_mut()
+                .unwrap()[2][2] = 8.0;
+            Ok(())
         })
         .unwrap();
     for (source, message) in [
         (hidden, "visible source face"),
         (model.into_vmf(), "world and func_detail"),
         (hidden_owner, "visible source face"),
-        (terrain.into_vmf(), "terrain brushes"),
+        (terrain.into_vmf(), "planar terrain"),
     ] {
         let mut document = Document::new(source);
         let before = document.vmf().clone();
@@ -652,8 +880,7 @@ fn refit_updates_only_existing_projection_and_preserves_raw_imported_metadata() 
         vmf::{Connection, Properties},
     };
 
-    for detail in [false, true] {
-        let (mut document, face) = fixture(detail);
+    for (mut document, face) in [fixture(false), fixture(true), terrain_fixture(false)] {
         let ObjectId::Entity(id) = document
             .edit("overlay", |tx| create(tx, face, options()))
             .unwrap()
@@ -1116,7 +1343,11 @@ fn corner_edits_keep_the_imported_frame_binding_settings_and_metadata() {
         (document, vec![face])
     });
     let (document, faces) = coplanar_fixture(48.0, true);
-    for (mut document, faces) in fixtures.into_iter().chain([(document, faces.to_vec())]) {
+    for (mut document, faces) in fixtures
+        .into_iter()
+        .chain([(document, faces.to_vec())])
+        .chain([terrain_fixture(false)].map(|(document, face)| (document, vec![face])))
+    {
         let face = faces[0];
         let anchor_first = faces.iter().rev().copied().collect::<Vec<_>>();
         let ObjectId::Entity(id) = document
@@ -1606,7 +1837,19 @@ fn corner_editing_retains_left_handed_axes_and_rejects_ambiguous_or_unsupported_
                 let mut terrain = Document::new(invalid);
                 terrain
                     .edit("terrain", |tx| {
-                        displacement::edit::create(tx, &[face], 2, 0)
+                        displacement::edit::create(tx, &[face], 2, 0)?;
+                        tx.solid_mut(face.solid)?
+                            .sides
+                            .iter_mut()
+                            .find(|side| side.id == face.side)
+                            .unwrap()
+                            .displacement
+                            .as_mut()
+                            .unwrap()
+                            .distances
+                            .as_mut()
+                            .unwrap()[2][2] = 8.0;
+                        Ok(())
                     })
                     .unwrap();
                 invalid = terrain.into_vmf();

@@ -9,19 +9,11 @@ use crate::faces::Face;
 use crate::map::Map;
 use crate::tree::Tree;
 
-const VERTEX_PRECISION: f64 = 10_000.0;
+use map_core::displacement::native::{vertex_key, vertex_position};
 const MAX_FACE_SOURCE_BYTES: usize = 64 * 1024 * 1024;
 
-fn vertex_key(point: DVec3) -> [i64; 3] {
-    (point * VERTEX_PRECISION).round().as_i64vec3().to_array()
-}
-
-fn vertex_position(key: [i64; 3]) -> [f32; 3] {
-    key.map(|v| (v as f64 / VERTEX_PRECISION) as f32)
-}
-
 pub(crate) fn stored_vertex(point: DVec3) -> DVec3 {
-    DVec3::from_array(vertex_position(vertex_key(point)).map(f64::from))
+    map_core::displacement::native::stored_vertex(point)
 }
 
 pub struct Model {

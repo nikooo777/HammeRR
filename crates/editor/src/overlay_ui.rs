@@ -601,8 +601,9 @@ fn refresh(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
             }
         } else {
             format!(
-                "Source · brush {} · face {} · world / detail quad",
-                source.solid, source.side
+                "Source · brush {} · face {} · {}",
+                source.solid, source.side,
+                if map_core::overlay::is_terrain(session.document().vmf(), source) { "isolated planar terrain quad" } else { "world / detail quad" }
             )
             .into()
         }
@@ -615,7 +616,7 @@ fn refresh(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
             "refit_error"
         }]
         .as_str()
-        .unwrap_or("Select exactly one visible world or detail quad face")
+        .unwrap_or("Select world/detail faces or one isolated planar terrain quad")
         .into()
     });
     let corners = if matches && draft["valid"] == true && form.reviewed.is_some() {
@@ -1230,6 +1231,108 @@ mod tests {
     use map_core::{BrushGeometry, ObjectId};
     use slint::Model;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn planar_terrain_overlay_controls_use_shared_displaced_frame() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let (_assets, game) = crate::test_assets::game();
+        let mut session = Session::new(Ok(game));
+        let ObjectId::Solid(solid) = session
+            .create_block(
+                Actor::User,
+                DVec3::new(-64.0, -64.0, 0.0),
+                DVec3::new(64.0, 64.0, 16.0),
+                "test/checker",
+                false,
+            )
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let source = FaceId {
+            solid,
+            side: session.document().solid(solid).unwrap().sides[0].id,
+        };
+        session
+            .edit(Actor::User, "elevated terrain", |tx| {
+                map_core::displacement::edit::create(tx, &[source], 2, 0)?;
+                tx.solid_mut(solid)?.sides[0]
+                    .displacement
+                    .as_mut()
+                    .unwrap()
+                    .elevation = 24.0;
+                Ok(())
+            })
+            .unwrap();
+        session
+            .select_faces(&[source], crate::session::SelectMode::Replace)
+            .unwrap();
+        let before = session.document().vmf().clone();
+        let expected = map_core::overlay::fit(
+            &before,
+            source,
+            Options {
+                material: "test/checker".into(),
+                ..Options::default()
+            },
+        )
+        .unwrap();
+        let shared = Arc::new(Mutex::new(session));
+        let controller = Controller::new(&shared).unwrap();
+        controller.show(&mut lock(&shared), "test/checker").unwrap();
+        assert!(controller.window.get_can_preview());
+        assert!(
+            controller
+                .window
+                .get_source_label()
+                .contains("isolated planar terrain")
+        );
+        controller.window.invoke_fit();
+        assert!(
+            controller.window.get_ready(),
+            "{}",
+            controller.window.get_message()
+        );
+        assert_eq!(
+            lock(&shared).get_overlay_state()["draft"]["corners"],
+            serde_json::json!(expected.corners())
+        );
+        assert_eq!(lock(&shared).document().vmf(), &before);
+        controller.window.invoke_apply();
+        let id = lock(&shared)
+            .document()
+            .vmf()
+            .entities
+            .iter()
+            .find(|entity| entity.classname() == Some("info_overlay"))
+            .unwrap()
+            .id;
+        controller.show(&mut lock(&shared), "test/checker").unwrap();
+        assert!(controller.window.get_can_refit());
+        assert!(controller.window.get_can_edit_corners());
+        controller.window.invoke_edit_corners();
+        assert!(controller.window.get_corners_mode());
+        controller.window.invoke_preview_corners();
+        assert!(
+            controller.window.get_ready(),
+            "{}",
+            controller.window.get_message()
+        );
+        assert_eq!(
+            lock(&shared).get_overlay_state()["draft"]["entity"],
+            format!("entity:{id}")
+        );
+        controller.window.invoke_cancel();
+        assert!(lock(&shared).get_overlay_state()["draft"].is_null());
+        controller.window.hide().unwrap();
+    }
 
     #[test]
     fn coplanar_multiface_overlay_controls_use_complete_selection_and_show_count() {

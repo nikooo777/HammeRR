@@ -7,6 +7,7 @@ pub mod brush;
 pub mod collision;
 pub mod edit;
 pub mod lod;
+pub mod native;
 pub mod neighbors;
 pub mod resample;
 pub mod sew;

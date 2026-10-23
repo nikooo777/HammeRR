@@ -289,9 +289,6 @@ fn source_face(vmf: &Vmf, face: FaceId) -> Result<(DVec3, Vec<DVec3>), String> {
     if owner.is_some_and(|entity| entity.classname() != Some("func_detail")) {
         return Err("Overlay fitting supports world and func_detail faces only".into());
     }
-    if solid.sides.iter().any(|side| side.displacement.is_some()) {
-        return Err("Overlay fitting does not support terrain brushes".into());
-    }
     let index = solid
         .sides
         .iter()
@@ -319,13 +316,176 @@ fn source_face(vmf: &Vmf, face: FaceId) -> Result<(DVec3, Vec<DVec3>), String> {
             "Overlay source vertices must fit ±{SOURCE_COORDINATE_LIMIT} units"
         ));
     }
+    if let Some(info) = &solid.sides[index].displacement {
+        return terrain_source(vmf, face, target, info);
+    }
+    if solid.sides.iter().any(|side| side.displacement.is_some()) {
+        return Err("Overlay fitting does not support terrain brushes' cage faces".into());
+    }
     Ok((target.plane.normal, target.vertices.clone()))
+}
+
+pub fn is_terrain(vmf: &Vmf, face: FaceId) -> bool {
+    vmf.solids()
+        .find(|solid| solid.id == face.solid)
+        .and_then(|solid| solid.sides.iter().find(|side| side.id == face.side))
+        .is_some_and(|side| side.displacement.is_some())
+}
+
+fn terrain_source(
+    vmf: &Vmf,
+    face: FaceId,
+    target: &crate::brush::Face,
+    info: &source_formats::vmf::DispInfo,
+) -> Result<(DVec3, Vec<DVec3>), String> {
+    use crate::displacement::{native, surface};
+    if vmf.entities.iter().any(|entity| {
+        !entity.hidden
+            && entity
+                .classname()
+                .is_some_and(|class| class.eq_ignore_ascii_case("func_instance"))
+    }) {
+        return Err("Terrain overlay authoring cannot prove isolation with visible instance references; hide them in saved map visibility or use an imported overlay. Temporary editor hiding does not qualify".into());
+    }
+    let (base, mesh) = native::checked_mesh(target, info)?;
+    crate::displacement::smoothing::angle(info)?;
+    crate::displacement::triangles::native_tags(info, &mesh).map_err(|error| error.to_string())?;
+    let prepared = surface::prepare(vmf);
+    let current = prepared
+        .get(&face)
+        .ok_or("Overlay target has no prepared terrain surface")?;
+    let bounds = |mesh: &crate::displacement::DisplacementMesh| {
+        mesh.base_positions
+            .iter()
+            .map(|point| native::stored_vertex(*point))
+            .fold((DVec3::MAX, DVec3::MIN), |(mins, maxs), point| {
+                (mins.min(point), maxs.max(point))
+            })
+    };
+    let (mins, maxs) = bounds(&mesh);
+    if prepared.meshes.iter().any(|(other, mesh)| {
+        let (other_mins, other_maxs) = bounds(mesh);
+        *other != face
+            && (mins - DVec3::splat(ON_EPSILON)).cmple(other_maxs).all()
+            && (maxs + DVec3::splat(ON_EPSILON)).cmpge(other_mins).all()
+    }) {
+        return Err("Overlay terrain fitting requires an isolated patch; separate touching or overlapping terrain base bounds, or use an imported overlay".into());
+    }
+    if current.positions != mesh.positions {
+        return Err("Overlay fitting does not support seam-adjusted terrain".into());
+    }
+    let (normal, corners) =
+        planar_terrain_quad(&current.positions, mesh.size, target.plane.normal)?;
+    let native = native::positions(
+        base,
+        bsp::DisplacementInfo {
+            start: native::stored_vertex(mesh.base_positions[0])
+                .as_vec3()
+                .to_array(),
+            power: info.power as i32,
+            ..Default::default()
+        },
+        native::vertices(&mesh),
+    )?
+    .into_iter()
+    .map(|point| DVec3::from_array(point.map(f64::from)))
+    .collect::<Vec<_>>();
+    planar_terrain_quad(&native, mesh.size, normal)?;
+    let origin = corners[0];
+    if native
+        .iter()
+        .any(|point| normal.dot(*point - origin).abs() > ON_EPSILON)
+        || corners
+            .iter()
+            .zip([
+                0,
+                (mesh.size - 1) * mesh.size,
+                mesh.size * mesh.size - 1,
+                mesh.size - 1,
+            ])
+            .any(|(corner, index)| !corner.abs_diff_eq(native[index], ON_EPSILON))
+    {
+        return Err("Overlay terrain differs from native surface precision".into());
+    }
+    Ok((normal, corners))
+}
+
+fn planar_terrain_quad(
+    positions: &[DVec3],
+    size: usize,
+    facing: DVec3,
+) -> Result<(DVec3, Vec<DVec3>), String> {
+    let corners = [0, (size - 1) * size, size * size - 1, size - 1].map(|index| positions[index]);
+    let normal = (corners[3] - corners[0])
+        .cross(corners[1] - corners[0])
+        .try_normalize()
+        .ok_or("Overlay terrain requires a nondegenerate planar quad")?;
+    if normal.dot(facing) <= 0.0
+        || positions.iter().any(|point| {
+            !point.is_finite()
+                || point.abs().max_element() > SOURCE_COORDINATE_LIMIT
+                || normal.dot(*point - corners[0]).abs() > ON_EPSILON
+        })
+    {
+        return Err("Overlay fitting supports planar terrain only; sculpted or nonplanar terrain is unavailable".into());
+    }
+    for row in 0..size {
+        for column in 0..size {
+            let point = positions[row * size + column];
+            for edge in 0..4 {
+                let a = corners[edge];
+                let b = corners[(edge + 1) % 4];
+                if a.distance_squared(b) < QUAD_AREA_EPSILON
+                    || (a - b).cross(point - a).dot(normal) / a.distance(b) < -ON_EPSILON
+                {
+                    return Err("Overlay terrain must stay inside its convex quad boundary".into());
+                }
+            }
+            let edge = if column == 0 {
+                Some((corners[0], corners[1]))
+            } else if column == size - 1 {
+                Some((corners[3], corners[2]))
+            } else if row == 0 {
+                Some((corners[0], corners[3]))
+            } else if row == size - 1 {
+                Some((corners[1], corners[2]))
+            } else {
+                None
+            };
+            if edge.is_some_and(|(a, b)| {
+                let edge = b - a;
+                let t = ((point - a).dot(edge) / edge.length_squared()).clamp(0.0, 1.0);
+                !point.abs_diff_eq(a + edge * t, ON_EPSILON)
+            }) {
+                return Err("Overlay terrain requires four straight quad boundary edges".into());
+            }
+        }
+    }
+    let triangles = bsp::DisplacementInfo {
+        power: (size - 1).ilog2() as i32,
+        ..Default::default()
+    }
+    .triangle_indices()
+    .map_err(|error| error.to_string())?;
+    if triangles.iter().any(|[a, b, c]| {
+        (positions[*a] - positions[*b])
+            .cross(positions[*c] - positions[*b])
+            .dot(normal)
+            < QUAD_AREA_EPSILON
+    }) {
+        return Err("Overlay terrain contains collapsed or folded surface triangles".into());
+    }
+    Ok((normal, corners.to_vec()))
 }
 
 pub fn fit(vmf: &Vmf, face: FaceId, options: Options) -> Result<Definition, String> {
     vmf.validate_ids().map_err(|error| error.to_string())?;
     let (normal, vertices) = source_face(vmf, face)?;
-    fit_source(face, normal, &vertices, options)
+    let definition = fit_source(face, normal, &vertices, options)?;
+    if is_terrain(vmf, face) {
+        validate_editable_projection(&definition, &definition)?;
+    }
+    Ok(definition)
 }
 
 fn fit_source(
@@ -400,6 +560,12 @@ fn coplanar_bounds(
     faces: &[FaceId],
     definition: &Definition,
 ) -> Result<([f64; 2], [f64; 2]), String> {
+    if faces.len() > 1 && faces.iter().any(|face| is_terrain(vmf, *face)) {
+        return Err(
+            "Overlay terrain authoring requires exactly one isolated planar displacement source"
+                .into(),
+        );
+    }
     let origin = DVec3::from_array(definition.basis_origin);
     let normal = DVec3::from_array(definition.basis_normal);
     let u = DVec3::from_array(definition.basis_u);

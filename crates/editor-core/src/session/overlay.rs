@@ -148,10 +148,17 @@ impl Session {
     }
 
     fn validate_overlay_sources(&self, sources: &[FaceId]) -> Result<(), String> {
-        if sources.len() <= 1 {
+        if !self.overlay_sources_need_validation(sources) {
             return Ok(());
         }
         self.validate_overlay_source_set(sources)
+    }
+
+    fn overlay_sources_need_validation(&self, sources: &[FaceId]) -> bool {
+        sources.len() > 1
+            || sources
+                .iter()
+                .any(|source| overlay::is_terrain(self.document.vmf(), *source))
     }
 
     fn validate_overlay_source_set(&self, sources: &[FaceId]) -> Result<(), String> {
@@ -183,6 +190,13 @@ impl Session {
                 entry.insert((tool, semantics));
             }
             let (tool, semantics) = materials.get(&path).unwrap();
+            if side.displacement.is_some() {
+                map_core::displacement::native::validate_material(
+                    semantics.draws,
+                    semantics.contents,
+                    semantics.surface,
+                )?;
+            }
             if !semantics.draws || !semantics.unsupported_flags.is_empty() {
                 return Err(format!(
                     "Overlay brush {} face {} requires a known rendering material with supported compile flags",
@@ -201,7 +215,7 @@ impl Session {
 
     fn selected_overlay_source(&self) -> Result<(Vec<FaceId>, Definition), String> {
         if !self.face_mode || self.face_selection.is_empty() {
-            return Err("Select exactly one visible world or func_detail quad face".into());
+            return Err("Select world/detail faces or one isolated planar terrain quad".into());
         }
         self.overlay_context()?;
         source_budget(self.face_selection.len())?;
@@ -241,6 +255,7 @@ impl Session {
             return Err("Select exactly one visible existing overlay to refit".into());
         };
         let (face, definition) = overlay::fit_existing(self.document.vmf(), *id)?;
+        self.validate_overlay_sources(&[face])?;
         Ok((*id, face, definition))
     }
 
@@ -387,11 +402,11 @@ impl Session {
             "selection_error":selection_error,"draft":draft,
             "selected_overlay":selected_overlay,"refit_error":refit_error,
             "selected_corners":selected_corners,"corners_error":corners_error,
-            "policy":"Create on one visible world/detail quad, refit one existing overlay to its single bound quad, or explicitly rebind it to a different visible world/detail quad. Refit and rebind preserve the entity ID, authored option strings, connections and metadata. Preview changes no geometry, selection or history. Review transfers ownership; Apply is one Undo step. Corner editing changes four local U/V positions in the existing projection frame while retaining the source binding, basis and raw settings. Corners must remain convex, native-representable and on the bound face plane. Existing bindings must contain one eligible quad; multiside and automatic rebinding are unavailable.",
+            "policy":"Create on visible world/detail quads or one isolated planar terrain quad, refit an existing overlay, or explicitly rebind it to a different eligible source. Terrain uses every prepared and native sample, with four straight boundary edges; touching or overlapping terrain base bounds, visible instance references, sculpted/nonplanar surfaces and terrain multiside bindings are unavailable. Refit and rebind preserve the entity ID, authored option strings, connections and metadata. Preview changes no geometry, selection or history. Review transfers ownership; Apply is one Undo step. Corner editing changes four local U/V positions in the existing projection frame while retaining the source binding, basis and raw settings. Corners must remain convex, native-representable and on the bound face plane. Existing bindings must contain one eligible quad; multiside and automatic rebinding are unavailable.",
         });
         if multiple {
             state["policy"] = json!(
-                "Create one overlay across visible coplanar world/detail faces facing the same direction, starting with a quad. The first quad supplies the projection axes; one U/V rectangle spans all real source loops. Refit an existing multi-face overlay only with an explicit eligible reference quad from its unchanged bindings; its current edges set the new projection axes. Numeric and viewport corner editing use the stored projection axes without choosing a new reference and retain every existing binding. Native rendering clips to every bound side, including gaps between faces. Preview changes no map, selection or history; Review transfers ownership and Apply is one Undo step. Explicit rebind replaces valid single or multiple bindings with a different bounded coplanar destination set and its explicit first-quad frame. Terrain, brush models and automatic rebinding are unavailable."
+                "Create one overlay across visible coplanar world/detail faces facing the same direction, starting with a quad. The first quad supplies the projection axes; one U/V rectangle spans all real source loops. Refit an existing multi-face overlay only with an explicit eligible reference quad from its unchanged bindings; its current edges set the new projection axes. Numeric and viewport corner editing use the stored projection axes without choosing a new reference and retain every existing binding. Native rendering clips to every bound side, including gaps between faces. Preview changes no map, selection or history; Review transfers ownership and Apply is one Undo step. Explicit rebind replaces valid single or multiple bindings with a different bounded coplanar destination set and its explicit first-quad frame. Terrain is limited to a single isolated planar displacement with straight quad edges; brush models and automatic rebinding are unavailable."
             );
         }
         state
@@ -567,7 +582,9 @@ impl Session {
             .chain(additional_sources.iter().copied())
             .collect::<Vec<_>>();
         let (previous, definition) = overlay::fit_rebind_faces(self.document.vmf(), id, &sources)?;
-        if previous.len() > 1 || sources.len() > 1 {
+        if self.overlay_sources_need_validation(&previous)
+            || self.overlay_sources_need_validation(&sources)
+        {
             self.validate_overlay_source_set(&previous)?;
             self.validate_overlay_source_set(&sources)?;
         }
@@ -604,8 +621,10 @@ impl Session {
             source,
             additional_sources: additional_sources.to_vec(),
             previous_sources: previous_sources.to_vec(),
-            visibility: (!additional_sources.is_empty() || previous_sources.len() > 1)
-                .then(|| self.overlay_visibility_stamp()),
+            visibility: (!additional_sources.is_empty()
+                || self.overlay_sources_need_validation(previous_sources)
+                || overlay::is_terrain(self.document.vmf(), source))
+            .then(|| self.overlay_visibility_stamp()),
             definition,
             operation,
             handles: None,
@@ -655,7 +674,10 @@ impl Session {
         let operation = draft.operation;
         let previous_sources = draft.previous_sources.clone();
         let corners = draft.definition.uv_points.map(|point| [point[0], point[1]]);
-        if !previous_sources.is_empty() && (previous_sources.len() > 1 || sources.len() > 1) {
+        if !previous_sources.is_empty()
+            && (self.overlay_sources_need_validation(&previous_sources)
+                || self.overlay_sources_need_validation(&sources))
+        {
             self.validate_overlay_source_set(&previous_sources)?;
             self.validate_overlay_source_set(&sources)?;
         } else {

@@ -2,61 +2,40 @@
 
 # Object groups
 
-Keep world brushes and whole entities together in native VMF groups. Groups can
-contain other groups, so an assembly retains its smaller sets of objects.
+Select and edit an assembly as one group.
 
-## Create and edit groups
+## Create a group
 
-1. Select objects, then open **Object groups…** in the inspector.
-2. Choose **New from selection** and enter a **Group name**. Completely selected
-   existing groups become nested members.
-3. Review **Direct members**. **Add current selection** adds the current objects;
-   choose a group on the left and use **Add chosen group** to nest it.
-4. To change nesting, choose a group on the left and click **Use chosen parent**,
-   or choose **Make root**. **Remove** returns a member to the edited group's
-   previous parent when applied.
-5. Choose **Apply group** to record one Undo step. **Cancel**, Escape or **Close**
-   discards the draft. Save the VMF to keep applied changes.
+1. Select the objects.
+2. Open **Object groups…**.
+3. Click **New from selection**.
+4. Enter **Group name**.
+5. Review **Direct members**.
+6. Click **Apply group**.
 
-Choose an existing group and **Edit group** to change its name, parent or direct
-members. Invalid cycles and missing members appear in the draft and disable
-**Apply group**. A map edit or map replacement makes an older draft unusable.
+**Add current selection** adds members.
+**Use chosen parent** changes nesting.
+Cancel discards the pending changes.
 
-![Object group hierarchy, membership and ungroup review](images/object-groups.png)
+## Select or dissolve a group
 
-## Select and ungroup
+1. Choose a group in **Object groups…**.
+2. Choose the selection combine mode.
+3. Select its members.
 
-1. Ordinary viewport picks and MCP object selection select the outermost group.
-   Ctrl+click toggles that group as one unit. Area, volume and paint selection
-   use the same groups; **Fully inside** requires the complete visible group.
-2. Choose a group in **Object groups…**, choose **Replace selection**,
-   **Add to selection**, **Remove from selection** or **Toggle selection**, then
-   choose **Select group**. This selects an inner group without its ancestors.
-3. Use a member's **Select** button to select that member explicitly. Enable
-   **Bypass groups** to pick individual objects in the viewport. This setting
-   changes selection behavior without changing the saved groups.
-4. Hidden peers are excluded by default. **Include hidden members** allows
-   explicit group or member selection to include them.
-5. To dissolve a group, choose **Ungroup…**, review its direct members, then
-   choose **Ungroup**. Members move to its parent; nested groups remain intact.
-   Undo restores the group and all memberships together.
+Ordinary picking selects the outermost visible group.
+Use a member's **Select** button for an explicit member selection.
+Enable group bypass to pick individual objects temporarily.
+**Include hidden members** includes hidden peers.
 
-In **Objects** mode, Alt+click cycles overlapping hits in depth order. An
-outermost group appears once even if several members lie under the cursor.
-Each click replaces the selection with the next whole group; **Bypass groups**
-keeps the same gesture and cycles individual objects instead. Alt does not
-change the **Bypass groups** setting. See [Selecting](selection.md#cycle-overlapping-objects).
+To dissolve a group, use **Ungroup…** and review its members.
+The member geometry remains in the map.
 
 ## Limits
 
-- Grouping edits world brushes and whole entities. Imported membership links on
-  brushes inside an entity are preserved and reported; those child links are
-  not editable here. Ungroup is blocked while those brushes reference the group.
-- Malformed imported group graphs are preserved and reported. Repair is outside
-  this workflow; ordinary object selection remains available.
-- Groups support 8,192 records, 8,192 direct members per edit, 64 nested levels
-  and names of up to 128 characters. Group and member lists are paginated.
-- Group bypass is a session setting. Changing it cancels pending area, volume
-  and paint selection previews. Faces retain their individual selection rules.
-- Explicit object IDs passed to transform or placement operations retain their
-  exact scope. Select a group first to operate on its complete selection.
+- 8192 group records, 8192 direct members per edit, and 64 nesting levels.
+- Group names have at most 128 characters.
+- Imported invalid group graphs remain preserved and reported.
+- Editing entity-owned child-brush memberships is unavailable.
+- Group bypass is session-local. It does not affect individual face selection.
+- Explicit transform/placement IDs keep their exact scope; select the complete group first when required.

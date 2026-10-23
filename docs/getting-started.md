@@ -2,101 +2,63 @@
 
 # Getting started
 
+Create, edit and compile Counter-Strike: Source maps on Linux.
+
 ## Requirements
 
-- **Linux.**
-- **Rust 1.92 or newer.**
-- **A Vulkan-capable graphics driver** for the editor window and rendered views. Headless editing and compiling work without one.
-- **FFmpeg and ffplay** on `PATH` for optional [sound audition and audio export](sounds.md).
-- **Counter-Strike: Source** installed through Steam. HammeRR uses its materials and entity definitions, and launches the Linux client to play compiled maps.
-- **Cage, grim and Bubblewrap** for optional [generated reflections](reflections.md). Capture also needs a running Steam client and usable Linux user namespaces.
+- Linux, Rust 1.92 or later, and a C++20 compiler.
+- Counter-Strike: Source installed through Steam.
+- A Vulkan driver for the editor and rendered views.
+- FFmpeg and ffplay for [sound previews](sounds.md).
+- Cage, grim, Bubblewrap and running Steam for [reflection capture](reflections.md).
 
-## Build
+Editing and compilation without rendered views do not need a GPU.
 
-```sh
-cargo build --release -p editor -p editor-core -p compiler -p native-runtime
-```
+## Build and launch
 
-This produces five programs in `target/release/`:
+1. Build the programs:
 
-| Program | Purpose |
+   ```sh
+   cargo build --release -j8 -p editor -p editor-core -p compiler -p native-runtime
+   ```
+
+2. Open a map:
+
+   ```sh
+   ./target/release/editor path/to/map.vmf
+   ```
+
+   Omit the filename to start an empty map.
+
+3. Click **Save as…** to choose a `.vmf` destination.
+4. Use **Save** or **Ctrl+S** for later changes.
+
+The editor finds the Steam game installation and SDK entity definitions automatically.
+Keep `hammerr-physics` and `hammerr-native-runtime` beside the other programs.
+These helpers support engine collision and reflection capture.
+
+![Textured brush courtyard and model props](images/showcase-editor.png)
+
+## Other content
+
+| Option | Use |
 | --- | --- |
-| `editor` | The map editor, including its MCP server for AI agents. |
-| `hammerr-headless` | The same editing session and stdio MCP tools, with a GUI-independent build. See [Without a window](mcp.md#without-a-window). |
-| `hammerr-compile` | The standalone map compiler. |
-| `hammerr-physics` | A helper used when building maps with CS:S engine physics. Keep it in the same folder as the other programs. |
-| `hammerr-native-runtime` | The private client helper for [generated reflections](reflections.md). Keep it beside the editor, headless server and compiler. |
+| `--game <gameinfo.txt>` | Choose the game content search paths. |
+| `--fgd <file.fgd>` | Choose entity definitions. |
+| `--mcp-port <port>` | Change the default MCP port, `7377`. |
+| `--no-mcp` | Disable the desktop MCP server. |
+| `--headless` | Use stdio MCP without a window. |
 
-## Launch
+Add custom content through the search paths in `gameinfo.txt`.
+The reader supports directories and VPK archives.
 
-```sh
-./target/release/editor path/to/map.vmf
-```
+## Limits
 
-Leave out the filename to start with an empty map. HammeRR finds Counter-Strike: Source through Steam and loads its materials and SDK entity definitions automatically.
+- File operations and game launching require Linux.
+- Invalid imports leave the current map open. Nesting is limited to 256 blocks.
+- Save retains imported properties and extra blocks. It uses standard VMF formatting.
+- A changed or conflicting destination blocks Save. Use **Save as…** to review the destination again.
+- Failed saves retain unsaved changes. A reported write-verification error can mean the file was already written.
+- Other-editor round trips are unverified.
 
-Saving increments the VMF's map version and uses standard VMF formatting while retaining imported properties and extra blocks. Round trips through other editors haven't been verified yet.
-
-Imports accept at most 256 nested blocks. An excessive or malformed import
-leaves the current map intact. Raw property keys/values, classnames, material
-names and group names cannot contain literal double quotes; invalid edits are
-rejected. Quoted unknown block names, including names containing spaces, remain
-quoted when saved. Serialization failures leave the existing file intact and
-appear as save or recovery errors.
-
-Saving through a file symlink updates its target and preserves the link and target permissions. Broken or looping links are refused. Failed saves preserve unsaved changes; repair the path or choose another destination and save again.
-
-Open maps and build outputs reserve their physical files inside the application,
-including aliases and hard links. A conflicting Open, Save or Compile fails
-without replacing the current map or output. If a source file or its directory
-changes outside HammeRR, an ordinary Save rejects the stale path. Use **Save as…**
-to choose the intended destination again, including the same filename.
-
-Opening, saving and compiler publication require Linux. Writes retain the destination
-directory while writing; manual writers and separate application processes do
-not participate in the application's reservations. A warning after publication
-means the file was written but its path could not be verified; inspect the
-destination before choosing it again.
-
-Discard confirmations apply to the map state you reviewed. If the map changes
-before New, Open, Recent maps or recovery replaces it, the action asks you to
-review again. Save and Compile file choosers also reject a buffer replaced while
-the chooser was open; edits within the same buffer remain allowed.
-
-## Save to another file
-
-1. Click **Save as…** in the toolbar, or press **Ctrl+Shift+S**.
-2. Choose a folder and filename in **Save map as**. The chooser starts with the
-   current filename and folder; unnamed maps start with `untitled.vmf`.
-3. Confirm the destination. It becomes the current source file for later
-   **Save** / **Ctrl+S**. Cancel leaves the map and current source unchanged.
-
-![Save as and the two toolbar rows](images/save-as-controls.png)
-
-Choosing a destination again does not merge external edits. A chooser opened
-before New or Open replaces the buffer cannot save the replacement map.
-
-## Launch options
-
-| Option | Purpose |
-| --- | --- |
-| `--game <gameinfo.txt>` | Load content from a specific game installation instead of the one found through Steam. |
-| `--fgd <file.fgd>` | Load another entity definition file, including the files it includes. |
-| `--mcp-port <port>` | Serve MCP on another port. The default is `7377`. |
-| `--no-mcp` | Don't start the MCP server. |
-| `--headless` | Run without a window and serve MCP over stdin/stdout. Graphics start only when a render is requested. See [AI agents and MCP](mcp.md#without-a-window). |
-
-## Game content
-
-HammeRR reads materials from the search paths listed in `gameinfo.txt`, including VPK archives.
-
-`--game` accepts absolute paths, relative paths and a filename in the current directory. Search-path tokens resolve from the supplied gameinfo location, including when that file is a symlink.
-
-- To use extra content, add its folder to the `gameinfo.txt` search paths. The folder itself may be a symlink.
-- Links inside a content folder must point somewhere inside that same folder. Directory loops are not followed repeatedly.
-
-## Next steps
-
-- Learn the window, previews and navigation in [Editor basics](basics.md).
-- Connect an AI agent with [AI agents and MCP](mcp.md).
-- Build and play your map with [Compile and play](compile-and-play.md).
+Next: [Editor basics](basics.md), [AI agents](mcp.md) or [Compile and play](compile-and-play.md).

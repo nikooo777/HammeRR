@@ -1,116 +1,45 @@
 [← Manual](README.md)
 
-# Physics and brush-model mass
+# Physics
 
-Build collision bodies with the installed CS:S physics library. Brush-model
-base masses come from the mounted material surface definitions and compiled
-geometry. Individual collision faces retain their own contact properties.
+Build collision bodies with the installed CS:S physics library.
 
-1. Select a brush entity. Set **Selection** to **Objects** to apply one material
-   across it, or **Faces · materials & textures** to assign individual faces.
-2. Click **Browse materials…**, choose a material, then **Use material** and
-   **Apply**. The material's `$surfaceprop` selects its physical properties;
-   a valid material without that field uses the defined `default` property.
-3. Open **Build settings…** and choose **Physics bodies → CS:S engine physics**.
-   Click **Close**, then **Compile**.
-4. Open **Build details…**. The entity diagnostic reports its base mass in
-   kilograms and the surface property used. Repair any missing material,
-   surface manifest or definition reported by the build, then compile again.
+1. Assign materials to world geometry or brush-entity faces.
+2. Open **Build settings…**.
+3. Choose **Physics bodies → CS:S engine physics**.
+4. Click **Close**, then **Compile**.
+5. Read **Build details… → Diagnostics**.
 
-![Physics settings](images/build-settings.png)
+Materials select contact properties through `$surfaceprop`.
+A valid material without that field uses the defined `default` surface property.
+Missing or malformed required definitions fail the build.
 
-If native collision fails, **Build details… → Diagnostics** identifies the
-construction or verification stage, VMF solid, owning entity/class/name and
-checked bounds. Instance failures identify the parent instance and original
-child file/object. Generated water hulls are labeled separately with their wet
-leaf and bounds. Repair the named geometry and compile again; a rejected hull
-stops publication and preserves the previous BSP. Convex bodies pass their checked
-faces and edges directly to the native constructor, retaining small carved
-fragments. Geometry that collapses in native coordinates or has invalid topology
-is rejected explicitly.
+## Brush-model mass
 
-For mixed-material models, the property covering the greatest emitted face
-area determines the base mass. Equal areas keep the first emitted property.
-This choice does not replace the per-face contact materials. Solid materials
-use collision volume and density; shell materials use emitted surface area,
-thickness and density. Base masses are capped at 50,000 kg. Positive
-`func_physbox` **Mass Scale** and **Override Parameters** apply later in the game;
-`phys_convert` **Mass Override** can replace the mass after conversion.
+The material with the greatest emitted face area determines base mass.
+Per-face contact materials remain separate. Solid materials use volume and density; shell materials use area, thickness and density.
+Base mass is capped at 50,000 kg.
 
-Limits: Linux64 with the verified installed CS:S physics library. Surface
-definitions load in manifest order from the same game content mounts as
-materials. Native inheritance and the declared density/thickness must agree.
-Missing or malformed assets, undefined bases, invalid density/thickness and
-unsupported native property indices stop the build and preserve previous
-output. The bounded loader accepts at most 64 definition files, 8 MiB of text,
-4,096 property definitions and 511-byte tokens. Native mass properties must
-resolve to indices 0–127. The existing 127-name shared contact table still
-applies. Custom density controls and broader moving-body collision behavior
-remain unfinished.
+`func_physbox` **Mass Scale** and **Override Parameters** apply later in the game.
+`phys_convert` **Mass Override** can replace mass after conversion.
 
 ## Terrain contact surfaces
 
-Paint terrain contact properties with a material that declares primary
-`$surfaceprop` and secondary `$surfaceprop2` values.
+Supported terrain uses the compiled surface and its material contact properties.
+Blended terrain can select properties through its authored blend values.
+Use [terrain collision controls](terrain.md#collision-and-triangle-classes) to change physics, player and ray collision separately.
 
-1. Set **Selection → Faces · materials & textures** and select terrain faces.
-   Click **Browse materials…**, choose a two-texture material with both surface
-   properties, then **Use material** and **Apply**.
-2. Open **Edit terrain…** and choose **Operation → Paint blend**. Set
-   **Brush center · world coordinates** and **Radius · world units**.
-3. Set **Blend value · 0 first texture, 255 second texture** and
-   **Strength · 0 leaves terrain unchanged, 1 applies fully**. For a uniform
-   contact patch, choose **Operation → Fill blend**: `0` selects the primary
-   property throughout the grid and `255` selects the secondary. Click **Preview**,
-   then **Apply**. See [Paint a material blend](terrain.md#paint-a-material-blend)
-   for fills, inversion and viewport strokes.
-4. Open **Build settings…**, choose **Physics bodies → CS:S engine physics**,
-   then **Close** and **Compile**.
-5. Open **Build details…** to inspect **Surface properties** and **Diagnostics**.
-   Repair any invalid secondary property or missing mounted surface definitions
-   before compiling again.
+## Water
 
-![Terrain blend painting controls](images/terrain-blend-controls.png)
+Eligible water generates fluid behavior. See [water](water.md) for current, pressure damping and invisible fluid helpers.
 
-Limits: each compiled collision triangle uses one property. Its three stored
-32-bit (`f32`) alpha values, added in triangle order, must sum to strictly more than
-382.5 to select `$surfaceprop2`; equality selects `$surfaceprop`. A missing
-`$surfaceprop2` retains the primary at every weight. Friction and other physical
-properties do not blend continuously. Mixed-resolution borders use the emitted
-LOD triangles. An explicit invalid or undefined secondary name, or missing
-surface definitions, stops the build and preserves the previous BSP.
+![A native physics crate floats in compiled water](images/water-buoyancy-native.png)
 
-An incomplete or inconsistent world collision body, fluid controller or surface
-material table stops the build and preserves the previous BSP.
+## Limits
 
-## Stationary invisible water
-
-Create up to two separate nodraw cuboids through the
-[stationary invisible water](water.md#stationary-invisible-water) workflow.
-Each volume has its own inline model and nonempty collision body. Both require
-**Physics bodies → CS:S engine physics** and dry, conservatively disjoint space.
-
-Touching or overlapping volumes, other retained WATER/SLIME geometry, authored
-world current/damping, movement, parenting and rendered surfaces are unsupported.
-A failed ownership, body or contents check stops publication.
-
-## Physical water current
-
-Supported structural-world water can carry a map-wide steady velocity for
-VPhysics bodies. Open **World settings…**, find **Water current · world units/s**,
-stage its **X**, **Y**, **Z** values, then click **Apply properties**. Use
-**Build settings… → Physics bodies → CS:S engine physics** and compile.
-See [Steady physical current](water.md#steady-physical-current) for the full
-workflow and source-property removal.
-
-Absence intentionally means zero velocity without a stored override. A stored
-value, including explicit zero, requires eligible emitted structural-world WATER.
-The finite vector's length is at most 128 world units/s and its source text is at
-most 128 UTF-8 bytes. The compiler converts authored units once for the checked
-native fluid controller; no normalization or clamping is applied. **Water pressure
-damping** selects a separate dimensionless coefficient from 0 to 0.01, defaulting
-to 0.01 when absent. Zero retains the native fixed pressure term. Either stored
-control requires engine physics and supported emitted water. Native provider
-velocity does not promise a terminal body speed or settling time. Per-pool
-controls, player/NPC currents and slime/detail/model liquid currents remain
-unavailable. See [Water pressure damping](water.md#water-pressure-damping). Rejected values/builds preserve previous output.
+- Verified Linux64 CS:S physics library required.
+- Missing, malformed, collapsed or unsupported hulls fail explicitly and preserve previous output.
+- Failure diagnostics identify the construction stage, source object and checked bounds.
+- Surface definitions follow mounted manifest order and checked native property limits.
+- Preview model bounds do not establish native collision shapes.
+- Custom density controls and broader moving-body behavior remain unfinished.

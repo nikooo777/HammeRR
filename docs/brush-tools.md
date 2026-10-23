@@ -2,87 +2,58 @@
 
 # Hollow, carve and clip
 
+Turn solid geometry into rooms, openings and cut shapes.
+
 ## Hollow
 
-Turn solid brushes into rooms with walls.
+1. Select the source brushes.
+2. Open **Hollow brushes…**.
+3. Set wall thickness.
+4. Choose **Inside the original size** or **Outside the original size**.
+5. Check the faces to remove under **Openings**.
+6. Click **Preview walls**.
+7. Inspect the cavity with **Look inside**.
+8. Click **Create walls**.
 
-1. Select solid brushes or brush entities and open **Hollow brushes…**.
-2. Set the wall thickness and choose:
-   - **Inside the original size**: the outer shape stays the same.
-   - **Outside the original size**: the original shape becomes the empty interior.
-3. Under **Openings**, check the faces that should stay open, such as the roof. Each brush needs at least one wall.
-4. Click **Preview walls**. **Look inside** moves the camera into the cavity (pick its number when hollowing several brushes). Wireframe mode also shows the walls from outside.
-5. **Create walls** replaces the originals.
+![A hollow room with its roof and front removed](images/hollow-room.png)
 
-- Thickness is measured perpendicular to each face, including slopes.
-- At an opening the original boundary stays in place, so an open roof keeps the side walls at full height.
-- Each wall is an ordinary convex brush. Inner faces inherit the material, texture mapping and lighting settings of the face they came from. Brush entities keep ownership of their walls.
-- A shell with openings needs other geometry to seal the map.
-
-**Limits:** 16 source brushes, 64 sides per brush, 256 walls, and a thickness from 0.125 to 4096 units. Terrain can't be hollowed.
-
-The default sphere uses 12 sides and 5 latitude bands so it fits the 64-side
-editing limit. More detailed primitives retain the explicitly requested
-resolution; **Brush shapes…** warns when that resolution exceeds the editing
-limit. Thin final pieces can still be refused by geometry or native collision
-checks.
-
-| Hollow controls | Inside the preview |
-| --- | --- |
-| ![Wall thickness, opening faces and cancellable shell preview](images/hollow-brushes.png) | ![Textured interior of a hollowed brush before applying](images/hollow-interior.png) |
-
-![An open roof and front face, with full-height side walls](images/hollow-open-shell.png)
+Inside keeps the outer dimensions. Outside keeps the original interior dimensions.
+Each source needs at least one wall. Open shells need other geometry to seal a playable map.
 
 ## Carve
 
-Subtract one or more shapes from other brushes.
+1. Select cutters and targets.
+2. Open **Carve brushes…**.
+3. Choose **Cutter · shape to subtract** and **Target brushes**.
+4. Enable **Use multiple cutter brushes** for more than one cutter.
+5. Click **Preview carve**.
+6. Inspect removed and unchanged targets.
+7. Click **Apply carve**.
 
-1. Select the cutter and the brushes to carve, then open **Carve brushes…**.
-2. Choose the **Cutter · shape to subtract** and check the **Target brushes**.
-3. Click **Preview carve**. The preview shows the resulting pieces and lists brushes that will be removed entirely or stay unchanged.
-4. **Apply carve** commits it. **Discard preview** or **Cancel** leaves the map alone.
+![A doorway cut with a box and cylindrical cutter](images/carved-doorway.png)
 
-To subtract several shapes at once, enable **Use multiple cutter brushes** and give each selected brush the **Cutter** or **Target** role. Overlapping cutters remove their shared volume once, and their order doesn't matter.
-
-- Cutters stay in the map. Move or delete them afterwards.
-- Original faces keep their settings. New faces take the material, texture projection and lighting of the cutter face that created them.
-- A world brush that lies entirely inside a cutter disappears. Carving away every brush of an entity is refused.
-
-**Limits:** 1–8 convex cutters, 16 targets, 256 pieces, and 64 faces per brush. Terrain can't be carved.
-
-| Carving controls | Carved pieces around the cutter |
-| --- | --- |
-| ![Cutter selector, target checkboxes and preview actions](images/brush-carving.png) | ![Six carved pieces around the retained cutter](images/carve-preview.png) |
-
-| Multiple cutters | Result with the cutters hidden |
-| --- | --- |
-| ![Cutter and target roles with a batch preview](images/multiple-cutter-controls.png) | ![Two combined cutter shapes leave a stepped cavity](images/multiple-cutter-cavities.png) |
-
-Hollow and Carve reject new edits, previews, framing and Apply actions during
-document shutdown. Their **Cancel** buttons still close the dialogs; a rejected
-cleanup cannot cancel a different preview.
+Cutters remain in the map. Move or delete them afterward.
+New cut faces inherit the cutter's material and texture placement.
+**Discard preview** keeps the source choices. **Cancel** closes the tool.
 
 ## Clip
 
-Cut brushes with a plane.
+1. Select brushes.
+2. Click **Clip selected brushes**.
+3. Draw a line in a planar view, enter a plane, or choose **Pick three points**.
+4. Choose **Arrow side**, **Opposite side** or **Both sides**.
+5. Inspect the preview.
+6. Click **Apply cut**.
 
-1. Select brushes or a brush entity and click **Clip selected brushes**.
-2. Define the cut in one of three ways:
-   - draw a line in Top, Front or Side;
-   - type a plane normal and distance;
-   - choose **Pick three points** and click three points on visible brush surfaces. You can switch views between clicks.
-3. Choose which part to keep: **Arrow side**, **Opposite side** or **Both sides**. Optionally browse for the material of the new cut faces.
-4. **Apply cut** commits it. **Cancel cut** or Escape discards it.
+![A diagonal cut creates a sloping brush](images/clipped-brush.png)
 
-With three points, orange markers show each point, and the third point (not in line with the other two) creates the preview. **Remove last point** and **Start again** revise them; **Use plane / line** switches back to the other methods. Points follow the editor's snapping.
+Use **Move plane** or **Rotate plane** to adjust the cut with handles.
+**Cancel cut** or Escape discards the preview.
 
-To fine-tune a cut, choose **Move plane** or **Rotate plane** under **Handles** and drag an arrow, a square or a ring. **Snap** uses the grid and the displayed angle step. Releasing keeps the preview; **Cancel positioning** or Escape during a drag puts the plane back.
+## Limits
 
-- Existing faces keep their texture projections. Brushes the plane doesn't cross stay unchanged.
-- Terrain that the plane crosses can't be clipped yet.
-
-| Positioning the cut | Rotating the plane |
-| --- | --- |
-| ![Cut-plane move handles](images/cut-plane-move.png) | ![Rotation rings on the cut preview](images/cut-plane-rotate.png) |
-
-![Three-point cut with point markers and the plane preview](images/three-point-cut.png)
+- Hollow: 16 brushes, 64 faces per brush, 256 walls; thickness 0.125–4096 units.
+- Carve: 1–8 cutters, 16 targets, 256 pieces, 64 faces per piece.
+- Carving away every child brush of an entity rejects.
+- Terrain cannot be hollowed or carved. A clip through terrain rejects.
+- Invalid, collapsed or excessively thin results reject before the map changes.

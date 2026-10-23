@@ -2,148 +2,52 @@
 
 # Generated reflections
 
-Generate reflections for the map's `env_cubemap` samples as part of **Compile** or **Run Map**. One build compiles the scene, captures one reflection bounce for each requested lighting channel in private CS:S clients, verifies the packed textures, then publishes the BSP once. **Direct LDR** captures LDR; **Direct LDR + HDR** captures LDR followed by HDR. Generation starts disabled.
+Capture scene cubemaps and pack them into the published BSP.
 
-## Choose reflection generation
+## Generate reflections
 
-1. Open **Entity…**, choose `env_cubemap`, then click **Place entity**. Set **Position** and **Advanced properties → Cubemap Size**, then save the map. Samples may also live in [referenced child VMFs](instances.md). Keep **Brush faces** empty for automatic assignment, or open the child normally, follow [Cubemap faces](cubemap-faces.md) to bind its direct world/detail faces, then save it before returning to the parent. Binding inspection and drafts remain unavailable in a parent with visible instance references.
-2. Click **Build settings…**, or **Build details…** after a build.
-3. Set **Build lighting** to **Direct LDR** for LDR reflections or **Direct LDR + HDR** for both channels.
-4. Enable **Generate reflections**. Read the capture runtime status below it. Enabling the setting does not launch CS:S.
-5. Close the window, then click **Compile** or **Run Map**. Open **Build details…** to inspect capture and verification progress. **Run Map** plays the published result after the build succeeds.
-6. To stop a build, click **Cancel build** and wait for cancellation and private-client cleanup to finish.
+1. Place `env_cubemap` near reflective surfaces.
+2. Set **Position** and **Advanced properties → Cubemap Size**.
+3. Save the map.
+4. Open **Build settings…**.
+5. Choose **Direct LDR** or **Direct LDR + HDR**.
+6. Enable **Generate reflections**.
+7. Check the capture runtime readiness message.
+8. Close settings, then click **Compile** or **Run Map**.
+9. Read capture and verification progress in **Build details…**.
 
-![LDR and HDR reflection generation with shared build controls](images/build-hdr-reflection-controls.png)
-
-**Fullbright** cannot generate reflections. Turn off **Generate reflections** before choosing it. Switching between **Direct LDR** and **Direct LDR + HDR** retains the generation setting. An incompatible update preserves both current values.
-
-Saved [referenced assemblies](instances.md) use these same settings and build
-controls. Automatic assignment includes supported transformed child geometry
-and samples. Child `env_cubemap` helpers require an explicit finite origin;
-instance transforms change their positions without synthesizing orientation
-fields. Source and every intermediate position
-must remain within ±16384 units. Existing root manual `sides` lists may
-refer only to unique original parent faces that survive the committed compile
-region. Missing or ambiguous root IDs reject before generated child IDs can
-satisfy them. Child manual `sides` lists require positive distinct IDs from
-visible ordinary world or `func_detail` brushes directly in that same child
-occurrence. Terrain-bearing solids, runtime models and cross-scope targets are
-unsupported. Authored and rewritten lists each have a 512-byte limit. Retained
-targets must pass the ordinary region and visible-face planner checks. Empty or
-absent child lists keep automatic assignment.
-
-**Instance contents…** and the instance section of **Build details…** report
-**Cubemap samples:** before regional filtering. Child samples have no reference
-geometry, icons, bounds, picking or framing; a sample-only reference can still
-be ready with its checked source identities and counts. The ordinary cubemap
-summary counts retained root and child samples together.
-
-**Cubemap faces…** inspection and binding drafts are unavailable while a visible
-instance reference is present. The authored-only
-view cannot report complete assembled assignments. An existing owned draft
-can still be cancelled. Reflection generation does not require that inspector.
-Hidden references are omitted and leave root-only binding inspection available.
-
-## Reflective props
-
-Materials that declare `$envmap env_cubemap` use scene reflection samples. Without
-generated scene reflections, the engine's default reflection can produce a
-different specular appearance, especially in HDR.
-
-1. Open **Build details… → Diagnostics** after a lit build. A reflective-prop
-   warning identifies the entity and material when **Generate reflections** is
-   disabled.
-2. Use **Place entity** to add `env_cubemap` helpers near the reflective props.
-   Save the map.
-3. Open **Build settings…**, choose **Direct LDR + HDR** when both channels are
-   needed, enable **Generate reflections**, then compile again.
-
-This warning uses materials already inspected for lit static-prop shadows,
-including the selected skin and resolved Patch materials. It does not inspect
-Fullbright or shadow-disabled props, and does not prove which runtime texture
-the game selects. Sample records alone are not captured reflections.
+LDR builds capture LDR. Dual-channel builds capture LDR, then HDR.
+The BSP is published only after all required captures and verification succeed.
 
 ## Configure the capture runtime
 
-1. In the same window, click **Configure capture…**.
-2. Under **CS:S installation override**, enter an installation folder or click **Choose CS:S folder…**. Leave it empty to use the mounted game's base directory when that directory verifies as a supported CS:S installation. A custom source-content folder needs an explicit supported installation when it cannot supply this default.
-3. Under **Steam client override**, enter the existing Steam client root or click **Choose Steam folder…**. Leave it empty to use the root of the unique running Steam main client. Capture validates that root's client configuration and CS:S library relationship; an override must match the running client.
-4. Click **Apply capture runtime** to validate and replace both overrides together. A rejected pair leaves the current configuration and your pending text intact. **Cancel runtime edit** discards the pending text.
-5. Review the resolved installation and readiness message before starting the build. If another actor changes the runtime while the form is open, cancel and reopen the form to review the new pair.
+1. Click **Configure capture…** in build settings.
+2. Enter **CS:S installation override**, or leave it empty for the verified mounted installation.
+3. Enter **Steam client override**, or leave it empty for the unique running client.
+4. Click **Apply capture runtime**.
+5. Check the resolved paths and readiness.
 
-**Close**, Escape and the window close button discard pending runtime edits. A folder chooser opened by a discarded edit cannot update a later edit.
+**Cancel runtime edit** discards pending paths. Configuration does not launch the game.
+These machine paths stay outside build recipes.
 
-Runtime paths apply to this machine. They are separate from the source-content mounts and stay outside build recipes and recent-map settings. Configuration does not launch a game. Capture uses a private client with `-insecure` and `sv_lan 1`.
+## Reflective props
 
-![Capture installation and Steam client settings](images/build-reflection-runtime.png)
+Materials with `$envmap env_cubemap` need scene samples for scene reflections.
+A reflective-prop warning identifies eligible inspected materials when generation is disabled.
+Sample records alone contain no captured textures.
 
-## Recipes, recent maps and agents
+## Face assignment
 
-**Save current as new** and **Replace with current** store the generation setting with the other build values. **Fast preview** and **Final lighting** keep generation disabled. Older recipes and recent-map files load with generation disabled. Opening a compatible recent map restores its saved generation setting.
-
-Agents use `set_compile_settings` with `lighting:"direct_ldr"` or `lighting:"direct_ldr_hdr"` and `generate_reflections:true`; both fields validate in the same update. `get_compile_settings` reports the current setting. `get_native_capture_runtime` inspects readiness, and `set_native_capture_runtime` replaces both machine overrides; omitted or null roots clear their overrides to automatic values. Existing `compile_map`, `start_compile`, `run_map`, `get_compile_status` and `cancel_compile` use the shared build job.
-
-The command-line compiler uses the same capture and publication checks:
-
-```sh
-hammerr-compile map.vmf --game /path/to/cstrike/gameinfo.txt \
-  --lighting direct_ldr_hdr --generate-reflections \
-  --reflection-engine-root /path/to/Counter-Strike\ Source
-```
-
-Use `--reflection-steam-root` to provide the Steam client override. The editor and headless service accept the same machine context through `--engine-root` and `--steam-root` at startup. These paths do not change source-content mounts.
-
-## Captured channels and publication
-
-**Build details…** shows **LDR reflection capture** or **LDR + HDR reflection
-capture**. Progress counts every channel's samples: a dual build with two
-positions captures four samples. Both passes use the same helper positions,
-resolutions and face assignments. The client selects LDR with `mat_hdr_level 0`
-and HDR with `mat_hdr_level 2`; capture checks those controls after loading the
-map. A known HDR-to-LDR fallback warning rejects the build.
-
-HDR capture requires complete native HDR light samples, world lights and ambient
-arrays. The published BSP retains both baked channels. No result is published
-until all required samples, source guards and preservation checks pass; a failed
-HDR pass keeps the previous output even when its LDR pass completed.
-
-Capture verifies unchanged geometry, entities, lighting and game records before
-reading the reflection archive. Invalid, overlapping or out-of-file lump ranges
-reject the build and preserve the previous BSP.
-
-LDR textures keep their ordinary `.vtf` names; matching HDR textures use
-`.hdr.vtf`. Material aliases retain their unsuffixed reflection names so the game
-can select the channel. HDR packing retains the six image faces' finite,
-nonnegative RGB half-float values at every mip and normalizes unused native
-alpha, sphere and header data. Malformed or incomplete captures return explicit
-errors. **Run Map** rebases registered names for both channels while retaining
-their texture data.
-
-The editor reserves one native activity when a reflective build leaves the
-compiler queue. A queued build holds no native capacity. An occupied activity
-fails that exact build before compiler work; there is no native waiting queue.
-Both capture channels, verification and publication retain the same owner.
-**Run Map** transfers that owner directly to its captured Play target after
-capture cleanup, even when the capture and Play installations differ.
+Empty **Brush faces** uses automatic assignment.
+Use [Cubemap faces…](cubemap-faces.md) for supported manual bindings.
+Supported samples and ordinary world/detail bindings can also come from [referenced assemblies](instances.md).
 
 ## Limits
 
-- Automatic face assignment supports checked initial rotations of unparented `func_brush` models; manual bindings select their authored helper directly. Later model motion does not reassign samples. See [Cubemap faces](cubemap-faces.md) for pose and work limits.
-- Generation supports one capture bounce per channel: LDR alone or paired LDR/HDR. Additional capture bounces, moving-scene reassignment and reflection preview inside the editor are unavailable. HDR playback still depends on the game setting and hardware; **HDR data ready** describes baked map data.
-- Ordinary compilation supports size enums 0–9 and up to 1024 cubemap sample records. Reflection generation independently supports 1–32 samples at distinct native integer positions. Both count limits cover the complete assembled root and retained child samples after regional filtering. Coordinates convert to Source’s 32-bit floats before truncation to integer sample positions. Sample size `0` uses the declared 128-pixel default. Explicit cube edges up to 128 pixels are supported; size `9` can compile an ordinary 256-pixel sample record but capture rejects it before launch. The private capture viewport must verify as 1280×720.
-- Capture-size, quantized-position collision and excess-sample errors identify the containing root reference, leaf filename and original child helper. Collision errors identify both helpers. Child source and intermediate positions validate before regional omission; malformed source, duplicate/case-aliased properties, non-neutral runtime fields, brushes, I/O and opaque blocks reject. See the [child cubemap limits](instances.md).
-- A supported CS:S installation, running Steam client, native runtime helper, Cage, grim and Bubblewrap must pass preflight. Bubblewrap needs usable Linux user namespaces. Unsupported materials, sample sizes, missing assets or unverified captures fail the build with diagnostics.
-- Native capture requires a short temporary directory path without uppercase ASCII characters. The complete private Wayland socket path, including its terminating NUL, must fit Linux's 108-byte limit. An overlong path is rejected before startup; use a writable lowercase `TMPDIR` such as `/path/to/project/target/native`.
-- The capture client reads external files through a read-only filesystem view. Only its owned capture directory is writable; source mounts keep their files and caches. Graphics devices and Steam IPC remain available.
-- Capture rejects authored scripts, script thinkers, script entities and command-executing entity inputs. This is a conservative capture restriction; the saved VMF and published entity lump keep their authored contents. A managed game in this editor process blocks capture. The existing UID-wide capture lock still rejects captures in another process, and capture preflight retains its same-installation running-client check. Those clients are never stopped.
-- External model assets in a generated-reflection scene are supported on `prop_static` only. Recording scripts and dynamic model entities need a separately authored capture scene; generation does not remove them automatically. Reflections captured from a scene with omitted objects do not establish matching reflections for those objects in the recording scene.
-- Native capture keeps each private channel job within a 256 MiB file budget, including two BSP copies and 64 MiB of scratch admission. BSP staging larger than 96 MiB is rejected. Captured assets and retained diagnostics have additional limits.
-- Packed generation shares a 64 MiB asset budget across both channels, with at most 1,024 material aliases and 4 MiB per captured VTF. HDR samples require VTF 7.4 RGBA16F, seven native faces and a full mip chain. A captured HDR default is optional; any extra LDR default emitted by the HDR pass is validated and reported, while the published LDR default comes from the LDR pass.
-- Active builds freeze compiler settings and runtime configuration. Changing generation afterward makes a previous build stale while its saved settings differ.
-- Failed, cancelled or stale generation preserves the previously published BSP. Capture does not add map Undo entries. **Cancel build** remains pending until owned processes stop and the preservation audit finishes.
-- Saving the map under another filename during capture rejects publication. Compile again from its new path.
-- Instance builds retain the original parent and transitive child identities
-  through capture, publication and Play. Changed or replaced dependencies
-  reject the build or make a completed build stale; repairing a source requires
-  recompilation. Capture does not save or flatten the authored VMFs.
-- Sample records and temporary bootstrap textures alone do not count as generated reflections. A BSP becomes available only after capture, packed-asset verification and publication succeed.
+- Fullbright cannot generate reflections.
+- Steam, the supported CS:S runtime and the private capture dependencies must be available.
+- Capture uses private clients with `-insecure` and `sv_lan 1`.
+- Missing channels, unsupported capture scenes, failed verification or cleanup errors stop publication.
+- **Cancel build** waits for owned capture cleanup.
+- Generation captures one reflection bounce, not repeated recursive reflection builds.
+- Root binding inspection is unavailable with visible instance references; generation can still use supported assembled samples.

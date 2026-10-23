@@ -1,135 +1,53 @@
 [← Manual](README.md)
 
-# Organizing and checking maps
+# Map tools
+
+Find objects, check map data and retain recovery copies.
 
 ## Find objects
 
-**Object report…** searches IDs, names, classes and materials. Filter by type (world brushes, point entities, brush entities…), by visibility, and optionally by an XYZ region.
+1. Open **Object report…**.
+2. Search IDs, names, classes or materials.
+3. Filter by object type, visibility or bounds.
+4. Select or frame the matching results.
 
-Select or frame a single result, or all matches including those on later pages. Selecting can replace, add to, remove from or toggle the current selection.
-
-## Hide and show
-
-**Hide selected**, **Isolate selected**, **Show selected** and **Show all** change visibility. Visibility is saved in the map and undoable. **Restore visibility** returns to the previous state, including hidden brushes inside entities.
-
-> [!IMPORTANT]
-> Hidden objects are left out of compiled maps. Show them before building if they should be in the game.
-
-![Object report with filters, selection modes and visibility actions](images/object-report.png)
-
-[Layers…](layers.md) organizes objects into named, colored nested layers with scoped selection and the same map visibility controls.
-
-## Map statistics
-
-**Map statistics…** counts brush sides, world and entity brushes, point and brush entities, connections, materials, model references and terrain. Hidden objects are included, and the numbers update as the map changes.
-
-Choose a breakdown to page through materials, entity classes, model paths, lightmap scales or terrain sizes, most frequent first.
-
-These counts describe the editable map: brush sides rather than compiled faces, and model paths as written rather than verified files. Open previews aren't counted.
-
-During document shutdown, refresh rejects new reads and preserves the displayed
-totals and rows. **Close** remains available.
-
-![Map totals and material usage](images/map-statistics.png)
+**Hide selected**, **Isolate selected**, **Show selected**, **Show all** and **Restore visibility** control saved map visibility.
+Use **Map statistics…** for object and geometry counts.
 
 ## Check the map
 
-1. Open **Check map…** and click **Run checks**.
-2. Filter by severity and select an issue to read its explanation.
-3. **Select issue** or **Focus issue** takes you to the problem.
+1. Open **Check map…**.
+2. Click **Run checks**.
+3. Select a result.
+4. Use **Select issue** or **Focus issue**.
+5. Repair the source, then run checks again.
 
-The report marks itself out of date when the map or the entity definitions change.
-
-Checks cover geometry, IDs, textures, entity logic, asset paths and player spawns. They include hidden objects and ignore open previews. Spawn checks warn when a visible spawn's standing player box overlaps solid world or `func_detail` brushes, including player clips, or a visible world or `func_detail` terrain sheet with **Player collision** enabled. Spawns that just touch the floor within 0.01 units are fine. Terrain parent volumes do not block; the check uses the authored surface triangles and identifies affected spawns and terrain faces.
-
-Some issues can be repaired automatically. **Review repair…** shows the exact before and after values, and **Apply repair** fixes it in one undo step. This currently covers invalid texture projections and zero lightmap scales. Other issues link you to the content so you can fix it by hand.
-
-Invalid material definitions, patch includes and display textures appear as
-face-linked errors. Repair the content file and click **Run checks** again;
-external asset edits do not automatically refresh a report.
-
-Failed content-directory scans appear as errors rather than lists of supposedly
-missing assets. Repair the content path and rerun checks. Terrain preview errors
-also identify affected faces; invalid patches remain in the source for repair.
-
-Unknown terrain materials, unsupported flags or malformed geometry are reported as unchecked. Invalid terrain border-smoothing values appear as face issues; repair them through **Edit terrain… → Border smoothing**. Compiler warnings identify actual unsupported owners, flags or removed triangles.
-
-Not checked yet: spawns blocked by models or other brush entities, removed terrain triangles, compiler LOD changes, runtime placement, gameplay objectives, full asset dependencies and engine limits. Compile and test in CS:S to find leaks and playability problems.
-
-![Map issues with navigation and a repair preview](images/map-checks.png)
-
-### Duplicate IDs
-
-A VMF that contains duplicate object or face IDs is refused when opened or recovered. The error names the duplicate ID, and the currently open map is left untouched. HammeRR never renumbers imported objects silently, so fix the IDs in the file first.
+Use **Review repair… → Apply repair** for supported reviewed repairs, such as duplicate IDs.
+Checks do not certify every compiler or engine behavior.
 
 ## Design notes
 
-**Design context…** keeps notes about intent, constraints and observations next to the geometry they describe. Agents read and write the same notes.
+1. Open **Design context…**.
+2. Choose **Map brief**, **Note on selection** or **New region**.
+3. Enter the relevant design context.
+4. Click **Save note**, or **Cancel**.
 
-- **Map brief**: notes about the whole map.
-- **Note on selection**: a note attached to objects.
-- **New region**: a note attached to a box in the map, shown with a colored guide.
-
-Search the notes, or find those relevant to the selection, a point or an area. Each note shows who wrote it and whether its objects changed since. **Save note** records one undo step.
-
-- Copied objects keep their notes, marked for review. Deleting objects removes their notes, and undo restores both.
-- Notes are editor-only and never compiled.
-- Limits: 200-character summaries, 4 KiB per note, 1 MiB per map.
-- Region change tracking currently covers the whole map. Other editors' handling of these notes hasn't been tested.
-- If **Cancel** or window close reports a replaced note draft while the editor is open, the dialog stays open for review. It leaves the replacement draft untouched.
-
-![Design notes, region bounds and edit controls](images/design-context.png)
+Notes are map metadata for humans and MCP clients. They do not compile into gameplay entities.
+The complete design-context payload is limited to 32 KiB.
 
 ## Autosave and recovery
 
-**Recovery…** lists automatic snapshots, manual checkpoints and the versions replaced by each save.
-
-- Autosave captures changed maps every two minutes by default, including unnamed maps. It never touches your VMF, its unsaved state or the undo history.
-- Change the interval and how many snapshots to keep, or create a snapshot immediately.
-
-To recover, select a snapshot and click **Open recovered copy**. It opens as an unsaved map; save it to keep it. Replacing unsaved work and deleting snapshots ask for confirmation first.
-
-Recovery files live in `$XDG_STATE_HOME/hammerr/recovery`, or `~/.local/state/hammerr/recovery` if that variable isn't set. Set `HAMMERR_RECOVERY_DIR` to an absolute path to use another folder. Turning autosave off keeps manual snapshots and save backups. Failed snapshots are reported in Recovery and in Activity.
-
-The requested storage path must be valid UTF-8. Invalid configuration leaves
-recovery unavailable with a visible error; correct the path and restart.
-A UTF-8 folder alias may point to a Linux directory whose physical name contains
-non-UTF-8 bytes. Maps opened through a UTF-8 filename alias also retain manual,
-automatic, exit and previous-save snapshots when the physical filename contains
-such bytes. If neither source name can be represented, Open or Save reports an
-error before replacing the map or publishing a file; use a UTF-8 alias.
-
-To retry after a snapshot failure, repair the reported storage problem and click
-**Save snapshot now** again. Each admitted request attempts its write once; a
-retry captures a fresh request.
-
-**Save snapshot now** captures committed map content and its retention settings
-before scheduling. Later edits remain pending for the next snapshot. Closing
-waits for admitted capture and cleanup; abandoned queued requests release their
-own activity without reporting a successful snapshot.
-
-Normal exit cancels instance Contents/Extraction work and FGD loading, then waits for their owned result/staging cleanup and map actions already in progress. It then waits for in-flight recovery and captures outstanding committed changes once when autosave is enabled. Unapplied previews are excluded. A failed exit snapshot or recovery-worker drain is reported on stderr and returns a failing process exit status, including both headless modes. If another application error also occurred, the final error retains both causes. The original map is never treated as saved by an exit snapshot.
-
-An exit-recovery failure remains terminal: repairing storage does not retry
-shutdown or make retained tool windows editable again. **Cancel** and window
-close still dismiss those windows; see [Closing the editor](basics.md#closing-the-editor).
-
-Recovery retains settings, snapshot-folder configuration, capture, retention and shutdown failures separately. Saving settings clears only settings errors; a successful snapshot clears only capture and retention errors. Recovery displays unresolved causes together with listing warnings, and MCP reports the same causes separately as well as in its combined error. A settings warning alone does not turn a successful exit snapshot into a shutdown failure.
-
-To reload settings after repairing or changing the saved file outside the editor:
-
 1. Open **Recovery…**.
-2. Click **Reload settings**. Success adopts the complete saved settings. Failure keeps your typed values and current settings, and displays the error.
-3. To save an explicit edit, change the settings and click **Apply settings**.
+2. Configure the available recovery settings, then click **Apply settings**.
+3. Use **Save snapshot now** for an explicit copy.
+4. Select a retained snapshot and click **Open recovered copy** to inspect it.
 
-![Autosave settings, snapshots and recovery controls](images/recovery.png)
+Use **Reload settings** after another editor changes recovery storage settings.
 
-![Failed Reload keeps typed recovery settings and existing snapshot errors](images/recovery-settings-reload.png)
+## Limits
 
-Reload does not capture a snapshot or write the map. An absent settings file restores the two-minute interval, ten snapshots per map and enabled autosave. Settings files must resolve to a regular file no larger than **32 KiB**; valid regular-file symlinks remain supported.
-
-Sessions attached to one application share saved recovery settings and settings errors. Applying or reloading settings affects future automatic captures; an in-flight snapshot keeps its original retention count. Snapshot folders, scheduling, pending changes, capture errors and recovery workers stay with each document.
-
-Participating Linux processes coordinate settings writes through an advisory lock in the physical destination's directory, including aliases that follow regular-file symlinks. If the saved source or its original directory changes, **Apply settings** preserves the current settings and reports a conflict. Click **Reload settings**, review the values, then apply your edit again. Lock contention can retry directly after the other writer finishes. Older editors and manual writers that ignore the lock remain outside this guarantee; settings are never merged automatically across processes.
-
-An explicit validated **Apply settings** can repair malformed or oversized settings that startup or **Reload settings** observed. A failed read or directory check requires a new **Reload settings** observation first. If a write commits but its verification fails, the editor adopts the committed settings and revision, reports that they were written and requires Reload before another write. A failed Reload keeps that publication warning visible alongside its new error.
+- Recovery is separate from saving the source VMF.
+- Missing, malformed or unwritable storage reports an error.
+- A recovered copy does not silently overwrite the original map.
+- Saved visibility, temporary editor hiding and working regions are separate controls.
+- Source changes can stale checks or repairs; review again before applying them.

@@ -2,93 +2,23 @@
 
 # Cubemap faces
 
-Choose which `env_cubemap` sample a reflective face uses. The inspector shows
-the same manual and automatic assignments used by the compiler, including
-the chosen sample position, original material and generated material alias.
-Inspection and binding drafts are unavailable when the map contains a visible
-instance reference: authored faces do not describe the
-assembled geometry. This does not prevent [reflection generation](reflections.md)
-with root-map or supported child helpers.
+Inspect automatic reflection assignments and author manual face bindings.
 
-1. Select one visible `env_cubemap` entity and choose **Cubemap faces…**.
-2. Keep the window open and select faces in the map. **Select face** in the
-   assignment list toggles a face in the shared selection. **Select bound
-   faces** selects this helper's complete manual binding list.
-3. Choose **Bind selected faces** to preview assigning those faces to this
-   helper. Existing manual ownership by another helper must be removed first.
-4. Review the draft's helper, face count and exact sample choices, then choose
-   **Apply**. The change updates the standard `sides` property in one Undo step.
-   **Cancel** or Escape discards only this window's owned draft.
-5. Use **Remove selected bindings** to remove selected faces from this helper.
-   **Clear all manual bindings** previews removal of its complete inspected
-   list. Removed faces use automatic selection, which may choose another
-   active helper. Review the new choices before **Apply**.
-6. Choose **Refresh** to update assignments after map, material or output-name
-   changes. Enter a material or face ID in **Filter material or face ID**, then
-   choose **Refresh**. **Previous** and **Next** page through this helper's
-   assignments.
+1. Place an `env_cubemap` sample.
+2. Open **Cubemap faces…**.
+3. Select a sample and inspect its face assignments.
+4. Use **Select face** or **Select bound faces** to inspect targets.
+5. Select eligible destination faces in the map.
+6. Click **Bind selected faces**, then **Apply**.
 
-![Reviewed manual binding removal and automatic sample choices](images/cubemap-faces.png)
-
-The draft label identifies its current owner. **Review current draft** takes
-ownership and issues a new token; the previous owner cannot apply or cancel
-it. Changes to the map, face selection, mounted content or output namespace
-make a draft stale. Preview the intended operation again before applying it.
-Adding a visible instance reference keeps the current draft but makes it invalid;
-its owner can still cancel it.
-Hidden references are omitted from compilation and leave root-map inspection
-and binding authoring available without reading their child files.
-
-To author bindings for a referenced assembly:
-
-1. Open the child VMF as a normal map.
-2. Follow the steps above to bind its `env_cubemap` to visible ordinary world or
-   `func_detail` faces directly in that child. Keep each helper's **Brush faces**
-   list within 512 bytes; the generated list must also fit 512 bytes.
-3. Save the child, return to the parent and create or refresh its instance
-   reference. Compile the parent through the ordinary reflection workflow.
-
-A child with visible nested references keeps the same inspection/draft
-restriction; raw `sides` editing remains available for its direct local IDs.
-
-The same operations are available through `get_cubemap_bindings` and
-`set_cubemap_bindings`. Inspection and previews do not capture reflections or
-require reflection generation to be enabled. Build and capture settings are
-described in [Generated reflections](reflections.md).
+**Remove selected bindings** removes only those manual entries.
+**Clear all manual bindings** returns the sample to automatic assignment.
+**Cancel** discards the owned draft. Use **Refresh** after source changes.
 
 ## Limits
 
-- Automatic assignment uses source polygons, world-space brush-model pivots
-  and the compiler's front-side preference. It does not test visibility or
-  occlusion between a face and its sample.
-- Automatic assignment supports bounded initial rotations of unparented `func_brush` models. It transforms both the source polygon center and face normal into the initial game pose, using the emitted native-float origin. The viewport still shows authored geometry.
-- Nonzero rotations on other classes, parenting, ambiguous pose fields and models outside ±16,384 units reject automatic assignment with an entity/side diagnostic. Manual bindings remain explicit choices and do not need automatic pose selection. See [Initial brush-model rotation](compile-and-play.md#initial-brush-model-rotation) for pose syntax.
-- Assignment has separate four-million-unit limits for pose preparation and face/sample comparisons. Exceeded limits fail explicitly; they do not select an unrotated substitute.
-- Manual targets must be unique, visible authored faces that survive the
-  committed compile region. Missing faces, ambiguous IDs, malformed lists,
-  duplicate owners and non-emitting targets reject with a diagnostic.
-  With visible instance references, existing root `sides` lists may name only
-  original root-map face IDs; generated child IDs cannot satisfy missing targets.
-  A child `sides` list must contain positive distinct IDs from visible ordinary
-  world or `func_detail` brushes directly in the same child occurrence. No side
-  of a terrain-bearing solid, runtime model, parent, descendant, sibling, repeated
-  occurrence or root map can supply a missing local target. Authored and rewritten
-  lists each have a 512-byte limit. Retained child targets must pass the same
-  region and visible-face checks. An absent or whitespace-only list uses automatic
-  assignment. See [Referenced assemblies](instances.md).
-- Another authored helper's manual ownership also blocks reassignment when
-  that helper is hidden or excluded by the compile region. Unhide it or
-  restore its region, remove the old binding explicitly, then bind the face
-  to its new helper. The compiler's active sample choices are unchanged.
-- One helper can have up to 1,024 manual faces in this workflow; one preview
-  accepts up to 1,024 explicit faces. MCP inspection pages contain up to 256
-  assignments. The window shows 20 assignments per page.
-- Assignment inspection uses the current supported reflection planner and
-  material assets. It may report capture-planner limits, invalid helper
-  positions or unsupported materials before a binding can be committed.
-- Unnamed maps show provisional `untitled` aliases. Saving or changing the
-  output basename recomputes aliases; **Refresh** shows the current names.
-- Routine window updates use cached inspection rows. **Refresh**, paging,
-  preview and Apply explicitly invoke the authoritative planner.
-- Raw entity property editing remains available. Dedicated binding previews
-  validate the resulting compiler plan before Apply.
+- Manual bindings target supported visible world/detail faces.
+- Missing, duplicate or unsupported targets reject before applying changes.
+- Bindings do not capture reflection textures. Enable [Generate reflections](reflections.md) for that.
+- Inspection is unavailable with visible instance references because an authored-only report would be incomplete.
+- Supported child manual bindings can still compile through the instance pipeline.

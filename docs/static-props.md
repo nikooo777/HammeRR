@@ -26,6 +26,10 @@ The **Physics bodies** setting controls compiled brush and terrain bodies separa
 
 Packing includes the checked model companions and supported material dependencies.
 Unsupported materials or missing required assets stop publication.
+Supported `Patch` materials can inherit through up to eight include edges,
+with at most one `$basetexture` `insert` or `replace` block per Patch. Packing retains
+every original material and declared texture, including overridden textures.
+Deeper edits win within the same edit type; replacements apply after all inserts.
 
 ## Bake vertex lighting
 
@@ -66,4 +70,7 @@ Inspect **Instance contents…** before building. Child source files must remain
 - Static props retain unit scale, white tint and normal render-mode restrictions.
 - Leaf membership uses conservative rotated header bounds, not exact model hulls.
 - Runtime appearance, collision, mesh shadows, vertex lighting and packing have separate acceptance rules.
+- Packed chains must end at `VertexLitGeneric` with one canonical `$basetexture`. Optional `$alphatest 1` uses the default cutoff.
+- Other terminal parameters, authored alpha references and proxies remain unsupported.
+- Cutout vertex-lighting receivers retain the one-direct-edit Patch limit.
 - Missing or unsupported required data fails rather than substituting another asset.

@@ -373,7 +373,7 @@ fn selected_unselected_and_overridden_alpha_inputs_remain_required_and_source_ow
 }
 
 #[test]
-fn alpha_terminals_keep_cached_direct_edits_and_existing_include_depth_without_edited_nesting() {
+fn alpha_terminals_keep_cached_edits_nested_inheritance_and_existing_include_depth() {
     for edited_first in [false, true] {
         let fixture = alpha_fixture("plain");
         fixture.write(EDIT_TEXTURE, alpha_texture(EDIT_ALPHA));
@@ -402,23 +402,52 @@ fn alpha_terminals_keep_cached_direct_edits_and_existing_include_depth_without_e
         assert_eq!(reads.get(base_texture), Some(&1));
         assert_eq!(reads.get(EDIT_TEXTURE), Some(&1));
         let fixture = alpha_fixture("replace");
+        fixture.write(MIDDLE, edited("insert", BASE));
         if edited_first {
+            fixture.write(FIRST, edited("replace", MIDDLE));
             fixture.write(SECOND, include(FIRST));
         } else {
             fixture.write(FIRST, include(SECOND));
-            fixture.write(SECOND, edited("replace", BASE));
+            fixture.write(SECOND, edited("replace", MIDDLE));
         }
-        let error = collect(
+        let mut reads = BTreeMap::new();
+        let paths = collect(
             &fixture,
             PakLimits::default(),
             &Control::default(),
-            &mut BTreeMap::new(),
+            &mut reads,
         )
-        .unwrap_err();
-        assert!(
-            error.to_string().contains("direct plain VertexLitGeneric"),
-            "{error}"
+        .unwrap();
+        assert_eq!(
+            paths,
+            [
+                MODEL,
+                VVD,
+                VTX,
+                FIRST,
+                SECOND,
+                MIDDLE,
+                BASE,
+                FIRST_TEXTURE,
+                EDIT_TEXTURE
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect()
         );
+        assert!(reads.values().all(|count| *count == 1));
+        for path in [FIRST, SECOND] {
+            let material = Material::load(&fixture.game, path).unwrap().unwrap();
+            assert_eq!(material.get("$basetexture"), Some("test/alpha_edit"));
+            assert_eq!(material.get("$alphatest"), Some("1"));
+        }
+        let mut bsp = prop_bsp(&[0]);
+        let manifest = fixture
+            .plan(&bsp)
+            .unwrap()
+            .attach(&mut bsp, &Control::default())
+            .unwrap();
+        verify_packed_static_props(&bsp, &manifest, &Control::default()).unwrap();
     }
     for edges in [MAX_PATCH_DEPTH, MAX_PATCH_DEPTH + 1] {
         let fixture = alpha_fixture("plain");

@@ -156,7 +156,7 @@ fn nested_patch_selection_preserves_resolved_raw_parameters_blocks_and_read_clos
     );
     assert_eq!(
         material.primary_base_texture().unwrap(),
-        Some("selected/albedo")
+        Some("inherited/albedo")
     );
     assert_eq!(material.get("$basetexture"), Some("raw/base"));
     assert_eq!(material.get("$basetexture2"), Some("second/base"));

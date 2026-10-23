@@ -11,6 +11,7 @@ use crate::Control;
 use crate::asset_sources::hash;
 
 const BASE: &str = "materials/models/test/edit_base.vmt";
+const MIDDLE: &str = "materials/models/test/edit_middle.vmt";
 const BLUE: &str = "materials/test/edit_blue.vtf";
 const GREEN: &str = "materials/test/edit_green.vtf";
 const OTHER_MODEL: &str = "models/props/portable_copy.mdl";
@@ -51,6 +52,17 @@ fn unseeded_edited_fixture(mode: &str) -> Fixture {
     fixture.write(BLUE, color([0, 0, 255]));
     fixture.write(GREEN, color([0, 255, 0]));
     fixture
+}
+
+fn nest_edits(fixture: &Fixture, mode: &str) {
+    let inner = if mode == "insert" {
+        "replace"
+    } else {
+        "insert"
+    };
+    fixture.write(MIDDLE, edited(inner, BASE, "test/edit_green"));
+    fixture.write(FIRST, edited(mode, MIDDLE, "test/edit_blue"));
+    fixture.write(SECOND, include(MIDDLE));
 }
 
 fn collect(
@@ -117,11 +129,20 @@ fn persist(bsp: &mut Bsp, archive: &mut PakArchive, manifest: &StaticPropAssetMa
 
 #[test]
 fn both_edit_modes_select_literal_variants_and_pack_original_union_for_all_model_skins_offline() {
-    for mode in ["insert", "replace"] {
+    for (mode, nested, first_texture) in [
+        ("insert", false, "test/edit_blue"),
+        ("replace", false, "test/edit_blue"),
+        ("insert", true, "test/edit_green"),
+        ("replace", true, "test/edit_blue"),
+    ] {
         for reversed in [false, true] {
             let fixture = unseeded_edited_fixture(mode);
+            if nested {
+                nest_edits(&fixture, mode);
+            }
             let mut bsp = two_models(&fixture, reversed);
-            for (path, expected) in [(FIRST, "test/edit_blue"), (SECOND, "test/edit_green")] {
+            let selected_materials = [(FIRST, first_texture), (SECOND, "test/edit_green")];
+            for (path, expected) in selected_materials {
                 let selected = Material::load(&fixture.game, path).unwrap().unwrap();
                 assert_eq!(selected.shader, "vertexlitgeneric");
                 assert_eq!(selected.get("$basetexture"), Some(expected));
@@ -130,7 +151,7 @@ fn both_edit_modes_select_literal_variants_and_pack_original_union_for_all_model
                 fs::read(fixture.directory.path().join(BLUE)).unwrap(),
                 fs::read(fixture.directory.path().join(FIRST_TEXTURE)).unwrap()
             );
-            let expected = [
+            let mut expected = [
                 MODEL,
                 VVD,
                 VTX,
@@ -147,6 +168,9 @@ fn both_edit_modes_select_literal_variants_and_pack_original_union_for_all_model
             .into_iter()
             .map(str::to_owned)
             .collect::<BTreeSet<_>>();
+            if nested {
+                expected.insert(MIDDLE.into());
+            }
             let mut reads = BTreeMap::new();
             let live = collect(&fixture, &bsp, PakLimits::default(), &mut reads).unwrap();
             assert_eq!(live, expected);
@@ -201,6 +225,18 @@ fn both_edit_modes_select_literal_variants_and_pack_original_union_for_all_model
                 Some(manifest.clone())
             );
             verify_packed_static_props(&bsp, &manifest, &Control::default()).unwrap();
+            for (path, expected) in selected_materials {
+                let selected = Material::load_with_reader(path, &mut |name| {
+                    Ok(archive
+                        .entries
+                        .iter()
+                        .find(|entry| entry.name == name)
+                        .map(|entry| entry.data.clone()))
+                })
+                .unwrap()
+                .unwrap();
+                assert_eq!(selected.get("$basetexture"), Some(expected));
+            }
         }
     }
 }
@@ -296,11 +332,12 @@ fn edit_raw_grammar_accepts_source_orders_and_case_but_no_extra_structure_or_res
 }
 
 #[test]
-fn missing_and_corrupt_original_textures_refuse_edited_materials_without_fallback() {
+fn missing_and_corrupt_originals_refuse_nested_edits_without_fallback() {
     for mode in ["insert", "replace"] {
-        for path in [FIRST_TEXTURE, BLUE, GREEN] {
+        for path in [MIDDLE, BASE, FIRST_TEXTURE, BLUE, GREEN] {
             for corrupt in [false, true] {
                 let fixture = edited_fixture(mode);
+                nest_edits(&fixture, mode);
                 if corrupt {
                     fixture.write(path, b"not a VTF");
                 } else {
@@ -316,6 +353,7 @@ fn missing_and_corrupt_original_textures_refuse_edited_materials_without_fallbac
             }
         }
         let fixture = edited_fixture(mode);
+        nest_edits(&fixture, mode);
         fixture.write(BASE, "VertexLitGeneric {}");
         assert!(fixture.plan(&prop_bsp(&[0])).is_err());
     }
@@ -323,12 +361,14 @@ fn missing_and_corrupt_original_textures_refuse_edited_materials_without_fallbac
 
 #[test]
 fn edited_originals_keep_first_read_and_late_source_identity_without_mutating_output() {
-    for path in [FIRST, BASE, FIRST_TEXTURE, BLUE, GREEN] {
+    for path in [FIRST, MIDDLE, BASE, FIRST_TEXTURE, BLUE, GREEN] {
         let fixture = edited_fixture("insert");
+        nest_edits(&fixture, "insert");
         fixture.seed(path);
         fixture.mutate(path);
         assert!(fixture.plan(&prop_bsp(&[0])).is_err(), "rebaselined {path}");
         let fixture = edited_fixture("replace");
+        nest_edits(&fixture, "replace");
         let plan = fixture.plan(&prop_bsp(&[0])).unwrap();
         fixture.mutate(path);
         assert!(plan.verify_source_metadata().is_err(), "unguarded {path}");
@@ -348,93 +388,113 @@ fn edited_originals_keep_first_read_and_late_source_identity_without_mutating_ou
 }
 
 #[test]
-fn edited_chain_limit_rejects_cached_and_uncached_suffixes_without_widening_include_only_depth() {
-    for (first, second, edit_already_visited) in [
+fn nested_edits_preserve_inheritance_and_cached_suffix_depth_and_cycle_bounds() {
+    for (first, second, selected) in [
         (
             edited("insert", BASE, "test/edit_blue"),
             include(FIRST),
-            true,
+            ["test/edit_blue", "test/edit_blue"],
         ),
         (
             include(SECOND),
             edited("insert", BASE, "test/edit_blue"),
-            false,
+            ["test/edit_blue", "test/edit_blue"],
         ),
         (
             include(BASE),
             edited("replace", FIRST, "test/edit_blue"),
-            false,
+            ["test/one", "test/edit_blue"],
         ),
         (
             edited("replace", SECOND, "test/edit_blue"),
             include(BASE),
-            false,
+            ["test/edit_blue", "test/one"],
         ),
         (
             edited("insert", BASE, "test/edit_blue"),
             edited("replace", FIRST, "test/edit_green"),
-            true,
+            ["test/edit_blue", "test/edit_green"],
         ),
         (
             edited("insert", SECOND, "test/edit_blue"),
             edited("replace", BASE, "test/edit_green"),
-            false,
+            ["test/edit_green", "test/edit_green"],
         ),
     ] {
         let fixture = edited_fixture("insert");
         fixture.write(FIRST, first);
         fixture.write(SECOND, second);
         let mut reads = BTreeMap::new();
-        let error =
-            collect(&fixture, &prop_bsp(&[0]), PakLimits::default(), &mut reads).unwrap_err();
-        assert!(
-            error.to_string().contains("direct plain VertexLitGeneric"),
-            "{error}"
-        );
+        let paths = collect(&fixture, &prop_bsp(&[0]), PakLimits::default(), &mut reads).unwrap();
         assert!(reads.values().all(|count| *count == 1));
-        assert!(!reads.contains_key(GREEN));
-        if !edit_already_visited {
-            assert!(!reads.contains_key(BLUE));
+        assert!(paths.contains(FIRST_TEXTURE));
+        assert!(paths.contains(BLUE));
+        assert_eq!(paths.contains(GREEN), selected.contains(&"test/edit_green"));
+        for (path, expected) in [FIRST, SECOND].into_iter().zip(selected) {
+            let material = Material::load(&fixture.game, path).unwrap().unwrap();
+            assert_eq!(material.get("$basetexture"), Some(expected));
         }
     }
     assert_eq!(MAX_PATCH_DEPTH, 8);
-    for edges in [MAX_PATCH_DEPTH, MAX_PATCH_DEPTH + 1] {
-        let fixture = Fixture::new();
-        let mut path = FIRST.to_owned();
-        for index in 0..edges {
-            let next = format!("materials/models/test/plain_{index}.vmt");
-            fixture.write(&path, include(&next));
-            path = next;
+    for prefix in [0, 1, 2] {
+        for edges in [MAX_PATCH_DEPTH - prefix, MAX_PATCH_DEPTH - prefix + 1] {
+            let fixture = edited_fixture("replace");
+            let mut path = FIRST.to_owned();
+            for index in 0..edges {
+                let next = format!("materials/models/test/nested_{index}.vmt");
+                let mode = if index % 2 == 0 { "insert" } else { "replace" };
+                fixture.write(&path, edited(mode, &next, "test/edit_blue"));
+                path = next;
+            }
+            fixture.write(&path, "VertexLitGeneric { $basetexture test/one }");
+            if prefix == 1 {
+                fixture.write(SECOND, edited("replace", FIRST, "test/edit_green"));
+            } else if prefix == 2 {
+                fixture.write(SECOND, include(MIDDLE));
+                fixture.write(MIDDLE, edited("insert", FIRST, "test/edit_green"));
+            }
+            let mut reads = BTreeMap::new();
+            let result = collect(&fixture, &prop_bsp(&[0]), PakLimits::default(), &mut reads);
+            if edges + prefix == MAX_PATCH_DEPTH {
+                assert!(result.is_ok());
+            } else {
+                assert!(result.unwrap_err().to_string().contains("depth"));
+                if prefix == 0 {
+                    assert!(!reads.contains_key(&path));
+                }
+            }
+            assert!(reads.values().all(|count| *count == 1));
         }
-        fixture.write(&path, "VertexLitGeneric { $basetexture test/one }");
-        let result = collect(
-            &fixture,
-            &prop_bsp(&[0]),
-            PakLimits::default(),
-            &mut BTreeMap::new(),
-        );
-        if edges == MAX_PATCH_DEPTH {
-            assert!(result.is_ok());
-        } else {
-            assert!(result.unwrap_err().to_string().contains("depth"));
-        }
+    }
+    for cycle in [FIRST, MIDDLE] {
+        let fixture = edited_fixture("replace");
+        fixture.write(FIRST, edited("insert", MIDDLE, "test/edit_blue"));
+        fixture.write(MIDDLE, edited("replace", cycle, "test/edit_green"));
+        let mut reads = BTreeMap::new();
+        let error =
+            collect(&fixture, &prop_bsp(&[0]), PakLimits::default(), &mut reads).unwrap_err();
+        assert!(error.to_string().contains("cycle"));
+        assert!(reads.values().all(|count| *count == 1));
+        assert!(!reads.contains_key(BLUE) && !reads.contains_key(GREEN));
     }
 }
 
 #[test]
 fn repeated_texture_declarations_deduplicate_reads_and_preserve_combined_pak_budgets() {
     let fixture = edited_fixture("insert");
-    fixture.write(FIRST, edited("insert", BASE, "test/one"));
-    fixture.write(SECOND, edited("replace", BASE, "test/one"));
+    fixture.write(FIRST, edited("insert", MIDDLE, "test/one"));
+    fixture.write(MIDDLE, edited("replace", BASE, "test/one"));
+    fixture.write(SECOND, edited("replace", MIDDLE, "test/one"));
     let mut reads = BTreeMap::new();
     let paths = collect(&fixture, &prop_bsp(&[0]), PakLimits::default(), &mut reads).unwrap();
-    assert_eq!(paths.len(), 7);
+    assert_eq!(paths.len(), 8);
     assert_eq!(reads.get(FIRST_TEXTURE), Some(&1));
     assert!(!paths.contains(BLUE) && !paths.contains(GREEN));
     let fixture = edited_fixture("replace");
+    nest_edits(&fixture, "replace");
     let bsp = prop_bsp(&[0]);
     let plan = fixture.plan(&bsp).unwrap();
-    assert_eq!(plan.entries().len(), 9);
+    assert_eq!(plan.entries().len(), 10);
     assert!(
         plan.entries()
             .iter()
@@ -471,8 +531,9 @@ fn repeated_texture_declarations_deduplicate_reads_and_preserve_combined_pak_bud
 
 #[test]
 fn cancellation_at_base_and_each_original_texture_read_stops_before_another_dependency() {
-    for stop in [BASE, FIRST_TEXTURE, BLUE, GREEN] {
+    for stop in [MIDDLE, BASE, FIRST_TEXTURE, BLUE, GREEN] {
         let fixture = edited_fixture("replace");
+        nest_edits(&fixture, "replace");
         let control = Control::default();
         let mut cancelled = false;
         let mut reads = Vec::new();
@@ -506,10 +567,11 @@ fn cancellation_at_base_and_each_original_texture_read_stops_before_another_depe
 #[test]
 fn offline_edits_recheck_omissions_rehashed_structure_and_original_identity() {
     let fixture = edited_fixture("replace");
+    nest_edits(&fixture, "replace");
     let mut original = prop_bsp(&[0]);
     let plan = fixture.plan(&original).unwrap();
     let manifest = plan.attach(&mut original, &Control::default()).unwrap();
-    for path in [BASE, FIRST_TEXTURE, BLUE, GREEN] {
+    for path in [MIDDLE, BASE, FIRST_TEXTURE, BLUE, GREEN] {
         let mut bsp = original.clone();
         let mut archive = bsp.pak_data(PakLimits::default()).unwrap();
         let mut changed = manifest.clone();
@@ -523,7 +585,7 @@ fn offline_edits_recheck_omissions_rehashed_structure_and_original_identity() {
     }
     for text in [
         format!("Patch {{ include {BASE} insert {{ $envmap env_cubemap }} }}"),
-        edited("replace", SECOND, "test/edit_blue"),
+        edited("replace", FIRST, "test/edit_blue"),
         format!(
             "Patch {{ include {BASE} insert {{ $basetexture test/edit_blue }} replace {{ $basetexture test/edit_green }} }}"
         ),
@@ -555,7 +617,7 @@ fn offline_edits_recheck_omissions_rehashed_structure_and_original_identity() {
         .iter_mut()
         .find(|entry| entry.name == FIRST)
         .unwrap();
-    entry.data = edited("replace", BASE, "test/edit_green").into_bytes();
+    entry.data = edited("replace", MIDDLE, "test/edit_green").into_bytes();
     let asset = changed
         .assets
         .iter_mut()

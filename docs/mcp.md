@@ -173,6 +173,10 @@ Save the child, refresh contents, then compile the parent. Missing, duplicate an
 Unresolved standalone templates fail in every build mode and are excluded from authored-lighting preview, including HDR or ambient tokens with sky ambient off.
 The reference form preserves bindings. Extraction with parameters and general replacements remain unsupported.
 
+Static-prop packing accepts up to eight Patch include edges with one basetexture edit per Patch.
+All original materials and declared textures stay packed. Deeper edits win within each type; replacements apply after all inserts.
+Cutout vertex-lighting receivers keep their separate direct-edit limit.
+
 ## Tool reference
 
 The server publishes the complete parameter schema for every tool.

@@ -42,6 +42,12 @@ pub struct Material {
     pub blocks: Vec<Node>,
 }
 
+#[derive(Default)]
+struct PatchEdits {
+    insert: Vec<Node>,
+    replace: Vec<Node>,
+}
+
 impl Material {
     /// Parses a VMT that isn't a `patch`; use [`Material::load`] to resolve
     /// patches through the filesystem.
@@ -77,51 +83,64 @@ impl Material {
     }
 
     /// Loads a game-relative VMT path and its Patch includes through the reader.
+    /// Sections accumulate outer to inner; all inserts apply before replacements.
     pub fn load_with_reader(
         path: &str,
         read: &mut dyn FnMut(&str) -> io::Result<Option<Vec<u8>>>,
     ) -> Result<Option<Self>, Error> {
-        Self::load_depth(&normalize(path), 0, read)
+        let mut edits = PatchEdits::default();
+        let Some(mut material) = Self::load_depth(&normalize(path), 0, read, &mut edits)? else {
+            return Ok(None);
+        };
+        material.apply(&edits.insert, false);
+        material.apply(&edits.replace, true);
+        Ok(Some(material))
     }
 
     fn load_depth(
         path: &str,
         depth: usize,
         read: &mut dyn FnMut(&str) -> io::Result<Option<Vec<u8>>>,
+        edits: &mut PatchEdits,
     ) -> Result<Option<Self>, Error> {
         if depth > MAX_PATCH_DEPTH {
             return Err(Error::PatchTooDeep);
         }
-        let Some(bytes) = read(path)? else {
-            return Ok(None);
-        };
-        let text = String::from_utf8_lossy(&bytes);
-        let nodes = keyvalues::parse_lenient_bounded(
-            strip_bom(&text),
-            MAX_MATERIAL_DEPTH,
-            MAX_MATERIAL_NODES,
-        )?;
-        let (shader, children) = shader_block(&nodes)?;
-        if shader != "patch" {
-            return Ok(Some(Self::from_shader(shader, children)));
-        }
-
-        let include = children
-            .iter()
-            .find(|n| n.key.eq_ignore_ascii_case("include"))
-            .and_then(Node::as_str)
-            .ok_or(Error::NoShader)?;
-        let mut base = Self::load_depth(&normalize(include), depth + 1, read)?
-            .ok_or_else(|| Error::MissingInclude(include.to_owned()))?;
-        for (section, only_existing) in [("insert", false), ("replace", true)] {
-            if let Some(children) = children
-                .iter()
-                .find(|node| node.key.eq_ignore_ascii_case(section))
-                .and_then(Node::children)
-            {
-                base.apply(children, only_existing);
+        let include = {
+            let Some(bytes) = read(path)? else {
+                return Ok(None);
+            };
+            let text = String::from_utf8_lossy(&bytes);
+            let nodes = keyvalues::parse_lenient_bounded(
+                strip_bom(&text),
+                MAX_MATERIAL_DEPTH,
+                MAX_MATERIAL_NODES,
+            )?;
+            let (shader, children) = shader_block(&nodes)?;
+            if shader != "patch" {
+                return Ok(Some(Self::from_shader(shader, children)));
             }
-        }
+            let include = children
+                .iter()
+                .find(|n| n.key.eq_ignore_ascii_case("include"))
+                .and_then(Node::as_str)
+                .ok_or(Error::NoShader)?;
+            for (section, destination) in [
+                ("insert", &mut edits.insert),
+                ("replace", &mut edits.replace),
+            ] {
+                if let Some(children) = children
+                    .iter()
+                    .find(|node| node.key.eq_ignore_ascii_case(section))
+                    .and_then(Node::children)
+                {
+                    destination.extend_from_slice(children);
+                }
+            }
+            include.to_owned()
+        };
+        let base = Self::load_depth(&normalize(&include), depth + 1, read, edits)?
+            .ok_or(Error::MissingInclude(include))?;
         Ok(Some(base))
     }
 
@@ -316,6 +335,101 @@ mod tests {
             .unwrap()
             .unwrap();
             assert_eq!(material.get("$value"), Some("replaced"));
+        }
+    }
+
+    #[test]
+    fn nested_patch_scalar_sections_accumulate_before_terminal_presence_checks() {
+        for (outer, inner, existing, expected) in [
+            ("insert", "insert", true, Some("inner")),
+            ("insert", "replace", true, Some("inner")),
+            ("replace", "insert", true, Some("outer")),
+            ("replace", "replace", true, Some("inner")),
+            ("insert", "insert", false, Some("inner")),
+            ("insert", "replace", false, Some("inner")),
+            ("replace", "insert", false, Some("outer")),
+            ("replace", "replace", false, None),
+        ] {
+            let outer = format!(
+                "Patch {{ include materials/inner.vmt {outer} {{ $value outer $outer_only from_outer }} }}"
+            );
+            let inner = format!(
+                "Patch {{ include materials/base.vmt {inner} {{ $value inner $inner_only from_inner }} }}"
+            );
+            let base = format!(
+                "VertexLitGeneric {{ {} $outer_only original $inner_only original $keep yes }}",
+                if existing { "$value original" } else { "" }
+            );
+            let mut reads = Vec::new();
+            let material = Material::load_with_reader("materials/outer.vmt", &mut |path| {
+                reads.push(path.to_owned());
+                Ok(Some(match path {
+                    "materials/outer.vmt" => outer.as_bytes().to_vec(),
+                    "materials/inner.vmt" => inner.as_bytes().to_vec(),
+                    "materials/base.vmt" => base.as_bytes().to_vec(),
+                    _ => panic!("unexpected material path {path}"),
+                }))
+            })
+            .unwrap()
+            .unwrap();
+            assert_eq!(material.get("$value"), expected, "{outer}; {inner}; {base}");
+            assert_eq!(material.get("$outer_only"), Some("from_outer"));
+            assert_eq!(material.get("$inner_only"), Some("from_inner"));
+            assert_eq!(material.get("$keep"), Some("yes"));
+            assert_eq!(
+                reads,
+                [
+                    "materials/outer.vmt",
+                    "materials/inner.vmt",
+                    "materials/base.vmt"
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn nested_patch_accumulation_preserves_missing_and_depth_read_boundaries() {
+        assert!(
+            Material::load_with_reader("materials/root.vmt", &mut |_| Ok(None))
+                .unwrap()
+                .is_none()
+        );
+        let missing = Material::load_with_reader("materials/root.vmt", &mut |path| {
+            Ok((path == "materials/root.vmt").then(|| {
+                b"Patch { include materials/missing.vmt replace { $value outer } }".to_vec()
+            }))
+        });
+        assert!(
+            matches!(missing, Err(Error::MissingInclude(path)) if path == "materials/missing.vmt")
+        );
+        for edges in [MAX_PATCH_DEPTH, MAX_PATCH_DEPTH + 1] {
+            let mut reads = Vec::new();
+            let material = Material::load_with_reader("materials/0.vmt", &mut |path| {
+                reads.push(path.to_owned());
+                let index: usize = path
+                    .strip_prefix("materials/")
+                    .unwrap()
+                    .strip_suffix(".vmt")
+                    .unwrap()
+                    .parse()
+                    .unwrap();
+                Ok(Some(if index == edges {
+                    b"VertexLitGeneric { $value original }".to_vec()
+                } else {
+                    format!(
+                        "Patch {{ include materials/{}.vmt insert {{ $value level_{index} }} }}",
+                        index + 1
+                    )
+                    .into_bytes()
+                }))
+            });
+            assert_eq!(reads.len(), MAX_PATCH_DEPTH + 1);
+            if edges == MAX_PATCH_DEPTH {
+                assert_eq!(material.unwrap().unwrap().get("$value"), Some("level_7"));
+            } else {
+                assert!(matches!(material, Err(Error::PatchTooDeep)));
+                assert!(!reads.iter().any(|path| path == "materials/9.vmt"));
+            }
         }
     }
 

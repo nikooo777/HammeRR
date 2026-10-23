@@ -41,7 +41,7 @@ The integrated compiler is experimental. File operations, BSP publication and ga
 | [Brush entities](compile-and-play.md#brush-entities-and-pivots) | Checked pivots, initial rotation, moving models and attached lightmaps. | General parenting, arbitrary model classes and initial poses. |
 | [Terrain](terrain.md) | Mixed-grid full/half neighbors, LOD snapping, lighting and collision. | Holes and runtime brush-model terrain. |
 | [Water](water.md) | Flat world pools, inward surfaces, depth, fluid physics, current and damping. | Sloped inward surfaces, slime, per-pool current and moving rendered water. |
-| [Static props](static-props.md) | Models, checked collision choices, shadows, ambient/vertex lighting and asset packing. | Exact hull leaf membership and general materials/bodygroups. |
+| [Static props](static-props.md) | Models, checked collision choices, shadows, ambient/vertex lighting and packing with nested material edits. | Exact hull leaf membership and general materials/bodygroups. |
 | [Detail props](material-detail-scattering.md) | Explicit and generated decorative models, cards, cross/tri shapes and supported lighting. | Editor display of final generated details. |
 | [Reflections](reflections.md) | Private LDR or paired LDR/HDR captures and verified packing. | Recursive reflection bounces and unsupported capture scenes. |
 | [Overlays](overlays.md) | Coplanar face-group fitting, native projections, face splitting, supported terrain targets and water transitions. | Full projected-material viewport preview; multi-face refit and corner editing. |

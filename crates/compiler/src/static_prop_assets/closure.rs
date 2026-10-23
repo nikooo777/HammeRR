@@ -21,12 +21,6 @@ pub(super) struct Roots {
     pub uses: Vec<StaticPropPackedUse>,
 }
 
-#[derive(Clone, Copy)]
-struct MaterialSummary {
-    depth: usize,
-    edited: bool,
-}
-
 impl Roots {
     pub fn from_bsp(bsp: &Bsp) -> io::Result<Self> {
         if bsp.lumps.len() != bsp::LUMP_COUNT {
@@ -114,7 +108,7 @@ pub(super) fn collect_closure(
 ) -> io::Result<BTreeSet<String>> {
     let mut paths = BTreeSet::new();
     let mut attempted = 0usize;
-    let mut materials = BTreeMap::<String, MaterialSummary>::new();
+    let mut materials = BTreeMap::<String, usize>::new();
     let mut texture_paths = BTreeSet::new();
     let mut material_bytes = 0usize;
     let mut charged = HardwareCharge::default();
@@ -241,13 +235,13 @@ pub(super) fn collect_closure(
                 continue;
             };
             let mut chain = Vec::new();
-            let mut edit_texture = None;
-            let mut summary = loop {
+            let mut edit_textures = Vec::new();
+            let mut depth = loop {
                 checkpoint(control)?;
                 let dependency = material::dependency(&material_path, &bytes)?;
                 let (include_path, texture) = match dependency {
                     material::Dependency::Texture(texture_path) => {
-                        chain.push((material_path.clone(), false));
+                        chain.push(material_path.clone());
                         if texture_paths.insert(texture_path.clone()) {
                             let bytes = required(
                                 &texture_path,
@@ -261,42 +255,31 @@ pub(super) fn collect_closure(
                             )?;
                             material::texture(&texture_path, bytes, control)?;
                         }
-                        break MaterialSummary {
-                            depth: 0,
-                            edited: false,
-                        };
+                        break 0;
                     }
                     material::Dependency::Include(include) => (include, None),
                     material::Dependency::EditedInclude { include, texture } => {
                         (include, Some(texture))
                     }
                 };
-                chain.push((material_path.clone(), texture.is_some()));
-                if texture.is_some() {
-                    edit_texture = texture;
+                chain.push(material_path.clone());
+                if let Some(texture) = texture {
+                    edit_textures.push(texture);
                 }
-                material::validate_edit_chain(chain.len(), edit_texture.is_some())?;
-                if chain.iter().any(|(path, _)| path == &include_path) {
+                if chain.contains(&include_path) {
                     return Err(invalid(format!(
                         "Static-prop Patch include cycle: {include_path}"
                     )));
                 }
                 let included = materials.get(&include_path).copied();
-                let depth = chain.len() + included.map_or(0, |summary| summary.depth);
+                let depth = chain.len() + included.unwrap_or(0);
                 if depth > MAX_PATCH_DEPTH {
                     return Err(invalid(format!(
                         "Static-prop Patch include depth exceeds {MAX_PATCH_DEPTH}: {include_path}"
                     )));
                 }
                 if let Some(included) = included {
-                    material::validate_edit_chain(
-                        depth,
-                        edit_texture.is_some() || included.edited,
-                    )?;
-                    break MaterialSummary {
-                        depth: included.depth + 1,
-                        edited: included.edited,
-                    };
+                    break included + 1;
                 }
                 let maximum = MAX_MATERIAL_BYTES
                     .min(limits.max_entry_bytes)
@@ -314,25 +297,24 @@ pub(super) fn collect_closure(
                 material_bytes += bytes.len();
                 material_path = include_path;
             };
-            if let Some(texture_path) = edit_texture
-                && texture_paths.insert(texture_path.clone())
-            {
-                let bytes = required(
-                    &texture_path,
-                    limits.max_entry_bytes,
-                    false,
-                    &mut paths,
-                    &mut attempted,
-                    limits,
-                    control,
-                    read,
-                )?;
-                material::texture(&texture_path, bytes, control)?;
+            for texture_path in edit_textures {
+                if texture_paths.insert(texture_path.clone()) {
+                    let bytes = required(
+                        &texture_path,
+                        limits.max_entry_bytes,
+                        false,
+                        &mut paths,
+                        &mut attempted,
+                        limits,
+                        control,
+                        read,
+                    )?;
+                    material::texture(&texture_path, bytes, control)?;
+                }
             }
-            for (path, edited) in chain.into_iter().rev() {
-                summary.edited |= edited;
-                materials.insert(path, summary);
-                summary.depth += 1;
+            for path in chain.into_iter().rev() {
+                materials.insert(path, depth);
+                depth += 1;
             }
         }
     }

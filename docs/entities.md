@@ -39,6 +39,7 @@ Palette changes persist independently of cancelling a property draft.
 Place `light`, `light_spot` or `light_environment` for point, spot or sun lighting.
 Set color, brightness, falloff and direction through entity properties.
 Spot cones, resource icons and supported FGD guides show placement and orientation.
+For reusable child maps, see [light colors per reference](instances.md#light-colors-per-reference).
 
 ![A selected spotlight with its cone guide](images/spotlight-guide.png)
 

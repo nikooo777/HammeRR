@@ -10,6 +10,7 @@ struct Child {
     identity: FileIdentity,
     bytes: usize,
     names: names::LocalIndex,
+    light_parameters: bool,
 }
 
 struct EntitySpec {
@@ -160,7 +161,12 @@ impl<'a> Expansion<'a> {
         }
         let names = names::LocalIndex::new(&child, &mut self.work, self.control)
             .map_err(|error| format!("Instance {relative}: {error}"))?;
+        let light_parameters = child
+            .entities
+            .iter()
+            .any(|entity| !entity.hidden && bindings::has_parameters(entity));
         let child = Arc::new(Child {
+            light_parameters,
             names,
             vmf: child,
             identity,
@@ -196,6 +202,16 @@ impl<'a> Expansion<'a> {
         let child = self
             .child(&relative, owner, ancestors)
             .map_err(EditError::Invalid)?;
+        let bindings = bindings::Bindings::new(helper).map_err(EditError::Invalid)?;
+        bindings
+            .check_child(
+                &child.vmf,
+                child.bytes,
+                child.light_parameters,
+                &mut self.work,
+                self.control,
+            )
+            .map_err(|error| EditError::Invalid(format!("Instance {relative}: {error}")))?;
         let angles = vector(helper, "angles").map_err(EditError::Invalid)?;
         let scope = names::Scope::capture(helper, &mut self.work, self.control)
             .map_err(EditError::Invalid)?;
@@ -360,7 +376,10 @@ impl<'a> Expansion<'a> {
                                     ),
                             );
                         }
-                        self.entity(tx, entity, spec, owner.id, &relative, transforms)?;
+                        let effective = bindings
+                            .resolve(entity, kind, &mut self.work, self.control)
+                            .map_err(EditError::Invalid)?;
+                        self.entity(tx, &effective, spec, owner.id, &relative, transforms)?;
                         Ok(())
                     })();
                     result.map_err(|error| {

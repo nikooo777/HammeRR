@@ -1066,6 +1066,19 @@ fn build(
         if let Some(diagnostic) = map::unresolved_instance_diagnostic(entity) {
             output.report.diagnostics.push(diagnostic);
         }
+        if !entity.hidden
+            && matches!(entity.classname(), Some("light" | "light_spot"))
+            && entity.properties.iter().any(|(key, value)| {
+                (key.eq_ignore_ascii_case("_light") || key.eq_ignore_ascii_case("_lightHDR"))
+                    && value.contains('$')
+            })
+        {
+            output.report.diagnostics.push(Diagnostic::error(
+                "Unresolved light-value parameter requires a literal binding on the immediately containing instance",
+                Some(format!("entity:{}", entity.id)),
+                entity.origin().filter(|point| map::within_compile_bounds(*point)),
+            ));
+        }
     }
     if output.report.has_errors() {
         return Ok(());

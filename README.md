@@ -82,7 +82,7 @@ See the [tool index and setup](docs/mcp.md).
 
 | [Overlays](docs/overlays.md) | [Assemblies](docs/instances.md) |
 | --- | --- |
-| ![A projected material on the compiled wall](docs/images/overlay-native.png) | ![Stationary brush assemblies with different initial poses in game](docs/images/stationary-child-poses.png) |
-| Fit, rebind and adjust native material projections. | Reuse saved assemblies with checked transforms and stationary brush poses. |
+| ![A projected material on the compiled wall](docs/images/overlay-native.png) | ![Two references to one arch use different baked light colors](docs/images/instance-light-colors.png) |
+| Fit, rebind and adjust native material projections. | Reuse assemblies with checked transforms, stationary brush poses and light colors for each reference. |
 
 Counter-Strike: Source and its assets are not included.

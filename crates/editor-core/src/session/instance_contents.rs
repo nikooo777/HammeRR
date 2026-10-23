@@ -1133,7 +1133,8 @@ impl Session {
             "diagnostics":ready.map(|ready|&ready.diagnostics),"diagnostics_truncated":ready.is_some_and(|ready|ready.diagnostics_truncated),
             "geometry":ready.map(|ready|json!({"vertices":ready.mesh.vertices.len(),"indices":ready.mesh.indices.len(),"line_vertices":ready.mesh.edges.len(),"triangles":ready.mesh.indices.len()/3,"cpu_bytes":ready.cpu_bytes,"gpu_bytes":ready.gpu_bytes})),
             "policy":if has_terrain {"read_only_world_detail_terrain_root_owner_picking_no_material_loading"} else {"flat_read_only_world_detail_root_owner_picking_no_material_loading"},
-            "authoring_bounds":"ordinary_root_objects_unchanged","limits":limits()
+            "authoring_bounds":"ordinary_root_objects_unchanged","limits":limits(),
+            "light_value_bindings":super::instance_reference::light_value_binding_scope()
         });
         let environment_lights = ready.map_or(0, |ready| ready.stats.environment_lights);
         if environment_lights > 0

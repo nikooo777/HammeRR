@@ -149,6 +149,12 @@ For [stationary child brush rotation](instances.md#rotate-a-stationary-child-bru
 Save the child, then compile its parent. Compilation lowers the initial pose into body geometry and emits zero angles.
 `brush_model_preview.deferred_checks` includes `initial_pose`; reference inspection still provides no child model mesh.
 
+For [light colors per reference](instances.md#light-colors-per-reference), set a child light's `_light` or `_lightHDR` to `$name`.
+Use `create_entity`, `set_entity_properties` or the property-edit tools.
+Set the containing helper's `replace01` through `replace10` to `$name literal` through the same operations.
+Save the child, refresh contents, then compile the parent. Missing, duplicate and unused bindings fail explicitly.
+The reference form preserves bindings. Extraction with parameters and general replacements remain unsupported.
+
 ## Tool reference
 
 The server publishes the complete parameter schema for every tool.

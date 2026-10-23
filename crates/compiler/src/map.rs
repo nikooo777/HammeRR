@@ -36,7 +36,7 @@ pub use terrain::Terrain;
 pub const DEFAULT_LIGHTMAP_SCALE: f64 = 16.0;
 pub use map_core::checks::SOURCE_COORDINATE_LIMIT as MAX_COMPILE_COORD;
 
-fn within_compile_bounds(point: DVec3) -> bool {
+pub(crate) fn within_compile_bounds(point: DVec3) -> bool {
     point.is_finite() && point.abs().max_element() <= MAX_COMPILE_COORD
 }
 

@@ -39,6 +39,14 @@ pub(super) fn kind(entity: &Entity) -> Option<Kind> {
 }
 
 pub(super) fn admit(entity: &Entity, kind: Kind) -> Result<(), String> {
+    admit_light(entity, kind, false)
+}
+
+pub(super) fn admit_template(entity: &Entity, kind: Kind) -> Result<(), String> {
+    admit_light(entity, kind, true)
+}
+
+fn admit_light(entity: &Entity, kind: Kind, template: bool) -> Result<(), String> {
     if matches!(kind, Kind::PlayerSpawn) {
         return spawns::admit(entity);
     }
@@ -140,6 +148,9 @@ pub(super) fn admit(entity: &Entity, kind: Kind) -> Result<(), String> {
                 "Static child light requires style from 0 to {MAX_CHILD_LIGHT_APPEARANCE}"
             ));
         }
+    }
+    if template && bindings::has_parameters(entity) {
+        return crate::lighting::validate_point_light_template(&mapped, matches!(kind, Kind::Spot));
     }
     for lighting in [LightingKind::Ldr, LightingKind::Hdr] {
         let light = crate::lighting::PointLight::from_entity_kind(&mapped, -1, lighting)?;

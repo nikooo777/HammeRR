@@ -21,6 +21,7 @@ Use **Reload material assets** after changing materials.
 ## Limits
 
 - No shadows, bounce, animation or sky visibility test. Lights can shine through walls.
+- Unresolved child light parameters are excluded with a reason. Other valid lamps remain available.
 - At most 32 visible, unnamed, constant lights, including one sun.
 - Parenting, switching, patterns and initially dark lights are unsupported.
 - Supported opaque brush faces, single-base terrain and model meshes receive light.

@@ -6,6 +6,7 @@ mod brush_models;
 mod cubemaps;
 mod environment_lights;
 mod light_appearances;
+mod light_value_bindings;
 mod lighting_origins;
 mod occluders;
 mod overlays;

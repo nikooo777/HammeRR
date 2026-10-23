@@ -276,6 +276,135 @@ fn checked_intensity(intensity: DVec3) -> Result<DVec3, String> {
     Ok(intensity)
 }
 
+fn point_light_pose_style(entity: &MapEntity) -> Result<(DVec3, u8), String> {
+    let origin = entity.origin.ok_or("Point light needs an origin")?;
+    if !origin.is_finite() || origin.abs().max_element() > crate::map::MAX_COMPILE_COORD {
+        return Err("Point light origin must be finite and inside Source compile bounds".into());
+    }
+    let style = number(entity, "style")?;
+    let named = property(entity, "targetname").is_some_and(|value| !value.is_empty());
+    if style.fract() != 0.0 || style > 63.0 || (style >= 32.0) != named {
+        return Err("Point/spot light styles require an authored Appearance from 0 to 31 or a compiler-assigned named style from 32 to 63".into());
+    }
+    Ok((origin, style as u8))
+}
+
+fn unresolved_color(entity: &MapEntity, key: &str, defer_parameters: bool) -> bool {
+    defer_parameters
+        && property(entity, key).is_some_and(|value| {
+            map_core::light::color_parameter(&entity.classname, key, value).is_some()
+        })
+}
+
+fn point_light_color(
+    entity: &MapEntity,
+    kind: LightingKind,
+    defer_parameters: bool,
+) -> Result<Option<LightColor>, String> {
+    let color = match kind {
+        LightingKind::Ldr => {
+            if unresolved_color(entity, "_light", defer_parameters) {
+                return Ok(None);
+            }
+            let color = LightColor::parse(
+                property(entity, "_light").ok_or("Point light needs a brightness value")?,
+                kind,
+            )?;
+            if color
+                .components
+                .iter()
+                .any(|value| !value.is_finite() || !(0.0..=255.0).contains(value))
+                || !color.brightness.is_finite()
+                || color.brightness < 0.0
+            {
+                return Err(
+                    "Point light colors must be 0–255 with finite nonnegative brightness".into(),
+                );
+            }
+            color
+        }
+        LightingKind::Hdr => {
+            if unresolved_color(entity, "_lightHDR", defer_parameters) {
+                return Ok(None);
+            }
+            match hdr_color(entity, "_lightHDR", true)? {
+                Some(color) => color,
+                None => {
+                    if unresolved_color(entity, "_light", defer_parameters) {
+                        return Ok(None);
+                    }
+                    hdr_color(entity, "_light", false)?
+                        .ok_or("HDR point light needs _lightHDR or _light brightness")?
+                }
+            }
+        }
+    };
+    Ok(Some(color))
+}
+
+pub(crate) fn validate_point_light_template(
+    entity: &MapEntity,
+    spotlight: bool,
+) -> Result<(), String> {
+    let (origin, _) = point_light_pose_style(entity)?;
+    let falloff = falloff::Falloff::from_entity(entity)?;
+    let scale = hdr_scale(entity, "_lightscaleHDR")?;
+    for kind in [LightingKind::Ldr, LightingKind::Hdr] {
+        if let Some(color) = point_light_color(entity, kind, true)? {
+            let mut intensity = color.intensity(falloff.gain);
+            if kind == LightingKind::Hdr {
+                intensity *= scale;
+            }
+            checked_intensity(intensity)?;
+        }
+    }
+    if spotlight {
+        spotlight_cone(entity, &map_core::light::Targets::new(), origin)?;
+    }
+    Ok(())
+}
+
+fn spotlight_cone(
+    entity: &MapEntity,
+    targets: &map_core::light::Targets<'_>,
+    origin: DVec3,
+) -> Result<Option<SpotCone>, String> {
+    let inner = if property(entity, "_inner_cone").is_none() {
+        10.0
+    } else {
+        number(entity, "_inner_cone")?
+    };
+    let inner = if inner == 0.0 { 10.0 } else { inner };
+    let outer = number(entity, "_cone")?;
+    let outer = if outer == 0.0 { inner } else { outer };
+    if inner == 180.0 && outer == 180.0 {
+        return Ok(None);
+    }
+    if inner > 90.0 || outer > 90.0 || outer < inner {
+        return Err(
+            "Spotlight cones need inner ≤ outer ≤ 90 degrees, or both 180 for a point light".into(),
+        );
+    }
+    let exponent = number(entity, "_exponent")?;
+    if exponent > f64::from(f32::MAX) {
+        return Err("Spotlight focus exceeds native float limits".into());
+    }
+    let target = map_core::light::target(property(entity, "target"), targets)?;
+    let direction = map_core::light::direction(
+        property(entity, "angles"),
+        property(entity, "angle"),
+        property(entity, "pitch"),
+        origin,
+        target,
+    )?;
+    Ok(Some(SpotCone {
+        direction,
+        inner: inner.to_radians().cos(),
+        outer: outer.to_radians().cos(),
+        exponent,
+    }))
+}
+
 impl PointLight {
     pub fn from_entity(entity: &MapEntity, cluster: i32) -> Result<Self, String> {
         Self::from_entity_kind(entity, cluster, LightingKind::Ldr)
@@ -286,43 +415,9 @@ impl PointLight {
         cluster: i32,
         kind: LightingKind,
     ) -> Result<Self, String> {
-        let origin = entity.origin.ok_or("Point light needs an origin")?;
-        if !origin.is_finite() || origin.abs().max_element() > crate::map::MAX_COMPILE_COORD {
-            return Err(
-                "Point light origin must be finite and inside Source compile bounds".into(),
-            );
-        }
-        let style = number(entity, "style")?;
-        let named = property(entity, "targetname").is_some_and(|value| !value.is_empty());
-        if style.fract() != 0.0 || style > 63.0 || (style >= 32.0) != named {
-            return Err("Point/spot light styles require an authored Appearance from 0 to 31 or a compiler-assigned named style from 32 to 63".into());
-        }
-        let color = match kind {
-            LightingKind::Ldr => {
-                let color = LightColor::parse(
-                    property(entity, "_light").ok_or("Point light needs a brightness value")?,
-                    kind,
-                )?;
-                if color
-                    .components
-                    .iter()
-                    .any(|value| !value.is_finite() || !(0.0..=255.0).contains(value))
-                    || !color.brightness.is_finite()
-                    || color.brightness < 0.0
-                {
-                    return Err(
-                        "Point light colors must be 0–255 with finite nonnegative brightness"
-                            .into(),
-                    );
-                }
-                color
-            }
-            LightingKind::Hdr => match hdr_color(entity, "_lightHDR", true)? {
-                Some(color) => color,
-                None => hdr_color(entity, "_light", false)?
-                    .ok_or("HDR point light needs _lightHDR or _light brightness")?,
-            },
-        };
+        let (origin, style) = point_light_pose_style(entity)?;
+        let color = point_light_color(entity, kind, false)?
+            .ok_or("Point light has an unresolved light-value parameter")?;
         let falloff = falloff::Falloff::from_entity(entity)?;
         let mut intensity = color.intensity(falloff.gain);
         if kind == LightingKind::Hdr {
@@ -332,7 +427,7 @@ impl PointLight {
         Ok(Self {
             source_id: entity.id,
             origin,
-            style: style as u8,
+            style,
             intensity,
             falloff,
             cluster,
@@ -345,41 +440,9 @@ impl PointLight {
         entity: &MapEntity,
         targets: &map_core::light::Targets<'_>,
     ) -> Result<Self, String> {
-        let inner = if property(entity, "_inner_cone").is_none() {
-            10.0
-        } else {
-            number(entity, "_inner_cone")?
-        };
-        let inner = if inner == 0.0 { 10.0 } else { inner };
-        let outer = number(entity, "_cone")?;
-        let outer = if outer == 0.0 { inner } else { outer };
-        if inner == 180.0 && outer == 180.0 {
-            return Ok(self);
+        if let Some(cone) = spotlight_cone(entity, targets, self.origin)? {
+            self.cone = Some(cone);
         }
-        if inner > 90.0 || outer > 90.0 || outer < inner {
-            return Err(
-                "Spotlight cones need inner ≤ outer ≤ 90 degrees, or both 180 for a point light"
-                    .into(),
-            );
-        }
-        let exponent = number(entity, "_exponent")?;
-        if exponent > f64::from(f32::MAX) {
-            return Err("Spotlight focus exceeds native float limits".into());
-        }
-        let target = map_core::light::target(property(entity, "target"), targets)?;
-        let direction = map_core::light::direction(
-            property(entity, "angles"),
-            property(entity, "angle"),
-            property(entity, "pitch"),
-            self.origin,
-            target,
-        )?;
-        self.cone = Some(SpotCone {
-            direction,
-            inner: inner.to_radians().cos(),
-            outer: outer.to_radians().cos(),
-            exponent,
-        });
         Ok(self)
     }
 

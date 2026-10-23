@@ -60,6 +60,49 @@ fn opened() -> (tempfile::TempDir, Session, PathBuf, Vec<ObjectId>) {
     (directory, session, parent, selected)
 }
 
+#[test]
+fn instance_extraction_keeps_refusing_parameterized_helper_defaults_for_both_actors() {
+    for actor in [Actor::User, Actor::Agent] {
+        let (directory, mut session, parent, _) = opened();
+        session.set_definitions(
+            actor,
+            Catalog::parse(
+                r#"@PointClass = func_instance [ replace01(string) : "Binding" : "$Lamp 255 220 180 400" ]"#,
+            )
+            .unwrap(),
+        );
+        let source = session.document.vmf().clone();
+        let history = session.history_snapshot();
+        let disk = std::fs::read(&parent).unwrap();
+        let error = match session.begin_instance_extraction(actor, "bound.vmf") {
+            Ok(_) => panic!("Parameterized extraction helper was admitted"),
+            Err(error) => error,
+        };
+        assert!(error.contains("nonempty replacement defaults"));
+        assert_eq!(session.document.vmf(), &source);
+        assert_eq!(session.history_snapshot(), history);
+        assert_eq!(std::fs::read(parent).unwrap(), disk);
+        assert!(!directory.path().join("bound.vmf").exists());
+        for empty in ["", " "] {
+            session.set_definitions(
+                actor,
+                Catalog::parse(&format!(
+                    "@PointClass = func_instance [ replace01(string) : \"Binding\" : \"{empty}\" ]"
+                ))
+                .unwrap(),
+            );
+            let request = session
+                .begin_instance_extraction(actor, "empty.vmf")
+                .unwrap();
+            let token = request.token();
+            session
+                .finish_instance_extraction(actor, request.run())
+                .unwrap();
+            session.cancel_instance_extraction(actor, token).unwrap();
+        }
+    }
+}
+
 fn prepared(session: &mut Session, actor: Actor, file: &str) -> u64 {
     let request = session.begin_instance_extraction(actor, file).unwrap();
     let token = request.token();

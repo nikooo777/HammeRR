@@ -783,6 +783,7 @@ impl Session {
             None
         };
         settings["lighting_work_limit"] = self.compilation.options.lighting_work_limit.into();
+        settings["light_value_bindings"] = instance_reference::light_value_binding_scope();
         settings["lighting_work_limit_range"] = json!({
             "min":compiler::MIN_LIGHTING_WORK_LIMIT,
             "max":compiler::MAX_LIGHTING_WORK_LIMIT,

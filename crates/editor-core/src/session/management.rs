@@ -20,6 +20,10 @@ mod water_current_tests;
 #[path = "management/water_damping_tests.rs"]
 mod water_damping_tests;
 
+#[cfg(test)]
+#[path = "management/light_value_binding_tests.rs"]
+mod light_value_binding_tests;
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct ObjectFilter {
     pub query: Option<String>,

@@ -1124,3 +1124,384 @@ fn legacy_flat_fullbright_light_behavior_and_zero_stat_shape_are_preserved() {
     assert!(stats.get("point_lights").is_none());
     assert!(stats.get("spot_lights").is_none());
 }
+
+fn parameter_light(id: u32, class: &str, origin: &str) -> Entity {
+    let mut light = static_light(id, class, origin);
+    light.properties.set("_light", "$lamp");
+    light.properties.set("_lightHDR", "$hdr");
+    light
+}
+
+fn light_bindings(helper: &mut Entity, ldr: &str, hdr: &str) {
+    helper.properties.set("replace01", format!("$LaMp {ldr}"));
+    helper.properties.set("replace10", format!("$HDR {hdr}"));
+}
+
+#[test]
+fn sibling_light_bindings_match_independent_literal_dual_bsp_and_preserve_raw_sources() {
+    let mut point = parameter_light(20, "light", "-48 16 128");
+    point.properties.set("style", "1");
+    let mut spot = parameter_light(21, "light_spot", "64 -16 160");
+    spot.properties.set("style", "11");
+    let (directory, mut parent, template, game) = emitter_fixture(vec![point, spot]);
+    let colors = [
+        ("255 96 32 300", "32 96 255 450"),
+        ("64 255 160 240", "256 80 40 600"),
+    ];
+    light_bindings(
+        parent.entities.last_mut().unwrap(),
+        colors[0].0,
+        colors[0].1,
+    );
+    let id = parent.object_ids().max().unwrap() + 1;
+    let mut sibling = nested_helper(id, "child.vmf", "-24 12 0", "0 0 0");
+    light_bindings(&mut sibling, colors[1].0, colors[1].1);
+    parent.entities.push(sibling);
+    write_child(directory.path(), "parent.vmf", &parent);
+    let raw = std::fs::read(directory.path().join("child.vmf")).unwrap();
+    let context = source(directory.path());
+    let mut literal = Document::new(parent.clone());
+    literal
+        .edit("independent sibling colors", |tx| {
+            for (helper, (ldr, hdr)) in parent
+                .entities
+                .iter()
+                .filter(|entity| {
+                    entity
+                        .classname()
+                        .is_some_and(|class| class.eq_ignore_ascii_case("func_instance"))
+                })
+                .zip(colors)
+            {
+                for original in &template.entities {
+                    let mut light =
+                        static_light(original.id, original.classname().unwrap(), "0 0 0");
+                    light.id = tx.new_object_id()?;
+                    light.properties.set(
+                        "origin",
+                        format_vec3(original.origin().unwrap() + helper.origin().unwrap()),
+                    );
+                    light.properties.set("_light", ldr);
+                    light.properties.set("_lightHDR", hdr);
+                    light
+                        .properties
+                        .set("style", original.properties.get("style").unwrap());
+                    tx.add_entity(light)?;
+                }
+            }
+            for helper in parent.entities.iter().filter(|entity| {
+                entity
+                    .classname()
+                    .is_some_and(|class| class.eq_ignore_ascii_case("func_instance"))
+            }) {
+                tx.remove(ObjectId::Entity(helper.id))?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    let expected = emitter_output(
+        literal.vmf(),
+        &game,
+        None,
+        crate::LightingMode::DirectLdrHdr,
+    );
+    let actual = emitter_output(
+        &parent,
+        &game,
+        Some(&context),
+        crate::LightingMode::DirectLdrHdr,
+    );
+    let stats = actual.stats.instances.as_ref().unwrap();
+    assert_eq!(
+        (
+            stats.instances,
+            stats.files,
+            stats.point_lights,
+            stats.spot_lights
+        ),
+        (2, 1, 2, 2)
+    );
+    assert_eq!(stats.dependencies[0].bytes, raw.len());
+    assert_eq!(
+        actual.bsp.as_ref().unwrap().to_bytes(),
+        expected.bsp.unwrap().to_bytes()
+    );
+    for channel in [LightingKind::Ldr, LightingKind::Hdr] {
+        let lights = actual.bsp.as_ref().unwrap().world_lights(channel).unwrap();
+        assert_eq!(
+            lights.iter().map(|light| light.style).collect::<Vec<_>>(),
+            [1, 11, 1, 11]
+        );
+        assert_ne!(lights[0].intensity, lights[2].intensity);
+    }
+    let contributors = &actual
+        .stats
+        .lighting_progress
+        .as_ref()
+        .unwrap()
+        .contributors;
+    assert!(contributors.iter().any(|light| {
+        light
+            .instance
+            .as_ref()
+            .is_some_and(|source| source.original_entity_id == 20)
+    }));
+    assert_eq!(
+        std::fs::read(directory.path().join("child.vmf")).unwrap(),
+        raw
+    );
+    actual
+        .instance_dependencies
+        .as_ref()
+        .unwrap()
+        .verify(&Control::default())
+        .unwrap();
+    let destination = directory.path().join("bound.bsp");
+    std::fs::write(&destination, b"previous BSP").unwrap();
+    let staged = actual
+        .prepare_write_controlled(&destination, &Control::default())
+        .unwrap()
+        .unwrap();
+    let changed = String::from_utf8(raw.clone())
+        .unwrap()
+        .replace("$lamp", "$other");
+    std::fs::write(directory.path().join("child.vmf"), changed).unwrap();
+    assert!(staged.commit(&Control::default()).is_err());
+    assert_eq!(std::fs::read(&destination).unwrap(), b"previous BSP");
+    std::fs::write(directory.path().join("child.vmf"), &raw).unwrap();
+    let original_parent = std::fs::read(directory.path().join("parent.vmf")).unwrap();
+    let context = source(directory.path());
+    let output = emitter_output(
+        &parent,
+        &game,
+        Some(&context),
+        crate::LightingMode::Fullbright,
+    );
+    let mut changed = parent.clone();
+    changed
+        .entities
+        .last_mut()
+        .unwrap()
+        .properties
+        .set("replace01", "$lamp 1 2 3 4");
+    write_child(directory.path(), "parent.vmf", &changed);
+    assert!(
+        output
+            .instance_dependencies
+            .as_ref()
+            .unwrap()
+            .verify(&Control::default())
+            .is_err()
+    );
+    std::fs::write(directory.path().join("parent.vmf"), original_parent).unwrap();
+}
+
+#[test]
+fn nested_light_bindings_are_local_even_when_names_repeat() {
+    let (directory, mut parent, _, _) =
+        emitter_fixture(vec![parameter_light(20, "light_spot", "0 0 96")]);
+    let mut nested = nested_helper(100, "child.vmf", "16 0 0", "0 0 0");
+    light_bindings(&mut nested, "64 255 32 200", "64 32 512 600");
+    write_child(
+        directory.path(),
+        "middle.vmf",
+        &helper_file(vec![parameter_light(200, "light", "-32 0 96"), nested]),
+    );
+    let root = parent.entities.last_mut().unwrap();
+    root.properties.set("file", "middle.vmf");
+    light_bindings(root, "255 32 64 300", "32 255 64 450");
+    let context = source(directory.path());
+    let resolved = resolve(
+        &parent,
+        Some(&context),
+        &Control::default(),
+        &mut Report::default(),
+    )
+    .unwrap();
+    let lights = resolved
+        .vmf()
+        .entities
+        .iter()
+        .filter(|entity| matches!(entity.classname(), Some("light" | "light_spot")))
+        .collect::<Vec<_>>();
+    assert_eq!(lights.len(), 2);
+    assert_eq!(lights[0].properties.get("_light"), Some("255 32 64 300"));
+    assert_eq!(lights[1].properties.get("_light"), Some("64 255 32 200"));
+    assert_eq!(lights[1].properties.get("_lightHDR"), Some("64 32 512 600"));
+    assert_eq!(resolved.stats().unwrap().max_expansion_depth, 2);
+    for light in lights {
+        entities::admit(light, entities::kind(light).unwrap()).unwrap();
+    }
+    parent
+        .entities
+        .last_mut()
+        .unwrap()
+        .properties
+        .remove("replace01");
+    assert!(
+        resolve(
+            &parent,
+            Some(&context),
+            &Control::default(),
+            &mut Report::default()
+        )
+        .err()
+        .unwrap()
+        .message
+        .contains("missing immediate binding")
+    );
+}
+
+#[test]
+fn bound_templates_reject_grouped_semantic_and_context_failures_before_fullbright() {
+    let (directory, baseline, template, game) =
+        emitter_fixture(vec![parameter_light(20, "light_spot", "0 0 96")]);
+    let context = source(directory.path());
+    for issue in [
+        "missing",
+        "unused",
+        "duplicate",
+        "recursive",
+        "noncanonical",
+        "embedded",
+        "hdr scale",
+        "bad ldr",
+        "bad hdr",
+        "bad hdr outside region",
+        "cone",
+        "hidden",
+        "world context",
+        "material context",
+        "forwarding",
+    ] {
+        let mut parent = baseline.clone();
+        let mut child = template.clone();
+        if issue == "bad hdr outside region" {
+            parent.cordon = Some(Node::block(
+                "cordon",
+                vec![
+                    Node::string("active", "1"),
+                    Node::string("mins", "-128 -128 0"),
+                    Node::string("maxs", "128 128 256"),
+                ],
+            ));
+            child.entities[0].properties.set("origin", "1024 0 96");
+        }
+        let helper = parent.entities.last_mut().unwrap();
+        light_bindings(helper, "255 96 32 300", "32 96 255 450");
+        match issue {
+            "missing" => {
+                helper.properties.remove("replace01");
+            }
+            "unused" => helper.properties.set("replace02", "$unused 1 2 3 4"),
+            "duplicate" => helper.properties.set("replace02", "$LAMP 1 2 3 4"),
+            "recursive" => helper.properties.set("replace01", "$lamp $hdr"),
+            "noncanonical" => {
+                helper.properties.remove("replace01");
+                helper.properties.set("Replace01", "$lamp 255 96 32 300");
+            }
+            "embedded" => child.entities[0]
+                .properties
+                .set("_light", "255 $lamp 32 300"),
+            "hdr scale" => child.entities[0].properties.set("_lightscaleHDR", "$lamp"),
+            "bad ldr" => helper.properties.set("replace01", "$lamp 300 96 32 300"),
+            "bad hdr" | "bad hdr outside region" => {
+                helper.properties.set("replace10", "$hdr 1 2 3 -1")
+            }
+            "cone" => child.entities[0].properties.set("_cone", "15"),
+            "hidden" => child.entities[0].hidden = true,
+            "world context" => child.world.properties.set("skyname", "$lamp"),
+            "material context" => {
+                child
+                    .world
+                    .solids
+                    .push(test_common::room().world.solids.remove(0));
+                child.world.solids[0].sides[0].material = "dev/$lamp".into();
+            }
+            "forwarding" => {
+                let mut nested = nested_helper(100, "child.vmf", "0 0 0", "0 0 0");
+                nested.properties.set("replace01", "$local $lamp");
+                child.entities.push(nested);
+            }
+            _ => unreachable!(),
+        }
+        let owner = helper.id;
+        write_child(directory.path(), "child.vmf", &child);
+        let raw = std::fs::read(directory.path().join("child.vmf")).unwrap();
+        let output = compile_with_source_controlled(
+            &parent,
+            &game,
+            Options {
+                lighting: crate::LightingMode::Fullbright,
+                ..Options::default()
+            },
+            None,
+            Some(&context),
+            &Control::default(),
+        );
+        assert!(
+            output.report.has_errors() && output.bsp.is_none(),
+            "{issue}: {:?}",
+            output.report
+        );
+        assert!(
+            output
+                .report
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.object == Some(format!("entity:{owner}"))),
+            "{issue}: {:?}",
+            output.report
+        );
+        assert_eq!(
+            std::fs::read(directory.path().join("child.vmf")).unwrap(),
+            raw
+        );
+    }
+}
+
+#[test]
+fn unresolved_standalone_light_templates_fail_in_every_compile_mode() {
+    for (class, key) in [("light", "_light"), ("light_spot", "_lightHDR")] {
+        let mut vmf = test_common::room();
+        let mut light = static_light(vmf.object_ids().max().unwrap() + 1, class, "0 0 96");
+        light.properties.set(key, "$lamp");
+        let id = light.id;
+        vmf.entities.push(light);
+        for value in ["$lamp", "$lamp suffix", "255 $lamp 1 2", "$bad-name"] {
+            vmf.entities.last_mut().unwrap().properties.set(key, value);
+            for lighting in [
+                crate::LightingMode::Fullbright,
+                crate::LightingMode::DirectLdr,
+                crate::LightingMode::DirectLdrHdr,
+            ] {
+                let output = compile_with_source_controlled(
+                    &vmf,
+                    &test_common::empty_game(),
+                    Options {
+                        lighting,
+                        ..Options::default()
+                    },
+                    None,
+                    None,
+                    &Control::default(),
+                );
+                assert!(output.bsp.is_none());
+                assert!(
+                    output
+                        .report
+                        .diagnostics
+                        .iter()
+                        .any(
+                            |diagnostic| diagnostic.object == Some(format!("entity:{id}"))
+                                && diagnostic
+                                    .message
+                                    .contains("Unresolved light-value parameter")
+                        ),
+                    "{class}, {key}, {lighting:?}: {:?}",
+                    output.report
+                );
+            }
+        }
+    }
+}

@@ -2,6 +2,32 @@ use glam::DVec3;
 use source_formats::vmf::parse_vec3;
 use std::collections::BTreeMap;
 
+const MAX_PARAMETER_NAME_BYTES: usize = 64;
+
+pub fn parameter_name(value: &str) -> Option<&str> {
+    let name = value.strip_prefix('$')?;
+    let bytes = name.as_bytes();
+    if bytes.is_empty()
+        || bytes.len() > MAX_PARAMETER_NAME_BYTES
+        || !(bytes[0].is_ascii_alphabetic() || bytes[0] == b'_')
+        || !bytes
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+    {
+        return None;
+    }
+    Some(name)
+}
+
+pub fn color_parameter<'a>(classname: &str, key: &str, value: &'a str) -> Option<&'a str> {
+    if !matches!(classname, "light" | "light_spot")
+        || !(key.eq_ignore_ascii_case("_light") || key.eq_ignore_ascii_case("_lightHDR"))
+    {
+        return None;
+    }
+    parameter_name(value)
+}
+
 pub type Targets<'a> = BTreeMap<&'a str, Vec<DVec3>>;
 
 pub fn target(name: Option<&str>, targets: &Targets<'_>) -> Result<Option<DVec3>, String> {
@@ -70,6 +96,44 @@ pub fn direction(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn light_parameters_require_whole_ascii_names_and_supported_color_fields() {
+        for name in ["lamp", "Lamp_2", "_", &"a".repeat(64)] {
+            let value = format!("${name}");
+            assert_eq!(parameter_name(&value), Some(name));
+            for class in ["light", "light_spot"] {
+                for key in ["_light", "_lightHDR", "_LIGHTHDR"] {
+                    assert_eq!(color_parameter(class, key, &value), Some(name));
+                }
+            }
+        }
+        for value in [
+            "lamp",
+            "$",
+            "$1lamp",
+            "$é",
+            " $lamp",
+            "$lamp ",
+            "$lamp suffix",
+            "prefix$lamp",
+            "$lamp\n",
+            "$lamp-x",
+            &format!("${}", "a".repeat(65)),
+        ] {
+            assert_eq!(parameter_name(value), None, "{value:?}");
+        }
+        for (class, key) in [
+            ("light_environment", "_light"),
+            ("light_dynamic", "_light"),
+            ("prop_static", "_lightHDR"),
+            ("light", "_lightscaleHDR"),
+            ("light_spot", "targetname"),
+            ("light", "_ambient"),
+        ] {
+            assert_eq!(color_parameter(class, key, "$lamp"), None);
+        }
+    }
 
     #[test]
     fn light_directions_share_pitch_yaw_legacy_angles_and_target_precedence() {

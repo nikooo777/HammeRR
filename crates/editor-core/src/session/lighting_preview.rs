@@ -184,6 +184,13 @@ pub(super) fn prepare(vmf: &Vmf, visible: &HashSet<ObjectId>, view: ViewOptions)
             Err(format!(
                 "Unshadowed preview does not support {class}; ambient and dynamic lights are excluded"
             ))
+        } else if let Some((key, value)) = entity.properties.iter().find(|(key, value)| {
+            map_core::light::color_parameter(entity.classname().unwrap_or_default(), key, value)
+                .is_some()
+        }) {
+            Err(format!(
+                "Unresolved template light value {key}={value}; bind it through replace01–replace10 on the immediately containing func_instance. Authored-lighting preview cannot resolve instance bindings"
+            ))
         } else {
             constant(entity).and_then(|()| {
                 let source = compiler::map::MapEntity {

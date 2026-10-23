@@ -231,7 +231,7 @@ fn instance_reference_invalid_imported_data_and_missing_source_are_never_repaire
             id,
             &[
                 ("file".into(), Some("missing.vmf".into())),
-                ("replace01".into(), Some("$name changed".into())),
+                ("replace01".into(), Some("$1name 255 220 180 400".into())),
             ],
         )
         .unwrap();
@@ -240,7 +240,7 @@ fn instance_reference_invalid_imported_data_and_missing_source_are_never_repaire
     let token = begin(&mut session, Actor::User, Some(id));
     let report = session.get_instance_reference();
     assert_eq!(report["valid"], false);
-    assert!(report["error"].as_str().unwrap().contains("replacements"));
+    assert!(report["error"].as_str().unwrap().contains("replace01"));
     assert!(
         session
             .apply_instance_reference(Actor::User, token)

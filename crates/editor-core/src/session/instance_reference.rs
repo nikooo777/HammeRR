@@ -4,6 +4,21 @@ use source_formats::vmf::Entity;
 
 use super::*;
 
+pub(super) fn light_value_binding_scope() -> Value {
+    json!({
+        "classes":["light","light_spot"],"properties":["_light","_lightHDR"],
+        "scope":"direct_visible_child_of_immediately_containing_func_instance",
+        "helper_fields":["replace01","replace02","replace03","replace04","replace05","replace06","replace07","replace08","replace09","replace10"],
+        "binding_form":"$identifier literal","binding_separator":"first ASCII space",
+        "token_form":"whole_value_$identifier","identifier":"1–64 ASCII bytes: letter or underscore first, then letters, digits or underscores",
+        "case_insensitive_names":true,"field_bytes":instances::MAX_FIELD_BYTES,
+        "literal_only":true,"empty_replacement_fields":true,
+        "rejected":["duplicates","missing","unused","recursive","embedded","unsupported_context","ancestor_forwarding"],
+        "other_parameter_contexts":false,"func_instance_parms":false,
+        "standalone_unresolved_compilation":false,"authored_lighting_preview_resolution":false
+    })
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Changes {
     pub file: Option<String>,
@@ -206,7 +221,7 @@ impl Session {
 
     pub fn get_instance_reference(&self) -> Value {
         let Some(form) = &self.instance_reference.form else {
-            return json!({"token":null,"valid":false,"contents_validation":"not_checked"});
+            return json!({"token":null,"valid":false,"contents_validation":"not_checked","light_value_bindings":light_value_binding_scope()});
         };
         let context = self.instance_reference_form(form.token, None);
         let error = self
@@ -242,7 +257,8 @@ impl Session {
             "source_admitted":form.location.is_some(),"presence_checked":checked.as_ref().is_some_and(Result::is_ok),
             "presence_error":presence_error,"bytes":form.checked.as_ref().map(ReferencePath::bytes),
             "contents_validation":"not_checked",
-            "limits":"Path and file presence only: explicit relative .vmf inside the saved referring parent tree, no child symlinks/search/substitution, at most 4 MiB. Child keys and aggregate/transformed geometry limits are checked by explicit Refresh instance contents or Compile; material and native validity are checked only by Compile. Nested assemblies support four levels with all paths relative to the saved root, including unnamed unparented ordinary func_brush children with resolved finite origins from an explicit origin or one consumed origin volume; admitted nonzero initial poses are baked into stationary geometry before helper transforms. Child model preview, in-context editing, other unsupported runtime entities and replacements remain unavailable.",
+            "light_value_bindings":light_value_binding_scope(),
+            "limits":"Path and file presence only: explicit relative .vmf inside the saved referring parent tree, no child symlinks or path substitution, at most 4 MiB. Child keys, immediate light-value bindings and aggregate/transformed geometry limits are checked by explicit Refresh instance contents or Compile; material and native validity are checked only by Compile. Existing replace01–replace10 light literals are preserved by this form; author them through ordinary properties. Nested assemblies support four levels with all paths relative to the saved root, including unnamed unparented ordinary func_brush children with resolved finite origins from an explicit origin or one consumed origin volume; admitted nonzero initial poses are baked into stationary geometry before helper transforms. Child model preview, in-context editing, other unsupported runtime entities and other replacements remain unavailable.",
         })
     }
 

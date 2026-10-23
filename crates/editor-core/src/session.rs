@@ -1264,6 +1264,8 @@ impl Session {
             }
             if let Some(value) = value
                 && !water_damping
+                && !(property.kind == "color255"
+                    && map_core::light::color_parameter(classname, key, value).is_some())
             {
                 property.validate(value)?;
             }

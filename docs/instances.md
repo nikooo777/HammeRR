@@ -53,6 +53,40 @@ Moving brush models, parenting and named brush models remain unsupported.
 The compiled entity does not retain the child's original angle value.
 The parent reference preview remains unavailable for child models.
 
+## Light colors per reference
+
+Use one child map with different point or spot light colors in each reference.
+
+1. Open the child VMF.
+2. Select a `light` or `light_spot`, then enable **Advanced properties**.
+3. Set **Property key** to `_light`.
+4. Set **Value** to `$tint`, then press Enter.
+5. Save the child and return to the parent.
+6. Select an instance reference and enable **Advanced properties**.
+7. Set **Property key** to `replace01`.
+8. Set **Value** to `$tint 255 220 180 400`, then press Enter.
+9. Open **Build settings…**.
+10. Set **Build lighting** to **Direct LDR** or **Direct LDR + HDR**, then click **Close**.
+11. Compile the parent.
+
+For HDR, set the child's `_lightHDR` to `$hdr`.
+Set the containing reference's `replace02` to `$hdr 255 240 220 600`.
+Each reference can supply different values. Compilation keeps the saved child unchanged.
+Use [compiled light inspection](compiled-lights.md) to check the effective LDR and HDR records.
+
+![Two references to one arch use different baked light colors](images/instance-light-colors.png)
+
+Use `replace01` through `replace10`. Each value has the form `$name literal`.
+Names are case-insensitive, with 1–64 ASCII letters, digits or underscores; the first character cannot be a digit.
+A parameter must fill the whole color field. Each containing reference must supply every used parameter.
+
+Missing, duplicate or unused bindings fail. Invalid effective light values also fail, including in Fullbright builds.
+An unresolved child template can be edited and saved, but cannot compile alone.
+Preview excludes unresolved lamps and reports a reason; the parent still has no child-light preview.
+
+Only `_light` and `_lightHDR` on direct child point and spot lights support these bindings.
+Nested references bind their own direct child lights. Ancestor forwarding, partial replacement and parameter declarations remain unsupported.
+
 ## Names and parameters
 
 Use **Advanced properties → Fix Up Name** and **Entity Name Fix Up → Prefix** for supported scoped names.

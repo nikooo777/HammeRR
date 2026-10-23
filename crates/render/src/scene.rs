@@ -986,6 +986,12 @@ fn light_number(entity: &Entity, key: &str, default: f32) -> f32 {
 }
 
 fn light_color(entity: &Entity) -> [u8; 3] {
+    if entity.properties.get("_light").is_some_and(|value| {
+        map_core::light::color_parameter(entity.classname().unwrap_or_default(), "_light", value)
+            .is_some()
+    }) {
+        return [110, 118, 132];
+    }
     let color = entity.properties.get("_light").and_then(|value| {
         source_formats::fgd::vector(value, 4).or_else(|| source_formats::fgd::vector(value, 3))
     });
@@ -1865,5 +1871,10 @@ mod tests {
         assert!((light_direction(&entity, &targets) - Vec3::Y).length() < 0.001);
         entity.properties.set("_light", "garbage");
         assert_eq!(light_color(&entity), [255, 240, 200]);
+        entity.properties.set("_light", "$Lamp");
+        assert_eq!(light_color(&entity), [110, 118, 132]);
+        entity.properties.set("_light", "10 20 30 400");
+        entity.properties.set("_lightHDR", "$HDR");
+        assert_eq!(light_color(&entity), [10, 20, 30]);
     }
 }

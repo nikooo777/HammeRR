@@ -33,7 +33,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Replace pending property changes and validate every target before accepting. set writes a value; remove deletes the override; default explicitly writes the FGD default; flag changes one declared bit preserving others; component edits one vector/color component. Names use the dedicated safe rename workflow. No map mutation until commit. handle identifies kind=property_edit with a decimal-string token, separate from source revisions. Starting another property draft replaces ownership; map or definition changes make it stale. Selection changes retain the captured targets; they do not retarget the draft."
+        description = "Replace pending property changes and validate every target before accepting. set writes a value; remove deletes the override; default explicitly writes the FGD default; flag changes one declared bit preserving others; component edits one vector/color component. Names use the dedicated safe rename workflow. Whole-value $identifier is accepted for light/light_spot _light/_lightHDR template colors; literals bind through replace01–replace10 on the immediately containing func_instance. Unresolved colors retain text controls without swatches or intensity. No map mutation until commit. handle identifies kind=property_edit with a decimal-string token, separate from source revisions. Starting another property draft replaces ownership; map or definition changes make it stale. Selection changes retain the captured targets; they do not retarget the draft."
     )]
     pub(in crate::mcp) fn update_property_edit(
         &self,
@@ -150,7 +150,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Create and select a point entity, including lights and player spawns. Applies inherited FGD defaults and validates declared property types. Custom classes and keys are supported. Light brightness uses RGB plus intensity, e.g. _light='255 220 180 400'; Direct LDR compiles static and styled lights with optional diffuse bounces."
+        description = "Create and select a point entity, including lights and player spawns. Applies inherited FGD defaults and validates declared property types. Custom classes and keys are supported. Light brightness uses RGB plus intensity, e.g. _light='255 220 180 400'; Direct LDR compiles static and styled lights with optional diffuse bounces. Whole-value $identifier in direct visible child light/light_spot _light/_lightHDR binds to a literal through canonical replace01–replace10 on the immediately containing func_instance. Names use 1–64 ASCII bytes (letter/underscore first, then letters/digits/underscores), compared case-insensitively; a binding separates token and literal at its first ASCII space and fits 512 bytes. Missing/unused/duplicate bindings, embedded tokens, recursion, ancestor forwarding, other contexts and func_instance_parms reject. Templates remain editable/savable; unresolved standalone compilation fails in every mode and authored-lighting preview excludes unresolved lamps."
     )]
     pub(in crate::mcp) fn create_entity(
         &self,
@@ -521,7 +521,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Set and/or remove entity properties (including classname, origin, angles, targetname and light brightness). Validates declared FGD types, choices and read-only fields atomically. Unknown keys are preserved and editable."
+        description = "Set and/or remove entity properties (including classname, origin, angles, targetname and light brightness). Validates declared FGD types, choices and read-only fields atomically. Unknown keys are preserved and editable. Whole-value $identifier in direct visible child light/light_spot _light/_lightHDR binds to a literal through canonical replace01–replace10 on the immediately containing func_instance. Names use 1–64 ASCII bytes (letter/underscore first, then letters/digits/underscores), compared case-insensitively; a binding separates token and literal at its first ASCII space and fits 512 bytes. Missing/unused/duplicate bindings, embedded tokens, recursion, ancestor forwarding, other contexts and func_instance_parms reject. Templates remain editable/savable; unresolved standalone compilation fails in every mode and authored-lighting preview excludes unresolved lamps."
     )]
     pub(in crate::mcp) fn set_entity_properties(
         &self,
@@ -589,3 +589,6 @@ mod water_current_tests;
 
 #[cfg(test)]
 mod water_damping_tests;
+
+#[cfg(test)]
+mod light_value_binding_tests;

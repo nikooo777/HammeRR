@@ -199,6 +199,18 @@ fn field(entity: &Entity, class: Option<&Class>, key: String) -> Field {
         key,
         value,
     };
+    if map_core::light::color_parameter(
+        entity.classname().unwrap_or_default(),
+        &result.key,
+        &result.value,
+    )
+    .is_some()
+    {
+        if !result.description.is_empty() {
+            result.description.push(' ');
+        }
+        result.description.push_str("Unresolved template light value. The immediately containing func_instance must bind this whole-value token through replace01–replace10. Standalone compilation and authored-lighting preview are unavailable until it is resolved.");
+    }
     if detail_tint {
         result.description = "Three integer linear RGB channels from 0 to 255 attenuate compiled detail lighting. White keeps its original intensity; 128 approximately halves a linear channel. Compiler Fullbright starts from tinted white. Dynamic lights and the client's mat_fullbright override keep their engine behavior.".into();
     }
@@ -602,6 +614,7 @@ mod tests {
             "255 255 255 -3",
             "2.5 255 255 400",
             "broken",
+            "$Lamp",
         ] {
             let mut entity = Entity::new(1, "light");
             entity.properties.set("_light", value);
@@ -613,6 +626,14 @@ mod tests {
                 .unwrap();
             assert_eq!(field.value, value);
             assert_eq!(field.control, Control::Text);
+            assert!(field.color.is_none() && field.intensity.is_none());
+            if value == "$Lamp" {
+                assert!(
+                    field
+                        .description
+                        .contains("Unresolved template light value")
+                );
+            }
         }
     }
 

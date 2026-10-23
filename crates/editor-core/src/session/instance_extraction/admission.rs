@@ -379,6 +379,11 @@ pub(super) fn plan(session: &Session, file: &str) -> Result<Plan, String> {
     for (key, value) in properties {
         helper.properties.set(key, value);
     }
+    if helper.properties.iter().any(|(key, value)| {
+        key.to_ascii_lowercase().starts_with("replace") && !value.trim().is_empty()
+    }) {
+        return Err("Instance extraction does not support nonempty replacement defaults; author light bindings on an ordinary instance reference".into());
+    }
     instances::helper_admission(&helper)?;
     let allocator_metadata = vmf
         .extra

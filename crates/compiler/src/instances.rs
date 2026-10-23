@@ -9,6 +9,7 @@ use source_formats::vmf::{Entity, Solid, Vmf, parse_vec3};
 
 use crate::{Control, Diagnostic, FileIdentity, FileStamp, Report};
 
+mod bindings;
 pub(crate) mod brush_models;
 mod cubemaps;
 mod entities;
@@ -500,18 +501,15 @@ pub fn helper_admission(entity: &Entity) -> Result<(), String> {
     for (key, value) in entity.properties.iter() {
         field(key)?;
         field(value)?;
-        let key = key.to_ascii_lowercase();
-        if !keys.insert(key.clone()) {
+        let lower = key.to_ascii_lowercase();
+        if !keys.insert(lower.clone()) {
             return Err(format!("Instance repeats property {key}"));
         }
-        if key.starts_with("replace") {
-            if !value.trim().is_empty() {
-                return Err(
-                    "Instance replacements are not supported by brush-only expansion".into(),
-                );
-            }
+        if lower.starts_with("replace") {
+            bindings::replacement(key, value)
+                .map_err(|error| format!("Instance {key}: {error}"))?;
         } else if !matches!(
-            key.as_str(),
+            lower.as_str(),
             "classname" | "origin" | "angles" | "file" | "fixup_style" | "targetname" | "name"
         ) {
             return Err(format!(
@@ -519,6 +517,7 @@ pub fn helper_admission(entity: &Entity) -> Result<(), String> {
             ));
         }
     }
+    bindings::Bindings::new(entity)?;
     filename(
         entity
             .properties
@@ -632,7 +631,7 @@ fn child_admission(child: &Vmf, control: &Control) -> Result<(), String> {
             continue;
         }
         if let Some(kind) = entities::kind(entity) {
-            entities::admit(entity, kind)
+            entities::admit_template(entity, kind)
                 .map_err(|error| format!("Child {} {}: {error}", kind.label(), entity.id))?;
             continue;
         }

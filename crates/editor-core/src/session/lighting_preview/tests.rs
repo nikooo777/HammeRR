@@ -58,6 +58,59 @@ fn enable(session: &mut Session) {
 }
 
 #[test]
+fn unresolved_template_lights_have_explicit_diagnostics_without_hiding_valid_lamps() {
+    let (_directory, mut session, _) = fixture();
+    let valid = add(
+        &mut session,
+        "light",
+        Some(DVec3::Z * 32.0),
+        &[("_light", "255 128 32 10")],
+    );
+    let unresolved = [
+        add(
+            &mut session,
+            "light",
+            Some(DVec3::Z * 48.0),
+            &[("_light", "$Lamp")],
+        ),
+        add(
+            &mut session,
+            "light_spot",
+            Some(DVec3::Z * 64.0),
+            &[
+                ("_light", "255 255 255 10"),
+                ("_lightHDR", "$HDR"),
+                ("pitch", "-90"),
+            ],
+        ),
+    ];
+    enable(&mut session);
+    let source = session.document().vmf().clone();
+    let history = session.history_snapshot();
+    let report = session.build_scene().lighting.report;
+    assert!(report.active);
+    assert_eq!(report.admitted_lights, 1);
+    assert_eq!(report.excluded_lights, 2);
+    let ObjectId::Entity(valid) = valid else {
+        unreachable!()
+    };
+    assert_eq!(report.admitted_entities, [valid]);
+    for id in unresolved {
+        let ObjectId::Entity(id) = id else {
+            unreachable!()
+        };
+        assert!(report.diagnostics.iter().any(|diagnostic| {
+            diagnostic.entity == Some(id)
+                && diagnostic
+                    .reason
+                    .contains("Unresolved template light value")
+        }));
+    }
+    assert_eq!(session.document().vmf(), &source);
+    assert_eq!(session.history_snapshot(), history);
+}
+
+#[test]
 fn authored_lighting_tracks_owned_transform_cancel_apply_and_undo_without_view_edits() {
     let (_directory, mut session, _) = fixture();
     let light = add(

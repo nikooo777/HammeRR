@@ -24,15 +24,16 @@ Cancel discards unsaved changes, including hidden search results.
 | Editing | Undo, Redo, Frame selection, Delete selection, Duplicate selection |
 | Projection | Perspective, Top, Front, Side |
 | Selection | Objects, Faces |
-| Display | Show grid, Snap to grid, Tool textures, Selection outlines |
+| Display | Show grid, Snap to grid, Tool textures, Selection outlines, Hide selected in editor, Show all editor-hidden |
 | Transform | Select tool, Move handles, Rotate handles, Scale handles |
 | Authoring | Draw brush, Clip mode |
 
 ## Limits
 
 - Bindings apply to the focused viewport. Text fields retain normal editing keys.
-- Projection and authoring commands start unbound.
+- Projection, authoring and editor-visibility commands start unbound.
+- Hide requires selected objects and committed geometry. Show all restores only temporary editor-hidden objects, including during a preview.
 - Changing Objects/Faces clears obsolete selection and drafts. Faces also stops brush drawing and clipping.
 - Display toggles do not save grid or preview defaults.
 - Invalid or changed storage requires Reload before another write.
-- Shortcuts do not change map data or Undo history.
+- Saving bindings does not edit the map. Executing a command has the same effect as its editor control.

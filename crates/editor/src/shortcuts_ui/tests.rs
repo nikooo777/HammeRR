@@ -417,14 +417,14 @@ fn shortcut_controls_save_atomically_report_conflicts_and_preserve_text_field_ed
     assert!(controller.window.get_can_save());
     crate::ui::tests::save_ui_snapshot(controller.window.window(), "selection-mode-shortcuts");
     let visible_commands = [
-        "Tool textures",
-        "Selection outlines",
         "Select tool",
         "Move handles",
         "Rotate handles",
         "Scale handles",
         "Draw brush",
         "Clip mode",
+        "Hide selected in editor",
+        "Show all editor-hidden",
     ];
     let list = i_slint_backend_testing::ElementHandle::find_by_element_id(
         &controller.window,
@@ -526,6 +526,28 @@ fn shortcut_controls_save_atomically_report_conflicts_and_preserve_text_field_ed
     assert_eq!(lock(&shared).shortcut_bindings(), Bindings::default());
     controller.window.invoke_reset();
     assert!(lock(&shared).shortcuts_error_message().is_none());
+    for (command, label, shift) in [
+        ("hide_selection_in_editor", "Hide selected in editor", false),
+        ("show_all_editor_hidden", "Show all editor-hidden", true),
+    ] {
+        controller.window.invoke_choose(command.into());
+        assert_eq!(controller.window.get_selected_label(), label);
+        assert_eq!(controller.window.get_primary_key(), 0);
+        controller.window.set_primary_key(key_index("H"));
+        controller.window.set_primary_control(false);
+        controller.window.set_primary_shift(shift);
+        controller.window.invoke_edited();
+        assert!(controller.window.get_can_save());
+    }
+    controller.window.invoke_save();
+    assert_eq!(
+        lock(&shared).resolve_editor_shortcut("H", false, false, false, false),
+        Some(Command::HideSelectionInEditor)
+    );
+    assert_eq!(
+        lock(&shared).resolve_editor_shortcut("H", false, true, false, false),
+        Some(Command::ShowAllEditorHidden)
+    );
     controller.window.invoke_cancel();
     assert!(!controller.window.window().is_visible());
 
@@ -590,6 +612,16 @@ fn shortcut_controls_save_atomically_report_conflicts_and_preserve_text_field_ed
         });
     }
     assert_eq!(lock(&shared).document().vmf(), &before);
+    dispatch_chord(&app, &[], "h");
+    assert_eq!(lock(&shared).editor_hidden_count(), 0);
+    lock(&shared)
+        .execute_editor_command(Actor::Agent, Command::HideSelectionInEditor, 1.0)
+        .unwrap();
+    dispatch_chord(&app, &[Key::Shift], "h");
+    assert_eq!(lock(&shared).editor_hidden_count(), 1);
+    lock(&shared)
+        .execute_editor_command(Actor::Agent, Command::ShowAllEditorHidden, 1.0)
+        .unwrap();
     app.window().dispatch_event(WindowEvent::PointerPressed {
         position: slint::LogicalPosition::new(600.0, 400.0),
         button: PointerEventButton::Left,
@@ -598,6 +630,10 @@ fn shortcut_controls_save_atomically_report_conflicts_and_preserve_text_field_ed
         position: slint::LogicalPosition::new(600.0, 400.0),
         button: PointerEventButton::Left,
     });
+    dispatch_chord(&app, &[], "h");
+    assert_eq!(lock(&shared).editor_hidden_count(), 1);
+    dispatch_chord(&app, &[Key::Shift], "h");
+    assert_eq!(lock(&shared).editor_hidden_count(), 0);
     app.window().dispatch_event(WindowEvent::KeyPressed {
         text: Key::Delete.into(),
     });

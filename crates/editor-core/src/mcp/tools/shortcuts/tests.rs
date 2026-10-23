@@ -42,6 +42,11 @@ fn command_search_matches_literals_ids_current_and_factory_without_activating_dr
     for (query, expected) in [
         ("  DRAW brush  ", Some(Command::DrawBrush)),
         ("clip_mode", Some(Command::ClipMode)),
+        (
+            "hide_selection_in_editor",
+            Some(Command::HideSelectionInEditor),
+        ),
+        ("show all editor-hidden", Some(Command::ShowAllEditorHidden)),
         ("frame_selection F8", Some(Command::FrameSelection)),
         ("undo CTRL+F6", Some(Command::Undo)),
         ("undo ctrl+z", Some(Command::Undo)),
@@ -265,6 +270,32 @@ async fn view_commands_share_the_schema_and_reject_after_originating_document_dr
     assert_eq!(lock(&shared).document().vmf(), &before);
     assert_eq!(lock(&shared).history_snapshot(), history);
     assert_eq!(lock(&shared).selected_ids(), selection);
+    for (name, hidden) in [
+        ("hide_selection_in_editor", 1),
+        ("hide_selection_in_editor", 1),
+        ("show_all_editor_hidden", 0),
+        ("show_all_editor_hidden", 0),
+    ] {
+        let request = CallToolRequestParams::new("execute_editor_command")
+            .with_arguments(json!({"command":name}).as_object().unwrap().clone());
+        let context = RequestContext::new(NumberOrString::Number(2), service.peer().clone());
+        let result = match tokio::time::timeout(TIMEOUT, server.call_tool(request, context))
+            .await
+            .unwrap()
+            .unwrap()
+        {
+            CallToolResponse::Complete(result) => value(Ok(result)),
+            result => panic!("unexpected command response: {result:?}"),
+        };
+        assert_eq!(result["command"], name);
+        assert_eq!(result["editor_visibility"]["hidden_total"], hidden);
+        assert_eq!(lock(&shared).editor_hidden_count(), hidden);
+        assert_eq!(lock(&shared).selected_ids(), selection);
+        assert_eq!(lock(&shared).document().vmf(), &before);
+        assert_eq!(lock(&shared).history_snapshot(), history);
+        assert_eq!(peer.editor_hidden_count(), 0);
+        assert_eq!(document.active_operations(), 0);
+    }
     let camera = lock(&shared).camera();
     for (name, enabled, changed) in [
         ("objects", false, false),
@@ -339,26 +370,28 @@ async fn view_commands_share_the_schema_and_reject_after_originating_document_dr
     let spatial = lock(&shared).spatial();
     let view = lock(&shared).view();
     let log = lock(&shared).log_serial();
-    let request = CallToolRequestParams::new("execute_editor_command").with_arguments(
-        json!({"command":"tool_textures"})
-            .as_object()
+    for name in [
+        "tool_textures",
+        "hide_selection_in_editor",
+        "show_all_editor_hidden",
+    ] {
+        let request = CallToolRequestParams::new("execute_editor_command")
+            .with_arguments(json!({"command":name}).as_object().unwrap().clone());
+        let context = RequestContext::new(NumberOrString::Number(2), service.peer().clone());
+        let result = match tokio::time::timeout(TIMEOUT, server.call_tool(request, context))
+            .await
             .unwrap()
-            .clone(),
-    );
-    let context = RequestContext::new(NumberOrString::Number(2), service.peer().clone());
-    let result = match tokio::time::timeout(TIMEOUT, server.call_tool(request, context))
-        .await
-        .unwrap()
-        .unwrap()
-    {
-        CallToolResponse::Complete(result) => result,
-        result => panic!("unexpected command response: {result:?}"),
-    };
-    assert_eq!(result.is_error, Some(true));
-    assert_eq!(
-        result.content[0].as_text().unwrap().text,
-        "the document is closed"
-    );
+            .unwrap()
+        {
+            CallToolResponse::Complete(result) => result,
+            result => panic!("unexpected command response: {result:?}"),
+        };
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(
+            result.content[0].as_text().unwrap().text,
+            "the document is closed"
+        );
+    }
     assert_eq!(lock(&shared).camera(), camera);
     assert_eq!(lock(&shared).spatial(), spatial);
     assert_eq!(lock(&shared).view(), view);

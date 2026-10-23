@@ -77,6 +77,7 @@ Escape cancels an active stroke.
 Use **Hide selected in editor** to remove targets from editor picking and display.
 Use **Show all editor-hidden** to restore them.
 This is separate from saved map visibility and [working regions](working-region.md).
+Assign either action under [Keyboard shortcuts…](keyboard-shortcuts.md). Both start unbound.
 
 ## Limits
 

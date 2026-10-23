@@ -261,6 +261,96 @@ fn object_shortcut_commands_reject_component_scope_without_discarding_its_state(
 }
 
 #[test]
+fn editor_visibility_commands_keep_shared_admission_and_temporary_document_local_state() {
+    for actor in [Actor::User, Actor::Agent] {
+        let (directory, mut session) = fixture();
+        let first = session
+            .create_block(Actor::User, DVec3::ZERO, DVec3::splat(64.0), "test", false)
+            .unwrap();
+        let second = session
+            .create_block(
+                Actor::User,
+                DVec3::splat(128.0),
+                DVec3::splat(192.0),
+                "test",
+                false,
+            )
+            .unwrap();
+        session.select(&[first], SelectMode::Replace).unwrap();
+        let source = session.document().vmf().clone();
+        let history = session.history_snapshot();
+        let revision = session.document().revision();
+        let dirty = session.document().is_dirty();
+        let camera = session.camera();
+        let bindings = session.keyboard_shortcuts_state();
+        let result = session
+            .execute_editor_command(actor, Command::HideSelectionInEditor, f32::NAN)
+            .unwrap();
+        assert_eq!(result["command"], "hide_selection_in_editor");
+        assert_eq!(
+            result["editor_visibility"],
+            session.get_editor_visibility(0, 50).unwrap()
+        );
+        assert_eq!(session.editor_hidden_count(), 1);
+        assert!(session.editor_object_hidden(first));
+        assert!(!session.editor_object_hidden(second));
+        assert_eq!(session.selected_ids(), [first]);
+        let stamp = session.working_region_stamp();
+        let epoch = session.interaction_epoch();
+        session
+            .execute_editor_command(actor, Command::HideSelectionInEditor, 1.0)
+            .unwrap();
+        assert_eq!(session.working_region_stamp(), stamp);
+        assert_eq!(session.interaction_epoch(), epoch);
+        session.select(&[second], SelectMode::Replace).unwrap();
+        session
+            .preview_transform(
+                actor,
+                &[second],
+                edit::Transform {
+                    translation: DVec3::X * 32.0,
+                    ..Default::default()
+                },
+                None,
+            )
+            .unwrap();
+        assert!(
+            session
+                .execute_editor_command(actor, Command::HideSelectionInEditor, 1.0)
+                .unwrap_err()
+                .contains("Apply or cancel")
+        );
+        assert_eq!(session.editor_hidden_count(), 1);
+        let result = session
+            .execute_editor_command(actor, Command::ShowAllEditorHidden, f32::NAN)
+            .unwrap();
+        assert_eq!(result["command"], "show_all_editor_hidden");
+        assert_eq!(result["editor_visibility"]["hidden_total"], 0);
+        assert_eq!(session.editor_hidden_count(), 0);
+        assert_eq!(
+            session.transform_preview().unwrap().transform.translation,
+            DVec3::X * 32.0
+        );
+        assert_eq!(session.selected_ids(), [second]);
+        session.cancel_transform_preview();
+        session.select(&[], SelectMode::Replace).unwrap();
+        assert!(
+            session
+                .execute_editor_command(actor, Command::HideSelectionInEditor, 1.0)
+                .unwrap_err()
+                .contains("Select objects")
+        );
+        assert_eq!(session.document().vmf(), &source);
+        assert_eq!(session.history_snapshot(), history);
+        assert_eq!(session.document().revision(), revision);
+        assert_eq!(session.document().is_dirty(), dirty);
+        assert_eq!(session.camera(), camera);
+        assert_eq!(session.keyboard_shortcuts_state(), bindings);
+        assert!(!directory.path().join(crate::shortcuts::FILE_NAME).exists());
+    }
+}
+
+#[test]
 fn viewport_toggle_commands_return_actual_booleans_without_authoring_or_preference_writes() {
     for actor in [Actor::User, Actor::Agent] {
         let (directory, mut session) = fixture();

@@ -36,10 +36,12 @@ pub enum Command {
     ScaleTool,
     DrawBrush,
     ClipMode,
+    HideSelectionInEditor,
+    ShowAllEditorHidden,
 }
 
 impl Command {
-    pub const ALL: [Self; 21] = [
+    pub const ALL: [Self; 23] = [
         Self::Undo,
         Self::Redo,
         Self::FrameSelection,
@@ -61,6 +63,8 @@ impl Command {
         Self::ScaleTool,
         Self::DrawBrush,
         Self::ClipMode,
+        Self::HideSelectionInEditor,
+        Self::ShowAllEditorHidden,
     ];
 
     pub fn label(self) -> &'static str {
@@ -86,6 +90,8 @@ impl Command {
             Self::ScaleTool => "Scale handles",
             Self::DrawBrush => "Draw brush",
             Self::ClipMode => "Clip mode",
+            Self::HideSelectionInEditor => "Hide selected in editor",
+            Self::ShowAllEditorHidden => "Show all editor-hidden",
         }
     }
 }
@@ -200,6 +206,10 @@ pub struct Bindings {
     pub draw_brush: Slots,
     #[serde(default)]
     pub clip_mode: Slots,
+    #[serde(default)]
+    pub hide_selection_in_editor: Slots,
+    #[serde(default)]
+    pub show_all_editor_hidden: Slots,
 }
 
 fn chord(key: &str, control: bool, shift: bool) -> Option<Chord> {
@@ -237,6 +247,8 @@ impl Default for Bindings {
             scale_tool: [None, None],
             draw_brush: [None, None],
             clip_mode: [None, None],
+            hide_selection_in_editor: [None, None],
+            show_all_editor_hidden: [None, None],
         }
     }
 }
@@ -324,6 +336,8 @@ impl Bindings {
             Command::ScaleTool => &self.scale_tool,
             Command::DrawBrush => &self.draw_brush,
             Command::ClipMode => &self.clip_mode,
+            Command::HideSelectionInEditor => &self.hide_selection_in_editor,
+            Command::ShowAllEditorHidden => &self.show_all_editor_hidden,
         }
     }
 
@@ -350,6 +364,8 @@ impl Bindings {
             Command::ScaleTool => &mut self.scale_tool,
             Command::DrawBrush => &mut self.draw_brush,
             Command::ClipMode => &mut self.clip_mode,
+            Command::HideSelectionInEditor => &mut self.hide_selection_in_editor,
+            Command::ShowAllEditorHidden => &mut self.show_all_editor_hidden,
         }
     }
 

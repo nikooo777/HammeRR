@@ -171,6 +171,15 @@ impl Session {
         match command {
             Command::Undo => result["label"] = json!(self.undo(actor)),
             Command::Redo => result["label"] = json!(self.redo(actor)),
+            Command::HideSelectionInEditor | Command::ShowAllEditorHidden => {
+                let action = if command == Command::HideSelectionInEditor {
+                    super::editor_visibility::Action::Hide(self.selected_ids())
+                } else {
+                    super::editor_visibility::Action::ShowAll
+                };
+                result["editor_visibility"] =
+                    self.set_editor_visibility(actor, action, &self.working_region_stamp())?;
+            }
             Command::Perspective => self.set_projection(actor, Projection::Perspective),
             Command::Top => self.set_projection(actor, Projection::Top),
             Command::Front => self.set_projection(actor, Projection::Front),

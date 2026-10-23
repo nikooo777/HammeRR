@@ -62,8 +62,8 @@ See the [tool index and setup](docs/mcp.md).
 
 | [Lighting preview](docs/lighting-preview.md) | [Baked lighting](docs/compile-and-play.md#lighting) |
 | --- | --- |
-| ![Warm and blue light pools](docs/images/authored-lighting.png) | ![Baked courtyard shadows in CS:S](docs/images/courtyard-native-shadows.png) |
-| Inspect unshadowed point, spot and sun lighting. | Compile LDR/HDR lighting, soft shadows and diffuse bounces. |
+| ![Warm and blue light pools](docs/images/authored-lighting.png) | ![A grate casts a patterned baked shadow in CS:S](docs/images/brush-cutout-shadow-on.png) |
+| Inspect unshadowed point, spot and sun lighting. | Compile LDR/HDR lighting, texture shadows and diffuse bounces. |
 
 | [Models](docs/models.md) | [Surface placement](docs/placement.md) |
 | --- | --- |

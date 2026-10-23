@@ -112,7 +112,7 @@ See [exposure controllers](hdr-exposure.md), [sky assets](sky.md) and [reflectio
 ### Brush texture shadows
 
 Enable **Brush texture shadows** for supported alpha-tested brush materials.
-Unsupported transparency or texture declarations report an error.
+See [brush texture shadows](brush-texture-shadows.md) for setup and limits.
 See [prop mesh shadows](prop-shadows.md) for static models.
 
 ### Model ambient lighting

@@ -140,6 +140,7 @@ Saving does not apply a preview.
 
 `compile_map` waits for the build. `run_map` builds and launches through the same job system.
 Use `cancel_compile` to stop owned build work.
+Set `brush_texture_shadows:true` for [brush cutout shadows](brush-texture-shadows.md).
 Game launches use `-insecure` and private validation uses `sv_lan 1`.
 Reflection capture also needs a ready `get_native_capture_runtime` result.
 See [Compile and play](compile-and-play.md).

@@ -36,7 +36,7 @@ The integrated compiler is experimental. File operations, BSP publication and ga
 | --- | --- | --- |
 | [World and visibility](compile-and-play.md) | Structural/detail geometry, Fast and Detailed visibility, hints, portals and fading windows. | General unsupported portal/model combinations. |
 | [Lighting](compile-and-play.md#lighting) | LDR/HDR, styles, point/spot/sun/sky, soft sun, ambient probes and up to four diffuse bounces. | Material emission, per-texel prop lightmaps and general shader transport. |
-| [Material lighting](compile-and-play.md#normal-map-lighting) | Checked normal maps, albedo, reflectivity and alpha texture shadows. | Unsupported effects reject explicitly. |
+| [Material lighting](compile-and-play.md#normal-map-lighting) | Checked normal maps, albedo, reflectivity and [alpha texture shadows](brush-texture-shadows.md). | Unsupported effects reject explicitly. |
 | [Physics](physics.md) | Engine world, terrain and supported brush-model collision, contact materials and derived mass. | Custom density and broader moving-body behavior. |
 | [Brush entities](compile-and-play.md#brush-entities-and-pivots) | Checked pivots, initial rotation, moving models and attached lightmaps. | General parenting, arbitrary model classes and initial poses. |
 | [Terrain](terrain.md) | Mixed-grid full/half neighbors, LOD snapping, lighting and collision. | Holes and runtime brush-model terrain. |

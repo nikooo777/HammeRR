@@ -71,6 +71,7 @@ See [Status](status.md) for supported features and limits.
 - [Water](water.md)
 - [Static props](static-props.md)
 - [Static-prop shadows](prop-shadows.md)
+- [Brush texture shadows](brush-texture-shadows.md)
 - [Generated reflections](reflections.md)
 - [Cubemap faces](cubemap-faces.md)
 - [HDR exposure](hdr-exposure.md)

@@ -1543,6 +1543,7 @@ fn unresolved_standalone_light_templates_fail_in_every_compile_mode() {
         ("light_spot", "_lightscaleHDR"),
         ("light_environment", "_lightscaleHDR"),
         ("light_environment", "_AmbientScaleHDR"),
+        ("light_environment", "SunSpreadAngle"),
         ("light", "_fifty_percent_distance"),
         ("light_spot", "_zero_percent_distance"),
     ] {

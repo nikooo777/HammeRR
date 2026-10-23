@@ -90,7 +90,7 @@ To bind sun and sky colors, use an unnamed `light_environment` in the child:
 
 The child's `_lightHDR` and `_ambientHDR` also accept whole-value tokens.
 Bind them in separate replacement slots; a literal `-1 -1 -1 1` keeps normal HDR inheritance.
-**SunSpreadAngle** remains a literal value.
+See [sun spread bindings](instance-authoring.md#bind-sun-spread) to set soft-shadow spread per reference.
 Baked lighting still permits one global `light_environment` across the parent and its children.
 
 To bind an HDR gain:
@@ -116,7 +116,7 @@ An unresolved child template can be edited and saved, but cannot compile alone.
 Preview excludes unresolved lamps and reports a reason; the parent still has no child-light preview.
 
 Point and spot lights support `_light`, `_lightHDR`, `_lightscaleHDR`, `_fifty_percent_distance` and `_zero_percent_distance`.
-Sun lights support `_light`, `_lightHDR`, `_ambient`, `_ambientHDR`, `_lightscaleHDR` and `_AmbientScaleHDR`.
+Sun lights support `_light`, `_lightHDR`, `_ambient`, `_ambientHDR`, `_lightscaleHDR`, `_AmbientScaleHDR` and `SunSpreadAngle`.
 See [light falloff bindings](instance-authoring.md#bind-light-falloff-distances) for the distance rules.
 Bindings apply only to direct child lights. Other scalar fields remain literal.
 Nested references bind their own direct child lights. Ancestor forwarding, partial replacement and parameter declarations remain unsupported.

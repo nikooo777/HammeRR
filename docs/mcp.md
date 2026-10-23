@@ -186,11 +186,12 @@ For [light colors per reference](instances.md#light-colors-per-reference), set a
 Child `light_environment` also supports `_ambient` and `_ambientHDR`.
 Bind `_lightscaleHDR` on point/spot/sun lights or `_AmbientScaleHDR` on sun lights to one finite, nonnegative scalar literal.
 For point/spot [falloff bindings](instance-authoring.md#bind-light-falloff-distances), bind `_fifty_percent_distance` and `_zero_percent_distance` to finite, nonnegative literals. Their effective pair uses the normal falloff rules; zero near-zero distance selects the automatic value.
-Environment distances, attenuation coefficients, cones and other scalar fields, including `SunSpreadAngle`, remain literal.
+For [sun spread](instance-authoring.md#bind-sun-spread), bind `SunSpreadAngle` on child `light_environment` to one finite literal from 0 to 90 degrees.
+Environment distances, attenuation coefficients, cones and other scalar fields remain literal.
 Use `create_entity`, `set_entity_properties` or the property-edit tools.
 Set the containing helper's `replace01` through `replace10` to `$name literal` through the same operations.
 Save the child, refresh contents, then compile the parent. Missing, duplicate and unused bindings fail explicitly.
-Unresolved standalone templates fail in every build mode and are excluded from authored-lighting preview, including distance, HDR color or gain tokens with sky ambient off.
+Unresolved standalone templates fail in every build mode and are excluded from authored-lighting preview, including distance, sun spread, HDR color or gain tokens with sky ambient off.
 The reference form preserves bindings. Extraction with parameters and general replacements remain unsupported.
 
 Static-prop packing accepts up to eight Patch include edges with one basetexture edit per Patch.

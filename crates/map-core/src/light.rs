@@ -24,6 +24,7 @@ pub enum ValueKind {
     Color,
     HdrGain,
     FalloffDistance,
+    SunSpreadAngle,
 }
 
 pub fn value_kind(classname: &str, key: &str) -> Option<ValueKind> {
@@ -45,6 +46,8 @@ pub fn value_kind(classname: &str, key: &str) -> Option<ValueKind> {
             || key.eq_ignore_ascii_case("_zero_percent_distance"))
     {
         Some(ValueKind::FalloffDistance)
+    } else if classname == "light_environment" && key.eq_ignore_ascii_case("SunSpreadAngle") {
+        Some(ValueKind::SunSpreadAngle)
     } else {
         None
     }
@@ -200,7 +203,6 @@ mod tests {
         for (class, key) in [
             ("light", "_AmbientScaleHDR"),
             ("light_spot", "_AmbientScaleHDR"),
-            ("light_environment", "SunSpreadAngle"),
             ("light_environment", "pitch"),
             ("light", "_quadratic_attn"),
             ("light_dynamic", "_lightscaleHDR"),
@@ -232,6 +234,24 @@ mod tests {
             ("light_spot", "_cone"),
         ] {
             assert_eq!(value_kind(class, key), None);
+        }
+    }
+
+    #[test]
+    fn sun_spread_tokens_are_only_environment_scalars() {
+        for key in ["SunSpreadAngle", "sunspreadangle"] {
+            assert_eq!(
+                value_kind("light_environment", key),
+                Some(ValueKind::SunSpreadAngle)
+            );
+            assert_eq!(
+                value_parameter("light_environment", key, "$Spread"),
+                Some("Spread")
+            );
+            assert_eq!(color_parameter("light_environment", key, "$Spread"), None);
+            for class in ["light", "light_spot", "light_dynamic"] {
+                assert_eq!(value_parameter(class, key, "$Spread"), None);
+            }
         }
     }
 

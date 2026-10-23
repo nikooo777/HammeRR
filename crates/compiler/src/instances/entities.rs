@@ -303,7 +303,7 @@ mod tests {
     }
 
     #[test]
-    fn environment_templates_defer_only_color_and_gain_tokens_and_validate_mechanics() {
+    fn environment_templates_defer_supported_value_tokens_and_validate_mechanics() {
         let mut template = environment();
         for key in [
             "_light",
@@ -312,6 +312,7 @@ mod tests {
             "_ambientHDR",
             "_lightscaleHDR",
             "_AmbientScaleHDR",
+            "SunSpreadAngle",
         ] {
             template.properties.set(key, "$color");
         }
@@ -327,7 +328,7 @@ mod tests {
             ("_lightscaleHDR", "-1"),
             ("_AmbientScaleHDR", "-1"),
             ("SunSpreadAngle", "91"),
-            ("SunSpreadAngle", "$color"),
+            ("SunSpreadAngle", "$color suffix"),
             ("_fifty_percent_distance", "$Half"),
             ("_zero_percent_distance", "$End"),
             ("pitch", "91"),

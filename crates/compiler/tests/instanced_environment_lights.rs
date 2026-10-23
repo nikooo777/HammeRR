@@ -1159,20 +1159,23 @@ fn bind_environment(helper: &mut Entity, values: [&str; 4]) {
 
 #[test]
 fn immediate_environment_bindings_match_independent_literal_bsp_in_every_mode() {
-    for (values, gains, hdr_intensities) in [
+    for (values, gains, spread, hdr_intensities) in [
         (
             ["255 0 0 200", "0 255 0 600", "0 0 255 40", "255 0 0 20"],
             ["0.5", "2"],
+            "5",
             vec![[0.0, 300.0 / 255.0, 0.0], [40.0 / 255.0, 0.0, 0.0]],
         ),
         (
             ["255 0 0 200", "-1 -1 -1 1", "0 0 255 40", "-1 -1 -1 1"],
             ["2", "3"],
+            "0",
             vec![[400.0 / 255.0, 0.0, 0.0], [0.0, 0.0, 120.0 / 255.0]],
         ),
         (
             ["255 0 0 200", "0 255 0 600", "0 0 255 40", "0"],
             ["0", "0"],
+            "90",
             vec![[0.0; 3]],
         ),
     ] {
@@ -1185,6 +1188,9 @@ fn immediate_environment_bindings_match_independent_literal_bsp_in_every_mode() 
         child.entities[0]
             .properties
             .set("_AmbientScaleHDR", "$SkyGain");
+        child.entities[0]
+            .properties
+            .set("SunSpreadAngle", "$Spread");
         let raw = write_source(directory.path(), "leaf.vmf", &child);
         let mut parent = room(true, true);
         let owner = instance(&mut parent, "leaf.vmf", "16 24 0", "0 0 0");
@@ -1196,6 +1202,9 @@ fn immediate_environment_bindings_match_independent_literal_bsp_in_every_mode() 
         helper
             .properties
             .set("replace05", format!("$skygain {}", gains[1]));
+        helper
+            .properties
+            .set("replace06", format!("$spread {spread}"));
         let before = parent.clone();
         let context = saved_parent(directory.path(), &parent);
         let prepared = resolve(&parent, &context);
@@ -1212,6 +1221,7 @@ fn immediate_environment_bindings_match_independent_literal_bsp_in_every_mode() 
         }
         assert_eq!(generated.properties.get("_lightscaleHDR"), Some(gains[0]));
         assert_eq!(generated.properties.get("_AmbientScaleHDR"), Some(gains[1]));
+        assert_eq!(generated.properties.get("SunSpreadAngle"), Some(spread));
         let mut authored_literal = environment("24 20 160", Some("0 0 0"), "-45");
         for ((key, _, _), value) in COLOR_BINDINGS.into_iter().zip(values) {
             authored_literal.properties.set(key, value);
@@ -1220,6 +1230,7 @@ fn immediate_environment_bindings_match_independent_literal_bsp_in_every_mode() 
         authored_literal
             .properties
             .set("_AmbientScaleHDR", gains[1]);
+        authored_literal.properties.set("SunSpreadAngle", spread);
         let expected = literal(&parent, &[authored_literal]);
         for mode in MODES {
             let actual = successful(compile_saved(&parent, &game, mode, &context));
@@ -1272,7 +1283,11 @@ fn immediate_environment_bindings_validate_all_effective_channels_before_region_
         "nonfinite gain",
         "gain overflow",
         "missing gain",
-        "spread token",
+        "spread wrong literal",
+        "negative spread",
+        "nonfinite spread",
+        "spread range",
+        "missing spread",
     ] {
         let mut child = baseline.clone();
         let mut parent = room(true, false);
@@ -1338,9 +1353,29 @@ fn immediate_environment_bindings_validate_all_effective_channels_before_region_
                     .set("_AmbientScaleHDR", "$gain");
                 "missing immediate binding $gain"
             }
-            "spread token" => {
+            "spread wrong literal" => {
                 child.entities[0].properties.set("SunSpreadAngle", "$Sky");
                 "Invalid light SunSpreadAngle"
+            }
+            "negative spread" | "nonfinite spread" | "spread range" | "missing spread" => {
+                child.entities[0]
+                    .properties
+                    .set("SunSpreadAngle", "$Spread");
+                match issue {
+                    "negative spread" => {
+                        helper.properties.set("replace04", "$spread -1");
+                        "SunSpreadAngle must be finite and nonnegative"
+                    }
+                    "nonfinite spread" => {
+                        helper.properties.set("replace04", "$spread NaN");
+                        "SunSpreadAngle must be finite and nonnegative"
+                    }
+                    "spread range" => {
+                        helper.properties.set("replace04", "$spread 91");
+                        "SunSpreadAngle must be between 0 and 90"
+                    }
+                    _ => "missing immediate binding $Spread",
+                }
             }
             _ => unreachable!(),
         };

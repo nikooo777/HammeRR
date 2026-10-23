@@ -37,15 +37,19 @@ fn sun_source(
     entity: &MapEntity,
     kind: LightingKind,
     defer_parameters: bool,
-) -> Result<(MapEntity, Option<PointLight>, f64), String> {
+) -> Result<(MapEntity, Option<PointLight>, Option<f64>), String> {
     if number(entity, "style")? != 0.0
         || property(entity, "targetname").is_some_and(|name| !name.is_empty())
         || property(entity, "pattern").is_some_and(|pattern| !pattern.is_empty())
     {
         return Err("Sun and sky lighting require unnamed static Appearance Normal".into());
     }
-    let spread = number(entity, "SunSpreadAngle")?;
-    if spread > MAX_SUN_SPREAD_ANGLE {
+    let spread = if unresolved_value(entity, "SunSpreadAngle", defer_parameters) {
+        None
+    } else {
+        Some(number(entity, "SunSpreadAngle")?)
+    };
+    if spread.is_some_and(|spread| spread > MAX_SUN_SPREAD_ANGLE) {
         return Err("SunSpreadAngle must be between 0 and 90 degrees".into());
     }
     for key in [
@@ -174,7 +178,7 @@ impl SkyLight {
             }
         };
         let direction = sun_direction(entity, targets, origin)?;
-        let (Some(point), Some(ambient)) = (point, ambient) else {
+        let (Some(point), Some(ambient), Some(spread)) = (point, ambient, spread) else {
             return Ok(None);
         };
         Ok(Some(Self {
@@ -193,6 +197,7 @@ impl SkyLight {
     ) -> Result<Self, String> {
         let (_, point, spread) = sun_source(entity, LightingKind::Ldr, false)?;
         let point = point.ok_or("Sun has an unresolved light-value parameter")?;
+        let spread = spread.ok_or("Sun has an unresolved light-value parameter")?;
         let origin = point.origin;
         Ok(Self {
             source_id: entity.id,

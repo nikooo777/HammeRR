@@ -144,6 +144,7 @@ fn unresolved_environment_values_exclude_the_sun_with_sky_ambient_enabled_or_dis
         "_ambientHDR",
         "_lightscaleHDR",
         "_AmbientScaleHDR",
+        "SunSpreadAngle",
     ] {
         let (_directory, mut session, _) = fixture();
         add(

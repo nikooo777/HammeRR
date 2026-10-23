@@ -10,7 +10,7 @@ pub(super) fn light_value_binding_scope() -> Value {
         "class_properties":{
             "light":["_light","_lightHDR","_lightscaleHDR","_fifty_percent_distance","_zero_percent_distance"],
             "light_spot":["_light","_lightHDR","_lightscaleHDR","_fifty_percent_distance","_zero_percent_distance"],
-            "light_environment":["_light","_lightHDR","_ambient","_ambientHDR","_lightscaleHDR","_AmbientScaleHDR"]
+            "light_environment":["_light","_lightHDR","_ambient","_ambientHDR","_lightscaleHDR","_AmbientScaleHDR","SunSpreadAngle"]
         },
         "scope":"direct_visible_child_of_immediately_containing_func_instance",
         "helper_fields":["replace01","replace02","replace03","replace04","replace05","replace06","replace07","replace08","replace09","replace10"],
@@ -20,7 +20,8 @@ pub(super) fn light_value_binding_scope() -> Value {
         "literal_only":true,"empty_replacement_fields":true,
         "rejected":["duplicates","missing","unused","recursive","embedded","unsupported_context","ancestor_forwarding"],
         "other_parameter_contexts":false,"scalar_parameters":true,
-        "scalar_properties":["_lightscaleHDR","_AmbientScaleHDR","_fifty_percent_distance","_zero_percent_distance"],
+        "scalar_properties":["_lightscaleHDR","_AmbientScaleHDR","_fifty_percent_distance","_zero_percent_distance","SunSpreadAngle"],
+        "sun_spread_properties":["SunSpreadAngle"],"sun_spread_classes":["light_environment"],"sun_spread_degrees":[0,90],
         "falloff_distance_properties":["_fifty_percent_distance","_zero_percent_distance"],
         "falloff_distance_classes":["light","light_spot"],
         "scalar_literal":"one finite nonnegative number","other_scalar_parameters":false,"func_instance_parms":false,

@@ -33,6 +33,18 @@ Unresolved tokens stay as text. They exclude the lamp from authored-lighting pre
 Reference inspection resolves values and reports counts. It does not preview child lighting.
 Only immediate child point/spot distances support these bindings. Environment distances, attenuation coefficients, cones, embedded tokens and ancestor forwarding remain unsupported.
 
+## Bind sun spread
+
+1. Open the child VMF and select its `light_environment`.
+2. Enable **Advanced properties**. Set **Property key** to `SunSpreadAngle` and **Value** to `$Spread`, then press Enter. Save the child.
+3. In the parent, select the containing `func_instance`. Set an unused `replace01`–`replace10` field to `$Spread 5`.
+4. Save the parent, then use **Refresh instance contents** or compile.
+
+Each reference can supply a finite spread from 0 to 90 degrees. An absent or empty `SunSpreadAngle` property keeps the ordinary default of 0.
+Lit builds retain one global sun across the parent and its children.
+Unresolved tokens stay as text, exclude the sun from authored-lighting preview and prevent standalone compilation, including **Fullbright**.
+Only the immediately containing reference supplies the value. Angles, pitch, embedded tokens and ancestor forwarding remain unsupported.
+
 ## Limits
 
 - Paths must end in `.vmf` and stay inside the saved root parent's tree.

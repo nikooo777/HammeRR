@@ -38,6 +38,7 @@ fn create(session: &mut Session, actor: Actor, classname: &str) -> u32 {
         properties.insert("_ambient".into(), "$Sky".into());
         properties.insert("_ambientHDR".into(), "$SkyHDR".into());
         properties.insert("_AmbientScaleHDR".into(), "$SkyGain".into());
+        properties.insert("SunSpreadAngle".into(), "$Spread".into());
     }
     if matches!(classname, "light" | "light_spot") {
         properties.insert("_fifty_percent_distance".into(), "$Half".into());
@@ -92,6 +93,10 @@ fn light_value_templates_share_create_set_draft_undo_and_save_reopen_for_both_ac
                 changes.push(PropertyChange::Set {
                     key: "_AmbientScaleHDR".into(),
                     value: "$SkyGainDraft".into(),
+                });
+                changes.push(PropertyChange::Set {
+                    key: "SunSpreadAngle".into(),
+                    value: "$SpreadDraft".into(),
                 });
             }
             if classname != "light_environment" {
@@ -159,6 +164,10 @@ fn light_value_templates_share_create_set_draft_undo_and_save_reopen_for_both_ac
                     reopened.properties.get("_AmbientScaleHDR"),
                     Some("$SkyGainDraft")
                 );
+                assert_eq!(
+                    reopened.properties.get("SunSpreadAngle"),
+                    Some("$SpreadDraft")
+                );
                 &[
                     "_light",
                     "_lightHDR",
@@ -166,6 +175,7 @@ fn light_value_templates_share_create_set_draft_undo_and_save_reopen_for_both_ac
                     "_ambientHDR",
                     "_lightscaleHDR",
                     "_AmbientScaleHDR",
+                    "SunSpreadAngle",
                 ]
             } else {
                 assert_eq!(
@@ -193,7 +203,10 @@ fn light_value_templates_share_create_set_draft_undo_and_save_reopen_for_both_ac
                     .unwrap();
                 assert_eq!(field.control, inspector::Control::Text);
                 assert!(field.color.is_none() && field.intensity.is_none());
-                if key.to_ascii_lowercase().contains("scalehdr") || key.ends_with("_distance") {
+                if key.to_ascii_lowercase().contains("scalehdr")
+                    || key.ends_with("_distance")
+                    || key == "SunSpreadAngle"
+                {
                     assert_eq!(
                         field.kind,
                         if key.ends_with("_distance") {
@@ -329,26 +342,25 @@ fn light_value_template_exception_rejects_invalid_tokens_and_other_color_context
 }
 
 #[test]
-fn environment_bindings_keep_spread_and_unrelated_color_parameters_literal() {
+fn environment_bindings_keep_unrelated_color_parameters_literal() {
     for actor in [Actor::User, Actor::Agent] {
         let mut session = session(actor);
         let id = create(&mut session, actor, "light_environment");
         let before = session.document().vmf().clone();
         let history = session.history_snapshot();
-        for key in ["SunSpreadAngle", "rendercolor"] {
-            assert!(
-                session
-                    .set_entity_properties(actor, id, &[(key.into(), Some("$Sky".into()))])
-                    .is_err()
-            );
-            assert_eq!(session.document().vmf(), &before);
-            assert_eq!(session.history_snapshot(), history);
-        }
+        assert!(
+            session
+                .set_entity_properties(actor, id, &[("rendercolor".into(), Some("$Sky".into()))])
+                .is_err()
+        );
+        assert_eq!(session.document().vmf(), &before);
+        assert_eq!(session.history_snapshot(), history);
         for key in [
             "_ambient",
             "_ambientHDR",
             "_lightscaleHDR",
             "_AmbientScaleHDR",
+            "SunSpreadAngle",
         ] {
             session
                 .set_entity_properties(actor, id, &[(key.into(), Some("$SetSky".into()))])

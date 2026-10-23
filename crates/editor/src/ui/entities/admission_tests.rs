@@ -44,6 +44,7 @@ fn unresolved_light_scalar_rows_keep_declared_types_and_raw_text_controls() {
             r#"@PointClass = light_environment [
         _lightscaleHDR(float) : "HDR gain" : "1"
         _AmbientScaleHDR(float) : "HDR ambient gain" : "1"
+        SunSpreadAngle(float) : "Sun spread" : "0"
     ]
     @PointClass = light [
         _fifty_percent_distance(string) : "50 percent distance" : "0"
@@ -60,6 +61,7 @@ fn unresolved_light_scalar_rows_keep_declared_types_and_raw_text_controls() {
             std::collections::BTreeMap::from([
                 ("_lightscaleHDR".into(), "$Gain".into()),
                 ("_AmbientScaleHDR".into(), "$SkyGain".into()),
+                ("SunSpreadAngle".into(), "$Spread".into()),
             ]),
         )
         .unwrap()
@@ -87,11 +89,13 @@ fn unresolved_light_scalar_rows_keep_declared_types_and_raw_text_controls() {
         .into_iter()
         .chain(session.entity_inspector(distance_id).unwrap().properties)
         .filter(|field| {
-            field.key.to_ascii_lowercase().contains("scalehdr") || field.key.ends_with("_distance")
+            field.key.to_ascii_lowercase().contains("scalehdr")
+                || field.key.ends_with("_distance")
+                || field.key == "SunSpreadAngle"
         })
         .map(property_row)
         .collect();
-    assert_eq!(rows.len(), 4);
+    assert_eq!(rows.len(), 5);
     for row in rows {
         assert_eq!(
             row.type_name,

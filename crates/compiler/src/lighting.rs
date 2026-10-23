@@ -1021,6 +1021,50 @@ mod input_tests {
     }
 
     #[test]
+    fn deferred_sun_spread_remains_unknown_and_preserves_known_validation() {
+        let targets = map_core::light::Targets::new();
+        let mut source = entity(&[
+            ("_light", "255 128 32 200"),
+            ("_ambient", "64 128 255 20"),
+            ("SunSpreadAngle", "$Spread"),
+        ]);
+        source.classname = "light_environment".into();
+        for kind in [LightingKind::Ldr, LightingKind::Hdr] {
+            assert!(
+                sky::SkyLight::parse(&source, &targets, kind, true)
+                    .unwrap()
+                    .is_none()
+            );
+            assert!(sky::SkyLight::from_entity_kind(&source, &targets, kind).is_err());
+        }
+        source
+            .properties
+            .push(("_ambientHDR".into(), "invalid known color".into()));
+        assert!(
+            sky::SkyLight::parse(&source, &targets, LightingKind::Hdr, true)
+                .unwrap_err()
+                .contains("_ambientHDR")
+        );
+        source.properties.retain(|(key, _)| key != "_ambientHDR");
+        source.properties.retain(|(key, _)| key != "SunSpreadAngle");
+        let absent = sky::SkyLight::parse(&source, &targets, LightingKind::Ldr, true)
+            .unwrap()
+            .unwrap();
+        source.properties.push(("SunSpreadAngle".into(), "".into()));
+        let empty = sky::SkyLight::parse(&source, &targets, LightingKind::Ldr, true)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            absent.sun_directions(crate::SkyQuality::Fast),
+            vec![-absent.direction]
+        );
+        assert_eq!(
+            absent.sun_directions(crate::SkyQuality::Fast),
+            empty.sun_directions(crate::SkyQuality::Fast)
+        );
+    }
+
+    #[test]
     fn deferred_falloff_distances_remain_unknown_and_validate_known_constraints() {
         for fields in [
             vec![

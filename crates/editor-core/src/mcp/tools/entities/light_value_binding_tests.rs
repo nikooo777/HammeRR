@@ -155,6 +155,7 @@ fn environment_color_binding_mcp_uses_shared_create_set_and_ambient_drafts() {
                 _ambientHDR(color255) : "HDR ambient" : "-1 -1 -1 1"
                 _lightscaleHDR(float) : "HDR gain" : "1"
                 _AmbientScaleHDR(float) : "HDR ambient gain" : "1"
+                SunSpreadAngle(float) : "Sun spread" : "0"
             ]"#,
         )
         .unwrap(),
@@ -170,11 +171,12 @@ fn environment_color_binding_mcp_uses_shared_create_set_and_ambient_drafts() {
         assert!(description.contains("light_environment"));
         assert!(description.contains("_ambientHDR"));
         assert!(description.contains("_AmbientScaleHDR"));
+        assert!(description.contains("SunSpreadAngle"));
     }
     let created = report(server.create_entity(Parameters(
         serde_json::from_value(json!({
             "classname":"light_environment","origin":[0,0,64],
-            "properties":{"_light":"$Sun","_lightHDR":"$SunHDR","_ambient":"$Sky","_ambientHDR":"$SkyHDR","_lightscaleHDR":"$Gain","_AmbientScaleHDR":"$SkyGain"}
+            "properties":{"_light":"$Sun","_lightHDR":"$SunHDR","_ambient":"$Sky","_ambientHDR":"$SkyHDR","_lightscaleHDR":"$Gain","_AmbientScaleHDR":"$SkyGain","SunSpreadAngle":"$Spread"}
         }))
         .unwrap(),
     )));
@@ -182,7 +184,7 @@ fn environment_color_binding_mcp_uses_shared_create_set_and_ambient_drafts() {
     report(
         server.set_entity_properties(Parameters(
             serde_json::from_value(
-                json!({"id":id,"set":{"_ambientHDR":"$OtherSkyHDR","_lightscaleHDR":"$OtherGain"}}),
+                json!({"id":id,"set":{"_ambientHDR":"$OtherSkyHDR","_lightscaleHDR":"$OtherGain","SunSpreadAngle":"$OtherSpread"}}),
             )
             .unwrap(),
         )),
@@ -198,7 +200,8 @@ fn environment_color_binding_mcp_uses_shared_create_set_and_ambient_drafts() {
                 {"action":"set","key":"_ambient","value":"$SkyDraft"},
                 {"action":"set","key":"_ambientHDR","value":"$SkyHDRDraft"},
                 {"action":"set","key":"_lightscaleHDR","value":"$GainDraft"},
-                {"action":"set","key":"_AmbientScaleHDR","value":"$SkyGainDraft"}
+                {"action":"set","key":"_AmbientScaleHDR","value":"$SkyGainDraft"},
+                {"action":"set","key":"SunSpreadAngle","value":"$SpreadDraft"}
             ]}))
             .unwrap(),
         )),
@@ -208,6 +211,7 @@ fn environment_color_binding_mcp_uses_shared_create_set_and_ambient_drafts() {
         "_ambientHDR",
         "_lightscaleHDR",
         "_AmbientScaleHDR",
+        "SunSpreadAngle",
     ] {
         let field = &staged["preview"]["properties"]
             .as_array()
@@ -217,7 +221,7 @@ fn environment_color_binding_mcp_uses_shared_create_set_and_ambient_drafts() {
             .unwrap()["field"];
         assert_eq!(field["control"], "text");
         assert!(field["color"].is_null() && field["intensity"].is_null());
-        if key.to_ascii_lowercase().contains("scalehdr") {
+        if key.to_ascii_lowercase().contains("scalehdr") || key == "SunSpreadAngle" {
             assert_eq!(field["kind"], "float");
             assert!(field["range"].is_null());
         }
@@ -239,9 +243,12 @@ fn environment_color_binding_mcp_uses_shared_create_set_and_ambient_drafts() {
             "_ambient",
             "_ambientHDR",
             "_lightscaleHDR",
-            "_AmbientScaleHDR"
+            "_AmbientScaleHDR",
+            "SunSpreadAngle"
         ])
     );
+    assert_eq!(scope["sun_spread_degrees"], json!([0, 90]));
+    assert_eq!(scope["sun_spread_classes"], json!(["light_environment"]));
     assert_eq!(scope["scalar_parameters"], true);
     assert_eq!(
         scope["falloff_distance_classes"],

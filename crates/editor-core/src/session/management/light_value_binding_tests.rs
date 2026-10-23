@@ -13,6 +13,9 @@ const FGD: &str = r#"
     _fifty_percent_distance(string) : "50 percent distance" : "0"
     _zero_percent_distance(string) : "Near-zero distance" : "0"
     SunSpreadAngle(float) : "SunSpreadAngle" : "0"
+    _inner_cone(integer) : "Inner (bright) angle" : 30
+    _cone(integer) : "Outer (fading) angle" : 45
+    _exponent(integer) : "Focus" : 1
     rendercolor(color255) : "Color" : "255 255 255"
 ]
 @PointClass base(Light) = light []
@@ -43,6 +46,15 @@ fn create(session: &mut Session, actor: Actor, classname: &str) -> u32 {
     if matches!(classname, "light" | "light_spot") {
         properties.insert("_fifty_percent_distance".into(), "$Half".into());
         properties.insert("_zero_percent_distance".into(), "$End".into());
+    }
+    if classname == "light_spot" {
+        for (key, value) in [
+            ("_inner_cone", "$Inner"),
+            ("_cone", "$Outer"),
+            ("_exponent", "$Focus"),
+        ] {
+            properties.insert(key.into(), value.into());
+        }
     }
     let ObjectId::Entity(id) = session
         .create_entity(actor, classname, Some(glam::DVec3::Z * 64.0), properties)
@@ -108,6 +120,14 @@ fn light_value_templates_share_create_set_draft_undo_and_save_reopen_for_both_ac
                         }
                     }),
                 );
+            }
+            if classname == "light_spot" {
+                changes.extend(["_inner_cone", "_cone", "_exponent"].map(|key| {
+                    PropertyChange::Set {
+                        key: key.into(),
+                        value: "$ShapeDraft".into(),
+                    }
+                }));
             }
             session.update_property_edit(token, changes).unwrap();
             let preview = session.preview_property_edit().unwrap();
@@ -177,6 +197,20 @@ fn light_value_templates_share_create_set_draft_undo_and_save_reopen_for_both_ac
                     "_AmbientScaleHDR",
                     "SunSpreadAngle",
                 ]
+            } else if classname == "light_spot" {
+                for key in ["_inner_cone", "_cone", "_exponent"] {
+                    assert_eq!(reopened.properties.get(key), Some("$ShapeDraft"));
+                }
+                &[
+                    "_light",
+                    "_lightHDR",
+                    "_lightscaleHDR",
+                    "_fifty_percent_distance",
+                    "_zero_percent_distance",
+                    "_inner_cone",
+                    "_cone",
+                    "_exponent",
+                ]
             } else {
                 assert_eq!(
                     reopened.properties.get("_fifty_percent_distance"),
@@ -206,11 +240,14 @@ fn light_value_templates_share_create_set_draft_undo_and_save_reopen_for_both_ac
                 if key.to_ascii_lowercase().contains("scalehdr")
                     || key.ends_with("_distance")
                     || key == "SunSpreadAngle"
+                    || matches!(key, "_inner_cone" | "_cone" | "_exponent")
                 {
                     assert_eq!(
                         field.kind,
                         if key.ends_with("_distance") {
                             "string"
+                        } else if matches!(key, "_inner_cone" | "_cone" | "_exponent") {
+                            "integer"
                         } else {
                             "float"
                         }
@@ -302,6 +339,9 @@ fn light_value_template_exception_rejects_invalid_tokens_and_other_color_context
             "rendercolor",
             "_AmbientScaleHDR",
             "SunSpreadAngle",
+            "_inner_cone",
+            "_cone",
+            "_exponent",
         ] {
             assert!(
                 session
@@ -378,12 +418,16 @@ fn light_value_template_exception_preserves_readonly_schema_and_generic_color_va
     for actor in [Actor::User, Actor::Agent] {
         let mut session = session(actor);
         let id = create(&mut session, actor, "light");
+        let spot_id = create(&mut session, actor, "light_spot");
         let catalog = Catalog::parse(FGD).unwrap();
         let color = catalog.class("light").unwrap().property("_light").unwrap();
         assert!(color.validate("$Lamp").is_err());
         assert!(color.validate("255 220 180 400").is_ok());
         for (key, declarations) in [
             ("_light", ["color255) readonly", "float)", "color1)"]),
+            ("_inner_cone", ["integer) readonly", "float)", "color255)"]),
+            ("_cone", ["integer) readonly", "float)", "color255)"]),
+            ("_exponent", ["integer) readonly", "float)", "color255)"]),
             (
                 "_lightscaleHDR",
                 ["float) readonly", "integer)", "color255)"],
@@ -397,11 +441,21 @@ fn light_value_template_exception_preserves_readonly_schema_and_generic_color_va
                 ["string) readonly", "integer)", "float)"],
             ),
         ] {
+            let classname = if matches!(key, "_inner_cone" | "_cone" | "_exponent") {
+                "light_spot"
+            } else {
+                "light"
+            };
+            let id = if classname == "light_spot" {
+                spot_id
+            } else {
+                id
+            };
             for declaration in declarations {
                 session.set_definitions(
                     actor,
                     Catalog::parse(&format!(
-                        "@PointClass = light [ {key}({declaration} : \"Brightness\" ]"
+                        "@PointClass = {classname} [ {key}({declaration} : \"Brightness\" ]"
                     ))
                     .unwrap(),
                 );
@@ -415,7 +469,7 @@ fn light_value_template_exception_preserves_readonly_schema_and_generic_color_va
                     session
                         .create_entity(
                             actor,
-                            "light",
+                            classname,
                             None,
                             BTreeMap::from([(key.into(), "$Lamp".into())]),
                         )

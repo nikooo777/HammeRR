@@ -108,6 +108,36 @@ fn unresolved_template_lights_have_explicit_diagnostics_without_hiding_valid_lam
                 ("pitch", "-90"),
             ],
         ),
+        add(
+            &mut session,
+            "light_spot",
+            Some(DVec3::Z * 64.0),
+            &[
+                ("_light", "255 255 255 10"),
+                ("_inner_cone", "$Inner"),
+                ("pitch", "-90"),
+            ],
+        ),
+        add(
+            &mut session,
+            "light_spot",
+            Some(DVec3::Z * 64.0),
+            &[
+                ("_light", "255 255 255 10"),
+                ("_cone", "$Outer"),
+                ("pitch", "-90"),
+            ],
+        ),
+        add(
+            &mut session,
+            "light_spot",
+            Some(DVec3::Z * 64.0),
+            &[
+                ("_light", "255 255 255 10"),
+                ("_exponent", "$Focus"),
+                ("pitch", "-90"),
+            ],
+        ),
     ];
     enable(&mut session);
     let source = session.document().vmf().clone();
@@ -115,7 +145,7 @@ fn unresolved_template_lights_have_explicit_diagnostics_without_hiding_valid_lam
     let report = session.build_scene().lighting.report;
     assert!(report.active);
     assert_eq!(report.admitted_lights, 1);
-    assert_eq!(report.excluded_lights, 5);
+    assert_eq!(report.excluded_lights, unresolved.len());
     let ObjectId::Entity(valid) = valid else {
         unreachable!()
     };

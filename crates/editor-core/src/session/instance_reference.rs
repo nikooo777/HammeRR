@@ -70,6 +70,11 @@ pub(super) fn light_value_binding_scope() -> Value {
         "sun_spread_properties":properties_for_kind(ValueKind::SunSpreadAngle),"sun_spread_classes":classes_for_kind(ValueKind::SunSpreadAngle),"sun_spread_degrees":[0,90],
         "falloff_distance_properties":properties_for_kind(ValueKind::FalloffDistance),
         "falloff_distance_classes":classes_for_kind(ValueKind::FalloffDistance),
+        "spotlight_angle_properties":properties_for_kind(ValueKind::SpotlightAngle),
+        "spotlight_angle_classes":classes_for_kind(ValueKind::SpotlightAngle),
+        "spotlight_angle_degrees":[0,90],"spotlight_point_angles":[180,180],
+        "spotlight_focus_properties":properties_for_kind(ValueKind::SpotlightFocus),
+        "spotlight_focus_classes":classes_for_kind(ValueKind::SpotlightFocus),
         "scalar_literal":"one finite nonnegative number","other_scalar_parameters":false,"func_instance_parms":false,
         "standalone_unresolved_compilation":false,"authored_lighting_preview_resolution":false
     })

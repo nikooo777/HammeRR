@@ -10,7 +10,12 @@ const FGD: &str = r#"
     _zero_percent_distance(string) : "Near-zero distance" : "0"
 ]
 @PointClass base(Light) = light []
-@PointClass base(Light) = light_spot [ pitch(integer) : "Pitch" : -90 ]
+@PointClass base(Light) = light_spot [
+    pitch(integer) : "Pitch" : -90
+    _inner_cone(integer) : "Inner (bright) angle" : 30
+    _cone(integer) : "Outer (fading) angle" : 45
+    _exponent(integer) : "Focus" : 1
+]
 "#;
 
 fn bound(actor: Actor) -> (tempfile::TempDir, Session, PathBuf, PathBuf, u32) {
@@ -20,18 +25,23 @@ fn bound(actor: Actor) -> (tempfile::TempDir, Session, PathBuf, PathBuf, u32) {
     let mut session = Session::new(Ok(game));
     session.set_definitions(actor, Catalog::parse(FGD).unwrap());
     for classname in ["light", "light_spot"] {
+        let mut properties = BTreeMap::from([
+            ("_light".into(), "$Lamp".into()),
+            ("_lightHDR".into(), "$HDR".into()),
+            ("_fifty_percent_distance".into(), "$Half".into()),
+            ("_zero_percent_distance".into(), "$End".into()),
+        ]);
+        if classname == "light_spot" {
+            for (key, value) in [
+                ("_inner_cone", "$Inner"),
+                ("_cone", "$Outer"),
+                ("_exponent", "$Focus"),
+            ] {
+                properties.insert(key.into(), value.into());
+            }
+        }
         session
-            .create_entity(
-                actor,
-                classname,
-                Some(DVec3::Z * 64.0),
-                BTreeMap::from([
-                    ("_light".into(), "$Lamp".into()),
-                    ("_lightHDR".into(), "$HDR".into()),
-                    ("_fifty_percent_distance".into(), "$Half".into()),
-                    ("_zero_percent_distance".into(), "$End".into()),
-                ]),
-            )
+            .create_entity(actor, classname, Some(DVec3::Z * 64.0), properties)
             .unwrap();
     }
     session.save(actor, Some(&child)).unwrap();
@@ -58,6 +68,18 @@ fn bound(actor: Actor) -> (tempfile::TempDir, Session, PathBuf, PathBuf, u32) {
                     ("file".into(), "child.vmf".into()),
                     ("replace01".into(), ldr.into()),
                     ("replace02".into(), hdr.into()),
+                    (
+                        "replace04".into(),
+                        format!("$Inner {}", if row == 0 { 15 } else { 30 }),
+                    ),
+                    (
+                        "replace05".into(),
+                        format!("$Outer {}", if row == 0 { 60 } else { 0 }),
+                    ),
+                    (
+                        "replace06".into(),
+                        format!("$Focus {}", if row == 0 { 2 } else { 0 }),
+                    ),
                     (
                         "replace08".into(),
                         format!("$Half {}", if row == 0 { 64 } else { 96 }),
@@ -106,6 +128,9 @@ fn immediate_light_bindings_refresh_after_reference_edits_and_reopen_for_both_ac
         for key in [
             "replace01",
             "replace02",
+            "replace04",
+            "replace05",
+            "replace06",
             "replace08",
             "replace09",
             "replace10",

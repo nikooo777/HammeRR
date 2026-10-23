@@ -359,6 +359,7 @@ fn point_light_color(
 pub(crate) fn validate_point_light_template(
     entity: &MapEntity,
     spotlight: bool,
+    targets: &map_core::light::Targets<'_>,
 ) -> Result<(), String> {
     for kind in [LightingKind::Ldr, LightingKind::Hdr] {
         PointLight::parse(entity, -1, kind, true)?;
@@ -366,36 +367,58 @@ pub(crate) fn validate_point_light_template(
     if spotlight {
         spotlight_cone(
             entity,
-            &map_core::light::Targets::new(),
+            targets,
             entity.origin.ok_or("Point light needs an origin")?,
+            true,
         )?;
     }
     Ok(())
+}
+
+enum SpotlightCone {
+    Unresolved,
+    Resolved(Option<SpotCone>),
 }
 
 fn spotlight_cone(
     entity: &MapEntity,
     targets: &map_core::light::Targets<'_>,
     origin: DVec3,
-) -> Result<Option<SpotCone>, String> {
-    let inner = if property(entity, "_inner_cone").is_none() {
-        10.0
-    } else {
-        number(entity, "_inner_cone")?
+    defer_parameters: bool,
+) -> Result<SpotlightCone, String> {
+    let scalar = |key| {
+        if unresolved_value(entity, key, defer_parameters) {
+            Ok(None)
+        } else {
+            number(entity, key).map(Some)
+        }
     };
-    let inner = if inner == 0.0 { 10.0 } else { inner };
-    let outer = number(entity, "_cone")?;
-    let outer = if outer == 0.0 { inner } else { outer };
-    if inner == 180.0 && outer == 180.0 {
-        return Ok(None);
+    let inner = if property(entity, "_inner_cone").is_none() {
+        Some(10.0)
+    } else {
+        scalar("_inner_cone")?
+    };
+    let inner = inner.map(|inner| if inner == 0.0 { 10.0 } else { inner });
+    let outer = scalar("_cone")?;
+    let outer = if outer == Some(0.0) { inner } else { outer };
+    if inner == Some(180.0) && outer == Some(180.0) {
+        return Ok(SpotlightCone::Resolved(None));
     }
-    if inner > 90.0 || outer > 90.0 || outer < inner {
+    if inner
+        .into_iter()
+        .chain(outer)
+        .any(|angle| angle > 90.0 && angle != 180.0)
+        || matches!((inner, outer), (Some(inner), Some(outer)) if inner > 90.0 || outer > 90.0 || outer < inner)
+    {
         return Err(
             "Spotlight cones need inner ≤ outer ≤ 90 degrees, or both 180 for a point light".into(),
         );
     }
-    let exponent = number(entity, "_exponent")?;
-    if exponent > f64::from(f32::MAX) {
+    if inner.is_none_or(|inner| inner == 180.0) && outer.is_none_or(|outer| outer == 180.0) {
+        return Ok(SpotlightCone::Unresolved);
+    }
+    let exponent = scalar("_exponent")?;
+    if exponent.is_some_and(|exponent| exponent > f64::from(f32::MAX)) {
         return Err("Spotlight focus exceeds native float limits".into());
     }
     let target = map_core::light::target(property(entity, "target"), targets)?;
@@ -406,12 +429,15 @@ fn spotlight_cone(
         origin,
         target,
     )?;
-    Ok(Some(SpotCone {
+    let (Some(inner), Some(outer), Some(exponent)) = (inner, outer, exponent) else {
+        return Ok(SpotlightCone::Unresolved);
+    };
+    Ok(SpotlightCone::Resolved(Some(SpotCone {
         direction,
         inner: inner.to_radians().cos(),
         outer: outer.to_radians().cos(),
         exponent,
-    }))
+    })))
 }
 
 impl PointLight {
@@ -466,8 +492,12 @@ impl PointLight {
         entity: &MapEntity,
         targets: &map_core::light::Targets<'_>,
     ) -> Result<Self, String> {
-        if let Some(cone) = spotlight_cone(entity, targets, self.origin)? {
-            self.cone = Some(cone);
+        match spotlight_cone(entity, targets, self.origin, false)? {
+            SpotlightCone::Resolved(Some(cone)) => self.cone = Some(cone),
+            SpotlightCone::Resolved(None) => {}
+            SpotlightCone::Unresolved => {
+                return Err("Spotlight has an unresolved light-value parameter".into());
+            }
         }
         Ok(self)
     }
@@ -1062,6 +1092,103 @@ mod input_tests {
             absent.sun_directions(crate::SkyQuality::Fast),
             empty.sun_directions(crate::SkyQuality::Fast)
         );
+    }
+
+    #[test]
+    fn deferred_spotlight_shapes_preserve_unknowns_and_validate_known_constraints() {
+        let targets = map_core::light::Targets::new();
+        for fields in [
+            vec![("_inner_cone", "$Inner"), ("_cone", "45")],
+            vec![("_inner_cone", "30"), ("_cone", "$Outer")],
+            vec![("_inner_cone", "$Inner"), ("_cone", "0")],
+            vec![("_inner_cone", "180"), ("_cone", "$Outer")],
+            vec![("_inner_cone", "$Inner"), ("_cone", "180")],
+            vec![
+                ("_inner_cone", "180"),
+                ("_cone", "$Outer"),
+                ("_exponent", "unused"),
+                ("pitch", "NaN"),
+            ],
+            vec![
+                ("_inner_cone", "$Inner"),
+                ("_cone", "$Outer"),
+                ("_exponent", "unused"),
+            ],
+            vec![("_exponent", "$Focus")],
+        ] {
+            let mut source = entity(&fields);
+            source.classname = "light_spot".into();
+            source
+                .properties
+                .push(("_light".into(), "255 128 32 200".into()));
+            assert!(matches!(
+                spotlight_cone(&source, &targets, source.origin.unwrap(), true).unwrap(),
+                SpotlightCone::Unresolved
+            ));
+            validate_point_light_template(&source, true, &targets).unwrap();
+            assert!(
+                PointLight::from_entity(&source, 0)
+                    .unwrap()
+                    .with_spotlight(&source, &targets)
+                    .is_err()
+            );
+        }
+        for fields in [
+            vec![("_inner_cone", "$Inner"), ("_cone", "91")],
+            vec![("_inner_cone", "91"), ("_cone", "$Outer")],
+            vec![
+                ("_inner_cone", "30"),
+                ("_cone", "20"),
+                ("_exponent", "$Focus"),
+            ],
+            vec![
+                ("_inner_cone", "180"),
+                ("_cone", "90"),
+                ("_exponent", "$Focus"),
+            ],
+            vec![
+                ("_inner_cone", "$Inner"),
+                ("_cone", "45"),
+                ("_exponent", "-1"),
+            ],
+            vec![("_cone", "$Outer"), ("_exponent", "NaN")],
+            vec![
+                ("_inner_cone", "$Inner"),
+                ("_cone", "45"),
+                ("_exponent", "1e40"),
+            ],
+            vec![("_exponent", "$Focus"), ("pitch", "NaN")],
+        ] {
+            let mut source = entity(&fields);
+            source.classname = "light_spot".into();
+            assert!(
+                spotlight_cone(&source, &targets, source.origin.unwrap(), true).is_err(),
+                "{fields:?}"
+            );
+        }
+        for fields in [
+            vec![],
+            vec![("_inner_cone", ""), ("_cone", ""), ("_exponent", "")],
+        ] {
+            let source = entity(&fields);
+            let SpotlightCone::Resolved(Some(cone)) =
+                spotlight_cone(&source, &targets, source.origin.unwrap(), true).unwrap()
+            else {
+                panic!("Absent and empty spotlight fields must retain ordinary defaults");
+            };
+            assert_eq!(cone.inner, 10_f64.to_radians().cos());
+            assert_eq!(cone.outer, cone.inner);
+            assert_eq!(cone.exponent, 0.0);
+        }
+        let source = entity(&[
+            ("_inner_cone", "180"),
+            ("_cone", "180"),
+            ("_exponent", "unused"),
+        ]);
+        assert!(matches!(
+            spotlight_cone(&source, &targets, source.origin.unwrap(), true).unwrap(),
+            SpotlightCone::Resolved(None)
+        ));
     }
 
     #[test]

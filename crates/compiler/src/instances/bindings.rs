@@ -201,6 +201,7 @@ impl<'a> Bindings<'a> {
         &self,
         original: &'e Entity,
         kind: entities::Kind,
+        targets: &map_core::light::Targets<'_>,
         work: &mut usize,
         control: &Control,
     ) -> Result<Cow<'e, Entity>, String> {
@@ -241,7 +242,7 @@ impl<'a> Bindings<'a> {
             };
             entity.properties.0.push((key.to_owned(), value.to_owned()));
         }
-        entities::admit(&entity, kind)?;
+        entities::admit_with_targets(&entity, kind, targets)?;
         Ok(Cow::Owned(entity))
     }
 }
@@ -320,6 +321,7 @@ mod tests {
                 .resolve(
                     &child.entities[0],
                     entities::Kind::Point,
+                    &map_core::light::Targets::new(),
                     &mut work,
                     &Control::default()
                 )
@@ -343,6 +345,7 @@ mod tests {
                 .resolve(
                     &child.entities[0],
                     entities::Kind::Point,
+                    &map_core::light::Targets::new(),
                     &mut work,
                     &Control::default(),
                 )
@@ -364,6 +367,7 @@ mod tests {
                 .resolve(
                     &child.entities[0],
                     entities::Kind::Point,
+                    &map_core::light::Targets::new(),
                     &mut work,
                     &control
                 )

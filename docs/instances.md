@@ -18,6 +18,7 @@ Compile supported contents of saved child VMFs into a parent map.
 | World and ordinary `func_detail` brushes | Checked transformed geometry and textures. |
 | Terrain | Supported explicit grids, borders and transformed geometry. |
 | Point, spot and sun lights | Checked static or supported built-in appearance settings. |
+| Spotlight targets | Named static `info_target` endpoints in the same child, with Prefix names. |
 | Static props | Supported models, skins, transforms and scoped lighting origins. |
 | Player spawns | Supported CS:S spawn classes. |
 | Stationary brush models | `func_brush` with supported pivots and initial poses. |
@@ -116,6 +117,7 @@ An unresolved child template can be edited and saved, but cannot compile alone.
 Preview excludes unresolved lamps and reports a reason; the parent still has no child-light preview.
 
 Point and spot lights support `_light`, `_lightHDR`, `_lightscaleHDR`, `_fifty_percent_distance` and `_zero_percent_distance`.
+Spotlights also support `_inner_cone`, `_cone` and `_exponent`; see [cone and focus bindings](instance-authoring.md#bind-spotlight-cones-and-focus).
 Sun lights support `_light`, `_lightHDR`, `_ambient`, `_ambientHDR`, `_lightscaleHDR`, `_AmbientScaleHDR` and `SunSpreadAngle`.
 See [light falloff bindings](instance-authoring.md#bind-light-falloff-distances) for the distance rules.
 Bindings apply only to direct child lights. Other scalar fields remain literal.
@@ -127,6 +129,18 @@ Use **Advanced properties → Fix Up Name** and **Entity Name Fix Up → Prefix*
 Lighting-origin branches require explicit prefixes at every enclosing level.
 Child helper names and references must agree before expansion.
 Unsupported replacements, name fixups, scripts or dynamic references fail explicitly.
+
+## Aim a child spotlight
+
+1. Open the child and click **Entity…**. Create `info_target` and set **Name** to `aim`.
+2. Select an unnamed `light_spot`. Set **Entity to point at** to `aim` and retain valid **Pitch**, cone and light values.
+3. Save the child. In every containing reference, set **Fix Up Name** explicitly and **Entity Name Fix Up** to **Prefix**.
+4. Refresh **Instance contents…**, then compile the parent.
+
+Each spotlight must reference one visible endpoint in its immediate child, with exact name spelling.
+Missing, duplicate, external, coincident and colliding targets stop the build. Keep both lamp and endpoint inside a lit compile region.
+The parent reports endpoint counts before region filtering. It does not preview child targets or targeting guides.
+Endpoint parenting, I/O and dynamic references remain unsupported.
 
 ## Source ownership
 

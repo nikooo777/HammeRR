@@ -31,7 +31,20 @@ Invalid distances stop the build, including lights outside a build region.
 
 Unresolved tokens stay as text. They exclude the lamp from authored-lighting preview and prevent standalone compilation, including **Fullbright**.
 Reference inspection resolves values and reports counts. It does not preview child lighting.
-Only immediate child point/spot distances support these bindings. Environment distances, attenuation coefficients, cones, embedded tokens and ancestor forwarding remain unsupported.
+Only immediate child point/spot distances support these bindings. Environment distances, attenuation coefficients, embedded tokens and ancestor forwarding remain unsupported.
+
+## Bind spotlight cones and focus
+
+1. Open the child VMF and select a `light_spot`.
+2. Enable **Advanced properties**. Set `_inner_cone` to `$Inner`, `_cone` to `$Outer` and `_exponent` to `$Focus` using **Property key** and **Value**. Press Enter after each value.
+3. Save the child. In the containing reference, set unused `replace01`–`replace10` fields to `$Inner 15`, `$Outer 60` and `$Focus 2`.
+4. Refresh the reference contents or compile the parent.
+
+Inner `0` uses 10 degrees. Outer `0` uses the effective inner angle.
+A spotlight requires inner ≤ outer ≤ 90 degrees. The pair `180, 180` selects the ordinary point-light mode.
+For spotlight cones, Focus must be finite, nonnegative and fit a native float. Point-light mode leaves focus unused.
+Ordinary integer fields stay integer; replacement strings can supply fractional compiler values.
+Unresolved tokens stay as text and exclude the spotlight from authored-lighting preview. The child cannot compile alone until its tokens resolve.
 
 ## Bind sun spread
 

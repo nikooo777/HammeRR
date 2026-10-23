@@ -25,12 +25,15 @@ pub enum ValueKind {
     HdrGain,
     FalloffDistance,
     SunSpreadAngle,
+    SpotlightAngle,
+    SpotlightFocus,
 }
 
 const ALL_VALUE_CLASSES: &[&str] = &["light", "light_spot", "light_environment"];
 const POINT_VALUE_CLASSES: &[&str] = &["light", "light_spot"];
 const SUN_VALUE_CLASSES: &[&str] = &["light_environment"];
-static VALUE_FIELDS: [(&str, &[&str], ValueKind); 9] = [
+const SPOT_VALUE_CLASSES: &[&str] = &["light_spot"];
+static VALUE_FIELDS: [(&str, &[&str], ValueKind); 12] = [
     ("_light", ALL_VALUE_CLASSES, ValueKind::Color),
     ("_lightHDR", ALL_VALUE_CLASSES, ValueKind::Color),
     ("_ambient", SUN_VALUE_CLASSES, ValueKind::Color),
@@ -52,6 +55,9 @@ static VALUE_FIELDS: [(&str, &[&str], ValueKind); 9] = [
         SUN_VALUE_CLASSES,
         ValueKind::SunSpreadAngle,
     ),
+    ("_inner_cone", SPOT_VALUE_CLASSES, ValueKind::SpotlightAngle),
+    ("_cone", SPOT_VALUE_CLASSES, ValueKind::SpotlightAngle),
+    ("_exponent", SPOT_VALUE_CLASSES, ValueKind::SpotlightFocus),
 ];
 
 pub fn value_fields() -> impl Iterator<Item = (&'static str, &'static [&'static str], ValueKind)> {
@@ -244,7 +250,7 @@ mod tests {
             ("light_dynamic", "_fifty_percent_distance"),
             ("light", "_distance"),
             ("light", "_quadratic_attn"),
-            ("light_spot", "_cone"),
+            ("light", "_cone"),
         ] {
             assert_eq!(value_kind(class, key), None);
         }
@@ -264,6 +270,23 @@ mod tests {
             assert_eq!(color_parameter("light_environment", key, "$Spread"), None);
             for class in ["light", "light_spot", "light_dynamic"] {
                 assert_eq!(value_parameter(class, key, "$Spread"), None);
+            }
+        }
+    }
+
+    #[test]
+    fn spotlight_shape_tokens_are_only_spotlight_scalars() {
+        for (key, kind) in [
+            ("_inner_cone", ValueKind::SpotlightAngle),
+            ("_CONE", ValueKind::SpotlightAngle),
+            ("_exponent", ValueKind::SpotlightFocus),
+        ] {
+            assert_eq!(value_kind("light_spot", key), Some(kind));
+            assert_eq!(value_parameter("light_spot", key, "$Shape"), Some("Shape"));
+            assert_eq!(value_parameter("light_spot", key, "$Shape suffix"), None);
+            assert_eq!(color_parameter("light_spot", key, "$Shape"), None);
+            for class in ["light", "light_environment", "light_dynamic", "Light_spot"] {
+                assert_eq!(value_kind(class, key), None);
             }
         }
     }

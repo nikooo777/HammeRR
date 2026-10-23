@@ -11,6 +11,7 @@ struct Child {
     bytes: usize,
     names: names::LocalIndex,
     light_parameters: bool,
+    targets: targets::LocalIndex,
 }
 
 struct EntitySpec {
@@ -134,8 +135,12 @@ impl<'a> Expansion<'a> {
             return Err(format!("Instance sources exceed {MAX_TOTAL_NODES} nodes"));
         }
         let child = Vmf::from_nodes(&parsed).map_err(|error| error.to_string())?;
-        child_admission(&child, self.control)
+        let targets = targets::LocalIndex::new(&child, &mut self.work, self.control)
             .map_err(|error| format!("Instance {relative}: {error}"))?;
+        let positions = targets.positions(&mut self.work, self.control)?;
+        child_admission(&child, self.control, &positions)
+            .map_err(|error| format!("Instance {relative}: {error}"))?;
+        drop(positions);
         let ignored = child
             .world
             .properties
@@ -170,6 +175,7 @@ impl<'a> Expansion<'a> {
         let child = Arc::new(Child {
             light_parameters,
             names,
+            targets,
             vmf: child,
             identity,
             bytes: input.len(),
@@ -229,6 +235,10 @@ impl<'a> Expansion<'a> {
         self.stats.instances += 1;
         self.stats.max_expansion_depth = self.stats.max_expansion_depth.max(depth);
         let result: Result<(), EditError> = (|| {
+            let target_positions = child
+                .targets
+                .positions(&mut self.work, self.control)
+                .map_err(EditError::Invalid)?;
             let mut local_helpers = BTreeMap::new();
             let mut local_sides = child
                 .vmf
@@ -247,12 +257,11 @@ impl<'a> Expansion<'a> {
                 .then(BTreeMap::new);
             let mut manual_cubemaps = Vec::new();
             let mut overlay_bindings = Vec::new();
-            for entity in child
-                .vmf
-                .entities
-                .iter()
-                .filter(|entity| !entity.hidden && entity.classname() == Some("info_lighting"))
-            {
+            for entity in child.vmf.entities.iter().filter(|entity| {
+                !entity.hidden
+                    && matches!(entity.classname(), Some("info_lighting" | "info_target"))
+            }) {
+                let kind = entities::kind(entity).unwrap();
                 let result: Result<u32, EditError> = (|| {
                     let name = names::compose(
                         &self.name_scopes,
@@ -267,16 +276,18 @@ impl<'a> Expansion<'a> {
                                 .map_err(EditError::Invalid)?,
                         );
                     }
-                    self.name_registry
-                        .as_mut()
-                        .unwrap()
-                        .insert(&name, &mut self.work, self.control)
-                        .map_err(EditError::Invalid)?;
+                    let registry = self.name_registry.as_mut().unwrap();
+                    if matches!(kind, entities::Kind::SpotlightTarget) {
+                        registry.insert_target(&name, tx.vmf(), &mut self.work, self.control)
+                    } else {
+                        registry.insert(&name, &mut self.work, self.control)
+                    }
+                    .map_err(EditError::Invalid)?;
                     self.entity(
                         tx,
                         entity,
                         EntitySpec {
-                            kind: entities::Kind::LightingOrigin,
+                            kind,
                             name: Some(("targetname", name)),
                             binding: None,
                         },
@@ -286,7 +297,7 @@ impl<'a> Expansion<'a> {
                     )
                 })();
                 let generated = result.map_err(|error| {
-                    EditError::Invalid(format!("Child lighting origin {}: {error}", entity.id))
+                    EditError::Invalid(format!("Child {} {}: {error}", kind.label(), entity.id))
                 })?;
                 names::charge(&mut self.work, 1, self.control).map_err(EditError::Invalid)?;
                 local_helpers.insert(entity.id, generated);
@@ -342,7 +353,10 @@ impl<'a> Expansion<'a> {
                         manual_cubemaps.push((entity, generated));
                     }
                 } else if let Some(kind) = entities::kind(entity) {
-                    if matches!(kind, entities::Kind::LightingOrigin) {
+                    if matches!(
+                        kind,
+                        entities::Kind::LightingOrigin | entities::Kind::SpotlightTarget
+                    ) {
                         continue;
                     }
                     let result: Result<(), EditError> = (|| {
@@ -351,6 +365,21 @@ impl<'a> Expansion<'a> {
                             name: None,
                             binding: None,
                         };
+                        if matches!(kind, entities::Kind::Spot)
+                            && let Some(reference) = entity
+                                .properties
+                                .get("target")
+                                .filter(|value| !value.is_empty())
+                        {
+                            let name = names::compose(
+                                &self.name_scopes,
+                                reference,
+                                &mut self.work,
+                                self.control,
+                            )
+                            .map_err(EditError::Invalid)?;
+                            spec.name = Some(("target", name));
+                        }
                         if matches!(kind, entities::Kind::StaticProp)
                             && let Some(reference) = entity
                                 .properties
@@ -379,8 +408,24 @@ impl<'a> Expansion<'a> {
                             );
                         }
                         let effective = bindings
-                            .resolve(entity, kind, &mut self.work, self.control)
+                            .resolve(
+                                entity,
+                                kind,
+                                &target_positions,
+                                &mut self.work,
+                                self.control,
+                            )
                             .map_err(EditError::Invalid)?;
+                        if matches!(kind, entities::Kind::Spot) {
+                            targets::check_poses(
+                                &effective,
+                                &target_positions,
+                                transforms,
+                                &mut self.work,
+                                self.control,
+                            )
+                            .map_err(EditError::Invalid)?;
+                        }
                         self.entity(tx, &effective, spec, owner.id, &relative, transforms)?;
                         Ok(())
                     })();
@@ -999,6 +1044,7 @@ impl<'a> Expansion<'a> {
             entities::Kind::Spot => self.stats.spot_lights += 1,
             entities::Kind::Environment => self.stats.environment_lights += 1,
             entities::Kind::LightingOrigin => self.stats.lighting_origins += 1,
+            entities::Kind::SpotlightTarget => self.stats.spotlight_targets += 1,
             entities::Kind::PlayerSpawn => self.stats.player_spawns += 1,
             entities::Kind::StaticProp => {
                 self.stats.static_props += 1;

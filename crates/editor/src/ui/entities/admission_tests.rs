@@ -49,6 +49,11 @@ fn unresolved_light_scalar_rows_keep_declared_types_and_raw_text_controls() {
     @PointClass = light [
         _fifty_percent_distance(string) : "50 percent distance" : "0"
         _zero_percent_distance(string) : "Near-zero distance" : "0"
+    ]
+    @PointClass = light_spot [
+        _inner_cone(integer) : "Inner (bright) angle" : 30
+        _cone(integer) : "Outer (fading) angle" : 45
+        _exponent(integer) : "Focus" : 1
     ]"#,
         )
         .unwrap(),
@@ -82,25 +87,44 @@ fn unresolved_light_scalar_rows_keep_declared_types_and_raw_text_controls() {
     else {
         unreachable!()
     };
+    let ObjectId::Entity(spot_id) = session
+        .create_entity(
+            Actor::User,
+            "light_spot",
+            None,
+            std::collections::BTreeMap::from([
+                ("_inner_cone".into(), "$Inner".into()),
+                ("_cone".into(), "$Outer".into()),
+                ("_exponent".into(), "$Focus".into()),
+            ]),
+        )
+        .unwrap()
+    else {
+        unreachable!()
+    };
     let rows: Vec<_> = session
         .entity_inspector(id)
         .unwrap()
         .properties
         .into_iter()
         .chain(session.entity_inspector(distance_id).unwrap().properties)
+        .chain(session.entity_inspector(spot_id).unwrap().properties)
         .filter(|field| {
             field.key.to_ascii_lowercase().contains("scalehdr")
                 || field.key.ends_with("_distance")
                 || field.key == "SunSpreadAngle"
+                || matches!(field.key.as_str(), "_inner_cone" | "_cone" | "_exponent")
         })
         .map(property_row)
         .collect();
-    assert_eq!(rows.len(), 5);
+    assert_eq!(rows.len(), 8);
     for row in rows {
         assert_eq!(
             row.type_name,
             if matches!(row.value.as_str(), "$Half" | "$End") {
                 "string"
+            } else if matches!(row.value.as_str(), "$Inner" | "$Outer" | "$Focus") {
+                "integer"
             } else {
                 "float"
             }

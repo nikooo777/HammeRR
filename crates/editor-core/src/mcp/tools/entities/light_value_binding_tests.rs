@@ -12,11 +12,14 @@ fn light_value_binding_mcp_uses_existing_string_schemas_and_shared_drafts() {
     session.set_definitions(
         Actor::User,
         Catalog::parse(
-            r#"@PointClass = light [
+            r#"@PointClass = light_spot [
                 _light(color255) : "Brightness" : "255 255 255 200"
                 _lightHDR(color255) : "HDR brightness" : "-1 -1 -1 1"
                 _fifty_percent_distance(string) : "50 percent distance" : "0"
                 _zero_percent_distance(string) : "Near-zero distance" : "0"
+                _inner_cone(integer) : "Inner (bright) angle" : 30
+                _cone(integer) : "Outer (fading) angle" : 45
+                _exponent(integer) : "Focus" : 1
             ]"#,
         )
         .unwrap(),
@@ -31,6 +34,7 @@ fn light_value_binding_mcp_uses_existing_string_schemas_and_shared_drafts() {
         let description = server.get_tool(tool).unwrap().description.unwrap();
         assert!(description.contains("replace01–replace10"));
         assert!(description.contains("_lightHDR"));
+        assert!(description.contains("_inner_cone/_cone/_exponent"));
     }
     let schema = serde_json::to_value(schemars::schema_for!(PropertyChange)).unwrap();
     let set = schema["oneOf"]
@@ -43,8 +47,8 @@ fn light_value_binding_mcp_uses_existing_string_schemas_and_shared_drafts() {
     let created = report(
         server.create_entity(Parameters(
             serde_json::from_value(json!({
-                "classname":"light","origin":[0,0,64],
-                "properties":{"_light":"$Lamp","_lightHDR":"$HDR","_fifty_percent_distance":"$Half","_zero_percent_distance":"$End"}
+                "classname":"light_spot","origin":[0,0,64],
+                "properties":{"_light":"$Lamp","_lightHDR":"$HDR","_fifty_percent_distance":"$Half","_zero_percent_distance":"$End","_inner_cone":"$Inner","_cone":"$Outer","_exponent":"$Focus"}
             }))
             .unwrap(),
         )),
@@ -53,7 +57,7 @@ fn light_value_binding_mcp_uses_existing_string_schemas_and_shared_drafts() {
     report(
         server.set_entity_properties(Parameters(
             serde_json::from_value(
-                json!({"id":id,"set":{"_light":"$Other","_fifty_percent_distance":"$OtherHalf"}}),
+                json!({"id":id,"set":{"_light":"$Other","_fifty_percent_distance":"$OtherHalf","_inner_cone":"$OtherInner","_exponent":"$OtherFocus"}}),
             )
             .unwrap(),
         )),
@@ -68,7 +72,10 @@ fn light_value_binding_mcp_uses_existing_string_schemas_and_shared_drafts() {
         server.update_property_edit(Parameters(
             serde_json::from_value(json!({"token":token,"changes":[
                 {"action":"set","key":"_light","value":"$Draft"},
-                {"action":"set","key":"_zero_percent_distance","value":"$EndDraft"}
+                {"action":"set","key":"_zero_percent_distance","value":"$EndDraft"},
+                {"action":"set","key":"_inner_cone","value":"$InnerDraft"},
+                {"action":"set","key":"_cone","value":"$OuterDraft"},
+                {"action":"set","key":"_exponent","value":"$FocusDraft"}
             ]}))
             .unwrap(),
         )),
@@ -95,6 +102,24 @@ fn light_value_binding_mcp_uses_existing_string_schemas_and_shared_drafts() {
     assert_eq!(distance["field"]["kind"], "string");
     assert_eq!(distance["field"]["control"], "text");
     assert_eq!(distance["field"]["value"], "$EndDraft");
+    for (key, value) in [
+        ("_inner_cone", "$InnerDraft"),
+        ("_cone", "$OuterDraft"),
+        ("_exponent", "$FocusDraft"),
+    ] {
+        let field = &staged["preview"]["properties"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|property| property["field"]["key"] == key)
+            .unwrap()["field"];
+        assert_eq!(field["kind"], "integer");
+        assert_eq!(field["control"], "text");
+        assert_eq!(field["value"], value);
+        assert!(
+            field["range"].is_null() && field["color"].is_null() && field["intensity"].is_null()
+        );
+    }
     assert!(field["color"].is_null() && field["intensity"].is_null());
     assert!(
         field["description"]
@@ -110,6 +135,9 @@ fn light_value_binding_mcp_uses_existing_string_schemas_and_shared_drafts() {
             .unwrap(),
         ))
         .unwrap();
+    assert!(rejected.is_error.unwrap());
+    assert_eq!(report(server.get_property_edit()), staged);
+    let rejected = server.update_property_edit(Parameters(serde_json::from_value(json!({"token":token,"changes":[{"action":"set","key":"_cone","value":"$Outer embedded"}]})).unwrap())).unwrap();
     assert!(rejected.is_error.unwrap());
     assert_eq!(report(server.get_property_edit()), staged);
     assert_eq!(lock(&shared).document().vmf(), &source);
@@ -247,7 +275,7 @@ fn environment_color_binding_mcp_uses_shared_create_set_and_ambient_drafts() {
         scope["class_properties"],
         json!({
             "light":["_light","_lightHDR","_lightscaleHDR","_fifty_percent_distance","_zero_percent_distance"],
-            "light_spot":["_light","_lightHDR","_lightscaleHDR","_fifty_percent_distance","_zero_percent_distance"],
+            "light_spot":["_light","_lightHDR","_lightscaleHDR","_fifty_percent_distance","_zero_percent_distance","_inner_cone","_cone","_exponent"],
             "light_environment":["_light","_lightHDR","_ambient","_ambientHDR","_lightscaleHDR","_AmbientScaleHDR","SunSpreadAngle"]
         })
     );
@@ -258,13 +286,25 @@ fn environment_color_binding_mcp_uses_shared_create_set_and_ambient_drafts() {
             "_AmbientScaleHDR",
             "_fifty_percent_distance",
             "_zero_percent_distance",
-            "SunSpreadAngle"
+            "SunSpreadAngle",
+            "_inner_cone",
+            "_cone",
+            "_exponent"
         ])
     );
     assert_eq!(scope["sun_spread_properties"], json!(["SunSpreadAngle"]));
     assert_eq!(scope["sun_spread_degrees"], json!([0, 90]));
     assert_eq!(scope["sun_spread_classes"], json!(["light_environment"]));
     assert_eq!(scope["scalar_parameters"], true);
+    assert_eq!(
+        scope["spotlight_angle_properties"],
+        json!(["_inner_cone", "_cone"])
+    );
+    assert_eq!(scope["spotlight_angle_classes"], json!(["light_spot"]));
+    assert_eq!(scope["spotlight_angle_degrees"], json!([0, 90]));
+    assert_eq!(scope["spotlight_point_angles"], json!([180, 180]));
+    assert_eq!(scope["spotlight_focus_properties"], json!(["_exponent"]));
+    assert_eq!(scope["spotlight_focus_classes"], json!(["light_spot"]));
     assert_eq!(
         scope["falloff_distance_classes"],
         json!(["light", "light_spot"])

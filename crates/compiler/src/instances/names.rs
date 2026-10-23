@@ -209,6 +209,7 @@ impl LocalIndex {
 
 pub(super) struct Registry {
     roots: BTreeSet<String>,
+    target_roots: Option<BTreeSet<String>>,
     generated: BTreeSet<String>,
 }
 
@@ -231,6 +232,7 @@ impl Registry {
         }
         Ok(Self {
             roots,
+            target_roots: None,
             generated: BTreeSet::new(),
         })
     }
@@ -254,5 +256,46 @@ impl Registry {
             ));
         }
         Ok(())
+    }
+
+    pub fn insert_target(
+        &mut self,
+        name: &str,
+        vmf: &Vmf,
+        work: &mut usize,
+        control: &Control,
+    ) -> Result<(), String> {
+        charge(work, name.len(), control)?;
+        if self.generated.contains(&name.to_ascii_lowercase()) {
+            return Err(format!(
+                "Scoped spotlight target name collides with another generated helper: {name}"
+            ));
+        }
+        if self.target_roots.is_none() {
+            let mut roots = BTreeSet::new();
+            for entity in vmf.entities.iter().filter(|entity| !entity.hidden) {
+                charge(work, 1, control)?;
+                for (_, name) in entity
+                    .properties
+                    .iter()
+                    .filter(|(key, _)| key.eq_ignore_ascii_case("targetname"))
+                {
+                    charge(work, name.len(), control)?;
+                    roots.insert(name.to_ascii_lowercase());
+                }
+            }
+            self.target_roots = Some(roots);
+        }
+        if self
+            .target_roots
+            .as_ref()
+            .unwrap()
+            .contains(&name.to_ascii_lowercase())
+        {
+            return Err(format!(
+                "Scoped spotlight target name collides with a visible root entity: {name}"
+            ));
+        }
+        self.insert(name, work, control)
     }
 }

@@ -11,6 +11,7 @@ mod lighting_origins;
 mod occluders;
 mod overlays;
 mod player_spawns;
+mod spotlight_targets;
 mod static_props;
 mod terrain;
 mod terrain_overlays;
@@ -225,7 +226,7 @@ fn changed_or_failed_grandchildren_remove_the_whole_contents_layer_and_preserve_
             } else if change == "failed_refresh" {
                 std::fs::write(
                     &leaves[0],
-                    b"world { id 1 classname worldspawn } entity { id 2 classname info_target }",
+                    b"world { id 1 classname worldspawn } entity { id 2 classname info_null }",
                 )
                 .unwrap();
                 let report = refresh(&mut session, actor);
@@ -736,7 +737,7 @@ fn failure_tokens_single_worker_and_empty_untitled_maps_remain_explicit() {
     );
     std::fs::write(
         child,
-        "world { id 1 classname worldspawn } entity {id 2 classname info_target}",
+        "world { id 1 classname worldspawn } entity {id 2 classname info_null}",
     )
     .unwrap();
     let failed = refresh(&mut session, Actor::Agent);

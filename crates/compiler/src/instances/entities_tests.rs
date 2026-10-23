@@ -1149,6 +1149,9 @@ fn sibling_light_bindings_match_independent_literal_dual_bsp_and_preserve_raw_so
     spot.properties.set("_lightscaleHDR", "$gain");
     spot.properties.set("_fifty_percent_distance", "$half");
     spot.properties.set("_zero_percent_distance", "$end");
+    spot.properties.set("_inner_cone", "$inner");
+    spot.properties.set("_cone", "$outer");
+    spot.properties.set("_exponent", "$focus");
     let (directory, mut parent, template, game) = emitter_fixture(vec![point, spot]);
     let colors = [
         ("255 96 32 300", "32 96 255 450"),
@@ -1156,6 +1159,7 @@ fn sibling_light_bindings_match_independent_literal_dual_bsp_and_preserve_raw_so
     ];
     let gains = ["2", "0.5"];
     let distances = [("64", "160"), ("96", "0")];
+    let shapes = [("12.5", "70", "2.5"), ("30", "0", "0")];
     light_bindings(
         parent.entities.last_mut().unwrap(),
         colors[0].0,
@@ -1174,7 +1178,7 @@ fn sibling_light_bindings_match_independent_literal_dual_bsp_and_preserve_raw_so
         .properties
         .set("replace09", format!("$gain {}", gains[1]));
     parent.entities.push(sibling);
-    for (helper, (half, end)) in parent
+    for ((helper, (half, end)), (inner, outer, focus)) in parent
         .entities
         .iter_mut()
         .filter(|entity| {
@@ -1183,9 +1187,19 @@ fn sibling_light_bindings_match_independent_literal_dual_bsp_and_preserve_raw_so
                 .is_some_and(|class| class.eq_ignore_ascii_case("func_instance"))
         })
         .zip(distances)
+        .zip(shapes)
     {
         helper.properties.set("replace07", format!("$half {half}"));
         helper.properties.set("replace08", format!("$end {end}"));
+        helper
+            .properties
+            .set("replace04", format!("$inner {inner}"));
+        helper
+            .properties
+            .set("replace05", format!("$outer {outer}"));
+        helper
+            .properties
+            .set("replace06", format!("$focus {focus}"));
     }
     write_child(directory.path(), "parent.vmf", &parent);
     let raw = std::fs::read(directory.path().join("child.vmf")).unwrap();
@@ -1193,7 +1207,7 @@ fn sibling_light_bindings_match_independent_literal_dual_bsp_and_preserve_raw_so
     let mut literal = Document::new(parent.clone());
     literal
         .edit("independent sibling colors", |tx| {
-            for (((helper, (ldr, hdr)), gain), (half, end)) in parent
+            for ((((helper, (ldr, hdr)), gain), (half, end)), (inner, outer, focus)) in parent
                 .entities
                 .iter()
                 .filter(|entity| {
@@ -1204,6 +1218,7 @@ fn sibling_light_bindings_match_independent_literal_dual_bsp_and_preserve_raw_so
                 .zip(colors)
                 .zip(gains)
                 .zip(distances)
+                .zip(shapes)
             {
                 for original in &template.entities {
                     let mut light =
@@ -1218,6 +1233,11 @@ fn sibling_light_bindings_match_independent_literal_dual_bsp_and_preserve_raw_so
                     light.properties.set("_lightscaleHDR", gain);
                     light.properties.set("_fifty_percent_distance", half);
                     light.properties.set("_zero_percent_distance", end);
+                    if original.classname() == Some("light_spot") {
+                        light.properties.set("_inner_cone", inner);
+                        light.properties.set("_cone", outer);
+                        light.properties.set("_exponent", focus);
+                    }
                     light
                         .properties
                         .set("style", original.properties.get("style").unwrap());
@@ -1333,18 +1353,30 @@ fn sibling_light_bindings_match_independent_literal_dual_bsp_and_preserve_raw_so
 
 #[test]
 fn nested_light_bindings_are_local_even_when_names_repeat() {
-    let (directory, mut parent, _, _) =
-        emitter_fixture(vec![parameter_light(20, "light_spot", "0 0 96")]);
+    let mut leaf = parameter_light(20, "light_spot", "0 0 96");
+    leaf.properties.set("_inner_cone", "$shape");
+    leaf.properties.set("_cone", "$outer");
+    leaf.properties.set("_exponent", "$focus");
+    let mut direct = leaf.clone();
+    direct.id = 200;
+    direct.properties.set("origin", "-32 0 96");
+    let (directory, mut parent, _, _) = emitter_fixture(vec![leaf]);
     let mut nested = nested_helper(100, "child.vmf", "16 0 0", "0 0 0");
     light_bindings(&mut nested, "64 255 32 200", "64 32 512 600");
+    nested.properties.set("replace04", "$shape 180");
+    nested.properties.set("replace05", "$outer 180");
+    nested.properties.set("replace06", "$focus 3");
     write_child(
         directory.path(),
         "middle.vmf",
-        &helper_file(vec![parameter_light(200, "light", "-32 0 96"), nested]),
+        &helper_file(vec![direct, nested]),
     );
     let root = parent.entities.last_mut().unwrap();
     root.properties.set("file", "middle.vmf");
     light_bindings(root, "255 32 64 300", "32 255 64 450");
+    root.properties.set("replace04", "$shape 15");
+    root.properties.set("replace05", "$outer 60");
+    root.properties.set("replace06", "$focus 2");
     let context = source(directory.path());
     let resolved = resolve(
         &parent,
@@ -1363,6 +1395,12 @@ fn nested_light_bindings_are_local_even_when_names_repeat() {
     assert_eq!(lights[0].properties.get("_light"), Some("255 32 64 300"));
     assert_eq!(lights[1].properties.get("_light"), Some("64 255 32 200"));
     assert_eq!(lights[1].properties.get("_lightHDR"), Some("64 32 512 600"));
+    assert_eq!(lights[0].properties.get("_inner_cone"), Some("15"));
+    assert_eq!(lights[0].properties.get("_cone"), Some("60"));
+    assert_eq!(lights[0].properties.get("_exponent"), Some("2"));
+    assert_eq!(lights[1].properties.get("_inner_cone"), Some("180"));
+    assert_eq!(lights[1].properties.get("_cone"), Some("180"));
+    assert_eq!(lights[1].properties.get("_exponent"), Some("3"));
     assert_eq!(resolved.stats().unwrap().max_expansion_depth, 2);
     for light in lights {
         entities::admit(light, entities::kind(light).unwrap()).unwrap();
@@ -1412,6 +1450,16 @@ fn bound_templates_reject_grouped_semantic_and_context_failures_before_fullbrigh
         "bad hdr",
         "bad hdr outside region",
         "cone",
+        "missing cone",
+        "unused focus",
+        "negative cone",
+        "nonfinite focus",
+        "focus native overflow",
+        "cone ordering",
+        "cone outside region",
+        "cone sentinel mismatch",
+        "cone literal tuple",
+        "point cone context",
         "hidden",
         "world context",
         "material context",
@@ -1419,7 +1467,10 @@ fn bound_templates_reject_grouped_semantic_and_context_failures_before_fullbrigh
     ] {
         let mut parent = baseline.clone();
         let mut child = template.clone();
-        if matches!(issue, "bad hdr outside region" | "distance outside region") {
+        if matches!(
+            issue,
+            "bad hdr outside region" | "distance outside region" | "cone outside region"
+        ) {
             parent.cordon = Some(Node::block(
                 "cordon",
                 vec![
@@ -1479,6 +1530,48 @@ fn bound_templates_reject_grouped_semantic_and_context_failures_before_fullbrigh
                 helper.properties.set("replace10", "$hdr 1 2 3 -1")
             }
             "cone" => child.entities[0].properties.set("_cone", "15"),
+            "missing cone" => child.entities[0].properties.set("_inner_cone", "$inner"),
+            "unused focus" => helper.properties.set("replace06", "$focus 2"),
+            "negative cone"
+            | "nonfinite focus"
+            | "focus native overflow"
+            | "cone ordering"
+            | "cone outside region"
+            | "cone sentinel mismatch"
+            | "cone literal tuple" => {
+                child.entities[0].properties.set("_inner_cone", "$inner");
+                child.entities[0].properties.set("_cone", "$outer");
+                child.entities[0].properties.set("_exponent", "$focus");
+                helper.properties.set(
+                    "replace04",
+                    match issue {
+                        "negative cone" => "$inner -1",
+                        "cone sentinel mismatch" => "$inner 180",
+                        "cone literal tuple" => "$inner 20 30",
+                        _ => "$inner 30",
+                    },
+                );
+                helper.properties.set(
+                    "replace05",
+                    match issue {
+                        "cone ordering" | "cone outside region" => "$outer 20",
+                        _ => "$outer 60",
+                    },
+                );
+                helper.properties.set(
+                    "replace06",
+                    match issue {
+                        "nonfinite focus" => "$focus NaN",
+                        "focus native overflow" => "$focus 1e40",
+                        _ => "$focus 2",
+                    },
+                );
+            }
+            "point cone context" => {
+                let mut point = parameter_light(21, "light", "0 0 96");
+                point.properties.set("_cone", "$lamp");
+                child.entities.push(point);
+            }
             "hidden" => child.entities[0].hidden = true,
             "world context" => child.world.properties.set("skyname", "$lamp"),
             "material context" => {
@@ -1546,6 +1639,9 @@ fn unresolved_standalone_light_templates_fail_in_every_compile_mode() {
         ("light_environment", "SunSpreadAngle"),
         ("light", "_fifty_percent_distance"),
         ("light_spot", "_zero_percent_distance"),
+        ("light_spot", "_inner_cone"),
+        ("light_spot", "_cone"),
+        ("light_spot", "_exponent"),
     ] {
         let mut vmf = test_common::room();
         let mut light = static_light(vmf.object_ids().max().unwrap() + 1, class, "0 0 96");

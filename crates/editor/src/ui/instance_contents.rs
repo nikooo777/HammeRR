@@ -170,6 +170,18 @@ impl Controller {
             summary.push('\n');
             summary.push_str(reason);
         }
+        if let Some(targets) = state["stats"]["spotlight_targets"]
+            .as_u64()
+            .filter(|&count| count > 0)
+        {
+            summary.push_str(&format!(
+                "\nExpanded spotlight targets: {targets} · before compile-region filtering"
+            ));
+        }
+        if let Some(reason) = state["spotlight_target_preview"]["reason"].as_str() {
+            summary.push('\n');
+            summary.push_str(reason);
+        }
         if let Some(spawns) = state["stats"]["player_spawns"]
             .as_u64()
             .filter(|&count| count > 0)

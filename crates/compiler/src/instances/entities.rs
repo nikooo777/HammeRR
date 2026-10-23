@@ -11,6 +11,7 @@ pub(super) enum Kind {
     Environment,
     StaticProp,
     LightingOrigin,
+    SpotlightTarget,
     PlayerSpawn,
 }
 
@@ -21,6 +22,7 @@ impl Kind {
             Self::Environment => "environment light",
             Self::StaticProp => "prop",
             Self::LightingOrigin => "lighting origin",
+            Self::SpotlightTarget => "spotlight target",
             Self::PlayerSpawn => "player spawn",
         }
     }
@@ -33,25 +35,60 @@ pub(super) fn kind(entity: &Entity) -> Option<Kind> {
         "light_environment" => Some(Kind::Environment),
         "prop_static" => Some(Kind::StaticProp),
         "info_lighting" => Some(Kind::LightingOrigin),
+        "info_target" => Some(Kind::SpotlightTarget),
         "info_player_terrorist" | "info_player_counterterrorist" => Some(Kind::PlayerSpawn),
         _ => None,
     }
 }
 
+#[cfg(test)]
 pub(super) fn admit(entity: &Entity, kind: Kind) -> Result<(), String> {
-    admit_light(entity, kind, false)
+    admit_light(entity, kind, false, &map_core::light::Targets::new())
 }
 
+#[cfg(test)]
 pub(super) fn admit_template(entity: &Entity, kind: Kind) -> Result<(), String> {
-    admit_light(entity, kind, true)
+    admit_light(entity, kind, true, &map_core::light::Targets::new())
 }
 
-fn admit_light(entity: &Entity, kind: Kind, template: bool) -> Result<(), String> {
+pub(super) fn admit_with_targets(
+    entity: &Entity,
+    kind: Kind,
+    targets: &map_core::light::Targets<'_>,
+) -> Result<(), String> {
+    admit_light(entity, kind, false, targets)
+}
+
+pub(super) fn admit_template_with_targets(
+    entity: &Entity,
+    kind: Kind,
+    targets: &map_core::light::Targets<'_>,
+) -> Result<(), String> {
+    admit_light(entity, kind, true, targets)
+}
+
+fn has_target(entity: &Entity, kind: Kind) -> bool {
+    matches!(kind, Kind::Spot)
+        && entity
+            .properties
+            .get("target")
+            .is_some_and(|value| !value.is_empty())
+}
+
+fn admit_light(
+    entity: &Entity,
+    kind: Kind,
+    template: bool,
+    targets: &map_core::light::Targets<'_>,
+) -> Result<(), String> {
     if matches!(kind, Kind::PlayerSpawn) {
         return spawns::admit(entity);
     }
     if matches!(kind, Kind::LightingOrigin) {
         return names::admit(entity);
+    }
+    if matches!(kind, Kind::SpotlightTarget) {
+        return super::targets::admit(entity);
     }
     if matches!(kind, Kind::StaticProp) {
         return props::admit(entity);
@@ -114,6 +151,12 @@ fn admit_light(entity: &Entity, kind: Kind, template: bool) -> Result<(), String
                     return Err(format!("Static child light requires {key} 0"));
                 }
             }
+            "target" if matches!(kind, Kind::Spot) && !value.is_empty() => {
+                if key != "target" {
+                    return Err("Static child spotlight requires canonical property target".into());
+                }
+                names::component(value)?;
+            }
             "targetname" | "target" | "parentname" | "name" | "globalname" | "killtarget"
             | "lightingorigin" | "pattern" => {
                 if !value.is_empty() {
@@ -127,6 +170,10 @@ fn admit_light(entity: &Entity, kind: Kind, template: bool) -> Result<(), String
         return Err("Static child light requires canonical property classname".into());
     }
     check_pose(entity, kind)?;
+    if has_target(entity, kind) {
+        let target = map_core::light::target(entity.properties.get("target"), targets)?;
+        map_core::light::direction(None, None, None, entity.origin().unwrap(), target)?;
+    }
     let mapped = crate::map::MapEntity {
         id: entity.id,
         classname: entity.classname().unwrap().to_owned(),
@@ -154,12 +201,16 @@ fn admit_light(entity: &Entity, kind: Kind, template: bool) -> Result<(), String
         }
     }
     if template && bindings::has_parameters(entity) {
-        return crate::lighting::validate_point_light_template(&mapped, matches!(kind, Kind::Spot));
+        return crate::lighting::validate_point_light_template(
+            &mapped,
+            matches!(kind, Kind::Spot),
+            targets,
+        );
     }
     for lighting in [LightingKind::Ldr, LightingKind::Hdr] {
         let light = crate::lighting::PointLight::from_entity_kind(&mapped, -1, lighting)?;
         if matches!(kind, Kind::Spot) {
-            light.with_spotlight(&mapped, &map_core::light::Targets::new())?;
+            light.with_spotlight(&mapped, targets)?;
         }
     }
     Ok(())
@@ -180,6 +231,9 @@ pub(super) fn check_pose(entity: &Entity, kind: Kind) -> Result<(), String> {
     }
     if matches!(kind, Kind::LightingOrigin) {
         return names::check_point(entity);
+    }
+    if matches!(kind, Kind::SpotlightTarget) {
+        return targets::check_pose(entity);
     }
     if matches!(kind, Kind::StaticProp) {
         return props::check_pose(entity).map(|_| ());

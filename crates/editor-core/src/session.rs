@@ -1273,6 +1273,8 @@ impl Session {
                         map_core::light::ValueKind::HdrGain
                         | map_core::light::ValueKind::SunSpreadAngle => "float",
                         map_core::light::ValueKind::FalloffDistance => "string",
+                        map_core::light::ValueKind::SpotlightAngle
+                        | map_core::light::ValueKind::SpotlightFocus => "integer",
                     };
                     property.kind == expected_kind
                         && map_core::light::value_parameter(classname, key, value).is_some()

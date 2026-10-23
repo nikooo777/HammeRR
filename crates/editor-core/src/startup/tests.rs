@@ -46,6 +46,7 @@ fn application_rejects_raw_recovery_configuration_before_sharing_preferences() {
         session.grid_preferences_state(),
         session.preview_preferences_state(),
         session.navigation_preferences_state(),
+        session.selection_preferences_state(),
         session.keyboard_shortcuts_state(),
     ] {
         assert_eq!(report["ready"], false);
@@ -93,6 +94,7 @@ fn application_preserves_utf8_recovery_alias_to_raw_storage() {
         session.grid_preferences_state(),
         session.preview_preferences_state(),
         session.navigation_preferences_state(),
+        session.selection_preferences_state(),
         session.keyboard_shortcuts_state(),
     ] {
         assert_eq!(report["ready"], true);

@@ -22,6 +22,7 @@ pub mod recent_maps;
 pub mod recovery;
 pub mod runtime;
 pub mod saved_defaults;
+pub mod selection_preferences;
 pub mod session;
 pub mod shortcuts;
 pub mod sky_assets;

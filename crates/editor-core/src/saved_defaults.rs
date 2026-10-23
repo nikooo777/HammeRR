@@ -11,6 +11,7 @@ pub struct SavedDefaults {
     pub(crate) grid: Authority<crate::grid_preferences::Store>,
     pub(crate) preview: Authority<crate::preview_preferences::Store>,
     pub(crate) navigation: Authority<crate::navigation_preferences::Store>,
+    pub(crate) selection: Authority<crate::selection_preferences::Store>,
 }
 
 impl SavedDefaults {
@@ -18,7 +19,8 @@ impl SavedDefaults {
         let defaults = Self::default();
         let _ = defaults.grid.configure(directory.clone());
         let _ = defaults.preview.configure(directory.clone());
-        let _ = defaults.navigation.configure(directory);
+        let _ = defaults.navigation.configure(directory.clone());
+        let _ = defaults.selection.configure(directory);
         defaults
     }
 }
@@ -94,6 +96,12 @@ store!(
     Navigation,
     "Navigation defaults",
     "Saved navigation defaults changed outside this session; Reload defaults before using them"
+);
+store!(
+    selection_preferences,
+    SelectionFilters,
+    "Selection defaults",
+    "Saved selection defaults changed outside this session; Reload defaults before using them"
 );
 
 pub(crate) struct Authority<S: Store> {

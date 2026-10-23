@@ -2,7 +2,7 @@ use super::*;
 use crate::grid_preferences::Grid;
 use crate::navigation_preferences::Navigation;
 use crate::preview_preferences::Preview;
-use crate::session::{Actor, Session};
+use crate::session::{Actor, Session, selection_filters::SelectionFilters};
 use glam::DVec3;
 use source_formats::keyvalues::WriteOptions;
 
@@ -11,14 +11,16 @@ enum Kind {
     Grid,
     Preview,
     Navigation,
+    Selection,
 }
 impl Kind {
-    const ALL: [Self; 3] = [Self::Grid, Self::Preview, Self::Navigation];
+    const ALL: [Self; 4] = [Self::Grid, Self::Preview, Self::Navigation, Self::Selection];
     fn state(self, session: &Session) -> Value {
         match self {
             Self::Grid => session.grid_preferences_state(),
             Self::Preview => session.preview_preferences_state(),
             Self::Navigation => session.navigation_preferences_state(),
+            Self::Selection => session.selection_preferences_state(),
         }
     }
     fn action(
@@ -35,6 +37,7 @@ impl Kind {
             Self::Navigation => {
                 session.change_navigation_preferences(Actor::Agent, action, snapshot)
             }
+            Self::Selection => session.change_selection_preferences(Actor::Agent, action, snapshot),
         }
     }
 }
@@ -43,7 +46,7 @@ fn session(defaults: &SavedDefaults) -> Session {
     Session::with_saved_defaults(Err("no assets needed".into()), defaults.clone())
 }
 
-fn current(session: &Session) -> [Value; 3] {
+fn current(session: &Session) -> [Value; 4] {
     Kind::ALL.map(|kind| kind.state(session)["current"].clone())
 }
 
@@ -65,6 +68,15 @@ fn set_current(session: &mut Session, grid: f64, speed: f32, outlines: bool) {
         })
         .unwrap();
     session.set_view(view);
+    session
+        .set_selection_filters(
+            Actor::User,
+            SelectionFilters {
+                world_brushes: outlines,
+                ..Default::default()
+            },
+        )
+        .unwrap();
 }
 
 fn source_state(session: &Session) -> Value {
@@ -156,7 +168,7 @@ fn attached_sessions_share_saved_values_and_errors_without_changing_current_valu
         assert!(kind.action(&mut second, "reset", Some(&old)).is_err());
         assert_eq!(source_state(&second), source);
         assert_eq!(current(&second), local);
-        if !matches!(kind, Kind::Navigation) {
+        if matches!(kind, Kind::Grid | Kind::Preview) {
             assert!(kind.action(&mut second, "apply", None).is_err());
             assert_eq!(kind.state(&first)["ready"], true);
             assert_eq!(kind.state(&second)["ready"], true);
@@ -208,11 +220,23 @@ fn constructors_apply_retained_startup_once_and_attached_recovery_cannot_rebind_
     }
     .save(Navigation { fly_speed: 987.625 }, false)
     .unwrap();
+    crate::selection_preferences::Store {
+        directory: root.clone(),
+    }
+    .save(
+        SelectionFilters {
+            world_brushes: false,
+            ..Default::default()
+        },
+        false,
+    )
+    .unwrap();
     let defaults = SavedDefaults::configured(Ok(root.clone()));
     let mut first = session(&defaults);
     assert_eq!(current(&first)[0]["grid_size"], 17.375);
     assert_eq!(current(&first)[1]["selection_outlines"], false);
     assert_eq!(first.fly_speed(), 987.625);
+    assert!(!first.selection_filters().world_brushes);
     set_current(&mut first, 31.5, 1500.0, true);
     let other = directory.path().join("other");
     first.configure_recovery(Ok(other.clone()));
@@ -338,7 +362,7 @@ fn concurrent_authority_writers_admit_one_reviewed_revision_and_reject_the_loser
 
 #[cfg(unix)]
 #[test]
-fn committed_verification_error_is_shared_and_retains_original_directory_for_all_three_consumers() {
+fn committed_verification_error_is_shared_and_retains_original_directory_for_all_defaults() {
     use std::os::unix::fs::symlink;
     for kind in Kind::ALL {
         let directory = tempfile::tempdir().unwrap();
@@ -372,6 +396,12 @@ fn committed_verification_error_is_shared_and_retains_original_directory_for_all
                 ".navigation-defaults.lock",
                 defaults.navigation.snapshot().source.unwrap(),
                 json!({"version":1,"navigation":Navigation{fly_speed:987.625}}),
+            ),
+            Kind::Selection => (
+                crate::selection_preferences::FILE_NAME,
+                ".selection-defaults.lock",
+                defaults.selection.snapshot().source.unwrap(),
+                json!({"version":1,"filters":SelectionFilters{world_brushes:false,..Default::default()}}),
             ),
         };
         let target = crate::preference_file::CoordinatedFile {
@@ -410,6 +440,13 @@ fn committed_verification_error_is_shared_and_retains_original_directory_for_all
             Kind::Navigation => defaults
                 .navigation
                 .accept(Navigation { fly_speed: 987.625 }, publication),
+            Kind::Selection => defaults.selection.accept(
+                SelectionFilters {
+                    world_brushes: false,
+                    ..Default::default()
+                },
+                publication,
+            ),
         }
         assert_eq!(kind.state(&first)["ready"], false);
         assert_eq!(kind.state(&first)["error"], kind.state(&second)["error"]);
@@ -425,6 +462,7 @@ fn committed_verification_error_is_shared_and_retains_original_directory_for_all
                 Kind::Grid => "grid",
                 Kind::Preview => "preview",
                 Kind::Navigation => "navigation",
+                Kind::Selection => "filters",
             }]
         );
         for _ in 0..2 {

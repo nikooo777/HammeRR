@@ -13,6 +13,19 @@ Choose objects, faces or bounded groups of visible geometry.
 Use **Pick object types** to allow **World brushes**, **Brush entities** and **Point entities & models**.
 Alt+click cycles overlapping object hits. **Bypass groups** selects individual members.
 
+## Save selection defaults
+
+1. Choose the types under **Pick object types**.
+2. Open **Selection defaults…**.
+3. Compare **Current session** with **Startup defaults**.
+4. Click **Save current as defaults** to use these filters for future documents.
+5. Click **Apply saved defaults** to restore the saved filters in this document.
+
+**Reload defaults** reads changes from disk without applying them.
+**Reset saved defaults** saves all three types enabled; click **Apply saved defaults** to use them now.
+If the dialog reports a storage error, repair the file and click **Reload defaults**,
+or explicitly replace it with **Reset saved defaults**.
+
 ## Area selection
 
 1. Choose **Intersects** or **Fully inside** under **Area**.
@@ -52,7 +65,10 @@ This is separate from saved map visibility and [working regions](working-region.
 
 ## Limits
 
-- Hidden and filtered targets are excluded.
+- Hidden targets are excluded. Type filters limit object-selection seeds; eligible hits still select complete visible groups. **Fully inside** requires every visible group member inside.
+- Faces, components, geometric queries and explicit object-ID selection bypass type filters. Changing filters retains existing selection and ends pending object-selection gestures.
+- Only the three object types are saved. Saving, reloading or resetting defaults leaves current filters unchanged; applying affects only this document. **New** and **Open** retain current filters in the same document session.
+- Other running editors may require **Reload defaults** after saved defaults change. Storage errors disable Save and Apply until Reload or an explicit Reset succeeds.
 - Loaded models use transformed bounds for area and volume matching; point picking uses mesh triangles.
 - Terrain selection follows the displaced sheet, not its former parent volume.
 - Overlap cycling retains up to 64 ordered hits.

@@ -7,6 +7,7 @@ export { HistoryWindow, HistoryRow } from "history.slint";
 export { GridDefaultsWindow } from "grid-defaults.slint";
 export { NavigationDefaultsWindow } from "navigation-defaults.slint";
 export { PreviewDefaultsWindow, PreviewDefaultRow } from "preview-defaults.slint";
+export { SelectionDefaultsWindow, SelectionDefaultRow } from "selection-defaults.slint";
 export { ShortcutsWindow, ShortcutRow } from "shortcuts.slint";
 export { WorkingRegionWindow } from "working-region.slint";
 export { CompileRegionWindow } from "compile-region.slint";
@@ -2162,6 +2163,8 @@ export component AppWindow inherits Window {
     in-out property <bool> pick-brush-entities: true;
     in-out property <bool> pick-point-entities: true;
     callback selection-filters-changed();
+    callback selection-defaults();
+    in property <bool> selection-defaults-error;
     in property <int> editor-hidden-count;
     in property <bool> can-hide-editor-selection;
     callback hide-editor-selection();
@@ -2888,6 +2891,7 @@ export component AppWindow inherits Window {
                     CheckBox { text: "World brushes"; enabled: !root.face-mode; checked <=> root.pick-world-brushes; toggled => { root.selection-filters-changed(); } }
                     CheckBox { text: "Brush entities"; enabled: !root.face-mode; checked <=> root.pick-brush-entities; toggled => { root.selection-filters-changed(); } }
                     CheckBox { text: "Point entities & models"; enabled: !root.face-mode; checked <=> root.pick-point-entities; toggled => { root.selection-filters-changed(); } }
+                    Button { text: root.selection-defaults-error ? "Selection defaults… · needs attention" : "Selection defaults…"; clicked => { root.selection-defaults(); } }
                     Text { text: "Object selection only. Objects stay visible; groups stay together."; color: #aeb9c8; wrap: word-wrap; font-size: 12px; }
                     Button { text: "Hide selected in editor"; enabled: root.can-hide-editor-selection; clicked => { root.hide-editor-selection(); } }
                     Button { text: "Show all editor-hidden"; enabled: root.editor-hidden-count > 0; clicked => { root.show-all-editor-hidden(); } }

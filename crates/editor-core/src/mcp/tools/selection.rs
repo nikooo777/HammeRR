@@ -1,9 +1,36 @@
 use super::super::*;
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SelectionDefaultsAction {
+    Save,
+    Apply,
+    Reload,
+    Reset,
+}
+
+impl SelectionDefaultsAction {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Save => "save",
+            Self::Apply => "apply",
+            Self::Reload => "reload",
+            Self::Reset => "reset",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SelectionDefaultsArgs {
+    action: SelectionDefaultsAction,
+    snapshot: String,
+}
+
 #[tool_router(router = selection_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
-        description = "Inspect session-local object-selection seed filters. All types start enabled and remain visible. Filters affect ordinary object clicks, overlap candidates/cycling, object marquee/volume and object paint. Enabled hits seed complete visible groups; fully-contained groups still need all visible members geometrically inside. Faces, components, geometric raycast/pick_at_pixel and explicit IDs/report/group/layer selection bypass. Current selection is retained. No map/history/compiler or preference writes.",
+        description = "Inspect session-local object-selection seed filters. Startup uses saved selection defaults, or all types enabled when no file exists. Objects remain visible. Filters affect ordinary object clicks, overlap candidates/cycling, object marquee/volume and object paint. Enabled hits seed complete visible groups; fully-contained groups still need all visible members geometrically inside. Faces, components, geometric raycast/pick_at_pixel and explicit IDs/report/group/layer selection bypass. Current selection is retained. No map/history/compiler or preference writes. Inspect get_selection_defaults for saved values, readiness and explicit default actions.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_selection_filters(&self) -> ToolResult {
@@ -11,13 +38,37 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Set all three object-selection seed filters through the same Session operation as Selection → Pick object types. world_brushes, brush_entities and point_entities are required booleans; point_entities includes models, helpers, ropes and root instances. All false is allowed. Cancels only object-selection drafts and stale object gestures; preserves existing selection, face/texture/geometry work, visibility, map/history and compiler output. Values remain in this Session across New/Open but are not saved preferences. No-op changes leave revisions and drafts unchanged. Inspect get_selection_filters for group and bypass rules."
+        description = "Set all three temporary object-selection seed filters through the same Session operation as Selection → Pick object types. world_brushes, brush_entities and point_entities are required booleans; point_entities includes models, helpers, ropes and root instances. All false is allowed. Cancels only object-selection drafts and stale object gestures; preserves existing selection, face/texture/geometry work, visibility, map/history and compiler output. Values remain in this Session across New/Open and never save automatically. Use set_selection_defaults to explicitly persist startup filters. No-op changes leave revisions and drafts unchanged. Inspect get_selection_filters for group and bypass rules."
     )]
     pub(in crate::mcp) fn set_selection_filters(
         &self,
         Parameters(filters): Parameters<crate::session::selection_filters::SelectionFilters>,
     ) -> ToolResult {
         run(|| self.session().set_selection_filters(Actor::Agent, filters))
+    }
+
+    #[tool(
+        description = "Inspect shared saved selection-filter defaults, the originating Session's current filters, factory defaults, storage readiness/errors and an action snapshot. Same state as Selection → Selection defaults…. Only world_brushes, brush_entities and point_entities are saved; all false is valid. Shared saved changes never replace current filters in other documents. No graphics, source, history or preference writes.",
+        annotations(read_only_hint = true)
+    )]
+    pub(in crate::mcp) fn get_selection_defaults(&self) -> ToolResult {
+        ok(self.session().selection_preferences_state())
+    }
+
+    #[tool(
+        description = "Manage selection-filter defaults using the latest get_selection_defaults.snapshot. save writes current filters; apply changes only this Session through set_selection_filters, retiring its stale object-selection gestures without pruning selection; reload reads storage without applying; reset writes all-enabled factory defaults without applying. Only save/reset write bounded atomic selection-defaults.json. Save/Apply/Reset recheck exact source/directory observations; conflicts require Reload. Malformed/unsupported files stay intact until explicit Reset. Participating Linux writers coordinate under the existing physical-destination lock; unrelated writers remain outside that guarantee. write_committed=true with ready=false explicitly reports publication followed by verification failure; inspect error before continuing. UI labels: Save current as defaults / Apply saved defaults / Reload defaults / Reset saved defaults. New/Open retain current filters; startup applies defaults once per Session."
+    )]
+    pub(in crate::mcp) fn set_selection_defaults(
+        &self,
+        Parameters(args): Parameters<SelectionDefaultsArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session().change_selection_preferences(
+                Actor::Agent,
+                args.action.name(),
+                &args.snapshot,
+            )
+        })
     }
 
     #[tool(

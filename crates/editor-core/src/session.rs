@@ -92,6 +92,7 @@ pub mod preview_preferences;
 pub mod primitives;
 mod recent;
 pub mod selection_filters;
+pub mod selection_preferences;
 pub mod shortcuts;
 mod view;
 mod viewport_pick;
@@ -271,6 +272,7 @@ pub struct Session {
     path: Option<PathBuf>,
     selection: BTreeSet<ObjectId>,
     selection_filters: selection_filters::State,
+    selection_preferences: selection_preferences::State,
     face_selection: BTreeSet<FaceId>,
     face_mode: bool,
     face_preview_serial: u64,
@@ -582,6 +584,7 @@ impl Session {
             path: None,
             selection: BTreeSet::new(),
             selection_filters: selection_filters::State::default(),
+            selection_preferences: selection_preferences::State::default(),
             face_selection: BTreeSet::new(),
             face_mode: false,
             face_preview_serial: 0,

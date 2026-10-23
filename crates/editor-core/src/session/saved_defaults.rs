@@ -15,6 +15,8 @@ impl Session {
         self.grid_preferences = Binding::Application(defaults.grid);
         self.preview_preferences = Binding::Application(defaults.preview);
         self.navigation_preferences = Binding::Application(defaults.navigation);
+        self.selection_preferences.binding = Binding::Application(defaults.selection);
+        self.apply_startup_selection_preferences();
         let grid = self.grid_preferences.authority().snapshot();
         if grid.loaded {
             if let Err(error) =

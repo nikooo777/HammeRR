@@ -254,6 +254,7 @@ impl Ui {
             measurements,
             grid_defaults,
             preview_defaults,
+            selection_defaults,
             navigation_defaults,
             shortcuts,
         );

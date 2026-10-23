@@ -337,6 +337,7 @@ impl Session {
         self.configure_grid_preferences(directory.clone());
         self.configure_preview_preferences(directory.clone());
         self.configure_navigation_preferences(directory.clone());
+        self.configure_selection_preferences(directory.clone());
         self.configure_shortcuts(directory.clone());
         self.configure_recent_maps(crate::recent_maps::directory(directory.clone()));
         if let Binding::Independent(authority) = &self.recovery.settings

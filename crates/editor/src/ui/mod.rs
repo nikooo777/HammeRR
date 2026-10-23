@@ -131,6 +131,7 @@ struct Ui {
     measurements: Option<measurements_ui::Controller>,
     grid_defaults: Option<grid_defaults_ui::Controller>,
     preview_defaults: Option<preview_defaults_ui::Controller>,
+    selection_defaults: Option<selection_defaults_ui::Controller>,
     navigation_defaults: Option<navigation_defaults_ui::Controller>,
     shortcuts: Option<shortcuts_ui::Controller>,
     material_for_group: bool,
@@ -259,6 +260,7 @@ impl Ui {
             measurements: None,
             grid_defaults: None,
             preview_defaults: None,
+            selection_defaults: None,
             navigation_defaults: None,
             shortcuts: None,
             material_for_group: false,
@@ -753,6 +755,26 @@ fn create_document_window(
         }
         if let Err(error) = ui
             .preview_defaults
+            .as_ref()
+            .unwrap()
+            .show(&lock(&ui.session))
+        {
+            app.unwrap().set_message(error.to_string().into());
+        }
+    });
+    root_callback!(app, ui, on_selection_defaults, |app| {
+        let mut ui = ui.borrow_mut();
+        if ui.selection_defaults.is_none() {
+            match selection_defaults_ui::Controller::new_with_access(&ui.document_access()) {
+                Ok(controller) => ui.selection_defaults = Some(controller),
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
+                }
+            }
+        }
+        if let Err(error) = ui
+            .selection_defaults
             .as_ref()
             .unwrap()
             .show(&lock(&ui.session))
@@ -3128,6 +3150,9 @@ fn create_document_window(
                     app.set_preview_defaults_error(
                         lock(&ui.session).preview_preferences_error().is_some(),
                     );
+                    app.set_selection_defaults_error(
+                        lock(&ui.session).selection_preferences_error().is_some(),
+                    );
                     shortcuts_ui::refresh_hint(&app, &lock(&ui.session));
                     if let Some(window) = &ui.hollow_window
                         && window.window().is_visible()
@@ -3231,6 +3256,11 @@ fn create_document_window(
                         controller.refresh(&lock(&ui.session));
                     }
                     if let Some(controller) = &ui.preview_defaults
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&lock(&ui.session));
+                    }
+                    if let Some(controller) = &ui.selection_defaults
                         && controller.window.window().is_visible()
                     {
                         controller.refresh(&lock(&ui.session));

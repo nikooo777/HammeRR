@@ -10,6 +10,7 @@ export component AtlasWindow inherits Window {
     in property <bool> stale;
     in property <bool> ready;
     in property <bool> loaded;
+    in property <bool> rectangle-dragging;
     in property <image> preview;
     in property <float> texture-width: 1;
     in property <float> texture-height: 1;
@@ -40,11 +41,19 @@ export component AtlasWindow inherits Window {
     callback preview-fit();
     callback apply-fit();
     callback cancel();
+    callback rectangle-pointer(int, float, float);
+    callback cancel-rectangle();
     forward-focus: keys;
     keys := FocusScope {
         width: parent.width;
         height: parent.height;
-        key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                if root.rectangle-dragging { root.cancel-rectangle(); } else { root.cancel(); }
+                accept
+            } else { reject }
+        }
+        focus-lost => { if root.rectangle-dragging { root.cancel-rectangle(); } }
         VerticalLayout {
             padding: 24px;
             spacing: 12px;
@@ -109,6 +118,31 @@ export component AtlasWindow inherits Window {
                             border-color: #ffd66e;
                             background: #ffd66e22;
                         }
+                        TouchArea {
+                            width: parent.width;
+                            height: parent.height;
+                            enabled: root.loaded && !root.stale;
+                            mouse-cursor: crosshair;
+                            accessible-role: image;
+                            accessible-label: "Atlas image rectangle";
+                            pointer-event(event) => {
+                                if event.kind == PointerEventKind.cancel {
+                                    root.cancel-rectangle();
+                                } else if event.button == PointerEventButton.left {
+                                    if event.kind == PointerEventKind.down {
+                                        keys.focus();
+                                        root.rectangle-pointer(0, self.mouse-x / self.width, self.mouse-y / self.height);
+                                    } else if event.kind == PointerEventKind.up {
+                                        root.rectangle-pointer(2, self.mouse-x / self.width, self.mouse-y / self.height);
+                                    }
+                                }
+                            }
+                            moved => {
+                                if root.rectangle-dragging {
+                                    root.rectangle-pointer(1, self.mouse-x / self.width, self.mouse-y / self.height);
+                                }
+                            }
+                        }
                     }
                     if !root.loaded: Text { text: "Inspect a supported material"; horizontal-alignment: center; vertical-alignment: center; color: #bac2ce; }
                 }
@@ -140,7 +174,7 @@ export component AtlasWindow inherits Window {
                     Rectangle { vertical-stretch: 1; }
                 }
             }
-            Text { text: "Cyan: rectangle. Yellow: usable area after padding. Image edges start at the top-left corner; X grows right and Y grows down."; wrap: word-wrap; color: #bac2ce; }
+            Text { text: "Drag on the image or enter pixel values. Escape cancels an active drag. Cyan: rectangle; yellow: usable area after padding. Image edges start at the top-left; X grows right and Y grows down."; wrap: word-wrap; color: #bac2ce; }
             Text {
                 text: root.fit-mode == 1 ? "Same-facing coplanar faces share the reference face's direction, skew, rotation and mirroring. Their combined bounds fit once into the usable area; gaps consume image space. Other face projection frames are replaced." : "Each face fits its projected bounds into the usable area, keeping its texture direction, skew, rotation and mirroring. Polygon corners can leave parts unused.";
                 wrap: word-wrap; color: #bac2ce;
@@ -151,8 +185,8 @@ export component AtlasWindow inherits Window {
                 spacing: 10px;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
                 Rectangle { horizontal-stretch: 1; }
-                Button { text: "Preview atlas fit"; enabled: !root.stale && root.loaded; clicked => { root.preview-fit(); } }
-                Button { text: "Apply atlas fit"; enabled: !root.stale && root.ready; clicked => { root.apply-fit(); } }
+                Button { text: "Preview atlas fit"; enabled: !root.stale && root.loaded && !root.rectangle-dragging; clicked => { root.preview-fit(); } }
+                Button { text: "Apply atlas fit"; enabled: !root.stale && root.ready && !root.rectangle-dragging; clicked => { root.apply-fit(); } }
             }
         }
     }

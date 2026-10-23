@@ -71,12 +71,17 @@ fn form(controller: &Controller) -> (Value, Vec<u8>) {
             "usable_width": window.get_usable_width(), "usable_height": window.get_usable_height(),
             "usable_details": window.get_usable_details().to_string(),
             "atlas": target.atlas, "token": target.token, "reviewed": target.reviewed,
+            "dragging": window.get_rectangle_dragging(), "drag": target.drag.is_some(),
         }),
         window.get_preview().to_rgba8().unwrap().as_bytes().to_vec(),
     )
 }
 
 fn rejected(window: &AtlasWindow, error: &str) {
+    for phase in [0, 1, 2] {
+        window.invoke_rectangle_pointer(phase, 0.25, 0.75);
+        assert_eq!(window.get_message(), error);
+    }
     for action in [
         AtlasWindow::invoke_edited,
         AtlasWindow::invoke_inspect_material,
@@ -223,8 +228,30 @@ fn managed_atlas_foreign_preview_and_failed_shutdown_preserve_exact_ownership() 
     }
     let foreign = lock(&target.shared).face_preview_token();
     assert_ne!(owned, foreign);
+    let previous = rectangle_fields(&target.controller.window);
+    target
+        .controller
+        .window
+        .invoke_rectangle_pointer(0, 0.25, 0.25);
+    target
+        .controller
+        .window
+        .invoke_rectangle_pointer(1, 0.75, 0.75);
+    target.controller.window.invoke_cancel_rectangle();
+    assert_eq!(rectangle_fields(&target.controller.window), previous);
+    assert_eq!(lock(&target.shared).face_preview_token(), foreign);
+    target
+        .controller
+        .window
+        .invoke_rectangle_pointer(0, 0.25, 0.25);
+    target
+        .controller
+        .window
+        .invoke_rectangle_pointer(1, 0.75, 0.75);
     target.controller.window.invoke_apply_fit();
     target.controller.window.invoke_cancel();
+    assert!(!target.controller.window.get_rectangle_dragging());
+    assert_eq!(rectangle_fields(&target.controller.window), previous);
     assert_eq!(lock(&target.shared).face_preview_token(), foreign);
     let expected = form(&target.controller);
     let recovery = target.directory.path().join("recovery");

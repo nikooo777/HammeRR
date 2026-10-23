@@ -7,7 +7,7 @@ Fit flat faces independently or together into a rectangular part of a material i
 1. Select faces under **Selection → Faces · materials & textures**.
 2. Open **Edit face textures…**, then **Fit atlas region…**.
 3. Enter **Material**, then click **Inspect material**.
-4. Enter **X**, **Y**, **Width** and **Height** in source image pixels.
+4. Drag between two edges on the inspected image, or enter **X**, **Y**, **Width** and **Height** in source image pixels.
 5. Set **Padding** in whole source image pixels. Use `0` for the full rectangle.
 6. Check **Usable area**. Cyan outlines the rectangle; yellow outlines the padded usable area.
 7. Click **Preview atlas fit**.
@@ -16,6 +16,11 @@ Fit flat faces independently or together into a rectangular part of a material i
 The top-left image edge is `0, 0`. The default **Each face independently** mode fits the usable area separately for every face. Its texture direction, skew, rotation and mirroring stay unchanged.
 For example, a `32 × 16` rectangle at `16, 8` with padding `2` uses `28 × 12` pixels at `18, 10`.
 **Cancel** discards the preview. Changed fields require another preview.
+
+Dragging rounds to whole source image pixel edges and works in either direction.
+Start inside the image; continuing beyond an edge clips the rectangle to the image.
+An empty click or line keeps the previous rectangle. **Escape** during a drag restores it without closing the dialog or discarding an existing face preview.
+Release, then click **Preview atlas fit** before applying. Reinspect or reopen the dialog after a source change.
 
 ![Two equal faces use the full image on the left and an eight-pixel inset on the right](images/atlas-padding.png)
 
@@ -39,7 +44,7 @@ Changing **Fit mode** or **Reference face** requires another preview before appl
 
 - Flat world, detail and brush-entity faces only; terrain and collapsed projections reject.
 - One static base image with a supported `LightmappedGeneric` or `UnlitGeneric` declaration.
-- No tool overrides, proxies, extra layers, packing, rectangle dragging or image editing.
+- No tool overrides, proxies, extra layers, packing or image editing.
 - The rectangle must have positive size and stay inside the original image.
 - Padding must leave a positive usable width and height; invalid updates preserve the existing preview.
 - Together fitting requires a reference from the target selection and same-facing coplanar faces. It does not unfold across corners.

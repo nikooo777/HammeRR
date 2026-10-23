@@ -19,6 +19,16 @@ struct Target {
     atlas: Option<Value>,
     token: Option<u64>,
     reviewed: Option<String>,
+    drag: Option<RectangleDrag>,
+}
+
+struct RectangleDrag {
+    previous: [slint::SharedString; 4],
+    expected_rectangle: [slint::SharedString; 4],
+    expected: String,
+    snapshot: String,
+    size: [u32; 2],
+    start: [u32; 2],
 }
 
 impl Target {
@@ -50,6 +60,132 @@ fn fields(window: &AtlasWindow) -> String {
         window.get_fit_mode(),
         window.get_reference_index()
     )
+}
+
+fn rectangle_fields(window: &AtlasWindow) -> [slint::SharedString; 4] {
+    [
+        window.get_region_x(),
+        window.get_region_y(),
+        window.get_region_pixels_wide(),
+        window.get_region_pixels_high(),
+    ]
+}
+
+fn set_rectangle_fields(window: &AtlasWindow, values: [slint::SharedString; 4]) {
+    let [x, y, width, height] = values;
+    window.set_region_x(x);
+    window.set_region_y(y);
+    window.set_region_pixels_wide(width);
+    window.set_region_pixels_high(height);
+}
+
+fn image_pixel(position: [f32; 2], size: [u32; 2], clip: bool) -> Result<[u32; 2], String> {
+    if size.contains(&0) || position.iter().any(|value| !value.is_finite()) {
+        return Err("Rectangle selection needs finite coordinates on an inspected image".into());
+    }
+    if !clip && position.iter().any(|value| !(0.0..=1.0).contains(value)) {
+        return Err("Start rectangle selection inside the inspected image".into());
+    }
+    Ok(std::array::from_fn(|axis| {
+        (f64::from(position[axis].clamp(0.0, 1.0)) * f64::from(size[axis])).round() as u32
+    }))
+}
+
+fn cancel_rectangle(window: &AtlasWindow, target: &mut Target) {
+    if let Some(drag) = target.drag.take() {
+        set_rectangle_fields(window, drag.previous);
+        window.set_ready(false);
+        window.set_rectangle_dragging(false);
+        show_rectangle(window);
+    }
+}
+
+fn rectangle_pointer(
+    window: &AtlasWindow,
+    target: &mut Target,
+    session: &mut Session,
+    phase: i32,
+    position: [f32; 2],
+) -> Result<(), String> {
+    target.check(session)?;
+    let atlas = target.atlas.as_ref().ok_or("Inspect the material first")?;
+    if !window.get_loaded()
+        || atlas["material"].as_str() != Some(window.get_material().as_str())
+        || atlas["content_epoch"].as_str()
+            != Some(session.build_content_epoch().to_string().as_str())
+    {
+        return Err(
+            "Material inspection changed. Inspect the material before selecting a rectangle".into(),
+        );
+    }
+    if phase == 0 {
+        let size = [
+            atlas["width"].as_u64().unwrap() as u32,
+            atlas["height"].as_u64().unwrap() as u32,
+        ];
+        let start = image_pixel(position, size, false)?;
+        let snapshot = atlas["snapshot"].as_str().unwrap().to_owned();
+        cancel_rectangle(window, target);
+        target.drag = Some(RectangleDrag {
+            previous: rectangle_fields(window),
+            expected_rectangle: rectangle_fields(window),
+            expected: fields(window),
+            snapshot,
+            size,
+            start,
+        });
+        window.set_ready(false);
+        window.set_rectangle_dragging(true);
+        window.set_message(
+            "Drag to choose pixel edges. Escape restores the previous rectangle.".into(),
+        );
+        return Ok(());
+    }
+    let Some(drag) = target.drag.as_ref() else {
+        return Ok(());
+    };
+    if fields(window) != drag.expected || atlas["snapshot"].as_str() != Some(drag.snapshot.as_str())
+    {
+        return Err("Atlas fields or inspection changed during rectangle selection".into());
+    }
+    if phase == 2 {
+        let current = session.inspect_material_atlas(&window.get_material())?;
+        if current.report["snapshot"].as_str() != Some(drag.snapshot.as_str()) {
+            return Err(
+                "Atlas source changed during rectangle selection. Inspect the material again."
+                    .into(),
+            );
+        }
+    }
+    let end = image_pixel(position, drag.size, true)?;
+    let rectangle = Rectangle {
+        x: drag.start[0].min(end[0]),
+        y: drag.start[1].min(end[1]),
+        width: drag.start[0].abs_diff(end[0]),
+        height: drag.start[1].abs_diff(end[1]),
+    };
+    if rectangle.width == 0 || rectangle.height == 0 {
+        if phase == 2 {
+            cancel_rectangle(window, target);
+        }
+        window.set_message("Choose a rectangle with positive width and height; the previous rectangle is retained.".into());
+        return Ok(());
+    }
+    set_rectangle_fields(
+        window,
+        [rectangle.x, rectangle.y, rectangle.width, rectangle.height]
+            .map(|value| value.to_string().into()),
+    );
+    show_rectangle(window);
+    if phase == 2 {
+        target.drag = None;
+        window.set_rectangle_dragging(false);
+        window.set_message("Rectangle selected. Preview atlas fit before applying.".into());
+    } else if let Some(drag) = &mut target.drag {
+        drag.expected = fields(window);
+        drag.expected_rectangle = rectangle_fields(window);
+    }
+    Ok(())
 }
 
 fn rectangle(window: &AtlasWindow) -> Result<Rectangle, String> {
@@ -147,6 +283,7 @@ fn show_rectangle(window: &AtlasWindow) {
 }
 
 fn inspect(window: &AtlasWindow, target: &mut Target, session: &mut Session) -> Result<(), String> {
+    cancel_rectangle(window, target);
     target.check(session)?;
     let atlas = session.inspect_material_atlas(&window.get_material())?;
     let width = atlas.report["width"].as_u64().unwrap() as u32;
@@ -189,6 +326,9 @@ fn inspect(window: &AtlasWindow, target: &mut Target, session: &mut Session) -> 
 }
 
 fn preview(window: &AtlasWindow, target: &mut Target, session: &mut Session) -> Result<(), String> {
+    if target.drag.is_some() {
+        return Err("Finish or cancel rectangle selection before previewing".into());
+    }
     target.check(session)?;
     let atlas = target.atlas.as_ref().ok_or("Inspect the material first")?;
     let state = session.preview_atlas_fit_options(
@@ -213,6 +353,9 @@ fn preview(window: &AtlasWindow, target: &mut Target, session: &mut Session) -> 
 }
 
 fn apply(window: &AtlasWindow, target: &mut Target, session: &mut Session) -> Result<(), String> {
+    if target.drag.is_some() {
+        return Err("Finish or cancel rectangle selection before applying".into());
+    }
     target.check(session)?;
     if target.reviewed.as_deref() != Some(fields(window).as_str()) || !window.get_ready() {
         return Err("Fields changed. Preview atlas fit before applying.".into());
@@ -251,6 +394,35 @@ impl Controller {
     pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let window = AtlasWindow::new()?;
         let target = Rc::new(RefCell::new(None::<Target>));
+        window.on_rectangle_pointer({
+            let (window, target, access) = (window.as_weak(), target.clone(), access.downgrade());
+            move |phase, x, y| {
+                with_window(&window, &access, |window, shared| {
+                    if let Some(target) = target.borrow_mut().as_mut() {
+                        let result =
+                            rectangle_pointer(window, target, &mut lock(shared), phase, [x, y]);
+                        if let Err(error) = result {
+                            cancel_rectangle(window, target);
+                            window.set_message(error.into());
+                        }
+                    }
+                });
+            }
+        });
+        window.on_cancel_rectangle({
+            let (window, target) = (window.as_weak(), target.clone());
+            move || {
+                if let Some(window) = window.upgrade()
+                    && let Some(target) = target.borrow_mut().as_mut()
+                    && target.drag.is_some()
+                {
+                    cancel_rectangle(&window, target);
+                    window.set_message(
+                        "Rectangle selection cancelled. Preview atlas fit before applying.".into(),
+                    );
+                }
+            }
+        });
         window.on_inspect_material({
             let (window, target, access) = (window.as_weak(), target.clone(), access.downgrade());
             move || {
@@ -309,6 +481,20 @@ impl Controller {
             let (window, target, access) = (window.as_weak(), target.clone(), access.downgrade());
             move || {
                 with_window(&window, &access, |window, _| {
+                    if let Some(target) = target.borrow_mut().as_mut()
+                        && let Some(drag) = &target.drag
+                    {
+                        let current = rectangle_fields(window);
+                        let edited = std::array::from_fn(|axis| {
+                            if current[axis] != drag.expected_rectangle[axis] {
+                                current[axis].clone()
+                            } else {
+                                drag.previous[axis].clone()
+                            }
+                        });
+                        cancel_rectangle(window, target);
+                        set_rectangle_fields(window, edited);
+                    }
                     window.set_ready(false);
                     let same_material = target
                         .borrow()
@@ -334,8 +520,12 @@ impl Controller {
                 let Some(window) = window.upgrade() else {
                     return;
                 };
-                with_window(&window.as_weak(), &access, |_, shared| {
+                if window.get_rectangle_dragging() {
+                    window.invoke_cancel_rectangle();
+                }
+                with_window(&window.as_weak(), &access, |window, shared| {
                     if let Some(target) = target.borrow_mut().as_mut() {
+                        cancel_rectangle(window, target);
                         target.cancel(&mut lock(shared));
                     }
                 });
@@ -361,6 +551,10 @@ impl Controller {
     }
 
     pub(crate) fn initialize(&self, session: &mut Session, material: &str) -> Result<(), String> {
+        if let Some(previous) = self.target.borrow_mut().as_mut() {
+            cancel_rectangle(&self.window, previous);
+        }
+        self.window.set_rectangle_dragging(false);
         let faces = session.selected_faces();
         if faces.is_empty() {
             return Err("Select flat brush faces before fitting an atlas region".into());
@@ -373,6 +567,7 @@ impl Controller {
             atlas: None,
             token: None,
             reviewed: None,
+            drag: None,
         };
         self.window.set_selection_label(
             format!("Fit {} selected flat faces", target.context.faces.len()).into(),
@@ -405,8 +600,12 @@ impl Controller {
     }
 
     pub fn choose_material(&self, session: &mut Session, material: &str) {
+        let mut target = self.target.borrow_mut();
+        if let Some(target) = target.as_mut() {
+            cancel_rectangle(&self.window, target);
+        }
         self.window.set_material(material.into());
-        if let Some(target) = self.target.borrow_mut().as_mut() {
+        if let Some(target) = target.as_mut() {
             let result = inspect(&self.window, target, session);
             self.window.set_ready(false);
             self.window.set_message(match result {
@@ -421,7 +620,7 @@ impl Controller {
     }
 
     pub fn refresh(&self, session: &Session) {
-        if let Some(target) = self.target.borrow().as_ref() {
+        if let Some(target) = self.target.borrow_mut().as_mut() {
             let epoch = session.build_content_epoch().to_string();
             let assets_changed = target
                 .atlas
@@ -444,6 +643,7 @@ impl Controller {
             });
             self.window.set_stale(target.check(session).is_err());
             if let Some(error) = invalid {
+                cancel_rectangle(&self.window, target);
                 self.window.set_ready(false);
                 if assets_changed {
                     self.window.set_loaded(false);

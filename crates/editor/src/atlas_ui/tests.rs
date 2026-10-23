@@ -4,6 +4,60 @@ use super::*;
 use crate::SurfaceWindow;
 use glam::DVec3;
 use map_core::{ObjectId, surface};
+use slint::platform::{PointerEventButton, WindowEvent};
+
+fn image_position(window: &AtlasWindow, point: [f32; 2]) -> slint::LogicalPosition {
+    window.window().take_snapshot().unwrap();
+    let image = i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+        window,
+        "Atlas image rectangle",
+    )
+    .next()
+    .unwrap();
+    let origin = image.absolute_position();
+    let size = image.size();
+    assert!((size.width / size.height - 2.0).abs() < 1e-5);
+    slint::LogicalPosition::new(
+        origin.x + point[0] * size.width,
+        origin.y + point[1] * size.height,
+    )
+}
+
+fn image_press(window: &AtlasWindow, point: [f32; 2]) {
+    window.window().dispatch_event(WindowEvent::PointerPressed {
+        position: image_position(window, point),
+        button: PointerEventButton::Left,
+    });
+}
+
+fn image_release(window: &AtlasWindow, point: [f32; 2]) {
+    window
+        .window()
+        .dispatch_event(WindowEvent::PointerReleased {
+            position: image_position(window, point),
+            button: PointerEventButton::Left,
+        });
+}
+
+#[test]
+fn image_rectangle_mapping_uses_original_pixel_edges_and_clips_only_continuing_drags() {
+    assert_eq!(
+        image_pixel([0.25, 0.75], [128, 64], false).unwrap(),
+        [32, 48]
+    );
+    assert_eq!(image_pixel([0.25, 0.75], [32, 64], false).unwrap(), [8, 48]);
+    assert_eq!(
+        image_pixel([1.0, 1.0], [8192, 4096], false).unwrap(),
+        [8192, 4096]
+    );
+    assert_eq!(
+        image_pixel([-0.25, 1.25], [128, 64], true).unwrap(),
+        [0, 64]
+    );
+    assert_eq!(image_pixel([0.125, 0.375], [12, 4], false).unwrap(), [2, 2]);
+    assert!(image_pixel([-0.01, 0.5], [128, 64], false).is_err());
+    assert!(image_pixel([f32::NAN, 0.5], [128, 64], true).is_err());
+}
 
 #[test]
 fn atlas_dialog_preview_apply_cancel_and_material_reload_share_session_guards() {
@@ -124,6 +178,161 @@ fn atlas_dialog_preview_apply_cancel_and_material_reload_share_session_guards() 
     assert!(controller.window.get_usable_details().contains("28 × 12"));
     let token = lock(&shared).face_preview_token();
     let draft = lock(&shared).render_document().vmf().clone();
+    let previous_rectangle = rectangle_fields(&controller.window);
+    let size = controller.window.window().size();
+    controller
+        .window
+        .window()
+        .dispatch_event(WindowEvent::ScaleFactorChanged { scale_factor: 1.25 });
+    controller
+        .window
+        .window()
+        .dispatch_event(WindowEvent::Resized {
+            size: size.to_logical(controller.window.window().scale_factor()),
+        });
+    image_press(&controller.window, [0.5, -0.1]);
+    image_release(&controller.window, [0.75, 0.75]);
+    assert!(!controller.window.get_rectangle_dragging());
+    assert_eq!(rectangle_fields(&controller.window), previous_rectangle);
+    image_press(&controller.window, [0.75, 0.75]);
+    assert!(controller.window.get_rectangle_dragging());
+    controller.window.invoke_preview_fit();
+    assert!(!controller.window.get_ready());
+    image_release(&controller.window, [0.25, 0.25]);
+    assert!(!controller.window.get_rectangle_dragging());
+    assert_eq!(rectangle_fields(&controller.window), previous_rectangle);
+    assert!(!controller.window.get_ready());
+    assert_eq!(lock(&shared).face_preview_token(), token);
+    image_press(&controller.window, [0.25, 0.25]);
+    controller
+        .window
+        .window()
+        .dispatch_event(WindowEvent::PointerMoved {
+            position: image_position(&controller.window, [1.25, 1.25]),
+        });
+    assert_eq!(
+        rectangle(&controller.window).unwrap(),
+        Rectangle {
+            x: 16,
+            y: 8,
+            width: 48,
+            height: 24
+        }
+    );
+    controller
+        .window
+        .window()
+        .dispatch_event(WindowEvent::KeyPressed {
+            text: slint::platform::Key::Escape.into(),
+        });
+    controller
+        .window
+        .window()
+        .dispatch_event(WindowEvent::KeyReleased {
+            text: slint::platform::Key::Escape.into(),
+        });
+    assert!(controller.window.window().is_visible());
+    assert!(!controller.window.get_rectangle_dragging());
+    assert_eq!(rectangle_fields(&controller.window), previous_rectangle);
+    assert_eq!(lock(&shared).face_preview_token(), token);
+    assert_eq!(lock(&shared).render_document().vmf(), &draft);
+    image_release(&controller.window, [1.25, 1.25]);
+    image_press(&controller.window, [0.125, 0.125]);
+    image_release(&controller.window, [0.875, 0.875]);
+    assert_eq!(
+        rectangle(&controller.window).unwrap(),
+        Rectangle {
+            x: 8,
+            y: 4,
+            width: 48,
+            height: 24
+        }
+    );
+    assert!(!controller.window.get_ready());
+    assert_eq!(lock(&shared).face_preview_token(), token);
+    controller.window.invoke_preview_fit();
+    assert!(controller.window.get_ready());
+    assert_eq!(
+        lock(&shared).atlas_fit_state()["preview"]["rectangle"],
+        serde_json::json!({"x":8,"y":4,"width":48,"height":24})
+    );
+    image_press(&controller.window, [0.75, 0.75]);
+    image_release(&controller.window, [0.25, 0.25]);
+    controller.window.invoke_preview_fit();
+    assert!(controller.window.get_ready());
+    let token = lock(&shared).face_preview_token();
+    let draft = lock(&shared).render_document().vmf().clone();
+    image_press(&controller.window, [0.5, 0.5]);
+    image_release(&controller.window, [0.5, 0.5]);
+    assert_eq!(rectangle_fields(&controller.window), previous_rectangle);
+    assert!(
+        controller
+            .window
+            .get_message()
+            .contains("positive width and height")
+    );
+    image_press(&controller.window, [0.25, 0.25]);
+    controller.window.invoke_rectangle_pointer(1, 0.875, 0.875);
+    controller
+        .window
+        .window()
+        .dispatch_event(WindowEvent::PointerExited);
+    assert!(!controller.window.get_rectangle_dragging());
+    assert_eq!(rectangle_fields(&controller.window), previous_rectangle);
+    image_press(&controller.window, [0.25, 0.25]);
+    controller.window.invoke_rectangle_pointer(1, 0.875, 0.875);
+    controller.window.invoke_inspect_material();
+    assert!(!controller.window.get_rectangle_dragging());
+    assert_eq!(rectangle_fields(&controller.window), previous_rectangle);
+    assert_eq!(lock(&shared).face_preview_token(), token);
+    image_release(&controller.window, [0.875, 0.875]);
+    image_press(&controller.window, [0.25, 0.25]);
+    controller.window.invoke_rectangle_pointer(1, 0.875, 0.875);
+    assert!(
+        controller
+            .initialize(&mut lock(&shared), "test/checker")
+            .is_err()
+    );
+    assert!(!controller.window.get_rectangle_dragging());
+    assert_eq!(rectangle_fields(&controller.window), previous_rectangle);
+    assert_eq!(lock(&shared).face_preview_token(), token);
+    image_release(&controller.window, [0.875, 0.875]);
+    let material_path = directory.path().join("materials/test/checker.vmt");
+    let material_source = std::fs::read_to_string(&material_path).unwrap();
+    image_press(&controller.window, [0.25, 0.25]);
+    controller.window.invoke_rectangle_pointer(1, 0.875, 0.875);
+    std::fs::write(
+        &material_path,
+        "LightmappedGeneric { $basetexture test/checker $color \"[1 0 0]\" }",
+    )
+    .unwrap();
+    image_release(&controller.window, [0.875, 0.875]);
+    assert!(!controller.window.get_rectangle_dragging());
+    assert_eq!(rectangle_fields(&controller.window), previous_rectangle);
+    assert_eq!(lock(&shared).render_document().vmf(), &draft);
+    assert_eq!(lock(&shared).face_preview_token(), token);
+    std::fs::write(material_path, material_source).unwrap();
+    controller.window.invoke_rectangle_pointer(0, 0.25, 0.25);
+    controller.window.invoke_rectangle_pointer(1, 0.875, 0.875);
+    controller.window.set_region_x("12".into());
+    controller.window.invoke_edited();
+    assert!(!controller.window.get_rectangle_dragging());
+    assert_eq!(
+        rectangle(&controller.window).unwrap(),
+        Rectangle {
+            x: 12,
+            y: 8,
+            width: 32,
+            height: 16
+        }
+    );
+    assert_eq!(lock(&shared).face_preview_token(), token);
+    controller.window.set_region_x("16".into());
+    controller.window.invoke_edited();
+    controller.window.invoke_preview_fit();
+    assert!(controller.window.get_ready());
+    let token = lock(&shared).face_preview_token();
+    let draft = lock(&shared).render_document().vmf().clone();
     controller.window.set_region_padding("8".into());
     controller.window.invoke_edited();
     controller.window.invoke_preview_fit();
@@ -186,7 +395,12 @@ fn atlas_dialog_preview_apply_cancel_and_material_reload_share_session_guards() 
     assert!(!controller.window.get_ready());
     controller.window.invoke_apply_fit();
     assert_eq!(lock(&shared).document().vmf(), &original);
+    let previous = rectangle_fields(&controller.window);
+    controller.window.invoke_rectangle_pointer(0, 0.25, 0.25);
+    controller.window.invoke_rectangle_pointer(1, 0.75, 0.75);
     controller.window.invoke_cancel();
+    assert!(!controller.window.get_rectangle_dragging());
+    assert_eq!(rectangle_fields(&controller.window), previous);
     assert!(!lock(&shared).has_face_preview());
     controller.show(&mut lock(&shared), "test/checker").unwrap();
     controller.window.set_region_x("16".into());

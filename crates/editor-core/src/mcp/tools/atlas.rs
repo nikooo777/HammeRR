@@ -38,13 +38,27 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Preview fitting each flat brush face independently into one material-atlas rectangle. Pass material, latest inspect_material_atlas snapshot and integer rectangle {x,y,width,height} in original source-image edge pixels (top-left origin). Optional nonnegative integer padding (default 0) insets all four edges in the same source-image pixels; it must leave a positive usable width and height. The outer rectangle must remain within the actual image. Omitted faces use selected faces; 1–256 world/brush-entity faces. Reuses texture-fit math and preserves axes, rotation, mirroring, geometry and lighting metadata. Terrain, invalid/zero/outside/exhausted regions and collapsed mappings reject atomically without replacing a valid preview. Pass token to revise your own atlas draft; foreign previews reject. Review returned usable UV bounds and get_face_selection.atlas; nonzero padding also returns padding and usable_rectangle. Finish with commit_face_preview/cancel_face_preview and the exact token. Apply adds one Undo step. Stale assets block commit; the owner can still Cancel. Foreign actors cannot commit or cancel. No texture-file or shader edits."
+        description = "Preview flat brush faces fitted into one material-atlas rectangle. mode per_face (default) fits each face independently and preserves its frame. mode together requires explicit reference {solid,side} belonging to targets: same-facing coplanar faces share that reference's axes, skew, rotation and mirroring; combined bounds fit once, including gaps, replacing other target frames. Reference is only allowed with together. Pass material, latest inspect_material_atlas snapshot and integer rectangle {x,y,width,height} in original source-image edge pixels (top-left origin). Optional nonnegative integer padding (default 0) insets all four edges in source-image pixels and must leave positive usable width/height. The outer rectangle must stay within the actual image. Omitted faces use selection; 1–256 world/brush-entity faces. Geometry and nonprojection metadata are preserved. Terrain, noncoplanar/opposite-facing together targets, invalid regions, references and collapsed mappings reject atomically without replacing a valid preview. Pass token to revise your own atlas draft; foreign previews reject. Review returned usable UV bounds and get_face_selection.atlas; nonzero padding adds padding/usable_rectangle, together adds mode/reference. Default responses retain their former shape. Finish with commit_face_preview/cancel_face_preview and exact token. Apply adds one Undo step. Stale assets block commit; the owner can still Cancel. Foreign actors cannot commit or cancel. No texture-file or shader edits."
     )]
     pub(in crate::mcp) fn preview_atlas_fit(
         &self,
         Parameters(args): Parameters<PreviewAtlasFitArgs>,
     ) -> ToolResult {
         run(|| {
+            use crate::session::atlas_texturing::{FitMode, FitOptions};
+
+            let mode = match (args.mode, args.reference.as_ref()) {
+                (AtlasFitModeArgs::PerFace, None) => FitMode::PerFace,
+                (AtlasFitModeArgs::Together, Some(reference)) => FitMode::Together {
+                    reference: face_id(reference),
+                },
+                (AtlasFitModeArgs::Together, None) => {
+                    return Err("Together atlas fitting requires an explicit reference face".into());
+                }
+                (AtlasFitModeArgs::PerFace, Some(_)) => {
+                    return Err("An atlas reference face is only valid with mode together".into());
+                }
+            };
             let mut session = self.session();
             let faces = args.faces.as_ref().map_or_else(
                 || session.selected_faces(),
@@ -59,11 +73,11 @@ impl EditorServer {
                 },
                 padding: args.padding,
             };
-            let state = session.preview_atlas_fit_region(
+            let state = session.preview_atlas_fit_options(
                 Actor::Agent,
                 &faces,
                 &args.material,
-                region,
+                FitOptions { region, mode },
                 &args.snapshot,
                 args.token.as_deref().map(parse_token).transpose()?,
             )?;

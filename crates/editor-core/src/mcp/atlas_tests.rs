@@ -96,23 +96,32 @@ fn report(result: ToolResult) -> Value {
 fn atlas_mcp_padding_is_optional_and_invalid_revisions_retain_the_reviewed_usable_area() {
     let (_directory, game) = crate::test_assets::game();
     let mut session = Session::new(Ok(game));
-    let ObjectId::Solid(solid) = session
-        .create_block(
-            Actor::Agent,
-            DVec3::ZERO,
-            DVec3::splat(64.0),
-            "test/checker",
-            false,
-        )
-        .unwrap()
-    else {
-        unreachable!()
-    };
-    let face = map_core::surface::FaceId {
-        solid,
-        side: session.document().solid(solid).unwrap().sides[0].id,
-    };
-    session.select_faces(&[face], SelectMode::Replace).unwrap();
+    let mut faces = Vec::new();
+    for x in [0.0, 64.0] {
+        let ObjectId::Solid(solid) = session
+            .create_block(
+                Actor::Agent,
+                DVec3::new(x, 0.0, 0.0),
+                DVec3::new(x + 64.0, 64.0, 64.0),
+                "test/checker",
+                false,
+            )
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let side = session
+            .document()
+            .solid(solid)
+            .unwrap()
+            .sides
+            .iter()
+            .find(|side| Plane::from_points(side.plane.0).unwrap().normal == DVec3::Z)
+            .unwrap()
+            .id;
+        faces.push(map_core::surface::FaceId { solid, side });
+    }
+    session.select_faces(&faces, SelectMode::Replace).unwrap();
     let snapshot = session
         .inspect_material_atlas("test/checker")
         .unwrap()
@@ -128,6 +137,8 @@ fn atlas_mcp_padding_is_optional_and_invalid_revisions_retain_the_reviewed_usabl
         server.preview_atlas_fit(Parameters(serde_json::from_value(request.clone()).unwrap())),
     );
     assert!(omitted["atlas"]["preview"].get("padding").is_none());
+    assert!(omitted["atlas"]["preview"].get("mode").is_none());
+    assert!(omitted["atlas"]["preview"].get("reference").is_none());
     assert!(
         omitted["atlas"]["preview"]
             .get("usable_rectangle")
@@ -135,6 +146,7 @@ fn atlas_mcp_padding_is_optional_and_invalid_revisions_retain_the_reviewed_usabl
     );
     let zero_preview = lock(&shared).render_document().vmf().clone();
     request["padding"] = json!(0);
+    request["mode"] = json!("per_face");
     request["token"] = omitted["atlas"]["preview"]["token"].clone();
     let explicit = report(
         server.preview_atlas_fit(Parameters(serde_json::from_value(request.clone()).unwrap())),
@@ -161,13 +173,60 @@ fn atlas_mcp_padding_is_optional_and_invalid_revisions_retain_the_reviewed_usabl
     request["padding"] = json!(8);
     request["token"] = padded["atlas"]["preview"]["token"].clone();
     let invalid = server
-        .preview_atlas_fit(Parameters(serde_json::from_value(request).unwrap()))
+        .preview_atlas_fit(Parameters(serde_json::from_value(request.clone()).unwrap()))
         .unwrap();
     assert!(invalid.is_error.unwrap_or(false));
     assert_eq!(lock(&shared).atlas_fit_state(), padded["atlas"]);
     assert_eq!(lock(&shared).render_document().vmf(), &preview);
+    request["padding"] = json!(2);
+    request["mode"] = json!("unknown");
+    assert!(serde_json::from_value::<PreviewAtlasFitArgs>(request.clone()).is_err());
+    request["mode"] = json!("together");
+    for reference in [None, Some(json!({"solid":u32::MAX,"side":u32::MAX}))] {
+        if let Some(reference) = reference {
+            request["reference"] = reference;
+        }
+        let invalid = server
+            .preview_atlas_fit(Parameters(serde_json::from_value(request.clone()).unwrap()))
+            .unwrap();
+        assert!(invalid.is_error.unwrap_or(false));
+        assert_eq!(lock(&shared).atlas_fit_state(), padded["atlas"]);
+        assert_eq!(lock(&shared).render_document().vmf(), &preview);
+    }
+    request["reference"] = json!({"solid":faces[0].solid,"side":faces[0].side});
+    let together = report(
+        server.preview_atlas_fit(Parameters(serde_json::from_value(request.clone()).unwrap())),
+    );
+    assert_eq!(together["atlas"]["preview"]["mode"], "together");
+    assert_eq!(
+        together["atlas"]["preview"]["reference"],
+        request["reference"]
+    );
+    assert_eq!(
+        together["atlas"]["preview"]["uv_bounds"],
+        padded["atlas"]["preview"]["uv_bounds"]
+    );
+    {
+        let session = lock(&shared);
+        for face in &faces {
+            let side = session.preview_side(*face).unwrap();
+            assert!(
+                map_core::texel_uv(side, DVec3::new(64.0, 32.0, 64.0))
+                    .abs_diff_eq(DVec2::new(32.0, 16.0), 1e-8)
+            );
+        }
+    }
+    let preview = lock(&shared).render_document().vmf().clone();
+    request["token"] = together["atlas"]["preview"]["token"].clone();
+    request["mode"] = json!("per_face");
+    let invalid = server
+        .preview_atlas_fit(Parameters(serde_json::from_value(request).unwrap()))
+        .unwrap();
+    assert!(invalid.is_error.unwrap_or(false));
+    assert_eq!(lock(&shared).atlas_fit_state(), together["atlas"]);
+    assert_eq!(lock(&shared).render_document().vmf(), &preview);
     report(server.commit_face_preview(Parameters(
-        serde_json::from_value(json!({"token":padded["atlas"]["preview"]["token"]})).unwrap(),
+        serde_json::from_value(json!({"token":together["atlas"]["preview"]["token"]})).unwrap(),
     )));
     assert_eq!(lock(&shared).document().vmf(), &preview);
     assert_eq!(server.rendering_status()["initialized"], false);

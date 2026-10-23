@@ -133,6 +133,10 @@ Saving does not apply a preview.
 For [atlas fitting](atlas-texturing.md), pass the snapshot from `inspect_material_atlas` to `preview_atlas_fit`.
 Its optional integer `padding` defaults to `0` and insets all four rectangle edges in original source image pixels.
 Nonzero padding returns `padding` and `usable_rectangle`; `uv_bounds` describes the usable area.
+The default `mode:"per_face"` fits each face independently.
+Set `mode:"together"` and `reference:{solid,side}` to fit same-facing coplanar faces continuously using that selected face's projection frame.
+Together drafts additionally return `mode` and `reference`; their `uv_bounds` describes the combined usable target, including gaps between faces.
+Together requires a reference from the targets. Per-face mode rejects a reference parameter.
 The outer rectangle must fit the actual image, and padding must leave positive width and height.
 Invalid updates preserve the current draft. Apply or cancel with its exact token through `commit_face_preview` or `cancel_face_preview`.
 

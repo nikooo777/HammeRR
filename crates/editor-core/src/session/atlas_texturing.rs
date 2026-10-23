@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
-use map_core::surface::{self, FaceId, SurfaceEdit};
-pub use map_core::texture_atlas::{FitRegion, Rectangle};
+use map_core::surface::FaceId;
+pub use map_core::texture_atlas::{FitMode, FitOptions, FitRegion, Rectangle};
 use render::materials::{material_identity, resolved_material_limited};
 use serde_json::{Value, json};
 use source_formats::gamefs::asset_relative;
@@ -30,7 +30,7 @@ pub(super) struct PreviewGuard {
     owner: Actor,
     material: String,
     snapshot: String,
-    region: FitRegion,
+    options: FitOptions,
     dimensions: [u32; 2],
 }
 
@@ -211,6 +211,28 @@ impl Session {
         snapshot: &str,
         token: Option<u64>,
     ) -> Result<Value, String> {
+        self.preview_atlas_fit_options(
+            actor,
+            faces,
+            material,
+            FitOptions {
+                region,
+                mode: FitMode::PerFace,
+            },
+            snapshot,
+            token,
+        )
+    }
+
+    pub fn preview_atlas_fit_options(
+        &mut self,
+        actor: Actor,
+        faces: &[FaceId],
+        material: &str,
+        options: FitOptions,
+        snapshot: &str,
+        token: Option<u64>,
+    ) -> Result<Value, String> {
         if let Some(preview) = &self.geometry.face_preview {
             if token != Some(preview.token)
                 || preview
@@ -242,34 +264,13 @@ impl Session {
             atlas.report["width"].as_u64().unwrap() as u32,
             atlas.report["height"].as_u64().unwrap() as u32,
         ];
-        region
-            .usable_rectangle(dimensions)
-            .map_err(|error| error.to_string())?;
         let material = atlas.report["material"].as_str().unwrap().to_owned();
-        let mut edits = Vec::with_capacity(faces.len());
-        for face in &faces {
-            let sample =
-                surface::sample(&self.document, *face).map_err(|error| error.to_string())?;
-            if sample.displaced {
-                return Err(
-                    "Atlas fit supports flat brush polygons; terrain faces are unsupported".into(),
-                );
-            }
-            let projection = map_core::texture_atlas::fit_region_projection(
-                &sample.projection,
-                &sample.vertices,
-                region,
-                dimensions,
-            )
-            .map_err(|error| error.to_string())?;
-            edits.push((
-                *face,
-                SurfaceEdit {
-                    material: Some(material.clone()),
-                    projection: Some(projection),
-                    ..SurfaceEdit::default()
-                },
-            ));
+        let faces: Vec<_> = faces.into_iter().collect();
+        let mut edits =
+            map_core::texture_atlas::plan_fit(&self.document, &faces, options, dimensions)
+                .map_err(|error| error.to_string())?;
+        for (_, edit) in &mut edits {
+            edit.material = Some(material.clone());
         }
         self.preview_or_apply_faces(actor, edits, true)?;
         self.geometry
@@ -280,7 +281,7 @@ impl Session {
             owner: actor,
             material,
             snapshot: snapshot.to_owned(),
-            region,
+            options,
             dimensions,
         });
         Ok(self.atlas_fit_state())
@@ -294,16 +295,21 @@ impl Session {
             return json!({"preview":null});
         };
         let usable = guard
+            .options
             .region
             .usable_rectangle(guard.dimensions)
             .expect("validated atlas region");
         let mut state = json!({"preview":{"token":preview.token.to_string(),"owner":guard.owner.label(),"material":guard.material,
-            "snapshot":guard.snapshot,"rectangle":rectangle_json(guard.region.rectangle),"dimensions":guard.dimensions,
+            "snapshot":guard.snapshot,"rectangle":rectangle_json(guard.options.region.rectangle),"dimensions":guard.dimensions,
             "uv_bounds":usable.uv_bounds(guard.dimensions).expect("validated rectangle"),
             "faces":preview.edits.iter().map(|(face,_)|json!({"solid":face.solid,"side":face.side})).collect::<Vec<_>>()}});
-        if guard.region.padding != 0 {
-            state["preview"]["padding"] = json!(guard.region.padding);
+        if guard.options.region.padding != 0 {
+            state["preview"]["padding"] = json!(guard.options.region.padding);
             state["preview"]["usable_rectangle"] = rectangle_json(usable);
+        }
+        if let FitMode::Together { reference } = guard.options.mode {
+            state["preview"]["mode"] = json!("together");
+            state["preview"]["reference"] = json!({"solid":reference.solid,"side":reference.side});
         }
         state
     }

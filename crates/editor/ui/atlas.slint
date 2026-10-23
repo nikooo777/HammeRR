@@ -1,9 +1,9 @@
-import { Button, LineEdit } from "std-widgets.slint";
+import { Button, ComboBox, LineEdit } from "std-widgets.slint";
 
 export component AtlasWindow inherits Window {
     title: "Fit atlas region - HammeRR";
     preferred-width: 720px;
-    preferred-height: 770px;
+    preferred-height: 850px;
     in property <string> selection-label;
     in property <string> details;
     in property <string> message;
@@ -25,6 +25,9 @@ export component AtlasWindow inherits Window {
     in property <bool> valid-usable-region;
     in property <bool> has-padding;
     in property <string> usable-details;
+    in property <[string]> references;
+    in-out property <int> fit-mode;
+    in-out property <int> reference-index;
     in-out property <string> material;
     in-out property <string> region-x: "0";
     in-out property <string> region-y: "0";
@@ -47,6 +50,26 @@ export component AtlasWindow inherits Window {
             spacing: 12px;
             Text { text: "Fit atlas region"; font-size: 24px; font-weight: 600; }
             Text { text: root.selection-label; color: #bac2ce; }
+            HorizontalLayout {
+                spacing: 8px;
+                Text { text: "Fit mode"; vertical-alignment: center; }
+                ComboBox {
+                    model: ["Each face independently", "Fit coplanar faces together"];
+                    current-index <=> root.fit-mode;
+                    selected => { root.edited(); }
+                    horizontal-stretch: 1;
+                }
+            }
+            if root.fit-mode == 1: HorizontalLayout {
+                spacing: 8px;
+                Text { text: "Reference face"; vertical-alignment: center; }
+                ComboBox {
+                    model: root.references;
+                    current-index <=> root.reference-index;
+                    selected => { root.edited(); }
+                    horizontal-stretch: 1;
+                }
+            }
             HorizontalLayout {
                 spacing: 8px;
                 Text { text: "Material"; vertical-alignment: center; }
@@ -118,7 +141,10 @@ export component AtlasWindow inherits Window {
                 }
             }
             Text { text: "Cyan: rectangle. Yellow: usable area after padding. Image edges start at the top-left corner; X grows right and Y grows down."; wrap: word-wrap; color: #bac2ce; }
-            Text { text: "Each face fits its projected bounds into the usable area, keeping its texture direction, rotation and mirroring. Polygon corners can leave parts unused."; wrap: word-wrap; color: #bac2ce; }
+            Text {
+                text: root.fit-mode == 1 ? "Same-facing coplanar faces share the reference face's direction, skew, rotation and mirroring. Their combined bounds fit once into the usable area; gaps consume image space. Other face projection frames are replaced." : "Each face fits its projected bounds into the usable area, keeping its texture direction, skew, rotation and mirroring. Polygon corners can leave parts unused.";
+                wrap: word-wrap; color: #bac2ce;
+            }
             Text { text: root.message; wrap: word-wrap; }
             Rectangle { vertical-stretch: 1; }
             HorizontalLayout {

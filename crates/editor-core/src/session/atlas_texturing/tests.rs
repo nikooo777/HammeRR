@@ -2,6 +2,7 @@ use super::*;
 use crate::session::SelectMode;
 use glam::{DVec2, DVec3};
 use map_core::ObjectId;
+use map_core::surface::{self, SurfaceEdit};
 
 fn fixture(actor: Actor) -> (tempfile::TempDir, Session, FaceId) {
     let (directory, game) = crate::test_assets::game();
@@ -70,6 +71,220 @@ fn region() -> Rectangle {
         width: 32,
         height: 16,
     }
+}
+
+fn grouped_fixture() -> (tempfile::TempDir, Session, Vec<FaceId>) {
+    let (directory, game) = crate::test_assets::game();
+    let mut session = Session::new(Ok(game));
+    let mut faces = Vec::new();
+    for x in [0.0, 64.0, 128.0] {
+        let ObjectId::Solid(solid) = session
+            .create_block(
+                Actor::Agent,
+                DVec3::new(x, 0.0, 0.0),
+                DVec3::new(x + 64.0, 32.0, 16.0),
+                "test/checker",
+                false,
+            )
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let side = session
+            .document()
+            .solid(solid)
+            .unwrap()
+            .sides
+            .iter()
+            .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal == DVec3::Z)
+            .unwrap()
+            .id;
+        faces.push(FaceId { solid, side });
+    }
+    session
+        .edit(Actor::Agent, "detail target", |tx| {
+            map_core::edit::tie_to_entity(tx, &[faces[1].solid], "func_detail", &[])
+        })
+        .unwrap();
+    for (index, face) in faces[..2].iter().enumerate() {
+        session
+            .edit_faces(
+                Actor::Agent,
+                &[*face],
+                SurfaceEdit {
+                    scale_u: Some(if index == 0 { -0.5 } else { 0.25 }),
+                    lightmap_scale: Some(if index == 0 { 8 } else { 32 }),
+                    smoothing_groups: Some(1 << index),
+                    ..SurfaceEdit::default()
+                },
+                false,
+                false,
+            )
+            .unwrap();
+    }
+    session
+        .create_terrain(Actor::Agent, &faces[2..], 2, 0)
+        .unwrap();
+    session
+        .select_faces(&faces[..2], SelectMode::Replace)
+        .unwrap();
+    (directory, session, faces)
+}
+
+#[test]
+fn grouped_atlas_owns_validated_reference_and_preserves_targets_through_rejection_cancel_and_undo()
+{
+    let (directory, mut session, faces) = grouped_fixture();
+    let selected = &faces[..2];
+    let original = session.document().vmf().clone();
+    let history = session.history_snapshot();
+    let undo_count = session.document().undo_labels().count();
+    let snapshot = session
+        .inspect_material_atlas("test/checker")
+        .unwrap()
+        .report["snapshot"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let options = FitOptions {
+        region: FitRegion {
+            rectangle: region(),
+            padding: 2,
+        },
+        mode: FitMode::Together {
+            reference: faces[0],
+        },
+    };
+    let state = session
+        .preview_atlas_fit_options(
+            Actor::Agent,
+            selected,
+            "test/checker",
+            options,
+            &snapshot,
+            None,
+        )
+        .unwrap();
+    assert_eq!(state["preview"]["mode"], "together");
+    assert_eq!(
+        state["preview"]["reference"],
+        json!({"solid":faces[0].solid,"side":faces[0].side})
+    );
+    let reference = session.preview_side(faces[0]).unwrap();
+    let other = session.preview_side(faces[1]).unwrap();
+    assert_eq!(reference.u_axis, other.u_axis);
+    assert_eq!(reference.v_axis, other.v_axis);
+    assert!(other.u_axis.scale.is_sign_negative());
+    for face in selected {
+        let preview = session.preview_side(*face).unwrap();
+        let mut expected = surface::side(session.document(), *face).unwrap().clone();
+        expected.u_axis = preview.u_axis;
+        expected.v_axis = preview.v_axis;
+        expected.rotation = preview.rotation;
+        expected.material = preview.material.clone();
+        assert_eq!(preview, &expected);
+    }
+    for (point, expected) in [
+        (DVec3::new(0.0, 0.0, 16.0), DVec2::new(46.0, 22.0)),
+        (DVec3::new(128.0, 32.0, 16.0), DVec2::new(18.0, 10.0)),
+        (DVec3::new(64.0, 0.0, 16.0), DVec2::new(32.0, 22.0)),
+    ] {
+        assert!(map_core::texel_uv(reference, point).abs_diff_eq(expected, 1e-8));
+        assert!(map_core::texel_uv(other, point).abs_diff_eq(expected, 1e-8));
+    }
+    let token = session.face_preview_token();
+    let preview = session.render_document().vmf().clone();
+    let mut invalid_targets = vec![vec![faces[0], faces[2]]];
+    for normal in [DVec3::Y, -DVec3::Z] {
+        let side = session
+            .document()
+            .solid(faces[0].solid)
+            .unwrap()
+            .sides
+            .iter()
+            .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal == normal)
+            .unwrap()
+            .id;
+        invalid_targets.push(vec![
+            faces[0],
+            FaceId {
+                solid: faces[0].solid,
+                side,
+            },
+        ]);
+    }
+    for targets in invalid_targets {
+        assert!(
+            session
+                .preview_atlas_fit_options(
+                    Actor::Agent,
+                    &targets,
+                    "test/checker",
+                    options,
+                    &snapshot,
+                    token,
+                )
+                .is_err()
+        );
+        assert_eq!(session.atlas_fit_state(), state);
+        assert_eq!(session.render_document().vmf(), &preview);
+    }
+    assert!(
+        session
+            .preview_atlas_fit_options(
+                Actor::Agent,
+                selected,
+                "test/checker",
+                FitOptions {
+                    mode: FitMode::Together {
+                        reference: faces[2]
+                    },
+                    ..options
+                },
+                &snapshot,
+                token,
+            )
+            .is_err()
+    );
+    assert!(session.commit_face_preview(Actor::User).is_err());
+    assert!(
+        session
+            .cancel_owned_face_preview(Actor::User, token)
+            .is_err()
+    );
+    let material_path = directory.path().join("materials/test/checker.vmt");
+    let material_source = std::fs::read_to_string(&material_path).unwrap();
+    std::fs::write(
+        &material_path,
+        "LightmappedGeneric { $basetexture test/checker $color \"[1 0 0]\" }",
+    )
+    .unwrap();
+    assert!(session.commit_face_preview(Actor::Agent).is_err());
+    assert_eq!(session.atlas_fit_state(), state);
+    assert_eq!(session.render_document().vmf(), &preview);
+    session
+        .cancel_owned_face_preview(Actor::Agent, token)
+        .unwrap();
+    assert_eq!(session.render_document().vmf(), &original);
+    assert_eq!(session.history_snapshot(), history);
+    std::fs::write(material_path, material_source).unwrap();
+    session
+        .preview_atlas_fit_options(
+            Actor::Agent,
+            selected,
+            "test/checker",
+            options,
+            &snapshot,
+            None,
+        )
+        .unwrap();
+    session.commit_face_preview(Actor::Agent).unwrap();
+    assert_eq!(session.document().vmf(), &preview);
+    assert_eq!(session.document().undo_labels().count(), undo_count + 1);
+    session.undo(Actor::Agent).unwrap();
+    assert_eq!(session.document().vmf(), &original);
+    session.redo(Actor::Agent).unwrap();
+    assert_eq!(session.document().vmf(), &preview);
 }
 
 #[test]

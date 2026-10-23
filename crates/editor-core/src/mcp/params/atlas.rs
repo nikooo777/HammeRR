@@ -15,6 +15,14 @@ pub(in crate::mcp) struct AtlasRectangleArgs {
     pub height: u32,
 }
 
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(in crate::mcp) enum AtlasFitModeArgs {
+    #[default]
+    PerFace,
+    Together,
+}
+
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(in crate::mcp) struct PreviewAtlasFitArgs {
@@ -22,6 +30,9 @@ pub(in crate::mcp) struct PreviewAtlasFitArgs {
     pub rectangle: AtlasRectangleArgs,
     #[serde(default)]
     pub padding: u32,
+    #[serde(default)]
+    pub mode: AtlasFitModeArgs,
+    pub reference: Option<FaceRef>,
     pub snapshot: String,
     pub faces: Option<Vec<FaceRef>>,
     pub token: Option<String>,

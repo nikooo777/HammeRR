@@ -46,24 +46,46 @@ fn atlas_dialog_preview_apply_cancel_and_material_reload_share_session_guards() 
     }
     std::fs::write(texture, bytes).unwrap();
     let mut session = Session::new(Ok(game));
-    let ObjectId::Solid(solid) = session
-        .create_block(
+    let mut faces = Vec::new();
+    for x in [0.0, 64.0] {
+        let ObjectId::Solid(solid) = session
+            .create_block(
+                Actor::User,
+                DVec3::new(x, 0.0, 0.0),
+                DVec3::new(x + 64.0, 64.0, 64.0),
+                "test/checker",
+                false,
+            )
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let side = session
+            .document()
+            .solid(solid)
+            .unwrap()
+            .sides
+            .iter()
+            .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal == DVec3::Z)
+            .unwrap()
+            .id;
+        faces.push(surface::FaceId { solid, side });
+    }
+    session
+        .edit_faces(
             Actor::User,
-            DVec3::ZERO,
-            DVec3::splat(64.0),
-            "test/checker",
+            &faces[1..],
+            surface::SurfaceEdit {
+                rotation: Some(90.0),
+                scale_u: Some(-0.5),
+                ..surface::SurfaceEdit::default()
+            },
+            false,
             false,
         )
-        .unwrap()
-    else {
-        unreachable!()
-    };
-    let face = surface::FaceId {
-        solid,
-        side: session.document().solid(solid).unwrap().sides[0].id,
-    };
+        .unwrap();
     session
-        .select_faces(&[face], crate::session::SelectMode::Replace)
+        .select_faces(&faces, crate::session::SelectMode::Replace)
         .unwrap();
     let original = session.document().vmf().clone();
     let history = session.document().undo_labels().count();
@@ -79,6 +101,7 @@ fn atlas_dialog_preview_apply_cancel_and_material_reload_share_session_guards() 
     parent.invoke_fit_atlas();
     assert!(controller.window.window().is_visible());
     assert!(controller.window.get_loaded());
+    assert_eq!(controller.window.get_fit_mode(), 0);
     controller.window.set_region_x("16".into());
     controller.window.set_region_y("8".into());
     controller.window.set_region_pixels_wide("32".into());
@@ -87,6 +110,11 @@ fn atlas_dialog_preview_apply_cancel_and_material_reload_share_session_guards() 
     controller.window.invoke_edited();
     controller.window.invoke_preview_fit();
     assert!(controller.window.get_ready());
+    assert!(
+        lock(&shared).atlas_fit_state()["preview"]
+            .get("mode")
+            .is_none()
+    );
     assert!(controller.window.get_valid_usable_region());
     assert!(controller.window.get_has_padding());
     assert_eq!(controller.window.get_usable_u(), 0.28125);
@@ -109,6 +137,30 @@ fn atlas_dialog_preview_apply_cancel_and_material_reload_share_session_guards() 
     controller.window.invoke_edited();
     controller.window.invoke_preview_fit();
     assert!(controller.window.get_ready());
+    controller.window.set_fit_mode(1);
+    controller.window.invoke_edited();
+    controller.window.invoke_apply_fit();
+    assert_eq!(lock(&shared).document().vmf(), &original);
+    controller.window.invoke_preview_fit();
+    assert!(controller.window.get_ready());
+    assert_eq!(
+        lock(&shared).atlas_fit_state()["preview"]["mode"],
+        "together"
+    );
+    let grouped_draft = lock(&shared).render_document().vmf().clone();
+    controller.window.set_reference_index(1);
+    controller.window.invoke_apply_fit();
+    assert!(!controller.window.get_ready());
+    assert_eq!(lock(&shared).render_document().vmf(), &grouped_draft);
+    assert_eq!(lock(&shared).document().vmf(), &original);
+    controller.window.invoke_edited();
+    controller.window.invoke_preview_fit();
+    assert!(controller.window.get_ready());
+    assert_eq!(
+        lock(&shared).atlas_fit_state()["preview"]["reference"],
+        serde_json::json!({"solid":faces[1].solid,"side":faces[1].side})
+    );
+    assert_ne!(lock(&shared).render_document().vmf(), &grouped_draft);
     let generation = lock(&shared).materials().generation();
     {
         let mut session = lock(&shared);
@@ -142,6 +194,8 @@ fn atlas_dialog_preview_apply_cancel_and_material_reload_share_session_guards() 
     controller.window.set_region_pixels_wide("32".into());
     controller.window.set_region_pixels_high("16".into());
     controller.window.set_region_padding("2".into());
+    controller.window.set_fit_mode(1);
+    controller.window.set_reference_index(1);
     controller.window.invoke_preview_fit();
     let reviewed = lock(&shared).render_document().vmf().clone();
     controller.window.invoke_apply_fit();

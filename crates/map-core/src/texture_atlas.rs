@@ -1,7 +1,7 @@
-use glam::DVec3;
+use glam::{DVec2, DVec3};
 
-use crate::EditError;
-use crate::surface::{Projection, placed_projection};
+use crate::surface::{self, FaceId, Projection, SurfaceEdit, placed_projection};
+use crate::{Document, EditError, surface_group};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rectangle {
@@ -15,6 +15,18 @@ pub struct Rectangle {
 pub struct FitRegion {
     pub rectangle: Rectangle,
     pub padding: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FitMode {
+    PerFace,
+    Together { reference: FaceId },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FitOptions {
+    pub region: FitRegion,
+    pub mode: FitMode,
 }
 
 impl FitRegion {
@@ -110,11 +122,211 @@ pub fn fit_region_projection(
     Ok(fitted)
 }
 
+pub fn plan_fit(
+    document: &Document,
+    faces: &[FaceId],
+    options: FitOptions,
+    size: [u32; 2],
+) -> Result<Vec<(FaceId, SurfaceEdit)>, EditError> {
+    let usable = options.region.usable_rectangle(size)?;
+    let samples = faces
+        .iter()
+        .map(|face| surface::sample(document, *face))
+        .collect::<Result<Vec<_>, _>>()?;
+    if samples.iter().any(|sample| sample.displaced) {
+        return Err(EditError::Invalid(
+            "Atlas fit supports flat brush polygons; terrain faces are unsupported".into(),
+        ));
+    }
+    match options.mode {
+        FitMode::PerFace => samples
+            .iter()
+            .map(|sample| {
+                let projection = fit_region_projection(
+                    &sample.projection,
+                    &sample.vertices,
+                    options.region,
+                    size,
+                )?;
+                Ok((
+                    sample.face,
+                    SurfaceEdit {
+                        projection: Some(projection),
+                        ..SurfaceEdit::default()
+                    },
+                ))
+            })
+            .collect(),
+        FitMode::Together { reference } => {
+            let mut edits = surface_group::project(
+                document,
+                faces,
+                surface_group::Basis::Face(reference),
+                [usable.width, usable.height],
+                DVec2::ONE,
+            )?;
+            for (_, edit) in &mut edits {
+                let projection = edit.projection.as_mut().expect("planned group projection");
+                projection.u.offset += f64::from(usable.x);
+                projection.v.offset += f64::from(usable.y);
+            }
+            Ok(edits)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use glam::DVec2;
     use source_formats::vmf::UvAxis;
+
+    fn coplanar_strip() -> (Document, Vec<FaceId>) {
+        let mut document = Document::empty();
+        let mut faces = Vec::new();
+        for x in [0.0, 4.0, 10.0] {
+            let crate::ObjectId::Solid(solid) = document
+                .edit("block", |tx| {
+                    crate::edit::create_block(
+                        tx,
+                        DVec3::new(x, 0.0, 0.0),
+                        DVec3::new(x + 4.0, 2.0, 1.0),
+                        "test/checker",
+                    )
+                })
+                .unwrap()
+            else {
+                unreachable!()
+            };
+            let side = document
+                .solid(solid)
+                .unwrap()
+                .sides
+                .iter()
+                .find(|side| crate::Plane::from_points(side.plane.0).unwrap().normal == DVec3::Z)
+                .unwrap()
+                .id;
+            faces.push(FaceId { solid, side });
+        }
+        (document, faces)
+    }
+
+    #[test]
+    fn grouped_atlas_has_literal_padded_corners_seams_and_gap_with_reference_skew_and_mirror() {
+        let (mut document, faces) = coplanar_strip();
+        let reference = faces[1];
+        let frame = Projection {
+            u: UvAxis {
+                axis: DVec3::new(1.0, 1.0, 0.0),
+                offset: 3.0,
+                scale: -0.25,
+            },
+            v: UvAxis {
+                axis: DVec3::new(-1.0, 2.0, 0.0),
+                offset: -7.0,
+                scale: 0.5,
+            },
+            rotation: 37.0,
+        };
+        document
+            .edit("reference frame", |tx| {
+                surface::edit_faces(
+                    tx,
+                    &[reference],
+                    &SurfaceEdit {
+                        projection: Some(frame.clone()),
+                        ..SurfaceEdit::default()
+                    },
+                )
+            })
+            .unwrap();
+        let original = document.vmf().clone();
+        let options = FitOptions {
+            region: FitRegion {
+                rectangle: Rectangle {
+                    x: 16,
+                    y: 8,
+                    width: 32,
+                    height: 16,
+                },
+                padding: 2,
+            },
+            mode: FitMode::Together { reference },
+        };
+        let edits = plan_fit(&document, &faces, options, [64, 32]).unwrap();
+        let projection = edits[0].1.projection.as_ref().unwrap();
+        assert_eq!(projection.u.axis, frame.u.axis);
+        assert_eq!(projection.v.axis, frame.v.axis);
+        assert_eq!(projection.rotation, frame.rotation);
+        assert!(projection.u.scale.is_sign_negative());
+        for (_, edit) in &edits {
+            assert_eq!(edit.projection.as_ref(), Some(projection));
+        }
+        let alternate = plan_fit(
+            &document,
+            &faces,
+            FitOptions {
+                mode: FitMode::Together {
+                    reference: faces[0],
+                },
+                ..options
+            },
+            [64, 32],
+        )
+        .unwrap();
+        assert_ne!(
+            alternate[0].1.projection.as_ref().unwrap().u.axis,
+            frame.u.axis
+        );
+        assert_eq!(document.vmf(), &original);
+        document
+            .edit("atlas fit", |tx| {
+                for (face, edit) in &edits {
+                    surface::edit_faces(tx, &[*face], edit)?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        for (face, point, expected) in [
+            (
+                faces[0],
+                DVec3::new(0.0, 0.0, 1.0),
+                DVec2::new(46.0, 58.0 / 3.0),
+            ),
+            (faces[2], DVec3::new(14.0, 0.0, 1.0), DVec2::new(21.5, 10.0)),
+            (
+                faces[2],
+                DVec3::new(14.0, 2.0, 1.0),
+                DVec2::new(18.0, 38.0 / 3.0),
+            ),
+            (faces[0], DVec3::new(0.0, 2.0, 1.0), DVec2::new(42.5, 22.0)),
+            (faces[1], DVec3::new(8.0, 0.0, 1.0), DVec2::new(32.0, 14.0)),
+            (
+                faces[2],
+                DVec3::new(10.0, 0.0, 1.0),
+                DVec2::new(28.5, 38.0 / 3.0),
+            ),
+        ] {
+            let actual = crate::texel_uv(surface::side(&document, face).unwrap(), point);
+            assert!(
+                actual.abs_diff_eq(expected, 1e-10),
+                "{actual} != {expected}"
+            );
+        }
+        for (point, expected) in [
+            (DVec3::new(4.0, 0.0, 1.0), DVec2::new(39.0, 50.0 / 3.0)),
+            (DVec3::new(4.0, 1.0, 1.0), DVec2::new(37.25, 18.0)),
+            (DVec3::new(4.0, 2.0, 1.0), DVec2::new(35.5, 58.0 / 3.0)),
+        ] {
+            for face in &faces[..2] {
+                let actual = crate::texel_uv(surface::side(&document, *face).unwrap(), point);
+                assert!(
+                    actual.abs_diff_eq(expected, 1e-10),
+                    "{actual} != {expected}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn atlas_fit_preserves_rotated_skewed_and_mirrored_bases_on_triangle_bounds() {

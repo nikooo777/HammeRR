@@ -58,7 +58,7 @@ See the [tool index and setup](docs/mcp.md).
 | [Atlas texturing](docs/atlas-texturing.md) |
 | --- |
 | ![Equal faces show full-image mapping and a padded atlas region](docs/images/atlas-padding.png) |
-| Fit faces inside source-image regions with pixel padding. |
+| Fit padded image regions to faces or coplanar groups. |
 
 | [Terrain](docs/terrain.md) | [Compiled terrain](docs/terrain.md#compile-split-borders) |
 | --- | --- |

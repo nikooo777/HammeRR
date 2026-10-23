@@ -1,9 +1,9 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use editor_core::session::atlas_texturing::{FitRegion, Rectangle};
+use editor_core::session::atlas_texturing::{FitMode, FitOptions, FitRegion, Rectangle};
 use serde_json::Value;
-use slint::ComponentHandle;
+use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::runtime::{DocumentAccess, DocumentContinuation, SharedSession, lock};
 use crate::session::{Actor, Session};
@@ -40,13 +40,15 @@ impl Target {
 
 fn fields(window: &AtlasWindow) -> String {
     format!(
-        "{}|{}|{}|{}|{}|{}",
+        "{}|{}|{}|{}|{}|{}|{}|{}",
         window.get_material(),
         window.get_region_x(),
         window.get_region_y(),
         window.get_region_pixels_wide(),
         window.get_region_pixels_high(),
-        window.get_region_padding()
+        window.get_region_padding(),
+        window.get_fit_mode(),
+        window.get_reference_index()
     )
 }
 
@@ -78,6 +80,24 @@ fn region(window: &AtlasWindow) -> Result<FitRegion, String> {
             .trim()
             .parse()
             .map_err(|_| "Enter nonnegative whole-pixel padding")?,
+    })
+}
+
+fn options(window: &AtlasWindow, target: &Target) -> Result<FitOptions, String> {
+    let mode = match window.get_fit_mode() {
+        0 => FitMode::PerFace,
+        1 => FitMode::Together {
+            reference: usize::try_from(window.get_reference_index())
+                .ok()
+                .and_then(|index| target.context.faces.get(index))
+                .copied()
+                .ok_or("Choose a reference face from the target selection")?,
+        },
+        _ => return Err("Choose an atlas fit mode".into()),
+    };
+    Ok(FitOptions {
+        region: region(window)?,
+        mode,
     })
 }
 
@@ -171,11 +191,11 @@ fn inspect(window: &AtlasWindow, target: &mut Target, session: &mut Session) -> 
 fn preview(window: &AtlasWindow, target: &mut Target, session: &mut Session) -> Result<(), String> {
     target.check(session)?;
     let atlas = target.atlas.as_ref().ok_or("Inspect the material first")?;
-    let state = session.preview_atlas_fit_region(
+    let state = session.preview_atlas_fit_options(
         Actor::User,
         &target.context.faces,
         &window.get_material(),
-        region(window)?,
+        options(window, target)?,
         atlas["snapshot"].as_str().unwrap(),
         target.token,
     )?;
@@ -355,12 +375,18 @@ impl Controller {
             reviewed: None,
         };
         self.window.set_selection_label(
-            format!(
-                "Fit each of {} selected faces independently",
-                target.context.faces.len()
-            )
-            .into(),
+            format!("Fit {} selected flat faces", target.context.faces.len()).into(),
         );
+        self.window.set_fit_mode(0);
+        self.window.set_reference_index(0);
+        self.window.set_references(ModelRc::new(VecModel::from(
+            target
+                .context
+                .faces
+                .iter()
+                .map(|face| format!("Brush {} · face {}", face.solid, face.side).into())
+                .collect::<Vec<_>>(),
+        )));
         self.window.set_material(material.into());
         self.window.set_loaded(false);
         self.window.set_ready(false);

@@ -1788,12 +1788,16 @@ mod tests {
     }
 
     fn light_mesh(classname: &str, selected: bool) -> SceneMesh {
+        light_mesh_with_pitch(classname, selected, "-90")
+    }
+
+    fn light_mesh_with_pitch(classname: &str, selected: bool, pitch: &str) -> SceneMesh {
         let mut vmf = map_core::Document::empty().vmf().clone();
         let mut light = Entity::new(1, classname);
         light.properties.set("origin", "0 0 0");
         light.properties.set("_light", "255 210 150 450");
         light.properties.set("angles", "0 90 0");
-        light.properties.set("pitch", "-90");
+        light.properties.set("pitch", pitch);
         vmf.entities.push(light);
         let fs = GameFs {
             game_dir: Default::default(),
@@ -1836,21 +1840,25 @@ mod tests {
     #[test]
     fn point_lights_use_standard_entity_markers() {
         for selected in [false, true] {
-            let light = light_mesh("light", selected);
-            let generic = light_mesh("info_target", selected);
-            assert_eq!(light.vertices.len(), 24);
-            assert_eq!(light.indices.len(), 36);
-            assert_eq!(light.vertices, generic.vertices);
-            assert_eq!(light.indices, generic.indices);
-            assert!(
-                light
-                    .lines
-                    .iter()
-                    .map(|line| (line.position, line.color))
-                    .eq(generic.lines.iter().map(|line| (line.position, line.color)))
-            );
-            assert_eq!(light.batches, generic.batches);
-            assert_eq!(light.stats.missing_materials, 0);
+            for light in [
+                light_mesh("light", selected),
+                light_mesh_with_pitch("light_spot", selected, "$Tilt"),
+            ] {
+                let generic = light_mesh("info_target", selected);
+                assert_eq!(light.vertices.len(), 24);
+                assert_eq!(light.indices.len(), 36);
+                assert_eq!(light.vertices, generic.vertices);
+                assert_eq!(light.indices, generic.indices);
+                assert!(
+                    light
+                        .lines
+                        .iter()
+                        .map(|line| (line.position, line.color))
+                        .eq(generic.lines.iter().map(|line| (line.position, line.color)))
+                );
+                assert_eq!(light.batches, generic.batches);
+                assert_eq!(light.stats.missing_materials, 0);
+            }
         }
     }
 

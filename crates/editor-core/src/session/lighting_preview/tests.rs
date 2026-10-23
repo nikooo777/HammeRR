@@ -138,6 +138,12 @@ fn unresolved_template_lights_have_explicit_diagnostics_without_hiding_valid_lam
                 ("pitch", "-90"),
             ],
         ),
+        add(
+            &mut session,
+            "light_spot",
+            Some(DVec3::Z * 64.0),
+            &[("_light", "255 255 255 10"), ("pitch", "$Tilt")],
+        ),
     ];
     enable(&mut session);
     let source = session.document().vmf().clone();

@@ -20,6 +20,7 @@ fn light_value_binding_mcp_uses_existing_string_schemas_and_shared_drafts() {
                 _inner_cone(integer) : "Inner (bright) angle" : 30
                 _cone(integer) : "Outer (fading) angle" : 45
                 _exponent(integer) : "Focus" : 1
+                pitch(integer) : "Pitch" : -90
             ]"#,
         )
         .unwrap(),
@@ -48,7 +49,7 @@ fn light_value_binding_mcp_uses_existing_string_schemas_and_shared_drafts() {
         server.create_entity(Parameters(
             serde_json::from_value(json!({
                 "classname":"light_spot","origin":[0,0,64],
-                "properties":{"_light":"$Lamp","_lightHDR":"$HDR","_fifty_percent_distance":"$Half","_zero_percent_distance":"$End","_inner_cone":"$Inner","_cone":"$Outer","_exponent":"$Focus"}
+                "properties":{"_light":"$Lamp","_lightHDR":"$HDR","_fifty_percent_distance":"$Half","_zero_percent_distance":"$End","_inner_cone":"$Inner","_cone":"$Outer","_exponent":"$Focus","pitch":"$Tilt"}
             }))
             .unwrap(),
         )),
@@ -57,7 +58,7 @@ fn light_value_binding_mcp_uses_existing_string_schemas_and_shared_drafts() {
     report(
         server.set_entity_properties(Parameters(
             serde_json::from_value(
-                json!({"id":id,"set":{"_light":"$Other","_fifty_percent_distance":"$OtherHalf","_inner_cone":"$OtherInner","_exponent":"$OtherFocus"}}),
+                json!({"id":id,"set":{"_light":"$Other","_fifty_percent_distance":"$OtherHalf","_inner_cone":"$OtherInner","_exponent":"$OtherFocus","pitch":"$OtherTilt"}}),
             )
             .unwrap(),
         )),
@@ -75,7 +76,8 @@ fn light_value_binding_mcp_uses_existing_string_schemas_and_shared_drafts() {
                 {"action":"set","key":"_zero_percent_distance","value":"$EndDraft"},
                 {"action":"set","key":"_inner_cone","value":"$InnerDraft"},
                 {"action":"set","key":"_cone","value":"$OuterDraft"},
-                {"action":"set","key":"_exponent","value":"$FocusDraft"}
+                {"action":"set","key":"_exponent","value":"$FocusDraft"},
+                {"action":"set","key":"pitch","value":"$TiltDraft"}
             ]}))
             .unwrap(),
         )),
@@ -106,6 +108,7 @@ fn light_value_binding_mcp_uses_existing_string_schemas_and_shared_drafts() {
         ("_inner_cone", "$InnerDraft"),
         ("_cone", "$OuterDraft"),
         ("_exponent", "$FocusDraft"),
+        ("pitch", "$TiltDraft"),
     ] {
         let field = &staged["preview"]["properties"]
             .as_array()
@@ -275,7 +278,7 @@ fn environment_color_binding_mcp_uses_shared_create_set_and_ambient_drafts() {
         scope["class_properties"],
         json!({
             "light":["_light","_lightHDR","_lightscaleHDR","_fifty_percent_distance","_zero_percent_distance"],
-            "light_spot":["_light","_lightHDR","_lightscaleHDR","_fifty_percent_distance","_zero_percent_distance","_inner_cone","_cone","_exponent"],
+            "light_spot":["_light","_lightHDR","_lightscaleHDR","_fifty_percent_distance","_zero_percent_distance","_inner_cone","_cone","_exponent","pitch"],
             "light_environment":["_light","_lightHDR","_ambient","_ambientHDR","_lightscaleHDR","_AmbientScaleHDR","SunSpreadAngle"]
         })
     );
@@ -289,7 +292,8 @@ fn environment_color_binding_mcp_uses_shared_create_set_and_ambient_drafts() {
             "SunSpreadAngle",
             "_inner_cone",
             "_cone",
-            "_exponent"
+            "_exponent",
+            "pitch"
         ])
     );
     assert_eq!(scope["sun_spread_properties"], json!(["SunSpreadAngle"]));
@@ -305,6 +309,13 @@ fn environment_color_binding_mcp_uses_shared_create_set_and_ambient_drafts() {
     assert_eq!(scope["spotlight_point_angles"], json!([180, 180]));
     assert_eq!(scope["spotlight_focus_properties"], json!(["_exponent"]));
     assert_eq!(scope["spotlight_focus_classes"], json!(["light_spot"]));
+    assert_eq!(scope["spotlight_pitch_properties"], json!(["pitch"]));
+    assert_eq!(scope["spotlight_pitch_classes"], json!(["light_spot"]));
+    assert_eq!(scope["spotlight_pitch_degrees"], json!([-90, 90]));
+    assert_eq!(
+        scope["scalar_literal"],
+        "one finite number; nonnegative except spotlight pitch"
+    );
     assert_eq!(
         scope["falloff_distance_classes"],
         json!(["light", "light_spot"])

@@ -46,6 +46,19 @@ For spotlight cones, Focus must be finite, nonnegative and fit a native float. P
 Ordinary integer fields stay integer; replacement strings can supply fractional compiler values.
 Unresolved tokens stay as text and exclude the spotlight from authored-lighting preview. The child cannot compile alone until its tokens resolve.
 
+## Bind spotlight pitch
+
+1. Open the child VMF and select a `light_spot`.
+2. Enable **Advanced properties**. Set **Property key** to `pitch` and **Value** to `$Pitch`, then press Enter. Save the child.
+3. In the containing reference, set an unused `replace01`–`replace10` field to `$Pitch -45`.
+4. Refresh the reference contents or compile the parent.
+
+Pitch must be finite and between −90 and 90 degrees. For directional spotlights without a target, negative values tilt the beam down before reference rotation.
+For a replacement of `0`, keep the first number in `angles` at `0`.
+Pitch remains required for targeted spotlights and the `180, 180` point-light mode.
+Unresolved pitch uses a neutral marker, excludes the lamp from authored-lighting preview and prevents standalone compilation, including **Fullbright**.
+Only immediate child `light_spot` pitch supports this binding. Sun pitch and angle vectors stay literal.
+
 ## Bind sun spread
 
 1. Open the child VMF and select its `light_environment`.
@@ -56,7 +69,7 @@ Unresolved tokens stay as text and exclude the spotlight from authored-lighting 
 Each reference can supply a finite spread from 0 to 90 degrees. An absent or empty `SunSpreadAngle` property keeps the ordinary default of 0.
 Lit builds retain one global sun across the parent and its children.
 Unresolved tokens stay as text, exclude the sun from authored-lighting preview and prevent standalone compilation, including **Fullbright**.
-Only the immediately containing reference supplies the value. Angles, pitch, embedded tokens and ancestor forwarding remain unsupported.
+Only the immediately containing reference supplies the value. Sun angles and pitch, embedded tokens and ancestor forwarding remain unsupported.
 
 ## Limits
 

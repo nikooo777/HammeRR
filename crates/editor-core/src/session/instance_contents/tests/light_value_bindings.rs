@@ -36,6 +36,7 @@ fn bound(actor: Actor) -> (tempfile::TempDir, Session, PathBuf, PathBuf, u32) {
                 ("_inner_cone", "$Inner"),
                 ("_cone", "$Outer"),
                 ("_exponent", "$Focus"),
+                ("pitch", "$Tilt"),
             ] {
                 properties.insert(key.into(), value.into());
             }
@@ -68,6 +69,10 @@ fn bound(actor: Actor) -> (tempfile::TempDir, Session, PathBuf, PathBuf, u32) {
                     ("file".into(), "child.vmf".into()),
                     ("replace01".into(), ldr.into()),
                     ("replace02".into(), hdr.into()),
+                    (
+                        "replace03".into(),
+                        format!("$Tilt {}", if row == 0 { -45 } else { 0 }),
+                    ),
                     (
                         "replace04".into(),
                         format!("$Inner {}", if row == 0 { 15 } else { 30 }),
@@ -128,6 +133,7 @@ fn immediate_light_bindings_refresh_after_reference_edits_and_reopen_for_both_ac
         for key in [
             "replace01",
             "replace02",
+            "replace03",
             "replace04",
             "replace05",
             "replace06",

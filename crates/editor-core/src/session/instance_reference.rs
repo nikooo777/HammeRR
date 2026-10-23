@@ -75,7 +75,9 @@ pub(super) fn light_value_binding_scope() -> Value {
         "spotlight_angle_degrees":[0,90],"spotlight_point_angles":[180,180],
         "spotlight_focus_properties":properties_for_kind(ValueKind::SpotlightFocus),
         "spotlight_focus_classes":classes_for_kind(ValueKind::SpotlightFocus),
-        "scalar_literal":"one finite nonnegative number","other_scalar_parameters":false,"func_instance_parms":false,
+        "spotlight_pitch_properties":properties_for_kind(ValueKind::SpotlightPitch),
+        "spotlight_pitch_classes":classes_for_kind(ValueKind::SpotlightPitch),"spotlight_pitch_degrees":[-90,90],
+        "scalar_literal":"one finite number; nonnegative except spotlight pitch","other_scalar_parameters":false,"func_instance_parms":false,
         "standalone_unresolved_compilation":false,"authored_lighting_preview_resolution":false
     })
 }

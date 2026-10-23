@@ -20,7 +20,7 @@ const FGD: &str = r#"
 ]
 @PointClass base(Light) = light []
 @PointClass base(Light) = light_spot [ pitch(integer) : "Pitch" : -90 ]
-@PointClass base(Light) = light_environment []
+@PointClass base(Light) = light_environment [ pitch(integer) : "Pitch" : -90 ]
 @PointClass base(Light) = light_dynamic []
 @SolidClass base(Light) = worldspawn []
 "#;
@@ -52,6 +52,7 @@ fn create(session: &mut Session, actor: Actor, classname: &str) -> u32 {
             ("_inner_cone", "$Inner"),
             ("_cone", "$Outer"),
             ("_exponent", "$Focus"),
+            ("pitch", "$Tilt"),
         ] {
             properties.insert(key.into(), value.into());
         }
@@ -122,7 +123,7 @@ fn light_value_templates_share_create_set_draft_undo_and_save_reopen_for_both_ac
                 );
             }
             if classname == "light_spot" {
-                changes.extend(["_inner_cone", "_cone", "_exponent"].map(|key| {
+                changes.extend(["_inner_cone", "_cone", "_exponent", "pitch"].map(|key| {
                     PropertyChange::Set {
                         key: key.into(),
                         value: "$ShapeDraft".into(),
@@ -198,7 +199,7 @@ fn light_value_templates_share_create_set_draft_undo_and_save_reopen_for_both_ac
                     "SunSpreadAngle",
                 ]
             } else if classname == "light_spot" {
-                for key in ["_inner_cone", "_cone", "_exponent"] {
+                for key in ["_inner_cone", "_cone", "_exponent", "pitch"] {
                     assert_eq!(reopened.properties.get(key), Some("$ShapeDraft"));
                 }
                 &[
@@ -210,6 +211,7 @@ fn light_value_templates_share_create_set_draft_undo_and_save_reopen_for_both_ac
                     "_inner_cone",
                     "_cone",
                     "_exponent",
+                    "pitch",
                 ]
             } else {
                 assert_eq!(
@@ -240,13 +242,13 @@ fn light_value_templates_share_create_set_draft_undo_and_save_reopen_for_both_ac
                 if key.to_ascii_lowercase().contains("scalehdr")
                     || key.ends_with("_distance")
                     || key == "SunSpreadAngle"
-                    || matches!(key, "_inner_cone" | "_cone" | "_exponent")
+                    || matches!(key, "_inner_cone" | "_cone" | "_exponent" | "pitch")
                 {
                     assert_eq!(
                         field.kind,
                         if key.ends_with("_distance") {
                             "string"
-                        } else if matches!(key, "_inner_cone" | "_cone" | "_exponent") {
+                        } else if matches!(key, "_inner_cone" | "_cone" | "_exponent" | "pitch") {
                             "integer"
                         } else {
                             "float"
@@ -395,6 +397,11 @@ fn environment_bindings_keep_unrelated_color_parameters_literal() {
         );
         assert_eq!(session.document().vmf(), &before);
         assert_eq!(session.history_snapshot(), history);
+        assert!(
+            session
+                .set_entity_properties(actor, id, &[("pitch".into(), Some("$Pitch".into()))])
+                .is_err()
+        );
         for key in [
             "_ambient",
             "_ambientHDR",
@@ -428,6 +435,7 @@ fn light_value_template_exception_preserves_readonly_schema_and_generic_color_va
             ("_inner_cone", ["integer) readonly", "float)", "color255)"]),
             ("_cone", ["integer) readonly", "float)", "color255)"]),
             ("_exponent", ["integer) readonly", "float)", "color255)"]),
+            ("pitch", ["integer) readonly", "float)", "color255)"]),
             (
                 "_lightscaleHDR",
                 ["float) readonly", "integer)", "color255)"],
@@ -441,7 +449,7 @@ fn light_value_template_exception_preserves_readonly_schema_and_generic_color_va
                 ["string) readonly", "integer)", "float)"],
             ),
         ] {
-            let classname = if matches!(key, "_inner_cone" | "_cone" | "_exponent") {
+            let classname = if matches!(key, "_inner_cone" | "_cone" | "_exponent" | "pitch") {
                 "light_spot"
             } else {
                 "light"

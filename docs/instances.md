@@ -117,7 +117,7 @@ An unresolved child template can be edited and saved, but cannot compile alone.
 Preview excludes unresolved lamps and reports a reason; the parent still has no child-light preview.
 
 Point and spot lights support `_light`, `_lightHDR`, `_lightscaleHDR`, `_fifty_percent_distance` and `_zero_percent_distance`.
-Spotlights also support `_inner_cone`, `_cone` and `_exponent`; see [cone and focus bindings](instance-authoring.md#bind-spotlight-cones-and-focus).
+Spotlights also support `_inner_cone`, `_cone`, `_exponent` and signed `pitch`; see [cone and focus bindings](instance-authoring.md#bind-spotlight-cones-and-focus) and [pitch bindings](instance-authoring.md#bind-spotlight-pitch).
 Sun lights support `_light`, `_lightHDR`, `_ambient`, `_ambientHDR`, `_lightscaleHDR`, `_AmbientScaleHDR` and `SunSpreadAngle`.
 See [light falloff bindings](instance-authoring.md#bind-light-falloff-distances) for the distance rules.
 Bindings apply only to direct child lights. Other scalar fields remain literal.

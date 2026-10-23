@@ -27,13 +27,14 @@ pub enum ValueKind {
     SunSpreadAngle,
     SpotlightAngle,
     SpotlightFocus,
+    SpotlightPitch,
 }
 
 const ALL_VALUE_CLASSES: &[&str] = &["light", "light_spot", "light_environment"];
 const POINT_VALUE_CLASSES: &[&str] = &["light", "light_spot"];
 const SUN_VALUE_CLASSES: &[&str] = &["light_environment"];
 const SPOT_VALUE_CLASSES: &[&str] = &["light_spot"];
-static VALUE_FIELDS: [(&str, &[&str], ValueKind); 12] = [
+static VALUE_FIELDS: [(&str, &[&str], ValueKind); 13] = [
     ("_light", ALL_VALUE_CLASSES, ValueKind::Color),
     ("_lightHDR", ALL_VALUE_CLASSES, ValueKind::Color),
     ("_ambient", SUN_VALUE_CLASSES, ValueKind::Color),
@@ -58,6 +59,7 @@ static VALUE_FIELDS: [(&str, &[&str], ValueKind); 12] = [
     ("_inner_cone", SPOT_VALUE_CLASSES, ValueKind::SpotlightAngle),
     ("_cone", SPOT_VALUE_CLASSES, ValueKind::SpotlightAngle),
     ("_exponent", SPOT_VALUE_CLASSES, ValueKind::SpotlightFocus),
+    ("pitch", SPOT_VALUE_CLASSES, ValueKind::SpotlightPitch),
 ];
 
 pub fn value_fields() -> impl Iterator<Item = (&'static str, &'static [&'static str], ValueKind)> {
@@ -119,10 +121,33 @@ pub fn direction(
     origin: DVec3,
     target: Option<DVec3>,
 ) -> Result<DVec3, String> {
+    read_direction(angles, angle, pitch, origin, target, false)?
+        .ok_or_else(|| "Light pitch is unresolved".into())
+}
+
+pub fn template_direction(
+    angles: Option<&str>,
+    angle: Option<&str>,
+    pitch: Option<&str>,
+    origin: DVec3,
+    target: Option<DVec3>,
+) -> Result<Option<DVec3>, String> {
+    read_direction(angles, angle, pitch, origin, target, true)
+}
+
+fn read_direction(
+    angles: Option<&str>,
+    angle: Option<&str>,
+    pitch: Option<&str>,
+    origin: DVec3,
+    target: Option<DVec3>,
+    defer_pitch: bool,
+) -> Result<Option<DVec3>, String> {
     if let Some(target) = target {
         return (target - origin)
             .try_normalize()
             .filter(|point| point.is_finite())
+            .map(Some)
             .ok_or_else(|| "Light target must be finite and distinct from its origin".into());
     }
     let angles = angles.map_or(Ok(DVec3::ZERO), |raw| {
@@ -132,23 +157,26 @@ pub fn direction(
     })?;
     let angle = scalar(angle, "angle")?;
     if angle == -1.0 {
-        return Ok(DVec3::Z);
+        return Ok(Some(DVec3::Z));
     }
     if angle == -2.0 {
-        return Ok(DVec3::NEG_Z);
+        return Ok(Some(DVec3::NEG_Z));
     }
     let yaw = if angle == 0.0 { angles.y } else { angle }
         .rem_euclid(360.0)
         .to_radians();
+    if defer_pitch && pitch.and_then(parameter_name).is_some() {
+        return Ok(None);
+    }
     let pitch = scalar(pitch, "pitch")?;
     let pitch = if pitch == 0.0 { angles.x } else { pitch }
         .rem_euclid(360.0)
         .to_radians();
-    Ok(DVec3::new(
+    Ok(Some(DVec3::new(
         pitch.cos() * yaw.cos(),
         pitch.cos() * yaw.sin(),
         pitch.sin(),
-    ))
+    )))
 }
 
 #[cfg(test)]
@@ -280,6 +308,7 @@ mod tests {
             ("_inner_cone", ValueKind::SpotlightAngle),
             ("_CONE", ValueKind::SpotlightAngle),
             ("_exponent", ValueKind::SpotlightFocus),
+            ("pitch", ValueKind::SpotlightPitch),
         ] {
             assert_eq!(value_kind("light_spot", key), Some(kind));
             assert_eq!(value_parameter("light_spot", key, "$Shape"), Some("Shape"));
@@ -293,6 +322,34 @@ mod tests {
 
     #[test]
     fn light_directions_share_pitch_yaw_legacy_angles_and_target_precedence() {
+        assert_eq!(
+            template_direction(Some("30 20 0"), None, Some("$Pitch"), DVec3::ZERO, None).unwrap(),
+            None
+        );
+        assert!(
+            template_direction(Some("NaN 20 0"), None, Some("$Pitch"), DVec3::ZERO, None).is_err()
+        );
+        assert!(template_direction(None, Some("NaN"), Some("$Pitch"), DVec3::ZERO, None).is_err());
+        assert_eq!(
+            template_direction(
+                Some("invalid"),
+                None,
+                Some("$Pitch"),
+                DVec3::ZERO,
+                Some(DVec3::Y)
+            )
+            .unwrap(),
+            Some(DVec3::Y)
+        );
+        assert!(direction(None, None, Some("$Pitch"), DVec3::ZERO, None).is_err());
+        assert_eq!(
+            template_direction(None, Some("-1"), Some("$Pitch"), DVec3::ZERO, None).unwrap(),
+            Some(DVec3::Z)
+        );
+        assert_eq!(
+            template_direction(None, Some("-2"), Some("$Pitch"), DVec3::ZERO, None).unwrap(),
+            Some(DVec3::NEG_Z)
+        );
         for (angles, angle, pitch, expected) in [
             ("0 90 0", "0", "0", DVec3::Y),
             (

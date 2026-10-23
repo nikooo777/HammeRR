@@ -169,7 +169,7 @@ fn admit_light(
     if entity.properties.get("classname").is_none() {
         return Err("Static child light requires canonical property classname".into());
     }
-    check_pose(entity, kind)?;
+    check_pose_parameters(entity, kind, template)?;
     if has_target(entity, kind) {
         let target = map_core::light::target(entity.properties.get("target"), targets)?;
         map_core::light::direction(None, None, None, entity.origin().unwrap(), target)?;
@@ -226,6 +226,10 @@ fn scalar(entity: &Entity, key: &str) -> Result<f64, String> {
 }
 
 pub(super) fn check_pose(entity: &Entity, kind: Kind) -> Result<(), String> {
+    check_pose_parameters(entity, kind, false)
+}
+
+fn check_pose_parameters(entity: &Entity, kind: Kind, template: bool) -> Result<(), String> {
     if matches!(kind, Kind::PlayerSpawn) {
         return spawns::check_pose(entity);
     }
@@ -250,6 +254,14 @@ pub(super) fn check_pose(entity: &Entity, kind: Kind) -> Result<(), String> {
         return Err("Static child light legacy angle must be absent or zero".into());
     }
     if matches!(kind, Kind::Spot | Kind::Environment) {
+        if template
+            && matches!(kind, Kind::Spot)
+            && entity.properties.get("pitch").is_some_and(|value| {
+                map_core::light::value_parameter("light_spot", "pitch", value).is_some()
+            })
+        {
+            return Ok(());
+        }
         let label = if matches!(kind, Kind::Environment) {
             "environment light"
         } else {

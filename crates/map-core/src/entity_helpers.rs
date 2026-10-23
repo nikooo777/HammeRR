@@ -128,7 +128,10 @@ impl Appearance {
 }
 
 pub fn specialized_light(entity: &Entity) -> bool {
-    matches!(
+    !entity.properties.get("pitch").is_some_and(|value| {
+        crate::light::value_parameter(entity.classname().unwrap_or_default(), "pitch", value)
+            .is_some()
+    }) && matches!(
         entity
             .classname()
             .unwrap_or("")

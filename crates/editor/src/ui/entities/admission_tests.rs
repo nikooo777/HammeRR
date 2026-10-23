@@ -54,6 +54,7 @@ fn unresolved_light_scalar_rows_keep_declared_types_and_raw_text_controls() {
         _inner_cone(integer) : "Inner (bright) angle" : 30
         _cone(integer) : "Outer (fading) angle" : 45
         _exponent(integer) : "Focus" : 1
+        pitch(integer) : "Pitch" : -90
     ]"#,
         )
         .unwrap(),
@@ -96,6 +97,7 @@ fn unresolved_light_scalar_rows_keep_declared_types_and_raw_text_controls() {
                 ("_inner_cone".into(), "$Inner".into()),
                 ("_cone".into(), "$Outer".into()),
                 ("_exponent".into(), "$Focus".into()),
+                ("pitch".into(), "$Tilt".into()),
             ]),
         )
         .unwrap()
@@ -113,17 +115,20 @@ fn unresolved_light_scalar_rows_keep_declared_types_and_raw_text_controls() {
             field.key.to_ascii_lowercase().contains("scalehdr")
                 || field.key.ends_with("_distance")
                 || field.key == "SunSpreadAngle"
-                || matches!(field.key.as_str(), "_inner_cone" | "_cone" | "_exponent")
+                || matches!(
+                    field.key.as_str(),
+                    "_inner_cone" | "_cone" | "_exponent" | "pitch"
+                )
         })
         .map(property_row)
         .collect();
-    assert_eq!(rows.len(), 8);
+    assert_eq!(rows.len(), 9);
     for row in rows {
         assert_eq!(
             row.type_name,
             if matches!(row.value.as_str(), "$Half" | "$End") {
                 "string"
-            } else if matches!(row.value.as_str(), "$Inner" | "$Outer" | "$Focus") {
+            } else if matches!(row.value.as_str(), "$Inner" | "$Outer" | "$Focus" | "$Tilt") {
                 "integer"
             } else {
                 "float"

@@ -447,25 +447,38 @@ fn nested_spotlight_beams_follow_independent_noncommuting_matrices_at_every_dept
         })
         .collect::<Vec<_>>();
         let (directory, mut parent, child, _) = emitter_fixture(lights);
+        let mut template = child.clone();
+        let mut pitch_bindings = Vec::new();
+        for (index, light) in template.entities.iter_mut().enumerate() {
+            let token = format!("$tilt{index}");
+            pitch_bindings.push((
+                format!("replace{:02}", index + 1),
+                format!("{token} {}", light.properties.get("pitch").unwrap()),
+            ));
+            light.properties.set("pitch", token);
+        }
+        write_child(directory.path(), "child.vmf", &template);
         let mut file = "child.vmf".to_owned();
         for (level, angles) in poses.iter().enumerate().skip(1) {
             let name = format!("level{level}.vmf");
-            write_child(
-                directory.path(),
-                &name,
-                &helper_file(vec![nested_helper(
-                    100,
-                    &file,
-                    "3 -5 7",
-                    &format_vec3(*angles),
-                )]),
-            );
+            let mut helper = nested_helper(100, &file, "3 -5 7", &format_vec3(*angles));
+            if file == "child.vmf" {
+                for (key, value) in &pitch_bindings {
+                    helper.properties.set(key, value);
+                }
+            }
+            write_child(directory.path(), &name, &helper_file(vec![helper]));
             file = name;
         }
         let root = parent.entities.last_mut().unwrap();
         root.properties.set("file", &file);
         root.properties.set("origin", "3 -5 7");
         root.properties.set("angles", format_vec3(poses[0]));
+        if file == "child.vmf" {
+            for (key, value) in &pitch_bindings {
+                root.properties.set(key, value);
+            }
+        }
         let owner = root.id;
         let context = source(directory.path());
         let prepared = prepare(
@@ -1138,6 +1151,59 @@ fn light_bindings(helper: &mut Entity, ldr: &str, hdr: &str) {
 }
 
 #[test]
+fn pitch_templates_defer_only_unknown_pose_constraints_even_with_targets_and_point_cones() {
+    let targets = map_core::light::Targets::from([("aim", vec![DVec3::ZERO])]);
+    for target in ["", "aim"] {
+        for point in [false, true] {
+            let mut light = static_light(20, "light_spot", "0 0 96");
+            light.properties.set("target", target);
+            light.properties.set("pitch", "$Pitch");
+            light.properties.set("angles", "10 20 0");
+            if point {
+                light.properties.set("_inner_cone", "180");
+                light.properties.set("_cone", "180");
+            }
+            let before = light.clone();
+            entities::admit_template_with_targets(&light, entities::Kind::Spot, &targets).unwrap();
+            assert!(entities::check_pose(&light, entities::Kind::Spot).is_err());
+            assert_eq!(light, before);
+            for pitch in ["-90", "-45.5", "45", "90"] {
+                light.properties.set("pitch", pitch);
+                entities::admit_with_targets(&light, entities::Kind::Spot, &targets).unwrap();
+            }
+            for pitch in ["0", "NaN", "inf", "-91", "91", ""] {
+                light.properties.set("pitch", pitch);
+                assert!(
+                    entities::admit_template_with_targets(&light, entities::Kind::Spot, &targets)
+                        .is_err(),
+                    "{target}/{point}/{pitch}"
+                );
+            }
+            light.properties.remove("pitch");
+            assert!(
+                entities::admit_template_with_targets(&light, entities::Kind::Spot, &targets)
+                    .is_err()
+            );
+            light.properties.set("pitch", "$Pitch");
+            light.properties.set("angles", "NaN 0 0");
+            assert!(
+                entities::admit_template_with_targets(&light, entities::Kind::Spot, &targets)
+                    .is_err()
+            );
+            light.properties.set("angles", "0 20 0");
+            light.properties.set("pitch", "0");
+            entities::admit_with_targets(&light, entities::Kind::Spot, &targets).unwrap();
+            light.properties.set("pitch", "$Pitch");
+            light.properties.set("_lightHDR", "invalid");
+            assert!(
+                entities::admit_template_with_targets(&light, entities::Kind::Spot, &targets)
+                    .is_err()
+            );
+        }
+    }
+}
+
+#[test]
 fn sibling_light_bindings_match_independent_literal_dual_bsp_and_preserve_raw_sources() {
     let mut point = parameter_light(20, "light", "-48 16 128");
     point.properties.set("style", "1");
@@ -1152,6 +1218,7 @@ fn sibling_light_bindings_match_independent_literal_dual_bsp_and_preserve_raw_so
     spot.properties.set("_inner_cone", "$inner");
     spot.properties.set("_cone", "$outer");
     spot.properties.set("_exponent", "$focus");
+    spot.properties.set("pitch", "$pitch");
     let (directory, mut parent, template, game) = emitter_fixture(vec![point, spot]);
     let colors = [
         ("255 96 32 300", "32 96 255 450"),
@@ -1160,6 +1227,7 @@ fn sibling_light_bindings_match_independent_literal_dual_bsp_and_preserve_raw_so
     let gains = ["2", "0.5"];
     let distances = [("64", "160"), ("96", "0")];
     let shapes = [("12.5", "70", "2.5"), ("30", "0", "0")];
+    let pitches = ["-45", "0"];
     light_bindings(
         parent.entities.last_mut().unwrap(),
         colors[0].0,
@@ -1178,7 +1246,7 @@ fn sibling_light_bindings_match_independent_literal_dual_bsp_and_preserve_raw_so
         .properties
         .set("replace09", format!("$gain {}", gains[1]));
     parent.entities.push(sibling);
-    for ((helper, (half, end)), (inner, outer, focus)) in parent
+    for (((helper, (half, end)), (inner, outer, focus)), pitch) in parent
         .entities
         .iter_mut()
         .filter(|entity| {
@@ -1188,9 +1256,13 @@ fn sibling_light_bindings_match_independent_literal_dual_bsp_and_preserve_raw_so
         })
         .zip(distances)
         .zip(shapes)
+        .zip(pitches)
     {
         helper.properties.set("replace07", format!("$half {half}"));
         helper.properties.set("replace08", format!("$end {end}"));
+        helper
+            .properties
+            .set("replace03", format!("$pitch {pitch}"));
         helper
             .properties
             .set("replace04", format!("$inner {inner}"));
@@ -1207,18 +1279,20 @@ fn sibling_light_bindings_match_independent_literal_dual_bsp_and_preserve_raw_so
     let mut literal = Document::new(parent.clone());
     literal
         .edit("independent sibling colors", |tx| {
-            for ((((helper, (ldr, hdr)), gain), (half, end)), (inner, outer, focus)) in parent
-                .entities
-                .iter()
-                .filter(|entity| {
-                    entity
-                        .classname()
-                        .is_some_and(|class| class.eq_ignore_ascii_case("func_instance"))
-                })
-                .zip(colors)
-                .zip(gains)
-                .zip(distances)
-                .zip(shapes)
+            for (((((helper, (ldr, hdr)), gain), (half, end)), (inner, outer, focus)), pitch) in
+                parent
+                    .entities
+                    .iter()
+                    .filter(|entity| {
+                        entity
+                            .classname()
+                            .is_some_and(|class| class.eq_ignore_ascii_case("func_instance"))
+                    })
+                    .zip(colors)
+                    .zip(gains)
+                    .zip(distances)
+                    .zip(shapes)
+                    .zip(pitches)
             {
                 for original in &template.entities {
                     let mut light =
@@ -1237,6 +1311,7 @@ fn sibling_light_bindings_match_independent_literal_dual_bsp_and_preserve_raw_so
                         light.properties.set("_inner_cone", inner);
                         light.properties.set("_cone", outer);
                         light.properties.set("_exponent", focus);
+                        light.properties.set("pitch", pitch);
                     }
                     light
                         .properties
@@ -1357,6 +1432,7 @@ fn nested_light_bindings_are_local_even_when_names_repeat() {
     leaf.properties.set("_inner_cone", "$shape");
     leaf.properties.set("_cone", "$outer");
     leaf.properties.set("_exponent", "$focus");
+    leaf.properties.set("pitch", "$pitch");
     let mut direct = leaf.clone();
     direct.id = 200;
     direct.properties.set("origin", "-32 0 96");
@@ -1366,6 +1442,7 @@ fn nested_light_bindings_are_local_even_when_names_repeat() {
     nested.properties.set("replace04", "$shape 180");
     nested.properties.set("replace05", "$outer 180");
     nested.properties.set("replace06", "$focus 3");
+    nested.properties.set("replace03", "$pitch -90");
     write_child(
         directory.path(),
         "middle.vmf",
@@ -1377,6 +1454,7 @@ fn nested_light_bindings_are_local_even_when_names_repeat() {
     root.properties.set("replace04", "$shape 15");
     root.properties.set("replace05", "$outer 60");
     root.properties.set("replace06", "$focus 2");
+    root.properties.set("replace03", "$pitch 45");
     let context = source(directory.path());
     let resolved = resolve(
         &parent,
@@ -1401,6 +1479,8 @@ fn nested_light_bindings_are_local_even_when_names_repeat() {
     assert_eq!(lights[1].properties.get("_inner_cone"), Some("180"));
     assert_eq!(lights[1].properties.get("_cone"), Some("180"));
     assert_eq!(lights[1].properties.get("_exponent"), Some("3"));
+    assert_eq!(lights[0].properties.get("pitch"), Some("45"));
+    assert_eq!(lights[1].properties.get("pitch"), Some("-90"));
     assert_eq!(resolved.stats().unwrap().max_expansion_depth, 2);
     for light in lights {
         entities::admit(light, entities::kind(light).unwrap()).unwrap();
@@ -1460,6 +1540,13 @@ fn bound_templates_reject_grouped_semantic_and_context_failures_before_fullbrigh
         "cone sentinel mismatch",
         "cone literal tuple",
         "point cone context",
+        "missing bound pitch",
+        "pitch below range",
+        "pitch above range",
+        "pitch nonfinite",
+        "pitch zero angles",
+        "pitch tuple",
+        "pitch outside region",
         "hidden",
         "world context",
         "material context",
@@ -1469,7 +1556,10 @@ fn bound_templates_reject_grouped_semantic_and_context_failures_before_fullbrigh
         let mut child = template.clone();
         if matches!(
             issue,
-            "bad hdr outside region" | "distance outside region" | "cone outside region"
+            "bad hdr outside region"
+                | "distance outside region"
+                | "cone outside region"
+                | "pitch outside region"
         ) {
             parent.cordon = Some(Node::block(
                 "cordon",
@@ -1532,6 +1622,28 @@ fn bound_templates_reject_grouped_semantic_and_context_failures_before_fullbrigh
             "cone" => child.entities[0].properties.set("_cone", "15"),
             "missing cone" => child.entities[0].properties.set("_inner_cone", "$inner"),
             "unused focus" => helper.properties.set("replace06", "$focus 2"),
+            "missing bound pitch" => child.entities[0].properties.set("pitch", "$pitch"),
+            "pitch below range"
+            | "pitch above range"
+            | "pitch nonfinite"
+            | "pitch zero angles"
+            | "pitch tuple"
+            | "pitch outside region" => {
+                child.entities[0].properties.set("pitch", "$pitch");
+                if issue == "pitch zero angles" {
+                    child.entities[0].properties.set("angles", "10 0 0");
+                }
+                helper.properties.set(
+                    "replace03",
+                    match issue {
+                        "pitch below range" => "$pitch -91",
+                        "pitch above range" | "pitch outside region" => "$pitch 91",
+                        "pitch nonfinite" => "$pitch NaN",
+                        "pitch tuple" => "$pitch -30 0",
+                        _ => "$pitch 0",
+                    },
+                );
+            }
             "negative cone"
             | "nonfinite focus"
             | "focus native overflow"
@@ -1642,6 +1754,7 @@ fn unresolved_standalone_light_templates_fail_in_every_compile_mode() {
         ("light_spot", "_inner_cone"),
         ("light_spot", "_cone"),
         ("light_spot", "_exponent"),
+        ("light_spot", "pitch"),
     ] {
         let mut vmf = test_common::room();
         let mut light = static_light(vmf.object_ids().max().unwrap() + 1, class, "0 0 96");

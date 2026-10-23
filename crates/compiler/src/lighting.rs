@@ -422,14 +422,26 @@ fn spotlight_cone(
         return Err("Spotlight focus exceeds native float limits".into());
     }
     let target = map_core::light::target(property(entity, "target"), targets)?;
-    let direction = map_core::light::direction(
-        property(entity, "angles"),
-        property(entity, "angle"),
-        property(entity, "pitch"),
-        origin,
-        target,
-    )?;
-    let (Some(inner), Some(outer), Some(exponent)) = (inner, outer, exponent) else {
+    let direction = if unresolved_value(entity, "pitch", defer_parameters) {
+        map_core::light::template_direction(
+            property(entity, "angles"),
+            property(entity, "angle"),
+            property(entity, "pitch"),
+            origin,
+            target,
+        )?
+    } else {
+        Some(map_core::light::direction(
+            property(entity, "angles"),
+            property(entity, "angle"),
+            property(entity, "pitch"),
+            origin,
+            target,
+        )?)
+    };
+    let (Some(inner), Some(outer), Some(exponent), Some(direction)) =
+        (inner, outer, exponent, direction)
+    else {
         return Ok(SpotlightCone::Unresolved);
     };
     Ok(SpotlightCone::Resolved(Some(SpotCone {
@@ -1115,6 +1127,7 @@ mod input_tests {
                 ("_exponent", "unused"),
             ],
             vec![("_exponent", "$Focus")],
+            vec![("pitch", "$Pitch")],
         ] {
             let mut source = entity(&fields);
             source.classname = "light_spot".into();
@@ -1158,6 +1171,8 @@ mod input_tests {
                 ("_exponent", "1e40"),
             ],
             vec![("_exponent", "$Focus"), ("pitch", "NaN")],
+            vec![("pitch", "$Pitch"), ("angles", "NaN 0 0")],
+            vec![("pitch", "$Pitch"), ("_exponent", "-1")],
         ] {
             let mut source = entity(&fields);
             source.classname = "light_spot".into();

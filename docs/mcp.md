@@ -194,7 +194,7 @@ Save the child, then compile its parent. Compilation lowers the initial pose int
 `brush_model_preview.deferred_checks` includes `initial_pose`; reference inspection still provides no child model mesh.
 
 In the `get_compile_settings` response, use `light_value_bindings.class_properties` for each light class.
-Its `properties` list contains only fields valid for every listed class; specialized lists give distance, sun-spread and spotlight-shape scope.
+Its `properties` list contains only fields valid for every listed class; specialized lists give distance, sun-spread, spotlight-shape and signed-pitch scope.
 
 For [light colors per reference](instances.md#light-colors-per-reference), set a child light's `_light` or `_lightHDR` to `$name`.
 Child `light_environment` also supports `_ambient` and `_ambientHDR`.
@@ -203,6 +203,7 @@ For point/spot [falloff bindings](instance-authoring.md#bind-light-falloff-dista
 For [sun spread](instance-authoring.md#bind-sun-spread), bind `SunSpreadAngle` on child `light_environment` to one finite literal from 0 to 90 degrees.
 For [spotlight shape](instance-authoring.md#bind-spotlight-cones-and-focus), bind `_inner_cone`, `_cone` and `_exponent` on child `light_spot`.
 Use class-specific discovery for angle/focus scope and ordinary cone rules. Unresolved integer rows retain text tokens without an evaluated value.
+For [spotlight pitch](instance-authoring.md#bind-spotlight-pitch), use `spotlight_pitch_properties`, `spotlight_pitch_classes` and `spotlight_pitch_degrees`. Bind `pitch` to one finite signed value from −90 to 90. A value of `0` requires the first `angles` component to be `0`, including targeted and point-mode child lights. Other scalar ranges stay unchanged.
 Child spotlights can also reference one visible local `info_target`; use explicit Prefix names on every containing helper.
 Reference refresh reports `spotlight_targets` and an unavailable `spotlight_target_preview`. Keep lamp and endpoint inside a lit compile region.
 Environment distances, attenuation coefficients and other unsupported scalar fields remain literal.

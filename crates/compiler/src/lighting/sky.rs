@@ -3,7 +3,7 @@ use source_formats::bsp::{LightingKind, WorldLight, world_light_kind};
 
 use super::{
     PointLight, ReceiverAngularMode, checked_intensity, hdr_color, hdr_scale, number, property,
-    unresolved_color,
+    unresolved_value,
 };
 use crate::map::MapEntity;
 
@@ -149,12 +149,12 @@ impl SkyLight {
                 }
             }
             LightingKind::Hdr => {
-                let scale = hdr_scale(entity, "_AmbientScaleHDR")?;
-                let ambient = if unresolved_color(entity, "_ambientHDR", defer_parameters) {
+                let scale = hdr_scale(entity, "_AmbientScaleHDR", defer_parameters)?;
+                let ambient = if unresolved_value(entity, "_ambientHDR", defer_parameters) {
                     None
                 } else {
                     let color = hdr_color(entity, "_ambientHDR", true)?;
-                    if color.is_none() && unresolved_color(entity, "_ambient", defer_parameters) {
+                    if color.is_none() && unresolved_value(entity, "_ambient", defer_parameters) {
                         None
                     } else {
                         let color = match color {
@@ -167,7 +167,8 @@ impl SkyLight {
                     }
                 };
                 ambient
-                    .map(|ambient| checked_intensity(ambient * scale))
+                    .zip(scale)
+                    .map(|(ambient, scale)| checked_intensity(ambient * scale))
                     .transpose()
                     .map_err(|error| format!("HDR sky ambient: {error}"))?
             }

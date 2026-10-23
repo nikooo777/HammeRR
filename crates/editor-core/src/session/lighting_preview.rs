@@ -183,7 +183,7 @@ pub(super) fn prepare(vmf: &Vmf, visible: &HashSet<ObjectId>, view: ViewOptions)
                 "Unshadowed preview does not support {class}; ambient and dynamic lights are excluded"
             ))
         } else if let Some((key, value)) = entity.properties.iter().find(|(key, value)| {
-            map_core::light::color_parameter(entity.classname().unwrap_or_default(), key, value)
+            map_core::light::value_parameter(entity.classname().unwrap_or_default(), key, value)
                 .is_some()
         }) {
             Err(format!(

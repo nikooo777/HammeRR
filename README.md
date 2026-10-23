@@ -88,6 +88,6 @@ See the [tool index and setup](docs/mcp.md).
 | [Overlays](docs/overlays.md) | [Assemblies](docs/instances.md) |
 | --- | --- |
 | ![One projection spans two panels with a clear gap](docs/images/overlay-native.png) | ![Two references to one arch use different baked light colors](docs/images/instance-light-colors.png) |
-| Fit one projection across coplanar faces, then adjust eligible single-face bindings. | Reuse assemblies with checked transforms, stationary brush poses and light colors for each reference. |
+| Fit one projection across coplanar faces, then adjust eligible single-face bindings. | Reuse assemblies with checked transforms, brush poses, light colors and HDR gains. |
 
 Counter-Strike: Source and its assets are not included.

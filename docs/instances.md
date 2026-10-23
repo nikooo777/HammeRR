@@ -89,19 +89,34 @@ To bind sun and sky colors, use an unnamed `light_environment` in the child:
 
 The child's `_lightHDR` and `_ambientHDR` also accept whole-value tokens.
 Bind them in separate replacement slots; a literal `-1 -1 -1 1` keeps normal HDR inheritance.
-HDR scales and **SunSpreadAngle** remain literal values.
+**SunSpreadAngle** remains a literal value.
 Baked lighting still permits one global `light_environment` across the parent and its children.
+
+To bind an HDR gain:
+
+1. In the child, enable **Advanced properties**.
+2. Set **Property key** to `_lightscaleHDR` and **Value** to `$gain`, then press Enter.
+3. Save the child and return to the parent.
+4. Select its instance reference and enable **Advanced properties**.
+5. Set an unused replacement slot, such as `replace03`, to `$gain 1.5`.
+6. Choose **Direct LDR + HDR** in **Build settings…**, then compile.
+
+`_lightscaleHDR` supports point, spot and sun lights.
+For sky ambient gain, use `_AmbientScaleHDR` on `light_environment` and another replacement slot.
+A gain binding must contain one finite, nonnegative number. Zero is valid.
+An absent gain keeps the normal value of 1. An unresolved token has no evaluated gain.
 
 Use `replace01` through `replace10`. Each value has the form `$name literal`.
 Names are case-insensitive, with 1–64 ASCII letters, digits or underscores; the first character cannot be a digit.
-A parameter must fill the whole color field. Each containing reference must supply every used parameter.
+A parameter must fill the whole supported value field. Each containing reference must supply every used parameter.
 
 Missing, duplicate or unused bindings fail. Invalid effective light values also fail, including in Fullbright builds.
 An unresolved child template can be edited and saved, but cannot compile alone.
 Preview excludes unresolved lamps and reports a reason; the parent still has no child-light preview.
 
-Point and spot lights support `_light` and `_lightHDR`; sun lights also support `_ambient` and `_ambientHDR`.
-Bindings apply only to direct child lights. Scalar fields remain literal.
+Point and spot lights support `_light`, `_lightHDR` and `_lightscaleHDR`.
+Sun lights also support `_ambient`, `_ambientHDR` and `_AmbientScaleHDR`.
+Bindings apply only to direct child lights. Other scalar fields remain literal.
 Nested references bind their own direct child lights. Ancestor forwarding, partial replacement and parameter declarations remain unsupported.
 
 ## Names and parameters

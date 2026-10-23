@@ -10,6 +10,7 @@ const FGD: &str = r#"
     _ambientHDR(color255) : "AmbientHDR" : "-1 -1 -1 1"
     _AmbientScaleHDR(float) : "Ambient HDR scale" : "1"
     _lightscaleHDR(float) : "HDR scale" : "1"
+    SunSpreadAngle(float) : "SunSpreadAngle" : "0"
     rendercolor(color255) : "Color" : "255 255 255"
 ]
 @PointClass base(Light) = light []
@@ -29,10 +30,12 @@ fn create(session: &mut Session, actor: Actor, classname: &str) -> u32 {
     let mut properties = BTreeMap::from([
         ("_light".into(), "$Lamp".into()),
         ("_lightHDR".into(), "$_HDR_1".into()),
+        ("_lightscaleHDR".into(), "$Gain".into()),
     ]);
     if classname == "light_environment" {
         properties.insert("_ambient".into(), "$Sky".into());
         properties.insert("_ambientHDR".into(), "$SkyHDR".into());
+        properties.insert("_AmbientScaleHDR".into(), "$SkyGain".into());
     }
     let ObjectId::Entity(id) = session
         .create_entity(actor, classname, Some(glam::DVec3::Z * 64.0), properties)
@@ -50,7 +53,14 @@ fn light_value_templates_share_create_set_draft_undo_and_save_reopen_for_both_ac
             let mut session = session(actor);
             let id = create(&mut session, actor, classname);
             session
-                .set_entity_properties(actor, id, &[("_light".into(), Some("$Other".into()))])
+                .set_entity_properties(
+                    actor,
+                    id,
+                    &[
+                        ("_light".into(), Some("$Other".into())),
+                        ("_lightscaleHDR".into(), Some("$OtherGain".into())),
+                    ],
+                )
                 .unwrap();
             let before = session.document().vmf().clone();
             let history = session.history_snapshot();
@@ -58,15 +68,25 @@ fn light_value_templates_share_create_set_draft_undo_and_save_reopen_for_both_ac
                 .begin_property_edit(PropertyTarget::Entities(vec![id]))
                 .unwrap();
             let token = session.property_draft().unwrap().token;
-            let mut changes = vec![PropertyChange::Set {
-                key: "_light".into(),
-                value: "$Draft".into(),
-            }];
+            let mut changes = vec![
+                PropertyChange::Set {
+                    key: "_light".into(),
+                    value: "$Draft".into(),
+                },
+                PropertyChange::Set {
+                    key: "_lightscaleHDR".into(),
+                    value: "$GainDraft".into(),
+                },
+            ];
             if classname == "light_environment" {
                 changes.extend(["_ambient", "_ambientHDR"].map(|key| PropertyChange::Set {
                     key: key.into(),
                     value: "$SkyDraft".into(),
                 }));
+                changes.push(PropertyChange::Set {
+                    key: "_AmbientScaleHDR".into(),
+                    value: "$SkyGainDraft".into(),
+                });
             }
             session.update_property_edit(token, changes).unwrap();
             let preview = session.preview_property_edit().unwrap();
@@ -112,12 +132,27 @@ fn light_value_templates_share_create_set_draft_undo_and_save_reopen_for_both_ac
             let reopened = session.document().entity(id).unwrap();
             assert_eq!(reopened.properties.get("_light"), Some("$Draft"));
             assert_eq!(reopened.properties.get("_lightHDR"), Some("$_HDR_1"));
+            assert_eq!(
+                reopened.properties.get("_lightscaleHDR"),
+                Some("$GainDraft")
+            );
             let keys: &[_] = if classname == "light_environment" {
                 assert_eq!(reopened.properties.get("_ambient"), Some("$SkyDraft"));
                 assert_eq!(reopened.properties.get("_ambientHDR"), Some("$SkyDraft"));
-                &["_light", "_lightHDR", "_ambient", "_ambientHDR"]
+                assert_eq!(
+                    reopened.properties.get("_AmbientScaleHDR"),
+                    Some("$SkyGainDraft")
+                );
+                &[
+                    "_light",
+                    "_lightHDR",
+                    "_ambient",
+                    "_ambientHDR",
+                    "_lightscaleHDR",
+                    "_AmbientScaleHDR",
+                ]
             } else {
-                &["_light", "_lightHDR"]
+                &["_light", "_lightHDR", "_lightscaleHDR"]
             };
             let field = session.entity_inspector(id).unwrap();
             for &key in keys {
@@ -128,6 +163,10 @@ fn light_value_templates_share_create_set_draft_undo_and_save_reopen_for_both_ac
                     .unwrap();
                 assert_eq!(field.control, inspector::Control::Text);
                 assert!(field.color.is_none() && field.intensity.is_none());
+                if key.to_ascii_lowercase().contains("scalehdr") {
+                    assert_eq!(field.kind, "float");
+                    assert!(field.components.is_empty() && field.range.is_none());
+                }
                 assert!(
                     field
                         .description
@@ -181,6 +220,16 @@ fn light_value_template_exception_rejects_invalid_tokens_and_other_color_context
             );
             assert!(
                 session
+                    .set_entity_properties(
+                        actor,
+                        id,
+                        &[("_lightscaleHDR".into(), Some(value.clone()))]
+                    )
+                    .is_err(),
+                "{value:?}"
+            );
+            assert!(
+                session
                     .update_property_edit(
                         token,
                         vec![PropertyChange::Set {
@@ -197,7 +246,13 @@ fn light_value_template_exception_rejects_invalid_tokens_and_other_color_context
                 draft
             );
         }
-        for key in ["_ambient", "_ambientHDR", "rendercolor", "_lightscaleHDR"] {
+        for key in [
+            "_ambient",
+            "_ambientHDR",
+            "rendercolor",
+            "_AmbientScaleHDR",
+            "SunSpreadAngle",
+        ] {
             assert!(
                 session
                     .set_entity_properties(actor, id, &[(key.into(), Some("$Lamp".into()))])
@@ -237,13 +292,13 @@ fn light_value_template_exception_rejects_invalid_tokens_and_other_color_context
 }
 
 #[test]
-fn environment_color_bindings_do_not_admit_scalar_or_unrelated_color_parameters() {
+fn environment_bindings_keep_spread_and_unrelated_color_parameters_literal() {
     for actor in [Actor::User, Actor::Agent] {
         let mut session = session(actor);
         let id = create(&mut session, actor, "light_environment");
         let before = session.document().vmf().clone();
         let history = session.history_snapshot();
-        for key in ["_lightscaleHDR", "_AmbientScaleHDR", "rendercolor"] {
+        for key in ["SunSpreadAngle", "rendercolor"] {
             assert!(
                 session
                     .set_entity_properties(actor, id, &[(key.into(), Some("$Sky".into()))])
@@ -252,7 +307,12 @@ fn environment_color_bindings_do_not_admit_scalar_or_unrelated_color_parameters(
             assert_eq!(session.document().vmf(), &before);
             assert_eq!(session.history_snapshot(), history);
         }
-        for key in ["_ambient", "_ambientHDR"] {
+        for key in [
+            "_ambient",
+            "_ambientHDR",
+            "_lightscaleHDR",
+            "_AmbientScaleHDR",
+        ] {
             session
                 .set_entity_properties(actor, id, &[(key.into(), Some("$SetSky".into()))])
                 .unwrap();
@@ -273,47 +333,55 @@ fn light_value_template_exception_preserves_readonly_schema_and_generic_color_va
         let color = catalog.class("light").unwrap().property("_light").unwrap();
         assert!(color.validate("$Lamp").is_err());
         assert!(color.validate("255 220 180 400").is_ok());
-        for declaration in ["color255) readonly", "float)", "color1)"] {
-            session.set_definitions(
-                actor,
-                Catalog::parse(&format!(
-                    "@PointClass = light [ _light({declaration} : \"Brightness\" ]"
-                ))
-                .unwrap(),
-            );
-            let source = session.document().vmf().clone();
-            assert!(
+        for (key, declarations) in [
+            ("_light", ["color255) readonly", "float)", "color1)"]),
+            (
+                "_lightscaleHDR",
+                ["float) readonly", "integer)", "color255)"],
+            ),
+        ] {
+            for declaration in declarations {
+                session.set_definitions(
+                    actor,
+                    Catalog::parse(&format!(
+                        "@PointClass = light [ {key}({declaration} : \"Brightness\" ]"
+                    ))
+                    .unwrap(),
+                );
+                let source = session.document().vmf().clone();
+                assert!(
+                    session
+                        .set_entity_properties(actor, id, &[(key.into(), Some("$Lamp".into()))])
+                        .is_err()
+                );
+                assert!(
+                    session
+                        .create_entity(
+                            actor,
+                            "light",
+                            None,
+                            BTreeMap::from([(key.into(), "$Lamp".into())]),
+                        )
+                        .is_err()
+                );
                 session
-                    .set_entity_properties(actor, id, &[("_light".into(), Some("$Lamp".into()))])
-                    .is_err()
-            );
-            assert!(
-                session
-                    .create_entity(
-                        actor,
-                        "light",
-                        None,
-                        BTreeMap::from([("_light".into(), "$Lamp".into())]),
-                    )
-                    .is_err()
-            );
-            session
-                .begin_property_edit(PropertyTarget::Entities(vec![id]))
-                .unwrap();
-            let token = session.property_draft().unwrap().token;
-            assert!(
-                session
-                    .update_property_edit(
-                        token,
-                        vec![PropertyChange::Set {
-                            key: "_light".into(),
-                            value: "$Lamp".into(),
-                        }],
-                    )
-                    .is_err()
-            );
-            assert_eq!(session.document().vmf(), &source);
-            session.cancel_property_edit(token).unwrap();
+                    .begin_property_edit(PropertyTarget::Entities(vec![id]))
+                    .unwrap();
+                let token = session.property_draft().unwrap().token;
+                assert!(
+                    session
+                        .update_property_edit(
+                            token,
+                            vec![PropertyChange::Set {
+                                key: key.into(),
+                                value: "$Lamp".into(),
+                            }],
+                        )
+                        .is_err()
+                );
+                assert_eq!(session.document().vmf(), &source);
+                session.cancel_property_edit(token).unwrap();
+            }
         }
     }
 }

@@ -83,6 +83,12 @@ fn unresolved_template_lights_have_explicit_diagnostics_without_hiding_valid_lam
                 ("pitch", "-90"),
             ],
         ),
+        add(
+            &mut session,
+            "light",
+            Some(DVec3::Z * 64.0),
+            &[("_light", "255 255 255 10"), ("_lightscaleHDR", "$Gain")],
+        ),
     ];
     enable(&mut session);
     let source = session.document().vmf().clone();
@@ -90,7 +96,7 @@ fn unresolved_template_lights_have_explicit_diagnostics_without_hiding_valid_lam
     let report = session.build_scene().lighting.report;
     assert!(report.active);
     assert_eq!(report.admitted_lights, 1);
-    assert_eq!(report.excluded_lights, 2);
+    assert_eq!(report.excluded_lights, 3);
     let ObjectId::Entity(valid) = valid else {
         unreachable!()
     };
@@ -111,8 +117,15 @@ fn unresolved_template_lights_have_explicit_diagnostics_without_hiding_valid_lam
 }
 
 #[test]
-fn unresolved_environment_color_channels_exclude_the_sun_with_sky_ambient_enabled_or_disabled() {
-    for key in ["_light", "_lightHDR", "_ambient", "_ambientHDR"] {
+fn unresolved_environment_values_exclude_the_sun_with_sky_ambient_enabled_or_disabled() {
+    for key in [
+        "_light",
+        "_lightHDR",
+        "_ambient",
+        "_ambientHDR",
+        "_lightscaleHDR",
+        "_AmbientScaleHDR",
+    ] {
         let (_directory, mut session, _) = fixture();
         add(
             &mut session,

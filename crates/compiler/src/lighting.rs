@@ -263,10 +263,17 @@ fn hdr_color(
     Ok(Some(color))
 }
 
-fn hdr_scale(entity: &MapEntity, name: &str) -> Result<f64, String> {
+fn hdr_scale(
+    entity: &MapEntity,
+    name: &str,
+    defer_parameters: bool,
+) -> Result<Option<f64>, String> {
     let Some(value) = property(entity, name) else {
-        return Ok(1.0);
+        return Ok(Some(1.0));
     };
+    if unresolved_value(entity, name, defer_parameters) {
+        return Ok(None);
+    }
     let value = value
         .trim()
         .parse::<f64>()
@@ -274,7 +281,7 @@ fn hdr_scale(entity: &MapEntity, name: &str) -> Result<f64, String> {
     if !value.is_finite() || value < 0.0 {
         return Err(format!("HDR light {name} must be finite and nonnegative"));
     }
-    Ok(value)
+    Ok(Some(value))
 }
 
 fn checked_intensity(intensity: DVec3) -> Result<DVec3, String> {
@@ -297,10 +304,10 @@ fn point_light_pose_style(entity: &MapEntity) -> Result<(DVec3, u8), String> {
     Ok((origin, style as u8))
 }
 
-fn unresolved_color(entity: &MapEntity, key: &str, defer_parameters: bool) -> bool {
+fn unresolved_value(entity: &MapEntity, key: &str, defer_parameters: bool) -> bool {
     defer_parameters
         && property(entity, key).is_some_and(|value| {
-            map_core::light::color_parameter(&entity.classname, key, value).is_some()
+            map_core::light::value_parameter(&entity.classname, key, value).is_some()
         })
 }
 
@@ -311,7 +318,7 @@ fn point_light_color(
 ) -> Result<Option<LightColor>, String> {
     let color = match kind {
         LightingKind::Ldr => {
-            if unresolved_color(entity, "_light", defer_parameters) {
+            if unresolved_value(entity, "_light", defer_parameters) {
                 return Ok(None);
             }
             let color = LightColor::parse(
@@ -332,13 +339,13 @@ fn point_light_color(
             color
         }
         LightingKind::Hdr => {
-            if unresolved_color(entity, "_lightHDR", defer_parameters) {
+            if unresolved_value(entity, "_lightHDR", defer_parameters) {
                 return Ok(None);
             }
             match hdr_color(entity, "_lightHDR", true)? {
                 Some(color) => color,
                 None => {
-                    if unresolved_color(entity, "_light", defer_parameters) {
+                    if unresolved_value(entity, "_light", defer_parameters) {
                         return Ok(None);
                     }
                     hdr_color(entity, "_light", false)?
@@ -432,11 +439,11 @@ impl PointLight {
         let color = point_light_color(entity, kind, defer_parameters)?;
         let falloff = falloff::Falloff::from_entity(entity)?;
         let scale = if kind == LightingKind::Hdr {
-            hdr_scale(entity, "_lightscaleHDR")?
+            hdr_scale(entity, "_lightscaleHDR", defer_parameters)?
         } else {
-            1.0
+            Some(1.0)
         };
-        let Some(color) = color else {
+        let (Some(color), Some(scale)) = (color, scale) else {
             return Ok(None);
         };
         let mut intensity = color.intensity(falloff.gain);
@@ -949,6 +956,59 @@ mod input_tests {
                 .map(|(key, value)| (key.to_string(), value.to_string()))
                 .collect(),
         }
+    }
+
+    #[test]
+    fn deferred_hdr_gains_remain_unknown_and_only_absent_gains_use_one() {
+        let source = entity(&[("_light", "255 0 0 200"), ("_lightscaleHDR", "$Gain")]);
+        assert_eq!(hdr_scale(&source, "_lightscaleHDR", true).unwrap(), None);
+        assert!(
+            PointLight::parse(&source, 0, LightingKind::Hdr, true)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            PointLight::parse(&source, 0, LightingKind::Ldr, true)
+                .unwrap()
+                .unwrap()
+                .intensity,
+            DVec3::new(200.0, 0.0, 0.0)
+        );
+        assert!(PointLight::from_entity_kind(&source, 0, LightingKind::Hdr).is_err());
+        assert_eq!(
+            hdr_scale(&entity(&[]), "_lightscaleHDR", true).unwrap(),
+            Some(1.0)
+        );
+        for value in ["", "-1", "inf", "NaN", "0 1", "$bad-name"] {
+            assert!(
+                hdr_scale(
+                    &entity(&[("_lightscaleHDR", value)]),
+                    "_lightscaleHDR",
+                    true
+                )
+                .is_err(),
+                "{value:?}"
+            );
+        }
+        let mut environment = source.clone();
+        environment.classname = "light_environment".into();
+        environment
+            .properties
+            .push(("_AmbientScaleHDR".into(), "$AmbientGain".into()));
+        let targets = map_core::light::Targets::new();
+        assert!(
+            sky::SkyLight::parse(&environment, &targets, LightingKind::Hdr, true)
+                .unwrap()
+                .is_none()
+        );
+        environment
+            .properties
+            .push(("_ambientHDR".into(), "invalid known color".into()));
+        assert!(
+            sky::SkyLight::parse(&environment, &targets, LightingKind::Hdr, true)
+                .unwrap_err()
+                .contains("_ambientHDR")
+        );
     }
 
     #[test]

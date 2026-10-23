@@ -28,7 +28,7 @@ The integrated compiler is experimental. File operations, BSP publication and ga
 | [Sounds](sounds.md) | File/script browsing, short audition and assignment. | Game mixing, soundscapes and sentence synthesis. |
 | [Organization](layers.md) | Groups, layers, clipboard, prefabs, notes and saved views. | Automatic category rules and embedded prefab assets. |
 | [Measurements](measurements.md) | Saved rulers, surface picks and origin/local entity attachments. | Surface attachments, parenting and animated bones. |
-| [Instances](instance-authoring.md) | Saved references, checked contents, point/spot/sun/sky color bindings and bounded extraction. | In-place child editing and general replacement parameters. |
+| [Instances](instance-authoring.md) | Saved references, checked contents, light color/HDR gain bindings and bounded extraction. | In-place child editing and general replacement parameters. |
 
 ## Compiler
 
@@ -45,7 +45,7 @@ The integrated compiler is experimental. File operations, BSP publication and ga
 | [Detail props](material-detail-scattering.md) | Explicit and generated decorative models, cards, cross/tri shapes and supported lighting. | Editor display of final generated details. |
 | [Reflections](reflections.md) | Private LDR or paired LDR/HDR captures and verified packing. | Recursive reflection bounces and unsupported capture scenes. |
 | [Overlays](overlays.md) | Coplanar face-group fitting, native projections, face splitting, supported terrain targets and water transitions. | Full projected-material viewport preview; multi-face refit and corner editing. |
-| [Assemblies](instances.md) | Checked nested transforms, stationary child initial poses, light colors for each reference and supported geometry/entities. | General runtime entities, scripting and name fixups. |
+| [Assemblies](instances.md) | Checked nested transforms, stationary child initial poses, per-reference light colors/HDR gains and supported geometry/entities. | General runtime entities, scripting and name fixups. |
 | [Visibility helpers](occluders.md) | Occluders and eligible visibility-cluster volumes. | Unsupported memberships and dynamic child control. |
 | [Inspection](baked-lightmaps.md) | Owned face lightmaps, prop vertex bytes and native light records. | Full baked-output viewport rendering. |
 | [Publication](compile-regions.md) | Captured build scope, cancellation, checked output writes and private game launch. | General cross-platform file/runtime support. |

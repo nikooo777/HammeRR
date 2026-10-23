@@ -1267,8 +1267,14 @@ impl Session {
             }
             if let Some(value) = value
                 && !water_damping
-                && !(property.kind == "color255"
-                    && map_core::light::color_parameter(classname, key, value).is_some())
+                && !map_core::light::value_kind(classname, key).is_some_and(|kind| {
+                    let expected_kind = match kind {
+                        map_core::light::ValueKind::Color => "color255",
+                        map_core::light::ValueKind::HdrGain => "float",
+                    };
+                    property.kind == expected_kind
+                        && map_core::light::value_parameter(classname, key, value).is_some()
+                })
             {
                 property.validate(value)?;
             }

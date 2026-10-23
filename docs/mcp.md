@@ -166,11 +166,13 @@ Save the child, then compile its parent. Compilation lowers the initial pose int
 `brush_model_preview.deferred_checks` includes `initial_pose`; reference inspection still provides no child model mesh.
 
 For [light colors per reference](instances.md#light-colors-per-reference), set a child light's `_light` or `_lightHDR` to `$name`.
-Child `light_environment` also supports `_ambient` and `_ambientHDR`; scales and spread remain literal.
+Child `light_environment` also supports `_ambient` and `_ambientHDR`.
+Bind `_lightscaleHDR` on point/spot/sun lights or `_AmbientScaleHDR` on sun lights to one finite, nonnegative scalar literal.
+Other scalar fields, including `SunSpreadAngle`, remain literal.
 Use `create_entity`, `set_entity_properties` or the property-edit tools.
 Set the containing helper's `replace01` through `replace10` to `$name literal` through the same operations.
 Save the child, refresh contents, then compile the parent. Missing, duplicate and unused bindings fail explicitly.
-Unresolved standalone templates fail in every build mode and are excluded from authored-lighting preview, including HDR or ambient tokens with sky ambient off.
+Unresolved standalone templates fail in every build mode and are excluded from authored-lighting preview, including HDR color or gain tokens with sky ambient off.
 The reference form preserves bindings. Extraction with parameters and general replacements remain unsupported.
 
 Static-prop packing accepts up to eight Patch include edges with one basetexture edit per Patch.

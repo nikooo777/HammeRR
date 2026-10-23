@@ -136,6 +136,8 @@ fn environment_color_binding_mcp_uses_shared_create_set_and_ambient_drafts() {
                 _lightHDR(color255) : "HDR brightness" : "-1 -1 -1 1"
                 _ambient(color255) : "Ambient" : "255 255 255 20"
                 _ambientHDR(color255) : "HDR ambient" : "-1 -1 -1 1"
+                _lightscaleHDR(float) : "HDR gain" : "1"
+                _AmbientScaleHDR(float) : "HDR ambient gain" : "1"
             ]"#,
         )
         .unwrap(),
@@ -150,18 +152,24 @@ fn environment_color_binding_mcp_uses_shared_create_set_and_ambient_drafts() {
         let description = server.get_tool(tool).unwrap().description.unwrap();
         assert!(description.contains("light_environment"));
         assert!(description.contains("_ambientHDR"));
+        assert!(description.contains("_AmbientScaleHDR"));
     }
     let created = report(server.create_entity(Parameters(
         serde_json::from_value(json!({
             "classname":"light_environment","origin":[0,0,64],
-            "properties":{"_light":"$Sun","_lightHDR":"$SunHDR","_ambient":"$Sky","_ambientHDR":"$SkyHDR"}
+            "properties":{"_light":"$Sun","_lightHDR":"$SunHDR","_ambient":"$Sky","_ambientHDR":"$SkyHDR","_lightscaleHDR":"$Gain","_AmbientScaleHDR":"$SkyGain"}
         }))
         .unwrap(),
     )));
     let id = created["id"].as_str().unwrap();
-    report(server.set_entity_properties(Parameters(
-        serde_json::from_value(json!({"id":id,"set":{"_ambientHDR":"$OtherSkyHDR"}})).unwrap(),
-    )));
+    report(
+        server.set_entity_properties(Parameters(
+            serde_json::from_value(
+                json!({"id":id,"set":{"_ambientHDR":"$OtherSkyHDR","_lightscaleHDR":"$OtherGain"}}),
+            )
+            .unwrap(),
+        )),
+    );
     let before = lock(&shared).document().vmf().clone();
     let opened = report(server.begin_property_edit(Parameters(
         serde_json::from_value(json!({"ids":[id]})).unwrap(),
@@ -171,12 +179,19 @@ fn environment_color_binding_mcp_uses_shared_create_set_and_ambient_drafts() {
         server.update_property_edit(Parameters(
             serde_json::from_value(json!({"token":token,"changes":[
                 {"action":"set","key":"_ambient","value":"$SkyDraft"},
-                {"action":"set","key":"_ambientHDR","value":"$SkyHDRDraft"}
+                {"action":"set","key":"_ambientHDR","value":"$SkyHDRDraft"},
+                {"action":"set","key":"_lightscaleHDR","value":"$GainDraft"},
+                {"action":"set","key":"_AmbientScaleHDR","value":"$SkyGainDraft"}
             ]}))
             .unwrap(),
         )),
     );
-    for key in ["_ambient", "_ambientHDR"] {
+    for key in [
+        "_ambient",
+        "_ambientHDR",
+        "_lightscaleHDR",
+        "_AmbientScaleHDR",
+    ] {
         let field = &staged["preview"]["properties"]
             .as_array()
             .unwrap()
@@ -185,6 +200,10 @@ fn environment_color_binding_mcp_uses_shared_create_set_and_ambient_drafts() {
             .unwrap()["field"];
         assert_eq!(field["control"], "text");
         assert!(field["color"].is_null() && field["intensity"].is_null());
+        if key.to_ascii_lowercase().contains("scalehdr") {
+            assert_eq!(field["kind"], "float");
+            assert!(field["range"].is_null());
+        }
         assert!(
             field["description"]
                 .as_str()
@@ -197,8 +216,16 @@ fn environment_color_binding_mcp_uses_shared_create_set_and_ambient_drafts() {
     let scope = report(server.get_compile_settings())["light_value_bindings"].clone();
     assert_eq!(
         scope["class_properties"]["light_environment"],
-        json!(["_light", "_lightHDR", "_ambient", "_ambientHDR"])
+        json!([
+            "_light",
+            "_lightHDR",
+            "_ambient",
+            "_ambientHDR",
+            "_lightscaleHDR",
+            "_AmbientScaleHDR"
+        ])
     );
-    assert_eq!(scope["scalar_parameters"], false);
+    assert_eq!(scope["scalar_parameters"], true);
+    assert_eq!(scope["other_scalar_parameters"], false);
     assert!(server.offscreen.lock().unwrap().renderer.is_none());
 }

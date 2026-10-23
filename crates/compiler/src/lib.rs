@@ -1068,7 +1068,7 @@ fn build(
         }
         if !entity.hidden
             && entity.properties.iter().any(|(key, value)| {
-                map_core::light::color_field(entity.classname().unwrap_or_default(), key)
+                map_core::light::value_kind(entity.classname().unwrap_or_default(), key).is_some()
                     && value.contains('$')
             })
         {

@@ -1159,27 +1159,43 @@ fn bind_environment(helper: &mut Entity, values: [&str; 4]) {
 
 #[test]
 fn immediate_environment_bindings_match_independent_literal_bsp_in_every_mode() {
-    for (values, hdr_intensities) in [
+    for (values, gains, hdr_intensities) in [
         (
             ["255 0 0 200", "0 255 0 600", "0 0 255 40", "255 0 0 20"],
+            ["0.5", "2"],
             vec![[0.0, 300.0 / 255.0, 0.0], [40.0 / 255.0, 0.0, 0.0]],
         ),
         (
             ["255 0 0 200", "-1 -1 -1 1", "0 0 255 40", "-1 -1 -1 1"],
-            vec![[100.0 / 255.0, 0.0, 0.0], [0.0, 0.0, 80.0 / 255.0]],
+            ["2", "3"],
+            vec![[400.0 / 255.0, 0.0, 0.0], [0.0, 0.0, 120.0 / 255.0]],
         ),
         (
             ["255 0 0 200", "0 255 0 600", "0 0 255 40", "0"],
-            vec![[0.0, 300.0 / 255.0, 0.0]],
+            ["0", "0"],
+            vec![[0.0; 3]],
         ),
     ] {
         let directory = tempfile::tempdir().unwrap();
         let game = game(directory.path());
-        let child = leaf(environment_template("8 -4 160"));
+        let mut child = leaf(environment_template("8 -4 160"));
+        child.entities[0]
+            .properties
+            .set("_lightscaleHDR", "$SunGain");
+        child.entities[0]
+            .properties
+            .set("_AmbientScaleHDR", "$SkyGain");
         let raw = write_source(directory.path(), "leaf.vmf", &child);
         let mut parent = room(true, true);
         let owner = instance(&mut parent, "leaf.vmf", "16 24 0", "0 0 0");
         bind_environment(parent.entities.last_mut().unwrap(), values);
+        let helper = parent.entities.last_mut().unwrap();
+        helper
+            .properties
+            .set("replace04", format!("$sungain {}", gains[0]));
+        helper
+            .properties
+            .set("replace05", format!("$skygain {}", gains[1]));
         let before = parent.clone();
         let context = saved_parent(directory.path(), &parent);
         let prepared = resolve(&parent, &context);
@@ -1194,10 +1210,16 @@ fn immediate_environment_bindings_match_independent_literal_bsp_in_every_mode() 
         for ((key, _, _), value) in COLOR_BINDINGS.into_iter().zip(values) {
             assert_eq!(generated.properties.get(key), Some(value));
         }
+        assert_eq!(generated.properties.get("_lightscaleHDR"), Some(gains[0]));
+        assert_eq!(generated.properties.get("_AmbientScaleHDR"), Some(gains[1]));
         let mut authored_literal = environment("24 20 160", Some("0 0 0"), "-45");
         for ((key, _, _), value) in COLOR_BINDINGS.into_iter().zip(values) {
             authored_literal.properties.set(key, value);
         }
+        authored_literal.properties.set("_lightscaleHDR", gains[0]);
+        authored_literal
+            .properties
+            .set("_AmbientScaleHDR", gains[1]);
         let expected = literal(&parent, &[authored_literal]);
         for mode in MODES {
             let actual = successful(compile_saved(&parent, &game, mode, &context));
@@ -1246,6 +1268,11 @@ fn immediate_environment_bindings_validate_all_effective_channels_before_region_
         "ambient hdr",
         "scalar",
         "embedded",
+        "negative gain",
+        "nonfinite gain",
+        "gain overflow",
+        "missing gain",
+        "spread token",
     ] {
         let mut child = baseline.clone();
         let mut parent = room(true, false);
@@ -1288,6 +1315,33 @@ fn immediate_environment_bindings_validate_all_effective_channels_before_region_
                 child.entities[0].properties.set("_ambient", "0 $Sky 0 40");
                 "light color"
             }
+            "negative gain" => {
+                child.entities[0].properties.set("_lightscaleHDR", "$gain");
+                helper.properties.set("replace04", "$gain -1");
+                "_lightscaleHDR must be finite and nonnegative"
+            }
+            "nonfinite gain" | "gain overflow" => {
+                child.entities[0]
+                    .properties
+                    .set("_AmbientScaleHDR", "$gain");
+                if issue == "nonfinite gain" {
+                    helper.properties.set("replace04", "$gain inf");
+                    "_AmbientScaleHDR must be finite and nonnegative"
+                } else {
+                    helper.properties.set("replace04", "$gain 1e40");
+                    "intensity exceeds native world-light limits"
+                }
+            }
+            "missing gain" => {
+                child.entities[0]
+                    .properties
+                    .set("_AmbientScaleHDR", "$gain");
+                "missing immediate binding $gain"
+            }
+            "spread token" => {
+                child.entities[0].properties.set("SunSpreadAngle", "$Sky");
+                "Invalid light SunSpreadAngle"
+            }
             _ => unreachable!(),
         };
         let raw = write_source(directory.path(), "leaf.vmf", &child);
@@ -1315,13 +1369,21 @@ fn immediate_environment_bindings_validate_all_effective_channels_before_region_
         );
     }
 
-    let raw = write_source(directory.path(), "leaf.vmf", &baseline);
+    let mut gain_only = leaf(environment("600 0 128", Some("0 0 0"), "-45"));
+    for (key, value) in [
+        ("_lightHDR", "-1 -1 -1 1"),
+        ("_ambientHDR", "-1 -1 -1 1"),
+        ("_lightscaleHDR", "$SunGain"),
+        ("_AmbientScaleHDR", "$SkyGain"),
+    ] {
+        gain_only.entities[0].properties.set(key, value);
+    }
+    let raw = write_source(directory.path(), "leaf.vmf", &gain_only);
     let mut parent = room(true, false);
     instance(&mut parent, "leaf.vmf", "0 0 0", "0 0 0");
-    bind_environment(
-        parent.entities.last_mut().unwrap(),
-        ["255 0 0 200", "-1 -1 -1 1", "0 0 255 40", "-1 -1 -1 1"],
-    );
+    let helper = parent.entities.last_mut().unwrap();
+    helper.properties.set("replace04", "$sungain 0.5");
+    helper.properties.set("replace05", "$skygain 2");
     region(&mut parent);
     let context = saved_parent(directory.path(), &parent);
     let mut authored_literal = environment("600 0 128", Some("0 0 0"), "-45");

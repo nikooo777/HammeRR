@@ -135,6 +135,8 @@ fn bound_environment_colors_refresh_without_parent_preview_and_preserve_saved_te
                     ("_lightHDR".into(), Some("$SunHDR".into())),
                     ("_ambient".into(), Some("$Sky".into())),
                     ("_ambientHDR".into(), Some("$SkyHDR".into())),
+                    ("_lightscaleHDR".into(), Some("$SunGain".into())),
+                    ("_AmbientScaleHDR".into(), Some("$SkyGain".into())),
                 ],
             )
             .unwrap();
@@ -153,6 +155,8 @@ fn bound_environment_colors_refresh_without_parent_preview_and_preserve_saved_te
                     ("replace02".into(), Some("$sunhdr -1 -1 -1 1".into())),
                     ("replace03".into(), Some("$sky 0 0 255 40".into())),
                     ("replace10".into(), Some("$skyhdr -1 -1 -1 1".into())),
+                    ("replace04".into(), Some("$sungain 0.5".into())),
+                    ("replace05".into(), Some("$skygain 2".into())),
                 ],
             )
             .unwrap();
@@ -175,14 +179,21 @@ fn bound_environment_colors_refresh_without_parent_preview_and_preserve_saved_te
         assert_eq!(report["geometry"]["vertices"], 0);
         assert_eq!(
             report["light_value_bindings"]["class_properties"]["light_environment"],
-            json!(["_light", "_lightHDR", "_ambient", "_ambientHDR"])
+            json!([
+                "_light",
+                "_lightHDR",
+                "_ambient",
+                "_ambientHDR",
+                "_lightscaleHDR",
+                "_AmbientScaleHDR"
+            ])
         );
         assert_eq!(session.document().vmf(), &before);
         assert_eq!(session.history_snapshot(), history);
         assert_eq!(std::fs::read(&fixture.source).unwrap(), parent);
         assert_eq!(std::fs::read(&fixture.child).unwrap(), child);
         session
-            .set_entity_properties(actor, owner, &[("replace03".into(), None)])
+            .set_entity_properties(actor, owner, &[("replace05".into(), None)])
             .unwrap();
         let failed = refresh(session, actor);
         assert_eq!(failed["state"], "failed", "{failed}");

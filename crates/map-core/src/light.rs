@@ -19,13 +19,38 @@ pub fn parameter_name(value: &str) -> Option<&str> {
     Some(name)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ValueKind {
+    Color,
+    HdrGain,
+}
+
+pub fn value_kind(classname: &str, key: &str) -> Option<ValueKind> {
+    if !matches!(classname, "light" | "light_spot" | "light_environment") {
+        return None;
+    }
+    if key.eq_ignore_ascii_case("_light")
+        || key.eq_ignore_ascii_case("_lightHDR")
+        || (classname == "light_environment"
+            && (key.eq_ignore_ascii_case("_ambient") || key.eq_ignore_ascii_case("_ambientHDR")))
+    {
+        Some(ValueKind::Color)
+    } else if key.eq_ignore_ascii_case("_lightscaleHDR")
+        || (classname == "light_environment" && key.eq_ignore_ascii_case("_AmbientScaleHDR"))
+    {
+        Some(ValueKind::HdrGain)
+    } else {
+        None
+    }
+}
+
+pub fn value_parameter<'a>(classname: &str, key: &str, value: &'a str) -> Option<&'a str> {
+    value_kind(classname, key)?;
+    parameter_name(value)
+}
+
 pub fn color_field(classname: &str, key: &str) -> bool {
-    matches!(classname, "light" | "light_spot" | "light_environment")
-        && (key.eq_ignore_ascii_case("_light")
-            || key.eq_ignore_ascii_case("_lightHDR")
-            || (classname == "light_environment"
-                && (key.eq_ignore_ascii_case("_ambient")
-                    || key.eq_ignore_ascii_case("_ambientHDR"))))
+    value_kind(classname, key) == Some(ValueKind::Color)
 }
 
 pub fn color_parameter<'a>(classname: &str, key: &str, value: &'a str) -> Option<&'a str> {
@@ -150,6 +175,32 @@ mod tests {
         ] {
             assert!(!color_field(class, key));
             assert_eq!(color_parameter(class, key, "$lamp"), None);
+        }
+    }
+
+    #[test]
+    fn hdr_gain_parameters_share_token_grammar_without_widening_color_or_other_scalar_fields() {
+        for (class, key) in [
+            ("light", "_lightscaleHDR"),
+            ("light_spot", "_LIGHTSCALEHDR"),
+            ("light_environment", "_lightscaleHDR"),
+            ("light_environment", "_AmbientScaleHDR"),
+        ] {
+            assert_eq!(value_kind(class, key), Some(ValueKind::HdrGain));
+            assert_eq!(value_parameter(class, key, "$Gain_1"), Some("Gain_1"));
+            assert_eq!(value_parameter(class, key, "$Gain suffix"), None);
+            assert_eq!(color_parameter(class, key, "$Gain_1"), None);
+        }
+        for (class, key) in [
+            ("light", "_AmbientScaleHDR"),
+            ("light_spot", "_AmbientScaleHDR"),
+            ("light_environment", "SunSpreadAngle"),
+            ("light_environment", "pitch"),
+            ("light", "_quadratic_attn"),
+            ("light_dynamic", "_lightscaleHDR"),
+        ] {
+            assert_eq!(value_kind(class, key), None);
+            assert_eq!(value_parameter(class, key, "$Gain"), None);
         }
     }
 

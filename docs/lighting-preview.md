@@ -21,7 +21,7 @@ Use **Reload material assets** after changing materials.
 ## Limits
 
 - No shadows, bounce, animation or sky visibility test. Lights can shine through walls.
-- Unresolved point/spot or sun/sky color parameters exclude that light with a reason. This includes HDR and ambient tokens even when **Include LDR sky ambient** is off. Other valid lamps remain available.
+- Unresolved color or HDR gain parameters exclude that light with a reason. This includes HDR and ambient tokens in LDR preview, even when **Include LDR sky ambient** is off. Other valid lamps remain available.
 - At most 32 visible, unnamed, constant lights, including one sun.
 - Parenting, switching, patterns and initially dark lights are unsupported.
 - Supported opaque brush faces, single-base terrain and model meshes receive light.

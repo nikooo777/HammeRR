@@ -199,7 +199,7 @@ fn field(entity: &Entity, class: Option<&Class>, key: String) -> Field {
         key,
         value,
     };
-    if map_core::light::color_parameter(
+    if map_core::light::value_parameter(
         entity.classname().unwrap_or_default(),
         &result.key,
         &result.value,

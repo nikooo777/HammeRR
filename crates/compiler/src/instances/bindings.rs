@@ -55,7 +55,7 @@ pub(super) fn replacement(key: &str, value: &str) -> Result<(), String> {
 
 pub(super) fn has_parameters(entity: &Entity) -> bool {
     entity.properties.iter().any(|(key, value)| {
-        map_core::light::color_parameter(entity.classname().unwrap_or(""), key, value).is_some()
+        map_core::light::value_parameter(entity.classname().unwrap_or(""), key, value).is_some()
     })
 }
 
@@ -113,7 +113,7 @@ impl<'a> Bindings<'a> {
                 .count();
             if let Some((_, binding)) = self.get(&suffix[..length]) {
                 return Err(format!(
-                    "Instance light binding ${} appears outside an immediate supported whole light color field",
+                    "Instance light binding ${} appears outside an immediate supported whole light value field",
                     binding.name
                 ));
             }
@@ -161,7 +161,7 @@ impl<'a> Bindings<'a> {
             for (key, value) in entity.properties.iter() {
                 self.unsupported(key)?;
                 if let Some(name) =
-                    map_core::light::color_parameter(entity.classname().unwrap_or(""), key, value)
+                    map_core::light::value_parameter(entity.classname().unwrap_or(""), key, value)
                 {
                     let (index, _) = self.get(name).ok_or_else(|| {
                         format!(
@@ -213,7 +213,7 @@ impl<'a> Bindings<'a> {
             .iter()
             .try_fold(0_usize, |bytes, (key, value)| {
                 let value =
-                    if let Some(name) = map_core::light::color_parameter(classname, key, value) {
+                    if let Some(name) = map_core::light::value_parameter(classname, key, value) {
                         self.get(name).map(|(_, binding)| binding.value)?
                     } else {
                         value
@@ -232,7 +232,7 @@ impl<'a> Bindings<'a> {
         entity.properties.0.reserve(original.properties.0.len());
         for (key, value) in original.properties.iter() {
             control.checkpoint()?;
-            let value = if let Some(name) = map_core::light::color_parameter(classname, key, value)
+            let value = if let Some(name) = map_core::light::value_parameter(classname, key, value)
             {
                 let (_, binding) = self.get(name).ok_or("Missing immediate light binding")?;
                 binding.value

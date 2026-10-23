@@ -36,6 +36,51 @@ fn software() {
 }
 
 #[test]
+fn unresolved_hdr_gain_rows_keep_float_types_and_raw_text_controls() {
+    let mut session = Session::new(Err("raw gain inspection needs no assets".into()));
+    session.set_definitions(
+        Actor::User,
+        Catalog::parse(
+            r#"@PointClass = light_environment [
+        _lightscaleHDR(float) : "HDR gain" : "1"
+        _AmbientScaleHDR(float) : "HDR ambient gain" : "1"
+    ]"#,
+        )
+        .unwrap(),
+    );
+    let ObjectId::Entity(id) = session
+        .create_entity(
+            Actor::User,
+            "light_environment",
+            None,
+            std::collections::BTreeMap::from([
+                ("_lightscaleHDR".into(), "$Gain".into()),
+                ("_AmbientScaleHDR".into(), "$SkyGain".into()),
+            ]),
+        )
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    let rows: Vec<_> = session
+        .entity_inspector(id)
+        .unwrap()
+        .properties
+        .into_iter()
+        .filter(|field| field.key.to_ascii_lowercase().contains("scalehdr"))
+        .map(property_row)
+        .collect();
+    assert_eq!(rows.len(), 2);
+    for row in rows {
+        assert_eq!(row.type_name, "float");
+        assert_eq!(row.control, "text");
+        assert!(!row.numeric && !row.has_intensity);
+        assert!(row.value.starts_with('$'));
+        assert!(row.description.contains("Unresolved template light value"));
+    }
+}
+
+#[test]
 fn hsv_hsl_inspector_picker_preserves_precision_brightness_cancel_and_undo() {
     software();
     let f = fixture();

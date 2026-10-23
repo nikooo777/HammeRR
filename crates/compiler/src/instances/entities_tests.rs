@@ -1141,21 +1141,33 @@ fn light_bindings(helper: &mut Entity, ldr: &str, hdr: &str) {
 fn sibling_light_bindings_match_independent_literal_dual_bsp_and_preserve_raw_sources() {
     let mut point = parameter_light(20, "light", "-48 16 128");
     point.properties.set("style", "1");
+    point.properties.set("_lightscaleHDR", "$gain");
     let mut spot = parameter_light(21, "light_spot", "64 -16 160");
     spot.properties.set("style", "11");
+    spot.properties.set("_lightscaleHDR", "$gain");
     let (directory, mut parent, template, game) = emitter_fixture(vec![point, spot]);
     let colors = [
         ("255 96 32 300", "32 96 255 450"),
         ("64 255 160 240", "256 80 40 600"),
     ];
+    let gains = ["2", "0.5"];
     light_bindings(
         parent.entities.last_mut().unwrap(),
         colors[0].0,
         colors[0].1,
     );
+    parent
+        .entities
+        .last_mut()
+        .unwrap()
+        .properties
+        .set("replace09", format!("$GAIN {}", gains[0]));
     let id = parent.object_ids().max().unwrap() + 1;
     let mut sibling = nested_helper(id, "child.vmf", "-24 12 0", "0 0 0");
     light_bindings(&mut sibling, colors[1].0, colors[1].1);
+    sibling
+        .properties
+        .set("replace09", format!("$gain {}", gains[1]));
     parent.entities.push(sibling);
     write_child(directory.path(), "parent.vmf", &parent);
     let raw = std::fs::read(directory.path().join("child.vmf")).unwrap();
@@ -1163,7 +1175,7 @@ fn sibling_light_bindings_match_independent_literal_dual_bsp_and_preserve_raw_so
     let mut literal = Document::new(parent.clone());
     literal
         .edit("independent sibling colors", |tx| {
-            for (helper, (ldr, hdr)) in parent
+            for ((helper, (ldr, hdr)), gain) in parent
                 .entities
                 .iter()
                 .filter(|entity| {
@@ -1172,6 +1184,7 @@ fn sibling_light_bindings_match_independent_literal_dual_bsp_and_preserve_raw_so
                         .is_some_and(|class| class.eq_ignore_ascii_case("func_instance"))
                 })
                 .zip(colors)
+                .zip(gains)
             {
                 for original in &template.entities {
                     let mut light =
@@ -1183,6 +1196,7 @@ fn sibling_light_bindings_match_independent_literal_dual_bsp_and_preserve_raw_so
                     );
                     light.properties.set("_light", ldr);
                     light.properties.set("_lightHDR", hdr);
+                    light.properties.set("_lightscaleHDR", gain);
                     light
                         .properties
                         .set("style", original.properties.get("style").unwrap());
@@ -1469,6 +1483,10 @@ fn unresolved_standalone_light_templates_fail_in_every_compile_mode() {
         ("light_environment", "_lightHDR"),
         ("light_environment", "_ambient"),
         ("light_environment", "_ambientHDR"),
+        ("light", "_lightscaleHDR"),
+        ("light_spot", "_lightscaleHDR"),
+        ("light_environment", "_lightscaleHDR"),
+        ("light_environment", "_AmbientScaleHDR"),
     ] {
         let mut vmf = test_common::room();
         let mut light = static_light(vmf.object_ids().max().unwrap() + 1, class, "0 0 96");

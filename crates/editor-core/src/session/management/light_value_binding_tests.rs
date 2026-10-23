@@ -10,6 +10,8 @@ const FGD: &str = r#"
     _ambientHDR(color255) : "AmbientHDR" : "-1 -1 -1 1"
     _AmbientScaleHDR(float) : "Ambient HDR scale" : "1"
     _lightscaleHDR(float) : "HDR scale" : "1"
+    _fifty_percent_distance(string) : "50 percent distance" : "0"
+    _zero_percent_distance(string) : "Near-zero distance" : "0"
     SunSpreadAngle(float) : "SunSpreadAngle" : "0"
     rendercolor(color255) : "Color" : "255 255 255"
 ]
@@ -36,6 +38,10 @@ fn create(session: &mut Session, actor: Actor, classname: &str) -> u32 {
         properties.insert("_ambient".into(), "$Sky".into());
         properties.insert("_ambientHDR".into(), "$SkyHDR".into());
         properties.insert("_AmbientScaleHDR".into(), "$SkyGain".into());
+    }
+    if matches!(classname, "light" | "light_spot") {
+        properties.insert("_fifty_percent_distance".into(), "$Half".into());
+        properties.insert("_zero_percent_distance".into(), "$End".into());
     }
     let ObjectId::Entity(id) = session
         .create_entity(actor, classname, Some(glam::DVec3::Z * 64.0), properties)
@@ -87,6 +93,16 @@ fn light_value_templates_share_create_set_draft_undo_and_save_reopen_for_both_ac
                     key: "_AmbientScaleHDR".into(),
                     value: "$SkyGainDraft".into(),
                 });
+            }
+            if classname != "light_environment" {
+                changes.extend(
+                    ["_fifty_percent_distance", "_zero_percent_distance"].map(|key| {
+                        PropertyChange::Set {
+                            key: key.into(),
+                            value: "$DistanceDraft".into(),
+                        }
+                    }),
+                );
             }
             session.update_property_edit(token, changes).unwrap();
             let preview = session.preview_property_edit().unwrap();
@@ -152,7 +168,21 @@ fn light_value_templates_share_create_set_draft_undo_and_save_reopen_for_both_ac
                     "_AmbientScaleHDR",
                 ]
             } else {
-                &["_light", "_lightHDR", "_lightscaleHDR"]
+                assert_eq!(
+                    reopened.properties.get("_fifty_percent_distance"),
+                    Some("$DistanceDraft")
+                );
+                assert_eq!(
+                    reopened.properties.get("_zero_percent_distance"),
+                    Some("$DistanceDraft")
+                );
+                &[
+                    "_light",
+                    "_lightHDR",
+                    "_lightscaleHDR",
+                    "_fifty_percent_distance",
+                    "_zero_percent_distance",
+                ]
             };
             let field = session.entity_inspector(id).unwrap();
             for &key in keys {
@@ -163,8 +193,15 @@ fn light_value_templates_share_create_set_draft_undo_and_save_reopen_for_both_ac
                     .unwrap();
                 assert_eq!(field.control, inspector::Control::Text);
                 assert!(field.color.is_none() && field.intensity.is_none());
-                if key.to_ascii_lowercase().contains("scalehdr") {
-                    assert_eq!(field.kind, "float");
+                if key.to_ascii_lowercase().contains("scalehdr") || key.ends_with("_distance") {
+                    assert_eq!(
+                        field.kind,
+                        if key.ends_with("_distance") {
+                            "string"
+                        } else {
+                            "float"
+                        }
+                    );
                     assert!(field.components.is_empty() && field.range.is_none());
                 }
                 assert!(
@@ -338,6 +375,14 @@ fn light_value_template_exception_preserves_readonly_schema_and_generic_color_va
             (
                 "_lightscaleHDR",
                 ["float) readonly", "integer)", "color255)"],
+            ),
+            (
+                "_fifty_percent_distance",
+                ["string) readonly", "integer)", "float)"],
+            ),
+            (
+                "_zero_percent_distance",
+                ["string) readonly", "integer)", "float)"],
             ),
         ] {
             for declaration in declarations {

@@ -6,6 +6,8 @@ const FGD: &str = r#"
 @BaseClass = Light [
     _light(color255) : "Brightness" : "255 255 255 200"
     _lightHDR(color255) : "BrightnessHDR" : "-1 -1 -1 1"
+    _fifty_percent_distance(string) : "50 percent distance" : "0"
+    _zero_percent_distance(string) : "Near-zero distance" : "0"
 ]
 @PointClass base(Light) = light []
 @PointClass base(Light) = light_spot [ pitch(integer) : "Pitch" : -90 ]
@@ -26,6 +28,8 @@ fn bound(actor: Actor) -> (tempfile::TempDir, Session, PathBuf, PathBuf, u32) {
                 BTreeMap::from([
                     ("_light".into(), "$Lamp".into()),
                     ("_lightHDR".into(), "$HDR".into()),
+                    ("_fifty_percent_distance".into(), "$Half".into()),
+                    ("_zero_percent_distance".into(), "$End".into()),
                 ]),
             )
             .unwrap();
@@ -54,6 +58,14 @@ fn bound(actor: Actor) -> (tempfile::TempDir, Session, PathBuf, PathBuf, u32) {
                     ("file".into(), "child.vmf".into()),
                     ("replace01".into(), ldr.into()),
                     ("replace02".into(), hdr.into()),
+                    (
+                        "replace08".into(),
+                        format!("$Half {}", if row == 0 { 64 } else { 96 }),
+                    ),
+                    (
+                        "replace09".into(),
+                        format!("$End {}", if row == 0 { 160 } else { 0 }),
+                    ),
                     ("replace10".into(), String::new()),
                 ]),
             )
@@ -91,7 +103,13 @@ fn immediate_light_bindings_refresh_after_reference_edits_and_reopen_for_both_ac
             .unwrap();
         session.apply_instance_reference(actor, token).unwrap();
         let current = session.document().entity(owner).unwrap();
-        for key in ["replace01", "replace02", "replace10"] {
+        for key in [
+            "replace01",
+            "replace02",
+            "replace08",
+            "replace09",
+            "replace10",
+        ] {
             assert_eq!(current.properties.get(key), original.properties.get(key));
         }
         session.save(actor, None).unwrap();

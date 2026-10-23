@@ -16,6 +16,23 @@ For an existing helper, use **Edit instance reference…**, then **Apply**.
 Use **Instance contents… → Refresh instance contents** to resolve and inspect the child.
 The file check confirms presence only; it does not validate child contents.
 
+## Bind light falloff distances
+
+1. Open the child VMF and select a `light` or `light_spot`.
+2. Enable **Advanced properties**. Set **Property key** to `_fifty_percent_distance` and **Value** to `$Half`, then press Enter.
+3. Repeat for `_zero_percent_distance` with **Value** `$End`. Save the child.
+4. In the parent, select the containing `func_instance`. Set unused `replace01`–`replace10` fields to values such as `$Half 64` and `$End 160`.
+5. Save the parent, then use **Refresh instance contents** or compile.
+
+Each reference can supply different distances. Each value must be one finite, nonnegative number.
+For a positive 50% distance, the near-zero distance must be greater; near-zero `0` selects an automatic distance.
+A zero 50% distance requires near-zero `0` and hard falloff `0`.
+Invalid distances stop the build, including lights outside a build region.
+
+Unresolved tokens stay as text. They exclude the lamp from authored-lighting preview and prevent standalone compilation, including **Fullbright**.
+Reference inspection resolves values and reports counts. It does not preview child lighting.
+Only immediate child point/spot distances support these bindings. Environment distances, attenuation coefficients, cones, embedded tokens and ancestor forwarding remain unsupported.
+
 ## Limits
 
 - Paths must end in `.vmf` and stay inside the saved root parent's tree.

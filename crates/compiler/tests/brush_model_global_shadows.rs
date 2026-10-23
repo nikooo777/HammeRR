@@ -1306,15 +1306,21 @@ fn child_cutout_refusals_and_original_publication_sources_survive_output_drop() 
             Some(&source),
             &Control::default(),
         );
-        assert!(output.report.has_errors() && output.bsp.is_none());
-        assert!(
-            output
-                .report
-                .diagnostics
-                .iter()
-                .any(|item| item.object == Some(format!("entity:{owner}"))
-                    && item.message.contains("grille.vmf"))
-        );
+        if request == Some("01") {
+            assert!(output.report.has_errors() && output.bsp.is_none());
+            assert!(
+                output
+                    .report
+                    .diagnostics
+                    .iter()
+                    .any(|item| item.object == Some(format!("entity:{owner}"))
+                        && item.message.contains("grille.vmf")
+                        && item.message.contains("canonical vrad_brush_cast_shadows"))
+            );
+        } else {
+            successful(&output);
+            assert_eq!(output.stats.brush_shadow_models, 0);
+        }
     }
     save(directory.path(), "grille.vmf", &child);
     for options in [
@@ -1512,16 +1518,8 @@ fn root_cutout_requests_keep_explicit_refusals_child_limits_and_texture_publicat
         Some(&child_context),
         &Control::default(),
     );
-    assert!(output.report.has_errors() && output.bsp.is_none());
-    assert!(
-        output
-            .report
-            .diagnostics
-            .iter()
-            .any(|item| item.message.contains("ordinary SOLID")),
-        "{:?}",
-        output.report
-    );
+    successful(&output);
+    assert_eq!(output.stats.brush_shadow_models, 0);
     std::fs::remove_file(directory.path().join("materials/test/mask.vtf")).unwrap();
     let output = compiler::compile_with_options(&source, &game, cutout_options(0));
     assert!(output.report.has_errors() && output.bsp.is_none());

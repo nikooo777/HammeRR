@@ -36,7 +36,7 @@ fn software() {
 }
 
 #[test]
-fn unresolved_hdr_gain_rows_keep_float_types_and_raw_text_controls() {
+fn unresolved_light_scalar_rows_keep_declared_types_and_raw_text_controls() {
     let mut session = Session::new(Err("raw gain inspection needs no assets".into()));
     session.set_definitions(
         Actor::User,
@@ -44,6 +44,10 @@ fn unresolved_hdr_gain_rows_keep_float_types_and_raw_text_controls() {
             r#"@PointClass = light_environment [
         _lightscaleHDR(float) : "HDR gain" : "1"
         _AmbientScaleHDR(float) : "HDR ambient gain" : "1"
+    ]
+    @PointClass = light [
+        _fifty_percent_distance(string) : "50 percent distance" : "0"
+        _zero_percent_distance(string) : "Near-zero distance" : "0"
     ]"#,
         )
         .unwrap(),
@@ -62,17 +66,41 @@ fn unresolved_hdr_gain_rows_keep_float_types_and_raw_text_controls() {
     else {
         unreachable!()
     };
+    let ObjectId::Entity(distance_id) = session
+        .create_entity(
+            Actor::User,
+            "light",
+            None,
+            std::collections::BTreeMap::from([
+                ("_fifty_percent_distance".into(), "$Half".into()),
+                ("_zero_percent_distance".into(), "$End".into()),
+            ]),
+        )
+        .unwrap()
+    else {
+        unreachable!()
+    };
     let rows: Vec<_> = session
         .entity_inspector(id)
         .unwrap()
         .properties
         .into_iter()
-        .filter(|field| field.key.to_ascii_lowercase().contains("scalehdr"))
+        .chain(session.entity_inspector(distance_id).unwrap().properties)
+        .filter(|field| {
+            field.key.to_ascii_lowercase().contains("scalehdr") || field.key.ends_with("_distance")
+        })
         .map(property_row)
         .collect();
-    assert_eq!(rows.len(), 2);
+    assert_eq!(rows.len(), 4);
     for row in rows {
-        assert_eq!(row.type_name, "float");
+        assert_eq!(
+            row.type_name,
+            if matches!(row.value.as_str(), "$Half" | "$End") {
+                "string"
+            } else {
+                "float"
+            }
+        );
         assert_eq!(row.control, "text");
         assert!(!row.numeric && !row.has_intensity);
         assert!(row.value.starts_with('$'));

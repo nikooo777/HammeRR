@@ -798,7 +798,7 @@ impl Session {
             "property":"vrad_brush_cast_shadows","enabled_value":"1","default_value":"0",
             "fullbright":"admit_and_preserve_without_baking",
             "baked_count":"stats.brush_shadow_models",
-            "description":"Advanced properties → Shadows → Yes requests global baked shadows from an unnamed, unparented stationary func_brush. Opaque root and child requests keep their ordinary SOLID material scope. Explicit root and child requests may also use the supported plain LightmappedGeneric binary cutout material when Brush texture shadows is enabled in a lit mode. Unrequested child cutouts remain unsupported. Root requests use an explicit finite Origin (X Y Z). Child models may instead resolve and consume one origin volume before the ordinary body check. Root and child requests validate before region omission; Fullbright reports admitted opaque source requests without baking, including requests omitted by compile regions. Admitted child initial poses are baked before containing transforms; emitted child angles are zero. Model surfaces never supply reflected radiance.",
+            "description":"Advanced properties → Shadows → Yes requests global baked shadows from an unnamed, unparented stationary func_brush. Opaque root and child requests keep their ordinary SOLID material scope. Explicit root and child requests may also use the supported plain LightmappedGeneric binary cutout material when Brush texture shadows is enabled in a lit mode. Child cutouts without a global request use only their own applicable baked receiver scope. Root requests use an explicit finite Origin (X Y Z). Child models may instead resolve and consume one origin volume before the ordinary body check. Root and child requests validate before region omission; Fullbright reports admitted opaque source requests without baking, including requests omitted by compile regions. Admitted child initial poses are baked before containing transforms; emitted child angles are zero. Model surfaces never supply reflected radiance.",
             "limits":{
                 "classname":"func_brush","origin":"resolved_finite",
                 "root_origin":"explicit_finite","child_origin":"explicit_or_one_consumed_volume",
@@ -830,15 +830,24 @@ impl Session {
         settings["brush_texture_shadowing"] = json!({
             "available":self.compilation.options.lighting.performs_lighting(),
             "unavailable_reason":if self.compilation.options.lighting.performs_lighting() { None } else { Some("Choose Direct LDR or Direct LDR + HDR before enabling brush texture shadows.") },
-            "description":"Use binary base-texture alpha on plain LightmappedGeneric world/detail faces and admitted initial-pose brush-model self shadows. An eligible stationary root or child func_brush with Advanced properties → Shadows → Yes also casts these cutouts into global baked lighting, including world and other-model receivers. Child effective origins and source initial poses lower before containing transforms. Unrequested root model cutouts stay within their own lit receiver scope; unrequested child cutouts remain unsupported. Model surfaces never supply reflected radiance. Default off; independent of native model-requested prop texture shadows. Geometry, collision and sealing remain unchanged. Requested unsupported materials, model scopes or missing textures stop publication.",
+            "description":"Use binary base-texture alpha on plain LightmappedGeneric world/detail faces and admitted initial-pose brush-model self shadows. An eligible stationary root or child func_brush with Advanced properties → Shadows → Yes also casts these cutouts into global baked lighting, including world and other-model receivers. Child effective origins and source initial poses lower before containing transforms. Unrequested root and child model cutouts stay within their own lit receiver scope. Absent or zero global requests never cast into world or other-model lighting. Model surfaces never supply reflected radiance. Default off; independent of native model-requested prop texture shadows. Geometry, collision and sealing remain unchanged. Requested unsupported materials, model scopes or missing textures stop publication.",
             "limits":{
                 "lighting_modes":["direct_ldr","direct_ldr_hdr"],
-                "casters":["world","func_detail","brush_model_self","requested_stationary_root_func_brush","requested_stationary_child_func_brush"],
+                "casters":["world","func_detail","brush_model_self","child_brush_model_self","requested_stationary_root_func_brush","requested_stationary_child_func_brush"],
                 "model_scope":{
                     "receivers":"same_model_only",
                     "pose":"existing_admitted_initial_pose",
                     "nonzero_rotation":{"classname":"func_brush","parented":false},
                     "requires_lit_receiver_scope":true,
+                    "casts_into_world":false,"casts_into_other_models":false,"radiance_source":false
+                },
+                "child_self_model_scope":{
+                    "classname":"func_brush","receivers":"same_model_only",
+                    "pose":"lowered_before_containing_transforms",
+                    "requires_brush_texture_shadows":true,"requires_lit_mode":true,
+                    "requires_lit_receiver_scope":true,"global_request_required":false,
+                    "request_field":"vrad_brush_cast_shadows","non_global_values":["absent","0"],
+                    "malformed_request":"reject",
                     "casts_into_world":false,"casts_into_other_models":false,"radiance_source":false
                 },
                 "global_root_model_scope":{
@@ -872,7 +881,7 @@ impl Session {
                 "transform_absolute_max":compiler::MAX_BRUSH_SHADOW_TRANSFORM,
                 "frames":1,"faces":1,"depth":1,
                 "alpha_reference":{"default":0.5,"min":0,"max":1,"zero_uses_default":true},
-                "unsupported":["fractional translucency","terrain alpha casters","unadmitted model poses","unrequested cutout models without lit receivers","unrequested child cutout models","model radiance sources","conditional or animated materials"]
+                "unsupported":["fractional translucency","terrain alpha casters","unadmitted model poses","unrequested cutout models without lit receivers","model radiance sources","conditional or animated materials"]
             }
         });
         settings["pack_water_assets"] = self.compilation.options.pack_water_assets.into();

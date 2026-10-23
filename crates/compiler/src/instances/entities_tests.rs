@@ -1142,15 +1142,20 @@ fn sibling_light_bindings_match_independent_literal_dual_bsp_and_preserve_raw_so
     let mut point = parameter_light(20, "light", "-48 16 128");
     point.properties.set("style", "1");
     point.properties.set("_lightscaleHDR", "$gain");
+    point.properties.set("_fifty_percent_distance", "$half");
+    point.properties.set("_zero_percent_distance", "$end");
     let mut spot = parameter_light(21, "light_spot", "64 -16 160");
     spot.properties.set("style", "11");
     spot.properties.set("_lightscaleHDR", "$gain");
+    spot.properties.set("_fifty_percent_distance", "$half");
+    spot.properties.set("_zero_percent_distance", "$end");
     let (directory, mut parent, template, game) = emitter_fixture(vec![point, spot]);
     let colors = [
         ("255 96 32 300", "32 96 255 450"),
         ("64 255 160 240", "256 80 40 600"),
     ];
     let gains = ["2", "0.5"];
+    let distances = [("64", "160"), ("96", "0")];
     light_bindings(
         parent.entities.last_mut().unwrap(),
         colors[0].0,
@@ -1169,13 +1174,26 @@ fn sibling_light_bindings_match_independent_literal_dual_bsp_and_preserve_raw_so
         .properties
         .set("replace09", format!("$gain {}", gains[1]));
     parent.entities.push(sibling);
+    for (helper, (half, end)) in parent
+        .entities
+        .iter_mut()
+        .filter(|entity| {
+            entity
+                .classname()
+                .is_some_and(|class| class.eq_ignore_ascii_case("func_instance"))
+        })
+        .zip(distances)
+    {
+        helper.properties.set("replace07", format!("$half {half}"));
+        helper.properties.set("replace08", format!("$end {end}"));
+    }
     write_child(directory.path(), "parent.vmf", &parent);
     let raw = std::fs::read(directory.path().join("child.vmf")).unwrap();
     let context = source(directory.path());
     let mut literal = Document::new(parent.clone());
     literal
         .edit("independent sibling colors", |tx| {
-            for ((helper, (ldr, hdr)), gain) in parent
+            for (((helper, (ldr, hdr)), gain), (half, end)) in parent
                 .entities
                 .iter()
                 .filter(|entity| {
@@ -1185,6 +1203,7 @@ fn sibling_light_bindings_match_independent_literal_dual_bsp_and_preserve_raw_so
                 })
                 .zip(colors)
                 .zip(gains)
+                .zip(distances)
             {
                 for original in &template.entities {
                     let mut light =
@@ -1197,6 +1216,8 @@ fn sibling_light_bindings_match_independent_literal_dual_bsp_and_preserve_raw_so
                     light.properties.set("_light", ldr);
                     light.properties.set("_lightHDR", hdr);
                     light.properties.set("_lightscaleHDR", gain);
+                    light.properties.set("_fifty_percent_distance", half);
+                    light.properties.set("_zero_percent_distance", end);
                     light
                         .properties
                         .set("style", original.properties.get("style").unwrap());
@@ -1379,6 +1400,14 @@ fn bound_templates_reject_grouped_semantic_and_context_failures_before_fullbrigh
         "noncanonical",
         "embedded",
         "hdr scale",
+        "missing distance",
+        "unused distance",
+        "negative distance",
+        "nonfinite distance",
+        "distance ordering",
+        "distance outside region",
+        "distance native overflow",
+        "coefficient token",
         "bad ldr",
         "bad hdr",
         "bad hdr outside region",
@@ -1390,7 +1419,7 @@ fn bound_templates_reject_grouped_semantic_and_context_failures_before_fullbrigh
     ] {
         let mut parent = baseline.clone();
         let mut child = template.clone();
-        if issue == "bad hdr outside region" {
+        if matches!(issue, "bad hdr outside region" | "distance outside region") {
             parent.cordon = Some(Node::block(
                 "cordon",
                 vec![
@@ -1418,6 +1447,33 @@ fn bound_templates_reject_grouped_semantic_and_context_failures_before_fullbrigh
                 .properties
                 .set("_light", "255 $lamp 32 300"),
             "hdr scale" => child.entities[0].properties.set("_lightscaleHDR", "$lamp"),
+            "missing distance" => child.entities[0]
+                .properties
+                .set("_fifty_percent_distance", "$half"),
+            "unused distance" => helper.properties.set("replace07", "$half 64"),
+            "negative distance"
+            | "nonfinite distance"
+            | "distance ordering"
+            | "distance outside region"
+            | "distance native overflow" => {
+                child.entities[0]
+                    .properties
+                    .set("_fifty_percent_distance", "$half");
+                child.entities[0]
+                    .properties
+                    .set("_zero_percent_distance", "$end");
+                helper.properties.set(
+                    "replace07",
+                    match issue {
+                        "negative distance" => "$half -1",
+                        "nonfinite distance" => "$half NaN",
+                        "distance native overflow" => "$half 1e40",
+                        _ => "$half 64",
+                    },
+                );
+                helper.properties.set("replace08", "$end 32");
+            }
+            "coefficient token" => child.entities[0].properties.set("_quadratic_attn", "$lamp"),
             "bad ldr" => helper.properties.set("replace01", "$lamp 300 96 32 300"),
             "bad hdr" | "bad hdr outside region" => {
                 helper.properties.set("replace10", "$hdr 1 2 3 -1")
@@ -1487,6 +1543,8 @@ fn unresolved_standalone_light_templates_fail_in_every_compile_mode() {
         ("light_spot", "_lightscaleHDR"),
         ("light_environment", "_lightscaleHDR"),
         ("light_environment", "_AmbientScaleHDR"),
+        ("light", "_fifty_percent_distance"),
+        ("light_spot", "_zero_percent_distance"),
     ] {
         let mut vmf = test_common::room();
         let mut light = static_light(vmf.object_ids().max().unwrap() + 1, class, "0 0 96");

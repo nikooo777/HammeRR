@@ -1309,7 +1309,7 @@ fn immediate_environment_bindings_validate_all_effective_channels_before_region_
             }
             "scalar" => {
                 child.entities[0].properties.set("_AmbientScaleHDR", "$Sky");
-                "Invalid HDR light _AmbientScaleHDR"
+                "Invalid light _AmbientScaleHDR"
             }
             "embedded" => {
                 child.entities[0].properties.set("_ambient", "0 $Sky 0 40");

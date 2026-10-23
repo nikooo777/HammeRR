@@ -1,4 +1,4 @@
-use super::{MIN_LIGHT_DISTANCE, REFERENCE_DISTANCE, number};
+use super::{MIN_LIGHT_DISTANCE, REFERENCE_DISTANCE, number, unresolved_value};
 use crate::map::MapEntity;
 
 const NEAR_ZERO_DIVISOR: f64 = 256.0;
@@ -14,13 +14,33 @@ pub(super) struct Falloff {
 }
 
 impl Falloff {
-    pub(super) fn from_entity(entity: &MapEntity) -> Result<Self, String> {
-        let half = number(entity, "_fifty_percent_distance")?;
-        let end = number(entity, "_zero_percent_distance")?;
+    pub(super) fn read(entity: &MapEntity, defer_parameters: bool) -> Result<Option<Self>, String> {
+        let distance = |name| {
+            if unresolved_value(entity, name, defer_parameters) {
+                Ok(None)
+            } else {
+                number(entity, name).map(Some)
+            }
+        };
+        let half = distance("_fifty_percent_distance")?;
+        let end = distance("_zero_percent_distance")?;
         let hard = number(entity, "_hardfalloff")?;
         if hard != 0.0 && hard != 1.0 {
             return Err("Light hard falloff must be zero or one".into());
         }
+        if half
+            .into_iter()
+            .chain(end)
+            .any(|value| value > f64::from(f32::MAX))
+        {
+            return Err("Light falloff exceeds finite native float limits".into());
+        }
+        if half == Some(0.0) && (end.is_some_and(|end| end != 0.0) || hard != 0.0) {
+            return Err("Near-zero distance and hard falloff need a positive 50% distance".into());
+        }
+        let (Some(half), Some(end)) = (half, end) else {
+            return Ok(None);
+        };
         let result = if half > 0.0 {
             let end = if end == 0.0 { 2.0 * half } else { end };
             if end <= half {
@@ -46,11 +66,6 @@ impl Falloff {
                 fade,
             }
         } else {
-            if end != 0.0 || hard != 0.0 {
-                return Err(
-                    "Near-zero distance and hard falloff need a positive 50% distance".into(),
-                );
-            }
             let mut coefficients = [
                 number(entity, "_constant_attn")?,
                 number(entity, "_linear_attn")?,
@@ -83,7 +98,7 @@ impl Falloff {
         {
             return Err("Light falloff exceeds finite native float limits".into());
         }
-        Ok(result)
+        Ok(Some(result))
     }
 
     pub(super) fn outside_range(self, distance: f64) -> bool {

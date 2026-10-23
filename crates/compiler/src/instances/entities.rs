@@ -328,6 +328,8 @@ mod tests {
             ("_AmbientScaleHDR", "-1"),
             ("SunSpreadAngle", "91"),
             ("SunSpreadAngle", "$color"),
+            ("_fifty_percent_distance", "$Half"),
+            ("_zero_percent_distance", "$End"),
             ("pitch", "91"),
             ("_light", "255 $color 0 200"),
             ("_ambientHDR", "$bad-name"),

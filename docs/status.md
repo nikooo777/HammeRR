@@ -28,7 +28,7 @@ The integrated compiler is experimental. File operations, BSP publication and ga
 | [Sounds](sounds.md) | File/script browsing, short audition and assignment. | Game mixing, soundscapes and sentence synthesis. |
 | [Organization](layers.md) | Groups, layers, clipboard, prefabs, notes and saved views. | Automatic category rules and embedded prefab assets. |
 | [Measurements](measurements.md) | Saved rulers, surface picks and origin/local entity attachments. | Surface attachments, parenting and animated bones. |
-| [Instances](instance-authoring.md) | Saved references, checked contents, light color/HDR gain bindings and bounded extraction. | In-place child editing and general replacement parameters. |
+| [Instances](instance-authoring.md) | Saved references, checked contents, light color/HDR gain/falloff bindings and bounded extraction. | In-place child editing and general replacement parameters. |
 
 ## Compiler
 
@@ -36,7 +36,7 @@ The integrated compiler is experimental. File operations, BSP publication and ga
 | --- | --- | --- |
 | [World and visibility](compile-and-play.md) | Structural/detail geometry, Fast and Detailed visibility, hints, portals and fading windows. | General unsupported portal/model combinations. |
 | [Lighting](compile-and-play.md#lighting) | LDR/HDR, styles, point/spot/sun/sky, soft sun, ambient probes and up to four diffuse bounces. | Material emission, per-texel prop lightmaps and general shader transport. |
-| [Material lighting](compile-and-play.md#normal-map-lighting) | Checked normal maps, albedo, reflectivity and [binary texture shadows](brush-texture-shadows.md), including explicitly requested stationary root and child brush models. | Unrequested child cutouts and general translucent effects remain unsupported. |
+| [Material lighting](compile-and-play.md#normal-map-lighting) | Checked normal maps, albedo, reflectivity and [binary texture shadows](brush-texture-shadows.md), including explicitly requested stationary root and child brush models. | Self shadows need a lit receiver in the same model; general translucent effects remain unsupported. |
 | [Physics](physics.md) | Engine world, terrain and supported brush-model collision, contact materials and derived mass. | Custom density and broader moving-body behavior. |
 | [Brush entities](compile-and-play.md#brush-entities-and-pivots) | Checked pivots, initial rotation, moving models and attached lightmaps. | General parenting, arbitrary model classes and initial poses. |
 | [Terrain](terrain.md) | Mixed-grid full/half neighbors, LOD snapping, lighting and collision. | Holes and runtime brush-model terrain. |
@@ -45,7 +45,7 @@ The integrated compiler is experimental. File operations, BSP publication and ga
 | [Detail props](material-detail-scattering.md) | Explicit and generated decorative models, cards, cross/tri shapes and supported lighting. | Editor display of final generated details. |
 | [Reflections](reflections.md) | Private LDR or paired LDR/HDR captures and verified packing. | Recursive reflection bounces and unsupported capture scenes. |
 | [Overlays](overlays.md) | Coplanar face-group fitting, refit, rebind and corner editing, native projections, face splitting, supported terrain targets and water transitions. | Full projected-material viewport preview. |
-| [Assemblies](instances.md) | Checked nested transforms, stationary child initial poses, per-reference light colors/HDR gains and supported geometry/entities. | General runtime entities, scripting and name fixups. |
+| [Assemblies](instances.md) | Checked nested transforms, stationary child initial poses, per-reference light colors, HDR gains and falloff and supported geometry/entities. | General runtime entities, scripting and name fixups. |
 | [Visibility helpers](occluders.md) | Occluders and eligible visibility-cluster volumes. | Unsupported memberships and dynamic child control. |
 | [Inspection](baked-lightmaps.md) | Owned face lightmaps, prop vertex bytes and native light records. | Full baked-output viewport rendering. |
 | [Publication](compile-regions.md) | Captured build scope, cancellation, checked output writes and private game launch. | General cross-platform file/runtime support. |

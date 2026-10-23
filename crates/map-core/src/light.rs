@@ -23,6 +23,7 @@ pub fn parameter_name(value: &str) -> Option<&str> {
 pub enum ValueKind {
     Color,
     HdrGain,
+    FalloffDistance,
 }
 
 pub fn value_kind(classname: &str, key: &str) -> Option<ValueKind> {
@@ -39,6 +40,11 @@ pub fn value_kind(classname: &str, key: &str) -> Option<ValueKind> {
         || (classname == "light_environment" && key.eq_ignore_ascii_case("_AmbientScaleHDR"))
     {
         Some(ValueKind::HdrGain)
+    } else if classname != "light_environment"
+        && (key.eq_ignore_ascii_case("_fifty_percent_distance")
+            || key.eq_ignore_ascii_case("_zero_percent_distance"))
+    {
+        Some(ValueKind::FalloffDistance)
     } else {
         None
     }
@@ -201,6 +207,31 @@ mod tests {
         ] {
             assert_eq!(value_kind(class, key), None);
             assert_eq!(value_parameter(class, key, "$Gain"), None);
+        }
+    }
+
+    #[test]
+    fn falloff_distance_parameters_are_limited_to_point_and_spot_fields() {
+        for class in ["light", "light_spot"] {
+            for key in ["_fifty_percent_distance", "_ZERO_PERCENT_DISTANCE"] {
+                assert_eq!(value_kind(class, key), Some(ValueKind::FalloffDistance));
+                assert_eq!(
+                    value_parameter(class, key, "$Distance_1"),
+                    Some("Distance_1")
+                );
+                assert_eq!(value_parameter(class, key, "$Distance suffix"), None);
+                assert_eq!(color_parameter(class, key, "$Distance_1"), None);
+            }
+        }
+        for (class, key) in [
+            ("light_environment", "_fifty_percent_distance"),
+            ("light_environment", "_zero_percent_distance"),
+            ("light_dynamic", "_fifty_percent_distance"),
+            ("light", "_distance"),
+            ("light", "_quadratic_attn"),
+            ("light_spot", "_cone"),
+        ] {
+            assert_eq!(value_kind(class, key), None);
         }
     }
 

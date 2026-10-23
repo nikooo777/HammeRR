@@ -1271,6 +1271,7 @@ impl Session {
                     let expected_kind = match kind {
                         map_core::light::ValueKind::Color => "color255",
                         map_core::light::ValueKind::HdrGain => "float",
+                        map_core::light::ValueKind::FalloffDistance => "string",
                     };
                     property.kind == expected_kind
                         && map_core::light::value_parameter(classname, key, value).is_some()

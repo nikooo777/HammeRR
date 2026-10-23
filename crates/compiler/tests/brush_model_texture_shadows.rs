@@ -2,12 +2,12 @@ mod common;
 
 use std::{collections::BTreeSet, path::Path};
 
-use compiler::{LightingMode, Options, SkyQuality};
+use compiler::{Control, LightingMode, Options, SkyQuality, instances};
 use glam::{DMat3, DVec3};
 use map_core::{Document, ObjectId, Plane, edit};
 use source_formats::bsp::{self, Bsp, LightingKind, Model, RgbExp32, TexInfo};
 use source_formats::gamefs::{GameFs, Mount, MountedPath};
-use source_formats::vmf::{UvAxis, Vmf, format_vec3};
+use source_formats::vmf::{Entity, UvAxis, Vmf, format_vec3};
 
 const PIVOT: DVec3 = DVec3::new(64.5, -32.25, 96.125);
 const MIXED: [f64; 9] = [
@@ -489,6 +489,161 @@ fn shared_asymmetric_alpha_uses_each_models_literal_inverse_pose() {
             );
         }
     }
+}
+
+#[test]
+fn child_compound_self_cutouts_match_literal_and_preserve_unrelated_lighting() {
+    let (directory, game) = game();
+    let mut leaf = Document::empty();
+    compound(&mut leaf, "0 0 0", false);
+    leaf.edit("unrelated child receiver", |tx| {
+        let ObjectId::Solid(id) = edit::create_block(
+            tx,
+            DVec3::new(-32.0, -32.0, 32.0),
+            DVec3::new(32.0, 32.0, 48.0),
+            "dev/dev_measuregeneric01",
+        )?
+        else {
+            unreachable!()
+        };
+        for side in &mut tx.solid_mut(id)?.sides {
+            side.lightmap_scale = 64;
+        }
+        edit::tie_to_entity(
+            tx,
+            &[id],
+            "func_brush",
+            &[("origin".into(), format_vec3(PIVOT))],
+        )
+    })
+    .unwrap();
+    let leaf = leaf.into_vmf();
+    let child_path = directory.path().join("child.vmf");
+    let child_bytes = leaf.write(&Default::default()).into_bytes();
+    std::fs::write(&child_path, &child_bytes).unwrap();
+    let mut base = room();
+    light(
+        &mut base,
+        DVec3::new(32.0, 0.0, 224.0),
+        0,
+        None,
+        "255 0 0 120",
+        "0 0 255 240",
+    );
+    let mut parent = base.into_vmf();
+    let helper_id = parent.object_ids().chain(parent.side_ids()).max().unwrap() + 1;
+    let mut helper = Entity::new(helper_id, "func_instance");
+    helper.properties.set("file", "child.vmf");
+    helper.properties.set("origin", "32 0 0");
+    helper.properties.set("angles", "0 0 0");
+    let mut literal = parent.clone();
+    parent.entities.push(helper);
+    let parent_path = directory.path().join("parent.vmf");
+    std::fs::write(&parent_path, parent.write(&Default::default())).unwrap();
+    let source = instances::SourceContext::capture(&parent_path, &Control::default()).unwrap();
+    let reference = instances::resolve(
+        &parent,
+        Some(&source),
+        &Control::default(),
+        &mut compiler::Report::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        reference.brush_model_preparation(),
+        instances::BrushModelPreparation::Deferred
+    );
+    assert!(reference.compilation_vmf().is_err());
+    assert!(
+        instances::resolve_for_compile(
+            &parent,
+            Some(&source),
+            &game,
+            &Control::default(),
+            &mut compiler::Report::default()
+        )
+        .is_err()
+    );
+    let generated = reference
+        .vmf()
+        .entities
+        .iter()
+        .filter(|entity| reference.root_entity(entity.id) == Some(helper_id))
+        .collect::<Vec<_>>();
+    assert_eq!(generated.len(), leaf.entities.len());
+    for (original, identity) in leaf.entities.iter().zip(generated) {
+        let mut model = original.clone();
+        model.id = identity.id;
+        model
+            .properties
+            .set("origin", format_vec3(PIVOT + DVec3::X * 32.0));
+        for (solid, ids) in model.solids.iter_mut().zip(&identity.solids) {
+            solid.id = ids.id;
+            for (side, id) in solid.sides.iter_mut().zip(&ids.sides) {
+                side.id = id.id;
+                for point in &mut side.plane.0 {
+                    point.x += 32.0;
+                }
+                for axis in [&mut side.u_axis, &mut side.v_axis] {
+                    axis.offset -= 32.0 * axis.axis.x / axis.scale;
+                }
+            }
+        }
+        literal.entities.push(model);
+    }
+    let options = Options {
+        lighting: LightingMode::DirectLdrHdr,
+        brush_texture_shadows: true,
+        sky_quality: SkyQuality::Fast,
+        ..Default::default()
+    };
+    let actual = compiler::compile_with_source_controlled(
+        &parent,
+        &game,
+        options,
+        None,
+        Some(&source),
+        &Control::default(),
+    );
+    assert!(!actual.report.has_errors(), "{:?}", actual.report);
+    let expected = compiler::compile_with_options(&literal, &game, options);
+    assert!(!expected.report.has_errors(), "{:?}", expected.report);
+    assert_eq!(
+        actual.bsp.as_ref().unwrap().to_bytes(),
+        expected.bsp.as_ref().unwrap().to_bytes()
+    );
+    assert_eq!(actual.stats.brush_shadow_models, 0);
+    assert_eq!(actual.stats.instances.as_ref().unwrap().brush_models, 2);
+    let texture_path = directory.path().join("game/materials/test/asymmetric.vtf");
+    let mut controls = Vec::new();
+    for alpha in [0, 255] {
+        std::fs::write(&texture_path, texture([[255, 255, 255, alpha]; 4])).unwrap();
+        let control = compiler::compile_with_source_controlled(
+            &parent,
+            &game,
+            options,
+            None,
+            Some(&source),
+            &Control::default(),
+        );
+        assert!(!control.report.has_errors(), "{:?}", control.report);
+        assert_eq!(control.stats.brush_shadow_models, 0);
+        assert_isolated(actual.bsp.as_ref().unwrap(), control.bsp.as_ref().unwrap());
+        controls.push(control);
+    }
+    for kind in [LightingKind::Ldr, LightingKind::Hdr] {
+        for (x, transparent) in [(64.0, true), (-64.0, false)] {
+            let target = DVec3::new(x, 64.0, 80.0);
+            let clear = sample(controls[0].bsp.as_ref().unwrap(), 1, target, kind, 0, 0);
+            let covered = sample(controls[1].bsp.as_ref().unwrap(), 1, target, kind, 0, 0);
+            assert!(clear.linear().into_iter().any(|value| value > 0.0));
+            assert_eq!(covered.linear(), [0.0; 3]);
+            assert_eq!(
+                sample(actual.bsp.as_ref().unwrap(), 1, target, kind, 0, 0),
+                if transparent { clear } else { covered }
+            );
+        }
+    }
+    assert_eq!(std::fs::read(child_path).unwrap(), child_bytes);
 }
 
 #[test]

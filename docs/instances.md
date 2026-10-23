@@ -50,7 +50,7 @@ The compiled body has zero entity angles; the child VMF keeps its authored value
 The foreground assembly combines initial pitch, yaw and roll with a containing reference rotation.
 
 Moving brush models, parenting and named brush models remain unsupported.
-Eligible child models with **Shadows → Yes** can cast [binary cutout shadows](brush-texture-shadows.md#cast-from-a-stationary-child-brush-model) when **Brush texture shadows** is enabled in a lit build. Unrequested child cutouts and general translucent materials remain unsupported. Effective origins and initial poses use the same lowering described above.
+Eligible child models with **Shadows → Yes** can cast [binary cutout shadows](brush-texture-shadows.md#cast-from-a-stationary-child-brush-model) when **Brush texture shadows** is enabled in a lit build. Without a global request, supported child cutouts affect only lit receivers in the same model. General translucent materials remain unsupported. Effective origins and initial poses use the same lowering described above.
 The compiled entity does not retain the child's original angle value.
 The parent reference preview remains unavailable for child models.
 
@@ -115,8 +115,9 @@ Missing, duplicate or unused bindings fail. Invalid effective light values also 
 An unresolved child template can be edited and saved, but cannot compile alone.
 Preview excludes unresolved lamps and reports a reason; the parent still has no child-light preview.
 
-Point and spot lights support `_light`, `_lightHDR` and `_lightscaleHDR`.
-Sun lights also support `_ambient`, `_ambientHDR` and `_AmbientScaleHDR`.
+Point and spot lights support `_light`, `_lightHDR`, `_lightscaleHDR`, `_fifty_percent_distance` and `_zero_percent_distance`.
+Sun lights support `_light`, `_lightHDR`, `_ambient`, `_ambientHDR`, `_lightscaleHDR` and `_AmbientScaleHDR`.
+See [light falloff bindings](instance-authoring.md#bind-light-falloff-distances) for the distance rules.
 Bindings apply only to direct child lights. Other scalar fields remain literal.
 Nested references bind their own direct child lights. Ancestor forwarding, partial replacement and parameter declarations remain unsupported.
 

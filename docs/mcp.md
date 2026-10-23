@@ -173,7 +173,7 @@ Only `apply` changes current filters. Profile edits leave startup defaults uncha
 `compile_map` waits for the build. `run_map` builds and launches through the same job system.
 Use `cancel_compile` to stop owned build work.
 Set `brush_texture_shadows:true` for [brush cutout shadows](brush-texture-shadows.md).
-For an eligible stationary root or child `func_brush`, set `vrad_brush_cast_shadows:"1"` through `set_entity_properties` to cast supported binary cutouts globally. This uses the same **Shadows → Yes** property and lit build option as the UI. Child origins and initial poses lower before containing transforms. Child cutouts require this request; unrequested root cutouts stay within their own lit receivers.
+For an eligible stationary root or child `func_brush`, set `vrad_brush_cast_shadows:"1"` through `set_entity_properties` to cast supported binary cutouts globally. This uses the same **Shadows → Yes** property and lit build option as the UI. Child origins and initial poses lower before containing transforms. Without this request, supported root and child cutouts stay within their own lit receivers. Absent or zero requests do not affect world or other-model lighting.
 Game launches use `-insecure` and private validation uses `sv_lan 1`.
 Reflection capture also needs a ready `get_native_capture_runtime` result.
 See [Compile and play](compile-and-play.md).
@@ -185,11 +185,12 @@ Save the child, then compile its parent. Compilation lowers the initial pose int
 For [light colors per reference](instances.md#light-colors-per-reference), set a child light's `_light` or `_lightHDR` to `$name`.
 Child `light_environment` also supports `_ambient` and `_ambientHDR`.
 Bind `_lightscaleHDR` on point/spot/sun lights or `_AmbientScaleHDR` on sun lights to one finite, nonnegative scalar literal.
-Other scalar fields, including `SunSpreadAngle`, remain literal.
+For point/spot [falloff bindings](instance-authoring.md#bind-light-falloff-distances), bind `_fifty_percent_distance` and `_zero_percent_distance` to finite, nonnegative literals. Their effective pair uses the normal falloff rules; zero near-zero distance selects the automatic value.
+Environment distances, attenuation coefficients, cones and other scalar fields, including `SunSpreadAngle`, remain literal.
 Use `create_entity`, `set_entity_properties` or the property-edit tools.
 Set the containing helper's `replace01` through `replace10` to `$name literal` through the same operations.
 Save the child, refresh contents, then compile the parent. Missing, duplicate and unused bindings fail explicitly.
-Unresolved standalone templates fail in every build mode and are excluded from authored-lighting preview, including HDR color or gain tokens with sky ambient off.
+Unresolved standalone templates fail in every build mode and are excluded from authored-lighting preview, including distance, HDR color or gain tokens with sky ambient off.
 The reference form preserves bindings. Extraction with parameters and general replacements remain unsupported.
 
 Static-prop packing accepts up to eight Patch include edges with one basetexture edit per Patch.

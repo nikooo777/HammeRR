@@ -15,6 +15,8 @@ fn light_value_binding_mcp_uses_existing_string_schemas_and_shared_drafts() {
             r#"@PointClass = light [
                 _light(color255) : "Brightness" : "255 255 255 200"
                 _lightHDR(color255) : "HDR brightness" : "-1 -1 -1 1"
+                _fifty_percent_distance(string) : "50 percent distance" : "0"
+                _zero_percent_distance(string) : "Near-zero distance" : "0"
             ]"#,
         )
         .unwrap(),
@@ -42,15 +44,20 @@ fn light_value_binding_mcp_uses_existing_string_schemas_and_shared_drafts() {
         server.create_entity(Parameters(
             serde_json::from_value(json!({
                 "classname":"light","origin":[0,0,64],
-                "properties":{"_light":"$Lamp","_lightHDR":"$HDR"}
+                "properties":{"_light":"$Lamp","_lightHDR":"$HDR","_fifty_percent_distance":"$Half","_zero_percent_distance":"$End"}
             }))
             .unwrap(),
         )),
     );
     let id = created["id"].as_str().unwrap();
-    report(server.set_entity_properties(Parameters(
-        serde_json::from_value(json!({"id":id,"set":{"_light":"$Other"}})).unwrap(),
-    )));
+    report(
+        server.set_entity_properties(Parameters(
+            serde_json::from_value(
+                json!({"id":id,"set":{"_light":"$Other","_fifty_percent_distance":"$OtherHalf"}}),
+            )
+            .unwrap(),
+        )),
+    );
     let source = lock(&shared).document().vmf().clone();
     let history = lock(&shared).history_snapshot();
     let opened = report(server.begin_property_edit(Parameters(
@@ -60,7 +67,8 @@ fn light_value_binding_mcp_uses_existing_string_schemas_and_shared_drafts() {
     let staged = report(
         server.update_property_edit(Parameters(
             serde_json::from_value(json!({"token":token,"changes":[
-                {"action":"set","key":"_light","value":"$Draft"}
+                {"action":"set","key":"_light","value":"$Draft"},
+                {"action":"set","key":"_zero_percent_distance","value":"$EndDraft"}
             ]}))
             .unwrap(),
         )),
@@ -78,6 +86,15 @@ fn light_value_binding_mcp_uses_existing_string_schemas_and_shared_drafts() {
         .unwrap()["field"];
     assert_eq!(field["control"], "text");
     assert_eq!(field["value"], "$Draft");
+    let distance = staged["preview"]["properties"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|property| property["field"]["key"] == "_zero_percent_distance")
+        .unwrap();
+    assert_eq!(distance["field"]["kind"], "string");
+    assert_eq!(distance["field"]["control"], "text");
+    assert_eq!(distance["field"]["value"], "$EndDraft");
     assert!(field["color"].is_null() && field["intensity"].is_null());
     assert!(
         field["description"]
@@ -226,6 +243,21 @@ fn environment_color_binding_mcp_uses_shared_create_set_and_ambient_drafts() {
         ])
     );
     assert_eq!(scope["scalar_parameters"], true);
+    assert_eq!(
+        scope["falloff_distance_classes"],
+        json!(["light", "light_spot"])
+    );
+    assert_eq!(
+        scope["falloff_distance_properties"],
+        json!(["_fifty_percent_distance", "_zero_percent_distance"])
+    );
+    assert!(
+        !scope["class_properties"]["light_environment"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|key| key == "_fifty_percent_distance" || key == "_zero_percent_distance")
+    );
     assert_eq!(scope["other_scalar_parameters"], false);
     assert!(server.offscreen.lock().unwrap().renderer.is_none());
 }

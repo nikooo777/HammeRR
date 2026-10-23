@@ -184,7 +184,13 @@ fn number(entity: &MapEntity, name: &str) -> Result<f64, String> {
     let value = property(entity, name)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or("0")
+        .unwrap_or("0");
+    nonnegative(value, name)
+}
+
+fn nonnegative(value: &str, name: &str) -> Result<f64, String> {
+    let value = value
+        .trim()
         .parse::<f64>()
         .map_err(|_| format!("Invalid light {name}"))?;
     if !value.is_finite() || value < 0.0 {
@@ -274,14 +280,7 @@ fn hdr_scale(
     if unresolved_value(entity, name, defer_parameters) {
         return Ok(None);
     }
-    let value = value
-        .trim()
-        .parse::<f64>()
-        .map_err(|_| format!("Invalid HDR light {name}"))?;
-    if !value.is_finite() || value < 0.0 {
-        return Err(format!("HDR light {name} must be finite and nonnegative"));
-    }
-    Ok(Some(value))
+    nonnegative(value, name).map(Some)
 }
 
 fn checked_intensity(intensity: DVec3) -> Result<DVec3, String> {
@@ -437,13 +436,13 @@ impl PointLight {
     ) -> Result<Option<Self>, String> {
         let (origin, style) = point_light_pose_style(entity)?;
         let color = point_light_color(entity, kind, defer_parameters)?;
-        let falloff = falloff::Falloff::from_entity(entity)?;
+        let falloff = falloff::Falloff::read(entity, defer_parameters)?;
         let scale = if kind == LightingKind::Hdr {
             hdr_scale(entity, "_lightscaleHDR", defer_parameters)?
         } else {
             Some(1.0)
         };
-        let (Some(color), Some(scale)) = (color, scale) else {
+        let (Some(color), Some(scale), Some(falloff)) = (color, scale, falloff) else {
             return Ok(None);
         };
         let mut intensity = color.intensity(falloff.gain);
@@ -1019,6 +1018,70 @@ mod input_tests {
                 .unwrap_err()
                 .contains("_ambientHDR")
         );
+    }
+
+    #[test]
+    fn deferred_falloff_distances_remain_unknown_and_validate_known_constraints() {
+        for fields in [
+            vec![
+                ("_fifty_percent_distance", "$Half"),
+                ("_zero_percent_distance", "160"),
+            ],
+            vec![
+                ("_fifty_percent_distance", "64"),
+                ("_zero_percent_distance", "$End"),
+            ],
+            vec![
+                ("_fifty_percent_distance", "$Half"),
+                ("_zero_percent_distance", "$End"),
+            ],
+        ] {
+            let mut source = entity(&fields);
+            source
+                .properties
+                .push(("_light".into(), "255 128 32 200".into()));
+            for kind in [LightingKind::Ldr, LightingKind::Hdr] {
+                assert!(PointLight::parse(&source, 0, kind, true).unwrap().is_none());
+                assert!(PointLight::from_entity_kind(&source, 0, kind).is_err());
+            }
+        }
+        for fields in [
+            vec![
+                ("_fifty_percent_distance", "$Half"),
+                ("_zero_percent_distance", "NaN"),
+            ],
+            vec![
+                ("_fifty_percent_distance", "-1"),
+                ("_zero_percent_distance", "$End"),
+            ],
+            vec![
+                ("_fifty_percent_distance", "1e40"),
+                ("_zero_percent_distance", "$End"),
+            ],
+            vec![
+                ("_fifty_percent_distance", "0"),
+                ("_zero_percent_distance", "$End"),
+                ("_hardfalloff", "1"),
+            ],
+            vec![("_fifty_percent_distance", "$Half"), ("_hardfalloff", "2")],
+        ] {
+            assert!(
+                falloff::Falloff::read(&entity(&fields), true).is_err(),
+                "{fields:?}"
+            );
+        }
+        let absent = falloff::Falloff::read(&entity(&[]), true).unwrap().unwrap();
+        let empty = falloff::Falloff::read(
+            &entity(&[
+                ("_fifty_percent_distance", ""),
+                ("_zero_percent_distance", ""),
+            ]),
+            true,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(absent.coefficients, empty.coefficients);
+        assert_eq!(absent.radius, empty.radius);
     }
 
     #[test]

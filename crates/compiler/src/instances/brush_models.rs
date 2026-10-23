@@ -340,10 +340,10 @@ fn validate_solid_materials(
         let index = materials.load(&side.material)?;
         let info = materials.get(index);
         if !ordinary(info) {
-            if brush_texture_shadows
-                && crate::brush_shadow_casters::request(entity)?
-                && crate::brush_shadow_casters::binary_cutout(info)
-            {
+            if brush_texture_shadows {
+                crate::brush_shadow_casters::request(entity)?;
+            }
+            if brush_texture_shadows && crate::brush_shadow_casters::binary_cutout(info) {
                 if checked_cutouts.insert(index) {
                     crate::brush_shadow_casters::validate_material(
                         &side.material.trim().replace('\\', "/").to_ascii_lowercase(),

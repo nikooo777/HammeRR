@@ -6,10 +6,10 @@ use super::*;
 
 pub(super) fn light_value_binding_scope() -> Value {
     json!({
-        "classes":["light","light_spot","light_environment"],"properties":["_light","_lightHDR","_lightscaleHDR"],
+        "classes":["light","light_spot","light_environment"],"properties":["_light","_lightHDR","_lightscaleHDR","_fifty_percent_distance","_zero_percent_distance"],
         "class_properties":{
-            "light":["_light","_lightHDR","_lightscaleHDR"],
-            "light_spot":["_light","_lightHDR","_lightscaleHDR"],
+            "light":["_light","_lightHDR","_lightscaleHDR","_fifty_percent_distance","_zero_percent_distance"],
+            "light_spot":["_light","_lightHDR","_lightscaleHDR","_fifty_percent_distance","_zero_percent_distance"],
             "light_environment":["_light","_lightHDR","_ambient","_ambientHDR","_lightscaleHDR","_AmbientScaleHDR"]
         },
         "scope":"direct_visible_child_of_immediately_containing_func_instance",
@@ -20,7 +20,9 @@ pub(super) fn light_value_binding_scope() -> Value {
         "literal_only":true,"empty_replacement_fields":true,
         "rejected":["duplicates","missing","unused","recursive","embedded","unsupported_context","ancestor_forwarding"],
         "other_parameter_contexts":false,"scalar_parameters":true,
-        "scalar_properties":["_lightscaleHDR","_AmbientScaleHDR"],
+        "scalar_properties":["_lightscaleHDR","_AmbientScaleHDR","_fifty_percent_distance","_zero_percent_distance"],
+        "falloff_distance_properties":["_fifty_percent_distance","_zero_percent_distance"],
+        "falloff_distance_classes":["light","light_spot"],
         "scalar_literal":"one finite nonnegative number","other_scalar_parameters":false,"func_instance_parms":false,
         "standalone_unresolved_compilation":false,"authored_lighting_preview_resolution":false
     })

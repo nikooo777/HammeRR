@@ -253,6 +253,7 @@ impl Ui {
             history,
             measurements,
             grid_defaults,
+            pivot_defaults,
             preview_defaults,
             selection_defaults,
             navigation_defaults,

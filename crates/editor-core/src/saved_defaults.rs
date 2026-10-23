@@ -9,6 +9,7 @@ use crate::preference_file::{ObservedSource, Publication, SaveError};
 #[derive(Clone, Default)]
 pub struct SavedDefaults {
     pub(crate) grid: Authority<crate::grid_preferences::Store>,
+    pub(crate) pivot: Authority<crate::pivot_preferences::Store>,
     pub(crate) preview: Authority<crate::preview_preferences::Store>,
     pub(crate) navigation: Authority<crate::navigation_preferences::Store>,
     pub(crate) selection: Authority<crate::selection_preferences::Store>,
@@ -18,6 +19,7 @@ impl SavedDefaults {
     pub fn configured(directory: Result<PathBuf, String>) -> Self {
         let defaults = Self::default();
         let _ = defaults.grid.configure(directory.clone());
+        let _ = defaults.pivot.configure(directory.clone());
         let _ = defaults.preview.configure(directory.clone());
         let _ = defaults.navigation.configure(directory.clone());
         let _ = defaults.selection.configure(directory);
@@ -102,6 +104,13 @@ store!(
     SelectionDefaults,
     "Selection defaults",
     "Saved selection defaults changed outside this session; Reload defaults before using them"
+);
+
+store!(
+    pivot_preferences,
+    Pivot,
+    "Transform pivot defaults",
+    "Saved transform pivot defaults changed outside this session; Reload defaults before using them"
 );
 
 pub(crate) struct Authority<S: Store> {

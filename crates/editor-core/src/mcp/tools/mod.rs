@@ -25,6 +25,7 @@ mod navigation_preferences;
 mod overlay;
 mod particles;
 mod partitions;
+mod pivot_preferences;
 mod placement;
 #[cfg(test)]
 mod preview_handle_tests;

@@ -68,6 +68,22 @@ Scale factors must be positive. Whole-object scaling changes point-entity spacin
 The pivot stays at its world position. It does not follow the surface.
 **Cancel pivot pick** or Escape stops an unfinished pick.
 
+### Save pivot defaults
+
+1. Choose **Selection center**, **World origin** or a **Custom** point under **Pivot**.
+2. Open **Transform pivot defaults…** under **VIEWPORT**.
+3. Compare **Current document** with the saved defaults.
+4. Click **Save current as defaults** to use this pivot in new document windows.
+5. Click **Apply saved defaults** to use the saved pivot in this document.
+
+**Reload defaults** reads storage without applying it.
+**Reset saved defaults** saves Selection center; click **Apply saved defaults** to use it now.
+**Close** or Escape closes the dialog.
+
+Save stores only the pivot mode and fixed world coordinates. It does not attach a pivot to a surface.
+Other open documents keep their current pivots. **New** and **Open** in the same document window also retain its current pivot.
+Finish active tools, previews, builds and launches before Apply.
+
 ### Snap selection to grid
 
 1. Set **Grid**.

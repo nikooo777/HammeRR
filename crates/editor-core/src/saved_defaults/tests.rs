@@ -1,6 +1,7 @@
 use super::*;
 use crate::grid_preferences::Grid;
 use crate::navigation_preferences::Navigation;
+use crate::pivot_preferences::Pivot;
 use crate::preview_preferences::Preview;
 use crate::session::{Actor, Session, selection_filters::SelectionFilters};
 use glam::DVec3;
@@ -12,15 +13,23 @@ enum Kind {
     Preview,
     Navigation,
     Selection,
+    Pivot,
 }
 impl Kind {
-    const ALL: [Self; 4] = [Self::Grid, Self::Preview, Self::Navigation, Self::Selection];
+    const ALL: [Self; 5] = [
+        Self::Grid,
+        Self::Preview,
+        Self::Navigation,
+        Self::Selection,
+        Self::Pivot,
+    ];
     fn state(self, session: &Session) -> Value {
         match self {
             Self::Grid => session.grid_preferences_state(),
             Self::Preview => session.preview_preferences_state(),
             Self::Navigation => session.navigation_preferences_state(),
             Self::Selection => session.selection_preferences_state(),
+            Self::Pivot => session.pivot_preferences_state(),
         }
     }
     fn action(
@@ -38,6 +47,7 @@ impl Kind {
                 session.change_navigation_preferences(Actor::Agent, action, snapshot)
             }
             Self::Selection => session.change_selection_preferences(Actor::Agent, action, snapshot),
+            Self::Pivot => session.change_pivot_preferences(Actor::Agent, action, snapshot),
         }
     }
 }
@@ -46,11 +56,20 @@ fn session(defaults: &SavedDefaults) -> Session {
     Session::with_saved_defaults(Err("no assets needed".into()), defaults.clone())
 }
 
-fn current(session: &Session) -> [Value; 4] {
+fn current(session: &Session) -> [Value; 5] {
     Kind::ALL.map(|kind| kind.state(session)["current"].clone())
 }
 
 fn set_current(session: &mut Session, grid: f64, speed: f32, outlines: bool) {
+    session
+        .set_transform_tool(
+            Actor::User,
+            crate::session::TransformTool {
+                pivot: Some(DVec3::new(grid, 0.0, 0.0)),
+                ..session.transform_tool()
+            },
+        )
+        .unwrap();
     session
         .set_spatial(
             Actor::User,
@@ -168,7 +187,7 @@ fn attached_sessions_share_saved_values_and_errors_without_changing_current_valu
         assert!(kind.action(&mut second, "reset", Some(&old)).is_err());
         assert_eq!(source_state(&second), source);
         assert_eq!(current(&second), local);
-        if matches!(kind, Kind::Grid | Kind::Preview) {
+        if matches!(kind, Kind::Grid | Kind::Preview | Kind::Pivot) {
             assert!(kind.action(&mut second, "apply", None).is_err());
             assert_eq!(kind.state(&first)["ready"], true);
             assert_eq!(kind.state(&second)["ready"], true);
@@ -397,6 +416,12 @@ fn committed_verification_error_is_shared_and_retains_original_directory_for_all
                 defaults.navigation.snapshot().source.unwrap(),
                 json!({"version":1,"navigation":Navigation{fly_speed:987.625}}),
             ),
+            Kind::Pivot => (
+                crate::pivot_preferences::FILE_NAME,
+                ".pivot-defaults.lock",
+                defaults.pivot.snapshot().source.unwrap(),
+                json!({"version":1,"pivot":Pivot::Custom { point: [1.25, 2.5, 3.75] }}),
+            ),
             Kind::Selection => (
                 crate::selection_preferences::FILE_NAME,
                 ".selection-defaults.lock",
@@ -440,6 +465,12 @@ fn committed_verification_error_is_shared_and_retains_original_directory_for_all
             Kind::Navigation => defaults
                 .navigation
                 .accept(Navigation { fly_speed: 987.625 }, publication),
+            Kind::Pivot => defaults.pivot.accept(
+                Pivot::Custom {
+                    point: [1.25, 2.5, 3.75],
+                },
+                publication,
+            ),
             Kind::Selection => defaults.selection.accept(
                 SelectionFilters {
                     world_brushes: false,
@@ -464,6 +495,7 @@ fn committed_verification_error_is_shared_and_retains_original_directory_for_all
                 Kind::Preview => "preview",
                 Kind::Navigation => "navigation",
                 Kind::Selection => "filters",
+                Kind::Pivot => "pivot",
             }]
         );
         for _ in 0..2 {

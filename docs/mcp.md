@@ -151,6 +151,9 @@ Multi-face rebind drafts report `previous_sources`/`previous_source_count` and n
 Unchanged binding sets require Refit. Invalid updates retain the current draft.
 `preview_overlay_corners` and `overlay_corner_handles` accept the complete coplanar binding set and use the stored projection axes. No reference parameter is needed.
 Corner drafts report `sources` and `source_count`; applying changes only `uv0` through `uv3` in one Undo step.
+The same tools accept one isolated planar displacement. Use its displaced face, not a cage face; omit additional sources.
+Its complete prepared and native surface must be a flat quad with straight borders. Touching or overlapping terrain base bounds and visible instance references reject.
+The fit follows actual displaced coordinates. Refit after moving the plane; rebind can switch between eligible flat and terrain sources.
 
 ## Selection defaults
 
@@ -161,6 +164,14 @@ Use `get_selection_profiles` to list named profiles and their stable IDs.
 Call `set_selection_profile` with the latest snapshot and `operation:{action:"save",name:"Props"}` to save current filters.
 Use a profile ID for `replace`, `apply`, `rename` or `delete`; `rename` also needs `name`.
 Only `apply` changes current filters. Profile edits leave startup defaults unchanged; default Save/Reset retain profiles.
+
+## Pivot defaults
+
+Use `get_transform_pivot_defaults` to inspect current and saved pivots, storage errors and the action snapshot.
+Pass that snapshot to `set_transform_pivot_defaults` with `action:"save"`, `"apply"`, `"reload"` or `"reset"`.
+Save records the current pivot for new document Sessions. Apply changes only the selected document's pivot.
+Reload and Reset do not apply a pivot. New/Open within an existing Session retain its current pivot.
+Surface picks save only fixed coordinates when explicitly requested.
 
 ## Compile and play
 
@@ -183,14 +194,18 @@ Save the child, then compile its parent. Compilation lowers the initial pose int
 `brush_model_preview.deferred_checks` includes `initial_pose`; reference inspection still provides no child model mesh.
 
 In the `get_compile_settings` response, use `light_value_bindings.class_properties` for each light class.
-Its `properties` list contains only fields valid for every listed class; specialized lists give distance and sun-spread scope.
+Its `properties` list contains only fields valid for every listed class; specialized lists give distance, sun-spread and spotlight-shape scope.
 
 For [light colors per reference](instances.md#light-colors-per-reference), set a child light's `_light` or `_lightHDR` to `$name`.
 Child `light_environment` also supports `_ambient` and `_ambientHDR`.
 Bind `_lightscaleHDR` on point/spot/sun lights or `_AmbientScaleHDR` on sun lights to one finite, nonnegative scalar literal.
 For point/spot [falloff bindings](instance-authoring.md#bind-light-falloff-distances), bind `_fifty_percent_distance` and `_zero_percent_distance` to finite, nonnegative literals. Their effective pair uses the normal falloff rules; zero near-zero distance selects the automatic value.
 For [sun spread](instance-authoring.md#bind-sun-spread), bind `SunSpreadAngle` on child `light_environment` to one finite literal from 0 to 90 degrees.
-Environment distances, attenuation coefficients, cones and other scalar fields remain literal.
+For [spotlight shape](instance-authoring.md#bind-spotlight-cones-and-focus), bind `_inner_cone`, `_cone` and `_exponent` on child `light_spot`.
+Use class-specific discovery for angle/focus scope and ordinary cone rules. Unresolved integer rows retain text tokens without an evaluated value.
+Child spotlights can also reference one visible local `info_target`; use explicit Prefix names on every containing helper.
+Reference refresh reports `spotlight_targets` and an unavailable `spotlight_target_preview`. Keep lamp and endpoint inside a lit compile region.
+Environment distances, attenuation coefficients and other unsupported scalar fields remain literal.
 Use `create_entity`, `set_entity_properties` or the property-edit tools.
 Set the containing helper's `replace01` through `replace10` to `$name literal` through the same operations.
 Save the child, refresh contents, then compile the parent. Missing, duplicate and unused bindings fail explicitly.

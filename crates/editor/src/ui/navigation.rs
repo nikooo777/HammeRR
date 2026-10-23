@@ -5,6 +5,7 @@ pub(super) fn refresh_spatial(app: &AppWindow, session: &Session) {
     refresh_clip(app, session);
     let settings = session.spatial();
     grid_defaults_ui::refresh_status(app, session);
+    pivot_defaults_ui::refresh_status(app, session);
     let projection = session.camera().projection;
     app.set_projection_index(projection.index() as i32);
     app.set_workplane_axis(

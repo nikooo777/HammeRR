@@ -5,6 +5,7 @@ export { AtlasWindow } from "atlas.slint";
 export { SkyAssetsWindow, SkyAssetFaceRow } from "sky-assets.slint";
 export { HistoryWindow, HistoryRow } from "history.slint";
 export { GridDefaultsWindow } from "grid-defaults.slint";
+export { PivotDefaultsWindow } from "pivot-defaults.slint";
 export { NavigationDefaultsWindow } from "navigation-defaults.slint";
 export { PreviewDefaultsWindow, PreviewDefaultRow } from "preview-defaults.slint";
 export { SelectionDefaultsWindow, SelectionDefaultRow, SelectionProfileRow } from "selection-defaults.slint";
@@ -2105,6 +2106,8 @@ export component AppWindow inherits Window {
     callback saved-views();
     callback measurements();
     callback grid-defaults();
+    callback pivot-defaults();
+    in property <bool> pivot-defaults-error;
     in property <bool> grid-defaults-error;
     callback navigation-defaults();
     callback fly-speed-changed();
@@ -2745,6 +2748,7 @@ export component AppWindow inherits Window {
                     SectionTitle {
                         text: "VIEWPORT";
                     }
+                    Button { text: root.pivot-defaults-error ? "Transform pivot defaults… · needs attention" : "Transform pivot defaults…"; clicked => { root.pivot-defaults(); } }
                     Button { text: root.grid-defaults-error ? "Grid defaults… · needs attention" : "Grid defaults…"; clicked => { root.grid-defaults(); } }
                     HorizontalLayout {
                         spacing: 8px;

@@ -13,6 +13,8 @@ impl Session {
 
     pub(crate) fn use_application_saved_defaults(&mut self, defaults: SavedDefaults) {
         self.grid_preferences = Binding::Application(defaults.grid);
+        self.pivot_preferences.binding = Binding::Application(defaults.pivot);
+        self.apply_startup_pivot_preferences();
         self.preview_preferences = Binding::Application(defaults.preview);
         self.navigation_preferences = Binding::Application(defaults.navigation);
         self.selection_preferences.binding = Binding::Application(defaults.selection);

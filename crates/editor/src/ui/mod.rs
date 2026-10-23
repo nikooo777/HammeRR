@@ -130,6 +130,7 @@ struct Ui {
     history: Option<history_ui::Controller>,
     measurements: Option<measurements_ui::Controller>,
     grid_defaults: Option<grid_defaults_ui::Controller>,
+    pivot_defaults: Option<pivot_defaults_ui::Controller>,
     preview_defaults: Option<preview_defaults_ui::Controller>,
     selection_defaults: Option<selection_defaults_ui::Controller>,
     navigation_defaults: Option<navigation_defaults_ui::Controller>,
@@ -259,6 +260,7 @@ impl Ui {
             history: None,
             measurements: None,
             grid_defaults: None,
+            pivot_defaults: None,
             preview_defaults: None,
             selection_defaults: None,
             navigation_defaults: None,
@@ -718,6 +720,21 @@ fn create_document_window(
             }
         }
         if let Err(error) = ui.grid_defaults.as_ref().unwrap().show(&lock(&ui.session)) {
+            app.unwrap().set_message(error.to_string().into());
+        }
+    });
+    root_callback!(app, ui, on_pivot_defaults, |app| {
+        let mut ui = ui.borrow_mut();
+        if ui.pivot_defaults.is_none() {
+            match pivot_defaults_ui::Controller::new_with_access(&ui.document_access()) {
+                Ok(controller) => ui.pivot_defaults = Some(controller),
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
+                }
+            }
+        }
+        if let Err(error) = ui.pivot_defaults.as_ref().unwrap().show(&lock(&ui.session)) {
             app.unwrap().set_message(error.to_string().into());
         }
     });
@@ -3147,6 +3164,7 @@ fn create_document_window(
                         controller.refresh(&lock(&ui.session));
                     }
                     grid_defaults_ui::refresh_status(&app, &lock(&ui.session));
+                    pivot_defaults_ui::refresh_status(&app, &lock(&ui.session));
                     app.set_preview_defaults_error(
                         lock(&ui.session).preview_preferences_error().is_some(),
                     );
@@ -3246,6 +3264,11 @@ fn create_document_window(
                         controller.refresh(&lock(&ui.session));
                     }
                     if let Some(controller) = &ui.grid_defaults
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&lock(&ui.session));
+                    }
+                    if let Some(controller) = &ui.pivot_defaults
                         && controller.window.window().is_visible()
                     {
                         controller.refresh(&lock(&ui.session));

@@ -31,6 +31,7 @@ mod model_ui;
 mod navigation_defaults_ui;
 mod overlay_ui;
 mod particles_ui;
+mod pivot_defaults_ui;
 mod placement_ui;
 mod pointfile_ui;
 mod polygon_ui;

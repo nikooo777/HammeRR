@@ -363,11 +363,11 @@ impl Session {
     }
 
     pub fn set_transform_tool(&mut self, actor: Actor, tool: TransformTool) -> Result<(), String> {
-        if tool.pivot.is_some_and(|pivot| !pivot.is_finite())
-            || !tool.angle_step.is_finite()
-            || !(0.0..=180.0).contains(&tool.angle_step)
-        {
-            return Err("Pivot must be finite and rotation snap between 0 and 180 degrees".into());
+        if let Some(pivot) = tool.pivot {
+            crate::pivot_preferences::validate_point(pivot)?;
+        }
+        if !tool.angle_step.is_finite() || !(0.0..=180.0).contains(&tool.angle_step) {
+            return Err("Rotation snap must be finite and between 0 and 180 degrees".into());
         }
         if tool == self.transform_tool
             && !self.geometry.paint.enabled
@@ -378,6 +378,9 @@ impl Session {
         }
         self.cancel_transform_preview();
         self.cancel_area_selection();
+        if self.transform_tool.pivot != tool.pivot {
+            self.pivot_preferences.local_serial += 1;
+        }
         self.transform_tool = tool;
         self.geometry.paint.enabled = false;
         self.clear_component_edit();

@@ -13,7 +13,7 @@ use crate::{
     asset_sources::BuildMaterialSources,
     brush_model_pose::Pose,
     instances,
-    materials::{Materials, Requirements},
+    materials::{MaterialInfo, Materials, Requirements},
 };
 
 const KEY: &str = "vrad_brush_cast_shadows";
@@ -24,7 +24,7 @@ pub(crate) fn enabled(properties: &[(String, String)]) -> bool {
         .any(|(key, value)| key == KEY && value.trim() == "1")
 }
 
-fn request(entity: &Entity) -> Result<bool, String> {
+pub(crate) fn request(entity: &Entity) -> Result<bool, String> {
     let mut fields = entity.properties.iter().filter(|(key, _)| {
         key.trim_end_matches(' ')
             .split('#')
@@ -190,7 +190,7 @@ fn opaque_raw(path: &str, bytes: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
-fn validate_material(
+pub(crate) fn validate_material(
     name: &str,
     sources: &BuildMaterialSources,
     control: &Control,
@@ -211,6 +211,16 @@ fn validate_material(
     } else {
         opaque_parameters(name, &material)
     }
+}
+
+pub(crate) fn binary_cutout(info: &MaterialInfo) -> bool {
+    info.found
+        && info.draws
+        && info.contents == (contents::WINDOW | contents::TRANSLUCENT)
+        && info.surface == 0
+        && !info.hint
+        && !info.skip
+        && info.unsupported_flags.is_empty()
 }
 
 fn opaque_parameters(name: &str, material: &vmt::Material) -> Result<(), String> {
@@ -266,14 +276,7 @@ pub(crate) fn validate(
                     control.checkpoint()?;
                     let index = materials.load(&side.material)?;
                     let info = materials.get(index);
-                    let cutout = brush_texture_shadows
-                        && info.found
-                        && info.draws
-                        && info.contents == (contents::WINDOW | contents::TRANSLUCENT)
-                        && info.surface == 0
-                        && !info.hint
-                        && !info.skip
-                        && info.unsupported_flags.is_empty();
+                    let cutout = brush_texture_shadows && binary_cutout(info);
                     if !instances::brush_models::ordinary(info) && !cutout {
                         return Err(format!(
                             "{} requires ordinary SOLID contents, or a supported binary cutout with brush texture shadows enabled, without origin, liquid or special surface semantics",

@@ -170,7 +170,7 @@ Only `apply` changes current filters. Profile edits leave startup defaults uncha
 `compile_map` waits for the build. `run_map` builds and launches through the same job system.
 Use `cancel_compile` to stop owned build work.
 Set `brush_texture_shadows:true` for [brush cutout shadows](brush-texture-shadows.md).
-For an eligible stationary root `func_brush`, set `vrad_brush_cast_shadows:"1"` through `set_entity_properties` to cast supported binary cutouts globally. This uses the same **Shadows → Yes** property and build option as the UI. Child cutout models remain refused; unrequested model cutouts keep their same-model lit-receiver scope.
+For an eligible stationary root or child `func_brush`, set `vrad_brush_cast_shadows:"1"` through `set_entity_properties` to cast supported binary cutouts globally. This uses the same **Shadows → Yes** property and lit build option as the UI. Child origins and initial poses lower before containing transforms. Child cutouts require this request; unrequested root cutouts stay within their own lit receivers.
 Game launches use `-insecure` and private validation uses `sv_lan 1`.
 Reflection capture also needs a ready `get_native_capture_runtime` result.
 See [Compile and play](compile-and-play.md).

@@ -214,6 +214,9 @@ pub(super) fn plan_origin(
     materials: &mut Materials<'_>,
     entity: &Entity,
     control: &Control,
+    brush_texture_shadows: bool,
+    sources: &BuildMaterialSources,
+    checked_cutouts: &mut std::collections::BTreeSet<usize>,
 ) -> Result<crate::map::origins::OriginPlan, String> {
     let mut report = Report::default();
     let plan = crate::map::origins::prepare_origins(materials, entity, &mut report, control)?;
@@ -241,8 +244,16 @@ pub(super) fn plan_origin(
         .filter(|solid| !solid.hidden && !plan.volumes.contains(&solid.id))
     {
         remaining += 1;
-        validate_solid_materials(materials, solid, control)
-            .map_err(|error| format!("Child brush-model material: solid {}: {error}", solid.id))?;
+        validate_solid_materials(
+            materials,
+            solid,
+            entity,
+            control,
+            brush_texture_shadows,
+            sources,
+            checked_cutouts,
+        )
+        .map_err(|error| format!("Child brush-model material: solid {}: {error}", solid.id))?;
     }
     if remaining == 0 {
         return Err(
@@ -318,12 +329,31 @@ pub(crate) fn ordinary(info: &MaterialInfo) -> bool {
 fn validate_solid_materials(
     materials: &mut Materials<'_>,
     solid: &Solid,
+    entity: &Entity,
     control: &Control,
+    brush_texture_shadows: bool,
+    sources: &BuildMaterialSources,
+    checked_cutouts: &mut std::collections::BTreeSet<usize>,
 ) -> Result<(), String> {
     for side in &solid.sides {
         control.checkpoint()?;
         let index = materials.load(&side.material)?;
-        if !ordinary(materials.get(index)) {
+        let info = materials.get(index);
+        if !ordinary(info) {
+            if brush_texture_shadows
+                && crate::brush_shadow_casters::request(entity)?
+                && crate::brush_shadow_casters::binary_cutout(info)
+            {
+                if checked_cutouts.insert(index) {
+                    crate::brush_shadow_casters::validate_material(
+                        &side.material.trim().replace('\\', "/").to_ascii_lowercase(),
+                        sources,
+                        control,
+                        true,
+                    )?;
+                }
+                continue;
+            }
             return Err(format!(
                 "{} requires ordinary SOLID contents without origin, liquid or special surface semantics",
                 side.material,
@@ -338,11 +368,21 @@ pub(super) fn validate_materials<'a>(
     fs: &GameFs,
     sources: &BuildMaterialSources,
     control: &Control,
+    brush_texture_shadows: bool,
 ) -> Result<(), Diagnostic> {
     let mut materials = Materials::with_build_sources(fs, Requirements::GeometrySemantics, sources);
+    let mut checked_cutouts = std::collections::BTreeSet::new();
     for entity in entities {
         for solid in entity.solids.iter().filter(|solid| !solid.hidden) {
-            let result = validate_solid_materials(&mut materials, solid, control);
+            let result = validate_solid_materials(
+                &mut materials,
+                solid,
+                entity,
+                control,
+                brush_texture_shadows,
+                sources,
+                &mut checked_cutouts,
+            );
             if let Err(message) = result {
                 return Err(Diagnostic::error(
                     format!("Child brush-model material: {message}"),
@@ -628,6 +668,7 @@ mod tests {
                 &game,
                 &sources,
                 &Control::default(),
+                false,
             );
             assert_eq!(
                 result.is_ok(),
@@ -644,6 +685,7 @@ mod tests {
             &game,
             &BuildMaterialSources::default(),
             &Control::default(),
+            false,
         )
         .unwrap_err();
         assert!(
@@ -659,7 +701,8 @@ mod tests {
                 std::iter::once(&entity),
                 &game,
                 &BuildMaterialSources::default(),
-                &control
+                &control,
+                false,
             )
             .unwrap_err()
             .message

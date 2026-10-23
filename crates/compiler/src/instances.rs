@@ -728,7 +728,7 @@ pub enum BrushModelPreparation {
 #[derive(Clone, Copy)]
 enum PreparationPurpose<'a> {
     Reference,
-    Compile(&'a source_formats::gamefs::GameFs),
+    Compile(&'a source_formats::gamefs::GameFs, bool),
 }
 
 pub struct PreparedInstances<'a> {
@@ -811,11 +811,12 @@ impl PreparedInstances<'_> {
         fs: &source_formats::gamefs::GameFs,
         sources: &crate::asset_sources::BuildMaterialSources,
         control: &Control,
+        brush_texture_shadows: bool,
     ) -> Result<(), Diagnostic> {
         let entities = self.vmf.entities.iter().filter(|entity| {
             brush_models::is_model(entity) && self.root_entity(entity.id).is_some()
         });
-        brush_models::validate_materials(entities, fs, sources, control)
+        brush_models::validate_materials(entities, fs, sources, control, brush_texture_shadows)
     }
 
     pub fn generated_brushes(&self) -> impl Iterator<Item = InstanceBrush<'_>> {
@@ -894,7 +895,7 @@ pub fn resolve_for_compile<'a>(
         source,
         control,
         report,
-        PreparationPurpose::Compile(fs),
+        PreparationPurpose::Compile(fs, false),
     )
 }
 
@@ -941,6 +942,7 @@ pub(crate) fn prepare_for_compile<'a>(
     vmf: &'a Vmf,
     source: Option<&SourceContext>,
     fs: &source_formats::gamefs::GameFs,
+    brush_texture_shadows: bool,
     control: &Control,
     report: &mut Report,
 ) -> Result<Prepared<'a>, Diagnostic> {
@@ -949,7 +951,7 @@ pub(crate) fn prepare_for_compile<'a>(
         source,
         control,
         report,
-        PreparationPurpose::Compile(fs),
+        PreparationPurpose::Compile(fs, brush_texture_shadows),
     )
 }
 

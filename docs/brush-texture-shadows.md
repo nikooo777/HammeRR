@@ -28,13 +28,23 @@ The setting changes lighting. Geometry, sealing, visibility and collision stay u
 
 The compiler applies the same binary cutout sampler at the model's admitted stationary initial pose to world and other-model receivers. Model surfaces do not become reflected-light sources.
 
+## Cast from a stationary child brush model
+
+1. Open the child VMF as a normal map and select an eligible unnamed, unparented `func_brush`.
+2. Enable **Advanced properties**, set its finite **Origin (X Y Z)**, and set **Shadows** to **Yes**. An existing supported origin brush may supply the effective pivot instead.
+3. Apply the supported binary cutout material and save the child.
+4. Open the parent map, open **Build settings…**, choose **Direct LDR** or **Direct LDR + HDR**, and enable **Brush texture shadows**.
+5. Compile and inspect **Diagnostics** in **Build details…**.
+
+Compilation consumes the effective origin and lowers the child's admitted initial pose before applying containing reference transforms. Each occurrence casts through its own transformed geometry and attached texture coordinates. The parent reference preview remains unavailable for child models.
+
 ## Limits
 
 - World and `func_detail` cutout surfaces are supported.
 - Binary alpha tests only; partial transparency is unsupported.
 - The bake samples mip 0 with nearest filtering. Game rendering can filter the texture differently.
-- Without an explicit eligible **Shadows → Yes** request, brush-model texture shadows stay within that model's own lit receivers.
-- Global cutout casting requires a root-map model. Child instance cutout models remain unsupported; ordinary opaque child global casters retain their existing support.
+- Without an explicit eligible **Shadows → Yes** request, root brush-model texture shadows stay within that model's own lit receivers. Child cutout models require the explicit request.
+- Requested root and child cutout models require **Brush texture shadows** in a lit mode. Fullbright and unsupported materials fail explicitly, including source-material errors outside the compile region.
 - Cutouts require the supported plain `LightmappedGeneric` material, `$alphatest 1`, a base texture and checked cutoff/transform values. Fractional translucency, additive/window effects and special compile contents are unsupported.
 - Terrain alpha casters are unsupported.
 - Unsupported materials, transforms or required assets stop the build.

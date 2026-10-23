@@ -1122,6 +1122,7 @@ fn build(
                 .as_ref()
                 .ok_or("Child brush models require original material sources")?,
             control,
+            options.brush_texture_shadows,
         )
     {
         output.report.diagnostics.push(diagnostic);
@@ -1885,7 +1886,14 @@ pub fn compile_with_source_controlled(
         bindings
             .map_err(|message| Diagnostic::error(message, None, None))
             .and_then(|()| {
-                instances::prepare_for_compile(vmf, source, fs, control, &mut output.report)
+                instances::prepare_for_compile(
+                    vmf,
+                    source,
+                    fs,
+                    options.brush_texture_shadows,
+                    control,
+                    &mut output.report,
+                )
             })
     };
     match prepared {

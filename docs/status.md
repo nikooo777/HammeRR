@@ -36,7 +36,7 @@ The integrated compiler is experimental. File operations, BSP publication and ga
 | --- | --- | --- |
 | [World and visibility](compile-and-play.md) | Structural/detail geometry, Fast and Detailed visibility, hints, portals and fading windows. | General unsupported portal/model combinations. |
 | [Lighting](compile-and-play.md#lighting) | LDR/HDR, styles, point/spot/sun/sky, soft sun, ambient probes and up to four diffuse bounces. | Material emission, per-texel prop lightmaps and general shader transport. |
-| [Material lighting](compile-and-play.md#normal-map-lighting) | Checked normal maps, albedo, reflectivity and [binary texture shadows](brush-texture-shadows.md), including explicitly requested stationary root brush models. | Child cutout models and general translucent effects remain unsupported. |
+| [Material lighting](compile-and-play.md#normal-map-lighting) | Checked normal maps, albedo, reflectivity and [binary texture shadows](brush-texture-shadows.md), including explicitly requested stationary root and child brush models. | Unrequested child cutouts and general translucent effects remain unsupported. |
 | [Physics](physics.md) | Engine world, terrain and supported brush-model collision, contact materials and derived mass. | Custom density and broader moving-body behavior. |
 | [Brush entities](compile-and-play.md#brush-entities-and-pivots) | Checked pivots, initial rotation, moving models and attached lightmaps. | General parenting, arbitrary model classes and initial poses. |
 | [Terrain](terrain.md) | Mixed-grid full/half neighbors, LOD snapping, lighting and collision. | Holes and runtime brush-model terrain. |

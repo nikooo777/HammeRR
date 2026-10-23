@@ -1193,7 +1193,7 @@ fn bake_inner(
     }
     if let Some(textures) = &brush_textures {
         textures.qualify_models(map, &scopes, &has_receivers, budget)?;
-        report.diagnostics.push(Diagnostic::info("Brush texture shadows samples binary alpha-test world/detail boundaries, admitted initial-pose same-model self shadows and explicitly requested stationary root global casters; geometry, occupancy and model radiance sources remain unchanged", None, None));
+        report.diagnostics.push(Diagnostic::info("Brush texture shadows samples binary alpha-test world/detail boundaries, admitted initial-pose same-model self shadows and explicitly requested stationary root or child global casters; geometry, occupancy and model radiance sources remain unchanged", None, None));
     }
     for plan in &mut plans {
         let scope = &scopes[plan.model];

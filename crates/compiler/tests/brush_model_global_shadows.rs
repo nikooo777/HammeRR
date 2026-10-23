@@ -1084,6 +1084,352 @@ fn from_source(
     output
 }
 
+fn cutout_child(directory: &Path) -> Vmf {
+    cutout_assets(directory);
+    std::fs::write(
+        directory.join("materials/test/pivot.vmt"),
+        "UnlitGeneric { %compileorigin 1 }",
+    )
+    .unwrap();
+    let mut document = Document::empty();
+    let id = model(
+        &mut document,
+        &[([-48.0, -64.0, 96.0], [48.0, 64.0, 104.0])],
+        DVec3::splat(999.0),
+        "test/mask",
+    );
+    document
+        .edit("effective cutout pivot", |tx| {
+            let volume = edit::block_solid(
+                tx,
+                DVec3::new(8.0, 0.0, -8.0),
+                DVec3::new(24.0, 16.0, 8.0),
+                "test/pivot",
+            )?;
+            let item = tx.entity_mut(id)?;
+            item.properties.set("angles", "0 90 0");
+            for side in &mut item.solids[0].sides {
+                side.u_axis = UvAxis {
+                    axis: DVec3::new(1.0, 2.0, 2.0) / 3.0,
+                    offset: -25.0 / 24.0,
+                    scale: 64.0,
+                };
+                side.v_axis = UvAxis {
+                    axis: DVec3::new(2.0, 2.0, -1.0) / 3.0,
+                    offset: 25.0 / 48.0,
+                    scale: 64.0,
+                };
+            }
+            item.solids.push(volume);
+            Ok(())
+        })
+        .unwrap();
+    document.into_vmf()
+}
+
+#[test]
+fn requested_child_cutouts_lower_effective_poses_and_match_independent_repeated_literals() {
+    let (directory, game) = fixture();
+    let child = cutout_child(directory.path());
+    save(directory.path(), "grille.vmf", &child);
+    let child_bytes = std::fs::read(directory.path().join("maps/grille.vmf")).unwrap();
+    let mut base = room();
+    lights(&mut base);
+    let mut parent = base.clone();
+    let owners = [
+        point(
+            &mut parent,
+            "func_instance",
+            "-96 0 216",
+            &[("file", "grille.vmf"), ("angles", "180 0 0")],
+        ),
+        point(
+            &mut parent,
+            "func_instance",
+            "96 0 216",
+            &[("file", "grille.vmf"), ("angles", "180 0 0")],
+        ),
+    ];
+    let source = context(directory.path(), &parent);
+    let mut report = compiler::Report::default();
+    let reference =
+        instances::resolve(&parent, Some(&source), &Control::default(), &mut report).unwrap();
+    assert_eq!(
+        reference.brush_model_preparation(),
+        instances::BrushModelPreparation::Deferred
+    );
+    assert!(reference.compilation_vmf().is_err());
+    assert_eq!(reference.generated_brushes().count(), 0);
+    assert!(
+        instances::resolve_for_compile(
+            &parent,
+            Some(&source),
+            &game,
+            &Control::default(),
+            &mut compiler::Report::default()
+        )
+        .is_err()
+    );
+    let mut literal = Document::new(base);
+    let ids = [
+        model(
+            &mut literal,
+            &[([-184.0, -56.0, 112.0], [-56.0, 40.0, 120.0])],
+            DVec3::new(-112.0, 8.0, 216.0),
+            "test/mask",
+        ),
+        model(
+            &mut literal,
+            &[([8.0, -56.0, 112.0], [136.0, 40.0, 120.0])],
+            DVec3::new(80.0, 8.0, 216.0),
+            "test/mask",
+        ),
+    ];
+    let mut literal = literal.into_vmf();
+    for (index, (&id, owner)) in ids.iter().zip(owners).enumerate() {
+        let generated = reference
+            .vmf()
+            .entities
+            .iter()
+            .find(|item| reference.root_entity(item.id) == Some(owner))
+            .unwrap();
+        let item = entity(&mut literal, id);
+        item.id = generated.id;
+        let origin = item.properties.get("origin").unwrap().to_owned();
+        item.properties.remove("origin");
+        item.properties.set("origin", origin);
+        let sides = item.solids[0].sides.clone();
+        item.solids[0].sides = [1, 0, 5, 4, 3, 2].map(|side| sides[side].clone()).to_vec();
+        item.solids[0].id = generated.solids[0].id;
+        for (side, identity) in item.solids[0]
+            .sides
+            .iter_mut()
+            .zip(&generated.solids[0].sides)
+        {
+            side.id = identity.id;
+            side.u_axis = UvAxis {
+                axis: DVec3::new(2.0, 1.0, -2.0) / 3.0,
+                offset: [2.5, 0.5][index],
+                scale: 64.0,
+            };
+            side.v_axis = UvAxis {
+                axis: DVec3::new(2.0, 2.0, 1.0) / 3.0,
+                offset: [35.0 / 48.0, -61.0 / 48.0][index],
+                scale: 64.0,
+            };
+            assert!(reference.face_origin(side.id).is_some_and(
+                |(actual_owner, file, solid, original_side)| {
+                    actual_owner == owner
+                        && file == "grille.vmf"
+                        && solid == child.entities[0].solids[0].id
+                        && child.entities[0].solids[0]
+                            .sides
+                            .iter()
+                            .any(|side| side.id == original_side)
+                }
+            ));
+        }
+    }
+    let actual = from_source(&parent, &game, &source, cutout_options(0));
+    let expected = built(&literal, &game, cutout_options(0));
+    assert_eq!(
+        successful(&actual).to_bytes(),
+        successful(&expected).to_bytes()
+    );
+    let stats = actual.stats.instances.as_ref().unwrap();
+    assert_eq!(
+        (
+            stats.brush_models,
+            stats.consumed_origin_brushes,
+            actual.stats.brush_shadow_models
+        ),
+        (2, 2, 2)
+    );
+    let emitted = successful(&actual).entities().unwrap();
+    assert_eq!(emitted.matches("\"angles\" \"0 0 0\"").count(), 2);
+    let clear = built(&mask(&literal, "clear"), &game, cutout_options(0));
+    let covered = built(&mask(&literal, "covered"), &game, cutout_options(0));
+    geometry_and_probe_locations(successful(&clear), successful(&actual));
+    for kind in [LightingKind::Ldr, LightingKind::Hdr] {
+        for x in [-192.0, 192.0] {
+            for (y, transparent) in [(64.0, true), (-96.0, false)] {
+                let target = DVec3::new(x, y, 0.0);
+                let lit = sample(successful(&clear), 0, target, DVec3::Z, kind, 0);
+                assert!(lit.linear().into_iter().any(|value| value > 0.0));
+                assert_eq!(
+                    sample(successful(&covered), 0, target, DVec3::Z, kind, 0).linear(),
+                    [0.0; 3]
+                );
+                assert_eq!(
+                    sample(successful(&actual), 0, target, DVec3::Z, kind, 0),
+                    if transparent {
+                        lit
+                    } else {
+                        RgbExp32::default()
+                    }
+                );
+            }
+        }
+    }
+    assert_eq!(
+        std::fs::read(directory.path().join("maps/grille.vmf")).unwrap(),
+        child_bytes
+    );
+}
+
+#[test]
+fn child_cutout_refusals_and_original_publication_sources_survive_output_drop() {
+    let (directory, game) = fixture();
+    let child = cutout_child(directory.path());
+    let mut parent = room();
+    lights(&mut parent);
+    let owner = point(
+        &mut parent,
+        "func_instance",
+        "-96 0 216",
+        &[("file", "grille.vmf"), ("angles", "180 0 0")],
+    );
+    let source = context(directory.path(), &parent);
+    for request in [None, Some("0"), Some("01")] {
+        let mut invalid = child.clone();
+        if let Some(value) = request {
+            invalid.entities[0].properties.set(FLAG, value);
+        } else {
+            invalid.entities[0].properties.remove(FLAG);
+        }
+        save(directory.path(), "grille.vmf", &invalid);
+        let output = compiler::compile_with_source_controlled(
+            &parent,
+            &game,
+            cutout_options(0),
+            None,
+            Some(&source),
+            &Control::default(),
+        );
+        assert!(output.report.has_errors() && output.bsp.is_none());
+        assert!(
+            output
+                .report
+                .diagnostics
+                .iter()
+                .any(|item| item.object == Some(format!("entity:{owner}"))
+                    && item.message.contains("grille.vmf"))
+        );
+    }
+    save(directory.path(), "grille.vmf", &child);
+    for options in [
+        options(0),
+        Options {
+            brush_texture_shadows: true,
+            ..Default::default()
+        },
+    ] {
+        let output = compiler::compile_with_source_controlled(
+            &parent,
+            &game,
+            options,
+            None,
+            Some(&source),
+            &Control::default(),
+        );
+        assert!(output.report.has_errors() && output.bsp.is_none());
+    }
+    let mut omitted = parent.clone();
+    entity(&mut omitted, owner)
+        .properties
+        .set("origin", "1024 0 216");
+    region(&mut omitted);
+    let omitted_source = context(directory.path(), &omitted);
+    for material in [
+        "LightmappedGeneric { $basetexture test/mask $alphatest 1 $translucent 1 }",
+        "LightmappedGeneric { $basetexture test/mask $alphatest 1 %compiletrigger 1 }",
+        "LightmappedGeneric { $basetexture test/mask $alphatest 1 $envmap env_cubemap }",
+    ] {
+        std::fs::write(
+            directory.path().join("materials/test/mask_base.vmt"),
+            material,
+        )
+        .unwrap();
+        let output = compiler::compile_with_source_controlled(
+            &omitted,
+            &game,
+            cutout_options(0),
+            None,
+            Some(&omitted_source),
+            &Control::default(),
+        );
+        assert!(
+            output.report.has_errors() && output.bsp.is_none(),
+            "{material}: {:?}",
+            output.report
+        );
+        assert!(output.report.diagnostics.iter().any(|item| {
+            item.object == Some(format!("entity:{owner}"))
+                && item.message.contains("grille.vmf")
+                && item
+                    .message
+                    .contains(&format!("solid {}", child.entities[0].solids[0].id))
+        }));
+    }
+    cutout_assets(directory.path());
+    let mut invalid = child.clone();
+    invalid.entities[0]
+        .properties
+        .set("parentname", "moving_parent");
+    save(directory.path(), "grille.vmf", &invalid);
+    let source = context(directory.path(), &parent);
+    let output = compiler::compile_with_source_controlled(
+        &parent,
+        &game,
+        cutout_options(0),
+        None,
+        Some(&source),
+        &Control::default(),
+    );
+    assert!(output.report.has_errors() && output.bsp.is_none());
+    for mutation in ["child", "include", "texture"] {
+        cutout_assets(directory.path());
+        save(directory.path(), "grille.vmf", &child);
+        let source = context(directory.path(), &parent);
+        let destination = directory.path().join("published/child-cutout.bsp");
+        std::fs::write(&destination, b"previous BSP").unwrap();
+        std::fs::write(destination.with_extension("lin"), b"previous LIN").unwrap();
+        let output = from_source(&parent, &game, &source, cutout_options(0));
+        let publication = output
+            .prepare_write_controlled(&destination, &Control::default())
+            .unwrap()
+            .unwrap();
+        drop(output);
+        match mutation {
+            "child" => {
+                let mut changed = child.clone();
+                changed.entities[0].properties.set("angles", "0 91 0");
+                save(directory.path(), "grille.vmf", &changed);
+            }
+            "include" => std::fs::write(
+                directory.path().join("materials/test/mask_base.vmt"),
+                "LightmappedGeneric { $basetexture test/mask $alphatest 1 $alpha 0.5 }",
+            )
+            .unwrap(),
+            "texture" => std::fs::write(
+                directory.path().join("materials/test/mask.vtf"),
+                b"changed texture",
+            )
+            .unwrap(),
+            _ => unreachable!(),
+        }
+        assert!(
+            publication.commit(&Control::default()).is_err(),
+            "{mutation}"
+        );
+        assert_eq!(std::fs::read(&destination).unwrap(), b"previous BSP");
+        assert_eq!(
+            std::fs::read(destination.with_extension("lin")).unwrap(),
+            b"previous LIN"
+        );
+    }
+}
+
 #[test]
 fn root_cutout_requests_keep_explicit_refusals_child_limits_and_texture_publication_guard() {
     let (directory, game) = fixture();
@@ -1148,6 +1494,7 @@ fn root_cutout_requests_keep_explicit_refusals_child_limits_and_texture_publicat
             .unwrap()
             .clone(),
     );
+    child.entities[0].properties.set(FLAG, "0");
     save(directory.path(), "cutout-child.vmf", &child);
     let mut parent = room();
     point(

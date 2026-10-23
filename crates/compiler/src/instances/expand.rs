@@ -48,6 +48,7 @@ pub(super) struct Expansion<'a> {
     purpose: PreparationPurpose<'a>,
     materials: Option<crate::materials::Materials<'a>>,
     material_sources: Option<crate::asset_sources::BuildMaterialSources>,
+    checked_cutouts: std::collections::BTreeSet<usize>,
 }
 
 impl<'a> Expansion<'a> {
@@ -78,6 +79,7 @@ impl<'a> Expansion<'a> {
             purpose,
             materials: None,
             material_sources: None,
+            checked_cutouts: std::collections::BTreeSet::new(),
         }
     }
 
@@ -641,7 +643,7 @@ impl<'a> Expansion<'a> {
             crate::brush_model_pose::initial_rotation("func_brush", &original.properties.0)
                 .map_err(EditError::Invalid)?;
         let lower_pose =
-            matches!(self.purpose, PreparationPurpose::Compile(_)) && rotation.is_some();
+            matches!(self.purpose, PreparationPurpose::Compile(..)) && rotation.is_some();
         self.objects = self.objects.saturating_add(1 + shape.brushes);
         self.sides = self.sides.saturating_add(shape.sides);
         let property_bytes = original
@@ -654,7 +656,7 @@ impl<'a> Expansion<'a> {
             .len()
             .checked_mul(2)
             .and_then(|poses| {
-                poses.checked_add(if matches!(self.purpose, PreparationPurpose::Compile(_)) {
+                poses.checked_add(if matches!(self.purpose, PreparationPurpose::Compile(..)) {
                     2
                 } else {
                     1
@@ -669,7 +671,7 @@ impl<'a> Expansion<'a> {
                     geometry
                 };
                 let field_bytes = property_bytes?.checked_add(
-                    if matches!(self.purpose, PreparationPurpose::Compile(_)) {
+                    if matches!(self.purpose, PreparationPurpose::Compile(..)) {
                         MAX_FIELD_BYTES
                     } else {
                         0
@@ -691,7 +693,7 @@ impl<'a> Expansion<'a> {
         }
         self.work = work;
         brush_models::check_source(original, self.control).map_err(EditError::Invalid)?;
-        let origins = if let PreparationPurpose::Compile(fs) = self.purpose {
+        let origins = if let PreparationPurpose::Compile(fs, brush_texture_shadows) = self.purpose {
             if self.materials.is_none() {
                 let sources = crate::asset_sources::BuildMaterialSources::default();
                 self.materials = Some(crate::materials::Materials::with_build_sources(
@@ -702,8 +704,15 @@ impl<'a> Expansion<'a> {
                 self.material_sources = Some(sources);
             }
             Some(
-                brush_models::plan_origin(self.materials.as_mut().unwrap(), original, self.control)
-                    .map_err(EditError::Invalid)?,
+                brush_models::plan_origin(
+                    self.materials.as_mut().unwrap(),
+                    original,
+                    self.control,
+                    brush_texture_shadows,
+                    self.material_sources.as_ref().unwrap(),
+                    &mut self.checked_cutouts,
+                )
+                .map_err(EditError::Invalid)?,
             )
         } else {
             None
@@ -1195,7 +1204,7 @@ mod tests {
             &source,
             &control,
             &mut report,
-            PreparationPurpose::Compile(&game),
+            PreparationPurpose::Compile(&game, false),
         );
         expansion.work = MAX_GEOMETRY_WORK - cost + 1;
         helper.solids[0].sides[0].plane.0 = [DVec3::ZERO; 3];
@@ -1356,7 +1365,7 @@ mod tests {
                 &source,
                 &control,
                 &mut report,
-                PreparationPurpose::Compile(&game),
+                PreparationPurpose::Compile(&game, false),
             );
             expansion.objects = MAX_OBJECTS - (1 + shape.brushes) + usize::from(exceeded == 0);
             expansion.sides = MAX_SIDES - shape.sides + usize::from(exceeded == 1);
@@ -1386,7 +1395,7 @@ mod tests {
             &source,
             &control,
             &mut report,
-            PreparationPurpose::Compile(&game),
+            PreparationPurpose::Compile(&game, false),
         );
         expansion.objects = MAX_OBJECTS - (1 + shape.brushes);
         expansion.sides = MAX_SIDES - shape.sides;

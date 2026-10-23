@@ -50,7 +50,7 @@ The compiled body has zero entity angles; the child VMF keeps its authored value
 The foreground assembly combines initial pitch, yaw and roll with a containing reference rotation.
 
 Moving brush models, parenting and named brush models remain unsupported.
-Child cutout brush models remain unsupported, including **Shadows → Yes** requests with **Brush texture shadows** enabled. The [global cutout extension](brush-texture-shadows.md#cast-from-a-stationary-root-brush-model) applies only to eligible root-map models.
+Eligible child models with **Shadows → Yes** can cast [binary cutout shadows](brush-texture-shadows.md#cast-from-a-stationary-child-brush-model) when **Brush texture shadows** is enabled in a lit build. Unrequested child cutouts and general translucent materials remain unsupported. Effective origins and initial poses use the same lowering described above.
 The compiled entity does not retain the child's original angle value.
 The parent reference preview remains unavailable for child models.
 

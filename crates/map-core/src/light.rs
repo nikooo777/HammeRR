@@ -27,30 +27,41 @@ pub enum ValueKind {
     SunSpreadAngle,
 }
 
+const ALL_VALUE_CLASSES: &[&str] = &["light", "light_spot", "light_environment"];
+const POINT_VALUE_CLASSES: &[&str] = &["light", "light_spot"];
+const SUN_VALUE_CLASSES: &[&str] = &["light_environment"];
+static VALUE_FIELDS: [(&str, &[&str], ValueKind); 9] = [
+    ("_light", ALL_VALUE_CLASSES, ValueKind::Color),
+    ("_lightHDR", ALL_VALUE_CLASSES, ValueKind::Color),
+    ("_ambient", SUN_VALUE_CLASSES, ValueKind::Color),
+    ("_ambientHDR", SUN_VALUE_CLASSES, ValueKind::Color),
+    ("_lightscaleHDR", ALL_VALUE_CLASSES, ValueKind::HdrGain),
+    ("_AmbientScaleHDR", SUN_VALUE_CLASSES, ValueKind::HdrGain),
+    (
+        "_fifty_percent_distance",
+        POINT_VALUE_CLASSES,
+        ValueKind::FalloffDistance,
+    ),
+    (
+        "_zero_percent_distance",
+        POINT_VALUE_CLASSES,
+        ValueKind::FalloffDistance,
+    ),
+    (
+        "SunSpreadAngle",
+        SUN_VALUE_CLASSES,
+        ValueKind::SunSpreadAngle,
+    ),
+];
+
+pub fn value_fields() -> impl Iterator<Item = (&'static str, &'static [&'static str], ValueKind)> {
+    VALUE_FIELDS.iter().copied()
+}
+
 pub fn value_kind(classname: &str, key: &str) -> Option<ValueKind> {
-    if !matches!(classname, "light" | "light_spot" | "light_environment") {
-        return None;
-    }
-    if key.eq_ignore_ascii_case("_light")
-        || key.eq_ignore_ascii_case("_lightHDR")
-        || (classname == "light_environment"
-            && (key.eq_ignore_ascii_case("_ambient") || key.eq_ignore_ascii_case("_ambientHDR")))
-    {
-        Some(ValueKind::Color)
-    } else if key.eq_ignore_ascii_case("_lightscaleHDR")
-        || (classname == "light_environment" && key.eq_ignore_ascii_case("_AmbientScaleHDR"))
-    {
-        Some(ValueKind::HdrGain)
-    } else if classname != "light_environment"
-        && (key.eq_ignore_ascii_case("_fifty_percent_distance")
-            || key.eq_ignore_ascii_case("_zero_percent_distance"))
-    {
-        Some(ValueKind::FalloffDistance)
-    } else if classname == "light_environment" && key.eq_ignore_ascii_case("SunSpreadAngle") {
-        Some(ValueKind::SunSpreadAngle)
-    } else {
-        None
-    }
+    value_fields().find_map(|(name, classes, kind)| {
+        (classes.contains(&classname) && key.eq_ignore_ascii_case(name)).then_some(kind)
+    })
 }
 
 pub fn value_parameter<'a>(classname: &str, key: &str, value: &'a str) -> Option<&'a str> {
@@ -174,6 +185,8 @@ mod tests {
         }
         for (class, key) in [
             ("light_dynamic", "_light"),
+            ("Light", "_light"),
+            ("LIGHT_ENVIRONMENT", "_ambient"),
             ("prop_static", "_lightHDR"),
             ("light", "_lightscaleHDR"),
             ("light_spot", "targetname"),

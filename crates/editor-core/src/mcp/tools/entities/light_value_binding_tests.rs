@@ -236,17 +236,32 @@ fn environment_color_binding_mcp_uses_shared_create_set_and_ambient_drafts() {
     report(server.commit_property_edit(Parameters(PropertyTokenArgs { token })));
     let scope = report(server.get_compile_settings())["light_value_bindings"].clone();
     assert_eq!(
-        scope["class_properties"]["light_environment"],
+        scope["classes"],
+        json!(["light", "light_spot", "light_environment"])
+    );
+    assert_eq!(
+        scope["properties"],
+        json!(["_light", "_lightHDR", "_lightscaleHDR"])
+    );
+    assert_eq!(
+        scope["class_properties"],
+        json!({
+            "light":["_light","_lightHDR","_lightscaleHDR","_fifty_percent_distance","_zero_percent_distance"],
+            "light_spot":["_light","_lightHDR","_lightscaleHDR","_fifty_percent_distance","_zero_percent_distance"],
+            "light_environment":["_light","_lightHDR","_ambient","_ambientHDR","_lightscaleHDR","_AmbientScaleHDR","SunSpreadAngle"]
+        })
+    );
+    assert_eq!(
+        scope["scalar_properties"],
         json!([
-            "_light",
-            "_lightHDR",
-            "_ambient",
-            "_ambientHDR",
             "_lightscaleHDR",
             "_AmbientScaleHDR",
+            "_fifty_percent_distance",
+            "_zero_percent_distance",
             "SunSpreadAngle"
         ])
     );
+    assert_eq!(scope["sun_spread_properties"], json!(["SunSpreadAngle"]));
     assert_eq!(scope["sun_spread_degrees"], json!([0, 90]));
     assert_eq!(scope["sun_spread_classes"], json!(["light_environment"]));
     assert_eq!(scope["scalar_parameters"], true);

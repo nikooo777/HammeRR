@@ -5,13 +5,59 @@ use source_formats::vmf::Entity;
 use super::*;
 
 pub(super) fn light_value_binding_scope() -> Value {
+    use map_core::light::ValueKind;
+
+    let fields: Vec<_> = map_core::light::value_fields().collect();
+    let mut classes = Vec::new();
+    for &(_, supported, _) in &fields {
+        for &class in supported {
+            if !classes.contains(&class) {
+                classes.push(class);
+            }
+        }
+    }
+    let class_properties: serde_json::Map<String, Value> = classes
+        .iter()
+        .map(|class| {
+            let properties: Vec<_> = fields
+                .iter()
+                .filter_map(|&(key, supported, _)| supported.contains(class).then_some(key))
+                .collect();
+            (class.to_string(), json!(properties))
+        })
+        .collect();
+    let common_properties: Vec<_> = fields
+        .iter()
+        .filter_map(|&(key, supported, _)| {
+            classes
+                .iter()
+                .all(|class| supported.contains(class))
+                .then_some(key)
+        })
+        .collect();
+    let scalar_properties: Vec<_> = fields
+        .iter()
+        .filter_map(|&(key, _, kind)| (kind != ValueKind::Color).then_some(key))
+        .collect();
+    let properties_for_kind = |kind| {
+        fields
+            .iter()
+            .filter_map(|&(key, _, field_kind)| (field_kind == kind).then_some(key))
+            .collect::<Vec<_>>()
+    };
+    let classes_for_kind = |kind| {
+        classes
+            .iter()
+            .copied()
+            .filter(|class| {
+                fields.iter().any(|&(_, supported, field_kind)| {
+                    field_kind == kind && supported.contains(class)
+                })
+            })
+            .collect::<Vec<_>>()
+    };
     json!({
-        "classes":["light","light_spot","light_environment"],"properties":["_light","_lightHDR","_lightscaleHDR","_fifty_percent_distance","_zero_percent_distance"],
-        "class_properties":{
-            "light":["_light","_lightHDR","_lightscaleHDR","_fifty_percent_distance","_zero_percent_distance"],
-            "light_spot":["_light","_lightHDR","_lightscaleHDR","_fifty_percent_distance","_zero_percent_distance"],
-            "light_environment":["_light","_lightHDR","_ambient","_ambientHDR","_lightscaleHDR","_AmbientScaleHDR","SunSpreadAngle"]
-        },
+        "classes":classes,"properties":common_properties,"class_properties":class_properties,
         "scope":"direct_visible_child_of_immediately_containing_func_instance",
         "helper_fields":["replace01","replace02","replace03","replace04","replace05","replace06","replace07","replace08","replace09","replace10"],
         "binding_form":"$identifier literal","binding_separator":"first ASCII space",
@@ -20,10 +66,10 @@ pub(super) fn light_value_binding_scope() -> Value {
         "literal_only":true,"empty_replacement_fields":true,
         "rejected":["duplicates","missing","unused","recursive","embedded","unsupported_context","ancestor_forwarding"],
         "other_parameter_contexts":false,"scalar_parameters":true,
-        "scalar_properties":["_lightscaleHDR","_AmbientScaleHDR","_fifty_percent_distance","_zero_percent_distance","SunSpreadAngle"],
-        "sun_spread_properties":["SunSpreadAngle"],"sun_spread_classes":["light_environment"],"sun_spread_degrees":[0,90],
-        "falloff_distance_properties":["_fifty_percent_distance","_zero_percent_distance"],
-        "falloff_distance_classes":["light","light_spot"],
+        "scalar_properties":scalar_properties,
+        "sun_spread_properties":properties_for_kind(ValueKind::SunSpreadAngle),"sun_spread_classes":classes_for_kind(ValueKind::SunSpreadAngle),"sun_spread_degrees":[0,90],
+        "falloff_distance_properties":properties_for_kind(ValueKind::FalloffDistance),
+        "falloff_distance_classes":classes_for_kind(ValueKind::FalloffDistance),
         "scalar_literal":"one finite nonnegative number","other_scalar_parameters":false,"func_instance_parms":false,
         "standalone_unresolved_compilation":false,"authored_lighting_preview_resolution":false
     })

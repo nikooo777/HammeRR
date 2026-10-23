@@ -182,6 +182,9 @@ For [stationary child brush rotation](instances.md#rotate-a-stationary-child-bru
 Save the child, then compile its parent. Compilation lowers the initial pose into body geometry and emits zero angles.
 `brush_model_preview.deferred_checks` includes `initial_pose`; reference inspection still provides no child model mesh.
 
+In the `get_compile_settings` response, use `light_value_bindings.class_properties` for each light class.
+Its `properties` list contains only fields valid for every listed class; specialized lists give distance and sun-spread scope.
+
 For [light colors per reference](instances.md#light-colors-per-reference), set a child light's `_light` or `_lightHDR` to `$name`.
 Child `light_environment` also supports `_ambient` and `_ambientHDR`.
 Bind `_lightscaleHDR` on point/spot/sun lights or `_AmbientScaleHDR` on sun lights to one finite, nonnegative scalar literal.

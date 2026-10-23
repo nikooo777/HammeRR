@@ -444,7 +444,8 @@ fn committed_verification_error_is_shared_and_retains_original_directory_for_all
                 SelectionFilters {
                     world_brushes: false,
                     ..Default::default()
-                },
+                }
+                .into(),
                 publication,
             ),
         }

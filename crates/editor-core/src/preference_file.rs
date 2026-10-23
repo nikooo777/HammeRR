@@ -7,6 +7,20 @@ use std::{
 
 use source_formats::file_publication::{BoundDestination, CommittedReceipt};
 
+pub(crate) fn named_preference(
+    name: &str,
+    max_bytes: usize,
+    label: &str,
+) -> Result<String, String> {
+    let name = name.trim();
+    if name.is_empty() || name.len() > max_bytes || name.chars().any(char::is_control) {
+        return Err(format!(
+            "{label} name must contain 1–{max_bytes} bytes without control characters"
+        ));
+    }
+    Ok(name.into())
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Source {
     Missing,

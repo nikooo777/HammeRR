@@ -35,13 +35,30 @@ async fn dispatched_filters_share_explicit_ids_and_reject_terminal_calls() {
         ("set_selection_defaults", json!({"action":"save"})),
         ("set_selection_defaults", json!({"action":"reload"})),
         ("set_selection_defaults", json!({"action":"apply"})),
+        ("get_selection_profiles", json!({})),
+        (
+            "set_selection_profile",
+            json!({"operation":{"action":"save","name":"All disabled"}}),
+        ),
+        (
+            "set_selection_profile",
+            json!({"operation":{"action":"rename","id":"profile:1","name":"Nothing"}}),
+        ),
+        (
+            "set_selection_profile",
+            json!({"operation":{"action":"replace","id":"profile:1"}}),
+        ),
+        (
+            "set_selection_profile",
+            json!({"operation":{"action":"apply","id":"profile:1"}}),
+        ),
         (
             "get_object_hit_candidates",
             json!({"origin":[0,0,128],"direction":[0,0,-1]}),
         ),
         ("select", json!({"ids":[id_string(selected)]})),
     ] {
-        if name == "set_selection_defaults" {
+        if matches!(name, "set_selection_defaults" | "set_selection_profile") {
             arguments["snapshot"] = json!(lock(&shared).selection_preferences_stamp());
         }
         let request =
@@ -61,10 +78,17 @@ async fn dispatched_filters_share_explicit_ids_and_reject_terminal_calls() {
         if name == "set_selection_filters" {
             assert_eq!(value["filters"], filters);
         }
-        if name == "set_selection_defaults" {
+        if matches!(name, "set_selection_defaults" | "set_selection_profile") {
             assert_eq!(value["saved"], filters);
             assert_eq!(value["current"], filters);
             assert_eq!(value["ready"], true);
+        }
+        if matches!(name, "get_selection_defaults" | "set_selection_defaults") {
+            assert!(value.get("profiles").is_none());
+        }
+        if name == "set_selection_profile" {
+            assert_eq!(value["profiles"][0]["filters"], filters);
+            assert_eq!(value["profile_id"], "profile:1");
         }
         if name == "get_object_hit_candidates" {
             assert_eq!(value["total"], 0);
@@ -94,6 +118,14 @@ async fn dispatched_filters_share_explicit_ids_and_reject_terminal_calls() {
     ] {
         assert!(serde_json::from_value::<SelectionDefaultsArgs>(invalid).is_err());
     }
+    for invalid in [
+        json!({"snapshot":"","operation":{"action":"save"}}),
+        json!({"snapshot":"","operation":{"action":"delete","id":"profile:1","name":"extra"}}),
+        json!({"snapshot":"","operation":{"action":"apply","name":"Nothing"}}),
+        json!({"snapshot":"","operation":{"action":"save","name":"A"},"extra":true}),
+    ] {
+        assert!(serde_json::from_value::<SelectionProfileArgs>(invalid).is_err());
+    }
     document.shutdown().unwrap();
     let before = lock(&shared).selection_filter_state();
     let request = CallToolRequestParams::new("set_selection_filters").with_arguments(
@@ -114,23 +146,30 @@ async fn dispatched_filters_share_explicit_ids_and_reject_terminal_calls() {
     assert_eq!(result.is_error, Some(true));
     assert_eq!(lock(&shared).selection_filter_state(), before);
     let before = lock(&shared).selection_preferences_state();
-    let request = CallToolRequestParams::new("set_selection_defaults").with_arguments(
-        json!({"action":"reset","snapshot":before["snapshot"]})
-            .as_object()
+    for (tool, args) in [
+        (
+            "set_selection_defaults",
+            json!({"action":"reset","snapshot":before["snapshot"]}),
+        ),
+        (
+            "set_selection_profile",
+            json!({"operation":{"action":"delete","id":"profile:1"},"snapshot":before["snapshot"]}),
+        ),
+    ] {
+        let request =
+            CallToolRequestParams::new(tool).with_arguments(args.as_object().unwrap().clone());
+        let context = RequestContext::new(NumberOrString::Number(3), service.peer().clone());
+        let result = match tokio::time::timeout(TIMEOUT, server.call_tool(request, context))
+            .await
             .unwrap()
-            .clone(),
-    );
-    let context = RequestContext::new(NumberOrString::Number(3), service.peer().clone());
-    let result = match tokio::time::timeout(TIMEOUT, server.call_tool(request, context))
-        .await
-        .unwrap()
-        .unwrap()
-    {
-        CallToolResponse::Complete(result) => result,
-        result => panic!("unexpected response: {result:?}"),
-    };
-    assert_eq!(result.is_error, Some(true));
-    assert_eq!(lock(&shared).selection_preferences_state(), before);
+            .unwrap()
+        {
+            CallToolResponse::Complete(result) => result,
+            result => panic!("unexpected response: {result:?}"),
+        };
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(lock(&shared).selection_preferences_state(), before);
+    }
     tokio::time::timeout(TIMEOUT, service.cancel())
         .await
         .unwrap()

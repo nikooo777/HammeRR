@@ -13,7 +13,7 @@ The integrated compiler is experimental. File operations, BSP publication and ga
 | [Documents](open-documents.md) | Two map windows, reviewed Close, per-map Save results. | Tabs, bulk Quit and workspace restoration. |
 | [VMF and recovery](map-tools.md) | Preserved imported fields, checked Save, recovery snapshots and map checks. | Other-editor round trips; general automatic repairs. |
 | [History](history.md) | Shared Undo/Redo and change summaries. | Persistent history and full property diffs. |
-| [Selection](selection.md) | Type filters, saved startup defaults, overlap cycling, area, volume and paint selection. | Named filter profiles. |
+| [Selection](selection.md) | Type filters, startup defaults, named profiles, overlap cycling, area, volume and paint selection. | Separate solid/group modes. |
 | [Brushes](brushes.md) | Shapes, handles, exact transforms, pivots, mirror, shear and grid snapping. | Magnetic snapping and persistent custom pivots. |
 | [Brush tools](brush-tools.md) | Hollow, carve, clip, convex merge and polygon extrusion. | Concave merge and holes. |
 | [Components](components.md) | Move, rotate, scale, weld, split, ridges and partitions. | General topology editing and arbitrary dividing lines. |

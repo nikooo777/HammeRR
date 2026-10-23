@@ -16,7 +16,7 @@ Alt+click cycles overlapping object hits. **Bypass groups** selects individual m
 ## Save selection defaults
 
 1. Choose the types under **Pick object types**.
-2. Open **Selection defaults…**.
+2. Open **Selection defaults…** and choose **Startup defaults**.
 3. Compare **Current session** with **Startup defaults**.
 4. Click **Save current as defaults** to use these filters for future documents.
 5. Click **Apply saved defaults** to restore the saved filters in this document.
@@ -25,6 +25,21 @@ Alt+click cycles overlapping object hits. **Bypass groups** selects individual m
 **Reset saved defaults** saves all three types enabled; click **Apply saved defaults** to use them now.
 If the dialog reports a storage error, repair the file and click **Reload defaults**,
 or explicitly replace it with **Reset saved defaults**.
+
+## Named filter profiles
+
+1. Choose the types under **Pick object types**.
+2. Open **Selection defaults…** and choose **Named profiles**.
+3. Enter **Profile name**, then click **Save current as profile**.
+4. Click a saved name in the list, then **Apply selected profile**.
+
+**Replace selected profile** saves current filters under the selected name.
+To rename it, edit **Profile name**, then click **Rename profile**.
+**Delete profile** removes the selected saved profile.
+
+Profiles and startup defaults are separate. Saving or editing profiles never
+changes current filters or startup defaults. Apply affects only this document.
+**Reload defaults** refreshes both lists without applying them.
 
 ## Area selection
 
@@ -67,8 +82,9 @@ This is separate from saved map visibility and [working regions](working-region.
 
 - Hidden targets are excluded. Type filters limit object-selection seeds; eligible hits still select complete visible groups. **Fully inside** requires every visible group member inside.
 - Faces, components, geometric queries and explicit object-ID selection bypass type filters. Changing filters retains existing selection and ends pending object-selection gestures.
-- Only the three object types are saved. Saving, reloading or resetting defaults leaves current filters unchanged; applying affects only this document. **New** and **Open** retain current filters in the same document session.
+- Profiles and startup defaults store the three type switches. Saving, reloading or resetting defaults leaves current filters unchanged; applying affects only this document. **New** and **Open** retain current filters in the same document session.
 - Other running editors may require **Reload defaults** after saved defaults change. Storage errors disable Save and Apply until Reload or an explicit Reset succeeds.
+- Keep at most 32 profiles with case-insensitively unique names of 1–80 UTF-8 bytes. **Reset saved defaults** retains valid profiles; unreadable profiles without a valid retained copy require file repair before Reload.
 - Loaded models use transformed bounds for area and volume matching; point picking uses mesh triangles.
 - Terrain selection follows the displaced sheet, not its former parent volume.
 - Overlap cycling retains up to 64 ordered hits.

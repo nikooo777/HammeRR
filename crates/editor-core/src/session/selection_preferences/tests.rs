@@ -147,4 +147,164 @@ fn independent_defaults_conflicts_and_failed_reload_require_explicit_recovery_wi
     );
     assert_eq!(second.selection_filters(), SelectionFilters::default());
     assert_eq!(second.selection_preferences_state()["ready"], true);
+    let mut legacy = serde_json::to_vec(&json!({"version":1,"filters":filters})).unwrap();
+    legacy.resize(4097, b' ');
+    std::fs::write(&path, &legacy).unwrap();
+    assert!(
+        action(&mut second, "reload")
+            .unwrap_err()
+            .contains("4096 bytes for version 1")
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), legacy);
+}
+
+fn profile_action(session: &mut Session, operation: ProfileAction) -> Value {
+    session
+        .change_selection_profile(
+            Actor::User,
+            operation,
+            &session.selection_preferences_stamp(),
+        )
+        .unwrap()
+}
+
+#[test]
+fn legacy_startup_and_shared_profiles_remain_independent_through_edits_apply_reload_and_reset() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory
+        .path()
+        .join(crate::selection_preferences::FILE_NAME);
+    let startup = SelectionFilters {
+        world_brushes: false,
+        ..Default::default()
+    };
+    let legacy = serde_json::to_vec(&json!({"version":1,"filters":startup})).unwrap();
+    std::fs::write(&path, &legacy).unwrap();
+    let defaults = SavedDefaults::configured(Ok(directory.path().into()));
+    let mut first = Session::with_saved_defaults(Err("no assets".into()), defaults.clone());
+    let mut second = Session::with_saved_defaults(Err("no assets".into()), defaults.clone());
+    assert_eq!(std::fs::read(&path).unwrap(), legacy);
+    assert_eq!(first.selection_filters(), startup);
+    assert_eq!(second.selection_filters(), startup);
+    let profile_filters = SelectionFilters {
+        world_brushes: true,
+        brush_entities: false,
+        point_entities: false,
+    };
+    first
+        .set_selection_filters(Actor::User, profile_filters)
+        .unwrap();
+    let stale = second.selection_preferences_stamp();
+    let saved = profile_action(
+        &mut first,
+        ProfileAction::Save {
+            name: "  World only  ".into(),
+        },
+    );
+    let id = saved["profile_id"].as_str().unwrap().to_owned();
+    assert_eq!(saved["profiles"][0]["name"], "World only");
+    assert_eq!(saved["saved"], json!(startup));
+    assert_eq!(
+        second.selection_profiles_state()["profiles"],
+        saved["profiles"]
+    );
+    assert_eq!(second.selection_filters(), startup);
+    assert!(
+        second
+            .change_selection_profile(
+                Actor::User,
+                ProfileAction::Delete { id: id.clone() },
+                &stale
+            )
+            .is_err()
+    );
+    let selected = second
+        .create_block(
+            Actor::User,
+            DVec3::splat(-16.0),
+            DVec3::splat(16.0),
+            "test",
+            false,
+        )
+        .unwrap();
+    let source = second.document().vmf().clone();
+    let history = second.history_snapshot();
+    let token = object_volume(&mut second);
+    let applied = profile_action(&mut second, ProfileAction::Apply { id: id.clone() });
+    assert_eq!(applied["write_committed"], false);
+    assert_eq!(second.selection_filters(), profile_filters);
+    assert!(second.commit_volume_selection(Actor::User, token).is_err());
+    assert_eq!(second.selected_ids(), [selected]);
+    assert_eq!(second.document().vmf(), &source);
+    assert_eq!(second.history_snapshot(), history);
+    action(&mut first, "save").unwrap();
+    assert_eq!(
+        first.selection_profiles_state()["profiles"],
+        saved["profiles"]
+    );
+    let renamed = profile_action(
+        &mut second,
+        ProfileAction::Rename {
+            id: id.clone(),
+            name: "Structure".into(),
+        },
+    );
+    assert_eq!(renamed["profiles"][0]["id"], id);
+    assert_eq!(renamed["saved"], json!(profile_filters));
+    second
+        .set_selection_filters(Actor::User, SelectionFilters::default())
+        .unwrap();
+    let replaced = profile_action(&mut second, ProfileAction::Replace { id: id.clone() });
+    assert_eq!(
+        replaced["profiles"][0]["filters"],
+        json!(SelectionFilters::default())
+    );
+    assert_eq!(replaced["profiles"][0]["name"], "Structure");
+    assert_eq!(first.selection_filters(), profile_filters);
+    let bytes = std::fs::read(&path).unwrap();
+    let snapshot = first.selection_preferences_stamp();
+    assert!(
+        first
+            .change_selection_profile(
+                Actor::User,
+                ProfileAction::Save {
+                    name: "STRUCTURE".into()
+                },
+                &snapshot
+            )
+            .is_err()
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    std::fs::write(&path, b"malformed catalogue").unwrap();
+    assert!(action(&mut first, "reload").is_err());
+    assert!(
+        first
+            .change_selection_profile(
+                Actor::User,
+                ProfileAction::Apply { id: id.clone() },
+                &first.selection_preferences_stamp()
+            )
+            .is_err()
+    );
+    let reset = action(&mut first, "reset").unwrap();
+    assert!(reset.get("profiles").is_none());
+    assert_eq!(
+        first.selection_profiles_state()["profiles"],
+        replaced["profiles"]
+    );
+    assert_eq!(first.selection_filters(), profile_filters);
+    assert_eq!(reset["saved"], json!(SelectionFilters::default()));
+    let restarted = Session::with_saved_defaults(Err("no assets".into()), defaults);
+    assert_eq!(restarted.selection_filters(), SelectionFilters::default());
+    profile_action(&mut second, ProfileAction::Delete { id: id.clone() });
+    assert_eq!(second.selection_filters(), SelectionFilters::default());
+    let saved = profile_action(
+        &mut second,
+        ProfileAction::Save {
+            name: "Replacement".into(),
+        },
+    );
+    assert_ne!(saved["profile_id"], id);
+    assert_eq!(second.document().vmf(), &source);
+    assert_eq!(second.history_snapshot(), history);
 }

@@ -26,7 +26,7 @@ impl SavedDefaults {
 }
 
 pub(crate) trait Store: Send {
-    type Settings: Copy + Default + Serialize + Send;
+    type Settings: Clone + Default + Serialize + Send;
     const LABEL: &'static str;
     const CHANGED: &'static str;
     const UNREADY: &'static str;
@@ -99,7 +99,7 @@ store!(
 );
 store!(
     selection_preferences,
-    SelectionFilters,
+    SelectionDefaults,
     "Selection defaults",
     "Saved selection defaults changed outside this session; Reload defaults before using them"
 );
@@ -190,7 +190,7 @@ impl<S: Store> Authority<S> {
             return Err(S::UNREADY.into());
         }
         state.check_source()?;
-        Ok(state.saved.unwrap_or_default())
+        Ok(state.saved.clone().unwrap_or_default())
     }
 
     pub fn save(
@@ -200,12 +200,24 @@ impl<S: Store> Authority<S> {
         settings: S::Settings,
         reset: bool,
     ) -> Result<(), String> {
+        self.update(serial, stale, reset, |_| Ok(settings))
+            .map(|_| ())
+    }
+
+    pub fn update(
+        &self,
+        serial: u64,
+        stale: &str,
+        reset: bool,
+        edit: impl FnOnce(Option<&S::Settings>) -> Result<S::Settings, String>,
+    ) -> Result<Snapshot<S::Settings>, String> {
         let mut state = self.lock();
         state.check_revision(serial, stale)?;
         if !reset && !state.loaded {
             return Err(S::UNREADY.into());
         }
         state.check_source()?;
+        let settings = edit(state.saved.as_ref())?;
         let result = state
             .store
             .as_ref()
@@ -216,13 +228,13 @@ impl<S: Store> Authority<S> {
                     .as_ref()
                     .ok_or("Inspect defaults before writing")?;
                 store
-                    .publish(settings, reset, expected)
+                    .publish(settings.clone(), reset, expected)
                     .map_err(|error| error.message)
             });
         match result {
             Ok(publication) => {
                 state.accept(settings, publication);
-                Ok(())
+                Ok(state.snapshot())
             }
             Err(error) => Err(state.fail(error)),
         }
@@ -241,7 +253,7 @@ impl<S: Store> Authority<S> {
 impl<S: Store> State<S> {
     fn snapshot(&self) -> Snapshot<S::Settings> {
         Snapshot {
-            saved: self.saved,
+            saved: self.saved.clone(),
             loaded: self.loaded,
             error: self.error.clone(),
             storage_error: self.store.as_ref().err().cloned(),

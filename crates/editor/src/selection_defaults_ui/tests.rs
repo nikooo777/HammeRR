@@ -51,7 +51,6 @@ fn selection_defaults_controls_share_saved_errors_and_apply_only_the_originating
     ] {
         crate::ui::tests::assert_dialog_button_visible(&left.window, label);
     }
-    crate::ui::tests::save_ui_snapshot(left.window.window(), "selection-defaults");
     left.window.invoke_save();
     assert_eq!(left.window.get_rows().row_data(0).unwrap().defaults, "Off");
     right.window.invoke_apply();
@@ -62,6 +61,52 @@ fn selection_defaults_controls_share_saved_errors_and_apply_only_the_originating
     lock(&first)
         .set_selection_filters(Actor::User, SelectionFilters::default())
         .unwrap();
+    left.refresh(&lock(&first));
+    left.window.set_section(1);
+    left.window.set_profile_name("Everything".into());
+    left.window.invoke_save_profile();
+    let id = left.window.get_selected_profile();
+    assert!(!id.is_empty());
+    assert_eq!(left.window.get_profiles().row_count(), 1);
+    assert_eq!(
+        lock(&first).selection_preferences_state()["saved"],
+        serde_json::json!(filters)
+    );
+    lock(&first)
+        .set_selection_filters(Actor::User, filters)
+        .unwrap();
+    right.refresh(&lock(&second));
+    right.window.set_section(1);
+    right.window.invoke_choose_profile(id.clone());
+    for label in [
+        "Save current as profile",
+        "Replace selected profile",
+        "Apply selected profile",
+        "Rename profile",
+        "Delete profile",
+    ] {
+        crate::ui::tests::assert_dialog_button_visible(&right.window, label);
+    }
+    right.window.invoke_apply_profile();
+    assert_eq!(
+        lock(&second).selection_filters(),
+        SelectionFilters::default()
+    );
+    assert_eq!(lock(&first).selection_filters(), filters);
+    right.window.set_profile_name("All types".into());
+    right.window.invoke_rename_profile();
+    left.window.set_profile_name("Unfinished name".into());
+    left.refresh(&lock(&first));
+    assert_eq!(left.window.get_profile_name(), "Unfinished name");
+    assert_eq!(
+        left.window.get_profiles().row_data(0).unwrap().name,
+        "All types"
+    );
+    lock(&second)
+        .set_selection_filters(Actor::User, filters)
+        .unwrap();
+    right.refresh(&lock(&second));
+    right.window.set_section(0);
     let path = directory
         .path()
         .join(editor_core::selection_preferences::FILE_NAME);
@@ -86,8 +131,17 @@ fn selection_defaults_controls_share_saved_errors_and_apply_only_the_originating
     assert_eq!(lock(&second).selection_filters(), filters);
     left.refresh(&lock(&first));
     assert!(left.window.get_ready());
+    assert_eq!(left.window.get_profiles().row_count(), 1);
     assert_eq!(left.window.get_rows().row_data(0).unwrap().defaults, "On");
     right.window.invoke_apply();
+    assert_eq!(
+        lock(&second).selection_filters(),
+        SelectionFilters::default()
+    );
+    right.window.set_section(1);
+    right.window.invoke_choose_profile(id);
+    right.window.invoke_delete_profile();
+    assert_eq!(right.window.get_profiles().row_count(), 0);
     assert_eq!(
         lock(&second).selection_filters(),
         SelectionFilters::default()
@@ -95,12 +149,14 @@ fn selection_defaults_controls_share_saved_errors_and_apply_only_the_originating
     left.window.invoke_close_dialog();
     right.window.invoke_close_dialog();
     assert!(!left.window.window().is_visible() && !right.window.window().is_visible());
-    let before = lock(&first).selection_preferences_state();
+    let before = lock(&first).selection_profiles_state();
     let bytes = std::fs::read(&path).unwrap();
     first_document.shutdown().unwrap();
     left.window.invoke_reset();
     assert_eq!(left.window.get_message(), "the document is closed");
-    assert_eq!(lock(&first).selection_preferences_state(), before);
+    left.window.invoke_save_profile();
+    assert_eq!(left.window.get_message(), "the document is closed");
+    assert_eq!(lock(&first).selection_profiles_state(), before);
     assert_eq!(std::fs::read(&path).unwrap(), bytes);
     second_document.shutdown().unwrap();
 }

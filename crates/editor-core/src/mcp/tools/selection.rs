@@ -27,6 +27,13 @@ pub struct SelectionDefaultsArgs {
     snapshot: String,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SelectionProfileArgs {
+    snapshot: String,
+    operation: crate::session::selection_preferences::ProfileAction,
+}
+
 #[tool_router(router = selection_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
@@ -68,6 +75,27 @@ impl EditorServer {
                 args.action.name(),
                 &args.snapshot,
             )
+        })
+    }
+
+    #[tool(
+        description = "Inspect named object-selection filter profiles, their stable IDs, current filters, independent startup defaults, shared storage readiness/errors and an action snapshot. Same catalogue as Selection defaults… → Named profiles. Profiles do not apply automatically or change startup defaults. Up to 32 profiles with case-insensitively unique names of 1–80 UTF-8 bytes share the bounded selection-defaults.json authority. No graphics, source, history or preference writes.",
+        annotations(read_only_hint = true)
+    )]
+    pub(in crate::mcp) fn get_selection_profiles(&self) -> ToolResult {
+        ok(self.session().selection_profiles_state())
+    }
+
+    #[tool(
+        description = "Manage named selection-filter profiles through the shared Session operation. Requires latest get_selection_profiles.snapshot and operation: {action:save,name} saves current filters as a new profile; {action:replace,id} replaces that profile's filters while retaining its name/ID; {action:rename,id,name} renames; {action:delete,id} removes; {action:apply,id} applies only to this Session through the ordinary filter setter. Only explicit apply changes active filters or retires object-selection gestures. Profile writes never change startup defaults or any other document's filters, selection, source/history or camera. The catalogue shares exact-source/directory guards, participating writer locks, errors and explicit Reload defaults with startup defaults. Stale forms/conflicts reject. write_committed=true with ready=false means the file was written but verification failed. UI: Save current as profile / Replace selected profile / Apply selected profile / Rename profile / Delete profile."
+    )]
+    pub(in crate::mcp) fn set_selection_profile(
+        &self,
+        Parameters(args): Parameters<SelectionProfileArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session()
+                .change_selection_profile(Actor::Agent, args.operation, &args.snapshot)
         })
     }
 

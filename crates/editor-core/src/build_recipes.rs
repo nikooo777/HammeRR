@@ -163,13 +163,7 @@ pub(crate) fn builtins() -> [Recipe; 2] {
 }
 
 fn recipe_name(name: &str) -> Result<String, String> {
-    let name = name.trim();
-    if name.is_empty() || name.len() > MAX_NAME_BYTES || name.chars().any(char::is_control) {
-        return Err(format!(
-            "Recipe name must contain 1–{MAX_NAME_BYTES} bytes without control characters"
-        ));
-    }
-    Ok(name.into())
+    crate::preference_file::named_preference(name, MAX_NAME_BYTES, "Recipe")
 }
 
 pub(crate) fn validate(file: &File) -> Result<(), String> {

@@ -124,3 +124,81 @@ fn light_value_binding_mcp_uses_existing_string_schemas_and_shared_drafts() {
     );
     assert!(server.offscreen.lock().unwrap().renderer.is_none());
 }
+
+#[test]
+fn environment_color_binding_mcp_uses_shared_create_set_and_ambient_drafts() {
+    let mut session = Session::new(Err("template authoring needs no assets".into()));
+    session.set_definitions(
+        Actor::User,
+        Catalog::parse(
+            r#"@PointClass = light_environment [
+                _light(color255) : "Brightness" : "255 255 255 200"
+                _lightHDR(color255) : "HDR brightness" : "-1 -1 -1 1"
+                _ambient(color255) : "Ambient" : "255 255 255 20"
+                _ambientHDR(color255) : "HDR ambient" : "-1 -1 -1 1"
+            ]"#,
+        )
+        .unwrap(),
+    );
+    let shared = Arc::new(Mutex::new(session));
+    let server = EditorServer::new(shared.clone(), None);
+    for tool in [
+        "create_entity",
+        "set_entity_properties",
+        "update_property_edit",
+    ] {
+        let description = server.get_tool(tool).unwrap().description.unwrap();
+        assert!(description.contains("light_environment"));
+        assert!(description.contains("_ambientHDR"));
+    }
+    let created = report(server.create_entity(Parameters(
+        serde_json::from_value(json!({
+            "classname":"light_environment","origin":[0,0,64],
+            "properties":{"_light":"$Sun","_lightHDR":"$SunHDR","_ambient":"$Sky","_ambientHDR":"$SkyHDR"}
+        }))
+        .unwrap(),
+    )));
+    let id = created["id"].as_str().unwrap();
+    report(server.set_entity_properties(Parameters(
+        serde_json::from_value(json!({"id":id,"set":{"_ambientHDR":"$OtherSkyHDR"}})).unwrap(),
+    )));
+    let before = lock(&shared).document().vmf().clone();
+    let opened = report(server.begin_property_edit(Parameters(
+        serde_json::from_value(json!({"ids":[id]})).unwrap(),
+    )));
+    let token = opened["draft"]["token"].as_u64().unwrap();
+    let staged = report(
+        server.update_property_edit(Parameters(
+            serde_json::from_value(json!({"token":token,"changes":[
+                {"action":"set","key":"_ambient","value":"$SkyDraft"},
+                {"action":"set","key":"_ambientHDR","value":"$SkyHDRDraft"}
+            ]}))
+            .unwrap(),
+        )),
+    );
+    for key in ["_ambient", "_ambientHDR"] {
+        let field = &staged["preview"]["properties"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|property| property["field"]["key"] == key)
+            .unwrap()["field"];
+        assert_eq!(field["control"], "text");
+        assert!(field["color"].is_null() && field["intensity"].is_null());
+        assert!(
+            field["description"]
+                .as_str()
+                .unwrap()
+                .contains("Unresolved template light value")
+        );
+    }
+    assert_eq!(lock(&shared).document().vmf(), &before);
+    report(server.commit_property_edit(Parameters(PropertyTokenArgs { token })));
+    let scope = report(server.get_compile_settings())["light_value_bindings"].clone();
+    assert_eq!(
+        scope["class_properties"]["light_environment"],
+        json!(["_light", "_lightHDR", "_ambient", "_ambientHDR"])
+    );
+    assert_eq!(scope["scalar_parameters"], false);
+    assert!(server.offscreen.lock().unwrap().renderer.is_none());
+}

@@ -111,6 +111,63 @@ fn unresolved_template_lights_have_explicit_diagnostics_without_hiding_valid_lam
 }
 
 #[test]
+fn unresolved_environment_color_channels_exclude_the_sun_with_sky_ambient_enabled_or_disabled() {
+    for key in ["_light", "_lightHDR", "_ambient", "_ambientHDR"] {
+        let (_directory, mut session, _) = fixture();
+        add(
+            &mut session,
+            "light",
+            Some(DVec3::Z * 32.0),
+            &[("_light", "255 128 32 10")],
+        );
+        let sun = add(
+            &mut session,
+            "light_environment",
+            Some(DVec3::Z * 64.0),
+            &[
+                ("_light", "255 255 255 10"),
+                ("_lightHDR", "-1 -1 -1 1"),
+                ("_ambient", "255 255 255 5"),
+                ("_ambientHDR", "-1 -1 -1 1"),
+                ("pitch", "-90"),
+            ],
+        );
+        let ObjectId::Entity(sun) = sun else {
+            unreachable!()
+        };
+        session
+            .set_entity_properties(Actor::User, sun, &[(key.into(), Some("$Color".into()))])
+            .unwrap();
+        enable(&mut session);
+        let before = session.document().vmf().clone();
+        let history = session.history_snapshot();
+        for sky_ambient in [false, true] {
+            let view = session
+                .resolve_view_update(ViewUpdate {
+                    lighting_sky_ambient: Some(sky_ambient),
+                    ..Default::default()
+                })
+                .unwrap();
+            session.set_view(view);
+            let report = session.build_scene().lighting.report;
+            assert!(report.active);
+            assert_eq!(report.admitted_lights, 1);
+            assert_eq!(report.excluded_lights, 1);
+            assert_eq!(report.admitted_suns, 0);
+            assert_eq!(report.excluded_suns, 1);
+            assert!(report.diagnostics.iter().any(|diagnostic| {
+                diagnostic.entity == Some(sun)
+                    && diagnostic
+                        .reason
+                        .contains(&format!("Unresolved template light value {key}=$Color"))
+            }));
+            assert_eq!(session.document().vmf(), &before);
+            assert_eq!(session.history_snapshot(), history);
+        }
+    }
+}
+
+#[test]
 fn authored_lighting_tracks_owned_transform_cancel_apply_and_undo_without_view_edits() {
     let (_directory, mut session, _) = fixture();
     let light = add(

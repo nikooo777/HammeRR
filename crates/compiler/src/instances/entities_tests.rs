@@ -1462,7 +1462,14 @@ fn bound_templates_reject_grouped_semantic_and_context_failures_before_fullbrigh
 
 #[test]
 fn unresolved_standalone_light_templates_fail_in_every_compile_mode() {
-    for (class, key) in [("light", "_light"), ("light_spot", "_lightHDR")] {
+    for (class, key) in [
+        ("light", "_light"),
+        ("light_spot", "_lightHDR"),
+        ("light_environment", "_light"),
+        ("light_environment", "_lightHDR"),
+        ("light_environment", "_ambient"),
+        ("light_environment", "_ambientHDR"),
+    ] {
         let mut vmf = test_common::room();
         let mut light = static_light(vmf.object_ids().max().unwrap() + 1, class, "0 0 96");
         light.properties.set(key, "$lamp");

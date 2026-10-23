@@ -178,9 +178,7 @@ pub(super) fn prepare(vmf: &Vmf, visible: &HashSet<ObjectId>, view: ViewOptions)
             continue;
         }
         let is_sun = class == "light_environment";
-        let result = if is_sun && suns > MAX_SUNS {
-            Err("Conflicting visible light_environment sources; every sun is excluded until only one remains visible".into())
-        } else if !["light", "light_spot", "light_environment"].contains(&class.as_str()) {
+        let result = if !["light", "light_spot", "light_environment"].contains(&class.as_str()) {
             Err(format!(
                 "Unshadowed preview does not support {class}; ambient and dynamic lights are excluded"
             ))
@@ -191,6 +189,8 @@ pub(super) fn prepare(vmf: &Vmf, visible: &HashSet<ObjectId>, view: ViewOptions)
             Err(format!(
                 "Unresolved template light value {key}={value}; bind it through replace01–replace10 on the immediately containing func_instance. Authored-lighting preview cannot resolve instance bindings"
             ))
+        } else if is_sun && suns > MAX_SUNS {
+            Err("Conflicting visible light_environment sources; every sun is excluded until only one remains visible".into())
         } else {
             constant(entity).and_then(|()| {
                 let source = compiler::map::MapEntity {

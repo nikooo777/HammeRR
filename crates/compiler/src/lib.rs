@@ -1067,9 +1067,8 @@ fn build(
             output.report.diagnostics.push(diagnostic);
         }
         if !entity.hidden
-            && matches!(entity.classname(), Some("light" | "light_spot"))
             && entity.properties.iter().any(|(key, value)| {
-                (key.eq_ignore_ascii_case("_light") || key.eq_ignore_ascii_case("_lightHDR"))
+                map_core::light::color_field(entity.classname().unwrap_or_default(), key)
                     && value.contains('$')
             })
         {

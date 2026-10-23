@@ -6,7 +6,12 @@ use super::*;
 
 pub(super) fn light_value_binding_scope() -> Value {
     json!({
-        "classes":["light","light_spot"],"properties":["_light","_lightHDR"],
+        "classes":["light","light_spot","light_environment"],"properties":["_light","_lightHDR"],
+        "class_properties":{
+            "light":["_light","_lightHDR"],
+            "light_spot":["_light","_lightHDR"],
+            "light_environment":["_light","_lightHDR","_ambient","_ambientHDR"]
+        },
         "scope":"direct_visible_child_of_immediately_containing_func_instance",
         "helper_fields":["replace01","replace02","replace03","replace04","replace05","replace06","replace07","replace08","replace09","replace10"],
         "binding_form":"$identifier literal","binding_separator":"first ASCII space",
@@ -14,7 +19,7 @@ pub(super) fn light_value_binding_scope() -> Value {
         "case_insensitive_names":true,"field_bytes":instances::MAX_FIELD_BYTES,
         "literal_only":true,"empty_replacement_fields":true,
         "rejected":["duplicates","missing","unused","recursive","embedded","unsupported_context","ancestor_forwarding"],
-        "other_parameter_contexts":false,"func_instance_parms":false,
+        "other_parameter_contexts":false,"scalar_parameters":false,"func_instance_parms":false,
         "standalone_unresolved_compilation":false,"authored_lighting_preview_resolution":false
     })
 }

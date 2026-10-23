@@ -1133,3 +1133,214 @@ fn repeated_environment_helpers_share_the_existing_object_budget_before_fullbrig
     );
     assert_preserved(&output, directory.path());
 }
+
+const COLOR_BINDINGS: [(&str, &str, &str); 4] = [
+    ("_light", "$Sun", "replace01"),
+    ("_lightHDR", "$SunHDR", "replace02"),
+    ("_ambient", "$Sky", "replace03"),
+    ("_ambientHDR", "$SkyHDR", "replace10"),
+];
+
+fn environment_template(origin: &str) -> Entity {
+    let mut source = environment(origin, Some("0 0 0"), "-45");
+    for (key, token, _) in COLOR_BINDINGS {
+        source.properties.set(key, token);
+    }
+    source
+}
+
+fn bind_environment(helper: &mut Entity, values: [&str; 4]) {
+    for ((_, token, slot), value) in COLOR_BINDINGS.into_iter().zip(values) {
+        helper
+            .properties
+            .set(slot, format!("{} {value}", token.to_ascii_lowercase()));
+    }
+}
+
+#[test]
+fn immediate_environment_bindings_match_independent_literal_bsp_in_every_mode() {
+    for (values, hdr_intensities) in [
+        (
+            ["255 0 0 200", "0 255 0 600", "0 0 255 40", "255 0 0 20"],
+            vec![[0.0, 300.0 / 255.0, 0.0], [40.0 / 255.0, 0.0, 0.0]],
+        ),
+        (
+            ["255 0 0 200", "-1 -1 -1 1", "0 0 255 40", "-1 -1 -1 1"],
+            vec![[100.0 / 255.0, 0.0, 0.0], [0.0, 0.0, 80.0 / 255.0]],
+        ),
+        (
+            ["255 0 0 200", "0 255 0 600", "0 0 255 40", "0"],
+            vec![[0.0, 300.0 / 255.0, 0.0]],
+        ),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let game = game(directory.path());
+        let child = leaf(environment_template("8 -4 160"));
+        let raw = write_source(directory.path(), "leaf.vmf", &child);
+        let mut parent = room(true, true);
+        let owner = instance(&mut parent, "leaf.vmf", "16 24 0", "0 0 0");
+        bind_environment(parent.entities.last_mut().unwrap(), values);
+        let before = parent.clone();
+        let context = saved_parent(directory.path(), &parent);
+        let prepared = resolve(&parent, &context);
+        let generated = prepared
+            .vmf()
+            .entities
+            .iter()
+            .find(|entity| entity.classname() == Some("light_environment"))
+            .unwrap();
+        assert_eq!(prepared.root_entity(generated.id), Some(owner));
+        assert_eq!(prepared.stats().unwrap().environment_lights, 1);
+        for ((key, _, _), value) in COLOR_BINDINGS.into_iter().zip(values) {
+            assert_eq!(generated.properties.get(key), Some(value));
+        }
+        let mut authored_literal = environment("24 20 160", Some("0 0 0"), "-45");
+        for ((key, _, _), value) in COLOR_BINDINGS.into_iter().zip(values) {
+            authored_literal.properties.set(key, value);
+        }
+        let expected = literal(&parent, &[authored_literal]);
+        for mode in MODES {
+            let actual = successful(compile_saved(&parent, &game, mode, &context));
+            let expected = successful(compiler::compile_with_options(
+                &expected,
+                &game,
+                options(mode),
+            ));
+            assert_eq!(
+                actual.to_bytes(),
+                expected.to_bytes(),
+                "{mode:?}: {values:?}"
+            );
+            if mode == LightingMode::DirectLdrHdr {
+                assert_eq!(
+                    actual
+                        .world_lights(LightingKind::Hdr)
+                        .unwrap()
+                        .iter()
+                        .map(|light| light.intensity)
+                        .collect::<Vec<_>>(),
+                    hdr_intensities
+                );
+                assert!(actual.lighting(LightingKind::Hdr).unwrap().is_some());
+            }
+        }
+        assert_eq!(parent, before);
+        assert_eq!(
+            std::fs::read(directory.path().join("leaf.vmf")).unwrap(),
+            raw
+        );
+    }
+}
+
+#[test]
+fn immediate_environment_bindings_validate_all_effective_channels_before_region_selection() {
+    let directory = tempfile::tempdir().unwrap();
+    let game = game(directory.path());
+    let baseline = leaf(environment_template("600 0 128"));
+    for issue in [
+        "missing",
+        "unused",
+        "sun ldr",
+        "sun hdr",
+        "ambient ldr",
+        "ambient hdr",
+        "scalar",
+        "embedded",
+    ] {
+        let mut child = baseline.clone();
+        let mut parent = room(true, false);
+        let owner = instance(&mut parent, "leaf.vmf", "0 0 0", "0 0 0");
+        let helper = parent.entities.last_mut().unwrap();
+        bind_environment(
+            helper,
+            ["255 0 0 200", "0 255 0 600", "0 0 255 40", "255 0 0 20"],
+        );
+        let reason = match issue {
+            "missing" => {
+                helper.properties.remove("replace03");
+                "missing immediate binding $Sky"
+            }
+            "unused" => {
+                helper.properties.set("replace04", "$unused 1 2 3 4");
+                "unused"
+            }
+            "sun ldr" => {
+                helper.properties.set("replace01", "$sun 300 0 0 200");
+                "colors must be 0"
+            }
+            "sun hdr" => {
+                helper.properties.set("replace02", "$sunhdr 0 255 0 -1");
+                "brightness must be nonnegative"
+            }
+            "ambient ldr" => {
+                helper.properties.set("replace03", "$sky 0 0 300 40");
+                "colors must be 0"
+            }
+            "ambient hdr" => {
+                helper.properties.set("replace10", "$skyhdr 255 0 0 -1");
+                "brightness must be nonnegative"
+            }
+            "scalar" => {
+                child.entities[0].properties.set("_AmbientScaleHDR", "$Sky");
+                "Invalid HDR light _AmbientScaleHDR"
+            }
+            "embedded" => {
+                child.entities[0].properties.set("_ambient", "0 $Sky 0 40");
+                "light color"
+            }
+            _ => unreachable!(),
+        };
+        let raw = write_source(directory.path(), "leaf.vmf", &child);
+        region(&mut parent);
+        let before = parent.clone();
+        let context = saved_parent(directory.path(), &parent);
+        for mode in MODES {
+            let output = compile_saved(&parent, &game, mode, &context);
+            assert!(output.report.has_errors() && output.bsp.is_none() && output.leak.is_none());
+            assert!(
+                output.report.diagnostics.iter().any(|diagnostic| {
+                    diagnostic.object == Some(format!("entity:{owner}"))
+                        && diagnostic.message.contains(reason)
+                }),
+                "{issue}/{mode:?}: {:?}",
+                output.report
+            );
+            assert!(output.stats.compile_region.is_none());
+            assert_preserved(&output, directory.path());
+        }
+        assert_eq!(parent, before);
+        assert_eq!(
+            std::fs::read(directory.path().join("leaf.vmf")).unwrap(),
+            raw
+        );
+    }
+
+    let raw = write_source(directory.path(), "leaf.vmf", &baseline);
+    let mut parent = room(true, false);
+    instance(&mut parent, "leaf.vmf", "0 0 0", "0 0 0");
+    bind_environment(
+        parent.entities.last_mut().unwrap(),
+        ["255 0 0 200", "-1 -1 -1 1", "0 0 255 40", "-1 -1 -1 1"],
+    );
+    region(&mut parent);
+    let context = saved_parent(directory.path(), &parent);
+    let mut authored_literal = environment("600 0 128", Some("0 0 0"), "-45");
+    authored_literal.properties.set("_lightHDR", "-1 -1 -1 1");
+    authored_literal.properties.set("_ambientHDR", "-1 -1 -1 1");
+    let expected = literal(&parent, &[authored_literal]);
+    for mode in MODES {
+        let output = compile_saved(&parent, &game, mode, &context);
+        assert!(output.stats.compile_region.is_some());
+        let actual = successful(output);
+        let expected = successful(compiler::compile_with_options(
+            &expected,
+            &game,
+            options(mode),
+        ));
+        assert_eq!(actual.to_bytes(), expected.to_bytes(), "{mode:?}");
+    }
+    assert_eq!(
+        std::fs::read(directory.path().join("leaf.vmf")).unwrap(),
+        raw
+    );
+}

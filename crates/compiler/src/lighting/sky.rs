@@ -3,6 +3,7 @@ use source_formats::bsp::{LightingKind, WorldLight, world_light_kind};
 
 use super::{
     PointLight, ReceiverAngularMode, checked_intensity, hdr_color, hdr_scale, number, property,
+    unresolved_color,
 };
 use crate::map::MapEntity;
 
@@ -35,7 +36,8 @@ pub(super) fn ambient_directions(quality: crate::SkyQuality) -> Vec<DVec3> {
 fn sun_source(
     entity: &MapEntity,
     kind: LightingKind,
-) -> Result<(MapEntity, PointLight, f64), String> {
+    defer_parameters: bool,
+) -> Result<(MapEntity, Option<PointLight>, f64), String> {
     if number(entity, "style")? != 0.0
         || property(entity, "targetname").is_some_and(|name| !name.is_empty())
         || property(entity, "pattern").is_some_and(|pattern| !pattern.is_empty())
@@ -76,7 +78,7 @@ fn sun_source(
             .into_iter()
             .any(|field| key.eq_ignore_ascii_case(field))
     });
-    let point = PointLight::from_entity_kind(&source, -1, kind)?;
+    let point = PointLight::parse(&source, -1, kind, defer_parameters)?;
     Ok((source, point, spread))
 }
 
@@ -118,8 +120,18 @@ impl SkyLight {
         targets: &map_core::light::Targets<'_>,
         kind: LightingKind,
     ) -> Result<Self, String> {
-        let (source, point, spread) = sun_source(entity, kind)?;
-        let origin = point.origin;
+        Self::parse(entity, targets, kind, false)?
+            .ok_or_else(|| "Sun and sky light has an unresolved light-value parameter".into())
+    }
+
+    pub(super) fn parse(
+        entity: &MapEntity,
+        targets: &map_core::light::Targets<'_>,
+        kind: LightingKind,
+        defer_parameters: bool,
+    ) -> Result<Option<Self>, String> {
+        let (source, point, spread) = sun_source(entity, kind, defer_parameters)?;
+        let origin = source.origin.ok_or("Sun needs an origin")?;
         let ambient = match kind {
             LightingKind::Ldr => {
                 if let Some(ambient) =
@@ -130,37 +142,56 @@ impl SkyLight {
                         .properties
                         .retain(|(key, _)| !key.eq_ignore_ascii_case("_light"));
                     source.properties.push(("_light".into(), ambient.into()));
-                    PointLight::from_entity(&source, -1)?.intensity
+                    PointLight::parse(&source, -1, kind, defer_parameters)?
+                        .map(|point| point.intensity)
                 } else {
-                    point.intensity * 0.5
+                    point.as_ref().map(|point| point.intensity * 0.5)
                 }
             }
             LightingKind::Hdr => {
-                let color = match hdr_color(entity, "_ambientHDR", true)? {
-                    Some(color) => Some(color),
-                    None => hdr_color(entity, "_ambient", true)?,
+                let scale = hdr_scale(entity, "_AmbientScaleHDR")?;
+                let ambient = if unresolved_color(entity, "_ambientHDR", defer_parameters) {
+                    None
+                } else {
+                    let color = hdr_color(entity, "_ambientHDR", true)?;
+                    if color.is_none() && unresolved_color(entity, "_ambient", defer_parameters) {
+                        None
+                    } else {
+                        let color = match color {
+                            Some(color) => Some(color),
+                            None => hdr_color(entity, "_ambient", true)?,
+                        };
+                        color
+                            .map(|color| color.intensity(1.0))
+                            .or_else(|| point.as_ref().map(|point| point.intensity * 0.5))
+                    }
                 };
-                let ambient = color.map_or(point.intensity * 0.5, |color| color.intensity(1.0));
-                checked_intensity(ambient * hdr_scale(entity, "_AmbientScaleHDR")?)
+                ambient
+                    .map(|ambient| checked_intensity(ambient * scale))
+                    .transpose()
                     .map_err(|error| format!("HDR sky ambient: {error}"))?
             }
         };
         let direction = sun_direction(entity, targets, origin)?;
-        Ok(Self {
+        let (Some(point), Some(ambient)) = (point, ambient) else {
+            return Ok(None);
+        };
+        Ok(Some(Self {
             source_id: entity.id,
             direction,
             intensity: point.intensity,
             ambient,
             origin,
             spread: spread.to_radians().sin(),
-        })
+        }))
     }
 
     pub(super) fn direct_from_entity(
         entity: &MapEntity,
         targets: &map_core::light::Targets<'_>,
     ) -> Result<Self, String> {
-        let (_, point, spread) = sun_source(entity, LightingKind::Ldr)?;
+        let (_, point, spread) = sun_source(entity, LightingKind::Ldr, false)?;
+        let point = point.ok_or("Sun has an unresolved light-value parameter")?;
         let origin = point.origin;
         Ok(Self {
             source_id: entity.id,

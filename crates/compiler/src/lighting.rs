@@ -45,6 +45,14 @@ pub(crate) fn validate_environment_light(entity: &MapEntity) -> Result<(), Strin
     Ok(())
 }
 
+pub(crate) fn validate_environment_light_template(entity: &MapEntity) -> Result<(), String> {
+    let targets = map_core::light::Targets::new();
+    for kind in [LightingKind::Ldr, LightingKind::Hdr] {
+        sky::SkyLight::parse(entity, &targets, kind, true)?;
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy)]
 pub(super) enum ReceiverAngularMode {
     Normal,
@@ -346,20 +354,15 @@ pub(crate) fn validate_point_light_template(
     entity: &MapEntity,
     spotlight: bool,
 ) -> Result<(), String> {
-    let (origin, _) = point_light_pose_style(entity)?;
-    let falloff = falloff::Falloff::from_entity(entity)?;
-    let scale = hdr_scale(entity, "_lightscaleHDR")?;
     for kind in [LightingKind::Ldr, LightingKind::Hdr] {
-        if let Some(color) = point_light_color(entity, kind, true)? {
-            let mut intensity = color.intensity(falloff.gain);
-            if kind == LightingKind::Hdr {
-                intensity *= scale;
-            }
-            checked_intensity(intensity)?;
-        }
+        PointLight::parse(entity, -1, kind, true)?;
     }
     if spotlight {
-        spotlight_cone(entity, &map_core::light::Targets::new(), origin)?;
+        spotlight_cone(
+            entity,
+            &map_core::light::Targets::new(),
+            entity.origin.ok_or("Point light needs an origin")?,
+        )?;
     }
     Ok(())
 }
@@ -415,16 +418,33 @@ impl PointLight {
         cluster: i32,
         kind: LightingKind,
     ) -> Result<Self, String> {
+        Self::parse(entity, cluster, kind, false)?
+            .ok_or_else(|| "Point light has an unresolved light-value parameter".into())
+    }
+
+    fn parse(
+        entity: &MapEntity,
+        cluster: i32,
+        kind: LightingKind,
+        defer_parameters: bool,
+    ) -> Result<Option<Self>, String> {
         let (origin, style) = point_light_pose_style(entity)?;
-        let color = point_light_color(entity, kind, false)?
-            .ok_or("Point light has an unresolved light-value parameter")?;
+        let color = point_light_color(entity, kind, defer_parameters)?;
         let falloff = falloff::Falloff::from_entity(entity)?;
+        let scale = if kind == LightingKind::Hdr {
+            hdr_scale(entity, "_lightscaleHDR")?
+        } else {
+            1.0
+        };
+        let Some(color) = color else {
+            return Ok(None);
+        };
         let mut intensity = color.intensity(falloff.gain);
         if kind == LightingKind::Hdr {
-            intensity *= hdr_scale(entity, "_lightscaleHDR")?;
+            intensity *= scale;
         }
         let intensity = checked_intensity(intensity)?;
-        Ok(Self {
+        Ok(Some(Self {
             source_id: entity.id,
             origin,
             style,
@@ -432,7 +452,7 @@ impl PointLight {
             falloff,
             cluster,
             cone: None,
-        })
+        }))
     }
 
     pub fn with_spotlight(

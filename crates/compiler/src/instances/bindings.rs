@@ -113,7 +113,7 @@ impl<'a> Bindings<'a> {
                 .count();
             if let Some((_, binding)) = self.get(&suffix[..length]) {
                 return Err(format!(
-                    "Instance light binding ${} appears outside an immediate whole _light or _lightHDR field",
+                    "Instance light binding ${} appears outside an immediate supported whole light color field",
                     binding.name
                 ));
             }

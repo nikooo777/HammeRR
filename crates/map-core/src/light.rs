@@ -19,10 +19,17 @@ pub fn parameter_name(value: &str) -> Option<&str> {
     Some(name)
 }
 
+pub fn color_field(classname: &str, key: &str) -> bool {
+    matches!(classname, "light" | "light_spot" | "light_environment")
+        && (key.eq_ignore_ascii_case("_light")
+            || key.eq_ignore_ascii_case("_lightHDR")
+            || (classname == "light_environment"
+                && (key.eq_ignore_ascii_case("_ambient")
+                    || key.eq_ignore_ascii_case("_ambientHDR"))))
+}
+
 pub fn color_parameter<'a>(classname: &str, key: &str, value: &'a str) -> Option<&'a str> {
-    if !matches!(classname, "light" | "light_spot")
-        || !(key.eq_ignore_ascii_case("_light") || key.eq_ignore_ascii_case("_lightHDR"))
-    {
+    if !color_field(classname, key) {
         return None;
     }
     parameter_name(value)
@@ -102,10 +109,18 @@ mod tests {
         for name in ["lamp", "Lamp_2", "_", &"a".repeat(64)] {
             let value = format!("${name}");
             assert_eq!(parameter_name(&value), Some(name));
-            for class in ["light", "light_spot"] {
+            for class in ["light", "light_spot", "light_environment"] {
                 for key in ["_light", "_lightHDR", "_LIGHTHDR"] {
+                    assert!(color_field(class, key));
                     assert_eq!(color_parameter(class, key, &value), Some(name));
                 }
+            }
+            for key in ["_ambient", "_ambientHDR", "_AMBIENTHDR"] {
+                assert!(color_field("light_environment", key));
+                assert_eq!(
+                    color_parameter("light_environment", key, &value),
+                    Some(name)
+                );
             }
         }
         for value in [
@@ -124,13 +139,16 @@ mod tests {
             assert_eq!(parameter_name(value), None, "{value:?}");
         }
         for (class, key) in [
-            ("light_environment", "_light"),
             ("light_dynamic", "_light"),
             ("prop_static", "_lightHDR"),
             ("light", "_lightscaleHDR"),
             ("light_spot", "targetname"),
             ("light", "_ambient"),
+            ("light_spot", "_ambientHDR"),
+            ("light_environment", "_AmbientScaleHDR"),
+            ("light_environment", "SunSpreadAngle"),
         ] {
+            assert!(!color_field(class, key));
             assert_eq!(color_parameter(class, key, "$lamp"), None);
         }
     }

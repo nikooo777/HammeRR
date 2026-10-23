@@ -121,6 +121,77 @@ fn authored(actor: Actor, mixed: bool) -> Authored {
 }
 
 #[test]
+fn bound_environment_colors_refresh_without_parent_preview_and_preserve_saved_templates() {
+    for actor in [Actor::User, Actor::Agent] {
+        let mut fixture = authored(actor, false);
+        let session = &mut fixture.session;
+        session.open(actor, &fixture.child, false).unwrap();
+        session
+            .set_entity_properties(
+                actor,
+                fixture.helper,
+                &[
+                    ("_light".into(), Some("$Sun".into())),
+                    ("_lightHDR".into(), Some("$SunHDR".into())),
+                    ("_ambient".into(), Some("$Sky".into())),
+                    ("_ambientHDR".into(), Some("$SkyHDR".into())),
+                ],
+            )
+            .unwrap();
+        session.save(actor, None).unwrap();
+        let child = std::fs::read(&fixture.child).unwrap();
+        session.open(actor, &fixture.source, false).unwrap();
+        let ObjectId::Entity(owner) = fixture.owner else {
+            unreachable!()
+        };
+        session
+            .set_entity_properties(
+                actor,
+                owner,
+                &[
+                    ("replace01".into(), Some("$sun 255 0 0 200".into())),
+                    ("replace02".into(), Some("$sunhdr -1 -1 -1 1".into())),
+                    ("replace03".into(), Some("$sky 0 0 255 40".into())),
+                    ("replace10".into(), Some("$skyhdr -1 -1 -1 1".into())),
+                ],
+            )
+            .unwrap();
+        session.save(actor, None).unwrap();
+        session.open(actor, &fixture.source, false).unwrap();
+        let before = session.document().vmf().clone();
+        let history = session.history_snapshot();
+        let parent = std::fs::read(&fixture.source).unwrap();
+        let report = refresh(session, actor);
+        assert_eq!(report["state"], "ready", "{report}");
+        assert_eq!(report["stats"]["environment_lights"], 1);
+        assert!(report["stats"].get("point_lights").is_none());
+        assert!(report["stats"].get("spot_lights").is_none());
+        assert_eq!(report["static_light_preview"]["available"], false);
+        assert_eq!(
+            report["static_light_preview"]["reason"],
+            ENVIRONMENT_LIGHT_PREVIEW_REASON
+        );
+        assert_eq!(report["available"], false);
+        assert_eq!(report["geometry"]["vertices"], 0);
+        assert_eq!(
+            report["light_value_bindings"]["class_properties"]["light_environment"],
+            json!(["_light", "_lightHDR", "_ambient", "_ambientHDR"])
+        );
+        assert_eq!(session.document().vmf(), &before);
+        assert_eq!(session.history_snapshot(), history);
+        assert_eq!(std::fs::read(&fixture.source).unwrap(), parent);
+        assert_eq!(std::fs::read(&fixture.child).unwrap(), child);
+        session
+            .set_entity_properties(actor, owner, &[("replace03".into(), None)])
+            .unwrap();
+        let failed = refresh(session, actor);
+        assert_eq!(failed["state"], "failed", "{failed}");
+        assert!(failed["stats"].get("environment_lights").is_none());
+        assert_eq!(std::fs::read(&fixture.child).unwrap(), child);
+    }
+}
+
+#[test]
 fn fgd_authored_environment_lights_have_sun_counts_and_no_parent_light_preview_for_both_actors() {
     for actor in [Actor::User, Actor::Agent] {
         let mut fixture = authored(actor, false);

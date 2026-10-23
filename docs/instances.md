@@ -76,6 +76,22 @@ Use [compiled light inspection](compiled-lights.md) to check the effective LDR a
 
 ![Two references to one arch use different baked light colors](images/instance-light-colors.png)
 
+To bind sun and sky colors, use an unnamed `light_environment` in the child:
+
+1. Open the child, select `light_environment`, and enable **Advanced properties**.
+2. Set **Property key** to `_light` and **Value** to `$sun`, then press Enter.
+3. Set **Property key** to `_ambient` and **Value** to `$sky`, then press Enter.
+4. Save the child and return to the parent.
+5. Select its instance reference and enable **Advanced properties**.
+6. Set `replace01` to `$sun 255 220 180 200` using **Property key** and **Value**.
+7. Set `replace02` to `$sky 180 210 255 40` the same way.
+8. Choose **Direct LDR** or **Direct LDR + HDR** in **Build settings…**, then compile.
+
+The child's `_lightHDR` and `_ambientHDR` also accept whole-value tokens.
+Bind them in separate replacement slots; a literal `-1 -1 -1 1` keeps normal HDR inheritance.
+HDR scales and **SunSpreadAngle** remain literal values.
+Baked lighting still permits one global `light_environment` across the parent and its children.
+
 Use `replace01` through `replace10`. Each value has the form `$name literal`.
 Names are case-insensitive, with 1–64 ASCII letters, digits or underscores; the first character cannot be a digit.
 A parameter must fill the whole color field. Each containing reference must supply every used parameter.
@@ -84,7 +100,8 @@ Missing, duplicate or unused bindings fail. Invalid effective light values also 
 An unresolved child template can be edited and saved, but cannot compile alone.
 Preview excludes unresolved lamps and reports a reason; the parent still has no child-light preview.
 
-Only `_light` and `_lightHDR` on direct child point and spot lights support these bindings.
+Point and spot lights support `_light` and `_lightHDR`; sun lights also support `_ambient` and `_ambientHDR`.
+Bindings apply only to direct child lights. Scalar fields remain literal.
 Nested references bind their own direct child lights. Ancestor forwarding, partial replacement and parameter declarations remain unsupported.
 
 ## Names and parameters

@@ -618,6 +618,11 @@ impl<'a> Expansion<'a> {
         let Some(shape) = brush_models::shape(original).map_err(EditError::Invalid)? else {
             return Ok(());
         };
+        let rotation =
+            crate::brush_model_pose::initial_rotation("func_brush", &original.properties.0)
+                .map_err(EditError::Invalid)?;
+        let lower_pose =
+            matches!(self.purpose, PreparationPurpose::Compile(_)) && rotation.is_some();
         self.objects = self.objects.saturating_add(1 + shape.brushes);
         self.sides = self.sides.saturating_add(shape.sides);
         let property_bytes = original
@@ -636,8 +641,14 @@ impl<'a> Expansion<'a> {
                     1
                 })
             })
+            .and_then(|poses| poses.checked_add(2 * usize::from(lower_pose)))
             .and_then(|poses| shape.geometry_work.checked_mul(poses))
             .and_then(|geometry| {
+                let geometry = if lower_pose {
+                    geometry.checked_add(shape.sides.checked_mul(8)?)?
+                } else {
+                    geometry
+                };
                 let field_bytes = property_bytes?.checked_add(
                     if matches!(self.purpose, PreparationPurpose::Compile(_)) {
                         MAX_FIELD_BYTES
@@ -751,6 +762,10 @@ impl<'a> Expansion<'a> {
         }
         if origins.is_some() {
             brush_models::check_pose(&entity, self.control).map_err(EditError::Invalid)?;
+            if let Some(rotation) = rotation {
+                brush_models::lower_initial_pose(&mut entity, rotation, self.control)
+                    .map_err(EditError::Invalid)?;
+            }
         }
         let generated = entity.id;
         let id = tx.add_entity(entity)?;
@@ -1135,6 +1150,46 @@ mod tests {
         let mut helper = Entity::new(1000, "func_viscluster");
         helper.solids.push(vmf.world.solids[0].clone());
         (directory, vmf, helper, source)
+    }
+
+    #[test]
+    fn nonzero_model_pose_reserves_its_added_work_before_geometry_or_material_reads() {
+        let (_directory, vmf, mut helper, source) = fixture();
+        helper.properties.set("classname", "func_brush");
+        helper.properties.set("origin", "0 0 0");
+        helper.properties.set("angles", "0 90 0");
+        let shape = brush_models::shape(&helper).unwrap().unwrap();
+        let transforms = [edit::Transform::default(); 2];
+        let fields: usize = helper
+            .properties
+            .iter()
+            .map(|(key, value)| key.len() + value.len())
+            .sum();
+        let cost = shape.geometry_work * (2 * transforms.len() + 4)
+            + shape.sides * 8
+            + (fields + MAX_FIELD_BYTES) * (transforms.len() + 1);
+        let control = Control::default();
+        let game = crate::test_common::empty_game();
+        let mut report = Report::default();
+        let mut expansion = Expansion::new(
+            &vmf,
+            &source,
+            &control,
+            &mut report,
+            PreparationPurpose::Compile(&game),
+        );
+        expansion.work = MAX_GEOMETRY_WORK - cost + 1;
+        helper.solids[0].sides[0].plane.0 = [DVec3::ZERO; 3];
+        let mut document = Document::new(vmf.clone());
+        let error = document
+            .edit("bounded posed model", |tx| {
+                expansion.brush_model(tx, &helper, 2000, "child.vmf", &transforms)
+            })
+            .unwrap_err();
+        assert!(error.to_string().contains("geometry-work limits"));
+        assert!(expansion.material_sources.is_none());
+        assert!(expansion.provenance.is_empty());
+        assert_eq!(document.vmf(), &vmf);
     }
 
     #[test]

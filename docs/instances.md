@@ -28,6 +28,26 @@ Compile supported contents of saved child VMFs into a parent map.
 Compiler support does not imply a full parent viewport preview of each child entity.
 Read [instance contents](instance-contents.md) for display limits.
 
+## Rotate a stationary child brush
+
+1. Open the child VMF as a normal map.
+2. Select an eligible `func_brush`.
+3. Enable **Advanced properties**.
+4. Enter `angles` under **Property key**.
+5. Enter pitch, yaw and roll under **Value**, then press Enter.
+6. For example, enter `15 35 10`.
+7. Save the child, return to the parent, and compile.
+
+Angles must be finite and within ±360 degrees per component.
+The installed FGD has no labeled rotation field for this class; use the raw property.
+
+Compilation resolves and consumes any origin brush first.
+It rotates the stationary body and attached texture coordinates before applying containing reference transforms.
+The compiled body has zero entity angles; the child VMF keeps its authored values.
+
+This does not enable moving models, parenting, named child endpoints or script-visible authored-angle preservation.
+The parent reference preview remains unavailable for child models.
+
 ## Names and parameters
 
 Use **Advanced properties → Fix Up Name** and **Entity Name Fix Up → Prefix** for supported scoped names.

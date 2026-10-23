@@ -1156,7 +1156,7 @@ impl Session {
                     BrushModelPreparation::Resolved => "resolved",
                 },
                 "deferred_checks":if ready.brush_model_preparation == BrushModelPreparation::Deferred {
-                    vec!["effective_pivot", "model_local_bounds", "materials", "native_compilation"]
+                    vec!["effective_pivot", "initial_pose", "model_local_bounds", "materials", "native_compilation"]
                 } else { Vec::new() }
             });
         }

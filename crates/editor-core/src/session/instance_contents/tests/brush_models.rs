@@ -78,6 +78,9 @@ fn installed_fgd_brush_models_keep_shared_authoring_source_identity_and_honest_p
             .set_entity_properties(actor, model, &[("origin".into(), Some("16 8 4".into()))])
             .unwrap();
         session
+            .set_entity_properties(actor, model, &[("angles".into(), Some("15 35 10".into()))])
+            .unwrap();
+        session
             .set_entity_properties(
                 actor,
                 model,
@@ -116,6 +119,15 @@ fn installed_fgd_brush_models_keep_shared_authoring_source_identity_and_honest_p
                 .entity(model)
                 .unwrap()
                 .properties
+                .get("angles"),
+            Some("15 35 10")
+        );
+        assert_eq!(
+            session
+                .document()
+                .entity(model)
+                .unwrap()
+                .properties
                 .get("vrad_brush_cast_shadows"),
             Some("1")
         );
@@ -139,7 +151,7 @@ fn installed_fgd_brush_models_keep_shared_authoring_source_identity_and_honest_p
         assert_eq!(
             report["brush_model_preview"],
             json!({"available":false,"reason":BRUSH_MODEL_PREVIEW_REASON,"consumed_origin_brushes":null,
-                "preparation":"deferred","deferred_checks":["effective_pivot","model_local_bounds","materials","native_compilation"]})
+                "preparation":"deferred","deferred_checks":["effective_pivot","initial_pose","model_local_bounds","materials","native_compilation"]})
         );
         assert_eq!(report["available"], false);
         assert_eq!(report["displayed"], false);
@@ -328,6 +340,7 @@ fn origin_volume_references_defer_material_pivots_without_geometry_or_source_mut
                 report["brush_model_preview"]["deferred_checks"],
                 json!([
                     "effective_pivot",
+                    "initial_pose",
                     "model_local_bounds",
                     "materials",
                     "native_compilation"

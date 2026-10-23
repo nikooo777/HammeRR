@@ -144,6 +144,10 @@ Game launches use `-insecure` and private validation uses `sv_lan 1`.
 Reflection capture also needs a ready `get_native_capture_runtime` result.
 See [Compile and play](compile-and-play.md).
 
+For [stationary child brush rotation](instances.md#rotate-a-stationary-child-brush), set canonical `angles` through `set_entity_properties` or property-edit tools.
+Save the child, then compile its parent. Compilation lowers the initial pose into body geometry and emits zero angles.
+`brush_model_preview.deferred_checks` includes `initial_pose`; reference inspection still provides no child model mesh.
+
 ## Tool reference
 
 The server publishes the complete parameter schema for every tool.

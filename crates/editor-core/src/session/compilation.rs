@@ -797,7 +797,7 @@ impl Session {
             "property":"vrad_brush_cast_shadows","enabled_value":"1","default_value":"0",
             "fullbright":"admit_and_preserve_without_baking",
             "baked_count":"stats.brush_shadow_models",
-            "description":"Advanced properties → Shadows → Yes requests opaque global baked shadows from an unnamed, unparented ordinary func_brush at its admitted stationary initial pose. Root requests use an explicit finite Origin (X Y Z). Child models may instead resolve and consume one origin volume before the ordinary body check. Root and child requests validate before region omission in every lighting mode; Fullbright reports admitted source requests without baking; this count includes requests omitted by compile regions. Child source angles remain absent or zero. No new build setting is required.",
+            "description":"Advanced properties → Shadows → Yes requests opaque global baked shadows from an unnamed, unparented ordinary func_brush at its admitted stationary initial pose. Root requests use an explicit finite Origin (X Y Z). Child models may instead resolve and consume one origin volume before the ordinary body check. Root and child requests validate before region omission in every lighting mode; Fullbright reports admitted source requests without baking; this count includes requests omitted by compile regions. Admitted child initial poses are baked before containing transforms; emitted child angles are zero. No new build setting is required.",
             "limits":{
                 "classname":"func_brush","origin":"resolved_finite",
                 "root_origin":"explicit_finite","child_origin":"explicit_or_one_consumed_volume",
@@ -808,7 +808,7 @@ impl Session {
                 "child_origin_volumes":"one_resolved_consumed_before_body_validation",
                 "radiance_source":false,"dynamic_relighting":false,
                 "geometry_collision_pvs_probe_placement":"unchanged",
-                "child_refresh":"source_keys_uv_world_bounds_checked_effective_pivot_local_bounds_materials_deferred",
+                "child_refresh":"source_keys_uv_world_bounds_checked_effective_pivot_initial_pose_local_bounds_materials_deferred",
                 "lighting_work_limit":"shared_aggregate"
             }
         });

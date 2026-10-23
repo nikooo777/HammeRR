@@ -717,7 +717,7 @@ pub(crate) struct StaticPropMetadata<'a> {
     pub lighting_origins: Option<&'a StaticPropBindings>,
 }
 
-pub const BRUSH_MODEL_PREPARATION_DEFERRED: &str = "Child brush-model effective pivots and local bounds require material-aware Compile; reference preparation is deferred";
+pub const BRUSH_MODEL_PREPARATION_DEFERRED: &str = "Child brush-model effective pivots, initial poses and local bounds require material-aware Compile; reference preparation is deferred";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BrushModelPreparation {

@@ -1,3 +1,4 @@
+use glam::DMat3;
 use source_formats::bsp::{contents, surf};
 use source_formats::gamefs::GameFs;
 
@@ -79,7 +80,11 @@ fn zero_angles(raw: &str) -> Result<(), String> {
 }
 
 pub(super) fn admit(entity: &Entity) -> Result<(), String> {
-    admit_fields(entity, false, false)
+    admit_fields(entity, true, false)?;
+    if shape(entity)?.is_some() {
+        crate::brush_model_pose::initial_rotation("func_brush", &entity.properties.0)?;
+    }
+    Ok(())
 }
 
 pub(crate) fn admit_stationary(entity: &Entity, rotation: bool) -> Result<(), String> {
@@ -267,6 +272,40 @@ pub(super) fn check_pose(entity: &Entity, control: &Control) -> Result<(), Strin
     Ok(())
 }
 
+pub(super) fn lower_initial_pose(
+    entity: &mut Entity,
+    rotation: DMat3,
+    control: &Control,
+) -> Result<(), String> {
+    let pivot = origin(entity)?;
+    let offset = crate::brush_model_pose::initial_offset(&entity.properties.0)?;
+    let pose = crate::brush_model_pose::Pose {
+        offset,
+        rotation: Some(rotation),
+    };
+    let translation = offset - rotation * pivot;
+    for solid in entity.solids.iter_mut().filter(|solid| !solid.hidden) {
+        control.checkpoint()?;
+        let geometry = checked_solid_geometry_controlled(solid, control)?;
+        pose.raw_and_stored_bounds(geometry.mins - pivot, geometry.maxs - pivot)?;
+        for side in &mut solid.sides {
+            control.checkpoint()?;
+            for point in &mut side.plane.0 {
+                *point = pose.point(*point - pivot);
+            }
+            for axis in [&mut side.u_axis, &mut side.v_axis] {
+                axis.axis = rotation * axis.axis;
+                axis.offset -= translation.dot(axis.axis) / axis.scale;
+            }
+        }
+    }
+    entity
+        .properties
+        .set("origin", source_formats::vmf::format_vec3(offset));
+    entity.properties.set("angles", "0 0 0");
+    check_pose(entity, control)
+}
+
 pub(crate) fn ordinary(info: &MaterialInfo) -> bool {
     info.found
         && info.contents == contents::SOLID
@@ -394,14 +433,15 @@ mod tests {
     }
 
     #[test]
-    fn stationary_global_request_shares_neutral_fields_but_keeps_child_source_zero() {
+    fn stationary_global_request_shares_neutral_fields_and_admitted_initial_angles() {
         let mut entity = model();
         entity.properties.set("vrad_brush_cast_shadows", "1");
         let original = entity.clone();
         admit(&entity).unwrap();
         assert_eq!(entity, original);
         entity.properties.set("angles", "15 90 -30");
-        assert!(admit(&entity).is_err());
+        admit(&entity).unwrap();
+        assert!(admit_stationary(&entity, false).is_err());
         admit_stationary(&entity, true).unwrap();
         for (key, value) in [
             ("targetname", "moving"),
@@ -416,10 +456,10 @@ mod tests {
     }
 
     #[test]
-    fn source_zero_angles_and_explicit_pivots_cannot_be_manufactured_by_parsing() {
+    fn source_angles_and_explicit_pivots_cannot_be_manufactured_by_parsing() {
         for angles in [
-            "0 90 0",
-            "360 0 0",
+            "360.0000001 0 0",
+            "0 -361 0",
             "1e-4000 0 0",
             "1e-50 0 0",
             "NaN 0 0",
@@ -470,6 +510,73 @@ mod tests {
         admit(&entity).unwrap();
         entity.solids.clear();
         assert!(admit(&entity).unwrap_err().contains("visible ordinary"));
+    }
+
+    #[test]
+    fn initial_pose_preserves_nonunit_texture_rows_and_uses_the_native_pivot() {
+        let mut entity = model();
+        let pivot = DVec3::new(0.1, -0.2, 0.3);
+        entity.properties.set("origin", "0.1 -0.2 0.3");
+        entity.properties.set("angles", "20 35 10");
+        for side in &mut entity.solids[0].sides {
+            side.u_axis.axis = DVec3::new(2.0, 3.0, 5.0);
+            side.v_axis.axis = DVec3::new(-1.0, 4.0, 2.0);
+            side.u_axis.scale = 0.5;
+            side.v_axis.scale = 2.0;
+            side.u_axis.offset = 7.0;
+            side.v_axis.offset = -11.0;
+        }
+        let before = entity.clone();
+        let native_pivot = DVec3::new(
+            0.10000000149011612,
+            -0.20000000298023224,
+            0.30000001192092896,
+        );
+        let expected_rotation = DMat3::from_cols_array(&[
+            0.7697511313200572,
+            0.5389855446957562,
+            -0.3420201433256687,
+            -0.5162121193659353,
+            0.8407726623973335,
+            0.16317591116653482,
+            0.37551064385876115,
+            0.050950100827363065,
+            0.9254165783983234,
+        ]);
+        let rotation =
+            crate::brush_model_pose::initial_rotation("func_brush", &entity.properties.0)
+                .unwrap()
+                .unwrap();
+        lower_initial_pose(&mut entity, rotation, &Control::default()).unwrap();
+        assert_eq!(entity.origin(), Some(native_pivot));
+        assert_eq!(entity.properties.get("angles"), Some("0 0 0"));
+        for (actual, original) in entity.solids[0].sides.iter().zip(&before.solids[0].sides) {
+            assert_eq!(actual.id, original.id);
+            assert_eq!(actual.material, original.material);
+            assert_eq!(actual.lightmap_scale, original.lightmap_scale);
+            for (point, old) in actual.plane.0.iter().zip(original.plane.0) {
+                let expected = expected_rotation * (old - pivot) + native_pivot;
+                assert!(point.abs_diff_eq(expected, 1e-12));
+                for (axis, source) in [
+                    (actual.u_axis, original.u_axis),
+                    (actual.v_axis, original.v_axis),
+                ] {
+                    assert_eq!(axis.scale, source.scale);
+                    assert!(
+                        axis.axis
+                            .abs_diff_eq(expected_rotation * source.axis, 1e-12)
+                    );
+                    let diffuse = expected.dot(axis.axis) / axis.scale + axis.offset;
+                    let source_diffuse = old.dot(source.axis) / source.scale + source.offset;
+                    assert!((diffuse - source_diffuse).abs() < 1e-10);
+                    let lightmap = (expected.dot(axis.axis) + axis.offset * axis.scale)
+                        / f64::from(actual.lightmap_scale);
+                    let source_lightmap = (old.dot(source.axis) + source.offset * source.scale)
+                        / f64::from(original.lightmap_scale);
+                    assert!((lightmap - source_lightmap).abs() < 1e-11);
+                }
+            }
+        }
     }
 
     #[test]

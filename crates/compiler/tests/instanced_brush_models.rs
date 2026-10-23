@@ -375,6 +375,101 @@ fn top_sample(
 }
 
 #[test]
+fn source_initial_rotation_precedes_nested_helpers_and_matches_a_literal_bsp() {
+    let (directory, game) = fixture();
+    let mut leaf = child(&SOURCE, PIVOT);
+    leaf.entities[0].properties.set("angles", "0 90 0");
+    let leaf_bytes = write(directory.path(), "leaf.vmf", &leaf);
+    let mut middle = Document::empty().into_vmf();
+    instance(&mut middle, "leaf.vmf", "16 32 0", "0 90 0");
+    write(directory.path(), "middle.vmf", &middle);
+    let base = lit_room();
+    let mut parent = base.clone();
+    let owner = instance(&mut parent, "middle.vmf", "1104 1040 1152", "90 0 0");
+    let context = saved(directory.path(), &parent);
+    let mut report = compiler::Report::default();
+    let reference =
+        instances::resolve(&parent, Some(&context), &Control::default(), &mut report).unwrap();
+    assert_eq!(
+        reference.brush_model_preparation(),
+        instances::BrushModelPreparation::Deferred
+    );
+    assert!(reference.compilation_vmf().is_err());
+    let prepared = resolve(&parent, &context, &game);
+    let actual = prepared
+        .compilation_vmf()
+        .unwrap()
+        .entities
+        .iter()
+        .find(|entity| prepared.root_entity(entity.id) == Some(owner))
+        .unwrap();
+    assert_eq!(actual.origin(), Some(DVec3::new(1108.0, 1088.0, 1144.0)));
+    assert_eq!(actual.properties.get("angles"), Some("0 0 0"));
+    for (solid, original) in actual.solids.iter().zip(&leaf.entities[0].solids) {
+        for (side, old) in solid.sides.iter().zip(&original.sides) {
+            assert_eq!(
+                prepared.face_origin(side.id),
+                Some((owner, "leaf.vmf", original.id, old.id))
+            );
+            for (point, source) in side.plane.0.iter().zip(old.plane.0) {
+                let expected = DVec3::new(source.z + 1104.0, 1096.0 - source.y, source.x + 1128.0);
+                assert!(point.abs_diff_eq(expected, 1e-9));
+            }
+        }
+    }
+    let mut flat = Document::new(base);
+    let id = model(
+        &mut flat,
+        &[
+            ([1056.0, 1096.0, 1064.0], [1152.0, 1112.0, 1192.0]),
+            ([1040.0, 1016.0, 1048.0], [1160.0, 1032.0, 1192.0]),
+        ],
+        DVec3::new(1108.0, 1088.0, 1144.0),
+    );
+    let mut literal = flat.into_vmf();
+    let expected = entity(&mut literal, id);
+    for solid in &mut expected.solids {
+        let sides = solid.sides.clone();
+        solid.sides = [3, 2, 1, 0, 5, 4].map(|side| sides[side].clone()).to_vec();
+    }
+    texture(
+        expected,
+        [
+            UvAxis {
+                axis: DVec3::new(2.0, -2.0, 1.0) / 3.0,
+                offset: -2267.0 / 3.0,
+                scale: 0.5,
+            },
+            UvAxis {
+                axis: DVec3::new(-1.0, -2.0, -2.0) / 3.0,
+                offset: 2743.0 / 3.0,
+                scale: 2.0,
+            },
+        ],
+    );
+    align_ids(expected, actual);
+    for lighting in [LightingMode::Fullbright, LightingMode::DirectLdrHdr] {
+        let options = Options {
+            lighting,
+            bounces: 1,
+            sky_quality: SkyQuality::Fast,
+            ..Options::default()
+        };
+        let output = compile(&parent, &game, &context, options);
+        let expected = compiler::compile_with_options(&literal, &game, options);
+        literal_bsp(
+            successful(&output),
+            successful(&expected),
+            "source initial pose",
+        );
+    }
+    assert_eq!(
+        std::fs::read(directory.path().join("maps/leaf.vmf")).unwrap(),
+        leaf_bytes
+    );
+}
+
+#[test]
 fn nested_compounds_match_literal_local_geometry_uvs_and_shared_lighting_consumers() {
     let (directory, game) = fixture();
     let leaf = child(&SOURCE, PIVOT);
@@ -904,101 +999,128 @@ fn native_engine_compound_child_matches_literal_physics() {
         std::env::var_os("CSS_DIR").expect("set CSS_DIR for the explicit child-model native cook"),
     );
     assert!(install.join("bin/linux64/vphysics.so").is_file());
-    let (directory, mut game) = fixture();
-    game.base_dir = install;
-    let scripts = directory.path().join("game/scripts");
-    std::fs::create_dir(&scripts).unwrap();
-    std::fs::write(
-        scripts.join("surfaceproperties_manifest.txt"),
-        "surfaceproperties_manifest { file scripts/mass_surfaces.txt }",
-    )
-    .unwrap();
-    std::fs::write(
-        scripts.join("mass_surfaces.txt"),
-        "default { density 2000 }",
-    )
-    .unwrap();
-    std::fs::write(
-        directory
-            .path()
-            .join("game/materials/test/native_pivot.vmt"),
-        "UnlitGeneric { %compileorigin 1 }",
-    )
-    .unwrap();
-    let mut leaf = child(&SOURCE, DVec3::ZERO);
-    let mut volume = Document::empty();
-    volume
-        .edit("native consumed pivot", |tx| {
-            edit::create_block(
-                tx,
-                PIVOT - DVec3::splat(4.0),
-                PIVOT + DVec3::splat(4.0),
-                "test/native_pivot",
-            )
+    for rotated in [false, true] {
+        let (directory, mut game) = fixture();
+        game.base_dir = install.clone();
+        let scripts = directory.path().join("game/scripts");
+        std::fs::create_dir(&scripts).unwrap();
+        std::fs::write(
+            scripts.join("surfaceproperties_manifest.txt"),
+            "surfaceproperties_manifest { file scripts/mass_surfaces.txt }",
+        )
+        .unwrap();
+        std::fs::write(
+            scripts.join("mass_surfaces.txt"),
+            "default { density 2000 }",
+        )
+        .unwrap();
+        std::fs::write(
+            directory
+                .path()
+                .join("game/materials/test/native_pivot.vmt"),
+            "UnlitGeneric { %compileorigin 1 }",
+        )
+        .unwrap();
+        let mut leaf = child(&SOURCE, DVec3::ZERO);
+        let mut volume = Document::empty();
+        volume
+            .edit("native consumed pivot", |tx| {
+                edit::create_block(
+                    tx,
+                    PIVOT - DVec3::splat(4.0),
+                    PIVOT + DVec3::splat(4.0),
+                    "test/native_pivot",
+                )
+            })
+            .unwrap();
+        let mut volume = volume.into_vmf().world.solids.pop().unwrap();
+        volume.id = leaf.object_ids().max().unwrap() + 1;
+        let first_side = leaf.side_ids().max().unwrap() + 1;
+        for (offset, side) in volume.sides.iter_mut().enumerate() {
+            side.id = first_side + u32::try_from(offset).unwrap();
+        }
+        leaf.entities[0].solids.push(volume);
+        if rotated {
+            leaf.entities[0].properties.set("angles", "0 90 0");
+        }
+        write(directory.path(), "leaf.vmf", &leaf);
+        let mut parent = room();
+        instance(&mut parent, "leaf.vmf", "1024 1024 1152", "0 0 0");
+        let context = saved(directory.path(), &parent);
+        let prepared = resolve(&parent, &context, &game);
+        assert_eq!(prepared.stats().unwrap().consumed_origin_brushes, 1);
+        let actual = prepared
+            .compilation_vmf()
+            .unwrap()
+            .entities
+            .iter()
+            .find(|entity| prepared.root_entity(entity.id).is_some())
+            .unwrap();
+        let mut flat = Document::new(room());
+        let id = model(
+            &mut flat,
+            &if rotated {
+                [
+                    ([1048.0, 952.0, 1104.0], [1064.0, 1080.0, 1200.0]),
+                    ([968.0, 936.0, 1088.0], [984.0, 1080.0, 1208.0]),
+                ]
+            } else {
+                [
+                    ([960.0, 1008.0, 1104.0], [1088.0, 1024.0, 1200.0]),
+                    ([944.0, 1088.0, 1088.0], [1088.0, 1104.0, 1208.0]),
+                ]
+            },
+            DVec3::new(1040.0, 1032.0, 1156.0),
+        );
+        flat.edit("literal translated UVs and IDs", |tx| {
+            let literal = tx.entity_mut(id)?;
+            let mut axes = source_axes();
+            if rotated {
+                axes[0].axis = DVec3::new(-2.0, 1.0, 2.0) / 3.0;
+                axes[0].offset = -809.0;
+                axes[1].axis = DVec3::new(-2.0, -2.0, -1.0) / 3.0;
+                axes[1].offset = 869.0;
+                for solid in &mut literal.solids {
+                    let sides = solid.sides.clone();
+                    solid.sides = [0, 1, 5, 4, 2, 3].map(|side| sides[side].clone()).to_vec();
+                }
+            } else {
+                axes[0].offset = -3577.0;
+                axes[1].offset = 181.0;
+            }
+            texture(literal, axes);
+            align_ids(literal, actual);
+            Ok(())
         })
         .unwrap();
-    let mut volume = volume.into_vmf().world.solids.pop().unwrap();
-    volume.id = leaf.object_ids().max().unwrap() + 1;
-    let first_side = leaf.side_ids().max().unwrap() + 1;
-    for (offset, side) in volume.sides.iter_mut().enumerate() {
-        side.id = first_side + u32::try_from(offset).unwrap();
+        let options = Options {
+            lighting: LightingMode::Fullbright,
+            physics: compiler::PhysicsMode::Engine,
+            ..Default::default()
+        };
+        let literal = compiler::compile_with_options(flat.vmf(), &game, options);
+        let expanded = compile(&parent, &game, &context, options);
+        for output in [&literal, &expanded] {
+            let bsp = successful(output);
+            assert_eq!(output.stats.physics_models, 2);
+            assert_eq!(output.stats.physics_convexes, 8);
+            let physics = bsp.physics().unwrap().unwrap();
+            assert_eq!(physics.models.len(), 2);
+            assert_eq!(physics.models[1].index, 1);
+            assert_eq!(physics.models[1].solids.len(), 1);
+            assert!(!physics.models[1].solids[0].body().unwrap().is_empty());
+            let model = bsp.records::<Model>().unwrap()[1];
+            let bounds = if rotated {
+                ([-72.0, -96.0, -68.0], [24.0, 48.0, 52.0])
+            } else {
+                ([-96.0, -24.0, -68.0], [48.0, 72.0, 52.0])
+            };
+            assert_eq!((model.mins, model.maxs), bounds);
+        }
+        assert_eq!(
+            successful(&expanded).lump(bsp::lump::PHYSCOLLIDE),
+            successful(&literal).lump(bsp::lump::PHYSCOLLIDE),
+            "native world and compound child collision must match the authored literal"
+        );
     }
-    leaf.entities[0].solids.push(volume);
-    write(directory.path(), "leaf.vmf", &leaf);
-    let mut parent = room();
-    instance(&mut parent, "leaf.vmf", "1024 1024 1152", "0 0 0");
-    let context = saved(directory.path(), &parent);
-    let prepared = resolve(&parent, &context, &game);
-    assert_eq!(prepared.stats().unwrap().consumed_origin_brushes, 1);
-    let actual = prepared
-        .compilation_vmf()
-        .unwrap()
-        .entities
-        .iter()
-        .find(|entity| prepared.root_entity(entity.id).is_some())
-        .unwrap();
-    let mut flat = Document::new(room());
-    let id = model(
-        &mut flat,
-        &[
-            ([960.0, 1008.0, 1104.0], [1088.0, 1024.0, 1200.0]),
-            ([944.0, 1088.0, 1088.0], [1088.0, 1104.0, 1208.0]),
-        ],
-        DVec3::new(1040.0, 1032.0, 1156.0),
-    );
-    flat.edit("literal translated UVs and IDs", |tx| {
-        let literal = tx.entity_mut(id)?;
-        let mut axes = source_axes();
-        axes[0].offset = -3577.0;
-        axes[1].offset = 181.0;
-        texture(literal, axes);
-        align_ids(literal, actual);
-        Ok(())
-    })
-    .unwrap();
-    let options = Options {
-        lighting: LightingMode::Fullbright,
-        physics: compiler::PhysicsMode::Engine,
-        ..Default::default()
-    };
-    let literal = compiler::compile_with_options(flat.vmf(), &game, options);
-    let expanded = compile(&parent, &game, &context, options);
-    for output in [&literal, &expanded] {
-        let bsp = successful(output);
-        assert_eq!(output.stats.physics_models, 2);
-        assert_eq!(output.stats.physics_convexes, 8);
-        let physics = bsp.physics().unwrap().unwrap();
-        assert_eq!(physics.models.len(), 2);
-        assert_eq!(physics.models[1].index, 1);
-        assert_eq!(physics.models[1].solids.len(), 1);
-        assert!(!physics.models[1].solids[0].body().unwrap().is_empty());
-        let model = bsp.records::<Model>().unwrap()[1];
-        assert_eq!(model.mins, [-96.0, -24.0, -68.0]);
-        assert_eq!(model.maxs, [48.0, 72.0, 52.0]);
-    }
-    assert_eq!(
-        successful(&expanded).lump(bsp::lump::PHYSCOLLIDE),
-        successful(&literal).lump(bsp::lump::PHYSCOLLIDE),
-        "native world and compound child collision must match the authored literal"
-    );
 }

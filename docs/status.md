@@ -45,7 +45,7 @@ The integrated compiler is experimental. File operations, BSP publication and ga
 | [Detail props](material-detail-scattering.md) | Explicit and generated decorative models, cards, cross/tri shapes and supported lighting. | Editor display of final generated details. |
 | [Reflections](reflections.md) | Private LDR or paired LDR/HDR captures and verified packing. | Recursive reflection bounces and unsupported capture scenes. |
 | [Overlays](overlays.md) | Native projections, face splitting, supported terrain targets and water transitions. | Full projected-material viewport preview. |
-| [Assemblies](instances.md) | Checked nested transforms and admitted child geometry/entities. | General runtime entities, scripting and name fixups. |
+| [Assemblies](instances.md) | Checked nested transforms, stationary child initial poses and admitted geometry/entities. | General runtime entities, scripting and name fixups. |
 | [Visibility helpers](occluders.md) | Occluders and eligible visibility-cluster volumes. | Unsupported memberships and dynamic child control. |
 | [Inspection](baked-lightmaps.md) | Owned face lightmaps, prop vertex bytes and native light records. | Full baked-output viewport rendering. |
 | [Publication](compile-regions.md) | Captured build scope, cancellation, guarded publication and private game launch. | General cross-platform file/runtime support. |

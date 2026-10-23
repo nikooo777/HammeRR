@@ -22,5 +22,6 @@ The refresh reads committed references explicitly. The visibility switch does no
 - Supported brush and terrain geometry can be displayed; child entities have separate count and availability reports.
 - Child lights, props, spawns, samples and visibility helpers can compile without a corresponding reference mesh or icon.
 - Overlay target geometry can appear without its projected material.
+- Model pivots, initial poses and local bounds remain deferred to material-aware compilation.
 - Source edits or changed dependencies require another refresh.
 - Missing or unsupported child content reports an error; stale data is not presented as current.

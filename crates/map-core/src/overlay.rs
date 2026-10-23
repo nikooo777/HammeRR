@@ -14,6 +14,7 @@ use crate::{
 
 const BASIS_TOLERANCE: f64 = 0.01;
 const QUAD_AREA_EPSILON: f64 = 1e-8;
+const COPLANAR_NORMAL_TOLERANCE: f64 = 1e-10;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Options {
@@ -269,8 +270,7 @@ pub fn parse(entity: &Entity) -> Result<Definition, String> {
     Ok(definition)
 }
 
-pub fn fit(vmf: &Vmf, face: FaceId, mut options: Options) -> Result<Definition, String> {
-    vmf.validate_ids().map_err(|error| error.to_string())?;
+fn source_face(vmf: &Vmf, face: FaceId) -> Result<(DVec3, Vec<DVec3>), String> {
     let (solid, owner) = vmf
         .world
         .solids
@@ -303,9 +303,6 @@ pub fn fit(vmf: &Vmf, face: FaceId, mut options: Options) -> Result<Definition, 
         .iter()
         .find(|target| target.side == index)
         .ok_or("Overlay target has no effective surface")?;
-    let [a, b, c, d] = target.vertices.as_slice() else {
-        return Err("Overlay fitting requires one convex planar quad face".into());
-    };
     if target
         .vertices
         .iter()
@@ -313,11 +310,19 @@ pub fn fit(vmf: &Vmf, face: FaceId, mut options: Options) -> Result<Definition, 
     {
         return Err("Overlay fitting requires one convex planar quad face".into());
     }
+    Ok((target.plane.normal, target.vertices.clone()))
+}
+
+pub fn fit(vmf: &Vmf, face: FaceId, mut options: Options) -> Result<Definition, String> {
+    vmf.validate_ids().map_err(|error| error.to_string())?;
+    let (normal, vertices) = source_face(vmf, face)?;
+    let [a, b, c, d] = vertices.as_slice() else {
+        return Err("Overlay fitting requires one convex planar quad face".into());
+    };
     let origin = (*a + *b + *c + *d) * 0.25;
     let u = (*d - *a)
         .try_normalize()
         .ok_or("Overlay fitting requires nondegenerate quad edges")?;
-    let normal = target.plane.normal;
     let v = normal.cross(u);
     let points = [a, b, c, d].map(|point| {
         let local = *point - origin;
@@ -335,6 +340,58 @@ pub fn fit(vmf: &Vmf, face: FaceId, mut options: Options) -> Result<Definition, 
         uv_points: points,
     };
     definition.validate()?;
+    Ok(definition)
+}
+
+pub fn fit_faces(vmf: &Vmf, faces: &[FaceId], options: Options) -> Result<Definition, String> {
+    side_budget(faces.len())?;
+    let first = *faces
+        .first()
+        .ok_or("Overlay fitting requires at least one source face")?;
+    let mut definition = fit(vmf, first, options)?;
+    if faces.len() == 1 {
+        return Ok(definition);
+    }
+    if faces.iter().copied().collect::<BTreeSet<_>>().len() != faces.len() {
+        return Err("Overlay fitting requires distinct source faces".into());
+    }
+    let origin = DVec3::from_array(definition.basis_origin);
+    let normal = DVec3::from_array(definition.basis_normal);
+    let u = DVec3::from_array(definition.basis_u);
+    let v = DVec3::from_array(definition.basis_v);
+    let mut mins = [f64::INFINITY; 2];
+    let mut maxs = [f64::NEG_INFINITY; 2];
+    for &face in faces {
+        let (face_normal, vertices) = source_face(vmf, face)
+            .map_err(|error| format!("Overlay brush {} face {}: {error}", face.solid, face.side))?;
+        if normal.dot(face_normal) < 1.0 - COPLANAR_NORMAL_TOLERANCE
+            || vertices
+                .iter()
+                .any(|point| normal.dot(*point - origin).abs() > ON_EPSILON)
+        {
+            return Err(format!(
+                "Overlay brush {} face {} must be coplanar with the first source and face the same direction",
+                face.solid, face.side
+            ));
+        }
+        for point in vertices {
+            let local = point - origin;
+            for (axis, coordinate) in [local.dot(u), local.dot(v)].into_iter().enumerate() {
+                mins[axis] = mins[axis].min(coordinate);
+                maxs[axis] = maxs[axis].max(coordinate);
+            }
+        }
+    }
+    definition.sides = faces.iter().map(|face| face.side).collect();
+    definition.sides.sort_unstable();
+    definition.uv_points = [
+        [mins[0], mins[1], 0.0],
+        [mins[0], maxs[1], 0.0],
+        [maxs[0], maxs[1], 0.0],
+        [maxs[0], mins[1], 0.0],
+    ];
+    definition.validate()?;
+    validate_editable_projection(&definition, &definition)?;
     Ok(definition)
 }
 
@@ -534,11 +591,27 @@ pub fn create(
     face: FaceId,
     options: Options,
 ) -> Result<ObjectId, EditError> {
-    let definition = fit(tx.document().vmf(), face, options).map_err(EditError::Invalid)?;
+    create_faces(tx, &[face], options)
+}
+
+pub fn create_faces(
+    tx: &mut Transaction<'_>,
+    faces: &[FaceId],
+    options: Options,
+) -> Result<ObjectId, EditError> {
+    let definition = fit_faces(tx.document().vmf(), faces, options).map_err(EditError::Invalid)?;
     let options = &definition.options;
     let mut properties = vec![
         ("material".into(), options.material.clone()),
-        ("sides".into(), face.side.to_string()),
+        (
+            "sides".into(),
+            definition
+                .sides
+                .iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join(" "),
+        ),
         (
             "BasisOrigin".into(),
             format_vec3(DVec3::from_array(definition.basis_origin)),

@@ -5,6 +5,120 @@ use map_core::{Document, ObjectId, Plane, edit, overlay, surface::FaceId};
 use source_formats::vmf::Vmf;
 
 #[test]
+fn coplanar_multiface_authoring_binds_only_selected_native_faces_across_a_gap() {
+    for gap in [0.0, 64.0] {
+        let mut document = Document::new(common::room());
+        let sources = document
+            .edit("selected plates and unbound control", |tx| {
+                let mut sources = Vec::new();
+                let mut ranges = vec![[-128.0, -gap * 0.5], [gap * 0.5, 128.0]];
+                if gap > 0.0 {
+                    ranges.push([-gap * 0.5, gap * 0.5]);
+                }
+                for (index, [min, max]) in ranges.into_iter().enumerate() {
+                    let ObjectId::Solid(solid) = edit::create_block(
+                        tx,
+                        DVec3::new(min, -64.0, 16.0),
+                        DVec3::new(max, 64.0, 32.0),
+                        "dev/dev_measuregeneric01",
+                    )?
+                    else {
+                        unreachable!()
+                    };
+                    let brush = tx.solid_mut(solid)?;
+                    let side = brush
+                        .sides
+                        .iter()
+                        .find(|side| Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+                        .unwrap()
+                        .id;
+                    if index < 2 {
+                        sources.push(FaceId { solid, side });
+                    }
+                    if index == 1 {
+                        edit::tie_to_entity(tx, &[solid], "func_detail", &[])?;
+                    }
+                }
+                Ok(sources)
+            })
+            .unwrap();
+        document
+            .edit("one overlay", |tx| {
+                overlay::create_faces(
+                    tx,
+                    &sources,
+                    overlay::Options {
+                        material: "decals/decalgraffiti001a".into(),
+                        targetname: Some("multi_mark".into()),
+                        ..Default::default()
+                    },
+                )
+            })
+            .unwrap();
+        let before = document.vmf().clone();
+        let output = compiler::compile(&before, &common::empty_game());
+        assert!(!output.report.has_errors(), "{:?}", output.report);
+        let bsp = output.bsp.unwrap();
+        let data = bsp.overlay_data().unwrap().unwrap();
+        assert_eq!(data.overlays.len(), 1);
+        let record = data.overlays[0];
+        assert!(record.face_count() > 0);
+        let faces = bsp.records::<source_formats::bsp::Face>().unwrap();
+        let vertices = bsp
+            .values::<[f32; 3]>(source_formats::bsp::lump::VERTEXES)
+            .unwrap();
+        let edges = bsp.records::<source_formats::bsp::Edge>().unwrap();
+        let surfedges = bsp
+            .values::<i32>(source_formats::bsp::lump::SURFEDGES)
+            .unwrap();
+        let mut coverage = [false; 2];
+        for &index in &record.faces[..record.face_count()] {
+            let face = faces[index as usize];
+            let points = surfedges
+                [face.first_edge as usize..face.first_edge as usize + face.edge_count as usize]
+                .iter()
+                .map(|&edge| {
+                    vertices
+                        [usize::from(edges[edge.unsigned_abs() as usize].0[usize::from(edge < 0)])]
+                })
+                .collect::<Vec<_>>();
+            assert!(points.iter().all(|point| point[2] == 32.0
+                && point[0] >= -128.0
+                && point[0] <= 128.0
+                && point[1] >= -64.0
+                && point[1] <= 64.0));
+            let min = points
+                .iter()
+                .map(|point| point[0])
+                .fold(f32::INFINITY, f32::min);
+            let max = points
+                .iter()
+                .map(|point| point[0])
+                .fold(f32::NEG_INFINITY, f32::max);
+            if gap > 0.0 {
+                assert!(
+                    max <= -gap as f32 * 0.5 || min >= gap as f32 * 0.5,
+                    "native binding spans unselected gap: {points:?}"
+                );
+            }
+            coverage[0] |= min < -gap as f32 * 0.5;
+            coverage[1] |= max > gap as f32 * 0.5;
+        }
+        assert_eq!(coverage, [true, true]);
+        assert!(
+            bsp.entities()
+                .unwrap()
+                .contains("\"targetname\" \"multi_mark\"")
+        );
+        let reopened = Vmf::parse(&before.write(&Default::default())).unwrap();
+        let repeated = compiler::compile(&reopened, &common::empty_game());
+        assert!(!repeated.report.has_errors(), "{:?}", repeated.report);
+        assert_eq!(repeated.bsp.unwrap().to_bytes(), bsp.to_bytes());
+        assert_eq!(document.vmf(), &before);
+    }
+}
+
+#[test]
 fn core_fitted_world_and_detail_quads_use_the_native_overlay_pipeline() {
     for detail in [false, true] {
         let mut document = Document::new(common::room());

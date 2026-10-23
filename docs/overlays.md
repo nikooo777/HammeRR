@@ -6,14 +6,18 @@ Project a material onto compiled surfaces. The editor shows the projection outli
 
 ## Create a fitted overlay
 
-1. Select one visible world or `func_detail` quad in face mode.
+1. Select visible coplanar world or `func_detail` faces in face mode, including at least one quad.
 2. Open **Overlay…**.
 3. Choose **Material** and optional **Name**.
 4. Set **Render order**, texture ranges and fade distances.
 5. Click **Fit / Preview**.
-6. Inspect the outline, then click **Apply overlay**.
+6. Inspect the outline and bound-face count, then click **Apply overlay**.
+
+The first eligible quad supplies the projection axes. One overlay spans all selected faces, up to 64 sources. Native rendering clips it to each bound face, leaving unbound gaps clear. Selecting one quad keeps the original fit.
 
 **Cancel** discards the owned preview. Compile and play to inspect the material projection.
+
+![One native overlay spans two panels and leaves the unbound gap clear](images/overlay-native.png)
 
 ## Refit or rebind
 
@@ -56,11 +60,11 @@ Supported imported water transitions use their own checked native records.
 Supported unnamed child overlays can target direct visible world/detail and displacement faces in the same occurrence.
 The parent contents preview shows target geometry, not the projected material.
 
-![A native overlay projects graffiti onto the compiled wall](images/overlay-native.png)
-
 ## Limits
 
-- Fitted authoring and refit/rebind/corner tools require one eligible visible ordinary quad binding.
+- Multi-face creation requires flat coplanar faces facing the same direction and an eligible quad to anchor the projection.
+- Refit, rebind and corner tools require one eligible visible ordinary quad binding.
+- Terrain and brush-model targets are unavailable for fitted authoring.
 - Compiled imported overlays support broader world/detail and terrain targets.
 - Corners may extend beyond a bound face; native rendering clips the projection to that face.
 - Moving geometry does not automatically refit or rebind an overlay.

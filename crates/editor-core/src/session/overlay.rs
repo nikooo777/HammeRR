@@ -1,7 +1,10 @@
+use std::collections::BTreeMap;
+
 use glam::DVec3;
 use map_core::overlay::{self, Definition, Options};
 use map_core::surface::FaceId;
 use serde_json::{Value, json};
+use source_formats::vmt::{CompileSemantics, material_path};
 
 use super::{Actor, SelectMode, Session};
 
@@ -33,6 +36,8 @@ struct Draft {
     selection: String,
     owner: Actor,
     source: FaceId,
+    additional_sources: Vec<FaceId>,
+    visibility: Option<(u64, u64, bool)>,
     definition: Definition,
     operation: Operation,
     handles: Option<handles::Handles>,
@@ -70,6 +75,25 @@ fn options_json(options: &Options) -> Value {
         "render_order":options.render_order,"u":options.u,"v":options.v,
         "fade_min":options.fade_min,"fade_max":options.fade_max,
     })
+}
+
+fn sources_json(sources: &[FaceId]) -> Value {
+    json!(
+        sources
+            .iter()
+            .map(|source| json!({"solid":source.solid,"side":source.side}))
+            .collect::<Vec<_>>()
+    )
+}
+
+fn source_budget(count: usize) -> Result<(), String> {
+    if count > source_formats::bsp::MAX_OVERLAY_FACES {
+        return Err(format!(
+            "Overlay sources exceed their {}-side allocation budget",
+            source_formats::bsp::MAX_OVERLAY_FACES
+        ));
+    }
+    Ok(())
 }
 
 fn bounds_json(definition: &Definition) -> Value {
@@ -114,21 +138,95 @@ impl Session {
         Ok(())
     }
 
-    fn selected_overlay_source(&self) -> Result<(FaceId, Definition), String> {
-        if !self.face_mode || self.face_selection.len() != 1 {
+    fn overlay_visibility_stamp(&self) -> (u64, u64, bool) {
+        (
+            self.working_region.serial,
+            self.materials.generation(),
+            self.view.tool_textures,
+        )
+    }
+
+    fn validate_overlay_sources(&self, sources: &[FaceId]) -> Result<(), String> {
+        if sources.len() <= 1 {
+            return Ok(());
+        }
+        let mut materials = BTreeMap::new();
+        for source in sources {
+            if !self.working_solid_visible(&self.document, source.solid) {
+                return Err(format!(
+                    "Overlay brush {} face {} is hidden or outside the working region",
+                    source.solid, source.side
+                ));
+            }
+            let side = map_core::surface::side(&self.document, *source)
+                .ok_or("Overlay face does not belong to the target brush")?;
+            let path = material_path(&side.material);
+            if let std::collections::btree_map::Entry::Vacant(entry) = materials.entry(path.clone())
+            {
+                let material = render::materials::resolved_material_limited(
+                    self.game(),
+                    &path,
+                    compiler::materials::MAX_GEOMETRY_MATERIAL_BYTES,
+                )?
+                .ok_or_else(|| format!("Overlay source material {path} is unavailable"))?;
+                let semantics = CompileSemantics::checked_from_material(&material)?;
+                let tool = material.is_tool()
+                    || matches!(
+                        path.as_str(),
+                        "materials/tools/toolsskybox.vmt" | "materials/tools/toolsskybox2d.vmt"
+                    );
+                entry.insert((tool, semantics));
+            }
+            let (tool, semantics) = materials.get(&path).unwrap();
+            if !semantics.draws || !semantics.unsupported_flags.is_empty() {
+                return Err(format!(
+                    "Overlay brush {} face {} requires a known rendering material with supported compile flags",
+                    source.solid, source.side
+                ));
+            }
+            if *tool && !self.view.tool_textures {
+                return Err(format!(
+                    "Overlay brush {} face {} is hidden by the tool-texture display setting",
+                    source.solid, source.side
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn selected_overlay_source(&self) -> Result<(Vec<FaceId>, Definition), String> {
+        if !self.face_mode || self.face_selection.is_empty() {
             return Err("Select exactly one visible world or func_detail quad face".into());
         }
         self.overlay_context()?;
-        let source = *self.face_selection.first().unwrap();
-        let definition = overlay::fit(
+        source_budget(self.face_selection.len())?;
+        let mut sources = self.face_selection.iter().copied().collect::<Vec<_>>();
+        if sources.len() > 1
+            && let Some(index) = sources.iter().position(|source| {
+                overlay::fit(
+                    self.document.vmf(),
+                    *source,
+                    Options {
+                        material: "dev/dev_measuregeneric01".into(),
+                        ..Options::default()
+                    },
+                )
+                .is_ok()
+            })
+        {
+            let first = sources.remove(index);
+            sources.insert(0, first);
+        }
+        let definition = overlay::fit_faces(
             self.document.vmf(),
-            source,
+            &sources,
             Options {
                 material: "dev/dev_measuregeneric01".into(),
                 ..Options::default()
             },
         )?;
-        Ok((source, definition))
+        self.validate_overlay_sources(&sources)?;
+        Ok((sources, definition))
     }
 
     fn selected_overlay_refit(&self) -> Result<(u32, FaceId, Definition), String> {
@@ -151,6 +249,9 @@ impl Session {
         if draft.generation != self.document_generation
             || draft.revision != self.document.revision()
             || draft.selection != self.overlay_selection_stamp()
+            || draft
+                .visibility
+                .is_some_and(|stamp| stamp != self.overlay_visibility_stamp())
         {
             return Err("Map or selection changed; preview the overlay again".into());
         }
@@ -184,14 +285,20 @@ impl Session {
             Err(error) => (Value::Null, json!(error)),
         };
         let (selected_source, selection_error) = match self.selected_overlay_source() {
-            Ok((source, definition)) => (
-                json!({"solid":source.solid,"side":source.side,"corners":definition.corners()}),
-                Value::Null,
-            ),
+            Ok((sources, definition)) => {
+                let source = sources[0];
+                let mut report =
+                    json!({"solid":source.solid,"side":source.side,"corners":definition.corners()});
+                if sources.len() > 1 {
+                    report["sources"] = sources_json(&sources);
+                    report["source_count"] = json!(sources.len());
+                }
+                (report, Value::Null)
+            }
             Err(error) => (Value::Null, json!(error)),
         };
         let draft = self.overlay.draft.as_ref().map(|draft| {
-            json!({
+            let mut report = json!({
                 "token":draft.token,"owner":draft.owner.label(),
                 "operation":draft.operation.label(),
                 "entity":draft.operation.entity().map(|id|format!("entity:{id}")),
@@ -204,16 +311,36 @@ impl Session {
                 "basis_origin":draft.definition.basis_origin,"basis_normal":draft.definition.basis_normal,
                 "basis_u":draft.definition.basis_u,"basis_v":draft.definition.basis_v,
                 "handles":self.overlay_corner_handles_report(),
-            })
+            });
+            if !draft.additional_sources.is_empty() {
+                let sources = std::iter::once(draft.source).chain(draft.additional_sources.iter().copied()).collect::<Vec<_>>();
+                report["sources"] = sources_json(&sources);
+                report["source_count"] = json!(sources.len());
+            }
+            report
         });
-        json!({
+        let multiple = selected_source["source_count"]
+            .as_u64()
+            .is_some_and(|count| count > 1)
+            || draft.as_ref().is_some_and(|draft| {
+                draft["source_count"]
+                    .as_u64()
+                    .is_some_and(|count| count > 1)
+            });
+        let mut state = json!({
             "snapshot":self.overlay_stamp(),"generation":self.document_generation,
             "revision":self.document.revision(),"selected_source":selected_source,
             "selection_error":selection_error,"draft":draft,
             "selected_overlay":selected_overlay,"refit_error":refit_error,
             "selected_corners":selected_corners,"corners_error":corners_error,
             "policy":"Create on one visible world/detail quad, refit one existing overlay to its single bound quad, or explicitly rebind it to a different visible world/detail quad. Refit and rebind preserve the entity ID, authored option strings, connections and metadata. Preview changes no geometry, selection or history. Review transfers ownership; Apply is one Undo step. Corner editing changes four local U/V positions in the existing projection frame while retaining the source binding, basis and raw settings. Corners must remain convex, native-representable and on the bound face plane. Existing bindings must contain one eligible quad; multiside and automatic rebinding are unavailable.",
-        })
+        });
+        if multiple {
+            state["policy"] = json!(
+                "Create one overlay across visible coplanar world/detail faces facing the same direction, starting with a quad. The first quad supplies the projection axes; one U/V rectangle spans all real source loops. Native rendering clips to every bound side, including gaps between faces. Preview changes no map, selection or history; Review transfers ownership and Apply is one Undo step. Refit, rebind and corner tools still require one existing bound quad. Terrain, brush models and automatic rebinding are unavailable."
+            );
+        }
+        state
     }
 
     pub fn preview_overlay(
@@ -222,12 +349,33 @@ impl Session {
         request: Request,
         snapshot: &str,
     ) -> Result<Value, String> {
+        self.preview_overlay_faces(actor, request, &[], snapshot)
+    }
+
+    pub fn preview_overlay_faces(
+        &mut self,
+        actor: Actor,
+        request: Request,
+        additional_sources: &[FaceId],
+        snapshot: &str,
+    ) -> Result<Value, String> {
         self.overlay_context()?;
         if snapshot != self.overlay_stamp() {
             return Err("Map, selection or overlay draft changed; inspect overlays again".into());
         }
-        let definition = overlay::fit(self.document.vmf(), request.source, request.options)?;
-        Ok(self.set_overlay_draft(actor, request.source, definition, Operation::Create))
+        source_budget(additional_sources.len().saturating_add(1))?;
+        let sources = std::iter::once(request.source)
+            .chain(additional_sources.iter().copied())
+            .collect::<Vec<_>>();
+        let definition = overlay::fit_faces(self.document.vmf(), &sources, request.options)?;
+        self.validate_overlay_sources(&sources)?;
+        Ok(self.set_overlay_draft(
+            actor,
+            request.source,
+            additional_sources,
+            definition,
+            Operation::Create,
+        ))
     }
 
     pub fn preview_overlay_refit(
@@ -241,7 +389,7 @@ impl Session {
             return Err("Map, selection or overlay draft changed; inspect overlays again".into());
         }
         let (source, definition) = overlay::fit_existing(self.document.vmf(), id)?;
-        Ok(self.set_overlay_draft(actor, source, definition, Operation::Refit(id)))
+        Ok(self.set_overlay_draft(actor, source, &[], definition, Operation::Refit(id)))
     }
 
     pub fn preview_overlay_corners(
@@ -256,7 +404,7 @@ impl Session {
             return Err("Map, selection or overlay draft changed; inspect overlays again".into());
         }
         let (source, definition) = overlay::with_corners(self.document.vmf(), id, corners)?;
-        Ok(self.set_overlay_draft(actor, source, definition, Operation::Corners(id)))
+        Ok(self.set_overlay_draft(actor, source, &[], definition, Operation::Corners(id)))
     }
 
     pub fn browse_overlay_targets(
@@ -320,6 +468,7 @@ impl Session {
         Ok(self.set_overlay_draft(
             actor,
             source,
+            &[],
             definition,
             Operation::Rebind { id, previous },
         ))
@@ -329,6 +478,7 @@ impl Session {
         &mut self,
         actor: Actor,
         source: FaceId,
+        additional_sources: &[FaceId],
         definition: Definition,
         operation: Operation,
     ) -> Value {
@@ -341,6 +491,8 @@ impl Session {
             selection: self.overlay_selection_stamp(),
             owner: actor,
             source,
+            additional_sources: additional_sources.to_vec(),
+            visibility: (!additional_sources.is_empty()).then(|| self.overlay_visibility_stamp()),
             definition,
             operation,
             handles: None,
@@ -383,9 +535,13 @@ impl Session {
             return Err("Finish or cancel viewport corner handles before Apply corners".into());
         }
         let source = draft.source;
+        let sources = std::iter::once(source)
+            .chain(draft.additional_sources.iter().copied())
+            .collect::<Vec<_>>();
         let options = draft.definition.options.clone();
         let operation = draft.operation;
         let corners = draft.definition.uv_points.map(|point| [point[0], point[1]]);
+        self.validate_overlay_sources(&sources)?;
         let id = match operation {
             Operation::Corners(id) => self.edit(actor, "Edit overlay corners", |tx| {
                 overlay::edit_corners(tx, id, corners)
@@ -397,7 +553,7 @@ impl Session {
                 overlay::rebind(tx, id, source)
             })?,
             Operation::Create => self.edit(actor, "Create overlay", |tx| {
-                overlay::create(tx, source, options)
+                overlay::create_faces(tx, &sources, options)
             })?,
         };
         self.overlay.draft = None;

@@ -23,6 +23,7 @@ export component OverlayWindow inherits Window {
     in property <image> material-image;
     in property <string> material-detail;
     in property <string> source-label;
+    in property <int> source-count: 1;
     in property <string> outline;
     in property <string> draft-label;
     in property <string> message;
@@ -77,8 +78,9 @@ export component OverlayWindow inherits Window {
         VerticalLayout {
             padding: 20px;
             spacing: 10px;
-            Text { text: root.corners-mode ? "Edit overlay corners" : root.rebind-mode ? "Rebind existing overlay" : root.refit-mode ? "Refit existing overlay" : "Fit an overlay to a face"; font-size: 24px; font-weight: 600; }
+            Text { text: root.corners-mode ? "Edit overlay corners" : root.rebind-mode ? "Rebind existing overlay" : root.refit-mode ? "Refit existing overlay" : "Fit an overlay to faces"; font-size: 24px; font-weight: 600; }
             Text { text: root.source-label; wrap: word-wrap; color: #bac2ce; }
+            if root.source-count > 1: Text { text: "One projection spans the selected faces. Native rendering clips it to each bound face and leaves gaps clear. Refit, rebind and corner tools require a single binding."; wrap: word-wrap; color: #bac2ce; }
             ScrollView {
                 vertical-stretch: 1;
                 VerticalLayout {
@@ -107,7 +109,7 @@ export component OverlayWindow inherits Window {
                         spacing: 16px;
                         VerticalLayout {
                             spacing: 5px;
-                            Text { text: root.corners-mode ? "Projection outline" : "Source face outline"; font-weight: 600; }
+                            Text { text: root.corners-mode || root.source-count > 1 ? "Projection outline" : "Source face outline"; font-weight: 600; }
                             Rectangle {
                                 min-width: 320px; min-height: 180px; background: #1a2430; border-color: #40536a; border-width: 1px; border-radius: 4px;
                                 if root.outline != "": Path {

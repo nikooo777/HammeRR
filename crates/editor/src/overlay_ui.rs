@@ -21,6 +21,7 @@ use crate::runtime::{SharedSession, lock};
 #[derive(Default)]
 struct Form {
     source: Option<FaceId>,
+    additional_sources: Vec<FaceId>,
     token: Option<u64>,
     reviewed: Option<Options>,
     refit: bool,
@@ -156,6 +157,13 @@ fn source(value: &Value) -> Option<FaceId> {
         solid: value["solid"].as_u64()?.try_into().ok()?,
         side: value["side"].as_u64()?.try_into().ok()?,
     })
+}
+
+fn additional_sources(value: &Value) -> Vec<FaceId> {
+    value["sources"]
+        .as_array()
+        .map(|sources| sources.iter().skip(1).filter_map(source).collect())
+        .unwrap_or_default()
 }
 
 fn outline(value: &Value) -> Option<String> {
@@ -350,6 +358,7 @@ fn preview_rebind(window: &OverlayWindow, session: &mut Session, form: &RefCell<
         let form = form.borrow();
         form.target
             .zip(form.source)
+            .filter(|_| form.additional_sources.is_empty())
             .map(|(id, source)| (id, source, form.snapshot.clone()))
     };
     let result = request
@@ -387,7 +396,11 @@ fn refresh(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
         form.corners && form.target.is_some() && form.snapshot == snapshot,
     );
     window.set_can_rebind(
-        form.rebind && form.target.is_some() && form.source.is_some() && form.snapshot == snapshot,
+        form.rebind
+            && form.target.is_some()
+            && form.source.is_some()
+            && form.additional_sources.is_empty()
+            && form.snapshot == snapshot,
     );
     window.set_can_preview(!form.refit && form.source.is_some() && form.snapshot == snapshot);
     window.set_can_refit(!state["selected_overlay"].is_null() && form.snapshot == snapshot);
@@ -424,7 +437,15 @@ fn refresh(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
         )
         .into()
     } else if matches {
-        "Your fitted overlay draft · Apply overlay creates one entity".into()
+        if form.additional_sources.is_empty() {
+            "Your fitted overlay draft · Apply overlay creates one entity".into()
+        } else {
+            format!(
+                "Your fitted overlay draft · {} bound faces · Apply overlay creates one entity",
+                form.additional_sources.len() + 1
+            )
+            .into()
+        }
     } else {
         "A shared draft is available · Review current draft to use it".into()
     });
@@ -437,12 +458,22 @@ fn refresh(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
     } else {
         &state["selected_source"]
     };
+    let source_count = if matches && draft["valid"] == true && form.reviewed.is_some() {
+        draft["source_count"].as_u64().unwrap_or(1)
+    } else {
+        display_source["source_count"].as_u64().unwrap_or(1)
+    };
+    window.set_source_count(source_count as i32);
     window.set_source_label(if let Some(source) = source(display_source) {
-        format!(
-            "Source · brush {} · face {} · world / detail quad",
-            source.solid, source.side
-        )
-        .into()
+        if source_count > 1 {
+            format!("Sources · {source_count} coplanar world / detail faces · first quad: brush {} · face {}", source.solid, source.side).into()
+        } else {
+            format!(
+                "Source · brush {} · face {} · world / detail quad",
+                source.solid, source.side
+            )
+            .into()
+        }
     } else {
         state[if session.face_mode() {
             "selection_error"
@@ -487,6 +518,7 @@ fn adopt(window: &OverlayWindow, state: &Value, form: &RefCell<Form>) {
     load(window, &draft["options"]);
     let mut form = form.borrow_mut();
     form.source = source(&draft["source"]);
+    form.additional_sources = additional_sources(draft);
     form.token = draft["token"].as_u64();
     form.reviewed = fields(window).ok();
     form.refit = matches!(
@@ -524,23 +556,25 @@ fn adopt(window: &OverlayWindow, state: &Value, form: &RefCell<Form>) {
 
 fn preview(window: &OverlayWindow, session: &mut Session, form: &RefCell<Form>) {
     let result = (|| {
-        let (source, snapshot) = {
+        let (source, additional_sources, snapshot) = {
             let form = form.borrow();
             if form.refit {
                 return Err("Existing-overlay updates preserve settings. Use Preview rebind, Apply or Cancel.".into());
             }
             (
                 form.source
-                    .ok_or("Select one world or detail quad face and reopen Overlay")?,
+                    .ok_or("Select coplanar world or detail faces, starting with a quad, and reopen Overlay")?,
+                form.additional_sources.clone(),
                 form.snapshot.clone(),
             )
         };
-        session.preview_overlay(
+        session.preview_overlay_faces(
             Actor::User,
             Request {
                 source,
                 options: fields(window)?,
             },
+            &additional_sources,
             &snapshot,
         )
     })();
@@ -610,6 +644,7 @@ fn edit_selected_corners(window: &OverlayWindow, session: &Session, form: &RefCe
     current.rebind = false;
     current.target = Some(id);
     current.source = source(&selected["source"]);
+    current.additional_sources.clear();
     current.reviewed = None;
     current.reviewed_corners = None;
     current.serial += 1;
@@ -959,6 +994,7 @@ impl Controller {
         let state = session.get_overlay_state();
         let mut form = self.form.borrow_mut();
         form.source = source(&state["selected_source"]);
+        form.additional_sources = additional_sources(&state["selected_source"]);
         form.snapshot = state["snapshot"].as_str().unwrap_or_default().into();
         form.reviewed = None;
         form.refit = false;
@@ -1030,6 +1066,91 @@ mod tests {
     use map_core::{BrushGeometry, ObjectId};
     use slint::Model;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn coplanar_multiface_overlay_controls_use_complete_selection_and_show_count() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let (_assets, game) = crate::test_assets::game();
+        let mut session = Session::new(Ok(game));
+        let mut sources = Vec::new();
+        for x in [-96.0, 32.0] {
+            let ObjectId::Solid(solid) = session
+                .create_block(
+                    Actor::User,
+                    DVec3::new(x, -32.0, 0.0),
+                    DVec3::new(x + 64.0, 32.0, 16.0),
+                    "test/checker",
+                    false,
+                )
+                .unwrap()
+            else {
+                unreachable!()
+            };
+            let side = session
+                .document()
+                .solid(solid)
+                .unwrap()
+                .sides
+                .iter()
+                .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+                .unwrap()
+                .id;
+            sources.push(FaceId { solid, side });
+        }
+        session
+            .select_faces(&sources, crate::session::SelectMode::Replace)
+            .unwrap();
+        let before = session.document().vmf().clone();
+        let history = session.document().undo_labels().count();
+        let shared = Arc::new(Mutex::new(session));
+        let controller = Controller::new(&shared).unwrap();
+        controller.show(&mut lock(&shared), "test/checker").unwrap();
+        assert!(controller.window.get_can_preview());
+        assert_eq!(controller.window.get_source_count(), 2);
+        assert!(controller.window.get_source_label().contains("2 coplanar"));
+        controller.window.invoke_fit();
+        assert!(
+            controller.window.get_ready(),
+            "{}",
+            controller.window.get_message()
+        );
+        assert_eq!(
+            lock(&shared).get_overlay_state()["draft"]["source_count"],
+            2
+        );
+        assert!(
+            controller
+                .window
+                .get_draft_label()
+                .contains("2 bound faces")
+        );
+        assert_eq!(lock(&shared).document().vmf(), &before);
+        assert_eq!(lock(&shared).selected_faces(), sources);
+        assert_eq!(lock(&shared).document().undo_labels().count(), history);
+        crate::ui::tests::save_ui_snapshot(controller.window.window(), "overlay-multiface");
+        controller.window.invoke_apply();
+        let after = lock(&shared).document().vmf().clone();
+        let overlays = after
+            .entities
+            .iter()
+            .filter(|entity| entity.classname() == Some("info_overlay"))
+            .collect::<Vec<_>>();
+        assert_eq!(overlays.len(), 1);
+        assert_eq!(
+            map_core::overlay::parse(overlays[0]).unwrap().sides,
+            sources.iter().map(|source| source.side).collect::<Vec<_>>()
+        );
+        assert_eq!(lock(&shared).document().undo_labels().count(), history + 1);
+        lock(&shared).undo(Actor::User).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &before);
+    }
 
     #[test]
     fn overlay_controls_guard_fields_material_choices_and_shared_draft_ownership() {

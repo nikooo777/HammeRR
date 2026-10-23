@@ -56,6 +56,212 @@ fn fixture(detail: bool) -> (Document, FaceId) {
     (document, face)
 }
 
+fn coplanar_fixture(gap: f64, detail: bool) -> (Document, [FaceId; 2]) {
+    let mut document = Document::empty();
+    let faces = document
+        .edit("coplanar skew plates", |tx| {
+            let mut faces = Vec::new();
+            for x in [-96.0, -16.0 + gap] {
+                let ObjectId::Solid(solid) = edit::create_block(
+                    tx,
+                    DVec3::new(x, -32.0, 0.0),
+                    DVec3::new(x + 80.0, 32.0, 16.0),
+                    "dev/dev_measuregeneric01",
+                )?
+                else {
+                    unreachable!()
+                };
+                let turn = DQuat::from_rotation_x(0.3) * DQuat::from_rotation_y(0.2);
+                let brush = tx.solid_mut(solid)?;
+                let side = brush
+                    .sides
+                    .iter()
+                    .find(|side| Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+                    .unwrap()
+                    .id;
+                for side in &mut brush.sides {
+                    for point in &mut side.plane.0 {
+                        point.x += point.y * 0.25;
+                        *point = turn * *point + DVec3::new(100.125, 200.25, 40.5);
+                    }
+                }
+                if detail {
+                    edit::tie_to_entity(tx, &[solid], "func_detail", &[])?;
+                }
+                faces.push(FaceId { solid, side });
+            }
+            Ok(faces.try_into().unwrap())
+        })
+        .unwrap();
+    (document, faces)
+}
+
+#[test]
+fn coplanar_multiface_fits_keep_anchor_frame_and_exact_adjacent_or_disjoint_bindings() {
+    for gap in [0.0, 48.0] {
+        for detail in [false, true] {
+            let (mut document, faces) = coplanar_fixture(gap, detail);
+            let before = document.vmf().clone();
+            let anchor = fit(&before, faces[0], options()).unwrap();
+            let definition = fit_faces(&before, &faces, options()).unwrap();
+            assert_eq!(definition.basis_origin, anchor.basis_origin);
+            assert_eq!(definition.basis_normal, anchor.basis_normal);
+            assert_eq!(definition.basis_u, anchor.basis_u);
+            assert_eq!(definition.basis_v, anchor.basis_v);
+            assert_eq!(definition.sides, faces.map(|face| face.side));
+            assert_eq!(definition.options, anchor.options);
+            let origin = DVec3::from_array(definition.basis_origin);
+            let normal = DVec3::from_array(definition.basis_normal);
+            let u = DVec3::from_array(definition.basis_u);
+            let v = DVec3::from_array(definition.basis_v);
+            let expected_normal =
+                DQuat::from_rotation_x(0.3) * DQuat::from_rotation_y(0.2) * DVec3::Z;
+            assert!(normal.abs_diff_eq(expected_normal, 1e-10));
+            assert!(normal.cross(u).abs_diff_eq(v, 1e-10));
+            for face in faces {
+                for point in crate::surface::face_vertices(&document, face).unwrap() {
+                    let local = point - origin;
+                    assert!(normal.dot(local).abs() < 1e-8);
+                    assert!(local.dot(u) >= definition.uv_points[0][0] - 1e-8);
+                    assert!(local.dot(u) <= definition.uv_points[2][0] + 1e-8);
+                    assert!(local.dot(v) >= definition.uv_points[0][1] - 1e-8);
+                    assert!(local.dot(v) <= definition.uv_points[2][1] + 1e-8);
+                }
+            }
+            let ObjectId::Entity(id) = document
+                .edit("one multiface overlay", |tx| {
+                    create_faces(tx, &faces, options())
+                })
+                .unwrap()
+            else {
+                unreachable!()
+            };
+            assert_eq!(parse(document.entity(id).unwrap()).unwrap(), definition);
+            assert_eq!(
+                document
+                    .vmf()
+                    .entities
+                    .iter()
+                    .filter(|entity| entity.classname() == Some("info_overlay"))
+                    .count(),
+                1
+            );
+            let after = document.vmf().clone();
+            let reopened = Vmf::parse(&after.write(&Default::default())).unwrap();
+            assert_eq!(
+                parse(
+                    reopened
+                        .entities
+                        .iter()
+                        .find(|entity| entity.id == id)
+                        .unwrap()
+                )
+                .unwrap(),
+                definition
+            );
+            document.undo().unwrap();
+            assert_eq!(document.vmf(), &before);
+            document.redo().unwrap();
+            assert_eq!(document.vmf(), &after);
+        }
+    }
+}
+
+#[test]
+fn coplanar_multiface_single_source_remains_the_exact_original_fit_and_entity() {
+    let (document, face) = fixture(false);
+    assert_eq!(
+        fit_faces(document.vmf(), &[face], options()).unwrap(),
+        fit(document.vmf(), face, options()).unwrap()
+    );
+    let mut original = Document::new(document.vmf().clone());
+    let mut multiple = Document::new(document.vmf().clone());
+    original
+        .edit("original", |tx| create(tx, face, options()))
+        .unwrap();
+    multiple
+        .edit("one source", |tx| create_faces(tx, &[face], options()))
+        .unwrap();
+    assert_eq!(original.vmf(), multiple.vmf());
+}
+
+#[test]
+fn coplanar_multiface_invalid_sources_reject_before_allocating_or_mutating() {
+    let (document, faces) = coplanar_fixture(48.0, false);
+    let mut cases = vec![
+        (document.vmf().clone(), vec![], "at least one"),
+        (
+            document.vmf().clone(),
+            vec![faces[0]; bsp::MAX_OVERLAY_FACES + 1],
+            "budget",
+        ),
+        (document.vmf().clone(), vec![faces[0], faces[0]], "distinct"),
+        (
+            document.vmf().clone(),
+            vec![
+                faces[0],
+                FaceId {
+                    solid: faces[1].solid,
+                    side: faces[0].side,
+                },
+            ],
+            "does not belong",
+        ),
+    ];
+    let mut hidden = document.vmf().clone();
+    hidden.world.solids[1].hidden = true;
+    cases.push((hidden, faces.to_vec(), "visible"));
+    for translation in [DVec3::Z, DVec3::ZERO] {
+        let mut moved = Document::new(document.vmf().clone());
+        moved
+            .edit("incompatible plane", |tx| {
+                edit::transform(
+                    tx,
+                    &[ObjectId::Solid(faces[1].solid)],
+                    edit::Transform {
+                        translation,
+                        rotation: if translation == DVec3::ZERO {
+                            DVec3::new(0.0, 2.0, 0.0)
+                        } else {
+                            DVec3::ZERO
+                        },
+                        ..Default::default()
+                    },
+                )
+            })
+            .unwrap();
+        cases.push((moved.into_vmf(), faces.to_vec(), "coplanar"));
+    }
+    let mut model = Document::new(document.vmf().clone());
+    model
+        .edit("model", |tx| {
+            edit::tie_to_entity(tx, &[faces[1].solid], "func_brush", &[])
+        })
+        .unwrap();
+    cases.push((model.into_vmf(), faces.to_vec(), "world and func_detail"));
+    let mut terrain = Document::new(document.vmf().clone());
+    terrain
+        .edit("terrain", |tx| {
+            displacement::edit::create(tx, &[faces[1]], 2, 0)
+        })
+        .unwrap();
+    cases.push((terrain.into_vmf(), faces.to_vec(), "terrain"));
+    for (vmf, sources, message) in cases {
+        let mut document = Document::new(vmf);
+        let before = document.vmf().clone();
+        let revision = document.revision();
+        let error = document
+            .edit("invalid multiface overlay", |tx| {
+                create_faces(tx, &sources, options())
+            })
+            .unwrap_err();
+        assert!(error.to_string().contains(message), "{error}");
+        assert_eq!(document.vmf(), &before);
+        assert_eq!(document.revision(), revision);
+        assert_eq!(document.undo_labels().count(), 0);
+    }
+}
+
 #[test]
 fn fitted_world_and_detail_trapezoids_roundtrip_with_one_undoable_creation() {
     for detail in [false, true] {

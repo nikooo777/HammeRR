@@ -136,6 +136,11 @@ Nonzero padding returns `padding` and `usable_rectangle`; `uv_bounds` describes 
 The outer rectangle must fit the actual image, and padding must leave positive width and height.
 Invalid updates preserve the current draft. Apply or cancel with its exact token through `commit_face_preview` or `cancel_face_preview`.
 
+For [overlay fitting](overlays.md), `preview_overlay.source` supplies the quad that sets the projection axes.
+Optional `additional_sources` adds coplanar flat world or `func_detail` faces, up to 64 sources in total.
+The projection spans their bounds and clips to the exact bound sides. Unbound gaps stay clear.
+Omit `additional_sources` for a single-face fit. Refit, rebind and corner tools still require one quad.
+
 ## Selection defaults
 
 Selection defaults use `get_selection_defaults` and `set_selection_defaults`.

@@ -144,14 +144,23 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Fit a new overlay to one explicit visible planar world/func_detail quad face, using source {solid,side} and the latest get_overlay_state.snapshot. material is a material path without materials/ or extension; targetname is optional. render_order defaults 0, u/v to [0,1], fade_min/fade_max to -1/0. Uses the shared checked core definition and derived basis. Valid preview replaces the current draft and owns its token; invalid or stale input preserves the last valid draft. Source, selection and Undo remain unchanged. UI: Surface → Overlay… → Fit / Preview."
+        description = "Fit one new overlay to source {solid,side}, an explicit visible planar world/func_detail quad, using latest get_overlay_state.snapshot. Optional additional_sources is a list of distinct coplanar flat world/detail faces facing the same direction (64 total source faces maximum). The first source supplies the existing projection axes; the combined U/V rectangle covers all real face loops, including gaps, and native rendering clips to the exact selected side IDs. Omitting the list preserves the original single-quad fit exactly. Rejects hidden/unsupported/missing/noncoplanar/terrain/model faces atomically. material is a material path without materials/ or extension; targetname is optional. render_order defaults 0, u/v to [0,1], fade_min/fade_max to -1/0. Valid preview replaces the shared draft and owns its token; invalid or stale input preserves the last valid draft. Multiple-source drafts report sources and source_count. Map, selection and Undo stay unchanged until Apply. Refit/rebind/corners still require one existing bound quad. UI: select coplanar faces → Overlay… → Fit / Preview."
     )]
     pub(in crate::mcp) fn preview_overlay(
         &self,
         Parameters(args): Parameters<OverlayPreviewArgs>,
     ) -> ToolResult {
         run(|| {
-            self.session().preview_overlay(
+            let additional_sources = args
+                .additional_sources
+                .unwrap_or_default()
+                .into_iter()
+                .map(|source| map_core::surface::FaceId {
+                    solid: source.solid,
+                    side: source.side,
+                })
+                .collect::<Vec<_>>();
+            self.session().preview_overlay_faces(
                 Actor::Agent,
                 crate::session::overlay::Request {
                     source: map_core::surface::FaceId {
@@ -168,6 +177,7 @@ impl EditorServer {
                         fade_max: args.fade_max.unwrap_or(0.0),
                     },
                 },
+                &additional_sources,
                 &args.snapshot,
             )
         })

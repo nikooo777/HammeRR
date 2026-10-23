@@ -66,6 +66,301 @@ fn preview(session: &mut Session, actor: Actor, source: FaceId) -> u64 {
         .unwrap()
 }
 
+fn multiface_fixture(actor: Actor, triangle: bool) -> (tempfile::TempDir, Session, [FaceId; 2]) {
+    let (directory, game) = crate::test_assets::game();
+    let mut session = Session::new(Ok(game));
+    let faces: [FaceId; 2] = session
+        .edit(actor, "separated coplanar faces", |tx| {
+            let mut faces = Vec::new();
+            for x in [-96.0, 32.0] {
+                let ObjectId::Solid(solid) = edit::create_block(
+                    tx,
+                    DVec3::new(x, -32.0, 0.0),
+                    DVec3::new(x + 80.0, 32.0, 16.0),
+                    "test/checker",
+                )?
+                else {
+                    unreachable!()
+                };
+                let brush = tx.solid_mut(solid)?;
+                let side = brush
+                    .sides
+                    .iter()
+                    .find(|side| {
+                        map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99
+                    })
+                    .unwrap()
+                    .id;
+                if triangle && faces.is_empty() {
+                    brush
+                        .sides
+                        .iter_mut()
+                        .find(|side| {
+                            map_core::Plane::from_points(side.plane.0).unwrap().normal.x > 0.99
+                        })
+                        .unwrap()
+                        .plane
+                        .0 = [
+                        DVec3::new(x, 32.0, 0.0),
+                        DVec3::new(x + 80.0, -32.0, 0.0),
+                        DVec3::new(x + 80.0, -32.0, 16.0),
+                    ];
+                }
+                if !faces.is_empty() {
+                    edit::tie_to_entity(tx, &[solid], "func_detail", &[])?;
+                }
+                faces.push(FaceId { solid, side });
+            }
+            Ok(faces.try_into().unwrap())
+        })
+        .unwrap();
+    session.select_faces(&faces, SelectMode::Replace).unwrap();
+    (directory, session, faces)
+}
+
+#[test]
+fn coplanar_multiface_selection_uses_first_eligible_quad_and_one_owned_history_step() {
+    for actor in [Actor::User, Actor::Agent] {
+        let (_directory, mut session, faces) = multiface_fixture(actor, true);
+        assert_eq!(
+            map_core::surface::face_vertices(&session.document, faces[0])
+                .unwrap()
+                .len(),
+            3
+        );
+        let state = session.get_overlay_state();
+        assert_eq!(state["selected_source"]["solid"], faces[1].solid);
+        assert_eq!(state["selected_source"]["source_count"], 2);
+        let sources = [faces[1], faces[0]];
+        assert_eq!(state["selected_source"]["sources"], sources_json(&sources));
+        let before = session.document.vmf().clone();
+        let history = session.document.undo_labels().count();
+        let camera = session.camera();
+        let state = session
+            .preview_overlay_faces(
+                actor,
+                request(sources[0]),
+                &sources[1..],
+                &session.overlay_stamp(),
+            )
+            .unwrap();
+        let token = state["draft"]["token"].as_u64().unwrap();
+        assert_eq!(state["draft"]["source_count"], 2);
+        assert_eq!(state["draft"]["sources"], sources_json(&sources));
+        assert_eq!(session.document.vmf(), &before);
+        assert_eq!(session.document.undo_labels().count(), history);
+        assert_eq!(session.selected_faces(), faces);
+        assert_eq!(session.camera(), camera);
+        let definition = session.overlay.draft.as_ref().unwrap().definition.clone();
+        let reviewer = if actor == Actor::User {
+            Actor::Agent
+        } else {
+            Actor::User
+        };
+        assert!(session.apply_overlay(reviewer, token).is_err());
+        let reviewed = session.review_overlay(reviewer, token).unwrap();
+        let replacement = reviewed["draft"]["token"].as_u64().unwrap();
+        assert_ne!(replacement, token);
+        assert!(session.apply_overlay(actor, token).is_err());
+        let applied = session.apply_overlay(reviewer, replacement).unwrap();
+        let ObjectId::Entity(id) =
+            crate::identity::parse_id(applied["created"].as_str().unwrap()).unwrap()
+        else {
+            unreachable!()
+        };
+        assert_eq!(
+            overlay::parse(session.document.entity(id).unwrap()).unwrap(),
+            definition
+        );
+        assert_eq!(session.selected_ids(), [ObjectId::Entity(id)]);
+        assert_eq!(session.document.undo_labels().count(), history + 1);
+        assert!(
+            overlay::fit_existing(session.document.vmf(), id)
+                .unwrap_err()
+                .contains("exactly one")
+        );
+        let after = session.document.vmf().clone();
+        session.undo(reviewer).unwrap();
+        assert_eq!(session.document.vmf(), &before);
+        session.redo(reviewer).unwrap();
+        assert_eq!(session.document.vmf(), &after);
+    }
+}
+
+#[test]
+fn coplanar_multiface_invalid_requests_preserve_owned_preview_and_stale_cleanup() {
+    let (directory, mut session, faces) = multiface_fixture(Actor::Agent, false);
+    std::fs::write(
+        directory.path().join("materials/test/hidden.vmt"),
+        "LightmappedGeneric { %compilenodraw 1 }",
+    )
+    .unwrap();
+    let invalid_faces = session
+        .edit(Actor::Agent, "unsupported targets", |tx| {
+            let mut targets = Vec::new();
+            for case in 0..5 {
+                let x = 192.0 + f64::from(case) * 96.0;
+                let ObjectId::Solid(solid) = edit::create_block(
+                    tx,
+                    DVec3::new(x, -32.0, 0.0),
+                    DVec3::new(x + 64.0, 32.0, if case == 3 { 32.0 } else { 16.0 }),
+                    if case == 4 {
+                        "test/hidden"
+                    } else {
+                        "test/checker"
+                    },
+                )?
+                else {
+                    unreachable!()
+                };
+                let brush = tx.solid_mut(solid)?;
+                let side = brush
+                    .sides
+                    .iter()
+                    .find(|side| {
+                        map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99
+                    })
+                    .unwrap()
+                    .id;
+                let face = FaceId { solid, side };
+                match case {
+                    0 => tx.solid_mut(solid)?.hidden = true,
+                    1 => {
+                        edit::tie_to_entity(tx, &[solid], "func_brush", &[])?;
+                    }
+                    2 => {
+                        map_core::displacement::edit::create(tx, &[face], 2, 0)?;
+                    }
+                    _ => {}
+                }
+                targets.push(face);
+            }
+            Ok(targets)
+        })
+        .unwrap();
+    session.select_faces(&faces, SelectMode::Replace).unwrap();
+    let before = session.document.vmf().clone();
+    let history = session.history_snapshot();
+    let valid = session
+        .preview_overlay_faces(
+            Actor::Agent,
+            request(faces[0]),
+            &faces[1..],
+            &session.overlay_stamp(),
+        )
+        .unwrap();
+    let token = valid["draft"]["token"].as_u64().unwrap();
+    let mut invalid = invalid_faces
+        .into_iter()
+        .map(|face| vec![face])
+        .collect::<Vec<_>>();
+    invalid.push(vec![faces[0]]);
+    invalid.push(vec![FaceId {
+        solid: faces[1].solid,
+        side: faces[0].side,
+    }]);
+    invalid.push(vec![faces[1]; source_formats::bsp::MAX_OVERLAY_FACES]);
+    for sources in invalid {
+        assert!(
+            session
+                .preview_overlay_faces(
+                    Actor::Agent,
+                    request(faces[0]),
+                    &sources,
+                    &session.overlay_stamp()
+                )
+                .is_err()
+        );
+        assert_eq!(session.get_overlay_state(), valid);
+        assert_eq!(session.document.vmf(), &before);
+        assert_eq!(session.history_snapshot(), history);
+    }
+    session
+        .select_faces(&faces[..1], SelectMode::Replace)
+        .unwrap();
+    assert!(session.apply_overlay(Actor::Agent, token).is_err());
+    assert_eq!(session.document.vmf(), &before);
+    assert!(session.cancel_overlay(Actor::User, token).is_err());
+    session.cancel_overlay(Actor::Agent, token).unwrap();
+    assert!(session.get_overlay_state()["draft"].is_null());
+    session.select_faces(&faces, SelectMode::Replace).unwrap();
+    let token = session
+        .preview_overlay_faces(
+            Actor::Agent,
+            request(faces[0]),
+            &faces[1..],
+            &session.overlay_stamp(),
+        )
+        .unwrap()["draft"]["token"]
+        .as_u64()
+        .unwrap();
+    session.set_view(render::ViewOptions {
+        tool_textures: !session.view().tool_textures,
+        ..session.view()
+    });
+    assert!(
+        !session.get_overlay_state()["draft"]["valid"]
+            .as_bool()
+            .unwrap()
+    );
+    assert!(session.apply_overlay(Actor::Agent, token).is_err());
+    session.cancel_overlay(Actor::Agent, token).unwrap();
+    assert_eq!(session.document.vmf(), &before);
+}
+
+#[test]
+fn coplanar_multiface_hidden_sky_faces_reject_when_tool_textures_are_hidden() {
+    let (directory, mut session, faces) = multiface_fixture(Actor::Agent, false);
+    std::fs::write(
+        directory.path().join("materials/test/sky.vmt"),
+        "LightmappedGeneric { %compilesky 1 }",
+    )
+    .unwrap();
+    session
+        .edit(Actor::Agent, "sky face", |tx| {
+            edit::set_material(
+                tx,
+                &[edit::FaceTarget::Side {
+                    solid: faces[1].solid,
+                    side: faces[1].side,
+                }],
+                "test/sky",
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    session.set_view(render::ViewOptions {
+        tool_textures: true,
+        ..session.view()
+    });
+    let valid = session
+        .preview_overlay_faces(
+            Actor::Agent,
+            request(faces[0]),
+            &faces[1..],
+            &session.overlay_stamp(),
+        )
+        .unwrap();
+    let token = valid["draft"]["token"].as_u64().unwrap();
+    session.set_view(render::ViewOptions {
+        tool_textures: false,
+        ..session.view()
+    });
+    let hidden = session.get_overlay_state();
+    let error = session
+        .preview_overlay_faces(
+            Actor::Agent,
+            request(faces[0]),
+            &faces[1..],
+            &session.overlay_stamp(),
+        )
+        .unwrap_err();
+    assert!(error.contains("hidden by the tool-texture"), "{error}");
+    assert_eq!(session.get_overlay_state(), hidden);
+    assert!(session.apply_overlay(Actor::Agent, token).is_err());
+    session.cancel_overlay(Actor::Agent, token).unwrap();
+}
+
 #[test]
 fn fitted_fractional_world_and_detail_quads_share_preview_outline_and_atomic_history() {
     for actor in [Actor::User, Actor::Agent] {
@@ -77,6 +372,11 @@ fn fitted_fractional_world_and_detail_quads_share_preview_outline_and_atomic_his
             let camera = session.camera();
             let initial_lines = session.build_scene().lines.len();
             let token = preview(&mut session, actor, source);
+            let state = session.get_overlay_state();
+            assert!(state["draft"].get("sources").is_none());
+            assert!(state["draft"].get("source_count").is_none());
+            assert!(state["selected_source"].get("sources").is_none());
+            assert!(state["selected_source"].get("source_count").is_none());
             let draft = session.overlay.draft.as_ref().unwrap();
             let definition = draft.definition.clone();
             assert!(DVec3::from_array(definition.basis_normal).z < 0.99);

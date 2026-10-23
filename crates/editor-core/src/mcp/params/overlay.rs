@@ -5,6 +5,7 @@ use super::*;
 pub struct OverlayPreviewArgs {
     pub snapshot: String,
     pub source: FaceRef,
+    pub additional_sources: Option<Vec<FaceRef>>,
     pub material: String,
     pub targetname: Option<String>,
     pub render_order: Option<u16>,
@@ -127,6 +128,17 @@ mod tests {
         let valid =
             json!({"snapshot":"current","source":{"solid":1,"side":2},"material":"test/checker"});
         assert!(serde_json::from_value::<OverlayPreviewArgs>(valid.clone()).is_ok());
+        let single: OverlayPreviewArgs = serde_json::from_value(valid.clone()).unwrap();
+        assert!(single.additional_sources.is_none());
+        let mut multiple = valid.clone();
+        multiple["additional_sources"] = json!([{"solid":3,"side":4}]);
+        let multiple: OverlayPreviewArgs = serde_json::from_value(multiple).unwrap();
+        assert_eq!(multiple.additional_sources.unwrap().len(), 1);
+        for sources in [json!([4]), json!([{"solid":3}]), json!("selection")] {
+            let mut invalid = valid.clone();
+            invalid["additional_sources"] = sources;
+            assert!(serde_json::from_value::<OverlayPreviewArgs>(invalid).is_err());
+        }
         let mut missing = valid.clone();
         missing.as_object_mut().unwrap().remove("source");
         assert!(serde_json::from_value::<OverlayPreviewArgs>(missing).is_err());

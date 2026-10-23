@@ -130,7 +130,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Preview refitting one visible existing info_overlay to its EXISTING single bound world/func_detail quad. id defaults to the single selected overlay; pass latest get_overlay_state.snapshot. No new-face rebinding. Rejects multiside, hidden, missing, terrain, brush-model and nonquad bindings without replacing a valid draft. Returns draft.operation=refit and its entity. Apply updates the same entity's projection/origin/sides only, preserving option strings, connections and opaque metadata. Use review_overlay, apply_overlay or cancel_overlay with the owned token. UI: Overlay… → Refit selected overlay → Apply refit."
+        description = "Preview refitting one visible existing info_overlay to its EXISTING bound world/func_detail faces. id defaults to the single selected overlay; pass latest get_overlay_state.snapshot. Multi-face refit requires explicit reference {solid,side}, an eligible quad belonging to those bindings; its CURRENT edges set the new projection axes, so review the new outline. All exact existing side IDs must resolve unambiguously to visible supported coplanar flat faces (64 maximum), facing the same direction. Omitting reference preserves original single-quad behavior. No new-face or automatic rebinding. Invalid, missing-reference, hidden, terrain or brush-model input preserves any valid draft. Returns draft.operation=refit and the same entity; multi drafts also report reference, sources and source_count. Apply preserves the binding set, raw settings, connections and metadata, with one Undo step. Use review_overlay, apply_overlay or cancel_overlay with the owned token. UI: Overlay… → choose Reference face for multi → Refit selected overlay → Apply refit."
     )]
     pub(in crate::mcp) fn preview_overlay_refit(
         &self,
@@ -139,12 +139,16 @@ impl EditorServer {
         run(|| {
             let mut session = self.session();
             let id = single_entity(&session, args.id.as_deref())?;
-            session.preview_overlay_refit(Actor::Agent, id, &args.snapshot)
+            let reference = args.reference.map(|face| map_core::surface::FaceId {
+                solid: face.solid,
+                side: face.side,
+            });
+            session.preview_overlay_refit_reference(Actor::Agent, id, reference, &args.snapshot)
         })
     }
 
     #[tool(
-        description = "Fit one new overlay to source {solid,side}, an explicit visible planar world/func_detail quad, using latest get_overlay_state.snapshot. Optional additional_sources is a list of distinct coplanar flat world/detail faces facing the same direction (64 total source faces maximum). The first source supplies the existing projection axes; the combined U/V rectangle covers all real face loops, including gaps, and native rendering clips to the exact selected side IDs. Omitting the list preserves the original single-quad fit exactly. Rejects hidden/unsupported/missing/noncoplanar/terrain/model faces atomically. material is a material path without materials/ or extension; targetname is optional. render_order defaults 0, u/v to [0,1], fade_min/fade_max to -1/0. Valid preview replaces the shared draft and owns its token; invalid or stale input preserves the last valid draft. Multiple-source drafts report sources and source_count. Map, selection and Undo stay unchanged until Apply. Refit/rebind/corners still require one existing bound quad. UI: select coplanar faces → Overlay… → Fit / Preview."
+        description = "Fit one new overlay to source {solid,side}, an explicit visible planar world/func_detail quad, using latest get_overlay_state.snapshot. Optional additional_sources is a list of distinct coplanar flat world/detail faces facing the same direction (64 total source faces maximum). The first source supplies the existing projection axes; the combined U/V rectangle covers all real face loops, including gaps, and native rendering clips to the exact selected side IDs. Omitting the list preserves the original single-quad fit exactly. Rejects hidden/unsupported/missing/noncoplanar/terrain/model faces atomically. material is a material path without materials/ or extension; targetname is optional. render_order defaults 0, u/v to [0,1], fade_min/fade_max to -1/0. Valid preview replaces the shared draft and owns its token; invalid or stale input preserves the last valid draft. Multiple-source drafts report sources and source_count. Map, selection and Undo stay unchanged until Apply. Multi-face refit requires an explicit bound reference quad; rebind/corners still require one existing bound quad. UI: select coplanar faces → Overlay… → Fit / Preview."
     )]
     pub(in crate::mcp) fn preview_overlay(
         &self,

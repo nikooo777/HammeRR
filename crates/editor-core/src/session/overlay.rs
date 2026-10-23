@@ -239,6 +239,42 @@ impl Session {
         Ok((*id, face, definition))
     }
 
+    fn selected_overlay_refit_report(&self) -> Result<Value, String> {
+        self.overlay_context()?;
+        let ids = self.selected_ids();
+        let [map_core::ObjectId::Entity(id)] = ids.as_slice() else {
+            return Err("Select exactly one visible existing overlay to refit".into());
+        };
+        let multiple = self
+            .document
+            .entity(*id)
+            .and_then(|entity| overlay::parse(entity).ok())
+            .is_some_and(|definition| definition.sides.len() > 1);
+        if !multiple {
+            let (id, source, definition) = self.selected_overlay_refit()?;
+            return Ok(
+                json!({"id":id,"entity":format!("entity:{id}"),"source":{"solid":source.solid,"side":source.side},"corners":definition.corners()}),
+            );
+        }
+        let (sources, existing) = overlay::refit_sources(self.document.vmf(), *id)?;
+        let references = sources
+            .iter()
+            .copied()
+            .filter(|source| {
+                overlay::fit(self.document.vmf(), *source, existing.options.clone()).is_ok()
+            })
+            .collect::<Vec<_>>();
+        let reference = *references
+            .first()
+            .ok_or("Overlay refit requires an eligible bound quad reference")?;
+        overlay::fit_existing_refit(self.document.vmf(), *id, Some(reference))?;
+        self.validate_overlay_sources(&sources)?;
+        Ok(
+            json!({"id":id,"entity":format!("entity:{id}"),"sources":sources_json(&sources),
+            "source_count":sources.len(),"reference_required":true,"references":sources_json(&references),"corners":null}),
+        )
+    }
+
     fn checked_overlay(&self, token: u64) -> Result<&Draft, String> {
         let draft = self
             .overlay
@@ -260,11 +296,8 @@ impl Session {
     }
 
     pub fn get_overlay_state(&self) -> Value {
-        let (selected_overlay, refit_error) = match self.selected_overlay_refit() {
-            Ok((id, source, definition)) => (
-                json!({"id":id,"entity":format!("entity:{id}"),"source":{"solid":source.solid,"side":source.side},"corners":definition.corners()}),
-                Value::Null,
-            ),
+        let (selected_overlay, refit_error) = match self.selected_overlay_refit_report() {
+            Ok(report) => (report, Value::Null),
             Err(error) => (Value::Null, json!(error)),
         };
         let (selected_corners, corners_error) = match self.selected_overlay_refit().and_then(
@@ -316,12 +349,18 @@ impl Session {
                 let sources = std::iter::once(draft.source).chain(draft.additional_sources.iter().copied()).collect::<Vec<_>>();
                 report["sources"] = sources_json(&sources);
                 report["source_count"] = json!(sources.len());
+                if matches!(draft.operation, Operation::Refit(_)) {
+                    report["reference"] = json!({"solid":draft.source.solid,"side":draft.source.side});
+                }
             }
             report
         });
         let multiple = selected_source["source_count"]
             .as_u64()
             .is_some_and(|count| count > 1)
+            || selected_overlay["source_count"]
+                .as_u64()
+                .is_some_and(|count| count > 1)
             || draft.as_ref().is_some_and(|draft| {
                 draft["source_count"]
                     .as_u64()
@@ -337,7 +376,7 @@ impl Session {
         });
         if multiple {
             state["policy"] = json!(
-                "Create one overlay across visible coplanar world/detail faces facing the same direction, starting with a quad. The first quad supplies the projection axes; one U/V rectangle spans all real source loops. Native rendering clips to every bound side, including gaps between faces. Preview changes no map, selection or history; Review transfers ownership and Apply is one Undo step. Refit, rebind and corner tools still require one existing bound quad. Terrain, brush models and automatic rebinding are unavailable."
+                "Create one overlay across visible coplanar world/detail faces facing the same direction, starting with a quad. The first quad supplies the projection axes; one U/V rectangle spans all real source loops. Refit an existing multi-face overlay only with an explicit eligible reference quad from its unchanged bindings; its current edges set the new projection axes. Native rendering clips to every bound side, including gaps between faces. Preview changes no map, selection or history; Review transfers ownership and Apply is one Undo step. Rebind and corner tools still require one existing bound quad. Terrain, brush models and automatic rebinding are unavailable."
             );
         }
         state
@@ -384,12 +423,30 @@ impl Session {
         id: u32,
         snapshot: &str,
     ) -> Result<Value, String> {
+        self.preview_overlay_refit_reference(actor, id, None, snapshot)
+    }
+
+    pub fn preview_overlay_refit_reference(
+        &mut self,
+        actor: Actor,
+        id: u32,
+        reference: Option<FaceId>,
+        snapshot: &str,
+    ) -> Result<Value, String> {
         self.overlay_context()?;
         if snapshot != self.overlay_stamp() {
             return Err("Map, selection or overlay draft changed; inspect overlays again".into());
         }
-        let (source, definition) = overlay::fit_existing(self.document.vmf(), id)?;
-        Ok(self.set_overlay_draft(actor, source, &[], definition, Operation::Refit(id)))
+        let (sources, definition) =
+            overlay::fit_existing_refit(self.document.vmf(), id, reference)?;
+        self.validate_overlay_sources(&sources)?;
+        Ok(self.set_overlay_draft(
+            actor,
+            sources[0],
+            &sources[1..],
+            definition,
+            Operation::Refit(id),
+        ))
     }
 
     pub fn preview_overlay_corners(
@@ -546,9 +603,13 @@ impl Session {
             Operation::Corners(id) => self.edit(actor, "Edit overlay corners", |tx| {
                 overlay::edit_corners(tx, id, corners)
             })?,
-            Operation::Refit(id) => {
-                self.edit(actor, "Refit overlay", |tx| overlay::refit(tx, id))?
-            }
+            Operation::Refit(id) => self.edit(actor, "Refit overlay", |tx| {
+                if sources.len() == 1 {
+                    overlay::refit(tx, id)
+                } else {
+                    overlay::refit_with_reference(tx, id, Some(source))
+                }
+            })?,
             Operation::Rebind { id, .. } => self.edit(actor, "Rebind overlay", |tx| {
                 overlay::rebind(tx, id, source)
             })?,

@@ -654,6 +654,197 @@ fn other_geometry_previews_block_overlay_changes_without_being_discarded() {
 }
 
 #[test]
+fn multiface_refit_requires_owned_explicit_reference_and_updates_only_existing_projection() {
+    for (actor, reviewer) in [(Actor::User, Actor::Agent), (Actor::Agent, Actor::User)] {
+        let (_directory, mut session, faces) = multiface_fixture(actor, false);
+        let state = session
+            .preview_overlay_faces(
+                actor,
+                request(faces[0]),
+                &faces[1..],
+                &session.overlay_stamp(),
+            )
+            .unwrap();
+        let token = state["draft"]["token"].as_u64().unwrap();
+        let created = session.apply_overlay(actor, token).unwrap()["created"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let ObjectId::Entity(id) = crate::identity::parse_id(&created).unwrap() else {
+            unreachable!()
+        };
+        let owners = faces.map(|face| session.document.owner_of_solid(face.solid).unwrap());
+        session
+            .edit(actor, "moved sources and imported strings", |tx| {
+                let entity = tx.entity_mut(id)?;
+                entity.properties.set("StartU", "-0.25000");
+                entity
+                    .properties
+                    .set("sides", format!(" {}  {} ", faces[1].side, faces[0].side));
+                edit::translate(tx, &owners, DVec3::new(3.125, -2.375, 24.625), true)
+            })
+            .unwrap();
+        let before = session.document.vmf().clone();
+        let history = session.document.undo_labels().count();
+        let initial = session.get_overlay_state();
+        assert_eq!(initial["selected_overlay"]["reference_required"], true);
+        assert_eq!(initial["selected_overlay"]["source_count"], 2);
+        assert_eq!(
+            initial["selected_overlay"]["references"],
+            sources_json(&faces)
+        );
+        assert!(initial["selected_overlay"]["corners"].is_null());
+        assert!(initial["selected_corners"].is_null());
+        assert!(
+            session
+                .preview_overlay_refit(actor, id, &session.overlay_stamp())
+                .unwrap_err()
+                .contains("Choose a reference face")
+        );
+        assert_eq!(session.get_overlay_state(), initial);
+        let state = session
+            .preview_overlay_refit_reference(actor, id, Some(faces[1]), &session.overlay_stamp())
+            .unwrap();
+        let token = state["draft"]["token"].as_u64().unwrap();
+        assert_eq!(
+            state["draft"]["reference"],
+            json!({"solid":faces[1].solid,"side":faces[1].side})
+        );
+        assert_eq!(
+            state["draft"]["sources"],
+            sources_json(&[faces[1], faces[0]])
+        );
+        assert_eq!(state["draft"]["entity"], created);
+        assert_eq!(session.document.vmf(), &before);
+        assert_eq!(session.document.undo_labels().count(), history);
+        for reference in [
+            None,
+            Some(FaceId {
+                solid: faces[0].solid,
+                side: faces[1].side,
+            }),
+        ] {
+            assert!(
+                session
+                    .preview_overlay_refit_reference(actor, id, reference, &session.overlay_stamp())
+                    .is_err()
+            );
+            assert_eq!(session.get_overlay_state(), state);
+        }
+        assert!(
+            session
+                .preview_overlay_rebind(actor, id, faces[0], &session.overlay_stamp())
+                .is_err()
+        );
+        assert!(
+            session
+                .preview_overlay_corners(
+                    actor,
+                    id,
+                    [[-1.0, -1.0], [-1.0, 1.0], [1.0, 1.0], [1.0, -1.0]],
+                    &session.overlay_stamp()
+                )
+                .is_err()
+        );
+        assert_eq!(session.get_overlay_state(), state);
+        assert!(session.apply_overlay(reviewer, token).is_err());
+        assert!(session.cancel_overlay(reviewer, token).is_err());
+        let reviewed = session.review_overlay(reviewer, token).unwrap();
+        let replacement = reviewed["draft"]["token"].as_u64().unwrap();
+        assert_ne!(replacement, token);
+        assert_eq!(reviewed["draft"]["reference"], state["draft"]["reference"]);
+        let expected = overlay::fit_existing_refit(&before, id, Some(faces[1]))
+            .unwrap()
+            .1;
+        let applied = session.apply_overlay(reviewer, replacement).unwrap();
+        assert_eq!(applied["updated"], created);
+        assert!(applied["created"].is_null());
+        assert_eq!(session.document.undo_labels().count(), history + 1);
+        assert_eq!(session.selected_ids(), [ObjectId::Entity(id)]);
+        assert_eq!(session.document.vmf().entities.len(), before.entities.len());
+        let entity = session.document.entity(id).unwrap();
+        assert_eq!(overlay::parse(entity).unwrap(), expected);
+        assert_eq!(entity.properties.get("StartU"), Some("-0.25000"));
+        assert_eq!(
+            entity.properties.get("sides"),
+            before
+                .entities
+                .iter()
+                .find(|entity| entity.id == id)
+                .unwrap()
+                .properties
+                .get("sides")
+        );
+        let after = session.document.vmf().clone();
+        session.undo(reviewer).unwrap();
+        assert_eq!(session.document.vmf(), &before);
+        session.redo(reviewer).unwrap();
+        assert_eq!(session.document.vmf(), &after);
+    }
+}
+
+#[test]
+fn multiface_refit_rejects_nonquad_reference_and_hidden_detail_without_replacing_owned_draft() {
+    let (_directory, mut session, faces) = multiface_fixture(Actor::Agent, true);
+    let state = session
+        .preview_overlay_faces(
+            Actor::Agent,
+            request(faces[1]),
+            &faces[..1],
+            &session.overlay_stamp(),
+        )
+        .unwrap();
+    let token = state["draft"]["token"].as_u64().unwrap();
+    let applied = session.apply_overlay(Actor::Agent, token).unwrap();
+    let ObjectId::Entity(id) =
+        crate::identity::parse_id(applied["created"].as_str().unwrap()).unwrap()
+    else {
+        unreachable!()
+    };
+    let state = session
+        .preview_overlay_refit_reference(Actor::Agent, id, Some(faces[1]), &session.overlay_stamp())
+        .unwrap();
+    assert_eq!(
+        state["selected_overlay"]["references"],
+        sources_json(&faces[1..])
+    );
+    assert!(
+        session
+            .preview_overlay_refit_reference(
+                Actor::Agent,
+                id,
+                Some(faces[0]),
+                &session.overlay_stamp()
+            )
+            .unwrap_err()
+            .contains("quad face")
+    );
+    assert_eq!(session.get_overlay_state(), state);
+    let owner = session.document.owner_of_solid(faces[1].solid).unwrap();
+    let ObjectId::Entity(owner) = owner else {
+        unreachable!()
+    };
+    session
+        .edit(Actor::Agent, "hidden detail", |tx| {
+            tx.entity_mut(owner)?.hidden = true;
+            Ok(())
+        })
+        .unwrap();
+    let before = session.get_overlay_state();
+    assert!(
+        session
+            .preview_overlay_refit_reference(
+                Actor::Agent,
+                id,
+                Some(faces[1]),
+                &session.overlay_stamp()
+            )
+            .is_err()
+    );
+    assert_eq!(session.get_overlay_state(), before);
+}
+
+#[test]
 fn refit_existing_binding_shares_owned_review_and_updates_one_entity_atomically() {
     for (actor, reviewer) in [(Actor::User, Actor::Agent), (Actor::Agent, Actor::User)] {
         for detail in [false, true] {
@@ -807,7 +998,7 @@ fn rejected_multiside_hidden_and_nonquad_refits_preserve_the_last_valid_draft() 
                 .unwrap_err();
             assert!(
                 error.contains(match case {
-                    0 => "exactly one",
+                    0 => "Choose a reference face",
                     1 => "visible info_overlay",
                     2 => "quad face",
                     _ => unreachable!(),

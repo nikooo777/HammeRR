@@ -152,6 +152,7 @@ fn forms(controller: &Controller) -> Value {
     json!({
         "form": {
             "source":form.source.map(|face|(face.solid,face.side)),"token":form.token,"reviewed":format!("{:?}",form.reviewed),
+            "additional_sources":form.additional_sources.iter().map(|face|(face.solid,face.side)).collect::<Vec<_>>(),"reference":form.reference.map(|face|(face.solid,face.side)),
             "refit":form.refit,"rebind":form.rebind,"corners":form.corners,"reviewed_corners":form.reviewed_corners,
             "target":form.target,"choices":form.choices,"choices_snapshot":form.choices_snapshot,"offset":form.choices_offset,
             "snapshot":form.snapshot,"seen":form.seen,"serial":form.serial,"generation":form.material_generation,
@@ -160,6 +161,8 @@ fn forms(controller: &Controller) -> Value {
         "render_order":window.get_render_order(),"corners":corner_fields(window).ok(),
         "search":window.get_overlay_search().to_string(),"ready":window.get_ready(),"outline":window.get_outline().to_string(),
         "source":window.get_source_label().to_string(),"rebind_target":window.get_rebind_target().to_string(),
+        "reference_required":window.get_reference_required(),"reference_label":window.get_refit_reference_label().to_string(),
+        "references":window.get_refit_references().iter().map(|row|(row.entity.to_string(),row.label.to_string(),row.eligible)).collect::<Vec<_>>(),
         "detail":window.get_material_detail().to_string(),"image":[window.get_material_image().size().width,window.get_material_image().size().height],
         "rows":window.get_overlay_targets().iter().map(|row|(row.entity.to_string(),row.label.to_string(),row.detail.to_string(),row.eligible)).collect::<Vec<_>>(),
         "viewport":controller.viewport.get(),
@@ -196,6 +199,8 @@ fn retained_actions(target: &Fixture, expected: &str) {
     window.invoke_overlay_page_change(1);
     assert_eq!(window.get_message(), expected);
     window.invoke_choose_overlay("entity:1".into());
+    assert_eq!(window.get_message(), expected);
+    window.invoke_choose_refit_reference("1:2".into());
     assert_eq!(window.get_message(), expected);
     assert_eq!(snapshot(target), before);
     assert_eq!(forms(&target.controller), form);

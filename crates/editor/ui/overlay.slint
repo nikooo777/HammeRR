@@ -31,6 +31,10 @@ export component OverlayWindow inherits Window {
     in property <bool> can-preview;
     in property <bool> can-review;
     in property <bool> can-refit;
+    in property <bool> reference-required;
+    in property <[OverlayTargetRow]> refit-references;
+    in property <string> refit-reference-label;
+    callback choose-refit-reference(string);
     in property <bool> refit-mode;
     in property <bool> rebind-mode;
     in property <bool> can-rebind;
@@ -80,11 +84,25 @@ export component OverlayWindow inherits Window {
             spacing: 10px;
             Text { text: root.corners-mode ? "Edit overlay corners" : root.rebind-mode ? "Rebind existing overlay" : root.refit-mode ? "Refit existing overlay" : "Fit an overlay to faces"; font-size: 24px; font-weight: 600; }
             Text { text: root.source-label; wrap: word-wrap; color: #bac2ce; }
-            if root.source-count > 1: Text { text: "One projection spans the selected faces. Native rendering clips it to each bound face and leaves gaps clear. Refit, rebind and corner tools require a single binding."; wrap: word-wrap; color: #bac2ce; }
+            if root.source-count > 1: Text { text: "One projection spans the bound faces. Native rendering clips it to each face and leaves gaps clear. Multi-face refit requires an explicit reference quad. Rebind and corner tools require a single binding."; wrap: word-wrap; color: #bac2ce; }
             ScrollView {
                 vertical-stretch: 1;
                 VerticalLayout {
                     spacing: 10px;
+                    if root.reference-required: VerticalLayout {
+                        spacing: 6px;
+                        Text { text: "Reference face"; font-weight: 600; }
+                        Text { text: root.refit-reference-label; wrap: word-wrap; }
+                        Text { text: "Its current edges set the projection axes. Refit, then review the new outline."; wrap: word-wrap; color: #bac2ce; }
+                        ListView {
+                            height: min(root.refit-references.length * 36px, 144px);
+                            for entry in root.refit-references: Button {
+                                text: entry.label;
+                                enabled: entry.eligible;
+                                clicked => { root.choose-refit-reference(entry.entity); }
+                            }
+                        }
+                    }
                     if !root.corners-mode: VerticalLayout {
                         spacing: 10px;
                         Text { text: "Existing overlay · rebind to the selected destination face"; font-weight: 600; wrap: word-wrap; }

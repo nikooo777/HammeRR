@@ -143,7 +143,9 @@ Invalid updates preserve the current draft. Apply or cancel with its exact token
 For [overlay fitting](overlays.md), `preview_overlay.source` supplies the quad that sets the projection axes.
 Optional `additional_sources` adds coplanar flat world or `func_detail` faces, up to 64 sources in total.
 The projection spans their bounds and clips to the exact bound sides. Unbound gaps stay clear.
-Omit `additional_sources` for a single-face fit. Refit, rebind and corner tools still require one quad.
+Omit `additional_sources` for a single-face fit.
+For multi-face `preview_overlay_refit`, pass `reference: {solid, side}` for an eligible quad in the existing bindings. Its current edges set the new projection axes.
+Apply retains the overlay ID, exact side list and settings. Rebind and corner tools still require one quad.
 
 ## Selection defaults
 

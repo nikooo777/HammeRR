@@ -395,7 +395,7 @@ pub fn fit_faces(vmf: &Vmf, faces: &[FaceId], options: Options) -> Result<Defini
     Ok(definition)
 }
 
-pub fn fit_existing(vmf: &Vmf, id: u32) -> Result<(FaceId, Definition), String> {
+fn existing_definition(vmf: &Vmf, id: u32) -> Result<Definition, String> {
     vmf.validate_ids().map_err(|error| error.to_string())?;
     let entity = vmf
         .entities
@@ -425,7 +425,30 @@ pub fn fit_existing(vmf: &Vmf, id: u32) -> Result<(FaceId, Definition), String> 
             return Err(format!("Overlay refit requires one {key} field"));
         }
     }
-    let existing = parse(entity)?;
+    parse(entity)
+}
+
+pub fn refit_sources(vmf: &Vmf, id: u32) -> Result<(Vec<FaceId>, Definition), String> {
+    let existing = existing_definition(vmf, id)?;
+    let faces = existing
+        .sides
+        .iter()
+        .map(|side| {
+            let solid = vmf
+                .solids()
+                .find(|solid| solid.sides.iter().any(|candidate| candidate.id == *side))
+                .ok_or_else(|| format!("Overlay bound source side {side} does not exist"))?;
+            Ok(FaceId {
+                solid: solid.id,
+                side: *side,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok((faces, existing))
+}
+
+pub fn fit_existing(vmf: &Vmf, id: u32) -> Result<(FaceId, Definition), String> {
+    let existing = existing_definition(vmf, id)?;
     let [side] = existing.sides.as_slice() else {
         return Err("Overlay refit requires exactly one existing bound source side".into());
     };
@@ -439,6 +462,32 @@ pub fn fit_existing(vmf: &Vmf, id: u32) -> Result<(FaceId, Definition), String> 
     };
     let definition = fit(vmf, face, existing.options)?;
     Ok((face, definition))
+}
+
+pub fn fit_existing_refit(
+    vmf: &Vmf,
+    id: u32,
+    reference: Option<FaceId>,
+) -> Result<(Vec<FaceId>, Definition), String> {
+    let existing = existing_definition(vmf, id)?;
+    if existing.sides.len() == 1 {
+        let (face, definition) = fit_existing(vmf, id)?;
+        if reference.is_some_and(|reference| reference != face) {
+            return Err("Overlay reference must belong to the existing source bindings".into());
+        }
+        return Ok((vec![face], definition));
+    }
+    let (mut faces, existing) = refit_sources(vmf, id)?;
+    let reference =
+        reference.ok_or("Choose a reference face from the overlay's existing bindings")?;
+    let index = faces
+        .iter()
+        .position(|face| *face == reference)
+        .ok_or("Overlay reference must belong to the existing source bindings")?;
+    faces.remove(index);
+    faces.insert(0, reference);
+    let definition = fit_faces(vmf, &faces, existing.options)?;
+    Ok((faces, definition))
 }
 
 pub fn editable_corners(vmf: &Vmf, id: u32) -> Result<(FaceId, Definition), String> {
@@ -550,20 +599,33 @@ pub fn fit_rebind(vmf: &Vmf, id: u32, source: FaceId) -> Result<Definition, Stri
 }
 
 pub fn refit(tx: &mut Transaction<'_>, id: u32) -> Result<ObjectId, EditError> {
-    let (face, definition) = fit_existing(tx.document().vmf(), id).map_err(EditError::Invalid)?;
-    write_projection(tx, id, face, &definition)
+    let (_, definition) = fit_existing(tx.document().vmf(), id).map_err(EditError::Invalid)?;
+    write_projection(tx, id, &definition, true)
+}
+
+pub fn refit_with_reference(
+    tx: &mut Transaction<'_>,
+    id: u32,
+    reference: Option<FaceId>,
+) -> Result<ObjectId, EditError> {
+    let (faces, definition) =
+        fit_existing_refit(tx.document().vmf(), id, reference).map_err(EditError::Invalid)?;
+    if faces.len() == 1 {
+        return refit(tx, id);
+    }
+    write_projection(tx, id, &definition, false)
 }
 
 pub fn rebind(tx: &mut Transaction<'_>, id: u32, source: FaceId) -> Result<ObjectId, EditError> {
     let definition = fit_rebind(tx.document().vmf(), id, source).map_err(EditError::Invalid)?;
-    write_projection(tx, id, source, &definition)
+    write_projection(tx, id, &definition, true)
 }
 
 fn write_projection(
     tx: &mut Transaction<'_>,
     id: u32,
-    face: FaceId,
     definition: &Definition,
+    update_bindings: bool,
 ) -> Result<ObjectId, EditError> {
     let entity = tx.entity_mut(id)?;
     for (key, value) in [
@@ -577,7 +639,17 @@ fn write_projection(
             .properties
             .set(key, format_vec3(DVec3::from_array(value)));
     }
-    entity.properties.set("sides", face.side.to_string());
+    if update_bindings {
+        entity.properties.set(
+            "sides",
+            definition
+                .sides
+                .iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
+    }
     for (index, point) in definition.uv_points.iter().enumerate() {
         entity
             .properties

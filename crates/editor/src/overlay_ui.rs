@@ -22,6 +22,7 @@ use crate::runtime::{SharedSession, lock};
 struct Form {
     source: Option<FaceId>,
     additional_sources: Vec<FaceId>,
+    reference: Option<FaceId>,
     token: Option<u64>,
     reviewed: Option<Options>,
     refit: bool,
@@ -333,6 +334,7 @@ fn choose_overlay(window: &OverlayWindow, session: &Session, form: &RefCell<Form
     state.corners = false;
     state.reviewed_corners = None;
     state.reviewed = None;
+    state.reference = None;
     state.serial += 1;
     drop(state);
     window.set_rebind_target(
@@ -350,6 +352,39 @@ fn choose_overlay(window: &OverlayWindow, session: &Session, form: &RefCell<Form
         "Preview rebind checks the destination and preserves existing settings.".into(),
     );
     refresh_material(window, session);
+    refresh(window, session, form);
+}
+
+fn choose_refit_reference(
+    window: &OverlayWindow,
+    session: &Session,
+    form: &RefCell<Form>,
+    key: &str,
+) {
+    let state = session.get_overlay_state();
+    if form.borrow().snapshot != state["snapshot"].as_str().unwrap_or_default() {
+        window.set_message(
+            "Map or selection changed. Reopen Overlay to choose a reference face.".into(),
+        );
+        return;
+    }
+    let reference = state["selected_overlay"]["references"]
+        .as_array()
+        .and_then(|references| {
+            references
+                .iter()
+                .filter_map(source)
+                .find(|face| format!("{}:{}", face.solid, face.side) == key)
+        });
+    let Some(reference) = reference else {
+        return;
+    };
+    let mut current = form.borrow_mut();
+    current.reference = Some(reference);
+    current.reviewed = None;
+    current.serial += 1;
+    drop(current);
+    window.set_message("The reference face's current edges set the projection axes. Refit, then review the new outline.".into());
     refresh(window, session, form);
 }
 
@@ -403,7 +438,44 @@ fn refresh(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
             && form.snapshot == snapshot,
     );
     window.set_can_preview(!form.refit && form.source.is_some() && form.snapshot == snapshot);
-    window.set_can_refit(!state["selected_overlay"].is_null() && form.snapshot == snapshot);
+    let reference_required = state["selected_overlay"]["reference_required"] == true;
+    let references = state["selected_overlay"]["references"].as_array();
+    let reference_valid = form.reference.is_some_and(|reference| {
+        references.is_some_and(|references| {
+            references
+                .iter()
+                .any(|value| source(value) == Some(reference))
+        })
+    });
+    window.set_reference_required(reference_required);
+    window.set_refit_references(ModelRc::new(VecModel::from(
+        references
+            .into_iter()
+            .flatten()
+            .filter_map(source)
+            .map(|face| OverlayTargetRow {
+                entity: format!("{}:{}", face.solid, face.side).into(),
+                label: format!("Brush {} · face {}", face.solid, face.side).into(),
+                detail: String::new().into(),
+                eligible: form.snapshot == snapshot,
+            })
+            .collect::<Vec<_>>(),
+    )));
+    window.set_refit_reference_label(if reference_valid {
+        let reference = form.reference.unwrap();
+        format!(
+            "Reference · brush {} · face {}",
+            reference.solid, reference.side
+        )
+        .into()
+    } else {
+        "Choose a reference face".into()
+    });
+    window.set_can_refit(
+        !state["selected_overlay"].is_null()
+            && form.snapshot == snapshot
+            && (!reference_required || reference_valid),
+    );
     let matches = draft["token"].as_u64() == form.token && draft["owner"] == "you";
     window.set_ready(
         matches
@@ -411,6 +483,7 @@ fn refresh(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
             && form.reviewed.is_some()
             && fields(window).ok().as_ref() == form.reviewed.as_ref()
             && corner_form_matches(window, &form)
+            && (draft["reference"].is_null() || source(&draft["reference"]) == form.reference)
             && draft["handles"].is_null(),
     );
     window.set_can_handle_corners(form.corners && window.get_ready());
@@ -431,11 +504,22 @@ fn refresh(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
         )
         .into()
     } else if matches && draft["operation"] == "refit" {
-        format!(
-            "Refit {} · Apply refit updates this existing entity",
-            draft["entity"].as_str().unwrap_or("overlay")
-        )
-        .into()
+        if form.additional_sources.is_empty() {
+            format!(
+                "Refit {} · Apply refit updates this existing entity",
+                draft["entity"].as_str().unwrap_or("overlay")
+            )
+            .into()
+        } else {
+            format!(
+                "Refit {} · {} bound faces · reference brush {} / face {}",
+                draft["entity"].as_str().unwrap_or("overlay"),
+                form.additional_sources.len() + 1,
+                draft["reference"]["solid"],
+                draft["reference"]["side"]
+            )
+            .into()
+        }
     } else if matches {
         if form.additional_sources.is_empty() {
             "Your fitted overlay draft · Apply overlay creates one entity".into()
@@ -461,7 +545,10 @@ fn refresh(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
     let source_count = if matches && draft["valid"] == true && form.reviewed.is_some() {
         draft["source_count"].as_u64().unwrap_or(1)
     } else {
-        display_source["source_count"].as_u64().unwrap_or(1)
+        display_source["source_count"]
+            .as_u64()
+            .or_else(|| state["selected_overlay"]["source_count"].as_u64())
+            .unwrap_or(1)
     };
     window.set_source_count(source_count as i32);
     window.set_source_label(if let Some(source) = source(display_source) {
@@ -474,6 +561,8 @@ fn refresh(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
             )
             .into()
         }
+    } else if reference_required {
+        format!("Bound sources · {source_count} coplanar world / detail faces · {}", window.get_refit_reference_label()).into()
     } else {
         state[if session.face_mode() {
             "selection_error"
@@ -519,6 +608,7 @@ fn adopt(window: &OverlayWindow, state: &Value, form: &RefCell<Form>) {
     let mut form = form.borrow_mut();
     form.source = source(&draft["source"]);
     form.additional_sources = additional_sources(draft);
+    form.reference = source(&draft["reference"]);
     form.token = draft["token"].as_u64();
     form.reviewed = fields(window).ok();
     form.refit = matches!(
@@ -601,8 +691,8 @@ fn preview_refit(window: &OverlayWindow, session: &mut Session, form: &RefCell<F
             .as_u64()
             .and_then(|id| u32::try_from(id).ok())
             .ok_or("Select one eligible existing overlay and reopen Overlay")?;
-        let snapshot = form.borrow().snapshot.clone();
-        session.preview_overlay_refit(Actor::User, id, &snapshot)
+        let form = form.borrow();
+        session.preview_overlay_refit_reference(Actor::User, id, form.reference, &form.snapshot)
     })();
     match result {
         Ok(state) => {
@@ -842,6 +932,14 @@ impl Controller {
                 });
             }
         });
+        window.on_choose_refit_reference({
+            let (window, document, form) = (window.as_weak(), access.downgrade(), form.clone());
+            move |key| {
+                callback(&window, &document, |window, session| {
+                    choose_refit_reference(&window, session, &form, &key);
+                });
+            }
+        });
         window.on_fit({
             let (window, document, form) = (window.as_weak(), access.downgrade(), form.clone());
             move || {
@@ -995,6 +1093,7 @@ impl Controller {
         let mut form = self.form.borrow_mut();
         form.source = source(&state["selected_source"]);
         form.additional_sources = additional_sources(&state["selected_source"]);
+        form.reference = None;
         form.snapshot = state["snapshot"].as_str().unwrap_or_default().into();
         form.reviewed = None;
         form.refit = false;
@@ -1012,7 +1111,7 @@ impl Controller {
         refresh_choices(&self.window, session, &self.form);
         load(&self.window, &Value::Null);
         self.window.set_material(material.into());
-        self.window.set_message(if !state["selected_overlay"].is_null() { "Edit selected corners adjusts the current projection; Refit selected overlay fits its full bound face." } else { state[if session.face_mode() { "selection_error" } else { "refit_error" }].as_str().unwrap_or("Choose a material, then Fit / Preview. Review current draft loads a shared overlay preview.") }.into());
+        self.window.set_message(if state["selected_overlay"]["reference_required"] == true { "Choose a reference face. Its current edges set the projection axes; Refit selected overlay fits all existing bound faces." } else if !state["selected_overlay"].is_null() { "Edit selected corners adjusts the current projection; Refit selected overlay fits its full bound face." } else { state[if session.face_mode() { "selection_error" } else { "refit_error" }].as_str().unwrap_or("Choose a material, then Fit / Preview. Review current draft loads a shared overlay preview.") }.into());
         refresh_material(&self.window, session);
         refresh(&self.window, session, &self.form);
         self.window.show()
@@ -1148,6 +1247,47 @@ mod tests {
             sources.iter().map(|source| source.side).collect::<Vec<_>>()
         );
         assert_eq!(lock(&shared).document().undo_labels().count(), history + 1);
+        let overlay_id = overlays[0].id;
+        controller.show(&mut lock(&shared), "test/checker").unwrap();
+        assert!(controller.window.get_reference_required());
+        assert_eq!(
+            controller.window.get_refit_reference_label(),
+            "Choose a reference face"
+        );
+        assert!(!controller.window.get_can_refit());
+        assert!(controller.window.get_outline().is_empty());
+        controller.window.invoke_refit();
+        assert!(lock(&shared).get_overlay_state()["draft"].is_null());
+        controller.window.invoke_choose_refit_reference(
+            format!("{}:{}", sources[1].solid, sources[1].side).into(),
+        );
+        assert!(controller.window.get_can_refit());
+        assert!(!controller.window.get_ready());
+        assert!(lock(&shared).get_overlay_state()["draft"].is_null());
+        controller.window.invoke_refit();
+        assert!(
+            controller.window.get_ready(),
+            "{}",
+            controller.window.get_message()
+        );
+        let draft = lock(&shared).get_overlay_state()["draft"].clone();
+        assert_eq!(source(&draft["reference"]), Some(sources[1]));
+        assert_eq!(controller.window.get_source_count(), 2);
+        controller.window.invoke_choose_refit_reference(
+            format!("{}:{}", sources[0].solid, sources[0].side).into(),
+        );
+        assert!(!controller.window.get_ready());
+        controller.window.invoke_apply();
+        assert_eq!(lock(&shared).document().vmf(), &after);
+        assert_eq!(lock(&shared).get_overlay_state()["draft"], draft);
+        controller.window.invoke_review();
+        assert!(controller.window.get_ready());
+        assert_eq!(controller.form.borrow().reference, Some(sources[1]));
+        controller.window.invoke_apply();
+        assert_eq!(lock(&shared).selected_ids(), [ObjectId::Entity(overlay_id)]);
+        assert_eq!(lock(&shared).document().undo_labels().count(), history + 2);
+        lock(&shared).undo(Actor::User).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &after);
         lock(&shared).undo(Actor::User).unwrap();
         assert_eq!(lock(&shared).document().vmf(), &before);
     }

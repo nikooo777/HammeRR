@@ -21,8 +21,12 @@ The first eligible quad supplies the projection axes. One overlay spans all sele
 
 ## Refit or rebind
 
-Use **Refit selected overlay** to fit an existing eligible overlay to its current face.
-Click **Apply refit** after reviewing the new outline.
+1. Select an existing eligible overlay and open **Overlay…**.
+2. For multiple bound faces, choose a quad under **Reference face**. Its current edges set the projection axes.
+3. Click **Refit selected overlay** to fit all existing bound faces.
+4. Review the new outline and bound-face count, then click **Apply refit**.
+
+The bound faces must remain visible, flat and coplanar. Refit preserves their exact side IDs. It follows moved geometry only when requested; it does not infer the original reference face or preserve an earlier in-plane orientation. A single-face overlay keeps its original refit behavior.
 
 To change its target:
 
@@ -63,7 +67,8 @@ The parent contents preview shows target geometry, not the projected material.
 ## Limits
 
 - Multi-face creation requires flat coplanar faces facing the same direction and an eligible quad to anchor the projection.
-- Refit, rebind and corner tools require one eligible visible ordinary quad binding.
+- Multi-face refit requires an explicit eligible quad reference from the existing bindings and the same source limits as creation.
+- Rebind and corner tools require one eligible visible ordinary quad binding.
 - Terrain and brush-model targets are unavailable for fitted authoring.
 - Compiled imported overlays support broader world/detail and terrain targets.
 - Corners may extend beyond a bound face; native rendering clips the projection to that face.

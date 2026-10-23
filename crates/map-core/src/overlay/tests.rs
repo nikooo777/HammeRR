@@ -471,6 +471,181 @@ fn checked_imports_and_fitting_share_projection_and_option_validation() {
 }
 
 #[test]
+fn multiface_refit_uses_explicit_current_quad_frame_and_preserves_exact_bindings_and_metadata() {
+    let (mut document, faces) = coplanar_fixture(48.0, true);
+    let ObjectId::Entity(id) = document
+        .edit("overlay", |tx| create_faces(tx, &faces, options()))
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    let old = parse(document.entity(id).unwrap()).unwrap();
+    let owners = faces.map(|face| document.owner_of_solid(face.solid).unwrap());
+    document
+        .edit("move bound geometry and retain imported fields", |tx| {
+            let entity = tx.entity_mut(id)?;
+            entity
+                .properties
+                .set("sides", format!(" {}  {} ", faces[1].side, faces[0].side));
+            entity.properties.set("StartU", "01.00000");
+            entity.properties.set("RenderOrder", "03");
+            entity.properties.set("custom_option", "opaque raw value");
+            entity.connections = Some(vec![source_formats::vmf::Connection {
+                output: "OnUser1".into(),
+                value: "relay,Trigger,,0,-1".into(),
+            }]);
+            entity.editor = Some(source_formats::vmf::Properties(vec![(
+                "color".into(),
+                "1 2 3".into(),
+            )]));
+            entity.extra.push(source_formats::keyvalues::Node::block(
+                "custom",
+                vec![source_formats::keyvalues::Node::string("keep", "verbatim")],
+            ));
+            edit::transform(
+                tx,
+                &owners,
+                edit::Transform {
+                    translation: DVec3::new(4.125, -2.375, 8.625),
+                    rotation: DVec3::new(7.25, -3.125, 2.625),
+                    ..Default::default()
+                },
+            )
+        })
+        .unwrap();
+    let before = document.vmf().clone();
+    assert!(
+        fit_existing_refit(&before, id, None)
+            .unwrap_err()
+            .contains("Choose a reference face")
+    );
+    let (sources, expected) = fit_existing_refit(&before, id, Some(faces[1])).unwrap();
+    assert_eq!(sources, [faces[1], faces[0]]);
+    let anchor = fit(&before, faces[1], options()).unwrap();
+    assert_eq!(expected.basis_origin, anchor.basis_origin);
+    assert_eq!(expected.basis_u, anchor.basis_u);
+    assert_eq!(expected.basis_v, anchor.basis_v);
+    assert_eq!(expected.basis_normal, anchor.basis_normal);
+    assert_ne!(expected.basis_u, old.basis_u);
+    assert_eq!(expected, fit_faces(&before, &sources, options()).unwrap());
+    assert!(fit_existing(&before, id).is_err());
+    assert!(fit_rebind(&before, id, faces[0]).is_err());
+    assert!(editable_corners(&before, id).is_err());
+    assert_eq!(
+        document
+            .edit("Refit overlay", |tx| refit_with_reference(
+                tx,
+                id,
+                Some(faces[1])
+            ))
+            .unwrap(),
+        ObjectId::Entity(id)
+    );
+    assert_eq!(parse(document.entity(id).unwrap()).unwrap(), expected);
+    let original = before
+        .entities
+        .iter()
+        .find(|entity| entity.id == id)
+        .unwrap();
+    let mut retained = document.entity(id).unwrap().clone();
+    for key in [
+        "origin",
+        "BasisOrigin",
+        "BasisNormal",
+        "BasisU",
+        "BasisV",
+        "uv0",
+        "uv1",
+        "uv2",
+        "uv3",
+    ] {
+        retained
+            .properties
+            .set(key, original.properties.get(key).unwrap());
+    }
+    assert_eq!(&retained, original);
+    for solid in before.solids() {
+        assert_eq!(
+            document
+                .vmf()
+                .solids()
+                .find(|candidate| candidate.id == solid.id)
+                .unwrap(),
+            solid
+        );
+    }
+    let after = document.vmf().clone();
+    document.undo().unwrap();
+    assert_eq!(document.vmf(), &before);
+    document.redo().unwrap();
+    assert_eq!(document.vmf(), &after);
+}
+
+#[test]
+fn multiface_refit_rejects_unresolved_or_ambiguous_native_ids_and_invalid_references_atomically() {
+    let (mut document, faces) = coplanar_fixture(48.0, false);
+    let ObjectId::Entity(id) = document
+        .edit("overlay", |tx| create_faces(tx, &faces, options()))
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    let base = document.vmf().clone();
+    let mut missing = base.clone();
+    missing
+        .entities
+        .iter_mut()
+        .find(|entity| entity.id == id)
+        .unwrap()
+        .properties
+        .set("sides", format!("{} {}", faces[0].side, u32::MAX));
+    let mut ambiguous = base.clone();
+    ambiguous.world.solids[1].sides[0].id = faces[0].side;
+    for (vmf, reference) in [
+        (base.clone(), None),
+        (
+            base.clone(),
+            Some(FaceId {
+                solid: faces[1].solid,
+                side: faces[0].side,
+            }),
+        ),
+        (missing, Some(faces[0])),
+        (ambiguous, Some(faces[0])),
+    ] {
+        let mut rejected = Document::new(vmf);
+        let before = rejected.vmf().clone();
+        let history = rejected.undo_labels().count();
+        assert!(
+            rejected
+                .edit("Rejected refit", |tx| refit_with_reference(
+                    tx, id, reference
+                ))
+                .is_err()
+        );
+        assert_eq!(rejected.vmf(), &before);
+        assert_eq!(rejected.undo_labels().count(), history);
+    }
+    let (mut original, face) = fixture(false);
+    let ObjectId::Entity(id) = original
+        .edit("single", |tx| create(tx, face, options()))
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    let mut delegated = Document::new(original.vmf().clone());
+    assert_eq!(
+        fit_existing_refit(original.vmf(), id, None).unwrap(),
+        (vec![face], fit_existing(original.vmf(), id).unwrap().1)
+    );
+    original.edit("refit", |tx| refit(tx, id)).unwrap();
+    delegated
+        .edit("refit", |tx| refit_with_reference(tx, id, None))
+        .unwrap();
+    assert_eq!(original.vmf(), delegated.vmf());
+}
+
+#[test]
 fn refit_updates_only_existing_projection_and_preserves_raw_imported_metadata() {
     use source_formats::{
         keyvalues::Node,

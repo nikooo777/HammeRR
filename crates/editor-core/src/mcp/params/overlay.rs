@@ -26,6 +26,7 @@ pub struct OverlayTokenArgs {
 pub struct OverlayRefitArgs {
     pub snapshot: String,
     pub id: Option<String>,
+    pub reference: Option<FaceRef>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -156,6 +157,19 @@ mod tests {
         }
         let refit = json!({"snapshot":"current", "id":"entity:12"});
         assert!(serde_json::from_value::<OverlayRefitArgs>(refit.clone()).is_ok());
+        let explicit =
+            json!({"snapshot":"current", "id":"entity:12", "reference":{"solid":7,"side":9}});
+        let args: OverlayRefitArgs = serde_json::from_value(explicit.clone()).unwrap();
+        assert_eq!(args.reference.unwrap().side, 9);
+        for reference in [
+            json!({"solid":7}),
+            json!({"side":9}),
+            json!({"solid":7,"side":"9"}),
+        ] {
+            let mut invalid = explicit.clone();
+            invalid["reference"] = reference;
+            assert!(serde_json::from_value::<OverlayRefitArgs>(invalid).is_err());
+        }
         for field in ["source", "material", "u", "BasisU", "sides"] {
             let mut invalid = refit.clone();
             invalid[field] = json!("replacement");

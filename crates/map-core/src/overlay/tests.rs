@@ -863,6 +863,10 @@ fn explicit_rebinding_fits_a_different_owner_face_and_preserves_raw_entity_data(
             .unwrap();
         let before = document.vmf().clone();
         let expected = fit_rebind(&before, id, destination).unwrap();
+        let mut delegated = Document::new(before.clone());
+        delegated
+            .edit("Rebind overlay", |tx| rebind_faces(tx, id, &[destination]))
+            .unwrap();
         assert_eq!(expected.sides, [destination.side]);
         assert!(fit_rebind(&before, id, original_face).is_err());
         assert_eq!(
@@ -873,6 +877,7 @@ fn explicit_rebinding_fits_a_different_owner_face_and_preserves_raw_entity_data(
         );
         assert_eq!(parse(document.entity(id).unwrap()).unwrap(), expected);
         let after = document.vmf().clone();
+        assert_eq!(&after, delegated.vmf());
         let original = before
             .entities
             .iter()
@@ -911,6 +916,132 @@ fn explicit_rebinding_fits_a_different_owner_face_and_preserves_raw_entity_data(
         document.redo().unwrap();
         assert_eq!(document.vmf(), &after);
     }
+}
+
+#[test]
+fn multiface_rebinding_replaces_complete_bindings_and_projection_with_one_preserved_entity() {
+    use source_formats::{keyvalues::Node, vmf::Connection};
+    let (mut document, old) = coplanar_fixture(48.0, true);
+    let ObjectId::Entity(id) = document
+        .edit("old multi overlay", |tx| create_faces(tx, &old, options()))
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    let targets: [FaceId; 2] = document
+        .edit("new coplanar destinations and raw data", |tx| {
+            let mut faces = Vec::new();
+            for x in [256.0, 384.0] {
+                let ObjectId::Solid(solid) = edit::create_block(
+                    tx,
+                    DVec3::new(x, -32.0, 128.0),
+                    DVec3::new(x + 80.0, 32.0, 144.0),
+                    "test/checker",
+                )?
+                else {
+                    unreachable!()
+                };
+                let side = tx
+                    .solid_mut(solid)?
+                    .sides
+                    .iter()
+                    .find(|side| Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+                    .unwrap()
+                    .id;
+                if !faces.is_empty() {
+                    edit::tie_to_entity(tx, &[solid], "func_detail", &[])?;
+                }
+                faces.push(FaceId { solid, side });
+            }
+            let entity = tx.entity_mut(id)?;
+            entity.properties.set("StartU", "01.00000");
+            entity
+                .properties
+                .set("material", "Materials/Decals/marking.VMT");
+            entity.properties.set("custom", "opaque value");
+            entity.connections = Some(vec![Connection {
+                output: "OnUser1".into(),
+                value: "relay,Trigger,,0,-1".into(),
+            }]);
+            entity.extra.push(Node::block(
+                "custom",
+                vec![Node::string("keep", "verbatim")],
+            ));
+            Ok(faces.try_into().unwrap())
+        })
+        .unwrap();
+    let before = document.vmf().clone();
+    let destination = [targets[1], targets[0]];
+    let (previous, expected) = fit_rebind_faces(&before, id, &destination).unwrap();
+    assert_eq!(previous, old);
+    assert_eq!(
+        expected,
+        fit_faces(&before, &destination, options()).unwrap()
+    );
+    assert_eq!(
+        expected.basis_origin,
+        fit(&before, targets[1], options()).unwrap().basis_origin
+    );
+    assert_eq!(expected.sides, targets.map(|face| face.side));
+    assert!(
+        fit_rebind_faces(&before, id, &[old[1], old[0]])
+            .unwrap_err()
+            .contains("Refit selected overlay")
+    );
+    assert_eq!(
+        document
+            .edit("Rebind overlay", |tx| rebind_faces(tx, id, &destination))
+            .unwrap(),
+        ObjectId::Entity(id)
+    );
+    let after = document.vmf().clone();
+    assert_eq!(parse(document.entity(id).unwrap()).unwrap(), expected);
+    let original = before
+        .entities
+        .iter()
+        .find(|entity| entity.id == id)
+        .unwrap();
+    let mut retained = document.entity(id).unwrap().clone();
+    for key in [
+        "origin",
+        "sides",
+        "BasisOrigin",
+        "BasisNormal",
+        "BasisU",
+        "BasisV",
+        "uv0",
+        "uv1",
+        "uv2",
+        "uv3",
+    ] {
+        retained
+            .properties
+            .set(key, original.properties.get(key).unwrap());
+    }
+    assert_eq!(&retained, original);
+    assert_eq!(before.entities.len(), after.entities.len());
+    for solid in before.solids() {
+        assert_eq!(
+            after
+                .solids()
+                .find(|candidate| candidate.id == solid.id)
+                .unwrap(),
+            solid
+        );
+    }
+    document.undo().unwrap();
+    assert_eq!(document.vmf(), &before);
+    document.redo().unwrap();
+    assert_eq!(document.vmf(), &after);
+    document
+        .edit("multi to single destination", |tx| {
+            rebind_faces(tx, id, &[old[0]])
+        })
+        .unwrap();
+    assert_eq!(
+        parse(document.entity(id).unwrap()).unwrap().sides,
+        [old[0].side]
+    );
 }
 
 #[test]
@@ -961,6 +1092,15 @@ fn rebind_rejects_an_unsupported_existing_binding_or_hidden_destination_atomical
         assert!(
             invalid
                 .edit("invalid rebind", |tx| rebind(tx, id, destination))
+                .is_err()
+        );
+        assert!(
+            invalid
+                .edit("invalid rebind list", |tx| rebind_faces(
+                    tx,
+                    id,
+                    &[destination]
+                ))
                 .is_err()
         );
         assert_eq!(invalid.vmf(), &before);

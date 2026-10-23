@@ -84,7 +84,7 @@ export component OverlayWindow inherits Window {
             spacing: 10px;
             Text { text: root.corners-mode ? "Edit overlay corners" : root.rebind-mode ? "Rebind existing overlay" : root.refit-mode ? "Refit existing overlay" : "Fit an overlay to faces"; font-size: 24px; font-weight: 600; }
             Text { text: root.source-label; wrap: word-wrap; color: #bac2ce; }
-            if root.source-count > 1: Text { text: "One projection spans the bound faces. Native rendering clips it to each face and leaves gaps clear. Corner editing keeps the stored axes and every binding. Multi-face refit requires an explicit reference quad; rebind requires a single binding."; wrap: word-wrap; color: #bac2ce; }
+            if root.source-count > 1: Text { text: "One projection spans the bound faces. Native rendering clips it to each face and leaves gaps clear. Corner editing keeps the stored axes and every binding. Rebind uses the selected destination set and its first eligible quad; multi-face refit requires an explicit reference quad."; wrap: word-wrap; color: #bac2ce; }
             ScrollView {
                 vertical-stretch: 1;
                 VerticalLayout {
@@ -105,7 +105,7 @@ export component OverlayWindow inherits Window {
                     }
                     if !root.corners-mode: VerticalLayout {
                         spacing: 10px;
-                        Text { text: "Existing overlay · rebind to the selected destination face"; font-weight: 600; wrap: word-wrap; }
+                        Text { text: "Existing overlay · rebind to the selected destination faces"; font-weight: 600; wrap: word-wrap; }
                         LineEdit { text <=> root.overlay-search; placeholder-text: "Search overlay names or materials"; accessible-label: "Search existing overlays"; edited => { root.search-overlays(); } }
                         ListView {
                             height: root.overlay-targets.length > 0 ? 140px : 0px;

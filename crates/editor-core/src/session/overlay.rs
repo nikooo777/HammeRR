@@ -37,6 +37,7 @@ struct Draft {
     owner: Actor,
     source: FaceId,
     additional_sources: Vec<FaceId>,
+    previous_sources: Vec<FaceId>,
     visibility: Option<(u64, u64, bool)>,
     definition: Definition,
     operation: Operation,
@@ -150,6 +151,10 @@ impl Session {
         if sources.len() <= 1 {
             return Ok(());
         }
+        self.validate_overlay_source_set(sources)
+    }
+
+    fn validate_overlay_source_set(&self, sources: &[FaceId]) -> Result<(), String> {
         let mut materials = BTreeMap::new();
         for source in sources {
             if !self.working_solid_visible(&self.document, source.solid) {
@@ -353,6 +358,13 @@ impl Session {
                     report["reference"] = json!({"solid":draft.source.solid,"side":draft.source.side});
                 }
             }
+            if draft.previous_sources.len() > 1 || (!draft.previous_sources.is_empty() && !draft.additional_sources.is_empty()) {
+                report["previous_sources"] = sources_json(&draft.previous_sources);
+                report["previous_source_count"] = json!(draft.previous_sources.len());
+                let sources = std::iter::once(draft.source).chain(draft.additional_sources.iter().copied()).collect::<Vec<_>>();
+                report["sources"] = sources_json(&sources);
+                report["source_count"] = json!(sources.len());
+            }
             report
         });
         let multiple = selected_source["source_count"]
@@ -365,6 +377,9 @@ impl Session {
                 draft["source_count"]
                     .as_u64()
                     .is_some_and(|count| count > 1)
+                    || draft["previous_source_count"]
+                        .as_u64()
+                        .is_some_and(|count| count > 1)
             });
         let mut state = json!({
             "snapshot":self.overlay_stamp(),"generation":self.document_generation,
@@ -376,7 +391,7 @@ impl Session {
         });
         if multiple {
             state["policy"] = json!(
-                "Create one overlay across visible coplanar world/detail faces facing the same direction, starting with a quad. The first quad supplies the projection axes; one U/V rectangle spans all real source loops. Refit an existing multi-face overlay only with an explicit eligible reference quad from its unchanged bindings; its current edges set the new projection axes. Numeric and viewport corner editing use the stored projection axes without choosing a new reference and retain every existing binding. Native rendering clips to every bound side, including gaps between faces. Preview changes no map, selection or history; Review transfers ownership and Apply is one Undo step. Rebind still requires one existing bound quad. Terrain, brush models and automatic rebinding are unavailable."
+                "Create one overlay across visible coplanar world/detail faces facing the same direction, starting with a quad. The first quad supplies the projection axes; one U/V rectangle spans all real source loops. Refit an existing multi-face overlay only with an explicit eligible reference quad from its unchanged bindings; its current edges set the new projection axes. Numeric and viewport corner editing use the stored projection axes without choosing a new reference and retain every existing binding. Native rendering clips to every bound side, including gaps between faces. Preview changes no map, selection or history; Review transfers ownership and Apply is one Undo step. Explicit rebind replaces valid single or multiple bindings with a different bounded coplanar destination set and its explicit first-quad frame. Terrain, brush models and automatic rebinding are unavailable."
             );
         }
         state
@@ -414,6 +429,7 @@ impl Session {
             additional_sources,
             definition,
             Operation::Create,
+            &[],
         ))
     }
 
@@ -446,6 +462,7 @@ impl Session {
             &sources[1..],
             definition,
             Operation::Refit(id),
+            &[],
         ))
     }
 
@@ -468,6 +485,7 @@ impl Session {
             &sources[1..],
             definition,
             Operation::Corners(id),
+            &[],
         ))
     }
 
@@ -505,11 +523,17 @@ impl Session {
             })
             .collect::<Vec<_>>();
         let entries = matches.iter().skip(offset).take(limit).map(|entity| {
-            let (source, options, error) = match overlay::fit_existing(self.document.vmf(), entity.id) {
-                Ok((face, definition)) => (Some(json!({"solid":face.solid,"side":face.side})), Some(options_json(&definition.options)), None),
-                Err(error) => (None, None, Some(error)),
+            let checked = overlay::rebind_sources(self.document.vmf(), entity.id).and_then(|(sources, definition)| {
+                self.validate_overlay_sources(&sources)?;
+                Ok((sources, definition))
+            });
+            let (sources, options, error) = match checked {
+                Ok((sources, definition)) => (sources, Some(options_json(&definition.options)), None),
+                Err(error) => (Vec::new(), None, Some(error)),
             };
-            json!({"id":entity.id,"entity":format!("entity:{}",entity.id),"name":entity.properties.get("targetname").unwrap_or(""),"material":entity.properties.get("material").unwrap_or(""),"source":source,"options":options,"eligible":error.is_none(),"error":error})
+            let mut report = json!({"id":entity.id,"entity":format!("entity:{}",entity.id),"name":entity.properties.get("targetname").unwrap_or(""),"material":entity.properties.get("material").unwrap_or(""),"source":sources.first().map(|source|json!({"solid":source.solid,"side":source.side})),"options":options,"eligible":error.is_none(),"error":error});
+            if sources.len() > 1 { report["sources"] = sources_json(&sources); report["source_count"] = json!(sources.len()); }
+            report
         }).collect::<Vec<_>>();
         Ok(
             json!({"snapshot":self.overlay_stamp(),"query":query,"offset":offset,"limit":limit,"total":matches.len(),"entries":entries}),
@@ -523,18 +547,40 @@ impl Session {
         source: FaceId,
         snapshot: &str,
     ) -> Result<Value, String> {
+        self.preview_overlay_rebind_faces(actor, id, source, &[], snapshot)
+    }
+
+    pub fn preview_overlay_rebind_faces(
+        &mut self,
+        actor: Actor,
+        id: u32,
+        source: FaceId,
+        additional_sources: &[FaceId],
+        snapshot: &str,
+    ) -> Result<Value, String> {
         self.overlay_context()?;
         if snapshot != self.overlay_stamp() {
             return Err("Map, selection or overlay draft changed; inspect overlays again".into());
         }
-        let definition = overlay::fit_rebind(self.document.vmf(), id, source)?;
-        let (previous, _) = overlay::fit_existing(self.document.vmf(), id)?;
+        source_budget(additional_sources.len().saturating_add(1))?;
+        let sources = std::iter::once(source)
+            .chain(additional_sources.iter().copied())
+            .collect::<Vec<_>>();
+        let (previous, definition) = overlay::fit_rebind_faces(self.document.vmf(), id, &sources)?;
+        if previous.len() > 1 || sources.len() > 1 {
+            self.validate_overlay_source_set(&previous)?;
+            self.validate_overlay_source_set(&sources)?;
+        }
         Ok(self.set_overlay_draft(
             actor,
             source,
-            &[],
+            additional_sources,
             definition,
-            Operation::Rebind { id, previous },
+            Operation::Rebind {
+                id,
+                previous: previous[0],
+            },
+            &previous,
         ))
     }
 
@@ -545,6 +591,7 @@ impl Session {
         additional_sources: &[FaceId],
         definition: Definition,
         operation: Operation,
+        previous_sources: &[FaceId],
     ) -> Value {
         self.overlay.serial += 1;
         self.scene_serial += 1;
@@ -556,7 +603,9 @@ impl Session {
             owner: actor,
             source,
             additional_sources: additional_sources.to_vec(),
-            visibility: (!additional_sources.is_empty()).then(|| self.overlay_visibility_stamp()),
+            previous_sources: previous_sources.to_vec(),
+            visibility: (!additional_sources.is_empty() || previous_sources.len() > 1)
+                .then(|| self.overlay_visibility_stamp()),
             definition,
             operation,
             handles: None,
@@ -604,8 +653,14 @@ impl Session {
             .collect::<Vec<_>>();
         let options = draft.definition.options.clone();
         let operation = draft.operation;
+        let previous_sources = draft.previous_sources.clone();
         let corners = draft.definition.uv_points.map(|point| [point[0], point[1]]);
-        self.validate_overlay_sources(&sources)?;
+        if !previous_sources.is_empty() && (previous_sources.len() > 1 || sources.len() > 1) {
+            self.validate_overlay_source_set(&previous_sources)?;
+            self.validate_overlay_source_set(&sources)?;
+        } else {
+            self.validate_overlay_sources(&sources)?;
+        }
         let id = match operation {
             Operation::Corners(id) => self.edit(actor, "Edit overlay corners", |tx| {
                 overlay::edit_corners(tx, id, corners)
@@ -618,7 +673,11 @@ impl Session {
                 }
             })?,
             Operation::Rebind { id, .. } => self.edit(actor, "Rebind overlay", |tx| {
-                overlay::rebind(tx, id, source)
+                if previous_sources.len() == 1 && sources.len() == 1 {
+                    overlay::rebind(tx, id, source)
+                } else {
+                    overlay::rebind_faces(tx, id, &sources)
+                }
             })?,
             Operation::Create => self.edit(actor, "Create overlay", |tx| {
                 overlay::create_faces(tx, &sources, options)

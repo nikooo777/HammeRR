@@ -263,7 +263,17 @@ fn refresh_choices(window: &OverlayWindow, session: &Session, form: &RefCell<For
                             entity: entry["entity"].as_str().unwrap().into(),
                             label: format!("{} · {}", name, entry["entity"].as_str().unwrap())
                                 .into(),
-                            detail: if entry["eligible"] == true {
+                            detail: if entry["eligible"] == true
+                                && entry["source_count"]
+                                    .as_u64()
+                                    .is_some_and(|count| count > 1)
+                            {
+                                format!(
+                                    "{} · {} bound faces",
+                                    entry["material"].as_str().unwrap(),
+                                    entry["source_count"]
+                                )
+                            } else if entry["eligible"] == true {
                                 format!(
                                     "{} · brush {} / face {}",
                                     entry["material"].as_str().unwrap(),
@@ -339,7 +349,7 @@ fn choose_overlay(window: &OverlayWindow, session: &Session, form: &RefCell<Form
     drop(state);
     window.set_rebind_target(
         format!(
-            "Rebind {} · {} to the destination face above",
+            "Rebind {} · {} to the destination faces above",
             choice["name"]
                 .as_str()
                 .filter(|name| !name.trim().is_empty())
@@ -391,15 +401,25 @@ fn choose_refit_reference(
 fn preview_rebind(window: &OverlayWindow, session: &mut Session, form: &RefCell<Form>) {
     let request = {
         let form = form.borrow();
-        form.target
-            .zip(form.source)
-            .filter(|_| form.additional_sources.is_empty())
-            .map(|(id, source)| (id, source, form.snapshot.clone()))
+        form.target.zip(form.source).map(|(id, source)| {
+            (
+                id,
+                source,
+                form.additional_sources.clone(),
+                form.snapshot.clone(),
+            )
+        })
     };
     let result = request
-        .ok_or("Select a destination face and choose an existing overlay".into())
-        .and_then(|(id, source, snapshot)| {
-            session.preview_overlay_rebind(Actor::User, id, source, &snapshot)
+        .ok_or("Select destination faces and choose an existing overlay".into())
+        .and_then(|(id, source, additional_sources, snapshot)| {
+            session.preview_overlay_rebind_faces(
+                Actor::User,
+                id,
+                source,
+                &additional_sources,
+                &snapshot,
+            )
         });
     match result {
         Ok(state) => {
@@ -431,15 +451,11 @@ fn refresh(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
         form.corners && form.target.is_some() && form.snapshot == snapshot,
     );
     window.set_can_rebind(
-        form.rebind
-            && form.target.is_some()
-            && form.source.is_some()
-            && form.additional_sources.is_empty()
-            && form.snapshot == snapshot,
+        form.rebind && form.target.is_some() && form.source.is_some() && form.snapshot == snapshot,
     );
     window.set_can_preview(!form.refit && form.source.is_some() && form.snapshot == snapshot);
     let reference_required =
-        !form.corners && state["selected_overlay"]["reference_required"] == true;
+        !form.corners && !form.rebind && state["selected_overlay"]["reference_required"] == true;
     let references = state["selected_overlay"]["references"].as_array();
     let reference_valid = form.reference.is_some_and(|reference| {
         references.is_some_and(|references| {
@@ -475,6 +491,7 @@ fn refresh(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
     window.set_can_refit(
         !state["selected_overlay"].is_null()
             && !form.corners
+            && !form.rebind
             && form.snapshot == snapshot
             && (!reference_required || reference_valid),
     );
@@ -658,7 +675,26 @@ fn adopt(window: &OverlayWindow, state: &Value, form: &RefCell<Form>) {
     form.snapshot = state["snapshot"].as_str().unwrap_or_default().into();
     form.serial += 1;
     if form.rebind {
-        window.set_rebind_target(
+        let label = if draft["previous_source_count"].is_number() {
+            let labels = |key: &str| {
+                draft[key]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(source)
+                    .map(|face| format!("brush {} / face {}", face.solid, face.side))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+            format!(
+                "Existing {} · previous {} faces: {} → destination {} faces: {}. The first destination quad sets the projection axes.",
+                draft["entity"].as_str().unwrap_or("overlay"),
+                draft["previous_source_count"],
+                labels("previous_sources"),
+                draft["source_count"],
+                labels("sources")
+            )
+        } else {
             format!(
                 "Existing {} · previous brush {} / face {} → destination brush {} / face {}",
                 draft["entity"].as_str().unwrap_or("overlay"),
@@ -667,8 +703,8 @@ fn adopt(window: &OverlayWindow, state: &Value, form: &RefCell<Form>) {
                 draft["source"]["solid"],
                 draft["source"]["side"]
             )
-            .into(),
-        );
+        };
+        window.set_rebind_target(label.into());
     }
 }
 
@@ -1135,7 +1171,7 @@ impl Controller {
         drop(form);
         self.window.set_overlay_search("".into());
         self.window.set_rebind_target(
-            "Choose an existing overlay to move it to the selected destination face.".into(),
+            "Choose an existing overlay to move it to the selected destination faces.".into(),
         );
         refresh_choices(&self.window, session, &self.form);
         load(&self.window, &Value::Null);

@@ -733,7 +733,15 @@ fn multiface_refit_requires_owned_explicit_reference_and_updates_only_existing_p
         }
         assert!(
             session
-                .preview_overlay_rebind(actor, id, faces[0], &session.overlay_stamp())
+                .preview_overlay_rebind(
+                    actor,
+                    id,
+                    FaceId {
+                        solid: faces[0].solid,
+                        side: faces[1].side
+                    },
+                    &session.overlay_stamp()
+                )
                 .is_err()
         );
         assert!(
@@ -1065,6 +1073,10 @@ fn rebind_keeps_destination_selection_until_owned_apply_updates_the_same_entity_
                 .unwrap();
             let token = state["draft"]["token"].as_u64().unwrap();
             assert_eq!(state["draft"]["operation"], "rebind");
+            assert!(state["draft"].get("sources").is_none());
+            assert!(state["draft"].get("source_count").is_none());
+            assert!(state["draft"].get("previous_sources").is_none());
+            assert!(state["draft"].get("previous_source_count").is_none());
             assert_eq!(
                 state["draft"]["previous_source"],
                 json!({"solid":original.solid,"side":original.side})
@@ -1140,6 +1152,156 @@ fn rebind_keeps_destination_selection_until_owned_apply_updates_the_same_entity_
             session.redo(actor).unwrap();
             assert_eq!(session.document.vmf(), &after);
         }
+    }
+}
+
+#[test]
+fn multiface_rebind_shares_complete_sources_owned_retention_and_one_undo() {
+    for (actor, reviewer) in [(Actor::User, Actor::Agent), (Actor::Agent, Actor::User)] {
+        let (_directory, mut session, old) = multiface_fixture(actor, true);
+        let state = session
+            .preview_overlay_faces(actor, request(old[1]), &old[..1], &session.overlay_stamp())
+            .unwrap();
+        let applied = session
+            .apply_overlay(actor, state["draft"]["token"].as_u64().unwrap())
+            .unwrap();
+        let ObjectId::Entity(id) =
+            crate::identity::parse_id(applied["created"].as_str().unwrap()).unwrap()
+        else {
+            unreachable!()
+        };
+        let targets: [FaceId; 2] = session
+            .edit(actor, "new target faces", |tx| {
+                let mut targets = Vec::new();
+                for x in [256.0, 384.0] {
+                    let ObjectId::Solid(solid) = edit::create_block(
+                        tx,
+                        DVec3::new(x, -32.0, 48.0),
+                        DVec3::new(x + 80.0, 32.0, 64.0),
+                        "test/checker",
+                    )?
+                    else {
+                        unreachable!()
+                    };
+                    let side = tx
+                        .solid_mut(solid)?
+                        .sides
+                        .iter()
+                        .find(|side| {
+                            map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99
+                        })
+                        .unwrap()
+                        .id;
+                    if !targets.is_empty() {
+                        edit::tie_to_entity(tx, &[solid], "func_detail", &[])?;
+                    }
+                    targets.push(FaceId { solid, side });
+                }
+                tx.entity_mut(id)?.properties.set("StartU", "-00.2500");
+                Ok(targets.try_into().unwrap())
+            })
+            .unwrap();
+        session.select_faces(&targets, SelectMode::Replace).unwrap();
+        let choices = session
+            .browse_overlay_targets("authored_overlay", 0, 8)
+            .unwrap();
+        let entry = &choices["entries"][0];
+        assert_eq!(entry["eligible"], true);
+        assert_eq!(entry["source_count"], 2);
+        assert_eq!(entry["sources"], sources_json(&old));
+        let before = session.document.vmf().clone();
+        let history = session.document.undo_labels().count();
+        let state = session
+            .preview_overlay_rebind_faces(
+                actor,
+                id,
+                targets[1],
+                &targets[..1],
+                &session.overlay_stamp(),
+            )
+            .unwrap();
+        let token = state["draft"]["token"].as_u64().unwrap();
+        assert_eq!(state["draft"]["previous_sources"], sources_json(&old));
+        assert_eq!(state["draft"]["previous_source_count"], 2);
+        assert_eq!(
+            state["draft"]["sources"],
+            sources_json(&[targets[1], targets[0]])
+        );
+        assert_eq!(state["draft"]["source_count"], 2);
+        assert_eq!(session.document.vmf(), &before);
+        assert_eq!(session.document.undo_labels().count(), history);
+        assert_eq!(session.selected_faces(), targets);
+        for (anchor, additional) in [
+            (targets[1], vec![targets[1]]),
+            (targets[1], vec![old[0]]),
+            (old[1], vec![old[0]]),
+            (
+                targets[1],
+                vec![targets[0]; source_formats::bsp::MAX_OVERLAY_FACES],
+            ),
+        ] {
+            assert!(
+                session
+                    .preview_overlay_rebind_faces(
+                        actor,
+                        id,
+                        anchor,
+                        &additional,
+                        &session.overlay_stamp()
+                    )
+                    .is_err()
+            );
+            assert_eq!(session.get_overlay_state(), state);
+        }
+        assert!(session.apply_overlay(reviewer, token).is_err());
+        assert!(session.cancel_overlay(reviewer, token).is_err());
+        let reviewed = session.review_overlay(reviewer, token).unwrap();
+        let replacement = reviewed["draft"]["token"].as_u64().unwrap();
+        assert_ne!(replacement, token);
+        assert!(session.apply_overlay(actor, token).is_err());
+        let applied = session.apply_overlay(reviewer, replacement).unwrap();
+        assert_eq!(applied["updated"], format!("entity:{id}"));
+        assert!(applied.get("created").is_none());
+        assert_eq!(
+            overlay::parse(session.document.entity(id).unwrap()).unwrap(),
+            overlay::fit_faces(&before, &[targets[1], targets[0]], request(old[1]).options)
+                .unwrap()
+        );
+        assert_eq!(
+            session
+                .document
+                .entity(id)
+                .unwrap()
+                .properties
+                .get("StartU"),
+            Some("-00.2500")
+        );
+        assert_eq!(session.document.undo_labels().count(), history + 1);
+        let after = session.document.vmf().clone();
+        session.undo(reviewer).unwrap();
+        assert_eq!(session.document.vmf(), &before);
+        session.redo(reviewer).unwrap();
+        assert_eq!(session.document.vmf(), &after);
+        let state = session
+            .preview_overlay_rebind(actor, id, old[1], &session.overlay_stamp())
+            .unwrap();
+        assert_eq!(state["draft"]["previous_source_count"], 2);
+        assert_eq!(state["draft"]["source_count"], 1);
+        assert_eq!(state["draft"]["sources"], sources_json(&old[1..]));
+        let token = state["draft"]["token"].as_u64().unwrap();
+        let owner = session.document.owner_of_solid(targets[0].solid).unwrap();
+        session
+            .set_editor_visibility(
+                reviewer,
+                crate::session::editor_visibility::Action::Hide(vec![owner]),
+                &session.working_region_stamp(),
+            )
+            .unwrap();
+        assert_eq!(session.get_overlay_state()["draft"]["valid"], false);
+        assert!(session.apply_overlay(actor, token).is_err());
+        session.cancel_overlay(actor, token).unwrap();
+        assert_eq!(session.document.vmf(), &after);
+        assert_eq!(session.document.undo_labels().count(), history + 1);
     }
 }
 

@@ -44,7 +44,7 @@ The integrated compiler is experimental. File operations, BSP publication and ga
 | [Static props](static-props.md) | Models, checked collision choices, shadows, ambient/vertex lighting and nested material edits for packing and cutout receivers. | Exact hull leaf membership and general materials/bodygroups. |
 | [Detail props](material-detail-scattering.md) | Explicit and generated decorative models, cards, cross/tri shapes and supported lighting. | Editor display of final generated details. |
 | [Reflections](reflections.md) | Private LDR or paired LDR/HDR captures and verified packing. | Recursive reflection bounces and unsupported capture scenes. |
-| [Overlays](overlays.md) | Coplanar face-group fitting, refit and corner editing, native projections, face splitting, supported terrain targets and water transitions. | Full projected-material viewport preview. |
+| [Overlays](overlays.md) | Coplanar face-group fitting, refit, rebind and corner editing, native projections, face splitting, supported terrain targets and water transitions. | Full projected-material viewport preview. |
 | [Assemblies](instances.md) | Checked nested transforms, stationary child initial poses, per-reference light colors/HDR gains and supported geometry/entities. | General runtime entities, scripting and name fixups. |
 | [Visibility helpers](occluders.md) | Occluders and eligible visibility-cluster volumes. | Unsupported memberships and dynamic child control. |
 | [Inspection](baked-lightmaps.md) | Owned face lightmaps, prop vertex bytes and native light records. | Full baked-output viewport rendering. |

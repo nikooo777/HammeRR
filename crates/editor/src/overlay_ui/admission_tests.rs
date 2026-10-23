@@ -154,6 +154,65 @@ fn corners(target: &Fixture) {
     target.controller.set_viewport(VIEWPORT);
 }
 
+fn multiple_rebind(target: &Fixture) -> source_formats::vmf::Vmf {
+    let overlay = lock(&target.shared).selected_ids()[0];
+    let mut faces = Vec::new();
+    {
+        let mut session = lock(&target.shared);
+        for x in [320.0, 448.0] {
+            let ObjectId::Solid(solid) = session
+                .create_block(
+                    Actor::User,
+                    DVec3::new(x, 0.0, 48.0),
+                    DVec3::new(x + 80.0, 64.0, 64.0),
+                    "test/checker",
+                    false,
+                )
+                .unwrap()
+            else {
+                unreachable!()
+            };
+            let side = session
+                .document()
+                .solid(solid)
+                .unwrap()
+                .sides
+                .iter()
+                .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal == DVec3::Z)
+                .unwrap()
+                .id;
+            faces.push(FaceId { solid, side });
+        }
+        session.select_faces(&faces, SelectMode::Replace).unwrap();
+    }
+    let before = lock(&target.shared).document().vmf().clone();
+    target
+        .controller
+        .show(&mut lock(&target.shared), "test/checker")
+        .unwrap();
+    target
+        .controller
+        .window
+        .invoke_choose_overlay(crate::identity::id_string(overlay).into());
+    assert!(target.controller.window.get_can_rebind());
+    target.controller.window.invoke_rebind();
+    assert!(
+        target.controller.window.get_ready(),
+        "{}",
+        target.controller.window.get_message()
+    );
+    assert_eq!(target.controller.window.get_source_count(), 2);
+    assert!(
+        target
+            .controller
+            .window
+            .get_rebind_target()
+            .contains("destination 2 faces")
+    );
+    assert_eq!(lock(&target.shared).document().vmf(), &before);
+    before
+}
+
 fn files(directory: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     let mut result = BTreeMap::new();
     for entry in std::fs::read_dir(directory).unwrap() {
@@ -365,6 +424,32 @@ fn managed_overlay_actions_create_refit_rebind_and_move_exact_corner_handles() {
         lock(&target.shared).get_overlay_state()["selected_overlay"]["source"]["side"],
         destination.side
     );
+    let before = multiple_rebind(&target);
+    let history = lock(&target.shared).document().undo_labels().count();
+    target.controller.window.invoke_apply();
+    assert_eq!(lock(&target.shared).selected_ids(), selected);
+    assert_eq!(
+        lock(&target.shared).document().undo_labels().count(),
+        history + 1
+    );
+    target
+        .controller
+        .show(&mut lock(&target.shared), "test/checker")
+        .unwrap();
+    let entity = crate::identity::id_string(selected[0]);
+    assert!(
+        target
+            .controller
+            .window
+            .get_overlay_targets()
+            .iter()
+            .any(|row| row.entity.as_str() == entity
+                && row.eligible
+                && row.detail.contains("2 bound faces"))
+    );
+    target.controller.window.invoke_cancel();
+    lock(&target.shared).undo(Actor::User).unwrap();
+    assert_eq!(lock(&target.shared).document().vmf(), &before);
 }
 
 #[test]
@@ -439,8 +524,12 @@ fn managed_overlay_actions_preserve_exact_material_choices_stale_forms_and_forei
 #[test]
 fn overlay_forms_and_handle_ownership_survive_real_drain_finish_and_live_peer_activity() {
     software();
-    for handles in [false, true] {
-        let target = fixture(handles);
+    for case in 0..3 {
+        let target = fixture(case == 1);
+        if case == 2 {
+            target.controller.window.invoke_apply();
+            multiple_rebind(&target);
+        }
         let peer = fixture(false);
         let gate = target.document.admit().unwrap();
         let draining = target.document.clone();

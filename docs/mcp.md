@@ -145,7 +145,10 @@ Optional `additional_sources` adds coplanar flat world or `func_detail` faces, u
 The projection spans their bounds and clips to the exact bound sides. Unbound gaps stay clear.
 Omit `additional_sources` for a single-face fit.
 For multi-face `preview_overlay_refit`, pass `reference: {solid, side}` for an eligible quad in the existing bindings. Its current edges set the new projection axes.
-Apply retains the overlay ID, exact side list and settings. Rebind requires one quad.
+Refit retains the overlay ID, exact side list and settings.
+For `preview_overlay_rebind`, pass an explicit target quad in `source` and optional coplanar `additional_sources` to replace the bindings with a different set of up to 64 faces.
+Multi-face rebind drafts report `previous_sources`/`previous_source_count` and new `sources`/`source_count`. Apply preserves the same entity and raw settings in one Undo step.
+Unchanged binding sets require Refit. Invalid updates retain the current draft.
 `preview_overlay_corners` and `overlay_corner_handles` accept the complete coplanar binding set and use the stored projection axes. No reference parameter is needed.
 Corner drafts report `sources` and `source_count`; applying changes only `uv0` through `uv3` in one Undo step.
 

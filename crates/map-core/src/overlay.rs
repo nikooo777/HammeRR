@@ -706,6 +706,35 @@ pub fn fit_rebind(vmf: &Vmf, id: u32, source: FaceId) -> Result<Definition, Stri
     fit(vmf, source, existing.options)
 }
 
+pub fn rebind_sources(vmf: &Vmf, id: u32) -> Result<(Vec<FaceId>, Definition), String> {
+    let existing = existing_definition(vmf, id)?;
+    if existing.sides.len() == 1 {
+        let (face, definition) = fit_existing(vmf, id)?;
+        return Ok((vec![face], definition));
+    }
+    let bound = checked_bound_definition(vmf, existing)?;
+    Ok((bound.faces, bound.definition))
+}
+
+pub fn fit_rebind_faces(
+    vmf: &Vmf,
+    id: u32,
+    sources: &[FaceId],
+) -> Result<(Vec<FaceId>, Definition), String> {
+    side_budget(sources.len())?;
+    let (previous, existing) = rebind_sources(vmf, id)?;
+    if previous.len() == 1 && sources.len() == 1 {
+        return Ok((previous, fit_rebind(vmf, id, sources[0])?));
+    }
+    let definition = fit_faces(vmf, sources, existing.options)?;
+    if previous.iter().copied().collect::<BTreeSet<_>>()
+        == sources.iter().copied().collect::<BTreeSet<_>>()
+    {
+        return Err("Choose different destination faces, or use Refit selected overlay".into());
+    }
+    Ok((previous, definition))
+}
+
 pub fn refit(tx: &mut Transaction<'_>, id: u32) -> Result<ObjectId, EditError> {
     let (_, definition) = fit_existing(tx.document().vmf(), id).map_err(EditError::Invalid)?;
     write_projection(tx, id, &definition, true)
@@ -726,6 +755,16 @@ pub fn refit_with_reference(
 
 pub fn rebind(tx: &mut Transaction<'_>, id: u32, source: FaceId) -> Result<ObjectId, EditError> {
     let definition = fit_rebind(tx.document().vmf(), id, source).map_err(EditError::Invalid)?;
+    write_projection(tx, id, &definition, true)
+}
+
+pub fn rebind_faces(
+    tx: &mut Transaction<'_>,
+    id: u32,
+    sources: &[FaceId],
+) -> Result<ObjectId, EditError> {
+    let (_, definition) =
+        fit_rebind_faces(tx.document().vmf(), id, sources).map_err(EditError::Invalid)?;
     write_projection(tx, id, &definition, true)
 }
 

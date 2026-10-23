@@ -30,13 +30,14 @@ The bound faces must remain visible, flat and coplanar. Refit preserves their ex
 
 To change its target:
 
-1. Select a destination quad.
+1. Select visible coplanar destination world or `func_detail` faces, including at least one quad.
 2. Open **Overlay…** and choose an existing overlay from the rebind list.
 3. Click **Preview rebind**.
-4. Inspect the old and new bindings.
+4. Inspect the old and new binding lists, face counts and projection outline. The first eligible selected quad supplies the new projection axes.
 5. Click **Apply rebind**.
 
 Refit and rebind preserve the existing overlay identity, settings and connections.
+Rebind can replace single or multiple valid bindings with a different set of up to 64 faces. It changes the projection and bindings in one **Undo** step. Use **Refit selected overlay** to change the frame while keeping the same binding set.
 
 ## Edit projection corners
 
@@ -71,7 +72,7 @@ The parent contents preview shows target geometry, not the projected material.
 - Multi-face creation requires flat coplanar faces facing the same direction and an eligible quad to anchor the projection.
 - Multi-face refit requires an explicit eligible quad reference from the existing bindings and the same source limits as creation.
 - Numeric and viewport corners require the same bounded flat coplanar source set and a valid stored projection on its plane.
-- Rebind requires one eligible visible ordinary quad binding.
+- Rebind requires valid existing ordinary world/detail bindings and a different bounded coplanar destination set with an eligible quad for the new frame.
 - Terrain and brush-model targets are unavailable for fitted authoring.
 - Compiled imported overlays support broader world/detail and terrain targets.
 - Corners may extend beyond a bound face; native rendering clips the projection to that face.

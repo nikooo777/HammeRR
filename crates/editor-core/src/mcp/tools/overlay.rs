@@ -84,7 +84,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Search existing info_overlay entities by name/material/ID without changing selection. Returns current overlay snapshot, exact total and paged rows with entity/name/material, existing bound face, settings, eligibility and rejection reason. A supported rebind target has one visible world/detail quad binding. UI: Overlay… → Existing overlay.",
+        description = "Search existing info_overlay entities by name/material/ID without changing selection. Returns current overlay snapshot, exact total and paged rows with entity/name/material, existing bound face, settings, eligibility and rejection reason. Supported existing bindings are visible bounded same-facing coplanar world/detail faces, including an eligible quad. Multi-bound rows add sources/source_count; single rows retain their original shape. UI: Overlay… → Existing overlay.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn browse_overlay_targets(
@@ -101,7 +101,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Preview explicitly rebinding an existing info_overlay to a DIFFERENT visible world/func_detail quad source {solid,side}. Pass the entity ID from browse_overlay_targets and current overlay snapshot. Existing binding must itself contain one visible eligible quad; multiside/hidden/missing/terrain/model/nonquad sources reject. Preserves raw settings, connections and metadata. Returns operation=rebind, entity and previous_source; owned review_overlay/apply_overlay/cancel_overlay work as usual. Apply updates the same entity in one Undo step. UI: select destination face → Overlay… → choose Existing overlay → Preview rebind → Apply rebind."
+        description = "Preview explicitly rebinding an existing info_overlay to a DIFFERENT destination set. source {solid,side} is an explicit eligible target quad whose current edges set projection axes; optional additional_sources supplies distinct visible same-facing coplanar flat world/func_detail faces, up to 64 targets total. Existing bindings may be single or multiple and must resolve to the same supported bounded source contract. Pass the entity ID from browse_overlay_targets and current snapshot. Omitting the list preserves original single-to-single behavior and fields. Rejects unchanged binding sets (use Refit selected overlay), invalid/native-out-of-bounds, hidden, missing, terrain and model sources without replacing a valid draft. Preserves entity ID, raw settings, connections and metadata; Apply changes projection/bindings in one Undo step. Multi cases report complete previous_sources/previous_source_count and new sources/source_count alongside previous_source. Owned Review/Apply/Cancel remain unchanged. UI: select destination faces including a quad → Overlay… → choose Existing overlay → Preview rebind → Apply rebind."
     )]
     pub(in crate::mcp) fn preview_overlay_rebind(
         &self,
@@ -110,20 +110,30 @@ impl EditorServer {
         run(|| {
             let mut session = self.session();
             let id = single_entity(&session, Some(&args.id))?;
-            session.preview_overlay_rebind(
+            let additional_sources = args
+                .additional_sources
+                .unwrap_or_default()
+                .into_iter()
+                .map(|source| map_core::surface::FaceId {
+                    solid: source.solid,
+                    side: source.side,
+                })
+                .collect::<Vec<_>>();
+            session.preview_overlay_rebind_faces(
                 Actor::Agent,
                 id,
                 map_core::surface::FaceId {
                     solid: args.source.solid,
                     side: args.source.side,
                 },
+                &additional_sources,
                 &args.snapshot,
             )
         })
     }
 
     #[tool(
-        description = "Inspect shared overlay creation, existing-binding refit, explicit new-face rebind, numeric local corner editing and viewport corner handles: current snapshot, selected source/overlay eligibility and rejection reasons, draft operation/target/owner/token/validity, settings, corners and bounds. Preview changes no map, selection or history. Create adds an entity; Refit, Rebind and Corners update the same entity projection without changing its authored settings."
+        description = "Inspect shared overlay creation, existing-binding refit, explicit destination-set rebind, numeric local corner editing and viewport corner handles: current snapshot, selected source/overlay eligibility and rejection reasons, draft operation/target/owner/token/validity, settings, corners and bounds. Preview changes no map, selection or history. Create adds an entity; Refit, Rebind and Corners update the same entity projection without changing its authored settings."
     )]
     pub(in crate::mcp) fn get_overlay_state(&self) -> ToolResult {
         ok(self.session().get_overlay_state())
@@ -148,7 +158,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Fit one new overlay to source {solid,side}, an explicit visible planar world/func_detail quad, using latest get_overlay_state.snapshot. Optional additional_sources is a list of distinct coplanar flat world/detail faces facing the same direction (64 total source faces maximum). The first source supplies the existing projection axes; the combined U/V rectangle covers all real face loops, including gaps, and native rendering clips to the exact selected side IDs. Omitting the list preserves the original single-quad fit exactly. Rejects hidden/unsupported/missing/noncoplanar/terrain/model faces atomically. material is a material path without materials/ or extension; targetname is optional. render_order defaults 0, u/v to [0,1], fade_min/fade_max to -1/0. Valid preview replaces the shared draft and owns its token; invalid or stale input preserves the last valid draft. Multiple-source drafts report sources and source_count. Map, selection and Undo stay unchanged until Apply. Multi-face refit requires an explicit bound reference quad; corner editing keeps stored axes and all bindings; rebind still requires one existing bound quad. UI: select coplanar faces → Overlay… → Fit / Preview."
+        description = "Fit one new overlay to source {solid,side}, an explicit visible planar world/func_detail quad, using latest get_overlay_state.snapshot. Optional additional_sources is a list of distinct coplanar flat world/detail faces facing the same direction (64 total source faces maximum). The first source supplies the existing projection axes; the combined U/V rectangle covers all real face loops, including gaps, and native rendering clips to the exact selected side IDs. Omitting the list preserves the original single-quad fit exactly. Rejects hidden/unsupported/missing/noncoplanar/terrain/model faces atomically. material is a material path without materials/ or extension; targetname is optional. render_order defaults 0, u/v to [0,1], fade_min/fade_max to -1/0. Valid preview replaces the shared draft and owns its token; invalid or stale input preserves the last valid draft. Multiple-source drafts report sources and source_count. Map, selection and Undo stay unchanged until Apply. Multi-face refit requires an explicit bound reference quad; corner editing keeps stored axes and all bindings; explicit rebind accepts a different bounded coplanar destination set. UI: select coplanar faces → Overlay… → Fit / Preview."
     )]
     pub(in crate::mcp) fn preview_overlay(
         &self,

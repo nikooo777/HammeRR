@@ -43,6 +43,7 @@ pub struct OverlayRebindArgs {
     pub snapshot: String,
     pub id: String,
     pub source: FaceRef,
+    pub additional_sources: Option<Vec<FaceRef>>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -145,6 +146,17 @@ mod tests {
         assert!(serde_json::from_value::<OverlayPreviewArgs>(missing).is_err());
         let rebind = json!({"snapshot":"current", "id":"entity:12", "source":{"solid":1,"side":2}});
         assert!(serde_json::from_value::<OverlayRebindArgs>(rebind.clone()).is_ok());
+        let single: OverlayRebindArgs = serde_json::from_value(rebind.clone()).unwrap();
+        assert!(single.additional_sources.is_none());
+        let mut multiple = rebind.clone();
+        multiple["additional_sources"] = json!([{"solid":3,"side":4}]);
+        let multiple: OverlayRebindArgs = serde_json::from_value(multiple).unwrap();
+        assert_eq!(multiple.additional_sources.unwrap().len(), 1);
+        for sources in [json!([4]), json!([{"solid":3}]), json!("selection")] {
+            let mut invalid = rebind.clone();
+            invalid["additional_sources"] = sources;
+            assert!(serde_json::from_value::<OverlayRebindArgs>(invalid).is_err());
+        }
         for field in ["id", "source", "snapshot"] {
             let mut missing = rebind.clone();
             missing.as_object_mut().unwrap().remove(field);

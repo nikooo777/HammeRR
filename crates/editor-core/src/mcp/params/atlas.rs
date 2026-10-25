@@ -37,3 +37,39 @@ pub(in crate::mcp) struct PreviewAtlasFitArgs {
     pub faces: Option<Vec<FaceRef>>,
     pub token: Option<String>,
 }
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(in crate::mcp) struct SaveAtlasRegionArgs {
+    pub name: String,
+    pub material: String,
+    pub rectangle: AtlasRectangleArgs,
+    #[serde(default)]
+    pub padding: u32,
+    pub snapshot: String,
+    pub catalog_snapshot: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(in crate::mcp) struct RenameAtlasRegionArgs {
+    pub id: u32,
+    pub name: String,
+    pub catalog_snapshot: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(in crate::mcp) struct DeleteAtlasRegionArgs {
+    pub id: u32,
+    pub catalog_snapshot: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(in crate::mcp) struct ChooseAtlasRegionArgs {
+    pub id: u32,
+    pub material: String,
+    pub snapshot: String,
+    pub catalog_snapshot: String,
+}

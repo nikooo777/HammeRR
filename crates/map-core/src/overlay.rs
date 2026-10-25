@@ -270,7 +270,13 @@ pub fn parse(entity: &Entity) -> Result<Definition, String> {
     Ok(definition)
 }
 
-fn source_face(vmf: &Vmf, face: FaceId) -> Result<(DVec3, Vec<DVec3>), String> {
+struct SourceFace {
+    normal: DVec3,
+    vertices: Vec<DVec3>,
+    samples: Vec<DVec3>,
+}
+
+fn source_face(vmf: &Vmf, face: FaceId) -> Result<SourceFace, String> {
     let (solid, owner) = vmf
         .world
         .solids
@@ -322,7 +328,11 @@ fn source_face(vmf: &Vmf, face: FaceId) -> Result<(DVec3, Vec<DVec3>), String> {
     if solid.sides.iter().any(|side| side.displacement.is_some()) {
         return Err("Overlay fitting does not support terrain brushes' cage faces".into());
     }
-    Ok((target.plane.normal, target.vertices.clone()))
+    Ok(SourceFace {
+        normal: target.plane.normal,
+        vertices: target.vertices.clone(),
+        samples: Vec::new(),
+    })
 }
 
 pub fn is_terrain(vmf: &Vmf, face: FaceId) -> bool {
@@ -337,7 +347,7 @@ fn terrain_source(
     face: FaceId,
     target: &crate::brush::Face,
     info: &source_formats::vmf::DispInfo,
-) -> Result<(DVec3, Vec<DVec3>), String> {
+) -> Result<SourceFace, String> {
     use crate::displacement::{native, surface};
     if vmf.entities.iter().any(|entity| {
         !entity.hidden
@@ -407,7 +417,11 @@ fn terrain_source(
     {
         return Err("Overlay terrain differs from native surface precision".into());
     }
-    Ok((normal, corners))
+    Ok(SourceFace {
+        normal,
+        vertices: corners,
+        samples: current.positions.iter().copied().chain(native).collect(),
+    })
 }
 
 fn planar_terrain_quad(
@@ -480,8 +494,8 @@ fn planar_terrain_quad(
 
 pub fn fit(vmf: &Vmf, face: FaceId, options: Options) -> Result<Definition, String> {
     vmf.validate_ids().map_err(|error| error.to_string())?;
-    let (normal, vertices) = source_face(vmf, face)?;
-    let definition = fit_source(face, normal, &vertices, options)?;
+    let source = source_face(vmf, face)?;
+    let definition = fit_source(face, source.normal, &source.vertices, options)?;
     if is_terrain(vmf, face) {
         validate_editable_projection(&definition, &definition)?;
     }
@@ -560,12 +574,6 @@ fn coplanar_bounds(
     faces: &[FaceId],
     definition: &Definition,
 ) -> Result<([f64; 2], [f64; 2]), String> {
-    if faces.len() > 1 && faces.iter().any(|face| is_terrain(vmf, *face)) {
-        return Err(
-            "Overlay terrain authoring requires exactly one isolated planar displacement source"
-                .into(),
-        );
-    }
     let origin = DVec3::from_array(definition.basis_origin);
     let normal = DVec3::from_array(definition.basis_normal);
     let u = DVec3::from_array(definition.basis_u);
@@ -573,11 +581,13 @@ fn coplanar_bounds(
     let mut mins = [f64::INFINITY; 2];
     let mut maxs = [f64::NEG_INFINITY; 2];
     for &face in faces {
-        let (face_normal, vertices) = source_face(vmf, face)
+        let source = source_face(vmf, face)
             .map_err(|error| format!("Overlay brush {} face {}: {error}", face.solid, face.side))?;
-        if normal.dot(face_normal) < 1.0 - COPLANAR_NORMAL_TOLERANCE
-            || vertices
+        if normal.dot(source.normal) < 1.0 - COPLANAR_NORMAL_TOLERANCE
+            || source
+                .vertices
                 .iter()
+                .chain(&source.samples)
                 .any(|point| normal.dot(*point - origin).abs() > ON_EPSILON)
         {
             return Err(format!(
@@ -585,7 +595,7 @@ fn coplanar_bounds(
                 face.solid, face.side
             ));
         }
-        for point in vertices {
+        for point in source.vertices {
             let local = point - origin;
             for (axis, coordinate) in [local.dot(u), local.dot(v)].into_iter().enumerate() {
                 mins[axis] = mins[axis].min(coordinate);
@@ -668,9 +678,14 @@ fn checked_bound_definition(vmf: &Vmf, definition: Definition) -> Result<BoundSo
     let mut references = Vec::new();
     let mut plane = None;
     for &face in &faces {
-        let (normal, vertices) = source_face(vmf, face)
+        let source = source_face(vmf, face)
             .map_err(|error| format!("Overlay brush {} face {}: {error}", face.solid, face.side))?;
-        if let Ok(candidate) = fit_source(face, normal, &vertices, definition.options.clone()) {
+        if let Ok(candidate) = fit_source(
+            face,
+            source.normal,
+            &source.vertices,
+            definition.options.clone(),
+        ) {
             references.push(face);
             if plane.is_none() {
                 plane = Some(candidate);

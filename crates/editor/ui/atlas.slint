@@ -3,7 +3,7 @@ import { Button, ComboBox, LineEdit } from "std-widgets.slint";
 export component AtlasWindow inherits Window {
     title: "Fit atlas region - HammeRR";
     preferred-width: 720px;
-    preferred-height: 850px;
+    preferred-height: 960px;
     in property <string> selection-label;
     in property <string> details;
     in property <string> message;
@@ -27,6 +27,10 @@ export component AtlasWindow inherits Window {
     in property <bool> has-padding;
     in property <string> usable-details;
     in property <[string]> references;
+    in property <[string]> saved-regions;
+    in property <bool> catalog-editable;
+    in-out property <int> saved-region-index: -1;
+    in-out property <string> saved-region-name;
     in-out property <int> fit-mode;
     in-out property <int> reference-index;
     in-out property <string> material;
@@ -43,6 +47,11 @@ export component AtlasWindow inherits Window {
     callback cancel();
     callback rectangle-pointer(int, float, float);
     callback cancel-rectangle();
+    callback select-saved-region();
+    callback choose-saved-region();
+    callback save-region();
+    callback rename-region();
+    callback delete-region();
     forward-focus: keys;
     keys := FocusScope {
         width: parent.width;
@@ -87,6 +96,24 @@ export component AtlasWindow inherits Window {
                 Button { text: "Inspect material"; enabled: !root.stale; clicked => { root.inspect-material(); } }
             }
             Text { text: root.details; wrap: word-wrap; color: #bac2ce; }
+            HorizontalLayout {
+                spacing: 8px;
+                Text { text: "Saved region"; vertical-alignment: center; }
+                ComboBox {
+                    model: root.saved-regions;
+                    current-index <=> root.saved-region-index;
+                    selected => { root.select-saved-region(); }
+                    horizontal-stretch: 1;
+                }
+                Button { text: "Use saved region"; enabled: !root.stale && root.loaded && root.saved-region-index >= 0 && !root.rectangle-dragging; clicked => { root.choose-saved-region(); } }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                LineEdit { text <=> root.saved-region-name; placeholder-text: "Region name"; accessible-label: "Atlas region name"; horizontal-stretch: 1; }
+                Button { text: "Save region"; enabled: !root.stale && root.loaded && root.catalog-editable && !root.rectangle-dragging; clicked => { root.save-region(); } }
+                Button { text: "Rename region"; enabled: !root.stale && root.catalog-editable && root.saved-region-index >= 0 && !root.rectangle-dragging; clicked => { root.rename-region(); } }
+                Button { text: "Delete region"; enabled: !root.stale && root.catalog-editable && root.saved-region-index >= 0 && !root.rectangle-dragging; clicked => { root.delete-region(); } }
+            }
             Text { text: "The base image stays cached until Reload material assets."; wrap: word-wrap; color: #bac2ce; }
             HorizontalLayout {
                 spacing: 20px;

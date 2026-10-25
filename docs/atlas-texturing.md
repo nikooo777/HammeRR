@@ -40,11 +40,27 @@ Changing **Fit mode** or **Reference face** requires another preview before appl
 
 ![One image spans two faces; the center edge does not restart the mapping](images/atlas-continuity.png)
 
+## Save and reuse named regions
+
+1. Inspect the material, then draw or enter the rectangle and **Padding**.
+2. Enter **Region name**, then click **Save region** before starting a face preview.
+3. When fitting this material again, choose it under **Saved region** and click **Use saved region**.
+4. Check the restored rectangle and padding, choose **Fit mode** and **Reference face** as needed, then click **Preview atlas fit**.
+5. Inspect the faces, then click **Apply atlas fit**, or **Cancel** to discard the face preview.
+
+Saved regions stay in this map, including after saving and reopening it. Each region keeps the canonical material, original image dimensions and identity, rectangle and padding. Fit mode and reference face remain current fitting choices.
+Names are unique for each material, ignoring case. Up to 128 regions can be saved in a map, with names up to 80 characters.
+
+To rename a region, select it, edit **Region name**, then click **Rename region**. **Delete region** removes the selected saved region. Each save, rename or delete has its own Undo step and leaves face projections unchanged. Apply or cancel any geometry preview before changing saved regions.
+
+After **Reload material assets**, unchanged images can reuse their regions. Changed materials, image contents or dimensions reject reuse and show **(source changed)** in the list. Inspect the image and save a new region; rename or delete an old one as needed. External texture changes follow the same explicit reload policy as the image and viewport.
+
 ## Limits
 
 - Flat world, detail and brush-entity faces only; terrain and collapsed projections reject.
 - One static base image with a supported `LightmappedGeneric` or `UnlitGeneric` declaration.
 - No tool overrides, proxies, extra layers, packing or image editing.
+- Saved region catalogs are not yet supported in referenced child maps.
 - The rectangle must have positive size and stay inside the original image.
 - Padding must leave a positive usable width and height; invalid updates preserve the existing preview.
 - Together fitting requires a reference from the target selection and same-facing coplanar faces. It does not unfold across corners.

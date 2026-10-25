@@ -5,6 +5,248 @@ use map_core::{Document, ObjectId, Plane, edit, overlay, surface::FaceId};
 use source_formats::vmf::Vmf;
 
 #[test]
+fn multiple_planar_terrain_and_flat_targets_match_native_samples_and_exact_bindings() {
+    let mut document = Document::new(common::room());
+    let sources = document
+        .edit("isolated displaced targets and gap controls", |tx| {
+            let mut sources = Vec::new();
+            for (index, [min, max]) in [
+                [-208.0, -112.0],
+                [-48.0, 48.0],
+                [112.0, 208.0],
+                [-96.0, -64.0],
+                [64.0, 96.0],
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let terrain = matches!(index, 0 | 1 | 3);
+                let ObjectId::Solid(solid) = edit::create_block(
+                    tx,
+                    DVec3::new(min, if terrain { -64.0 } else { -60.0 }, 16.0),
+                    DVec3::new(
+                        max,
+                        if terrain { 64.0 } else { 68.0 },
+                        if terrain { 32.0 } else { 44.0 },
+                    ),
+                    "dev/dev_measuregeneric01",
+                )?
+                else {
+                    unreachable!()
+                };
+                let source = FaceId {
+                    solid,
+                    side: tx.solid_mut(solid)?.sides[0].id,
+                };
+                if terrain {
+                    let power = if index == 1 { 3 } else { 2 };
+                    map_core::displacement::edit::create(
+                        tx,
+                        &[source],
+                        power,
+                        if index == 1 { 2 } else { 0 },
+                    )?;
+                    let size = (1 << power) + 1;
+                    tx.solid_mut(solid)?.sides[0]
+                        .displacement
+                        .as_mut()
+                        .unwrap()
+                        .offsets = Some(vec![vec![DVec3::new(3.0, 4.0, 12.0); size]; size]);
+                }
+                if index == 1 {
+                    edit::tie_to_entity(tx, &[solid], "func_detail", &[])?;
+                }
+                if index < 3 {
+                    sources.push(source);
+                }
+            }
+            Ok(sources)
+        })
+        .unwrap();
+    let base = document.vmf().clone();
+    let prepared = map_core::displacement::surface::prepare(&base);
+    assert!(prepared.issues.is_empty(), "{:?}", prepared.issues);
+    assert_eq!(prepared.meshes.len(), 3);
+    for anchor in [0, 2] {
+        let mut document = Document::new(base.clone());
+        let mut ordered = sources.clone();
+        let first = ordered.remove(anchor);
+        ordered.insert(0, first);
+        let ObjectId::Entity(id) = document
+            .edit("one terrain and flat overlay", |tx| {
+                overlay::create_faces(
+                    tx,
+                    &ordered,
+                    overlay::Options {
+                        material: "decals/decalgraffiti001a".into(),
+                        targetname: Some("multiple_terrain_mark".into()),
+                        ..Default::default()
+                    },
+                )
+            })
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        assert_eq!(
+            overlay::parse(document.entity(id).unwrap()).unwrap().sides,
+            sources.iter().map(|source| source.side).collect::<Vec<_>>()
+        );
+        let authored = document.vmf().clone();
+        let output = compiler::compile(&authored, &common::empty_game());
+        assert!(!output.report.has_errors(), "{:?}", output.report);
+        let bsp = output.bsp.unwrap();
+        let data = bsp.overlay_data().unwrap().unwrap();
+        assert_eq!(data.overlays.len(), 1);
+        let record = data.overlays[0];
+        let (origin, min, max) = if anchor == 0 {
+            ([-157.0, 4.0, 44.0], -48.0, 365.0)
+        } else {
+            ([160.0, 4.0, 44.0], -365.0, 48.0)
+        };
+        assert_eq!(record.origin, origin);
+        assert_eq!(record.basis_normal, [0.0, 0.0, 1.0]);
+        assert_eq!(
+            record.uv_points,
+            [
+                [min, -64.0, 1.0],
+                [min, 64.0, 0.0],
+                [max, 64.0, 0.0],
+                [max, -64.0, 0.0]
+            ]
+        );
+        let bound = record.faces[..record.face_count()]
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>();
+        let terrain = bsp.displacements().unwrap().unwrap();
+        assert_eq!(terrain.infos.len(), 3);
+        let mut selected_terrain = 0;
+        for (index, info) in terrain.infos.iter().enumerate() {
+            let quad = bsp.displacement_quad(index).unwrap();
+            assert!(quad.iter().all(|point| point[2] == 32.0));
+            let points = terrain.positions(index, quad).unwrap();
+            assert!(points.iter().all(|point| point[2] == 44.0));
+            assert!(
+                info.edges
+                    .iter()
+                    .flatten()
+                    .all(|edge| edge.index == u16::MAX)
+            );
+            let center = points[points.len() / 2];
+            let source = if center[0] < -100.0 {
+                Some(sources[0])
+            } else if center[0] > -50.0 {
+                Some(sources[1])
+            } else {
+                None
+            };
+            assert_eq!(
+                bound.contains(&i32::from(info.face)),
+                source.is_some(),
+                "native terrain center {center:?}"
+            );
+            if let Some(source) = source {
+                selected_terrain += 1;
+                let expected = prepared.get(&source).unwrap();
+                assert_eq!(points.len(), expected.positions.len());
+                for (native, actual) in points.iter().zip(&expected.positions) {
+                    assert!(DVec3::from_array(native.map(f64::from)).abs_diff_eq(*actual, 0.00001));
+                    assert!((native[0] - origin[0]) >= min && (native[0] - origin[0]) <= max);
+                    assert!(native[1] >= -60.0 && native[1] <= 68.0);
+                }
+                assert_eq!(
+                    center,
+                    if source == sources[0] {
+                        [-157.0, 4.0, 44.0]
+                    } else {
+                        [3.0, 4.0, 44.0]
+                    }
+                );
+            }
+        }
+        assert_eq!(selected_terrain, 2);
+        let faces = bsp.records::<source_formats::bsp::Face>().unwrap();
+        let vertices = bsp
+            .values::<[f32; 3]>(source_formats::bsp::lump::VERTEXES)
+            .unwrap();
+        let edges = bsp.records::<source_formats::bsp::Edge>().unwrap();
+        let surfedges = bsp
+            .values::<i32>(source_formats::bsp::lump::SURFEDGES)
+            .unwrap();
+        let mut flat_faces = 0;
+        for index in &bound {
+            if terrain
+                .infos
+                .iter()
+                .any(|info| i32::from(info.face) == *index)
+            {
+                continue;
+            }
+            flat_faces += 1;
+            let face = faces[*index as usize];
+            for &edge in &surfedges
+                [face.first_edge as usize..face.first_edge as usize + face.edge_count as usize]
+            {
+                let point = vertices
+                    [usize::from(edges[edge.unsigned_abs() as usize].0[usize::from(edge < 0)])];
+                assert!(
+                    point[0] >= 112.0
+                        && point[0] <= 208.0
+                        && point[1] >= -60.0
+                        && point[1] <= 68.0
+                        && point[2] == 44.0,
+                    "unselected native flat binding: {point:?}"
+                );
+            }
+        }
+        assert!(flat_faces > 0);
+        let mut literal = Document::new(base.clone());
+        literal
+            .edit("literal imported multi-terrain projection", |tx| {
+                edit::create_entity(
+                    tx,
+                    "info_overlay",
+                    Some(DVec3::from_array(origin.map(f64::from))),
+                    &[
+                        ("material".into(), "decals/decalgraffiti001a".into()),
+                        ("targetname".into(), "multiple_terrain_mark".into()),
+                        (
+                            "sides".into(),
+                            sources
+                                .iter()
+                                .map(|source| source.side.to_string())
+                                .collect::<Vec<_>>()
+                                .join(" "),
+                        ),
+                        (
+                            "BasisOrigin".into(),
+                            if anchor == 0 { "-157 4 44" } else { "160 4 44" }.into(),
+                        ),
+                        ("BasisNormal".into(), "0 0 1".into()),
+                        ("BasisU".into(), "1 0 0".into()),
+                        ("BasisV".into(), "0 1 0".into()),
+                        ("uv0".into(), format!("{min} -64 0")),
+                        ("uv1".into(), format!("{min} 64 0")),
+                        ("uv2".into(), format!("{max} 64 0")),
+                        ("uv3".into(), format!("{max} -64 0")),
+                    ],
+                    Vec::new(),
+                )
+            })
+            .unwrap();
+        let expected = compiler::compile(literal.vmf(), &common::empty_game());
+        assert!(!expected.report.has_errors(), "{:?}", expected.report);
+        assert_eq!(expected.bsp.unwrap().to_bytes(), bsp.to_bytes());
+        let reopened = Vmf::parse(&authored.write(&Default::default())).unwrap();
+        let repeated = compiler::compile(&reopened, &common::empty_game());
+        assert!(!repeated.report.has_errors(), "{:?}", repeated.report);
+        assert_eq!(repeated.bsp.unwrap().to_bytes(), bsp.to_bytes());
+        assert_eq!(document.vmf(), &authored);
+    }
+}
+
+#[test]
 fn fitted_planar_terrain_matches_literal_native_projection_and_original_displacement_binding() {
     let mut document = Document::new(common::room());
     let source = document

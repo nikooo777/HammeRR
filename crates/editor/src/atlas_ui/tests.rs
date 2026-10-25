@@ -427,4 +427,56 @@ fn atlas_dialog_preview_apply_cancel_and_material_reload_share_session_guards() 
     assert_eq!(lock(&shared).document().vmf(), &original);
     controller.window.invoke_cancel();
     assert_eq!(lock(&shared).camera(), camera);
+
+    controller.show(&mut lock(&shared), "test/checker").unwrap();
+    controller.window.set_region_x("16".into());
+    controller.window.set_region_y("8".into());
+    controller.window.set_region_pixels_wide("32".into());
+    controller.window.set_region_pixels_high("16".into());
+    controller.window.set_region_padding("2".into());
+    controller.window.set_saved_region_name("Panel".into());
+    controller.window.invoke_save_region();
+    assert_eq!(controller.window.get_saved_region_index(), 0);
+    assert!(!controller.window.get_stale());
+    assert_eq!(lock(&shared).document().undo_labels().count(), history + 1);
+    assert_eq!(lock(&shared).document().vmf().world, original.world);
+    controller.window.set_region_x("0".into());
+    controller.window.set_region_padding("0".into());
+    controller.window.invoke_choose_saved_region();
+    assert_eq!(controller.window.get_region_x(), "16");
+    assert_eq!(controller.window.get_region_padding(), "2");
+    assert!(!controller.window.get_ready());
+    controller.window.set_saved_region_name("Trim".into());
+    controller.window.invoke_rename_region();
+    assert_eq!(
+        lock(&shared).atlas_regions_state().unwrap()["regions"][0]["name"],
+        "Trim"
+    );
+    controller.window.invoke_preview_fit();
+    assert!(controller.window.get_ready());
+    assert!(!controller.window.get_catalog_editable());
+    let draft = lock(&shared).render_document().vmf().clone();
+    controller.window.invoke_delete_region();
+    assert_eq!(lock(&shared).render_document().vmf(), &draft);
+    assert_eq!(
+        lock(&shared).atlas_regions_state().unwrap()["regions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    controller.window.invoke_cancel();
+    controller.show(&mut lock(&shared), "test/checker").unwrap();
+    controller.window.set_saved_region_index(0);
+    controller.window.invoke_delete_region();
+    assert_eq!(
+        lock(&shared).atlas_regions_state().unwrap()["regions"],
+        serde_json::json!([])
+    );
+    controller.window.invoke_cancel();
+    for _ in 0..3 {
+        lock(&shared).undo(Actor::User).unwrap();
+    }
+    assert_eq!(lock(&shared).document().vmf(), &original);
+    assert_eq!(lock(&shared).camera(), camera);
 }

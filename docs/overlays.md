@@ -6,7 +6,7 @@ Project a material onto compiled surfaces. The editor shows the projection outli
 
 ## Create a fitted overlay
 
-1. Select visible coplanar world or `func_detail` faces in face mode, including at least one quad.
+1. Select visible coplanar world or `func_detail` faces in face mode, including at least one quad. Eligible isolated planar terrain faces may be included.
 2. Open **Overlay…**.
 3. Choose **Material** and optional **Name**.
 4. Set **Render order**, texture ranges and fade distances.
@@ -26,11 +26,11 @@ The first eligible quad supplies the projection axes. One overlay spans all sele
 3. Click **Refit selected overlay** to fit all existing bound faces.
 4. Review the new outline and bound-face count, then click **Apply refit**.
 
-The bound faces must remain visible, flat and coplanar. Refit preserves their exact side IDs. It follows moved geometry only when requested; it does not infer the original reference face or preserve an earlier in-plane orientation. A single-face overlay keeps its original refit behavior.
+The bound faces must remain visible and coplanar. Terrain faces must remain isolated and planar. Refit preserves their exact side IDs. It follows moved geometry only when requested; it does not infer the original reference face or preserve an earlier in-plane orientation. A single-face overlay keeps its original refit behavior.
 
 To change its target:
 
-1. Select visible coplanar destination world or `func_detail` faces, including at least one quad.
+1. Select visible coplanar destination world or `func_detail` faces, including at least one quad. Eligible isolated planar terrain faces may be included.
 2. Open **Overlay…** and choose an existing overlay from the rebind list.
 3. Click **Preview rebind**.
 4. Inspect the old and new binding lists, face counts and projection outline. The first eligible selected quad supplies the new projection axes.
@@ -47,7 +47,7 @@ Rebind can replace single or multiple valid bindings with a different set of up 
 4. Click **Preview corners** and inspect the outline and bound-face count.
 5. Click **Apply corners**.
 
-This works with one or up to 64 visible coplanar world/detail bindings, including an eligible quad. Corner editing uses the stored projection axes and keeps every original side binding; it requires no reference choice. Only the four projection corners change. Moved sources need an explicit refit first.
+This works with one or up to 64 visible coplanar world/detail bindings, including eligible isolated planar terrain and at least one quad. Corner editing uses the stored projection axes and keeps every original side binding; it requires no reference choice. Only the four projection corners change. Moved sources need an explicit refit first.
 
 After **Preview corners**, choose **Viewport handles** to drag a cyan corner directly. Release to review, then use **Apply corners**. **Cancel handles** restores the exact pre-handle draft. Crossed, collapsed or unsupported corners reject. **Undo** restores the previous projection.
 
@@ -69,23 +69,23 @@ The parent contents preview shows target geometry, not the projected material.
 
 ## Fit on planar terrain
 
-1. Select one isolated planar terrain face in face mode.
-2. Open **Overlay…**. Check that the source says **isolated planar terrain quad**.
+1. Select one or more isolated planar terrain faces in face mode. Selected surfaces must be coplanar and face the same direction; flat world/detail faces may be included.
+2. Open **Overlay…**. A single terrain source says **isolated planar terrain quad**; multiple sources show the bound-face count.
 3. Choose **Material**, then click **Fit / Preview** and **Apply overlay**.
 4. Use the same corner, refit and rebind controls described above.
 
-The fit uses the displaced surface, including its elevation and offsets. It keeps the original terrain-side binding.
+The fit uses every actual prepared and native terrain sample, including elevation and offsets. It keeps every original terrain-side binding. A terrain quad may supply the initial projection axes or the explicit multi-face refit reference.
 After moving that plane, use **Refit selected overlay** before editing its corners.
-Rebind can move the projection between eligible flat and terrain faces.
+Rebind can replace complete eligible flat, terrain or mixed target sets.
 
 ## Limits
 
-- Multi-face creation requires flat coplanar faces facing the same direction and an eligible quad to anchor the projection.
+- Multi-face creation requires coplanar flat faces or isolated planar terrain quads facing the same direction and an eligible quad to anchor the projection.
 - Multi-face refit requires an explicit eligible quad reference from the existing bindings and the same source limits as creation.
-- Numeric and viewport corners require the same bounded flat coplanar source set and a valid stored projection on its plane.
-- Rebind requires valid world/detail bindings or one eligible planar terrain binding, and a different eligible destination. Terrain stays limited to a single isolated patch.
-- Terrain fitting requires one planar quad with straight borders and valid native samples. Sculpted, folded and multiple-terrain targets reject.
-- The terrain base bounds must be separate from every other terrain base, including corner contacts. Visible instance references also reject; hide them in saved map visibility or use an imported overlay. Temporary editor hiding does not qualify.
+- Numeric and viewport corners require the same bounded coplanar source set and a valid stored projection on its plane.
+- Rebind requires valid world/detail or isolated planar terrain bindings and a different eligible destination set.
+- Every terrain target requires a planar quad with straight convex borders and valid prepared/native samples on the common projection plane. Sculpted and folded targets reject.
+- Each terrain target's stored base bounds must be separate from every other terrain base, including other selected terrain and corner contacts. Joined, touching or overlapping terrain bases remain unavailable. Visible instance references also reject; hide them in saved map visibility or use an imported overlay. Temporary editor hiding does not qualify.
 - Terrain cage faces and brush-model targets are unavailable for fitted authoring.
 - Compiled imported overlays support broader world/detail and terrain targets.
 - Corners may extend beyond a bound face; native rendering clips the projection to that face.

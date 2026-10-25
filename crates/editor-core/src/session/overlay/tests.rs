@@ -88,6 +88,120 @@ fn planar_terrain_fixture(actor: Actor) -> (tempfile::TempDir, Session, FaceId) 
     (directory, session, face)
 }
 
+fn multiple_planar_terrain_fixture(actor: Actor) -> (tempfile::TempDir, Session, [FaceId; 2]) {
+    let (directory, mut session, faces) = multiface_fixture(actor, false);
+    let ObjectId::Entity(detail) = session.document.owner_of_solid(faces[1].solid).unwrap() else {
+        unreachable!()
+    };
+    session
+        .edit(actor, "separate elevated terrain sources", |tx| {
+            edit::move_to_world(tx, detail)?;
+            for (index, face) in faces.iter().enumerate() {
+                map_core::displacement::edit::create(tx, &[*face], 2 + index as u32, index as u32)?;
+                let info = tx
+                    .solid_mut(face.solid)?
+                    .sides
+                    .iter_mut()
+                    .find(|side| side.id == face.side)
+                    .unwrap()
+                    .displacement
+                    .as_mut()
+                    .unwrap();
+                let size = (1 << info.power) + 1;
+                info.elevation = 24.0;
+                info.offsets = Some(vec![vec![DVec3::new(7.0, 11.0, 0.0); size]; size]);
+            }
+            edit::tie_to_entity(tx, &[faces[1].solid], "func_detail", &[])?;
+            Ok(())
+        })
+        .unwrap();
+    (directory, session, faces)
+}
+
+#[test]
+fn multiple_planar_terrain_preview_keeps_complete_sources_and_secondary_guards() {
+    for actor in [Actor::User, Actor::Agent] {
+        let (_directory, mut session, faces) = multiple_planar_terrain_fixture(actor);
+        let before = session.document.vmf().clone();
+        let history = session.document.undo_labels().count();
+        assert_eq!(
+            session.get_overlay_state()["selected_source"]["sources"],
+            sources_json(&faces)
+        );
+        let state = session
+            .preview_overlay_faces(
+                actor,
+                request(faces[1]),
+                &faces[..1],
+                &session.overlay_stamp(),
+            )
+            .unwrap();
+        let token = state["draft"]["token"].as_u64().unwrap();
+        assert_eq!(
+            state["draft"]["sources"],
+            sources_json(&[faces[1], faces[0]])
+        );
+        assert_eq!(state["draft"]["source_count"], 2);
+        assert_eq!(state["draft"]["basis_origin"][2], 40.0);
+        assert!(
+            session
+                .preview_overlay_faces(
+                    actor,
+                    request(faces[1]),
+                    &[faces[1]],
+                    &session.overlay_stamp()
+                )
+                .is_err()
+        );
+        assert_eq!(session.get_overlay_state(), state);
+        assert_eq!(session.document.vmf(), &before);
+        assert_eq!(session.document.undo_labels().count(), history);
+        let reviewer = if actor == Actor::User {
+            Actor::Agent
+        } else {
+            Actor::User
+        };
+        assert!(session.apply_overlay(reviewer, token).is_err());
+        let reviewed = session.review_overlay(reviewer, token).unwrap();
+        let state = session
+            .apply_overlay(reviewer, reviewed["draft"]["token"].as_u64().unwrap())
+            .unwrap();
+        let ObjectId::Entity(id) =
+            crate::identity::parse_id(state["created"].as_str().unwrap()).unwrap()
+        else {
+            unreachable!()
+        };
+        assert_eq!(
+            overlay::parse(session.document.entity(id).unwrap())
+                .unwrap()
+                .sides,
+            faces.map(|face| face.side)
+        );
+        let after = session.document.vmf().clone();
+        assert_eq!(session.document.undo_labels().count(), history + 1);
+        session.undo(reviewer).unwrap();
+        assert_eq!(session.document.vmf(), &before);
+        session.redo(reviewer).unwrap();
+        assert_eq!(session.document.vmf(), &after);
+        let state = session
+            .preview_overlay_refit_reference(actor, id, Some(faces[0]), &session.overlay_stamp())
+            .unwrap();
+        let token = state["draft"]["token"].as_u64().unwrap();
+        let owner = session.document.owner_of_solid(faces[1].solid).unwrap();
+        session
+            .set_editor_visibility(
+                actor,
+                crate::session::editor_visibility::Action::Hide(vec![owner]),
+                &session.working_region_stamp(),
+            )
+            .unwrap();
+        assert_eq!(session.get_overlay_state()["draft"]["valid"], false);
+        assert!(session.apply_overlay(actor, token).is_err());
+        session.cancel_overlay(actor, token).unwrap();
+        assert_eq!(session.document.vmf(), &after);
+    }
+}
+
 #[test]
 fn planar_terrain_creation_refit_corners_and_rebind_share_owned_session_lifecycle() {
     let (_directory, mut session, source) = planar_terrain_fixture(Actor::Agent);
@@ -460,6 +574,17 @@ fn coplanar_multiface_invalid_requests_preserve_owned_preview_and_stale_cleanup(
                     }
                     2 => {
                         map_core::displacement::edit::create(tx, &[face], 2, 0)?;
+                        let mut offsets = vec![vec![DVec3::ZERO; 5]; 5];
+                        offsets[2][2].z = 8.0;
+                        tx.solid_mut(solid)?
+                            .sides
+                            .iter_mut()
+                            .find(|side| side.id == face.side)
+                            .unwrap()
+                            .displacement
+                            .as_mut()
+                            .unwrap()
+                            .offsets = Some(offsets);
                     }
                     _ => {}
                 }
@@ -885,8 +1010,17 @@ fn other_geometry_previews_block_overlay_changes_without_being_discarded() {
 
 #[test]
 fn multiface_refit_requires_owned_explicit_reference_and_updates_only_existing_projection() {
-    for (actor, reviewer) in [(Actor::User, Actor::Agent), (Actor::Agent, Actor::User)] {
-        let (_directory, mut session, faces) = multiface_fixture(actor, false);
+    for (actor, reviewer, terrain) in [
+        (Actor::User, Actor::Agent, false),
+        (Actor::Agent, Actor::User, false),
+        (Actor::User, Actor::Agent, true),
+        (Actor::Agent, Actor::User, true),
+    ] {
+        let (_directory, mut session, faces) = if terrain {
+            multiple_planar_terrain_fixture(actor)
+        } else {
+            multiface_fixture(actor, false)
+        };
         let state = session
             .preview_overlay_faces(
                 actor,
@@ -1387,8 +1521,17 @@ fn rebind_keeps_destination_selection_until_owned_apply_updates_the_same_entity_
 
 #[test]
 fn multiface_rebind_shares_complete_sources_owned_retention_and_one_undo() {
-    for (actor, reviewer) in [(Actor::User, Actor::Agent), (Actor::Agent, Actor::User)] {
-        let (_directory, mut session, old) = multiface_fixture(actor, true);
+    for (actor, reviewer, terrain) in [
+        (Actor::User, Actor::Agent, false),
+        (Actor::Agent, Actor::User, false),
+        (Actor::User, Actor::Agent, true),
+        (Actor::Agent, Actor::User, true),
+    ] {
+        let (_directory, mut session, old) = if terrain {
+            multiple_planar_terrain_fixture(actor)
+        } else {
+            multiface_fixture(actor, true)
+        };
         let state = session
             .preview_overlay_faces(actor, request(old[1]), &old[..1], &session.overlay_stamp())
             .unwrap();
@@ -1422,6 +1565,19 @@ fn multiface_rebind_shares_complete_sources_owned_retention_and_one_undo() {
                         })
                         .unwrap()
                         .id;
+                    if terrain {
+                        let face = FaceId { solid, side };
+                        map_core::displacement::edit::create(tx, &[face], 2, 0)?;
+                        tx.solid_mut(solid)?
+                            .sides
+                            .iter_mut()
+                            .find(|candidate| candidate.id == side)
+                            .unwrap()
+                            .displacement
+                            .as_mut()
+                            .unwrap()
+                            .elevation = 12.0;
+                    }
                     if !targets.is_empty() {
                         edit::tie_to_entity(tx, &[solid], "func_detail", &[])?;
                     }
@@ -1611,8 +1767,11 @@ fn corner_drafts_share_review_atomic_apply_and_exact_undo_without_refitting() {
         [32.25, -20.125],
     ];
     for actor in [Actor::User, Actor::Agent] {
-        for case in 0..3 {
-            let (_directory, mut session, sources) = if case == 2 {
+        for case in 0..4 {
+            let (_directory, mut session, sources) = if case == 3 {
+                let (directory, session, sources) = multiple_planar_terrain_fixture(actor);
+                (directory, session, sources.to_vec())
+            } else if case == 2 {
                 let (directory, session, sources) = multiface_fixture(actor, true);
                 (directory, session, vec![sources[1], sources[0]])
             } else {

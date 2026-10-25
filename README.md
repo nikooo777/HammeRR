@@ -58,7 +58,7 @@ See the [tool index and setup](docs/mcp.md).
 | [Atlas texturing](docs/atlas-texturing.md) |
 | --- |
 | ![Equal faces show full-image mapping and a padded atlas region](docs/images/atlas-padding.png) |
-| Pick and fit padded image regions to faces or coplanar groups. |
+| Save named image regions and fit padded areas across faces. |
 
 | [Terrain](docs/terrain.md) | [Compiled terrain](docs/terrain.md#compile-split-borders) |
 | --- | --- |
@@ -88,6 +88,6 @@ See the [tool index and setup](docs/mcp.md).
 | [Overlays](docs/overlays.md) | [Assemblies](docs/instances.md) |
 | --- | --- |
 | ![One projection spans two panels with a clear gap](docs/images/overlay-native.png) | ![Two references to one arch use different baked light colors](docs/images/instance-light-colors.png) |
-| Fit, refit, rebind and shape projections on flat faces and planar terrain. | Reuse transformed assemblies with per-reference light settings and scoped spotlight targets. |
+| Fit projections across flat faces and separate planar terrain patches. | Reuse transformed assemblies with per-reference light settings and scoped spotlight targets. |
 
 Counter-Strike: Source and its assets are not included.

@@ -231,3 +231,100 @@ fn atlas_mcp_padding_is_optional_and_invalid_revisions_retain_the_reviewed_usabl
     assert_eq!(lock(&shared).document().vmf(), &preview);
     assert_eq!(server.rendering_status()["initialized"], false);
 }
+
+#[test]
+fn named_atlas_region_mcp_catalog_choice_and_owned_fit_share_session_operations() {
+    let (_directory, game) = crate::test_assets::game();
+    let mut session = Session::new(Ok(game));
+    let ObjectId::Solid(solid) = session
+        .create_block(
+            Actor::Agent,
+            DVec3::ZERO,
+            DVec3::splat(64.0),
+            "test/checker",
+            false,
+        )
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    let face = map_core::surface::FaceId {
+        solid,
+        side: session.document().solid(solid).unwrap().sides[0].id,
+    };
+    session.select_faces(&[face], SelectMode::Replace).unwrap();
+    let original = session.document().vmf().clone();
+    let shared = Arc::new(Mutex::new(session));
+    let server = EditorServer::new(shared.clone(), None);
+    for tool in [
+        "list_atlas_regions",
+        "save_atlas_region",
+        "rename_atlas_region",
+        "delete_atlas_region",
+        "choose_atlas_region",
+    ] {
+        assert!(server.get_tool(tool).is_some(), "missing tool {tool}");
+    }
+    assert!(
+        serde_json::from_value::<SaveAtlasRegionArgs>(json!({
+            "name":"Panel","material":"test/checker","rectangle":{"x":0,"y":0,"width":1,"height":1},
+            "snapshot":"x","catalog_snapshot":"x","mode":"together"
+        }))
+        .is_err()
+    );
+    let atlas = lock(&shared)
+        .inspect_material_atlas("test/checker")
+        .unwrap()
+        .report;
+    let listed = report(server.list_atlas_regions());
+    assert_eq!(listed["regions"], json!([]));
+    let saved = report(server.save_atlas_region(Parameters(serde_json::from_value(json!({
+        "name":"Panel","material":"test/checker","rectangle":{"x":16,"y":8,"width":32,"height":16},
+        "padding":2,"snapshot":atlas["snapshot"],"catalog_snapshot":listed["snapshot"]
+    })).unwrap())));
+    assert_eq!(
+        saved["regions"],
+        lock(&shared).atlas_regions_state().unwrap()["regions"]
+    );
+    assert_eq!(lock(&shared).document().vmf().world, original.world);
+    let id = saved["saved_id"].clone();
+    let renamed = report(
+        server.rename_atlas_region(Parameters(
+            serde_json::from_value(json!({
+                "id":id,"name":"Trim","catalog_snapshot":saved["snapshot"]
+            }))
+            .unwrap(),
+        )),
+    );
+    let stale = server.choose_atlas_region(Parameters(serde_json::from_value(json!({
+        "id":id,"material":"test/checker","snapshot":atlas["snapshot"],"catalog_snapshot":saved["snapshot"]
+    })).unwrap())).unwrap();
+    assert!(stale.is_error.unwrap_or(false));
+    let chosen = report(server.choose_atlas_region(Parameters(serde_json::from_value(json!({
+        "id":id,"material":"test/checker","snapshot":atlas["snapshot"],"catalog_snapshot":renamed["snapshot"]
+    })).unwrap())));
+    assert_eq!(chosen["name"], "Trim");
+    let preview = report(server.preview_atlas_fit(Parameters(serde_json::from_value(json!({
+        "material":chosen["material"],"snapshot":chosen["snapshot"],"rectangle":chosen["rectangle"],"padding":chosen["padding"]
+    })).unwrap())));
+    assert_eq!(
+        preview["atlas"]["preview"]["usable_rectangle"],
+        json!({"x":18,"y":10,"width":28,"height":12})
+    );
+    assert_eq!(lock(&shared).document().undo_labels().count(), 3);
+    let rejected = server
+        .delete_atlas_region(Parameters(
+            serde_json::from_value(json!({"id":id,"catalog_snapshot":renamed["snapshot"]}))
+                .unwrap(),
+        ))
+        .unwrap();
+    assert!(rejected.is_error.unwrap_or(false));
+    report(server.cancel_face_preview(Parameters(
+        serde_json::from_value(json!({"token":preview["atlas"]["preview"]["token"]})).unwrap(),
+    )));
+    let deleted = report(server.delete_atlas_region(Parameters(
+        serde_json::from_value(json!({"id":id,"catalog_snapshot":renamed["snapshot"]})).unwrap(),
+    )));
+    assert_eq!(deleted["regions"], json!([]));
+    assert_eq!(server.rendering_status()["initialized"], false);
+}

@@ -168,7 +168,17 @@ fn planar_terrain_handles_keep_actual_plane_and_restore_stale_owned_drafts() {
 
 #[test]
 fn multiface_corner_handles_capture_secondary_visibility_and_share_owned_review_apply() {
-    let (_directory, mut session, faces) = multiface_fixture(Actor::User, true);
+    let (_directory, session, faces) = multiface_fixture(Actor::User, true);
+    check_multiface_corner_handles(session, faces);
+}
+
+#[test]
+fn multiple_terrain_corner_handles_capture_secondary_visibility_and_share_owned_review_apply() {
+    let (_directory, session, faces) = multiple_planar_terrain_fixture(Actor::User);
+    check_multiface_corner_handles(session, faces);
+}
+
+fn check_multiface_corner_handles(mut session: Session, faces: [FaceId; 2]) {
     let state = session
         .preview_overlay_faces(
             Actor::User,

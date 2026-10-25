@@ -72,6 +72,10 @@ fn form(controller: &Controller) -> (Value, Vec<u8>) {
             "usable_details": window.get_usable_details().to_string(),
             "atlas": target.atlas, "token": target.token, "reviewed": target.reviewed,
             "dragging": window.get_rectangle_dragging(), "drag": target.drag.is_some(),
+            "catalog": target.catalog, "saved_regions": target.saved_regions,
+            "saved_region": usize::try_from(window.get_saved_region_index()).ok().and_then(|index| target.saved_regions.get(index)),
+            "saved_region_name": window.get_saved_region_name().to_string(),
+            "catalog_editable": window.get_catalog_editable(),
         }),
         window.get_preview().to_rgba8().unwrap().as_bytes().to_vec(),
     )
@@ -87,6 +91,11 @@ fn rejected(window: &AtlasWindow, error: &str) {
         AtlasWindow::invoke_inspect_material,
         AtlasWindow::invoke_preview_fit,
         AtlasWindow::invoke_apply_fit,
+        AtlasWindow::invoke_select_saved_region,
+        AtlasWindow::invoke_choose_saved_region,
+        AtlasWindow::invoke_save_region,
+        AtlasWindow::invoke_rename_region,
+        AtlasWindow::invoke_delete_region,
     ] {
         action(window);
         assert_eq!(window.get_message(), error);

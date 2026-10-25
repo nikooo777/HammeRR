@@ -589,12 +589,12 @@ fn refresh(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
         if source_count > 1 {
             if form.corners {
                 format!(
-                    "Bound sources · {source_count} coplanar world / detail faces · stored projection axes"
+                    "Bound sources · {source_count} coplanar faces · flat or isolated planar terrain · stored projection axes"
                 )
                 .into()
             } else {
                 format!(
-                    "Sources · {source_count} coplanar world / detail faces · first quad: brush {} · face {}",
+                    "Sources · {source_count} coplanar faces · flat or isolated planar terrain · first quad: brush {} · face {}",
                     source.solid, source.side
                 )
                 .into()
@@ -608,7 +608,7 @@ fn refresh(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
             .into()
         }
     } else if reference_required {
-        format!("Bound sources · {source_count} coplanar world / detail faces · {}", window.get_refit_reference_label()).into()
+        format!("Bound sources · {source_count} coplanar faces · flat or isolated planar terrain · {}", window.get_refit_reference_label()).into()
     } else {
         state[if session.face_mode() {
             "selection_error"
@@ -616,7 +616,7 @@ fn refresh(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
             "refit_error"
         }]
         .as_str()
-        .unwrap_or("Select world/detail faces or one isolated planar terrain quad")
+        .unwrap_or("Select coplanar world/detail or isolated planar terrain faces")
         .into()
     });
     let corners = if matches && draft["valid"] == true && form.reviewed.is_some() {
@@ -718,7 +718,7 @@ fn preview(window: &OverlayWindow, session: &mut Session, form: &RefCell<Form>) 
             }
             (
                 form.source
-                    .ok_or("Select coplanar world or detail faces, starting with a quad, and reopen Overlay")?,
+                    .ok_or("Select coplanar world/detail or isolated planar terrain faces, including a quad, and reopen Overlay")?,
                 form.additional_sources.clone(),
                 form.snapshot.clone(),
             )
@@ -1344,6 +1344,11 @@ mod tests {
             },
         )))
         .unwrap();
+        check_multiface_overlay_controls(false);
+        check_multiface_overlay_controls(true);
+    }
+
+    fn check_multiface_overlay_controls(terrain: bool) {
         let (_assets, game) = crate::test_assets::game();
         let mut session = Session::new(Ok(game));
         let mut sources = Vec::new();
@@ -1370,6 +1375,27 @@ mod tests {
                 .unwrap()
                 .id;
             sources.push(FaceId { solid, side });
+        }
+        if terrain {
+            session
+                .edit(Actor::User, "isolated planar terrain targets", |tx| {
+                    for source in &sources {
+                        map_core::displacement::edit::create(tx, &[*source], 2, 0)?;
+                        let info = tx
+                            .solid_mut(source.solid)?
+                            .sides
+                            .iter_mut()
+                            .find(|side| side.id == source.side)
+                            .unwrap()
+                            .displacement
+                            .as_mut()
+                            .unwrap();
+                        info.elevation = 24.0;
+                        info.offsets = Some(vec![vec![DVec3::new(3.0, 4.0, 0.0); 5]; 5]);
+                    }
+                    Ok(())
+                })
+                .unwrap();
         }
         session
             .select_faces(&sources, crate::session::SelectMode::Replace)
@@ -1401,7 +1427,14 @@ mod tests {
         assert_eq!(lock(&shared).document().vmf(), &before);
         assert_eq!(lock(&shared).selected_faces(), sources);
         assert_eq!(lock(&shared).document().undo_labels().count(), history);
-        crate::ui::tests::save_ui_snapshot(controller.window.window(), "overlay-multiface");
+        crate::ui::tests::save_ui_snapshot(
+            controller.window.window(),
+            if terrain {
+                "overlay-terrain-multiface"
+            } else {
+                "overlay-multiface"
+            },
+        );
         controller.window.invoke_apply();
         let after = lock(&shared).document().vmf().clone();
         let overlays = after

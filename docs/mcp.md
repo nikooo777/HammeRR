@@ -140,8 +140,14 @@ Together requires a reference from the targets. Per-face mode rejects a referenc
 The outer rectangle must fit the actual image, and padding must leave positive width and height.
 Invalid updates preserve the current draft. Apply or cancel with its exact token through `commit_face_preview` or `cancel_face_preview`.
 
+Use `list_atlas_regions` for saved map-local regions and the catalog snapshot.
+Pass it as `catalog_snapshot`, plus the inspected atlas `snapshot`, to `save_atlas_region` or `choose_atlas_region`.
+Save also needs `name`, `material`, `rectangle` and optional `padding`; Choose needs `id` and `material`.
+Use `rename_atlas_region` or `delete_atlas_region` with the latest catalog snapshot and region ID.
+Choose restores fit inputs without editing faces. Preview and apply the fit separately. Changed image identities reject reuse.
+
 For [overlay fitting](overlays.md), `preview_overlay.source` supplies the quad that sets the projection axes.
-Optional `additional_sources` adds coplanar flat world or `func_detail` faces, up to 64 sources in total.
+Optional `additional_sources` adds same-facing coplanar flat or isolated planar terrain faces from world or `func_detail`, up to 64 sources in total.
 The projection spans their bounds and clips to the exact bound sides. Unbound gaps stay clear.
 Omit `additional_sources` for a single-face fit.
 For multi-face `preview_overlay_refit`, pass `reference: {solid, side}` for an eligible quad in the existing bindings. Its current edges set the new projection axes.
@@ -151,8 +157,8 @@ Multi-face rebind drafts report `previous_sources`/`previous_source_count` and n
 Unchanged binding sets require Refit. Invalid updates retain the current draft.
 `preview_overlay_corners` and `overlay_corner_handles` accept the complete coplanar binding set and use the stored projection axes. No reference parameter is needed.
 Corner drafts report `sources` and `source_count`; applying changes only `uv0` through `uv3` in one Undo step.
-The same tools accept one isolated planar displacement. Use its displaced face, not a cage face; omit additional sources.
-Its complete prepared and native surface must be a flat quad with straight borders. Touching or overlapping terrain base bounds and visible instance references reject.
+The same tools accept multiple isolated planar displacements and mixed flat targets. Use displaced faces, not cage faces.
+Every prepared and native sample must lie on the common projection plane, with straight quad borders. Each terrain base must be separate from every other terrain base. Touching or overlapping bounds and visible instance references reject.
 The fit follows actual displaced coordinates. Refit after moving the plane; rebind can switch between eligible flat and terrain sources.
 
 ## Selection defaults
@@ -234,7 +240,7 @@ These groups locate the available operations.
 | --- | --- |
 | Documents and workspace | `list_documents`, `new_document`, `open_document`, `save_all_named_maps`, `show_document` |
 | [Models, sounds and assets](models.md) | `apply_model_choice`, `apply_sound_choice`, `begin_model_choice`, `begin_sound_choice`, `browse_models`, `browse_sounds`, `cancel_model_choice`, `cancel_sound_choice`, `choose_model`, `choose_model_bodygroup`, `choose_sound`, `clear_model_attachment`, `frame_model_attachment`, `get_model_attachment_guide`, `get_model_choice`, `get_sound_choice`, `get_sound_preview`, `inspect_entity_model`, `inspect_model`, `inspect_sound`, `play_sound_preview`, `reload_model_assets`, `reload_sound_assets`, `render_model_preview`, `render_sound_preview`, `set_sound_preview_volume`, `show_model_attachment`, `stop_sound_preview` |
-| [Atlas texturing](atlas-texturing.md) | `inspect_material_atlas`, `preview_atlas_fit` |
+| [Atlas texturing](atlas-texturing.md) | `inspect_material_atlas`, `preview_atlas_fit`, `list_atlas_regions`, `save_atlas_region`, `choose_atlas_region`, `rename_atlas_region`, `delete_atlas_region` |
 | [Build and play](compile-and-play.md) | `apply_build_recipe`, `apply_compile_region`, `cancel_compile`, `cancel_compile_region`, `compile_map`, `delete_build_recipe`, `frame_compile_region`, `game_log`, `get_build_recipes`, `get_compile_region`, `get_compile_settings`, `get_compile_status`, `get_native_capture_runtime`, `launch_game`, `preview_compile_region`, `reload_build_recipes`, `rename_build_recipe`, `run_map`, `run_map_checks`, `save_build_recipe`, `set_compile_settings`, `set_native_capture_runtime`, `start_compile`, `stop_game` |
 | [Map checks and reports](map-tools.md) | `apply_map_fixes`, `cancel_map_fixes`, `get_map_checks`, `get_object_report`, `preview_map_fixes`, `select_map_issue`, `select_object_report`, `set_object_visibility` |
 | [Clipboard and prefabs](clipboard.md) | `apply_paste`, `cancel_paste`, `copy_objects`, `cut_objects`, `delete_prefab`, `export_clipboard`, `get_clipboard`, `get_prefabs`, `import_clipboard`, `inspect_prefab_thumbnail`, `preview_paste`, `preview_prefab`, `rename_prefab`, `render_prefab_gallery`, `render_prefab_thumbnail`, `save_prefab` |

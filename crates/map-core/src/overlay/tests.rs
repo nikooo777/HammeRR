@@ -100,6 +100,265 @@ fn terrain_fixture(detail: bool) -> (Document, FaceId) {
     (document, face)
 }
 
+fn multiple_terrain_fixture() -> (Document, [FaceId; 3]) {
+    let mut document = Document::empty();
+    let faces = document
+        .edit("separated planar terrain and flat target", |tx| {
+            let mut faces = Vec::new();
+            for (index, x) in [-256.0, -64.0, 128.0].into_iter().enumerate() {
+                let terrain = index < 2;
+                let ObjectId::Solid(solid) = edit::create_block(
+                    tx,
+                    DVec3::new(x, -32.0, 0.0),
+                    DVec3::new(x + 96.0, 32.0, if terrain { 16.0 } else { 40.0 }),
+                    "dev/dev_measuregeneric01",
+                )?
+                else {
+                    unreachable!()
+                };
+                let face = FaceId {
+                    solid,
+                    side: tx.solid_mut(solid)?.sides[0].id,
+                };
+                if terrain {
+                    let power = 2 + index as u32;
+                    displacement::edit::create(tx, &[face], power, index as u32)?;
+                    let geometry =
+                        BrushGeometry::from_solid(tx.document().solid(solid).unwrap()).unwrap();
+                    let target = geometry
+                        .faces
+                        .iter()
+                        .find(|target| {
+                            tx.document().solid(solid).unwrap().sides[target.side].id == face.side
+                        })
+                        .unwrap();
+                    let info = tx.solid_mut(solid)?.sides[0].displacement.as_mut().unwrap();
+                    let mesh = displacement::DisplacementMesh::build(target, info).unwrap();
+                    info.elevation = 24.0;
+                    info.offsets = Some(
+                        mesh.base_positions
+                            .chunks(mesh.size)
+                            .map(|row| {
+                                row.iter()
+                                    .map(|point| DVec3::new(3.0, 4.0, point.x * 0.125))
+                                    .collect()
+                            })
+                            .collect(),
+                    );
+                } else {
+                    for side in &mut tx.solid_mut(solid)?.sides {
+                        for point in &mut side.plane.0 {
+                            point.z += (point.x - 3.0) * 0.125;
+                        }
+                    }
+                }
+                if index == 1 {
+                    edit::tie_to_entity(tx, &[solid], "func_detail", &[])?;
+                }
+                faces.push(face);
+            }
+            Ok(faces.try_into().unwrap())
+        })
+        .unwrap();
+    (document, faces)
+}
+
+#[test]
+fn multiple_planar_terrain_and_flat_fits_use_actual_samples_and_either_quad_anchor() {
+    let (document, faces) = multiple_terrain_fixture();
+    let before = document.vmf().clone();
+    let prepared = displacement::surface::prepare(&before);
+    assert!(prepared.issues.is_empty());
+    for sources in [faces, [faces[2], faces[1], faces[0]]] {
+        let mut document = Document::new(before.clone());
+        let definition = fit_faces(&before, &sources, options()).unwrap();
+        let anchor = fit(&before, sources[0], options()).unwrap();
+        assert_eq!(definition.basis_origin, anchor.basis_origin);
+        assert_eq!(definition.basis_u, anchor.basis_u);
+        assert_eq!(definition.basis_v, anchor.basis_v);
+        assert_eq!(definition.sides, faces.map(|face| face.side));
+        let origin = DVec3::from_array(definition.basis_origin);
+        let normal = DVec3::from_array(definition.basis_normal);
+        let u = DVec3::from_array(definition.basis_u);
+        let v = DVec3::from_array(definition.basis_v);
+        for face in &faces[..2] {
+            let mesh = prepared.get(face).unwrap();
+            assert!(
+                mesh.positions
+                    .iter()
+                    .zip(&mesh.base_positions)
+                    .all(|(point, base)| point.distance(*base) > 4.0)
+            );
+            for point in &mesh.positions {
+                assert!((point.z - (40.0 + (point.x - 3.0) * 0.125)).abs() < 1e-8);
+                assert!(normal.dot(*point - origin).abs() < 1e-8);
+                for (axis, local) in [u.dot(*point - origin), v.dot(*point - origin)]
+                    .into_iter()
+                    .enumerate()
+                {
+                    let min = definition
+                        .uv_points
+                        .iter()
+                        .map(|point| point[axis])
+                        .fold(f64::INFINITY, f64::min);
+                    let max = definition
+                        .uv_points
+                        .iter()
+                        .map(|point| point[axis])
+                        .fold(f64::NEG_INFINITY, f64::max);
+                    assert!(local >= min - 1e-8 && local <= max + 1e-8);
+                }
+            }
+        }
+        let ObjectId::Entity(id) = document
+            .edit("mixed terrain overlay", |tx| {
+                create_faces(tx, &sources, options())
+            })
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        assert_eq!(parse(document.entity(id).unwrap()).unwrap(), definition);
+        let after = document.vmf().clone();
+        let reopened = Vmf::parse(&after.write(&Default::default())).unwrap();
+        assert_eq!(editable_corner_faces(&reopened, id).unwrap().0, faces);
+        document.undo().unwrap();
+        assert_eq!(document.vmf(), &before);
+        document.redo().unwrap();
+        assert_eq!(document.vmf(), &after);
+    }
+}
+
+#[test]
+fn multiple_terrain_sources_refuse_sculpting_seams_and_off_plane_samples_atomically() {
+    let (document, faces) = multiple_terrain_fixture();
+    let original = document.vmf().clone();
+    for case in 0..5 {
+        let mut document = Document::new(original.clone());
+        document
+            .edit("unsupported secondary terrain", |tx| {
+                let ObjectId::Entity(owner) = tx.document().owner_of_solid(faces[1].solid).unwrap()
+                else {
+                    unreachable!()
+                };
+                let info = tx
+                    .entity_mut(owner)?
+                    .solids
+                    .iter_mut()
+                    .find(|solid| solid.id == faces[1].solid)
+                    .unwrap()
+                    .sides[0]
+                    .displacement
+                    .as_mut()
+                    .unwrap();
+                match case {
+                    0 => info.offsets.as_mut().unwrap()[4][4].z += 1.0,
+                    1 => info.offsets.as_mut().unwrap()[0][1] += DVec3::new(1.0, 1.0, 0.125),
+                    2 => info.elevation += 1.0,
+                    3 => {
+                        let ObjectId::Solid(solid) = edit::create_block(
+                            tx,
+                            DVec3::new(32.0, -32.0, 0.0),
+                            DVec3::new(128.0, 32.0, 16.0),
+                            "dev/dev_measuregeneric01",
+                        )?
+                        else {
+                            unreachable!()
+                        };
+                        let face = FaceId {
+                            solid,
+                            side: tx.solid_mut(solid)?.sides[0].id,
+                        };
+                        displacement::edit::create(tx, &[face], 4, 0)?;
+                    }
+                    _ => {
+                        info.elevation += ON_EPSILON * 0.75;
+                        info.offsets.as_mut().unwrap()[4][4].z += ON_EPSILON * 0.75;
+                        assert!(fit(tx.document().vmf(), faces[1], options()).is_ok());
+                    }
+                }
+                Ok(())
+            })
+            .unwrap();
+        let before = document.vmf().clone();
+        assert!(
+            document
+                .edit("invalid mixed terrain overlay", |tx| create_faces(
+                    tx,
+                    &faces,
+                    options()
+                ))
+                .is_err(),
+            "case {case}"
+        );
+        assert_eq!(document.vmf(), &before);
+    }
+}
+
+#[test]
+fn multiple_terrain_rebinding_retains_raw_metadata_and_replaces_complete_sets() {
+    let (mut document, faces) = multiple_terrain_fixture();
+    let ObjectId::Entity(id) = document
+        .edit("terrain overlay", |tx| {
+            create_faces(tx, &faces[..2], options())
+        })
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    document
+        .edit("raw fields", |tx| {
+            let entity = tx.entity_mut(id)?;
+            entity.properties.set("StartU", "01.0000");
+            entity.properties.set("custom", "keep verbatim");
+            entity.connections = Some(vec![source_formats::vmf::Connection {
+                output: "OnUser1".into(),
+                value: "relay,Trigger,,0,-1".into(),
+            }]);
+            Ok(())
+        })
+        .unwrap();
+    for sources in [vec![faces[2], faces[1]], vec![faces[0]], faces.to_vec()] {
+        let before = document.vmf().clone();
+        let original = document.entity(id).unwrap().clone();
+        let (previous, expected) = fit_rebind_faces(&before, id, &sources).unwrap();
+        assert_eq!(
+            previous.iter().map(|face| face.side).collect::<Vec<_>>(),
+            parse(&original).unwrap().sides
+        );
+        assert_eq!(
+            document
+                .edit("rebind terrain set", |tx| rebind_faces(tx, id, &sources))
+                .unwrap(),
+            ObjectId::Entity(id)
+        );
+        assert_eq!(parse(document.entity(id).unwrap()).unwrap(), expected);
+        let mut retained = document.entity(id).unwrap().clone();
+        for key in [
+            "origin",
+            "sides",
+            "BasisOrigin",
+            "BasisNormal",
+            "BasisU",
+            "BasisV",
+            "uv0",
+            "uv1",
+            "uv2",
+            "uv3",
+        ] {
+            retained
+                .properties
+                .set(key, original.properties.get(key).unwrap());
+        }
+        assert_eq!(retained, original);
+        let after = document.vmf().clone();
+        document.undo().unwrap();
+        assert_eq!(document.vmf(), &before);
+        document.redo().unwrap();
+        assert_eq!(document.vmf(), &after);
+    }
+}
+
 #[test]
 fn isolated_planar_terrain_fit_uses_displaced_surface_and_roundtrips_original_side() {
     for detail in [false, true] {
@@ -458,7 +717,15 @@ fn coplanar_multiface_invalid_sources_reject_before_allocating_or_mutating() {
     let mut terrain = Document::new(document.vmf().clone());
     terrain
         .edit("terrain", |tx| {
-            displacement::edit::create(tx, &[faces[1]], 2, 0)
+            displacement::edit::create(tx, &[faces[1]], 2, 0)?;
+            tx.solid_mut(faces[1].solid)?.sides[0]
+                .displacement
+                .as_mut()
+                .unwrap()
+                .distances
+                .as_mut()
+                .unwrap()[2][2] = 1.0;
+            Ok(())
         })
         .unwrap();
     cases.push((terrain.into_vmf(), faces.to_vec(), "terrain"));
@@ -700,7 +967,17 @@ fn checked_imports_and_fitting_share_projection_and_option_validation() {
 
 #[test]
 fn multiface_refit_uses_explicit_current_quad_frame_and_preserves_exact_bindings_and_metadata() {
-    let (mut document, faces) = coplanar_fixture(48.0, true);
+    let (document, faces) = coplanar_fixture(48.0, true);
+    check_multiface_refit(document, faces);
+}
+
+#[test]
+fn multiple_terrain_refit_uses_explicit_displaced_quad_and_preserves_exact_bindings_and_metadata() {
+    let (document, faces) = multiple_terrain_fixture();
+    check_multiface_refit(document, [faces[0], faces[1]]);
+}
+
+fn check_multiface_refit(mut document: Document, faces: [FaceId; 2]) {
     let ObjectId::Entity(id) = document
         .edit("overlay", |tx| create_faces(tx, &faces, options()))
         .unwrap()
@@ -1347,6 +1624,7 @@ fn corner_edits_keep_the_imported_frame_binding_settings_and_metadata() {
         .into_iter()
         .chain([(document, faces.to_vec())])
         .chain([terrain_fixture(false)].map(|(document, face)| (document, vec![face])))
+        .chain([multiple_terrain_fixture()].map(|(document, faces)| (document, faces.to_vec())))
     {
         let face = faces[0];
         let anchor_first = faces.iter().rev().copied().collect::<Vec<_>>();

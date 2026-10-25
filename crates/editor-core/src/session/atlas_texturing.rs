@@ -1,9 +1,11 @@
 use std::collections::BTreeSet;
 
 use map_core::surface::FaceId;
+use map_core::texture_atlas::regions::MAX_TEXTURE_AXIS;
 pub use map_core::texture_atlas::{FitMode, FitOptions, FitRegion, Rectangle};
 use render::materials::{material_identity, resolved_material_limited};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use source_formats::gamefs::asset_relative;
 use source_formats::vmt::{DuplicateOperations, Material, texture_path, texture_transform};
 use source_formats::vtf::{RgbaImage, Vtf};
@@ -15,9 +17,10 @@ pub const MAX_PREVIEW_SIDE: u32 = 256;
 pub const MAX_TEXTURE_BYTES: usize = 32 * 1024 * 1024;
 pub const MAX_MATERIAL_BYTES: usize = 1024 * 1024;
 pub const MAX_DECODE_PIXELS: u64 = 16 * 1024 * 1024;
-const MAX_TEXTURE_AXIS: u32 = 8192;
 const MAX_ASSET_PATH_BYTES: usize = 512;
 const DYNAMIC_TEXTURE_FLAGS: u32 = 0x0001_8800;
+
+mod regions;
 
 #[derive(Debug)]
 pub struct Atlas {
@@ -161,6 +164,31 @@ impl Session {
             return Err("Atlas fit requires one static 2D base texture, at most 8192 pixels per axis, matching the editor's UV dimensions".into());
         }
         let image = thumbnail(base)?;
+        let mut identity = Sha256::new();
+        identity.update(b"hammerr-atlas-image-v1\0");
+        identity.update((material.params.len() as u64).to_le_bytes());
+        for value in std::iter::once(material.shader.as_str()).chain(
+            material
+                .params
+                .iter()
+                .flat_map(|(key, value)| [key.as_str(), value.as_str()]),
+        ) {
+            identity.update((value.len() as u64).to_le_bytes());
+            identity.update(value.as_bytes());
+        }
+        identity.update(texture.as_bytes());
+        identity.update(base.width.to_le_bytes());
+        identity.update(base.height.to_le_bytes());
+        identity.update(base.flags.to_le_bytes());
+        identity.update(format!("{:?}", base.format).as_bytes());
+        identity.update([base.mip_count]);
+        for mip in 0..base.mip_count {
+            identity.update(
+                base.image_data(mip, 0, 0)
+                    .map_err(|error| error.to_string())?,
+            );
+        }
+        let image_identity = format!("{:x}", identity.finalize());
         let snapshot = format!(
             "{}:{}:{}:{}x{}",
             self.content_epoch,
@@ -170,7 +198,7 @@ impl Session {
             base.height
         );
         Ok(Atlas {
-            report: json!({"material":name,"texture":texture,"width":base.width,"height":base.height,
+            report: json!({"material":name,"texture":texture,"width":base.width,"height":base.height,"image_identity":image_identity,
                 "asset_generation":self.materials.generation().to_string(),"content_epoch":self.content_epoch.to_string(),"snapshot":snapshot,
                 "preview_width":image.width,"preview_height":image.height,
                 "coordinate_system":"Integer texture edges, origin at top left; X grows right and Y grows down.",

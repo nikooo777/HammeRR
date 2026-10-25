@@ -3,6 +3,8 @@ use glam::{DVec2, DVec3};
 use crate::surface::{self, FaceId, Projection, SurfaceEdit, placed_projection};
 use crate::{Document, EditError, surface_group};
 
+pub mod regions;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rectangle {
     pub x: u32,

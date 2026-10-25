@@ -18,7 +18,7 @@ The integrated compiler is experimental. File operations, BSP publication and ga
 | [Brushes](brushes.md) | Shapes, handles, exact transforms, pivots with explicit grid snapping and saved defaults, mirror and shear. | Magnetic snapping and surface-attached pivots. |
 | [Brush tools](brush-tools.md) | Hollow, carve, clip, convex merge and polygon extrusion. | Concave merge and holes. |
 | [Components](components.md) | Move, rotate, scale, weld, split, ridges and partitions. | General topology editing and arbitrary dividing lines. |
-| [Materials](textures.md) | Grouped browsing, favorites, mapping, painting, wrapping, replacement, image-picked padded atlas rectangles with coplanar continuity and face lighting. | Full native shader preview. |
+| [Materials](textures.md) | Grouped browsing, favorites, mapping, painting, wrapping, replacement, saved named atlas regions, padded image fitting with coplanar continuity and face lighting. | Full native shader preview. |
 | [Normal maps](normal-maps.md) | Supported flat-brush normal textures. | Terrain/model normal maps and special encodings. |
 | [Lighting preview](lighting-preview.md) | Unshadowed point, spot and sun lighting with checked receivers. | Shadows, sky visibility, bounce and native brightness match. |
 | [Terrain](terrain.md) | Creation, sculpting, blending, masks, handles, resizing, sewing and full/half-edge subdivision. | Holes, triangle removal and general fractional joins. |
@@ -45,7 +45,7 @@ The integrated compiler is experimental. File operations, BSP publication and ga
 | [Static props](static-props.md) | Models, checked collision choices, shadows, ambient/vertex lighting and nested material edits for packing and cutout receivers. | Exact hull leaf membership and general materials/bodygroups. |
 | [Detail props](material-detail-scattering.md) | Explicit and generated decorative models, cards, cross/tri shapes and supported lighting. | Editor display of final generated details. |
 | [Reflections](reflections.md) | Private LDR or paired LDR/HDR captures and verified packing. | Recursive reflection bounces and unsupported capture scenes. |
-| [Overlays](overlays.md) | Coplanar face-group and isolated planar-terrain fitting, refit, rebind and corner editing; native projections, face splitting and water transitions. | Joined or nonplanar terrain authoring; projected-material viewport preview. |
+| [Overlays](overlays.md) | Coplanar flat, isolated planar-terrain and mixed-group fitting, refit, rebind and corner editing; native projections, face splitting and water transitions. | Joined or nonplanar terrain authoring; projected-material viewport preview. |
 | [Assemblies](instances.md) | Checked transforms, stationary child poses, local spotlight targets and per-reference colors, gains, percentage or legacy coefficient falloff, sun spread, cones, focus and signed spotlight pitch. | General runtime entities, scripting and name fixups. |
 | [Visibility helpers](occluders.md) | Occluders and eligible visibility-cluster volumes. | Unsupported memberships and dynamic child control. |
 | [Inspection](baked-lightmaps.md) | Owned face lightmaps, prop vertex bytes and native light records. | Unreportable physical paths show stale provenance; no full baked-output viewport rendering. |

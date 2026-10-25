@@ -20,6 +20,8 @@ struct Target {
     token: Option<u64>,
     reviewed: Option<String>,
     drag: Option<RectangleDrag>,
+    catalog: Option<Value>,
+    saved_regions: Vec<Value>,
 }
 
 struct RectangleDrag {
@@ -301,7 +303,10 @@ fn inspect(window: &AtlasWindow, target: &mut Target, session: &mut Session) -> 
     window.set_loaded(true);
     window.set_ready(false);
     if !rectangle(window).is_ok_and(|rectangle| rectangle.validate([width, height]).is_ok())
-        || target.atlas.is_none()
+        || target
+            .atlas
+            .as_ref()
+            .is_none_or(|previous| previous["image_identity"] != atlas.report["image_identity"])
     {
         window.set_region_x("0".into());
         window.set_region_y("0".into());
@@ -321,7 +326,152 @@ fn inspect(window: &AtlasWindow, target: &mut Target, session: &mut Session) -> 
     );
     target.atlas = Some(atlas.report);
     target.reviewed = None;
+    refresh_regions(window, target, session, None)?;
     show_rectangle(window);
+    Ok(())
+}
+
+fn refresh_regions(
+    window: &AtlasWindow,
+    target: &mut Target,
+    session: &Session,
+    selected: Option<u32>,
+) -> Result<(), String> {
+    let catalog = session.atlas_regions_state()?;
+    let material = window.get_material();
+    target.saved_regions = catalog["regions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|region| region["material"].as_str() == Some(material.as_str()))
+        .cloned()
+        .collect();
+    let identity = target.atlas.as_ref().map(|atlas| &atlas["image_identity"]);
+    window.set_saved_regions(ModelRc::new(VecModel::from(
+        target
+            .saved_regions
+            .iter()
+            .map(|region| {
+                let suffix = if identity == Some(&region["image_identity"]) {
+                    ""
+                } else {
+                    " (source changed)"
+                };
+                format!("{}{suffix}", region["name"].as_str().unwrap()).into()
+            })
+            .collect::<Vec<_>>(),
+    )));
+    let index = selected.and_then(|id| {
+        target
+            .saved_regions
+            .iter()
+            .position(|region| region["id"].as_u64() == Some(u64::from(id)))
+    });
+    window.set_saved_region_index(index.map_or(-1, |index| index as i32));
+    target.catalog = Some(catalog);
+    window.set_catalog_editable(!session.has_face_preview());
+    Ok(())
+}
+
+fn selected_region(window: &AtlasWindow, target: &Target) -> Result<Value, String> {
+    usize::try_from(window.get_saved_region_index())
+        .ok()
+        .and_then(|index| target.saved_regions.get(index))
+        .cloned()
+        .ok_or_else(|| "Choose a saved atlas region first".into())
+}
+
+fn choose_saved_region(
+    window: &AtlasWindow,
+    target: &mut Target,
+    session: &mut Session,
+) -> Result<(), String> {
+    target.check(session)?;
+    if target.drag.is_some() {
+        return Err("Finish or cancel rectangle selection before choosing a saved region".into());
+    }
+    let saved = selected_region(window, target)?;
+    let atlas = target.atlas.as_ref().ok_or("Inspect the material first")?;
+    let catalog = target
+        .catalog
+        .as_ref()
+        .ok_or("Inspect the saved regions first")?;
+    let chosen = session.choose_atlas_region(
+        saved["id"].as_u64().unwrap() as u32,
+        &window.get_material(),
+        atlas["snapshot"].as_str().unwrap(),
+        catalog["snapshot"].as_str().unwrap(),
+    )?;
+    set_rectangle_fields(
+        window,
+        ["x", "y", "width", "height"].map(|field| chosen["rectangle"][field].to_string().into()),
+    );
+    window.set_region_padding(chosen["padding"].to_string().into());
+    window.set_saved_region_name(chosen["name"].as_str().unwrap().into());
+    window.set_ready(false);
+    target.reviewed = None;
+    show_rectangle(window);
+    window.set_message("Saved region chosen. Preview atlas fit before applying.".into());
+    Ok(())
+}
+
+fn edit_saved_region(
+    window: &AtlasWindow,
+    target: &mut Target,
+    session: &mut Session,
+    operation: i32,
+) -> Result<(), String> {
+    target.check(session)?;
+    if target.drag.is_some() {
+        return Err("Finish or cancel rectangle selection before changing saved regions".into());
+    }
+    let snapshot = target
+        .catalog
+        .as_ref()
+        .ok_or("Inspect the saved regions first")?["snapshot"]
+        .as_str()
+        .unwrap();
+    let state = match operation {
+        0 => {
+            let atlas = target.atlas.as_ref().ok_or("Inspect the material first")?;
+            session.save_atlas_region(
+                Actor::User,
+                &window.get_saved_region_name(),
+                &window.get_material(),
+                region(window)?,
+                atlas["snapshot"].as_str().unwrap(),
+                snapshot,
+            )?
+        }
+        1 => session.rename_atlas_region(
+            Actor::User,
+            selected_region(window, target)?["id"].as_u64().unwrap() as u32,
+            &window.get_saved_region_name(),
+            snapshot,
+        )?,
+        2 => session.delete_atlas_region(
+            Actor::User,
+            selected_region(window, target)?["id"].as_u64().unwrap() as u32,
+            snapshot,
+        )?,
+        _ => return Err("Unknown saved atlas region action".into()),
+    };
+    let selected = if operation == 0 {
+        state["saved_id"].as_u64().map(|id| id as u32)
+    } else if operation == 1 {
+        Some(selected_region(window, target)?["id"].as_u64().unwrap() as u32)
+    } else {
+        None
+    };
+    target.context = face_edit_ui::Context::capture(session, target.context.faces.clone());
+    target.reviewed = None;
+    window.set_ready(false);
+    refresh_regions(window, target, session, selected)?;
+    window.set_message(match operation {
+        0 => "Region saved in the map in one Undo step. Preview atlas fit to use the current rectangle.",
+        1 => "Region renamed in one Undo step.",
+        _ => "Region deleted in one Undo step.",
+    }.into());
     Ok(())
 }
 
@@ -342,6 +492,7 @@ fn preview(window: &AtlasWindow, target: &mut Target, session: &mut Session) -> 
     target.token = session.face_preview_token();
     target.reviewed = Some(fields(window));
     window.set_ready(true);
+    window.set_catalog_editable(false);
     window.set_message(
         format!(
             "Preview fits usable UV {}. Apply to keep exactly this fit in one Undo step.",
@@ -394,6 +545,52 @@ impl Controller {
     pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let window = AtlasWindow::new()?;
         let target = Rc::new(RefCell::new(None::<Target>));
+        window.on_select_saved_region({
+            let (window, target, access) = (window.as_weak(), target.clone(), access.downgrade());
+            move || {
+                with_window(&window, &access, |window, _| {
+                    if let Some(target) = target.borrow().as_ref()
+                        && let Ok(region) = selected_region(window, target)
+                    {
+                        window.set_saved_region_name(region["name"].as_str().unwrap().into());
+                    }
+                });
+            }
+        });
+        window.on_choose_saved_region({
+            let (window, target, access) = (window.as_weak(), target.clone(), access.downgrade());
+            move || {
+                with_window(&window, &access, |window, shared| {
+                    if let Some(target) = target.borrow_mut().as_mut()
+                        && let Err(error) = choose_saved_region(window, target, &mut lock(shared))
+                    {
+                        window.set_message(error.into());
+                    }
+                });
+            }
+        });
+        let edit_region = {
+            let (window, target, access) = (window.as_weak(), target.clone(), access.downgrade());
+            move |operation| {
+                with_window(&window, &access, |window, shared| {
+                    if let Some(target) = target.borrow_mut().as_mut()
+                        && let Err(error) =
+                            edit_saved_region(window, target, &mut lock(shared), operation)
+                    {
+                        window.set_message(error.into());
+                    }
+                });
+            }
+        };
+        window.on_save_region({
+            let edit_region = edit_region.clone();
+            move || edit_region(0)
+        });
+        window.on_rename_region({
+            let edit_region = edit_region.clone();
+            move || edit_region(1)
+        });
+        window.on_delete_region(move || edit_region(2));
         window.on_rectangle_pointer({
             let (window, target, access) = (window.as_weak(), target.clone(), access.downgrade());
             move |phase, x, y| {
@@ -568,6 +765,8 @@ impl Controller {
             token: None,
             reviewed: None,
             drag: None,
+            catalog: None,
+            saved_regions: Vec::new(),
         };
         self.window.set_selection_label(
             format!("Fit {} selected flat faces", target.context.faces.len()).into(),
@@ -583,6 +782,12 @@ impl Controller {
                 .collect::<Vec<_>>(),
         )));
         self.window.set_material(material.into());
+        self.window.set_saved_region_name("".into());
+        self.window.set_saved_regions(ModelRc::new(VecModel::from(
+            Vec::<slint::SharedString>::new(),
+        )));
+        self.window.set_saved_region_index(-1);
+        self.window.set_catalog_editable(false);
         self.window.set_loaded(false);
         self.window.set_ready(false);
         self.window.set_stale(false);
@@ -621,6 +826,8 @@ impl Controller {
 
     pub fn refresh(&self, session: &Session) {
         if let Some(target) = self.target.borrow_mut().as_mut() {
+            self.window
+                .set_catalog_editable(!session.has_face_preview());
             let epoch = session.build_content_epoch().to_string();
             let assets_changed = target
                 .atlas

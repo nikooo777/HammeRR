@@ -173,6 +173,33 @@ fn unresolved_template_lights_have_explicit_diagnostics_without_hiding_valid_lam
                 ("_fifty_percent_distance", "64"),
             ],
         ),
+        add(
+            &mut session,
+            "light",
+            Some(DVec3::Z * 64.0),
+            &[("_light", "255 255 255 10"), ("_distance", "$Radius")],
+        ),
+        add(
+            &mut session,
+            "light_spot",
+            Some(DVec3::Z * 64.0),
+            &[
+                ("_light", "255 255 255 10"),
+                ("_distance", "$UnusedRadius"),
+                ("_fifty_percent_distance", "64"),
+                ("pitch", "-90"),
+            ],
+        ),
+        add(
+            &mut session,
+            "light",
+            Some(DVec3::Z * 64.0),
+            &[
+                ("_light", "255 255 255 10"),
+                ("_hardfalloff", "$Hard"),
+                ("_fifty_percent_distance", "64"),
+            ],
+        ),
     ];
     enable(&mut session);
     let source = session.document().vmf().clone();

@@ -9,6 +9,7 @@ pub(super) enum Kind {
     Point,
     Spot,
     Environment,
+    Fog,
     StaticProp,
     LightingOrigin,
     SpotlightTarget,
@@ -20,6 +21,7 @@ impl Kind {
         match self {
             Self::Point | Self::Spot => "light",
             Self::Environment => "environment light",
+            Self::Fog => "fog controller",
             Self::StaticProp => "prop",
             Self::LightingOrigin => "lighting origin",
             Self::SpotlightTarget => "spotlight target",
@@ -33,6 +35,7 @@ pub(super) fn kind(entity: &Entity) -> Option<Kind> {
         "light" => Some(Kind::Point),
         "light_spot" => Some(Kind::Spot),
         "light_environment" => Some(Kind::Environment),
+        "env_fog_controller" => Some(Kind::Fog),
         "prop_static" => Some(Kind::StaticProp),
         "info_lighting" => Some(Kind::LightingOrigin),
         "info_target" => Some(Kind::SpotlightTarget),
@@ -81,6 +84,9 @@ fn admit_light(
     template: bool,
     targets: &map_core::light::Targets<'_>,
 ) -> Result<(), String> {
+    if matches!(kind, Kind::Fog) {
+        return fog::admit(entity);
+    }
     if matches!(kind, Kind::PlayerSpawn) {
         return spawns::admit(entity);
     }
@@ -230,6 +236,9 @@ pub(super) fn check_pose(entity: &Entity, kind: Kind) -> Result<(), String> {
 }
 
 fn check_pose_parameters(entity: &Entity, kind: Kind, template: bool) -> Result<(), String> {
+    if matches!(kind, Kind::Fog) {
+        return fog::check_pose(entity);
+    }
     if matches!(kind, Kind::PlayerSpawn) {
         return spawns::check_pose(entity);
     }

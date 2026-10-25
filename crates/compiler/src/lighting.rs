@@ -1346,6 +1346,122 @@ mod input_tests {
     }
 
     #[test]
+    fn deferred_radius_and_hard_falloff_validate_known_selected_constraints_without_defaults() {
+        for fields in [
+            vec![("_distance", "$Radius")],
+            vec![("_hardfalloff", "$Hard")],
+            vec![("_distance", "$Radius"), ("_hardfalloff", "$Hard")],
+            vec![
+                ("_fifty_percent_distance", "64"),
+                ("_zero_percent_distance", "160"),
+                ("_hardfalloff", "$Hard"),
+            ],
+        ] {
+            let mut source = entity(&fields);
+            source
+                .properties
+                .push(("_light".into(), "255 128 32 200".into()));
+            for kind in [LightingKind::Ldr, LightingKind::Hdr] {
+                assert!(
+                    PointLight::parse(&source, 0, kind, true).unwrap().is_none(),
+                    "{fields:?}"
+                );
+                assert!(PointLight::from_entity_kind(&source, 0, kind).is_err());
+            }
+        }
+        for fields in [
+            vec![("_distance", "$Radius"), ("_hardfalloff", "1")],
+            vec![("_fifty_percent_distance", "$Half"), ("_hardfalloff", "2")],
+            vec![
+                ("_fifty_percent_distance", "$Half"),
+                ("_hardfalloff", "NaN"),
+            ],
+            vec![
+                ("_fifty_percent_distance", "$Half"),
+                ("_hardfalloff", "0 1"),
+            ],
+            vec![("_hardfalloff", "$Hard"), ("_distance", "-1")],
+            vec![("_hardfalloff", "$Hard"), ("_distance", "NaN")],
+            vec![("_hardfalloff", "$Hard"), ("_distance", "1e40")],
+            vec![("_hardfalloff", "$Hard"), ("_distance", "1e-60")],
+            vec![("_distance", "$Radius"), ("_linear_attn", "-1")],
+            vec![("_zero_percent_distance", "$End"), ("_distance", "-1")],
+            vec![
+                ("_zero_percent_distance", "$End"),
+                ("_constant_attn", "1e-100"),
+            ],
+            vec![("_hardfalloff", "$Hard"), ("_zero_percent_distance", "1")],
+            vec![
+                ("_fifty_percent_distance", "64"),
+                ("_zero_percent_distance", "32"),
+                ("_hardfalloff", "$Hard"),
+            ],
+            vec![
+                ("_fifty_percent_distance", "2e38"),
+                ("_hardfalloff", "$Hard"),
+            ],
+        ] {
+            assert!(
+                falloff::Falloff::read(&entity(&fields), true).is_err(),
+                "{fields:?}"
+            );
+        }
+        for hard in ["0", "1"] {
+            let source = entity(&[
+                ("_fifty_percent_distance", "64"),
+                ("_zero_percent_distance", "160"),
+                ("_hardfalloff", hard),
+                ("_distance", "$Radius"),
+            ]);
+            let actual = falloff::Falloff::read(&source, true).unwrap().unwrap();
+            let expected = falloff::Falloff::read(
+                &entity(&[
+                    ("_fifty_percent_distance", "64"),
+                    ("_zero_percent_distance", "160"),
+                    ("_hardfalloff", hard),
+                ]),
+                false,
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(actual.coefficients, expected.coefficients);
+            assert_eq!(actual.cap, expected.cap);
+            assert_eq!(actual.fade, expected.fade);
+            assert_eq!(actual.radius, 0.0);
+            if hard == "1" {
+                assert_eq!(actual.factor(160.0).unwrap(), 0.0);
+                assert!(actual.factor(100.0).unwrap() > 0.0);
+            }
+        }
+        let absent = falloff::Falloff::read(&entity(&[]), true).unwrap().unwrap();
+        let empty =
+            falloff::Falloff::read(&entity(&[("_distance", ""), ("_hardfalloff", "")]), true)
+                .unwrap()
+                .unwrap();
+        assert_eq!(empty.radius, absent.radius);
+        assert_eq!(empty.coefficients, absent.coefficients);
+        assert_eq!(empty.fade, absent.fade);
+        let radius = falloff::Falloff::read(&entity(&[("_distance", "192.5")]), false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(radius.radius, 192.5);
+        assert!(radius.factor(192.5).unwrap() > 0.0);
+        assert_eq!(radius.factor(193.0).unwrap(), 0.0);
+        let source = entity(&[("_light", "255 128 32 200"), ("_distance", "1e-60")]);
+        for kind in [LightingKind::Ldr, LightingKind::Hdr] {
+            assert!(PointLight::from_entity_kind(&source, 0, kind).is_err());
+        }
+        let source = entity(&[("_fifty_percent_distance", "64"), ("_distance", "1e-60")]);
+        assert_eq!(
+            falloff::Falloff::read(&source, false)
+                .unwrap()
+                .unwrap()
+                .radius,
+            0.0
+        );
+    }
+
+    #[test]
     fn ldr_keeps_first_tuple_and_ignores_hdr_fields() {
         let reference = PointLight::from_entity(&entity(&[("_light", "255 0 0 120")]), 7).unwrap();
         for fields in [

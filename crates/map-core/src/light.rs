@@ -24,6 +24,8 @@ pub enum ValueKind {
     Color,
     HdrGain,
     FalloffDistance,
+    FalloffRadius,
+    HardFalloff,
     AttenuationCoefficient,
     SunSpreadAngle,
     SpotlightAngle,
@@ -35,7 +37,7 @@ const ALL_VALUE_CLASSES: &[&str] = &["light", "light_spot", "light_environment"]
 const POINT_VALUE_CLASSES: &[&str] = &["light", "light_spot"];
 const SUN_VALUE_CLASSES: &[&str] = &["light_environment"];
 const SPOT_VALUE_CLASSES: &[&str] = &["light_spot"];
-static VALUE_FIELDS: [(&str, &[&str], ValueKind); 16] = [
+static VALUE_FIELDS: [(&str, &[&str], ValueKind); 18] = [
     ("_light", ALL_VALUE_CLASSES, ValueKind::Color),
     ("_lightHDR", ALL_VALUE_CLASSES, ValueKind::Color),
     ("_ambient", SUN_VALUE_CLASSES, ValueKind::Color),
@@ -76,6 +78,8 @@ static VALUE_FIELDS: [(&str, &[&str], ValueKind); 16] = [
         POINT_VALUE_CLASSES,
         ValueKind::AttenuationCoefficient,
     ),
+    ("_distance", POINT_VALUE_CLASSES, ValueKind::FalloffRadius),
+    ("_hardfalloff", POINT_VALUE_CLASSES, ValueKind::HardFalloff),
 ];
 
 pub fn value_fields() -> impl Iterator<Item = (&'static str, &'static [&'static str], ValueKind)> {
@@ -278,8 +282,13 @@ mod tests {
     #[test]
     fn falloff_distance_parameters_are_limited_to_point_and_spot_fields() {
         for class in ["light", "light_spot"] {
-            for key in ["_fifty_percent_distance", "_ZERO_PERCENT_DISTANCE"] {
-                assert_eq!(value_kind(class, key), Some(ValueKind::FalloffDistance));
+            for (key, kind) in [
+                ("_fifty_percent_distance", ValueKind::FalloffDistance),
+                ("_ZERO_PERCENT_DISTANCE", ValueKind::FalloffDistance),
+                ("_distance", ValueKind::FalloffRadius),
+                ("_HARDFALLOFF", ValueKind::HardFalloff),
+            ] {
+                assert_eq!(value_kind(class, key), Some(kind));
                 assert_eq!(
                     value_parameter(class, key, "$Distance_1"),
                     Some("Distance_1")
@@ -292,7 +301,10 @@ mod tests {
             ("light_environment", "_fifty_percent_distance"),
             ("light_environment", "_zero_percent_distance"),
             ("light_dynamic", "_fifty_percent_distance"),
-            ("light", "_distance"),
+            ("light_environment", "_distance"),
+            ("light_environment", "_hardfalloff"),
+            ("light_dynamic", "_distance"),
+            ("light_dynamic", "_hardfalloff"),
             ("light_environment", "_quadratic_attn"),
             ("light", "_cone"),
         ] {
@@ -321,7 +333,7 @@ mod tests {
                 assert_eq!(value_parameter(class, key, "$Coefficient"), None);
             }
         }
-        for key in ["_distance", "_hardfalloff", "angles", "angle"] {
+        for key in ["angles", "angle"] {
             assert_eq!(value_parameter("light", key, "$Coefficient"), None);
         }
     }

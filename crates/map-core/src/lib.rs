@@ -11,6 +11,7 @@ pub mod displacement;
 pub mod document;
 pub mod edit;
 pub mod entity_helpers;
+pub mod fog;
 pub mod groups;
 pub mod hollow;
 pub mod layers;

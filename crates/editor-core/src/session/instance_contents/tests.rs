@@ -5,6 +5,7 @@ use map_core::edit;
 mod brush_models;
 mod cubemaps;
 mod environment_lights;
+mod fog_controllers;
 mod light_appearances;
 mod light_value_bindings;
 mod lighting_origins;
@@ -386,6 +387,105 @@ fn refresh(session: &mut Session, actor: Actor) -> Value {
     session
         .finish_instance_contents_refresh(actor, result)
         .unwrap()
+}
+
+#[test]
+fn child_atlas_metadata_refresh_compile_and_metadata_only_staleness_share_original_sources() {
+    use map_core::texture_atlas::regions::{Region, Regions};
+    use map_core::texture_atlas::{FitRegion, Rectangle};
+    use sha2::{Digest, Sha256};
+
+    for actor in [Actor::User, Actor::Agent] {
+        let (_directory, mut session, source, child, owner) = opened(actor);
+        session.select(&[owner], SelectMode::Replace).unwrap();
+        let plain = refresh(&mut session, actor);
+        assert_eq!(plain["state"], "ready", "{plain}");
+        let memory = session.document().vmf().clone();
+        let history = session.history_snapshot();
+        let camera = session.camera();
+        let parent_bytes = std::fs::read(&source).unwrap();
+        let mut document =
+            Document::new(Vmf::parse(&std::fs::read_to_string(&child).unwrap()).unwrap());
+        let mut catalog = Regions {
+            regions: vec![Region {
+                id: 1,
+                name: "Panel".into(),
+                material: "unmounted/editor_only_atlas".into(),
+                image_identity: "a".repeat(64),
+                dimensions: [64, 32],
+                region: FitRegion {
+                    rectangle: Rectangle {
+                        x: 16,
+                        y: 8,
+                        width: 32,
+                        height: 16,
+                    },
+                    padding: 2,
+                },
+                extra: Vec::new(),
+            }],
+            extra: vec![source_formats::keyvalues::Node::string(
+                "extension",
+                "original bytes",
+            )],
+        };
+        document
+            .edit("save atlas region", |tx| catalog.clone().write(tx))
+            .unwrap();
+        let child_bytes = document.vmf().write(&Default::default()).into_bytes();
+        std::fs::write(&child, &child_bytes).unwrap();
+        assert_eq!(
+            session.inspect_instance_contents(0, 64).unwrap()["state"],
+            "stale"
+        );
+        let report = refresh(&mut session, actor);
+        assert_eq!(report["state"], "ready", "{report}");
+        assert_eq!(report["geometry"], plain["geometry"]);
+        assert_eq!(report["face_provenance"], plain["face_provenance"]);
+        assert_eq!(
+            report["stats"]["dependencies"][0]["bytes"],
+            child_bytes.len()
+        );
+        assert_eq!(
+            report["stats"]["dependencies"][0]["sha256"],
+            format!("{:x}", Sha256::digest(&child_bytes))
+        );
+        let request = session.begin_compile(actor, None).unwrap();
+        let result = request.run();
+        assert!(
+            result.as_ref().unwrap().output.bsp.is_some(),
+            "{:?}",
+            result.as_ref().unwrap().output.report
+        );
+        session.finish_compile(actor, &result);
+        assert!(result.as_ref().unwrap().published());
+        assert_eq!(session.compile_status()["job"]["stale"], false);
+        let published = std::fs::read(source.with_extension("bsp")).unwrap();
+        assert_eq!(std::fs::read(&child).unwrap(), child_bytes);
+        drop(result);
+
+        catalog.regions[0].name = "Renamed metadata only".into();
+        document
+            .edit("rename atlas region", |tx| catalog.write(tx))
+            .unwrap();
+        std::fs::write(&child, document.vmf().write(&Default::default())).unwrap();
+        assert_eq!(session.compile_status()["job"]["stale"], true);
+        assert_eq!(
+            session.inspect_instance_contents(0, 64).unwrap()["state"],
+            "stale"
+        );
+        assert!(session.instance_contents_preview(true).mesh.is_none());
+        assert_eq!(refresh(&mut session, actor)["state"], "ready");
+        assert_eq!(
+            std::fs::read(source.with_extension("bsp")).unwrap(),
+            published
+        );
+        assert_eq!(session.document().vmf(), &memory);
+        assert_eq!(session.history_snapshot(), history);
+        assert_eq!(session.camera(), camera);
+        assert_eq!(session.selected_ids(), vec![owner]);
+        assert_eq!(std::fs::read(&source).unwrap(), parent_bytes);
+    }
 }
 
 #[test]

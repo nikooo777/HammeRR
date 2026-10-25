@@ -11,6 +11,8 @@ const FGD: &str = r#"
     _constant_attn(string) : "Constant" : "0"
     _linear_attn(string) : "Linear" : "0"
     _quadratic_attn(string) : "Quadratic" : "1"
+    _distance(integer) : "Maximum distance" : 0
+    _hardfalloff(integer) : "hard falloff" : 0
 ]
 @PointClass base(Light) = light []
 @PointClass base(Light) = light_spot [
@@ -34,6 +36,16 @@ fn bound(actor: Actor) -> (tempfile::TempDir, Session, PathBuf, PathBuf, u32) {
             ("_fifty_percent_distance".into(), "$Half".into()),
             ("_zero_percent_distance".into(), "$End".into()),
         ]);
+        properties.insert("_distance".into(), "$Radius".into());
+        properties.insert(
+            "_hardfalloff".into(),
+            if classname == "light" {
+                "0"
+            } else {
+                "$Coefficient"
+            }
+            .into(),
+        );
         if classname == "light" {
             properties.insert("_fifty_percent_distance".into(), "0".into());
             properties.insert("_zero_percent_distance".into(), "0".into());
@@ -97,7 +109,7 @@ fn bound(actor: Actor) -> (tempfile::TempDir, Session, PathBuf, PathBuf, u32) {
                     ),
                     (
                         "replace07".into(),
-                        format!("$Coefficient {}", if row == 0 { "0" } else { "0.5" }),
+                        format!("$Coefficient {}", if row == 0 { "0" } else { "1" }),
                     ),
                     (
                         "replace08".into(),
@@ -107,7 +119,10 @@ fn bound(actor: Actor) -> (tempfile::TempDir, Session, PathBuf, PathBuf, u32) {
                         "replace09".into(),
                         format!("$End {}", if row == 0 { 160 } else { 0 }),
                     ),
-                    ("replace10".into(), String::new()),
+                    (
+                        "replace10".into(),
+                        format!("$Radius {}", if row == 0 { 192 } else { 384 }),
+                    ),
                 ]),
             )
             .unwrap()
@@ -201,6 +216,9 @@ fn unused_and_invalid_bindings_still_fail_refresh_and_compile_without_publicatio
             ("replace03", "$1invalid 255 220 180 400", true),
             ("replace07", "$Coefficient NaN", false),
             ("replace07", "$Coefficient 1e-100", false),
+            ("replace10", "$Radius -1", false),
+            ("replace10", "$Radius 1e-60", false),
+            ("replace07", "$Coefficient 0.5", false),
         ] {
             let (_directory, mut session, parent, child, owner) = bound(actor);
             session

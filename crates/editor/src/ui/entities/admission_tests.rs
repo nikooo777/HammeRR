@@ -52,6 +52,8 @@ fn unresolved_light_scalar_rows_keep_declared_types_and_raw_text_controls() {
         _constant_attn(string) : "Constant" : "0"
         _linear_attn(string) : "Linear" : "0"
         _quadratic_attn(string) : "Quadratic" : "1"
+        _distance(integer) : "Maximum distance" : 0
+        _hardfalloff(integer) : "hard falloff" : 0
     ]
     @PointClass = light_spot [
         _inner_cone(integer) : "Inner (bright) angle" : 30
@@ -88,6 +90,8 @@ fn unresolved_light_scalar_rows_keep_declared_types_and_raw_text_controls() {
                 ("_constant_attn".into(), "$Constant".into()),
                 ("_linear_attn".into(), "$Linear".into()),
                 ("_quadratic_attn".into(), "$Quadratic".into()),
+                ("_distance".into(), "$Radius".into()),
+                ("_hardfalloff".into(), "$Hard".into()),
             ]),
         )
         .unwrap()
@@ -124,12 +128,12 @@ fn unresolved_light_scalar_rows_keep_declared_types_and_raw_text_controls() {
                 || field.key == "SunSpreadAngle"
                 || matches!(
                     field.key.as_str(),
-                    "_inner_cone" | "_cone" | "_exponent" | "pitch"
+                    "_inner_cone" | "_cone" | "_exponent" | "pitch" | "_hardfalloff"
                 )
         })
         .map(property_row)
         .collect();
-    assert_eq!(rows.len(), 12);
+    assert_eq!(rows.len(), 14);
     for row in rows {
         assert_eq!(
             row.type_name,
@@ -138,7 +142,10 @@ fn unresolved_light_scalar_rows_keep_declared_types_and_raw_text_controls() {
                 "$Half" | "$End" | "$Constant" | "$Linear" | "$Quadratic"
             ) {
                 "string"
-            } else if matches!(row.value.as_str(), "$Inner" | "$Outer" | "$Focus" | "$Tilt") {
+            } else if matches!(
+                row.value.as_str(),
+                "$Inner" | "$Outer" | "$Focus" | "$Tilt" | "$Radius" | "$Hard"
+            ) {
                 "integer"
             } else {
                 "float"

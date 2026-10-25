@@ -70,6 +70,12 @@ pub(super) fn light_value_binding_scope() -> Value {
         "sun_spread_properties":properties_for_kind(ValueKind::SunSpreadAngle),"sun_spread_classes":classes_for_kind(ValueKind::SunSpreadAngle),"sun_spread_degrees":[0,90],
         "falloff_distance_properties":properties_for_kind(ValueKind::FalloffDistance),
         "falloff_distance_classes":classes_for_kind(ValueKind::FalloffDistance),
+        "falloff_radius_properties":properties_for_kind(ValueKind::FalloffRadius),
+        "falloff_radius_classes":classes_for_kind(ValueKind::FalloffRadius),
+        "falloff_radius_precedence":"positive 50% distance selects percentage falloff instead",
+        "hard_falloff_properties":properties_for_kind(ValueKind::HardFalloff),
+        "hard_falloff_classes":classes_for_kind(ValueKind::HardFalloff),
+        "hard_falloff_values":[0,1],"hard_falloff_requires_positive_half_when_one":true,
         "attenuation_coefficient_properties":properties_for_kind(ValueKind::AttenuationCoefficient),
         "attenuation_coefficient_classes":classes_for_kind(ValueKind::AttenuationCoefficient),
         "attenuation_coefficient_precedence":"positive 50% distance selects percentage falloff instead",
@@ -81,7 +87,7 @@ pub(super) fn light_value_binding_scope() -> Value {
         "spotlight_focus_classes":classes_for_kind(ValueKind::SpotlightFocus),
         "spotlight_pitch_properties":properties_for_kind(ValueKind::SpotlightPitch),
         "spotlight_pitch_classes":classes_for_kind(ValueKind::SpotlightPitch),"spotlight_pitch_degrees":[-90,90],
-        "scalar_literal":"one finite number; nonnegative except spotlight pitch","other_scalar_parameters":false,"func_instance_parms":false,
+        "scalar_literal":"one finite number; nonnegative except spotlight pitch; hard falloff zero or one","other_scalar_parameters":false,"func_instance_parms":false,
         "standalone_unresolved_compilation":false,"authored_lighting_preview_resolution":false
     })
 }

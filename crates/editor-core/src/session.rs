@@ -1279,7 +1279,9 @@ impl Session {
                         | map_core::light::ValueKind::AttenuationCoefficient => "string",
                         map_core::light::ValueKind::SpotlightAngle
                         | map_core::light::ValueKind::SpotlightFocus
-                        | map_core::light::ValueKind::SpotlightPitch => "integer",
+                        | map_core::light::ValueKind::SpotlightPitch
+                        | map_core::light::ValueKind::FalloffRadius
+                        | map_core::light::ValueKind::HardFalloff => "integer",
                     };
                     property.kind == expected_kind
                         && map_core::light::value_parameter(classname, key, value).is_some()

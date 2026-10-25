@@ -1,99 +1,13 @@
+use map_core::fog::parse_static_ldr as parse;
 use render::fog::Fog;
 use serde_json::{Value, json};
-use source_formats::vmf::Entity;
 
 use super::Session;
-
-const COLOR_ERROR: &str = "fogcolor needs exactly three integer RGB channels from 0 to 255";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct Selection {
     pub enabled: bool,
     pub controller: Option<u32>,
-}
-
-fn property<'a>(entity: &'a Entity, key: &str) -> Result<Option<&'a str>, String> {
-    let mut values = entity
-        .properties
-        .iter()
-        .filter(|(name, _)| name.eq_ignore_ascii_case(key));
-    let value = values.next().map(|(_, value)| value.trim());
-    if values.next().is_some() {
-        return Err(format!(
-            "{key} has ambiguous case-insensitive duplicate keys"
-        ));
-    }
-    Ok(value)
-}
-
-fn number(entity: &Entity, key: &str, default: Option<f32>) -> Result<f32, String> {
-    let value = match property(entity, key)? {
-        Some(value) => value
-            .parse::<f32>()
-            .map_err(|_| format!("{key} must be a finite number"))?,
-        None => default.ok_or_else(|| format!("{key} is missing; author an explicit value"))?,
-    };
-    if !value.is_finite() {
-        return Err(format!("{key} must be a finite number"));
-    }
-    Ok(value)
-}
-
-fn boolean(entity: &Entity, key: &str) -> Result<bool, String> {
-    match property(entity, key)?.unwrap_or("0") {
-        "0" => Ok(false),
-        "1" => Ok(true),
-        _ => Err(format!("{key} must be 0 or 1")),
-    }
-}
-
-fn parse(entity: &Entity) -> Result<Fog, String> {
-    if entity.hidden {
-        return Err(
-            "Authored-hidden fog controller is unavailable; show it before previewing".into(),
-        );
-    }
-    if !entity.solids.is_empty() {
-        return Err("env_fog_controller must be a point entity".into());
-    }
-    if boolean(entity, "fogblend")? {
-        return Err("fogblend=1 directional color blending is unsupported".into());
-    }
-    if boolean(entity, "fogradial")? {
-        return Err("fogradial=1 radial fog is unsupported; this preview uses view depth".into());
-    }
-    if number(entity, "farz", Some(-1.0))? > 0.0 {
-        return Err("Positive farz clipping is unsupported".into());
-    }
-    for key in ["HDRColorScale", "ZoomFogScale"] {
-        if number(entity, key, Some(1.0))? != 1.0 {
-            return Err(format!("{key} must be 1 for this LDR preview"));
-        }
-    }
-    if number(entity, "foglerptime", Some(0.0))? < 0.0 {
-        return Err("foglerptime must be nonnegative".into());
-    }
-    let color =
-        property(entity, "fogcolor")?.ok_or("fogcolor is missing; author an explicit RGB value")?;
-    let mut channels = color.split_whitespace();
-    let mut color = [0; 3];
-    for channel in &mut color {
-        *channel = channels
-            .next()
-            .ok_or(COLOR_ERROR)?
-            .parse::<u8>()
-            .map_err(|_| COLOR_ERROR)?;
-    }
-    if channels.next().is_some() {
-        return Err(COLOR_ERROR.into());
-    }
-    Fog::new(
-        color,
-        number(entity, "fogstart", None)?,
-        number(entity, "fogend", None)?,
-        number(entity, "fogmaxdensity", Some(1.0))?,
-        boolean(entity, "fogenable")?,
-    )
 }
 
 fn settings(fog: Fog) -> Value {
@@ -227,6 +141,7 @@ mod tests {
     use super::super::Actor;
     use super::*;
     use map_core::ObjectId;
+    use source_formats::vmf::Entity;
     use std::collections::BTreeMap;
 
     fn controller(session: &mut Session, extra: &[(&str, &str)]) -> u32 {
@@ -387,6 +302,15 @@ mod tests {
         let initial = parse(&entity).unwrap();
         assert!(!initial.enabled());
         assert_eq!(initial.max_density(), 1.0);
+        for (key, value) in [
+            ("use_angles", "1"),
+            ("fogdir", "runtime-owned"),
+            ("fogcolor2", "runtime-owned"),
+            ("foglerptime", "2"),
+        ] {
+            entity.properties.set(key, value);
+        }
+        assert_eq!(parse(&entity).unwrap(), initial);
         entity.properties.0.push(("FOGEND".into(), "2048".into()));
         assert!(parse(&entity).unwrap_err().contains("duplicate"));
         let missing = Entity::new(101, "env_fog_controller");

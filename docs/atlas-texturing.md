@@ -50,6 +50,7 @@ Changing **Fit mode** or **Reference face** requires another preview before appl
 
 Saved regions stay in this map, including after saving and reopening it. Each region keeps the canonical material, original image dimensions and identity, rectangle and padding. Fit mode and reference face remain current fitting choices.
 Names are unique for each material, ignoring case. Up to 128 regions can be saved in a map, with names up to 80 characters.
+Saved child VMFs can retain valid catalogs when used as [compiled assemblies](instances.md). Their regions remain in the child and do not become parent regions or compiled map data.
 
 To rename a region, select it, edit **Region name**, then click **Rename region**. **Delete region** removes the selected saved region. Each save, rename or delete has its own Undo step and leaves face projections unchanged. Apply or cancel any geometry preview before changing saved regions.
 
@@ -60,7 +61,6 @@ After **Reload material assets**, unchanged images can reuse their regions. Chan
 - Flat world, detail and brush-entity faces only; terrain and collapsed projections reject.
 - One static base image with a supported `LightmappedGeneric` or `UnlitGeneric` declaration.
 - No tool overrides, proxies, extra layers, packing or image editing.
-- Saved region catalogs are not yet supported in referenced child maps.
 - The rectangle must have positive size and stay inside the original image.
 - Padding must leave a positive usable width and height; invalid updates preserve the existing preview.
 - Together fitting requires a reference from the target selection and same-facing coplanar faces. It does not unfold across corners.

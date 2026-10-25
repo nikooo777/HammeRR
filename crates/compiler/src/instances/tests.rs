@@ -17,6 +17,9 @@ mod entities_tests;
 #[path = "spawns_tests.rs"]
 mod spawns_tests;
 
+#[path = "fog_tests.rs"]
+mod fog_tests;
+
 #[path = "props_tests.rs"]
 mod props_tests;
 

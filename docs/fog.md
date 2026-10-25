@@ -19,6 +19,24 @@ Inspect an authored fog controller in the editor.
 **Cancel** discards the choice. Use **Refresh choices** after changes from another interface.
 To disable fog, clear **Enable fog preview**, then click **Apply preview**.
 
+## Fog controllers in a child map
+
+1. Open the child VMF normally and use **Entity…** to place `env_fog_controller`.
+2. Set literal `fogcolor`, `fogstart`, `fogend`, `fogmaxdensity` and `fogenable` values in its properties.
+3. Keep `fogblend`, `use_angles`, `foglerptime` and `spawnflags` at `0`. Leave the controller unnamed and unparented.
+4. Save the child. In the parent, create or select its **Instance reference…**, then use **Instance contents… → Refresh instance contents** or compile.
+
+Child controllers support static LDR settings. If authored, `fogradial` must be `0`,
+`HDRColorScale` and `ZoomFogScale` must be `1`, and `farz` must be nonpositive.
+Secondary color and direction fields remain literal; they do not enable color blending.
+Runtime connections, transitions, Master priority, directed fog, fog volumes and value bindings are unsupported.
+
+Each controller's marker origin follows every containing reference transform.
+A compile region retains it only when that transformed origin is inside or on the region boundary.
+Multiple controllers retain their ordinary entity order; no controller is made global or selected automatically.
+Refresh counts child controllers before region filtering and reports their fog preview as unavailable.
+The parent's **Fog preview…** lists only parent controllers; child icons, bounds, picking and framing are unavailable.
+
 ## Limits
 
 - Static initial settings only; perspective Textured surfaces and model meshes receive fog.

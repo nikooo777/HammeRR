@@ -16,6 +16,16 @@ For an existing helper, use **Edit instance reference…**, then **Apply**.
 Use **Instance contents… → Refresh instance contents** to resolve and inspect the child.
 The file check confirms presence only; it does not validate child contents.
 
+## Add static child fog
+
+1. Open the child VMF and use **Entity…** to place an unnamed `env_fog_controller`.
+2. Author its literal color, start/end distances, density and enable state. Keep `fogblend`, `use_angles`, `foglerptime` and `spawnflags` at `0`.
+3. Save the child, return to the parent, then use **Instance contents… → Refresh instance contents** or compile.
+
+The supported static LDR subset and field limits are described in [Fog preview](fog.md#fog-controllers-in-a-child-map).
+Controller origins follow the reference transforms and ordinary compile-region inclusion.
+Multiple controllers remain ordered entities. Child fog and controller helpers are unavailable in the parent's preview.
+
 ## Bind light falloff distances
 
 1. Open the child VMF and select a `light` or `light_spot`.
@@ -28,6 +38,24 @@ Each reference can supply different distances. Each value must be one finite, no
 For a positive 50% distance, the near-zero distance must be greater; near-zero `0` selects an automatic distance.
 A zero 50% distance requires near-zero `0` and hard falloff `0`.
 Invalid distances stop the build, including lights outside a build region.
+
+To bind the legacy maximum distance:
+
+1. In the child, set **Property key** to `_distance` and **Value** to `$Radius`, then press Enter and save.
+2. In the containing reference, set an unused `replace01`–`replace10` field to `$Radius 192`.
+3. Keep **50 percent falloff distance** at `0`, then refresh the reference contents or compile.
+
+Maximum distance must be finite and nonnegative, fit a native float, and preserve any nonzero value when converted to that float. Zero keeps the ordinary unlimited radius.
+A positive **50 percent falloff distance** selects percentage falloff and leaves the legacy maximum distance unused.
+
+To bind hard falloff:
+
+1. In the child, set **Property key** to `_hardfalloff` and **Value** to `$Hard`, then press Enter and save.
+2. In the containing reference, set an unused replacement field to `$Hard 1` to fade to exactly zero at the near-zero distance, or `$Hard 0` for ordinary falloff.
+3. Keep **50 percent falloff distance** positive when using `1`, then refresh or compile.
+
+Hard falloff accepts only `0` or `1`. An absent or empty maximum distance or hard-falloff field retains the ordinary default of `0`; bindings do not add missing properties.
+Both fields keep integer authoring controls for ordinary literals. Replacement strings may supply a fractional maximum distance accepted by the compiler.
 
 Unresolved tokens stay as text. They exclude the lamp from authored-lighting preview and prevent standalone compilation, including **Fullbright**.
 Reference inspection resolves values and reports counts. It does not preview child lighting.
@@ -44,7 +72,8 @@ Active coefficients must be finite, nonnegative and representable as native floa
 An effective all-zero triple uses ordinary constant falloff. Absent or empty coefficient fields retain their ordinary zero values; bindings do not add missing properties.
 A positive **50 percent falloff distance** selects percentage falloff instead, leaving the legacy coefficients unused.
 Unresolved tokens stay as text, exclude the lamp from authored-lighting preview and prevent standalone compilation, including **Fullbright**.
-Only the immediately containing reference supplies values. Environment attenuation, `_distance`, `_hardfalloff`, embedded tokens and ancestor forwarding remain unsupported binding contexts.
+Only the immediately containing reference supplies values. See [falloff distance and limit bindings](#bind-light-falloff-distances) for `_distance` and `_hardfalloff`.
+Environment attenuation, embedded tokens and ancestor forwarding remain unsupported binding contexts.
 
 ## Bind spotlight cones and focus
 

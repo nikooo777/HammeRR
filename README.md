@@ -88,6 +88,6 @@ See the [tool index and setup](docs/mcp.md).
 | [Overlays](docs/overlays.md) | [Assemblies](docs/instances.md) |
 | --- | --- |
 | ![One projection spans two panels with a clear gap](docs/images/overlay-native.png) | ![Two references to one arch use different baked light colors](docs/images/instance-light-colors.png) |
-| Fit projections across flat faces and separate planar terrain patches. | Reuse transformed assemblies with per-reference light settings and scoped spotlight targets. |
+| Fit projections across flat faces and separate planar terrain patches. | Reuse transformed assemblies with light settings, scoped spotlight targets and static fog. |
 
 Counter-Strike: Source and its assets are not included.

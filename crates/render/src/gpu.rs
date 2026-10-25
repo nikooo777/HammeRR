@@ -1221,7 +1221,7 @@ impl Renderer {
                 options.surface == SurfaceView::Textured
                     && camera.projection == crate::Projection::Perspective
             })
-            .map(crate::fog::Fog::uniforms)
+            .map(crate::fog::uniforms)
             .unwrap_or(([0.0; 4], [0.0; 4]));
         let mut lighting_lights = [crate::lighting::Light::default(); crate::lighting::MAX_LIGHTS];
         let lighting_active = options.lighting_preview

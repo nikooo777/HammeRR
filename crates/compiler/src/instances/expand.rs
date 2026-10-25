@@ -114,12 +114,21 @@ impl<'a> Expansion<'a> {
             MAX_FILE_NODES.min(MAX_TOTAL_NODES.saturating_sub(self.nodes)),
         )
         .map_err(|error| error.to_string())?;
-        let mut stack = parsed.iter().map(|node| (node, false)).collect::<Vec<_>>();
-        while let Some((node, hidden)) = stack.pop() {
+        let mut stack = parsed
+            .iter()
+            .map(|node| {
+                (
+                    node,
+                    false,
+                    node.key == map_core::texture_atlas::regions::KEY,
+                )
+            })
+            .collect::<Vec<_>>();
+        while let Some((node, hidden, editor_only)) = stack.pop() {
             self.control.checkpoint()?;
             self.nodes += 1;
             if let Some(children) = node.children() {
-                if node.key == "dispinfo" {
+                if !editor_only && node.key == "dispinfo" {
                     let result = if hidden {
                         terrain::hidden_source_grid(children, &mut self.terrain, self.control)
                     } else {
@@ -128,7 +137,7 @@ impl<'a> Expansion<'a> {
                     result.map_err(|error| format!("Instance {relative}: {error}"))?;
                 }
                 let hidden = hidden || node.key == "hidden";
-                stack.extend(children.iter().map(|child| (child, hidden)));
+                stack.extend(children.iter().map(|child| (child, hidden, editor_only)));
             }
         }
         if self.nodes > MAX_TOTAL_NODES {
@@ -1043,6 +1052,7 @@ impl<'a> Expansion<'a> {
             entities::Kind::Point => self.stats.point_lights += 1,
             entities::Kind::Spot => self.stats.spot_lights += 1,
             entities::Kind::Environment => self.stats.environment_lights += 1,
+            entities::Kind::Fog => self.stats.fog_controllers += 1,
             entities::Kind::LightingOrigin => self.stats.lighting_origins += 1,
             entities::Kind::SpotlightTarget => self.stats.spotlight_targets += 1,
             entities::Kind::PlayerSpawn => self.stats.player_spawns += 1,

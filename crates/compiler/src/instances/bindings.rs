@@ -306,12 +306,18 @@ mod tests {
     }
 
     #[test]
-    fn attenuation_binding_preserves_absent_optional_properties_and_original_template() {
-        let mut original = light("255 128 32 300");
-        original.properties.set("_constant_attn", "$constant");
-        let before = original.clone();
-        for value in ["0", "0.5"] {
-            let owner = helper(&format!("$constant {value}"));
+    fn light_falloff_bindings_preserve_absent_optional_properties_and_original_template() {
+        for (key, value) in [
+            ("_constant_attn", "0"),
+            ("_constant_attn", "0.5"),
+            ("_distance", "0"),
+            ("_distance", "192.5"),
+            ("_hardfalloff", "0"),
+        ] {
+            let mut original = light("255 128 32 300");
+            original.properties.set(key, "$value");
+            let before = original.clone();
+            let owner = helper(&format!("$value {value}"));
             let bindings = Bindings::new(&owner).unwrap();
             let mut work = 0;
             let effective = bindings
@@ -323,15 +329,19 @@ mod tests {
                     &Control::default(),
                 )
                 .unwrap();
-            assert_eq!(effective.properties.get("_constant_attn"), Some(value));
-            for key in [
+            assert_eq!(effective.properties.get(key), Some(value));
+            for optional in [
+                "_constant_attn",
                 "_linear_attn",
                 "_quadratic_attn",
                 "_distance",
                 "_fifty_percent_distance",
                 "_zero_percent_distance",
+                "_hardfalloff",
             ] {
-                assert_eq!(effective.properties.get(key), None);
+                if optional != key {
+                    assert_eq!(effective.properties.get(optional), None);
+                }
             }
             assert_eq!(original, before);
         }

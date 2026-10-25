@@ -23,6 +23,7 @@ mod terrain;
 pub const BRUSH_MODEL_PREVIEW_REASON: &str = "Child brush models have no reference geometry or icons; model bounds, picking and framing are unavailable. Refresh checks source geometry and properties, not material or native compilation validity. Refresh leaves effective pivots, model-local bounds and consumed origin-volume counts unknown until material-aware Compile.";
 pub const STATIC_PROP_PREVIEW_REASON: &str = "Child static-prop models are compiled but not shown in the reference preview; model bounds, picking and framing are unavailable.";
 pub const ENVIRONMENT_LIGHT_PREVIEW_REASON: &str = "Child lights, sun/sky illumination and icons are not shown in the reference or authored-lighting preview; child light bounds, picking and framing are unavailable.";
+pub const FOG_PREVIEW_REASON: &str = "Child fog controllers are compiled but are not selectable in the parent's Fog preview. Child fog, controller icons, bounds, picking and framing are unavailable in the reference preview.";
 pub const LIGHTING_ORIGIN_PREVIEW_REASON: &str = "Child lighting-origin helpers have no reference geometry or icons; helper bounds, picking and framing are unavailable.";
 pub const SPOTLIGHT_TARGET_PREVIEW_REASON: &str = "Child spotlight targets have no reference geometry or icons; target bounds, picking and framing are unavailable. Child spotlight targeting is compiled but is not shown in the reference or authored-lighting preview.";
 pub const PLAYER_SPAWN_PREVIEW_REASON: &str = "Child player-spawn models and icons are not shown in the reference preview; spawn bounds, picking and framing are unavailable.";
@@ -1138,6 +1139,9 @@ impl Session {
             "light_value_bindings":super::instance_reference::light_value_binding_scope()
         });
         let environment_lights = ready.map_or(0, |ready| ready.stats.environment_lights);
+        if ready.is_some_and(|ready| ready.stats.fog_controllers > 0) {
+            report["fog_preview"] = json!({"available":false,"reason":FOG_PREVIEW_REASON});
+        }
         if environment_lights > 0
             || ready
                 .is_some_and(|ready| ready.stats.point_lights > 0 || ready.stats.spot_lights > 0)

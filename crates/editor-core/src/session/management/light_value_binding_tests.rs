@@ -15,6 +15,8 @@ const FGD: &str = r#"
     _constant_attn(string) : "Constant" : "0"
     _linear_attn(string) : "Linear" : "0"
     _quadratic_attn(string) : "Quadratic" : "1"
+    _distance(integer) : "Maximum distance" : 0
+    _hardfalloff(integer) : "hard falloff" : 0
     SunSpreadAngle(float) : "SunSpreadAngle" : "0"
     _inner_cone(integer) : "Inner (bright) angle" : 30
     _cone(integer) : "Outer (fading) angle" : 45
@@ -49,6 +51,8 @@ fn create(session: &mut Session, actor: Actor, classname: &str) -> u32 {
     if matches!(classname, "light" | "light_spot") {
         properties.insert("_fifty_percent_distance".into(), "$Half".into());
         properties.insert("_zero_percent_distance".into(), "$End".into());
+        properties.insert("_distance".into(), "$Radius".into());
+        properties.insert("_hardfalloff".into(), "$Hard".into());
         for key in ["_constant_attn", "_linear_attn", "_quadratic_attn"] {
             properties.insert(key.into(), "$Coefficient".into());
         }
@@ -93,7 +97,11 @@ fn light_value_templates_share_create_set_draft_undo_and_save_reopen_for_both_ac
                     .set_entity_properties(
                         actor,
                         id,
-                        &[("_constant_attn".into(), Some("$OtherCoefficient".into()))],
+                        &[
+                            ("_constant_attn".into(), Some("$OtherCoefficient".into())),
+                            ("_distance".into(), Some("$OtherRadius".into())),
+                            ("_hardfalloff".into(), Some("$OtherHard".into())),
+                        ],
                     )
                     .unwrap();
             }
@@ -144,6 +152,18 @@ fn light_value_templates_share_create_set_draft_undo_and_save_reopen_for_both_ac
                             key: key.into(),
                             value: "$CoefficientDraft".into(),
                         }
+                    }),
+                );
+            }
+            if classname != "light_environment" {
+                changes.extend(
+                    [
+                        ("_distance", "$RadiusDraft"),
+                        ("_hardfalloff", "$HardDraft"),
+                    ]
+                    .map(|(key, value)| PropertyChange::Set {
+                        key: key.into(),
+                        value: value.into(),
                     }),
                 );
             }
@@ -204,6 +224,8 @@ fn light_value_templates_share_create_set_draft_undo_and_save_reopen_for_both_ac
                 Some("$GainDraft")
             );
             if classname != "light_environment" {
+                assert_eq!(reopened.properties.get("_distance"), Some("$RadiusDraft"));
+                assert_eq!(reopened.properties.get("_hardfalloff"), Some("$HardDraft"));
                 for key in ["_constant_attn", "_linear_attn", "_quadratic_attn"] {
                     assert_eq!(reopened.properties.get(key), Some("$CoefficientDraft"));
                 }
@@ -241,6 +263,8 @@ fn light_value_templates_share_create_set_draft_undo_and_save_reopen_for_both_ac
                     "_constant_attn",
                     "_linear_attn",
                     "_quadratic_attn",
+                    "_distance",
+                    "_hardfalloff",
                     "_inner_cone",
                     "_cone",
                     "_exponent",
@@ -264,6 +288,8 @@ fn light_value_templates_share_create_set_draft_undo_and_save_reopen_for_both_ac
                     "_constant_attn",
                     "_linear_attn",
                     "_quadratic_attn",
+                    "_distance",
+                    "_hardfalloff",
                 ]
             };
             let field = session.entity_inspector(id).unwrap();
@@ -279,13 +305,31 @@ fn light_value_templates_share_create_set_draft_undo_and_save_reopen_for_both_ac
                     || key.ends_with("_distance")
                     || key.ends_with("_attn")
                     || key == "SunSpreadAngle"
-                    || matches!(key, "_inner_cone" | "_cone" | "_exponent" | "pitch")
+                    || matches!(
+                        key,
+                        "_inner_cone"
+                            | "_cone"
+                            | "_exponent"
+                            | "pitch"
+                            | "_distance"
+                            | "_hardfalloff"
+                    )
                 {
                     assert_eq!(
                         field.kind,
-                        if key.ends_with("_distance") || key.ends_with("_attn") {
+                        if (key.ends_with("_distance") && key != "_distance")
+                            || key.ends_with("_attn")
+                        {
                             "string"
-                        } else if matches!(key, "_inner_cone" | "_cone" | "_exponent" | "pitch") {
+                        } else if matches!(
+                            key,
+                            "_inner_cone"
+                                | "_cone"
+                                | "_exponent"
+                                | "pitch"
+                                | "_distance"
+                                | "_hardfalloff"
+                        ) {
                             "integer"
                         } else {
                             "float"
@@ -354,6 +398,24 @@ fn light_value_template_exception_rejects_invalid_tokens_and_other_color_context
                     .is_err(),
                 "{value:?}"
             );
+            for key in ["_distance", "_hardfalloff"] {
+                assert!(
+                    session
+                        .set_entity_properties(actor, id, &[(key.into(), Some(value.clone()))])
+                        .is_err()
+                );
+                assert!(
+                    session
+                        .update_property_edit(
+                            token,
+                            vec![PropertyChange::Set {
+                                key: key.into(),
+                                value: value.clone()
+                            }]
+                        )
+                        .is_err()
+                );
+            }
             assert!(
                 session
                     .update_property_edit(
@@ -434,11 +496,13 @@ fn environment_bindings_keep_unrelated_color_parameters_literal() {
         );
         assert_eq!(session.document().vmf(), &before);
         assert_eq!(session.history_snapshot(), history);
-        assert!(
-            session
-                .set_entity_properties(actor, id, &[("pitch".into(), Some("$Pitch".into()))])
-                .is_err()
-        );
+        for key in ["pitch", "_distance", "_hardfalloff"] {
+            assert!(
+                session
+                    .set_entity_properties(actor, id, &[(key.into(), Some("$Value".into()))])
+                    .is_err()
+            );
+        }
         for key in [
             "_ambient",
             "_ambientHDR",
@@ -467,12 +531,25 @@ fn light_value_template_exception_preserves_readonly_schema_and_generic_color_va
         let color = catalog.class("light").unwrap().property("_light").unwrap();
         assert!(color.validate("$Lamp").is_err());
         assert!(color.validate("255 220 180 400").is_ok());
+        for (key, value) in [("_distance", "192.5"), ("_hardfalloff", "0.5")] {
+            assert!(
+                catalog
+                    .class("light")
+                    .unwrap()
+                    .property(key)
+                    .unwrap()
+                    .validate(value)
+                    .is_err()
+            );
+        }
         for (key, declarations) in [
             ("_light", ["color255) readonly", "float)", "color1)"]),
             ("_inner_cone", ["integer) readonly", "float)", "color255)"]),
             ("_cone", ["integer) readonly", "float)", "color255)"]),
             ("_exponent", ["integer) readonly", "float)", "color255)"]),
             ("pitch", ["integer) readonly", "float)", "color255)"]),
+            ("_distance", ["integer) readonly", "float)", "color255)"]),
+            ("_hardfalloff", ["integer) readonly", "float)", "color255)"]),
             (
                 "_lightscaleHDR",
                 ["float) readonly", "integer)", "color255)"],
@@ -492,7 +569,10 @@ fn light_value_template_exception_preserves_readonly_schema_and_generic_color_va
                 ["string) readonly", "integer)", "float)"],
             ),
         ] {
-            let classname = if matches!(key, "_inner_cone" | "_cone" | "_exponent" | "pitch") {
+            let classname = if matches!(
+                key,
+                "_inner_cone" | "_cone" | "_exponent" | "pitch" | "_distance" | "_hardfalloff"
+            ) {
                 "light_spot"
             } else {
                 "light"

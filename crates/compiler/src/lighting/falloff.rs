@@ -24,8 +24,8 @@ impl Falloff {
         };
         let half = scalar("_fifty_percent_distance")?;
         let end = scalar("_zero_percent_distance")?;
-        let hard = number(entity, "_hardfalloff")?;
-        if hard != 0.0 && hard != 1.0 {
+        let hard = scalar("_hardfalloff")?;
+        if hard.is_some_and(|hard| hard != 0.0 && hard != 1.0) {
             return Err("Light hard falloff must be zero or one".into());
         }
         if half
@@ -35,18 +35,33 @@ impl Falloff {
         {
             return Err("Light falloff exceeds finite native float limits".into());
         }
-        if half == Some(0.0) && (end.is_some_and(|end| end != 0.0) || hard != 0.0) {
+        if half == Some(0.0)
+            && (end.is_some_and(|end| end != 0.0) || hard.is_some_and(|hard| hard != 0.0))
+        {
             return Err("Near-zero distance and hard falloff need a positive 50% distance".into());
         }
-        let (Some(half), Some(end)) = (half, end) else {
+        let Some(half) = half else {
             return Ok(None);
         };
         let result = if half > 0.0 {
+            let Some(end) = end else {
+                return Ok(None);
+            };
             let end = if end == 0.0 { 2.0 * half } else { end };
             if end <= half {
                 return Err("Near-zero light distance must exceed the 50% distance; use zero for an automatic distance".into());
             }
             let coefficients = percentage_curve(half, end)?;
+            if !native_value(end)
+                || coefficients
+                    .iter()
+                    .any(|&value| !native_preserves_nonzero(value))
+            {
+                return Err("Light falloff exceeds finite native float limits".into());
+            }
+            let Some(hard) = hard else {
+                return Ok(None);
+            };
             let [_, linear, quadratic] = coefficients;
             let cap = if quadratic < 0.0 {
                 Some(linear / (-2.0 * quadratic))
@@ -71,16 +86,18 @@ impl Falloff {
                 scalar("_linear_attn")?,
                 scalar("_quadratic_attn")?,
             ];
-            let radius = number(entity, "_distance")?;
-            if !native_value(radius)
+            let radius = scalar("_distance")?;
+            if radius.is_some_and(|radius| !native_preserves_nonzero(radius))
                 || coefficients
                     .into_iter()
                     .flatten()
-                    .any(|value| !native_coefficient(value))
+                    .any(|value| !native_preserves_nonzero(value))
             {
                 return Err("Light falloff exceeds finite native float limits".into());
             }
-            let [Some(constant), Some(linear), Some(quadratic)] = coefficients else {
+            let (Some(radius), [Some(constant), Some(linear), Some(quadratic)], Some(_), Some(_)) =
+                (radius, coefficients, end, hard)
+            else {
                 return Ok(None);
             };
             let mut coefficients = [constant, linear, quadratic];
@@ -97,8 +114,9 @@ impl Falloff {
                 fade: None,
             }
         };
-        if [half, end, result.radius]
+        if [half, result.radius]
             .into_iter()
+            .chain(end)
             .chain(result.coefficients)
             .chain(result.cap)
             .chain(result.fade.into_iter().flatten())
@@ -106,7 +124,7 @@ impl Falloff {
             || result
                 .coefficients
                 .iter()
-                .any(|&value| !native_coefficient(value))
+                .any(|&value| !native_preserves_nonzero(value))
             || !result.gain.is_finite()
         {
             return Err("Light falloff exceeds finite native float limits".into());
@@ -142,7 +160,7 @@ fn native_value(value: f64) -> bool {
     value.is_finite() && value.abs() <= f64::from(f32::MAX)
 }
 
-fn native_coefficient(value: f64) -> bool {
+fn native_preserves_nonzero(value: f64) -> bool {
     native_value(value) && (value == 0.0 || value as f32 != 0.0)
 }
 

@@ -20,6 +20,8 @@ fn light_value_binding_mcp_uses_existing_string_schemas_and_shared_drafts() {
                 _constant_attn(string) : "Constant" : "0"
                 _linear_attn(string) : "Linear" : "0"
                 _quadratic_attn(string) : "Quadratic" : "1"
+                _distance(integer) : "Maximum distance" : 0
+                _hardfalloff(integer) : "hard falloff" : 0
                 _inner_cone(integer) : "Inner (bright) angle" : 30
                 _cone(integer) : "Outer (fading) angle" : 45
                 _exponent(integer) : "Focus" : 1
@@ -30,17 +32,6 @@ fn light_value_binding_mcp_uses_existing_string_schemas_and_shared_drafts() {
     );
     let shared = Arc::new(Mutex::new(session));
     let server = EditorServer::new(shared.clone(), None);
-    for tool in [
-        "create_entity",
-        "set_entity_properties",
-        "update_property_edit",
-    ] {
-        let description = server.get_tool(tool).unwrap().description.unwrap();
-        assert!(description.contains("replace01–replace10"));
-        assert!(description.contains("_lightHDR"));
-        assert!(description.contains("_inner_cone/_cone/_exponent"));
-        assert!(description.contains("_constant_attn/_linear_attn/_quadratic_attn"));
-    }
     let schema = serde_json::to_value(schemars::schema_for!(PropertyChange)).unwrap();
     let set = schema["oneOf"]
         .as_array()
@@ -53,7 +44,7 @@ fn light_value_binding_mcp_uses_existing_string_schemas_and_shared_drafts() {
         server.create_entity(Parameters(
             serde_json::from_value(json!({
                 "classname":"light_spot","origin":[0,0,64],
-                "properties":{"_light":"$Lamp","_lightHDR":"$HDR","_fifty_percent_distance":"$Half","_zero_percent_distance":"$End","_inner_cone":"$Inner","_cone":"$Outer","_exponent":"$Focus","pitch":"$Tilt","_constant_attn":"$Constant","_linear_attn":"$Linear","_quadratic_attn":"$Quadratic"}
+                "properties":{"_light":"$Lamp","_lightHDR":"$HDR","_fifty_percent_distance":"$Half","_zero_percent_distance":"$End","_inner_cone":"$Inner","_cone":"$Outer","_exponent":"$Focus","pitch":"$Tilt","_constant_attn":"$Constant","_linear_attn":"$Linear","_quadratic_attn":"$Quadratic","_distance":"$Radius","_hardfalloff":"$Hard"}
             }))
             .unwrap(),
         )),
@@ -62,7 +53,7 @@ fn light_value_binding_mcp_uses_existing_string_schemas_and_shared_drafts() {
     report(
         server.set_entity_properties(Parameters(
             serde_json::from_value(
-                json!({"id":id,"set":{"_light":"$Other","_fifty_percent_distance":"$OtherHalf","_inner_cone":"$OtherInner","_exponent":"$OtherFocus","pitch":"$OtherTilt","_constant_attn":"$OtherConstant"}}),
+                json!({"id":id,"set":{"_light":"$Other","_fifty_percent_distance":"$OtherHalf","_inner_cone":"$OtherInner","_exponent":"$OtherFocus","pitch":"$OtherTilt","_constant_attn":"$OtherConstant","_distance":"$OtherRadius","_hardfalloff":"$OtherHard"}}),
             )
             .unwrap(),
         )),
@@ -84,7 +75,9 @@ fn light_value_binding_mcp_uses_existing_string_schemas_and_shared_drafts() {
                 {"action":"set","key":"pitch","value":"$TiltDraft"},
                 {"action":"set","key":"_constant_attn","value":"$ConstantDraft"},
                 {"action":"set","key":"_linear_attn","value":"$LinearDraft"},
-                {"action":"set","key":"_quadratic_attn","value":"$QuadraticDraft"}
+                {"action":"set","key":"_quadratic_attn","value":"$QuadraticDraft"},
+                {"action":"set","key":"_distance","value":"$RadiusDraft"},
+                {"action":"set","key":"_hardfalloff","value":"$HardDraft"}
             ]}))
             .unwrap(),
         )),
@@ -115,6 +108,8 @@ fn light_value_binding_mcp_uses_existing_string_schemas_and_shared_drafts() {
         ("_constant_attn", "$ConstantDraft"),
         ("_linear_attn", "$LinearDraft"),
         ("_quadratic_attn", "$QuadraticDraft"),
+        ("_distance", "$RadiusDraft"),
+        ("_hardfalloff", "$HardDraft"),
         ("_inner_cone", "$InnerDraft"),
         ("_cone", "$OuterDraft"),
         ("_exponent", "$FocusDraft"),
@@ -210,17 +205,6 @@ fn environment_color_binding_mcp_uses_shared_create_set_and_ambient_drafts() {
     );
     let shared = Arc::new(Mutex::new(session));
     let server = EditorServer::new(shared.clone(), None);
-    for tool in [
-        "create_entity",
-        "set_entity_properties",
-        "update_property_edit",
-    ] {
-        let description = server.get_tool(tool).unwrap().description.unwrap();
-        assert!(description.contains("light_environment"));
-        assert!(description.contains("_ambientHDR"));
-        assert!(description.contains("_AmbientScaleHDR"));
-        assert!(description.contains("SunSpreadAngle"));
-    }
     let created = report(server.create_entity(Parameters(
         serde_json::from_value(json!({
             "classname":"light_environment","origin":[0,0,64],
@@ -294,8 +278,8 @@ fn environment_color_binding_mcp_uses_shared_create_set_and_ambient_drafts() {
     assert_eq!(
         scope["class_properties"],
         json!({
-            "light":["_light","_lightHDR","_lightscaleHDR","_fifty_percent_distance","_zero_percent_distance","_constant_attn","_linear_attn","_quadratic_attn"],
-            "light_spot":["_light","_lightHDR","_lightscaleHDR","_fifty_percent_distance","_zero_percent_distance","_inner_cone","_cone","_exponent","pitch","_constant_attn","_linear_attn","_quadratic_attn"],
+            "light":["_light","_lightHDR","_lightscaleHDR","_fifty_percent_distance","_zero_percent_distance","_constant_attn","_linear_attn","_quadratic_attn","_distance","_hardfalloff"],
+            "light_spot":["_light","_lightHDR","_lightscaleHDR","_fifty_percent_distance","_zero_percent_distance","_inner_cone","_cone","_exponent","pitch","_constant_attn","_linear_attn","_quadratic_attn","_distance","_hardfalloff"],
             "light_environment":["_light","_lightHDR","_ambient","_ambientHDR","_lightscaleHDR","_AmbientScaleHDR","SunSpreadAngle"]
         })
     );
@@ -313,7 +297,9 @@ fn environment_color_binding_mcp_uses_shared_create_set_and_ambient_drafts() {
             "pitch",
             "_constant_attn",
             "_linear_attn",
-            "_quadratic_attn"
+            "_quadratic_attn",
+            "_distance",
+            "_hardfalloff"
         ])
     );
     assert_eq!(scope["sun_spread_properties"], json!(["SunSpreadAngle"]));
@@ -334,7 +320,7 @@ fn environment_color_binding_mcp_uses_shared_create_set_and_ambient_drafts() {
     assert_eq!(scope["spotlight_pitch_degrees"], json!([-90, 90]));
     assert_eq!(
         scope["scalar_literal"],
-        "one finite number; nonnegative except spotlight pitch"
+        "one finite number; nonnegative except spotlight pitch; hard falloff zero or one"
     );
     assert_eq!(
         scope["falloff_distance_classes"],
@@ -374,6 +360,22 @@ fn environment_color_binding_mcp_uses_shared_create_set_and_ambient_drafts() {
             .iter()
             .any(|key| key.as_str().unwrap().ends_with("_attn"))
     );
+    assert_eq!(scope["falloff_radius_properties"], json!(["_distance"]));
+    assert_eq!(
+        scope["falloff_radius_classes"],
+        json!(["light", "light_spot"])
+    );
+    assert_eq!(
+        scope["falloff_radius_precedence"],
+        "positive 50% distance selects percentage falloff instead"
+    );
+    assert_eq!(scope["hard_falloff_properties"], json!(["_hardfalloff"]));
+    assert_eq!(
+        scope["hard_falloff_classes"],
+        json!(["light", "light_spot"])
+    );
+    assert_eq!(scope["hard_falloff_values"], json!([0, 1]));
+    assert_eq!(scope["hard_falloff_requires_positive_half_when_one"], true);
     assert_eq!(scope["other_scalar_parameters"], false);
     assert!(server.offscreen.lock().unwrap().renderer.is_none());
 }

@@ -12,8 +12,10 @@ use crate::{Control, Diagnostic, FileIdentity, FileStamp, Report};
 mod bindings;
 pub(crate) mod brush_models;
 mod cubemaps;
+mod editor_metadata;
 mod entities;
 mod expand;
+mod fog;
 mod names;
 mod occluders;
 mod overlays;
@@ -364,6 +366,8 @@ pub struct InstanceStats {
     #[serde(skip_serializing_if = "is_zero")]
     pub environment_lights: usize,
     #[serde(skip_serializing_if = "is_zero")]
+    pub fog_controllers: usize,
+    #[serde(skip_serializing_if = "is_zero")]
     pub static_props: usize,
     #[serde(skip_serializing_if = "is_zero")]
     pub lighting_origins: usize,
@@ -612,13 +616,8 @@ fn child_admission(
     targets: &map_core::light::Targets<'_>,
 ) -> Result<(), String> {
     child.validate_ids().map_err(|error| error.to_string())?;
-    if child
-        .extra
-        .iter()
-        .any(|node| !node.key.eq_ignore_ascii_case("cordons"))
-        || !child.world.extra.is_empty()
-        || !child.visgroups_extra.is_empty()
-    {
+    editor_metadata::admit(child)?;
+    if !child.world.extra.is_empty() || !child.visgroups_extra.is_empty() {
         return Err("Instance child has unknown or compiler-owned map metadata".into());
     }
     if map_core::compile_region::active(child)
@@ -673,7 +672,7 @@ fn child_admission(
             .is_some_and(|class| class.eq_ignore_ascii_case("func_detail"))
         {
             return Err(format!(
-                "Child entity {} ({}) is unsupported; only world/func_detail brushes, bounded unnamed ordinary func_brush models, unnamed static point/spot/environment lights, bounded static props, scoped info_lighting and info_target helpers, neutral player spawns, consumed func_viscluster volumes, unnamed stationary func_occluder helpers, bounded unnamed info_overlay projections, bounded env_cubemap samples and bounded func_instance helpers are supported",
+                "Child entity {} ({}) is unsupported; only world/func_detail brushes, bounded unnamed ordinary func_brush models, unnamed static point/spot/environment lights and static LDR fog controllers, bounded static props, scoped info_lighting and info_target helpers, neutral player spawns, consumed func_viscluster volumes, unnamed stationary func_occluder helpers, bounded unnamed info_overlay projections, bounded env_cubemap samples and bounded func_instance helpers are supported",
                 entity.id,
                 entity.classname().unwrap_or("missing class")
             ));

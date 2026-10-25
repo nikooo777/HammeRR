@@ -25,9 +25,22 @@ Compile supported contents of saved child VMFs into a parent map.
 | Overlays | Supported unnamed projections bound to direct child world/detail or terrain faces. |
 | Cubemap samples | Supported positions and direct ordinary world/detail manual bindings. |
 | Visibility helpers and occluders | Checked static helper classes and supported geometry. |
+| Saved atlas regions | Valid editor-only catalogs stay in child sources and are omitted from compiled assemblies. |
 
 Compiler support does not imply a full parent viewport preview of each child entity.
 Read [instance contents](instance-contents.md) for display limits.
+
+## Keep saved atlas regions in a child
+
+1. Open the child VMF and [save named atlas regions](atlas-texturing.md#save-and-reuse-named-regions).
+2. Save the child, then return to the parent.
+3. Open **Instance contents…** and click **Refresh instance contents**.
+4. Compile the parent normally.
+
+Each child catalog uses the same bounded version and validation as the atlas dialog.
+Valid opaque catalog extensions remain editor-only. Catalogs are never copied into the parent or BSP, and their stored image/material references do not load assets for compilation.
+Malformed or duplicate catalogs, unsupported versions and unknown top-level map blocks reject. Nested and repeated references follow the same rules.
+Changing only a saved region or catalog extension still makes prior previews and builds stale because dependency checks retain the complete original child file.
 
 ## Rotate a stationary child brush
 
@@ -116,7 +129,7 @@ Missing, duplicate or unused bindings fail. Invalid effective light values also 
 An unresolved child template can be edited and saved, but cannot compile alone.
 Preview excludes unresolved lamps and reports a reason; the parent still has no child-light preview.
 
-Point and spot lights support `_light`, `_lightHDR`, `_lightscaleHDR`, `_fifty_percent_distance`, `_zero_percent_distance`, `_constant_attn`, `_linear_attn` and `_quadratic_attn`.
+Point and spot lights support `_light`, `_lightHDR`, `_lightscaleHDR`, `_fifty_percent_distance`, `_zero_percent_distance`, `_constant_attn`, `_linear_attn`, `_quadratic_attn`, `_distance` and `_hardfalloff`.
 Spotlights also support `_inner_cone`, `_cone`, `_exponent` and signed `pitch`; see [cone and focus bindings](instance-authoring.md#bind-spotlight-cones-and-focus) and [pitch bindings](instance-authoring.md#bind-spotlight-pitch).
 Sun lights support `_light`, `_lightHDR`, `_ambient`, `_ambientHDR`, `_lightscaleHDR`, `_AmbientScaleHDR` and `SunSpreadAngle`.
 See [light falloff bindings](instance-authoring.md#bind-light-falloff-distances) for the distance rules.

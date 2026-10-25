@@ -1437,15 +1437,17 @@ fn attenuation_bindings_match_independent_literal_dual_bsp_with_zero_and_percent
             ("_quadratic_attn", "$quadratic"),
             ("_fifty_percent_distance", "$half"),
             ("_zero_percent_distance", "$end"),
+            ("_distance", "$radius"),
+            ("_hardfalloff", "$hard"),
         ] {
             light.properties.set(key, value);
         }
     }
     let (directory, mut parent, template, game) = emitter_fixture(vec![point, spot]);
     let values = [
-        (["2", "0.5", "0.25"], ["0", "0"]),
-        (["0", "0", "0"], ["0", "0"]),
-        (["NaN", "-1", "1e40"], ["64", "160"]),
+        (["2", "0.5", "0.25"], ["0", "0", "192.5", "0"]),
+        (["0", "0", "0"], ["0", "0", "0", "0"]),
+        (["NaN", "-1", "1e40"], ["64", "160", "NaN", "1"]),
     ];
     let original = parent.entities.pop().unwrap();
     for (index, (coefficients, distances)) in values.into_iter().enumerate() {
@@ -1454,10 +1456,18 @@ fn attenuation_bindings_match_independent_literal_dual_bsp_with_zero_and_percent
         helper
             .properties
             .set("origin", format!("{} -8 4", index as i32 * 32 - 16));
-        for (slot, (name, value)) in ["constant", "linear", "quadratic", "half", "end"]
-            .into_iter()
-            .zip(coefficients.into_iter().chain(distances))
-            .enumerate()
+        for (slot, (name, value)) in [
+            "constant",
+            "linear",
+            "quadratic",
+            "half",
+            "end",
+            "radius",
+            "hard",
+        ]
+        .into_iter()
+        .zip(coefficients.into_iter().chain(distances))
+        .enumerate()
         {
             helper.properties.set(
                 format!("replace{:02}", slot + 1),
@@ -1497,6 +1507,8 @@ fn attenuation_bindings_match_independent_literal_dual_bsp_with_zero_and_percent
                         "_quadratic_attn",
                         "_fifty_percent_distance",
                         "_zero_percent_distance",
+                        "_distance",
+                        "_hardfalloff",
                     ]
                     .into_iter()
                     .zip(coefficients.into_iter().chain(distances))
@@ -1539,6 +1551,10 @@ fn attenuation_bindings_match_independent_literal_dual_bsp_with_zero_and_percent
     for channel in [LightingKind::Ldr, LightingKind::Hdr] {
         let lights = actual.bsp.as_ref().unwrap().world_lights(channel).unwrap();
         assert_eq!(lights.len(), 6);
+        assert_eq!(
+            lights.iter().map(|light| light.radius).collect::<Vec<_>>(),
+            [192.5, 192.5, 0.0, 0.0, 0.0, 0.0]
+        );
         for light in &lights[..2] {
             assert_eq!(
                 [
@@ -1600,9 +1616,13 @@ fn nested_light_bindings_are_local_even_when_names_repeat() {
         leaf.properties.set("_constant_attn", "$constant");
         leaf.properties.set("_linear_attn", "$linear");
         leaf.properties.set("_quadratic_attn", "$quadratic");
+        leaf.properties.set("_hardfalloff", "$quadratic");
+        leaf.properties.set("_distance", "$radius");
         let mut direct = leaf.clone();
         direct.id = 200;
         direct.properties.set("origin", "-32 0 96");
+        leaf.properties.set("_fifty_percent_distance", "64");
+        leaf.properties.set("_zero_percent_distance", "160");
         let (directory, mut parent, _, _) = emitter_fixture(vec![leaf]);
         let mut nested = nested_helper(100, "child.vmf", "16 0 0", "0 0 0");
         nested.properties.set("classname", class);
@@ -1614,6 +1634,7 @@ fn nested_light_bindings_are_local_even_when_names_repeat() {
         nested.properties.set("replace07", "$constant 0");
         nested.properties.set("replace08", "$linear 0");
         nested.properties.set("replace09", "$quadratic 1");
+        nested.properties.set("replace02", "$radius NaN");
         write_child(
             directory.path(),
             "middle.vmf",
@@ -1629,6 +1650,7 @@ fn nested_light_bindings_are_local_even_when_names_repeat() {
         root.properties.set("replace07", "$CONSTANT 2");
         root.properties.set("replace08", "$linear 0.5");
         root.properties.set("replace09", "$quadratic 0");
+        root.properties.set("replace02", "$RADIUS 192.5");
         let context = source(directory.path());
         let resolved = resolve(
             &parent,
@@ -1663,6 +1685,10 @@ fn nested_light_bindings_are_local_even_when_names_repeat() {
                 assert_eq!(light.properties.get(key), Some(value));
             }
         }
+        assert_eq!(lights[0].properties.get("_distance"), Some("192.5"));
+        assert_eq!(lights[1].properties.get("_distance"), Some("NaN"));
+        assert_eq!(lights[0].properties.get("_hardfalloff"), Some("0"));
+        assert_eq!(lights[1].properties.get("_hardfalloff"), Some("1"));
         assert_eq!(resolved.stats().unwrap().max_expansion_depth, 2);
         for light in lights {
             entities::admit(light, entities::kind(light).unwrap()).unwrap();
@@ -1717,7 +1743,20 @@ fn bound_templates_reject_grouped_semantic_and_context_failures_before_fullbrigh
         "coefficient native overflow",
         "coefficient native underflow",
         "coefficient outside region",
-        "unsupported radius token",
+        "radius color tuple",
+        "missing radius",
+        "missing inactive radius",
+        "unused radius",
+        "negative radius",
+        "radius native overflow",
+        "radius native underflow",
+        "radius outside region",
+        "missing hard flag",
+        "unused hard flag",
+        "hard flag fraction",
+        "hard flag nonfinite",
+        "hard flag without percentage",
+        "hard flag outside region",
         "bad ldr",
         "bad hdr",
         "bad hdr outside region",
@@ -1753,6 +1792,8 @@ fn bound_templates_reject_grouped_semantic_and_context_failures_before_fullbrigh
                 | "cone outside region"
                 | "pitch outside region"
                 | "coefficient outside region"
+                | "radius outside region"
+                | "hard flag outside region"
         ) {
             parent.cordon = Some(Node::block(
                 "cordon",
@@ -1814,7 +1855,45 @@ fn bound_templates_reject_grouped_semantic_and_context_failures_before_fullbrigh
                 .properties
                 .set("_constant_attn", "$constant"),
             "unused coefficient" => helper.properties.set("replace07", "$constant 1"),
-            "unsupported radius token" => child.entities[0].properties.set("_distance", "$lamp"),
+            "radius color tuple" => child.entities[0].properties.set("_distance", "$lamp"),
+            "missing radius" => child.entities[0].properties.set("_distance", "$radius"),
+            "missing inactive radius" => {
+                child.entities[0].properties.set("_distance", "$radius");
+                child.entities[0]
+                    .properties
+                    .set("_fifty_percent_distance", "64");
+            }
+            "unused radius" => helper.properties.set("replace02", "$radius 192"),
+            "negative radius"
+            | "radius native overflow"
+            | "radius native underflow"
+            | "radius outside region" => {
+                child.entities[0].properties.set("_distance", "$radius");
+                helper.properties.set(
+                    "replace02",
+                    match issue {
+                        "radius native overflow" => "$radius 1e40",
+                        "radius native underflow" => "$radius 1e-60",
+                        _ => "$radius -1",
+                    },
+                );
+            }
+            "missing hard flag" => child.entities[0].properties.set("_hardfalloff", "$hard"),
+            "unused hard flag" => helper.properties.set("replace02", "$hard 0"),
+            "hard flag fraction"
+            | "hard flag nonfinite"
+            | "hard flag without percentage"
+            | "hard flag outside region" => {
+                child.entities[0].properties.set("_hardfalloff", "$hard");
+                helper.properties.set(
+                    "replace02",
+                    match issue {
+                        "hard flag fraction" => "$hard 0.5",
+                        "hard flag nonfinite" => "$hard NaN",
+                        _ => "$hard 1",
+                    },
+                );
+            }
             "duplicate coefficient binding"
             | "negative coefficient"
             | "nonfinite coefficient"
@@ -1981,6 +2060,8 @@ fn unresolved_standalone_light_templates_fail_in_every_compile_mode() {
         ("light", "_constant_attn"),
         ("light_spot", "_linear_attn"),
         ("light", "_quadratic_attn"),
+        ("light", "_distance"),
+        ("light_spot", "_hardfalloff"),
     ] {
         let mut vmf = test_common::room();
         let mut light = static_light(vmf.object_ids().max().unwrap() + 1, class, "0 0 96");

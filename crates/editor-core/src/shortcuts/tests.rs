@@ -2,6 +2,13 @@ use std::fs;
 
 use super::*;
 
+fn assert_authored_bindings(input: &serde_json::Value, bindings: &Bindings) {
+    let actual = serde_json::to_value(bindings).unwrap();
+    for (command, slots) in input["bindings"].as_object().unwrap() {
+        assert_eq!(&actual[command], slots, "{command}");
+    }
+}
+
 #[test]
 fn factory_aliases_and_exact_modifiers_resolve_without_reserved_key_collisions() {
     let bindings = Bindings::default().validated().unwrap();
@@ -99,10 +106,7 @@ fn older_version_one_bindings_preserve_bytes_and_default_only_missing_extensions
         loaded
     );
     assert_eq!(fs::read(store.path()).unwrap(), original_bytes);
-    let loaded_json = serde_json::to_value(&loaded).unwrap();
-    for (command, slots) in original["bindings"].as_object().unwrap() {
-        assert_eq!(&loaded_json[command], slots, "{command}");
-    }
+    assert_authored_bindings(&original, &loaded);
     for command in [
         Command::Perspective,
         Command::Top,
@@ -152,6 +156,7 @@ fn older_version_one_bindings_preserve_bytes_and_default_only_missing_extensions
     let source = store.read_source().unwrap();
     let mut loaded = store.parse(&source).unwrap().unwrap();
     assert_eq!(authority.snapshot().current, loaded);
+    assert_authored_bindings(&nine, &loaded);
     assert_eq!(fs::read(store.path()).unwrap(), nine_bytes);
     assert_eq!(loaded.objects, [None, None]);
     assert_eq!(loaded.faces, [None, None]);
@@ -180,6 +185,7 @@ fn older_version_one_bindings_preserve_bytes_and_default_only_missing_extensions
     let source = store.read_source().unwrap();
     let mut loaded = store.parse(&source).unwrap().unwrap();
     assert_eq!(authority.snapshot().current, loaded);
+    assert_authored_bindings(&eleven, &loaded);
     assert_eq!(fs::read(store.path()).unwrap(), eleven_bytes);
     for command in [
         Command::ShowGrid,
@@ -212,6 +218,7 @@ fn older_version_one_bindings_preserve_bytes_and_default_only_missing_extensions
     let source = store.read_source().unwrap();
     let mut loaded = store.parse(&source).unwrap().unwrap();
     assert_eq!(authority.snapshot().current, loaded);
+    assert_authored_bindings(&fifteen, &loaded);
     assert_eq!(fs::read(store.path()).unwrap(), fifteen_bytes);
     for command in [
         Command::SelectTool,
@@ -240,6 +247,7 @@ fn older_version_one_bindings_preserve_bytes_and_default_only_missing_extensions
     let source = store.read_source().unwrap();
     let mut loaded = store.parse(&source).unwrap().unwrap();
     assert_eq!(authority.snapshot().current, loaded);
+    assert_authored_bindings(&nineteen, &loaded);
     assert_eq!(fs::read(store.path()).unwrap(), nineteen_bytes);
     assert_eq!(loaded.draw_brush, [None, None]);
     assert_eq!(loaded.clip_mode, [None, None]);
@@ -255,6 +263,7 @@ fn older_version_one_bindings_preserve_bytes_and_default_only_missing_extensions
     let source = store.read_source().unwrap();
     let mut loaded = store.parse(&source).unwrap().unwrap();
     assert_eq!(authority.snapshot().current, loaded);
+    assert_authored_bindings(&twenty_one, &loaded);
     assert_eq!(fs::read(store.path()).unwrap(), twenty_one_bytes);
     assert_eq!(loaded.hide_selection_in_editor, [None, None]);
     assert_eq!(loaded.show_all_editor_hidden, [None, None]);

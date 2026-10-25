@@ -16,6 +16,7 @@ Use **Refresh inspection** after a new build or source change.
 
 ## Limits
 
+- Physical paths that cannot be reported show stale provenance and omitted path fields.
 - Prop ordinals and hardware sections belong to one build, not authored entity IDs.
 - Packed values are not an editor appearance preview or a screen-brightness measurement.
 - Missing channels remain unavailable; they do not substitute another channel.

@@ -231,12 +231,9 @@ fn build_state_with_mode(
         .ok()
         .and_then(|source| source.as_ref())
         .map(compiler::FileIdentity::path);
-    let paths_admitted = matches!(mode, SourceVerification::Resolved)
-        || std::iter::once(build.path.as_path())
-            .chain(source)
-            .all(|path| {
-                path.as_os_str().as_encoded_bytes().len() <= 16 * 1024 && path.to_str().is_some()
-            });
+    let paths_admitted = std::iter::once(build.path.as_path())
+        .chain(source)
+        .all(|path| crate::report_path::checked(path).is_ok());
     if !paths_admitted {
         diagnostics.push("Build/source path cannot be represented as UTF-8 JSON or exceeds the inspection metadata path budget".into());
     }

@@ -127,7 +127,7 @@ pub fn collect_static_prop_asset_plan(
     control: &Control,
 ) -> io::Result<StaticPropAssetPlan> {
     checkpoint(control)?;
-    let limits = bounded_limits(limits);
+    let limits = crate::pak_limits::bounded(limits);
     let roots = Roots::from_bsp(bsp)?;
     let mut check = || checkpoint(control);
     existing.to_bytes_controlled(limits, &mut check)?;
@@ -237,16 +237,4 @@ pub fn collect_static_prop_asset_plan(
     verify_bsp_size(bsp, plan.combined_pak_bytes, limits, control)?;
     plan.verify_source_metadata()?;
     Ok(plan)
-}
-
-fn bounded_limits(limits: PakLimits) -> PakLimits {
-    let defaults = PakLimits::default();
-    PakLimits {
-        max_archive_bytes: limits.max_archive_bytes.min(defaults.max_archive_bytes),
-        max_entries: limits.max_entries.min(defaults.max_entries),
-        max_entry_bytes: limits.max_entry_bytes.min(defaults.max_entry_bytes),
-        max_total_bytes: limits.max_total_bytes.min(defaults.max_total_bytes),
-        max_name_bytes: limits.max_name_bytes.min(defaults.max_name_bytes),
-        max_bsp_bytes: limits.max_bsp_bytes.min(defaults.max_bsp_bytes),
-    }
 }

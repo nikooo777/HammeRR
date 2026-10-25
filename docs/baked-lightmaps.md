@@ -16,6 +16,7 @@ Use page controls for long match and contributor lists.
 
 ## Limits
 
+- Physical paths that cannot be reported show stale provenance and omitted path fields.
 - Reads that build's BSP; it does not estimate lighting from the editor view.
 - Compiled face numbers belong to one build and can change after rebuilding.
 - Stale intact output remains historical. Missing, replaced or corrupt output is unavailable.

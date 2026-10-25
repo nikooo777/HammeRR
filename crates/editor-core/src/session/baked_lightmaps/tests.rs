@@ -624,3 +624,57 @@ fn output_changed_after_quick_state_clears_display_currentness_and_mapped_sample
     assert_eq!(retained["mapping"]["status"], "unavailable");
     assert!(retained["faces"].as_array().unwrap().is_empty());
 }
+
+#[test]
+fn baked_reports_share_checked_paths_for_raw_physical_directory_aliases() {
+    use std::ffi::OsString;
+    use std::os::unix::{ffi::OsStringExt, fs::symlink};
+    let directory = tempfile::tempdir().unwrap();
+    let physical = directory
+        .path()
+        .join(OsString::from_vec(b"source-\xff".to_vec()));
+    std::fs::create_dir(&physical).unwrap();
+    std::fs::write(
+        physical.join("source.vmf"),
+        map_core::Document::empty().vmf().write(&Default::default()),
+    )
+    .unwrap();
+    let alias = directory.path().join("authored");
+    symlink(&physical, &alias).unwrap();
+    let source = alias.join("source.vmf");
+    let output = directory.path().join("owned.bsp");
+    fixture().write(&output).unwrap();
+    let mut session = Session::new(Err("no assets".into()));
+    session.open(Actor::User, &source, false).unwrap();
+    install_build(&mut session, &output, &source);
+    let before = (session.document().vmf().clone(), session.history_snapshot());
+    for state in [
+        session.baked_lightmap_build_state(),
+        session.baked_prop_vertex_build_state(),
+        session.compiled_world_light_build_state(),
+        session
+            .inspect_baked_lightmaps(&Query::default())
+            .unwrap()
+            .report["build"]
+            .clone(),
+    ] {
+        assert_eq!(state["status"], "stale");
+        assert_eq!(state["current"], false);
+        assert!(state["source"].is_null() && state["bsp"].is_null());
+        assert!(
+            state["diagnostics"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|message| {
+                    message.as_str().is_some_and(|message| {
+                        message.contains("cannot be represented as UTF-8 JSON")
+                    })
+                })
+        );
+    }
+    assert_eq!(
+        (session.document().vmf().clone(), session.history_snapshot()),
+        before
+    );
+}

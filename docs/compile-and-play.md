@@ -23,6 +23,7 @@ The compiler remains experimental. Check diagnostics before using a build.
 
 **Run Map** builds, then launches the successful result.
 Game launches use `-insecure` and LAN mode (`sv_lan 1`). Steam must be running.
+Game installation paths must resolve to UTF-8 paths. Unsupported paths return an explicit error.
 
 ## Controls
 

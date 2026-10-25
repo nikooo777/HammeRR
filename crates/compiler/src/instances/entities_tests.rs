@@ -1428,81 +1428,84 @@ fn sibling_light_bindings_match_independent_literal_dual_bsp_and_preserve_raw_so
 
 #[test]
 fn nested_light_bindings_are_local_even_when_names_repeat() {
-    let mut leaf = parameter_light(20, "light_spot", "0 0 96");
-    leaf.properties.set("_inner_cone", "$shape");
-    leaf.properties.set("_cone", "$outer");
-    leaf.properties.set("_exponent", "$focus");
-    leaf.properties.set("pitch", "$pitch");
-    let mut direct = leaf.clone();
-    direct.id = 200;
-    direct.properties.set("origin", "-32 0 96");
-    let (directory, mut parent, _, _) = emitter_fixture(vec![leaf]);
-    let mut nested = nested_helper(100, "child.vmf", "16 0 0", "0 0 0");
-    light_bindings(&mut nested, "64 255 32 200", "64 32 512 600");
-    nested.properties.set("replace04", "$shape 180");
-    nested.properties.set("replace05", "$outer 180");
-    nested.properties.set("replace06", "$focus 3");
-    nested.properties.set("replace03", "$pitch -90");
-    write_child(
-        directory.path(),
-        "middle.vmf",
-        &helper_file(vec![direct, nested]),
-    );
-    let root = parent.entities.last_mut().unwrap();
-    root.properties.set("file", "middle.vmf");
-    light_bindings(root, "255 32 64 300", "32 255 64 450");
-    root.properties.set("replace04", "$shape 15");
-    root.properties.set("replace05", "$outer 60");
-    root.properties.set("replace06", "$focus 2");
-    root.properties.set("replace03", "$pitch 45");
-    let context = source(directory.path());
-    let resolved = resolve(
-        &parent,
-        Some(&context),
-        &Control::default(),
-        &mut Report::default(),
-    )
-    .unwrap();
-    let lights = resolved
-        .vmf()
-        .entities
-        .iter()
-        .filter(|entity| matches!(entity.classname(), Some("light" | "light_spot")))
-        .collect::<Vec<_>>();
-    assert_eq!(lights.len(), 2);
-    assert_eq!(lights[0].properties.get("_light"), Some("255 32 64 300"));
-    assert_eq!(lights[1].properties.get("_light"), Some("64 255 32 200"));
-    assert_eq!(lights[1].properties.get("_lightHDR"), Some("64 32 512 600"));
-    assert_eq!(lights[0].properties.get("_inner_cone"), Some("15"));
-    assert_eq!(lights[0].properties.get("_cone"), Some("60"));
-    assert_eq!(lights[0].properties.get("_exponent"), Some("2"));
-    assert_eq!(lights[1].properties.get("_inner_cone"), Some("180"));
-    assert_eq!(lights[1].properties.get("_cone"), Some("180"));
-    assert_eq!(lights[1].properties.get("_exponent"), Some("3"));
-    assert_eq!(lights[0].properties.get("pitch"), Some("45"));
-    assert_eq!(lights[1].properties.get("pitch"), Some("-90"));
-    assert_eq!(resolved.stats().unwrap().max_expansion_depth, 2);
-    for light in lights {
-        entities::admit(light, entities::kind(light).unwrap()).unwrap();
-    }
-    parent
-        .entities
-        .last_mut()
-        .unwrap()
-        .properties
-        .remove("replace01");
-    assert!(
-        resolve(
+    for class in ["func_instance", "FUNC_INSTANCE", "Func_Instance"] {
+        let mut leaf = parameter_light(20, "light_spot", "0 0 96");
+        leaf.properties.set("_inner_cone", "$shape");
+        leaf.properties.set("_cone", "$outer");
+        leaf.properties.set("_exponent", "$focus");
+        leaf.properties.set("pitch", "$pitch");
+        let mut direct = leaf.clone();
+        direct.id = 200;
+        direct.properties.set("origin", "-32 0 96");
+        let (directory, mut parent, _, _) = emitter_fixture(vec![leaf]);
+        let mut nested = nested_helper(100, "child.vmf", "16 0 0", "0 0 0");
+        nested.properties.set("classname", class);
+        light_bindings(&mut nested, "64 255 32 200", "64 32 512 600");
+        nested.properties.set("replace04", "$shape 180");
+        nested.properties.set("replace05", "$outer 180");
+        nested.properties.set("replace06", "$focus 3");
+        nested.properties.set("replace03", "$pitch -90");
+        write_child(
+            directory.path(),
+            "middle.vmf",
+            &helper_file(vec![direct, nested]),
+        );
+        let root = parent.entities.last_mut().unwrap();
+        root.properties.set("file", "middle.vmf");
+        light_bindings(root, "255 32 64 300", "32 255 64 450");
+        root.properties.set("replace04", "$shape 15");
+        root.properties.set("replace05", "$outer 60");
+        root.properties.set("replace06", "$focus 2");
+        root.properties.set("replace03", "$pitch 45");
+        let context = source(directory.path());
+        let resolved = resolve(
             &parent,
             Some(&context),
             &Control::default(),
-            &mut Report::default()
+            &mut Report::default(),
         )
-        .err()
-        .unwrap()
-        .message
-        .contains("missing immediate binding")
-    );
+        .unwrap();
+        let lights = resolved
+            .vmf()
+            .entities
+            .iter()
+            .filter(|entity| matches!(entity.classname(), Some("light" | "light_spot")))
+            .collect::<Vec<_>>();
+        assert_eq!(lights.len(), 2);
+        assert_eq!(lights[0].properties.get("_light"), Some("255 32 64 300"));
+        assert_eq!(lights[1].properties.get("_light"), Some("64 255 32 200"));
+        assert_eq!(lights[1].properties.get("_lightHDR"), Some("64 32 512 600"));
+        assert_eq!(lights[0].properties.get("_inner_cone"), Some("15"));
+        assert_eq!(lights[0].properties.get("_cone"), Some("60"));
+        assert_eq!(lights[0].properties.get("_exponent"), Some("2"));
+        assert_eq!(lights[1].properties.get("_inner_cone"), Some("180"));
+        assert_eq!(lights[1].properties.get("_cone"), Some("180"));
+        assert_eq!(lights[1].properties.get("_exponent"), Some("3"));
+        assert_eq!(lights[0].properties.get("pitch"), Some("45"));
+        assert_eq!(lights[1].properties.get("pitch"), Some("-90"));
+        assert_eq!(resolved.stats().unwrap().max_expansion_depth, 2);
+        for light in lights {
+            entities::admit(light, entities::kind(light).unwrap()).unwrap();
+        }
+        parent
+            .entities
+            .last_mut()
+            .unwrap()
+            .properties
+            .remove("replace01");
+        assert!(
+            resolve(
+                &parent,
+                Some(&context),
+                &Control::default(),
+                &mut Report::default()
+            )
+            .err()
+            .unwrap()
+            .message
+            .contains("missing immediate binding")
+        );
+    }
 }
 
 #[test]

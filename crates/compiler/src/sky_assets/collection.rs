@@ -212,15 +212,7 @@ pub fn collect_sky_asset_plan(
     control: &Control,
 ) -> io::Result<SkyAssetPlan> {
     control.checkpoint().map_err(io::Error::other)?;
-    let defaults = PakLimits::default();
-    let limits = PakLimits {
-        max_archive_bytes: limits.max_archive_bytes.min(defaults.max_archive_bytes),
-        max_entries: limits.max_entries.min(defaults.max_entries),
-        max_entry_bytes: limits.max_entry_bytes.min(defaults.max_entry_bytes),
-        max_total_bytes: limits.max_total_bytes.min(defaults.max_total_bytes),
-        max_name_bytes: limits.max_name_bytes.min(defaults.max_name_bytes),
-        max_bsp_bytes: limits.max_bsp_bytes.min(defaults.max_bsp_bytes),
-    };
+    let limits = crate::pak_limits::bounded(limits);
     let mut check = || control.checkpoint().map_err(io::Error::other);
     existing.to_bytes_controlled(limits, &mut check)?;
     let mut names = vmf.world.properties.get_all("skyname");

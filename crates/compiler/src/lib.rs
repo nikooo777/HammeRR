@@ -19,6 +19,7 @@ mod lighting_origins;
 pub mod map;
 pub mod materials;
 mod overlays;
+mod pak_limits;
 pub mod physics;
 pub mod planes;
 pub mod portals;

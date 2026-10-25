@@ -386,13 +386,16 @@ fn is_zero(value: &usize) -> bool {
     *value == 0
 }
 
+fn is_instance(entity: &Entity) -> bool {
+    entity
+        .classname()
+        .is_some_and(|class| class.eq_ignore_ascii_case("func_instance"))
+}
+
 pub fn requires_source(vmf: &Vmf) -> bool {
-    vmf.entities.iter().any(|entity| {
-        !entity.hidden
-            && entity
-                .classname()
-                .is_some_and(|class| class.eq_ignore_ascii_case("func_instance"))
-    })
+    vmf.entities
+        .iter()
+        .any(|entity| !entity.hidden && is_instance(entity))
 }
 
 fn field(value: &str) -> Result<(), String> {
@@ -485,10 +488,7 @@ fn walk_reference_path(
 }
 
 pub fn helper_admission(entity: &Entity) -> Result<(), String> {
-    if !entity
-        .classname()
-        .is_some_and(|class| class.eq_ignore_ascii_case("func_instance"))
-    {
+    if !is_instance(entity) {
         return Err("Only func_instance supports brush-only expansion; parameter helpers remain unsupported".into());
     }
     if !entity.solids.is_empty()
@@ -629,10 +629,7 @@ fn child_admission(
     }
     for entity in child.entities.iter().filter(|entity| !entity.hidden) {
         control.checkpoint()?;
-        if entity
-            .classname()
-            .is_some_and(|class| class.eq_ignore_ascii_case("func_instance"))
-        {
+        if is_instance(entity) {
             helper_admission(entity)
                 .map_err(|error| format!("Child instance {}: {error}", entity.id))?;
             continue;
@@ -987,12 +984,7 @@ fn prepare_purpose<'a>(
     let helpers = vmf
         .entities
         .iter()
-        .filter(|entity| {
-            !entity.hidden
-                && entity
-                    .classname()
-                    .is_some_and(|class| class.eq_ignore_ascii_case("func_instance"))
-        })
+        .filter(|entity| !entity.hidden && is_instance(entity))
         .take(MAX_INSTANCES + 1)
         .collect::<Vec<_>>();
     let failure = |entity: &Entity, message: String| {

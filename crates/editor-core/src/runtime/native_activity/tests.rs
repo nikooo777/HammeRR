@@ -264,3 +264,41 @@ fn capture_freezes_steam_and_directory_or_archive_content_bindings() {
         assert!(frozen.verify().is_err());
     }
 }
+
+#[test]
+fn raw_physical_installation_paths_fail_before_native_reservation() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+    let directory = tempfile::tempdir().unwrap();
+    let physical = directory
+        .path()
+        .join(OsString::from_vec(b"install-\xff".to_vec()));
+    std::fs::create_dir_all(physical.join("cstrike")).unwrap();
+    std::fs::write(physical.join("cstrike_linux64"), b"fixture").unwrap();
+    let alias = directory.path().join("installation");
+    symlink(&physical, &alias).unwrap();
+    let error = Target::play(
+        &alias,
+        &alias.join("cstrike"),
+        &alias.join("cstrike_linux64"),
+    )
+    .err()
+    .unwrap();
+    assert!(
+        error.contains("cannot be represented as UTF-8 JSON"),
+        "{error}"
+    );
+    let authority = Authority::isolated();
+    let (client, _) = clients(&authority);
+    assert_eq!(client.status()["available"], true);
+    let valid = target(&directory.path().join("valid"));
+    let permit = client
+        .reserve(Phase::PlayStartup, None, Some(&valid))
+        .unwrap();
+    assert_eq!(
+        client.status()["owner"]["targets"]["play"]["engine"]["path"],
+        valid.engine.canonical.to_str().unwrap()
+    );
+    drop(permit);
+    assert_eq!(client.status()["available"], true);
+}

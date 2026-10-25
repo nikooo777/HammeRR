@@ -21,6 +21,7 @@ mod preference_file;
 pub mod preview_preferences;
 pub mod recent_maps;
 pub mod recovery;
+mod report_path;
 pub mod runtime;
 pub mod saved_defaults;
 pub mod selection_preferences;

@@ -110,7 +110,7 @@ pub fn collect_water_asset_plan<'a>(
     control: &Control,
 ) -> io::Result<WaterAssetPlan> {
     checkpoint(control)?;
-    let limits = bounded_limits(limits);
+    let limits = crate::pak_limits::bounded(limits);
     let mut check = || checkpoint(control);
     existing.to_bytes_controlled(limits, &mut check)?;
     let mut selected = BTreeSet::new();
@@ -228,16 +228,4 @@ pub fn collect_water_asset_plan<'a>(
     plan.combined_pak_bytes = combined.to_bytes_controlled(limits, &mut check)?.len();
     plan.verify_source_metadata()?;
     Ok(plan)
-}
-
-fn bounded_limits(limits: PakLimits) -> PakLimits {
-    let defaults = PakLimits::default();
-    PakLimits {
-        max_archive_bytes: limits.max_archive_bytes.min(defaults.max_archive_bytes),
-        max_entries: limits.max_entries.min(defaults.max_entries),
-        max_entry_bytes: limits.max_entry_bytes.min(defaults.max_entry_bytes),
-        max_total_bytes: limits.max_total_bytes.min(defaults.max_total_bytes),
-        max_name_bytes: limits.max_name_bytes.min(defaults.max_name_bytes),
-        max_bsp_bytes: limits.max_bsp_bytes.min(defaults.max_bsp_bytes),
-    }
 }

@@ -80,6 +80,7 @@ impl Binding {
         let canonical = requested
             .canonicalize()
             .map_err(|error| format!("{}: {error}", requested.display()))?;
+        crate::report_path::checked(&canonical)?;
         let file = open(&canonical).map_err(|error| format!("{}: {error}", canonical.display()))?;
         let metadata = file.metadata().map_err(|error| error.to_string())?;
         if (executable && !metadata.is_file()) || (!executable && !metadata.is_dir()) {

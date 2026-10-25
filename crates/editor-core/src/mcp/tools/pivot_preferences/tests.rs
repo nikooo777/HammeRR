@@ -11,6 +11,7 @@ async fn dispatched_pivot_defaults_share_human_settings_and_refuse_terminal_writ
     let mut session = Session::new(Err("no assets".into()));
     session.configure_recovery(Ok(directory.path().into()));
     let point = DVec3::new(1.125, -2.375, 3.0625);
+    let custom = json!({"mode":"custom","point":[1.125,-2.375,3.0625]});
     session
         .set_transform_tool(
             Actor::User,
@@ -27,37 +28,48 @@ async fn dispatched_pivot_defaults_share_human_settings_and_refuse_terminal_writ
     let server = EditorServer::for_document(document.clone(), None);
     let (transport, _client) = tokio::io::duplex(4096);
     let service = serve_directly::<rmcp::RoleServer, _, _, _, _>(server.clone(), transport, None);
-    for (name, mut arguments, expected) in [
-        ("get_transform_pivot_defaults", json!({}), Some(point)),
+    for (name, mut arguments, expected, report) in [
+        (
+            "get_transform_pivot_defaults",
+            json!({}),
+            Some(point),
+            custom.clone(),
+        ),
         (
             "set_transform_pivot_defaults",
             json!({"action":"save"}),
             Some(point),
+            custom.clone(),
         ),
         (
             "set_transform_tool",
             json!({"pivot_mode":"world"}),
             Some(DVec3::ZERO),
+            json!({"mode":"world_origin"}),
         ),
         (
             "set_transform_pivot_defaults",
             json!({"action":"reload"}),
             Some(DVec3::ZERO),
+            json!({"mode":"world_origin"}),
         ),
         (
             "set_transform_pivot_defaults",
             json!({"action":"apply"}),
             Some(point),
+            custom.clone(),
         ),
         (
             "set_transform_pivot_defaults",
             json!({"action":"reset"}),
             Some(point),
+            custom.clone(),
         ),
         (
             "set_transform_pivot_defaults",
             json!({"action":"apply"}),
             None,
+            json!({"mode":"selection_center"}),
         ),
     ] {
         if name == "set_transform_pivot_defaults" {
@@ -78,10 +90,7 @@ async fn dispatched_pivot_defaults_share_human_settings_and_refuse_terminal_writ
         let value: Value =
             serde_json::from_str(&result.content[0].as_text().unwrap().text).unwrap();
         if name != "set_transform_tool" {
-            assert_eq!(
-                value["current"],
-                json!(crate::pivot_preferences::Pivot::from_point(expected))
-            );
+            assert_eq!(value["current"], report);
             assert_eq!(value["ready"], true);
             assert_eq!(
                 value["write_committed"],

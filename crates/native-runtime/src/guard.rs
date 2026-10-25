@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io::{self, Read, Seek, SeekFrom};
+use std::io;
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -15,6 +15,9 @@ use sha1::{Digest, Sha1};
 
 use crate::CaptureEnvironment;
 use crate::util::{self, MAX_CONFIG, invalid};
+
+mod cloud_log;
+use cloud_log::Observation as CloudLog;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -33,7 +36,14 @@ pub(crate) struct Baseline {
     pub identity: Identity,
     pub files: BTreeMap<String, Option<String>>,
     pub cloud: Value,
-    pub cloud_log_size: u64,
+    pub cloud_log: CloudLog,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Preflight {
+    steam_root: PathBuf,
+    cloud_log: CloudLog,
 }
 
 pub(crate) fn ensure_no_client(root: &Path) -> io::Result<()> {
@@ -173,36 +183,6 @@ fn validate_steam_root(root: &Path, engine: &Path) -> io::Result<()> {
         ));
     }
     Ok(())
-}
-
-fn upload_lines(steam: &Path, cursor: u64) -> io::Result<Vec<String>> {
-    let mut file = fs::File::open(steam.join("logs/cloud_log.txt"))?;
-    if file.metadata()?.len() < cursor {
-        return Err(invalid("Steam Cloud log rotated during native preflight"));
-    }
-    file.seek(SeekFrom::Start(cursor))?;
-    let mut bytes = Vec::new();
-    file.take(8 * 1024 * 1024 + 1).read_to_end(&mut bytes)?;
-    if bytes.len() > 8 * 1024 * 1024 {
-        return Err(invalid(
-            "Steam Cloud log exceeded the preflight read budget",
-        ));
-    }
-    Ok(String::from_utf8_lossy(&bytes)
-        .lines()
-        .filter(|line| {
-            line.contains("[AppID 240]")
-                && [
-                    "Need to upload file",
-                    "HTTP upload",
-                    "Upload batch initiated",
-                    "Upload OK",
-                ]
-                .iter()
-                .any(|term| line.contains(term))
-        })
-        .map(str::to_owned)
-        .collect())
 }
 
 pub fn validate_environment(environment: &CaptureEnvironment) -> io::Result<()> {
@@ -554,29 +534,18 @@ pub(crate) fn finish_preflight(directory: &Path) -> io::Result<()> {
     if !path.exists() {
         return Ok(());
     }
-    let before: Value = util::json_read(&path, 4096)?;
-    let root = before["steam_root"]
-        .as_str()
-        .ok_or_else(|| invalid("Preflight Steam root missing"))?;
-    let cursor = before["cursor"]
-        .as_u64()
-        .ok_or_else(|| invalid("Preflight Cloud cursor missing"))?;
+    let before: Preflight = util::json_read(&path, 4096)?;
+    let mut cloud_log = before.cloud_log;
     let started = Instant::now();
     let mut stable = Instant::now();
     let mut previous_length = None;
     let mut uploads = BTreeSet::new();
     let mut errors = BTreeSet::new();
     loop {
-        match upload_lines(Path::new(root), cursor) {
-            Ok(lines) => uploads.extend(lines),
-            Err(error) => {
-                errors.insert(error.to_string());
-            }
-        }
-        let length =
-            fs::metadata(Path::new(root).join("logs/cloud_log.txt")).map(|metadata| metadata.len());
-        match length {
-            Ok(length) => {
+        match cloud_log.read(&before.steam_root) {
+            Ok(read) => {
+                uploads.extend(read.uploads);
+                let length = cloud_log.length();
                 if previous_length != Some(length) {
                     stable = Instant::now();
                     previous_length = Some(length);
@@ -616,13 +585,19 @@ pub(crate) fn begin(
     helper: &Path,
     directory: &Path,
 ) -> io::Result<Baseline> {
-    let earliest_cursor = fs::metadata(environment.steam_root.join("logs/cloud_log.txt"))?.len();
+    let mut cloud_log = CloudLog::capture(&environment.steam_root)?;
+    let earliest_cursor = cloud_log.length();
     util::json_write(
         &directory.join("preflight-cloud-before.json"),
-        &json!({"steam_root":environment.steam_root,"cursor":earliest_cursor}),
+        &Preflight {
+            steam_root: environment.steam_root.clone(),
+            cloud_log: cloud_log.clone(),
+        },
     )?;
     let identity = query_identity(environment, helper, directory);
-    let preflight = upload_lines(&environment.steam_root, earliest_cursor);
+    let preflight = cloud_log
+        .read(&environment.steam_root)
+        .map(|read| read.uploads);
     util::json_write(
         &directory.join("preflight-cloud.json"),
         &json!({"cloud_log_cursor":earliest_cursor,"uploads":preflight.as_ref().ok(),"error":preflight.as_ref().err().map(ToString::to_string)}),
@@ -644,7 +619,7 @@ pub(crate) fn begin(
         steam: identity.steam_root.clone(),
         files: preference_files(&environment.engine_root, &identity)?,
         cloud: cloud_state(&identity)?,
-        cloud_log_size: earliest_cursor,
+        cloud_log,
         identity,
     };
     util::json_write(
@@ -656,20 +631,38 @@ pub(crate) fn begin(
 
 pub(crate) fn finish(baseline: &Baseline, directory: &Path, observer: &str) -> io::Result<()> {
     let previous = directory.join("private-preservation.json");
-    let previous_pass = if previous.exists() {
-        util::json_read::<Value>(&previous, MAX_CONFIG)
-            .ok()
-            .is_some_and(|v| v["success"] == true)
+    let previous_report = if previous.exists() {
+        Some(util::json_read::<Value>(&previous, MAX_CONFIG))
     } else {
-        true
+        None
     };
+    let previous_pass = previous_report.as_ref().is_none_or(|report| {
+        report
+            .as_ref()
+            .is_ok_and(|report| report["success"] == true)
+    });
     let started = Instant::now();
     let mut stable = Instant::now();
     let mut signature = None;
     let mut changed = BTreeSet::new();
     let mut cloud_changed = false;
     let mut errors = BTreeSet::new();
-    let (after_files, after_cloud, uploads) = loop {
+    let mut uploads = BTreeSet::new();
+    let mut cloud_log = baseline.cloud_log.clone();
+    if let Some(report) = previous_report {
+        let observation = report
+            .and_then(|report| {
+                serde_json::from_value(report["cloud_log"].clone()).map_err(io::Error::other)
+            })
+            .and_then(|observation| baseline.cloud_log.resume(observation));
+        match observation {
+            Ok(observation) => cloud_log = observation,
+            Err(error) => {
+                errors.insert(error.to_string());
+            }
+        }
+    }
+    let (after_files, after_cloud) = loop {
         let after_files = match preference_files(&baseline.root, &baseline.identity) {
             Ok(files) => {
                 for key in baseline.files.keys().chain(files.keys()) {
@@ -692,45 +685,16 @@ pub(crate) fn finish(baseline: &Baseline, directory: &Path, observer: &str) -> i
         if !busy && after_cloud != baseline.cloud {
             cloud_changed = true;
         }
-        let log_path = baseline.steam.join("logs/cloud_log.txt");
-        let appended = (|| {
-            let mut file = fs::File::open(&log_path)?;
-            if file.metadata()?.len() < baseline.cloud_log_size {
-                return Err(invalid("Steam Cloud log rotated during capture"));
+        let lines = match cloud_log.read(&baseline.steam) {
+            Ok(read) => {
+                uploads.extend(read.uploads);
+                read.lines
             }
-            file.seek(SeekFrom::Start(baseline.cloud_log_size))?;
-            let mut bytes = Vec::new();
-            file.take(8 * 1024 * 1024 + 1).read_to_end(&mut bytes)?;
-            if bytes.len() > 8 * 1024 * 1024 {
-                return Err(invalid("Steam Cloud log exceeds audit budget"));
-            }
-            Ok(String::from_utf8_lossy(&bytes).into_owned())
-        })();
-        let log = match appended {
-            Ok(log) => log,
             Err(e) => {
                 errors.insert(e.to_string());
-                String::new()
+                Vec::new()
             }
         };
-        let lines: Vec<&str> = log
-            .lines()
-            .filter(|line| line.contains("[AppID 240]"))
-            .collect();
-        let uploads: Vec<String> = lines
-            .iter()
-            .filter(|line| {
-                [
-                    "Need to upload file",
-                    "HTTP upload",
-                    "Upload batch initiated",
-                    "Upload OK",
-                ]
-                .iter()
-                .any(|term| line.contains(term))
-            })
-            .map(|line| line.to_string())
-            .collect();
         let next = json!([after_files, after_cloud, lines]);
         if signature.as_ref() != Some(&next) || busy {
             stable = Instant::now();
@@ -740,11 +704,11 @@ pub(crate) fn finish(baseline: &Baseline, directory: &Path, observer: &str) -> i
             && stable.elapsed() >= Duration::from_secs(3)
             && !busy
         {
-            break (after_files, after_cloud, uploads);
+            break (after_files, after_cloud);
         }
         if started.elapsed() >= Duration::from_secs(12) {
             errors.insert("Steam Cloud state did not settle after native exit".into());
-            break (after_files, after_cloud, uploads);
+            break (after_files, after_cloud);
         }
         thread::sleep(Duration::from_millis(500));
     };
@@ -754,7 +718,7 @@ pub(crate) fn finish(baseline: &Baseline, directory: &Path, observer: &str) -> i
         && after_cloud == baseline.cloud
         && uploads.is_empty()
         && errors.is_empty();
-    let report = json!({"success":success,"observer":observer,"before":baseline,"after":{"files":after_files,"cloud":after_cloud},"changed_preference_files":changed,"cloud_preferences_unchanged":!cloud_changed,"app240_cloud_uploads":uploads,"errors":errors,"observation_seconds":started.elapsed().as_secs_f64(),"settled_seconds":stable.elapsed().as_secs_f64(),"previous_audit_success":previous_pass});
+    let report = json!({"success":success,"observer":observer,"before":baseline,"after":{"files":after_files,"cloud":after_cloud},"cloud_log":cloud_log,"changed_preference_files":changed,"cloud_preferences_unchanged":!cloud_changed,"app240_cloud_uploads":uploads,"errors":errors,"observation_seconds":started.elapsed().as_secs_f64(),"settled_seconds":stable.elapsed().as_secs_f64(),"previous_audit_success":previous_pass});
     util::json_write(
         &directory.join(format!("private-preservation-{observer}.json")),
         &report,
@@ -809,7 +773,10 @@ mod tests {
         fs::write(steam.join("logs/cloud_log.txt"), "").unwrap();
         util::json_write(
             &directory.path().join("preflight-cloud-before.json"),
-            &json!({"steam_root":steam,"cursor":0}),
+            &Preflight {
+                steam_root: steam.clone(),
+                cloud_log: CloudLog::capture(&steam).unwrap(),
+            },
         )
         .unwrap();
         let log = steam.join("logs/cloud_log.txt");

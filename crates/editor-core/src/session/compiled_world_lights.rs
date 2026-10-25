@@ -136,9 +136,10 @@ impl Session {
     /// A no-I/O invalidation key; source and output freshness require an inspection.
     pub fn compiled_world_light_observation(&self) -> Value {
         let build = self.compiled.as_ref();
-        let path_omitted = self.path.as_ref().is_some_and(|path| {
-            path.as_os_str().as_encoded_bytes().len() > 16 * 1024 || path.to_str().is_none()
-        });
+        let path_omitted = self
+            .path
+            .as_ref()
+            .is_some_and(|path| crate::report_path::checked(path).is_err());
         json!({
             "token":build.map(|build| build.lightmap_identity.token.to_string()),
             "generation":self.document_generation,

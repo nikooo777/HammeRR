@@ -157,7 +157,7 @@ impl<'a> Bindings<'a> {
         }
         for entity in child.entities.iter().filter(|entity| !entity.hidden) {
             control.checkpoint()?;
-            let nested = entity.classname() == Some("func_instance");
+            let nested = is_instance(entity);
             for (key, value) in entity.properties.iter() {
                 self.unsupported(key)?;
                 if let Some(name) =

@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::{cell::OnceCell, collections::BTreeSet};
 
 use glam::DVec3;
 use source_formats::{
@@ -8,8 +8,8 @@ use source_formats::{
 };
 
 use crate::{
-    BrushGeometry, EditError, ObjectId, Transaction, checks::SOURCE_COORDINATE_LIMIT, edit,
-    plane::ON_EPSILON, surface::FaceId,
+    BrushGeometry, EditError, ObjectId, Transaction, checks::SOURCE_COORDINATE_LIMIT,
+    displacement::surface, edit, plane::ON_EPSILON, surface::FaceId,
 };
 
 const BASIS_TOLERANCE: f64 = 0.01;
@@ -276,7 +276,11 @@ struct SourceFace {
     samples: Vec<DVec3>,
 }
 
-fn source_face(vmf: &Vmf, face: FaceId) -> Result<SourceFace, String> {
+fn source_face(
+    vmf: &Vmf,
+    face: FaceId,
+    prepared: &OnceCell<surface::Prepared>,
+) -> Result<SourceFace, String> {
     let (solid, owner) = vmf
         .world
         .solids
@@ -323,7 +327,7 @@ fn source_face(vmf: &Vmf, face: FaceId) -> Result<SourceFace, String> {
         ));
     }
     if let Some(info) = &solid.sides[index].displacement {
-        return terrain_source(vmf, face, target, info);
+        return terrain_source(vmf, face, target, info, prepared);
     }
     if solid.sides.iter().any(|side| side.displacement.is_some()) {
         return Err("Overlay fitting does not support terrain brushes' cage faces".into());
@@ -347,8 +351,9 @@ fn terrain_source(
     face: FaceId,
     target: &crate::brush::Face,
     info: &source_formats::vmf::DispInfo,
+    prepared: &OnceCell<surface::Prepared>,
 ) -> Result<SourceFace, String> {
-    use crate::displacement::{native, surface};
+    use crate::displacement::native;
     if vmf.entities.iter().any(|entity| {
         !entity.hidden
             && entity
@@ -360,7 +365,7 @@ fn terrain_source(
     let (base, mesh) = native::checked_mesh(target, info)?;
     crate::displacement::smoothing::angle(info)?;
     crate::displacement::triangles::native_tags(info, &mesh).map_err(|error| error.to_string())?;
-    let prepared = surface::prepare(vmf);
+    let prepared = prepared.get_or_init(|| surface::prepare(vmf));
     let current = prepared
         .get(&face)
         .ok_or("Overlay target has no prepared terrain surface")?;
@@ -493,8 +498,17 @@ fn planar_terrain_quad(
 }
 
 pub fn fit(vmf: &Vmf, face: FaceId, options: Options) -> Result<Definition, String> {
+    fit_with_prepared(vmf, face, options, &OnceCell::new())
+}
+
+fn fit_with_prepared(
+    vmf: &Vmf,
+    face: FaceId,
+    options: Options,
+    prepared: &OnceCell<surface::Prepared>,
+) -> Result<Definition, String> {
     vmf.validate_ids().map_err(|error| error.to_string())?;
-    let source = source_face(vmf, face)?;
+    let source = source_face(vmf, face, prepared)?;
     let definition = fit_source(face, source.normal, &source.vertices, options)?;
     if is_terrain(vmf, face) {
         validate_editable_projection(&definition, &definition)?;
@@ -540,14 +554,16 @@ pub fn fit_faces(vmf: &Vmf, faces: &[FaceId], options: Options) -> Result<Defini
     let first = *faces
         .first()
         .ok_or("Overlay fitting requires at least one source face")?;
-    let definition = fit(vmf, first, options)?;
-    fit_sources(vmf, faces, definition)
+    let prepared = OnceCell::new();
+    let definition = fit_with_prepared(vmf, first, options, &prepared)?;
+    fit_sources(vmf, faces, definition, &prepared)
 }
 
 fn fit_sources(
     vmf: &Vmf,
     faces: &[FaceId],
     mut definition: Definition,
+    prepared: &OnceCell<surface::Prepared>,
 ) -> Result<Definition, String> {
     if faces.len() == 1 {
         return Ok(definition);
@@ -555,7 +571,7 @@ fn fit_sources(
     if faces.iter().copied().collect::<BTreeSet<_>>().len() != faces.len() {
         return Err("Overlay fitting requires distinct source faces".into());
     }
-    let (mins, maxs) = coplanar_bounds(vmf, faces, &definition)?;
+    let (mins, maxs) = coplanar_bounds(vmf, faces, &definition, prepared)?;
     definition.sides = faces.iter().map(|face| face.side).collect();
     definition.sides.sort_unstable();
     definition.uv_points = [
@@ -573,6 +589,7 @@ fn coplanar_bounds(
     vmf: &Vmf,
     faces: &[FaceId],
     definition: &Definition,
+    prepared: &OnceCell<surface::Prepared>,
 ) -> Result<([f64; 2], [f64; 2]), String> {
     let origin = DVec3::from_array(definition.basis_origin);
     let normal = DVec3::from_array(definition.basis_normal);
@@ -581,7 +598,7 @@ fn coplanar_bounds(
     let mut mins = [f64::INFINITY; 2];
     let mut maxs = [f64::NEG_INFINITY; 2];
     for &face in faces {
-        let source = source_face(vmf, face)
+        let source = source_face(vmf, face, prepared)
             .map_err(|error| format!("Overlay brush {} face {}: {error}", face.solid, face.side))?;
         if normal.dot(source.normal) < 1.0 - COPLANAR_NORMAL_TOLERANCE
             || source
@@ -675,10 +692,11 @@ pub fn checked_bound_sources(vmf: &Vmf, id: u32) -> Result<BoundSources, String>
 
 fn checked_bound_definition(vmf: &Vmf, definition: Definition) -> Result<BoundSources, String> {
     let faces = resolve_sources(vmf, &definition)?;
+    let prepared = OnceCell::new();
     let mut references = Vec::new();
     let mut plane = None;
     for &face in &faces {
-        let source = source_face(vmf, face)
+        let source = source_face(vmf, face, &prepared)
             .map_err(|error| format!("Overlay brush {} face {}: {error}", face.solid, face.side))?;
         if let Ok(candidate) = fit_source(
             face,
@@ -693,7 +711,7 @@ fn checked_bound_definition(vmf: &Vmf, definition: Definition) -> Result<BoundSo
         }
     }
     let plane = plane.ok_or("Overlay editing requires an eligible bound quad")?;
-    coplanar_bounds(vmf, &faces, &plane)?;
+    coplanar_bounds(vmf, &faces, &plane, &prepared)?;
     Ok(BoundSources {
         faces,
         references,

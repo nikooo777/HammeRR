@@ -18,7 +18,11 @@ fn replacement_key(key: &str) -> bool {
         .is_some_and(|prefix| prefix.eq_ignore_ascii_case("replace"))
 }
 
-fn parse_replacement<'a>(key: &str, value: &'a str) -> Result<Option<Binding<'a>>, String> {
+fn parse_replacement<'a>(
+    key: &str,
+    value: &'a str,
+    template: bool,
+) -> Result<Option<Binding<'a>>, String> {
     if value.trim().is_empty() {
         return Ok(None);
     }
@@ -38,8 +42,14 @@ fn parse_replacement<'a>(key: &str, value: &'a str) -> Result<Option<Binding<'a>
     )?;
     let name = map_core::light::parameter_name(token)
         .ok_or("Instance light binding requires a whole $name with 1–64 ASCII identifier bytes")?;
-    if literal.trim().is_empty() || literal.contains('$') {
-        return Err("Instance light bindings require nonempty literal values; recursive bindings and ancestor forwarding are unsupported".into());
+    if !template && map_core::light::parameter_name(literal).is_some() {
+        return Err("Unresolved instance light forwarding requires an immediately containing parent binding scope".into());
+    }
+    if literal.trim().is_empty()
+        || (literal.contains('$')
+            && !(template && map_core::light::parameter_name(literal).is_some()))
+    {
+        return Err("Instance light bindings require nonempty literals or an exact whole immediate-parent token in a nested helper; recursive and embedded replacements are unsupported".into());
     }
     field(value)?;
     field(literal)?;
@@ -49,8 +59,21 @@ fn parse_replacement<'a>(key: &str, value: &'a str) -> Result<Option<Binding<'a>
     }))
 }
 
-pub(super) fn replacement(key: &str, value: &str) -> Result<(), String> {
-    parse_replacement(key, value).map(|_| ())
+pub(super) fn replacement(key: &str, value: &str, template: bool) -> Result<(), String> {
+    parse_replacement(key, value, template).map(|_| ())
+}
+
+fn forwarding_name(value: &str) -> Option<&str> {
+    let (_, operand) = value.split_once(' ')?;
+    map_core::light::parameter_name(operand)
+}
+
+pub(super) fn has_forwarding(entity: &Entity) -> bool {
+    is_instance(entity)
+        && entity
+            .properties
+            .iter()
+            .any(|(key, value)| replacement_key(key) && forwarding_name(value).is_some())
 }
 
 pub(super) fn has_parameters(entity: &Entity) -> bool {
@@ -70,6 +93,14 @@ fn charge(work: &mut usize, amount: usize, control: &Control) -> Result<(), Stri
 
 impl<'a> Bindings<'a> {
     pub fn new(helper: &'a Entity) -> Result<Self, String> {
+        Self::read(helper, false)
+    }
+
+    pub fn validate_template(helper: &'a Entity) -> Result<(), String> {
+        Self::read(helper, true).map(|_| ())
+    }
+
+    fn read(helper: &'a Entity, template: bool) -> Result<Self, String> {
         let mut result = Self {
             values: [None; MAX_BINDINGS],
             len: 0,
@@ -79,7 +110,7 @@ impl<'a> Bindings<'a> {
             .iter()
             .filter(|(key, _)| replacement_key(key))
         {
-            let Some(binding) = parse_replacement(key, value)? else {
+            let Some(binding) = parse_replacement(key, value, template)? else {
                 continue;
             };
             if result.get(binding.name).is_some() {
@@ -170,7 +201,14 @@ impl<'a> Bindings<'a> {
                         )
                     })?;
                     used[index] = true;
-                } else if !(nested && replacement_key(key)) {
+                } else if nested && replacement_key(key) {
+                    if let Some(name) = forwarding_name(value) {
+                        let (index, _) = self.get(name).ok_or_else(|| {
+                            format!("Child instance {} is missing immediate-parent light binding ${name}", entity.id)
+                        })?;
+                        used[index] = true;
+                    }
+                } else {
                     self.unsupported(value)?;
                 }
             }
@@ -181,7 +219,7 @@ impl<'a> Bindings<'a> {
         for (index, binding) in self.values[..self.len].iter().enumerate() {
             if !used[index] {
                 return Err(format!(
-                    "Instance light binding ${} is unused by direct visible child lights",
+                    "Instance light binding ${} is unused by direct visible child lights or forwarding helpers",
                     binding.unwrap().name
                 ));
             }
@@ -195,6 +233,73 @@ impl<'a> Bindings<'a> {
             self.unsupported(&side.material)?;
         }
         Ok(())
+    }
+
+    fn forwarded<'v>(
+        &self,
+        key: &str,
+        value: &'v str,
+    ) -> Result<Option<(&'v str, &'a str)>, String> {
+        if !replacement_key(key) {
+            return Ok(None);
+        }
+        let Some(name) = forwarding_name(value) else {
+            return Ok(None);
+        };
+        let (_, binding) = self
+            .get(name)
+            .ok_or_else(|| format!("Missing immediate-parent light binding ${name}"))?;
+        let (token, _) = value.split_once(' ').unwrap();
+        token
+            .len()
+            .checked_add(1)
+            .and_then(|bytes| bytes.checked_add(binding.value.len()))
+            .filter(|bytes| *bytes <= MAX_FIELD_BYTES)
+            .ok_or_else(|| {
+                format!("Forwarded instance replacement exceeds {MAX_FIELD_BYTES} bytes")
+            })?;
+        Ok(Some((token, binding.value)))
+    }
+
+    pub fn resolve_helper<'e>(
+        &self,
+        original: &'e Entity,
+        work: &mut usize,
+        control: &Control,
+    ) -> Result<Cow<'e, Entity>, String> {
+        if !has_forwarding(original) {
+            return Ok(Cow::Borrowed(original));
+        }
+        helper_template_admission(original)?;
+        let mut bytes = 0_usize;
+        for (key, value) in original.properties.iter() {
+            control.checkpoint()?;
+            let length = match self.forwarded(key, value)? {
+                Some((token, literal)) => token.len() + 1 + literal.len(),
+                None => value.len(),
+            };
+            bytes = bytes
+                .checked_add(key.len())
+                .and_then(|bytes| bytes.checked_add(length))
+                .ok_or("Instance forwarded helper property-work overflow")?;
+        }
+        let amount = bytes
+            .checked_mul(2)
+            .ok_or("Instance forwarded helper copy-work overflow")?;
+        charge(work, amount, control)?;
+        let mut entity = Entity::new(original.id, "");
+        entity.properties.0.clear();
+        entity.properties.0.reserve(original.properties.0.len());
+        for (key, value) in original.properties.iter() {
+            control.checkpoint()?;
+            let value = match self.forwarded(key, value)? {
+                Some((token, literal)) => format!("{token} {literal}"),
+                None => value.to_owned(),
+            };
+            entity.properties.0.push((key.to_owned(), value));
+        }
+        helper_admission(&entity)?;
+        Ok(Cow::Owned(entity))
     }
 
     pub fn resolve<'e>(
@@ -303,6 +408,113 @@ mod tests {
         let full = format!("$lamp {}", "1".repeat(MAX_FIELD_BYTES - "$lamp ".len()));
         helper_admission(&helper(&full)).unwrap();
         assert!(helper_admission(&helper(&(full + "1"))).is_err());
+        for value in ["$lamp $Outer", "$lamp $lamp"] {
+            helper_template_admission(&helper(value)).unwrap();
+            assert!(helper_admission(&helper(value)).is_err());
+        }
+        for value in [
+            "$lamp  $Outer",
+            "$lamp $Outer ",
+            "$lamp prefix$Outer",
+            "$lamp $Outer suffix",
+            "$lamp $Outer$Other",
+        ] {
+            assert!(
+                helper_template_admission(&helper(value)).is_err(),
+                "{value}"
+            );
+        }
+        let mut repeated = helper("$lamp $Outer");
+        repeated.properties.set("replace02", "$LAMP $Other");
+        assert!(
+            helper_template_admission(&repeated)
+                .unwrap_err()
+                .contains("repeats light binding")
+        );
+    }
+
+    #[test]
+    fn forwarding_uses_only_parent_literals_and_charges_bounded_detached_copies() {
+        let owner = helper("$Outer 255 128 32 300");
+        let bindings = Bindings::new(&owner).unwrap();
+        for source in ["$local $oUtEr", "$Outer $OUTER"] {
+            let nested = helper(source);
+            let before = nested.clone();
+            let mut work = 0;
+            let effective = bindings
+                .resolve_helper(&nested, &mut work, &Control::default())
+                .unwrap();
+            let token = source.split_once(' ').unwrap().0;
+            assert_eq!(
+                effective.properties.get("replace01"),
+                Some(format!("{token} 255 128 32 300").as_str())
+            );
+            assert!(work > 0);
+            assert_eq!(nested, before);
+            let mut child = Document::empty().into_vmf();
+            child.entities.push(nested.clone());
+            bindings
+                .check_child(&child, 100, true, &mut work, &Control::default())
+                .unwrap();
+            let mut exhausted = MAX_GEOMETRY_WORK;
+            assert!(
+                bindings
+                    .resolve_helper(&nested, &mut exhausted, &Control::default())
+                    .unwrap_err()
+                    .contains("geometry-work")
+            );
+            assert_eq!(exhausted, MAX_GEOMETRY_WORK);
+            let control = Control::default();
+            control.cancel().unwrap();
+            assert!(
+                bindings
+                    .resolve_helper(&nested, &mut work, &control)
+                    .is_err()
+            );
+            assert_eq!(nested, before);
+        }
+        let mut sibling = helper("$local $Sibling");
+        sibling
+            .properties
+            .set("replace02", "$Sibling 255 128 32 300");
+        let mut work = 0;
+        assert!(
+            bindings
+                .resolve_helper(&sibling, &mut work, &Control::default())
+                .unwrap_err()
+                .contains("immediate-parent")
+        );
+        let mut shadowed = helper("$local $Outer");
+        shadowed.properties.set("replace02", "$Outer 1 2 3 4");
+        let effective = bindings
+            .resolve_helper(&shadowed, &mut work, &Control::default())
+            .unwrap();
+        assert_eq!(
+            effective.properties.get("replace01"),
+            Some("$local 255 128 32 300")
+        );
+        assert_eq!(
+            effective.properties.get("replace02"),
+            Some("$Outer 1 2 3 4")
+        );
+        let long = format!("${}", "a".repeat(64));
+        let nested = helper(&format!("{long} $Outer"));
+        for extra in [0, 1] {
+            let literal = "1".repeat(MAX_FIELD_BYTES - long.len() - 1 + extra);
+            let owner = helper(&format!("$Outer {literal}"));
+            let bindings = Bindings::new(&owner).unwrap();
+            let mut work = 0;
+            let result = bindings.resolve_helper(&nested, &mut work, &Control::default());
+            if extra == 0 {
+                assert_eq!(
+                    result.unwrap().properties.get("replace01").unwrap().len(),
+                    MAX_FIELD_BYTES
+                );
+            } else {
+                assert!(result.unwrap_err().contains("512 bytes"));
+                assert_eq!(work, 0);
+            }
+        }
     }
 
     #[test]

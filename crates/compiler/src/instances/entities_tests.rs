@@ -1427,7 +1427,7 @@ fn sibling_light_bindings_match_independent_literal_dual_bsp_and_preserve_raw_so
 }
 
 #[test]
-fn attenuation_bindings_match_independent_literal_dual_bsp_with_zero_and_percentage_precedence() {
+fn forwarded_light_bindings_match_independent_literal_dual_bsp_through_four_helper_levels() {
     let mut point = static_light(20, "light", "-48 16 128");
     let mut spot = static_light(21, "light_spot", "64 -16 160");
     for light in [&mut point, &mut spot] {
@@ -1439,35 +1439,71 @@ fn attenuation_bindings_match_independent_literal_dual_bsp_with_zero_and_percent
             ("_zero_percent_distance", "$end"),
             ("_distance", "$radius"),
             ("_hardfalloff", "$hard"),
+            ("_light", "$lamp"),
+            ("_lightHDR", "$hdr"),
         ] {
             light.properties.set(key, value);
         }
     }
     let (directory, mut parent, template, game) = emitter_fixture(vec![point, spot]);
     let values = [
-        (["2", "0.5", "0.25"], ["0", "0", "192.5", "0"]),
-        (["0", "0", "0"], ["0", "0", "0", "0"]),
-        (["NaN", "-1", "1e40"], ["64", "160", "NaN", "1"]),
+        (
+            ["2", "0.5", "0.25"],
+            ["0", "0", "192.5", "0"],
+            ["255 96 32 300", "32 96 255 450"],
+        ),
+        (
+            ["0", "0", "0"],
+            ["0", "0", "0", "0"],
+            ["64 255 160 240", "256 80 40 600"],
+        ),
+        (
+            ["NaN", "-1", "1e40"],
+            ["64", "160", "NaN", "1"],
+            ["255 128 32 200", "64 256 128 300"],
+        ),
     ];
+    let names = [
+        "constant",
+        "linear",
+        "quadratic",
+        "half",
+        "end",
+        "radius",
+        "hard",
+        "lamp",
+        "hdr",
+    ];
+    let mut file = "child.vmf".to_owned();
+    let mut intermediate_bytes = Vec::new();
+    for depth in 1..=3 {
+        let mut helper = nested_helper(100, &file, "8 -4 0", "0 0 0");
+        helper.properties.set("classname", "FuNc_InStAnCe");
+        for (index, name) in names.into_iter().enumerate() {
+            helper.properties.set(
+                format!("replace{:02}", index + 1),
+                format!("${name} ${name}"),
+            );
+        }
+        file = format!("forward{depth}.vmf");
+        write_child(directory.path(), &file, &helper_file(vec![helper]));
+        intermediate_bytes.push((
+            file.clone(),
+            std::fs::read(directory.path().join(&file)).unwrap(),
+        ));
+    }
     let original = parent.entities.pop().unwrap();
-    for (index, (coefficients, distances)) in values.into_iter().enumerate() {
+    for (index, (coefficients, distances, colors)) in values.into_iter().enumerate() {
         let mut helper = original.clone();
         helper.id += index as u32;
+        helper.properties.set("file", &file);
         helper
             .properties
             .set("origin", format!("{} -8 4", index as i32 * 32 - 16));
-        for (slot, (name, value)) in [
-            "constant",
-            "linear",
-            "quadratic",
-            "half",
-            "end",
-            "radius",
-            "hard",
-        ]
-        .into_iter()
-        .zip(coefficients.into_iter().chain(distances))
-        .enumerate()
+        for (slot, (name, value)) in names
+            .into_iter()
+            .zip(coefficients.into_iter().chain(distances).chain(colors))
+            .enumerate()
         {
             helper.properties.set(
                 format!("replace{:02}", slot + 1),
@@ -1484,7 +1520,7 @@ fn attenuation_bindings_match_independent_literal_dual_bsp_with_zero_and_percent
     let mut literal = Document::new(parent.clone());
     literal
         .edit("independent attenuation literals", |tx| {
-            for (helper, (coefficients, distances)) in parent
+            for (helper, (coefficients, distances, colors)) in parent
                 .entities
                 .iter()
                 .filter(|entity| {
@@ -1499,7 +1535,11 @@ fn attenuation_bindings_match_independent_literal_dual_bsp_with_zero_and_percent
                         static_light(tx.new_object_id()?, original.classname().unwrap(), "0 0 0");
                     light.properties.set(
                         "origin",
-                        format_vec3(original.origin().unwrap() + helper.origin().unwrap()),
+                        format_vec3(
+                            original.origin().unwrap()
+                                + helper.origin().unwrap()
+                                + DVec3::new(24.0, -12.0, 0.0),
+                        ),
                     );
                     for (key, value) in [
                         "_constant_attn",
@@ -1509,9 +1549,11 @@ fn attenuation_bindings_match_independent_literal_dual_bsp_with_zero_and_percent
                         "_zero_percent_distance",
                         "_distance",
                         "_hardfalloff",
+                        "_light",
+                        "_lightHDR",
                     ]
                     .into_iter()
-                    .zip(coefficients.into_iter().chain(distances))
+                    .zip(coefficients.into_iter().chain(distances).chain(colors))
                     {
                         light.properties.set(key, value);
                     }
@@ -1546,11 +1588,13 @@ fn attenuation_bindings_match_independent_literal_dual_bsp_with_zero_and_percent
             stats.point_lights,
             stats.spot_lights
         ),
-        (3, 1, 3, 3)
+        (12, 4, 3, 3)
     );
+    assert_eq!(stats.max_expansion_depth, 4);
     for channel in [LightingKind::Ldr, LightingKind::Hdr] {
         let lights = actual.bsp.as_ref().unwrap().world_lights(channel).unwrap();
         assert_eq!(lights.len(), 6);
+        assert_ne!(lights[0].intensity, lights[2].intensity);
         assert_eq!(
             lights.iter().map(|light| light.radius).collect::<Vec<_>>(),
             [192.5, 192.5, 0.0, 0.0, 0.0, 0.0]
@@ -1591,7 +1635,10 @@ fn attenuation_bindings_match_independent_literal_dual_bsp_with_zero_and_percent
         std::fs::read(directory.path().join("child.vmf")).unwrap(),
         raw
     );
-    let destination = directory.path().join("attenuation.bsp");
+    for (file, bytes) in &intermediate_bytes {
+        assert_eq!(std::fs::read(directory.path().join(file)).unwrap(), *bytes);
+    }
+    let destination = directory.path().join("forwarded.bsp");
     std::fs::write(&destination, b"previous BSP").unwrap();
     let staged = actual
         .prepare_write_controlled(&destination, &Control::default())
@@ -1781,7 +1828,14 @@ fn bound_templates_reject_grouped_semantic_and_context_failures_before_fullbrigh
         "hidden",
         "world context",
         "material context",
-        "forwarding",
+        "forwarding cycle",
+        "forward missing scope",
+        "forward sibling lookup",
+        "forward ancestor search",
+        "forward embedded",
+        "forward effective field overflow",
+        "forward unused descendant",
+        "forward type outside region",
     ] {
         let mut parent = baseline.clone();
         let mut child = template.clone();
@@ -1794,6 +1848,7 @@ fn bound_templates_reject_grouped_semantic_and_context_failures_before_fullbrigh
                 | "coefficient outside region"
                 | "radius outside region"
                 | "hard flag outside region"
+                | "forward type outside region"
         ) {
             parent.cordon = Some(Node::block(
                 "cordon",
@@ -1995,9 +2050,80 @@ fn bound_templates_reject_grouped_semantic_and_context_failures_before_fullbrigh
                     .push(test_common::room().world.solids.remove(0));
                 child.world.solids[0].sides[0].material = "dev/$lamp".into();
             }
-            "forwarding" => {
+            "forwarding cycle" => {
                 let mut nested = nested_helper(100, "child.vmf", "0 0 0", "0 0 0");
                 nested.properties.set("replace01", "$local $lamp");
+                child.entities.push(nested);
+            }
+            "forward missing scope"
+            | "forward sibling lookup"
+            | "forward ancestor search"
+            | "forward embedded"
+            | "forward effective field overflow"
+            | "forward unused descendant"
+            | "forward type outside region" => {
+                let mut nested = nested_helper(100, "forward-leaf.vmf", "0 0 0", "0 0 0");
+                nested.properties.set(
+                    "replace01",
+                    match issue {
+                        "forward missing scope" => "$local $absent",
+                        "forward sibling lookup" => "$local $sibling",
+                        "forward embedded" => "$local prefix$lamp",
+                        "forward effective field overflow" | "forward type outside region" => {
+                            "$local $outer"
+                        }
+                        _ => "$local $lamp",
+                    },
+                );
+                if issue == "forward sibling lookup" {
+                    nested
+                        .properties
+                        .set("replace02", "$sibling 255 128 32 300");
+                }
+                if issue == "forward ancestor search" {
+                    helper
+                        .properties
+                        .set("replace02", "$Ancestor 255 128 32 300");
+                    nested.properties.set("replace01", "$Bridge $Ancestor");
+                    nested.properties.set("file", "forward-middle.vmf");
+                    let mut skipped = nested_helper(100, "forward-leaf.vmf", "0 0 0", "0 0 0");
+                    skipped.properties.set("replace01", "$local $Ancestor");
+                    write_child(
+                        directory.path(),
+                        "forward-middle.vmf",
+                        &helper_file(vec![skipped]),
+                    );
+                }
+                if issue == "forward effective field overflow" {
+                    nested
+                        .properties
+                        .set("replace01", format!("${} $outer", "a".repeat(64)));
+                    helper.properties.set(
+                        "replace02",
+                        format!("$outer {}", "1".repeat(MAX_FIELD_BYTES - "$outer ".len())),
+                    );
+                }
+                let mut leaf = Vec::new();
+                if matches!(
+                    issue,
+                    "forward type outside region" | "forward ancestor search"
+                ) {
+                    if issue == "forward type outside region" {
+                        helper.properties.set("replace02", "$outer 300 1 1 100");
+                    }
+                    let mut light = static_light(
+                        20,
+                        "light",
+                        if issue == "forward type outside region" {
+                            "1024 0 96"
+                        } else {
+                            "0 0 96"
+                        },
+                    );
+                    light.properties.set("_light", "$local");
+                    leaf.push(light);
+                }
+                write_child(directory.path(), "forward-leaf.vmf", &helper_file(leaf));
                 child.entities.push(nested);
             }
             _ => unreachable!(),
@@ -2021,6 +2147,15 @@ fn bound_templates_reject_grouped_semantic_and_context_failures_before_fullbrigh
             "{issue}: {:?}",
             output.report
         );
+        if issue == "forward ancestor search" {
+            assert!(
+                output.report.diagnostics.iter().any(|diagnostic| diagnostic
+                    .message
+                    .contains("missing immediate-parent light binding $Ancestor")),
+                "{:?}",
+                output.report
+            );
+        }
         assert!(
             output
                 .report

@@ -10,7 +10,7 @@ struct Child {
     identity: FileIdentity,
     bytes: usize,
     names: names::LocalIndex,
-    light_parameters: bool,
+    binding_parameters: bool,
     targets: targets::LocalIndex,
 }
 
@@ -177,12 +177,11 @@ impl<'a> Expansion<'a> {
         }
         let names = names::LocalIndex::new(&child, &mut self.work, self.control)
             .map_err(|error| format!("Instance {relative}: {error}"))?;
-        let light_parameters = child
-            .entities
-            .iter()
-            .any(|entity| !entity.hidden && bindings::has_parameters(entity));
+        let binding_parameters = child.entities.iter().any(|entity| {
+            !entity.hidden && (bindings::has_parameters(entity) || bindings::has_forwarding(entity))
+        });
         let child = Arc::new(Child {
-            light_parameters,
+            binding_parameters,
             names,
             targets,
             vmf: child,
@@ -224,7 +223,7 @@ impl<'a> Expansion<'a> {
             .check_child(
                 &child.vmf,
                 child.bytes,
-                child.light_parameters,
+                child.binding_parameters,
                 &mut self.work,
                 self.control,
             )
@@ -329,7 +328,12 @@ impl<'a> Expansion<'a> {
                     .classname()
                     .is_some_and(|class| class.eq_ignore_ascii_case("func_instance"))
                 {
-                    self.helper(tx, entity, owner, transforms, ancestors)?;
+                    let effective = bindings
+                        .resolve_helper(entity, &mut self.work, self.control)
+                        .map_err(|error| {
+                            EditError::Invalid(format!("Child instance {}: {error}", entity.id))
+                        })?;
+                    self.helper(tx, &effective, owner, transforms, ancestors)?;
                 } else if brush_models::is_model(entity) {
                     self.brush_model(tx, entity, owner.id, &relative, transforms)
                         .map_err(|error| {

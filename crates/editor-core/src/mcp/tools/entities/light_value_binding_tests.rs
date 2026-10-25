@@ -26,7 +26,8 @@ fn light_value_binding_mcp_uses_existing_string_schemas_and_shared_drafts() {
                 _cone(integer) : "Outer (fading) angle" : 45
                 _exponent(integer) : "Focus" : 1
                 pitch(integer) : "Pitch" : -90
-            ]"#,
+            ]
+            @PointClass = func_instance [ file(instance_file) : "File" replace01(string) : "Binding" ]"#,
         )
         .unwrap(),
     );
@@ -182,6 +183,26 @@ fn light_value_binding_mcp_uses_existing_string_schemas_and_shared_drafts() {
         )["light_value_bindings"],
         scope
     );
+    let created = report(server.create_entity(Parameters(serde_json::from_value(json!({"classname":"func_instance","origin":[0,0,0],"properties":{"file":"child.vmf","replace01":"$Lamp $Outer"}})).unwrap())));
+    let helper = created["id"].as_str().unwrap();
+    report(server.set_entity_properties(Parameters(
+        serde_json::from_value(json!({"id":helper,"set":{"replace01":"$Lamp $Other"}})).unwrap(),
+    )));
+    let opened = report(server.begin_property_edit(Parameters(
+        serde_json::from_value(json!({"ids":[helper]})).unwrap(),
+    )));
+    let token = opened["draft"]["token"].as_u64().unwrap();
+    let staged = report(server.update_property_edit(Parameters(serde_json::from_value(json!({"token":token,"changes":[{"action":"set","key":"replace01","value":"$Lamp $Lamp"}]})).unwrap())));
+    let field = &staged["preview"]["properties"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|property| property["field"]["key"] == "replace01")
+        .unwrap()["field"];
+    assert_eq!(field["kind"], "string");
+    assert_eq!(field["control"], "text");
+    assert_eq!(field["value"], "$Lamp $Lamp");
+    report(server.commit_property_edit(Parameters(PropertyTokenArgs { token })));
     assert!(server.offscreen.lock().unwrap().renderer.is_none());
 }
 
@@ -376,6 +397,25 @@ fn environment_color_binding_mcp_uses_shared_create_set_and_ambient_drafts() {
     );
     assert_eq!(scope["hard_falloff_values"], json!([0, 1]));
     assert_eq!(scope["hard_falloff_requires_positive_half_when_one"], true);
+    assert_eq!(scope["literal_only"], false);
+    assert_eq!(scope["root_literal_only"], true);
+    assert_eq!(scope["nested_forwarding"], true);
+    assert_eq!(scope["forwarding_operand"], "whole_value_$identifier");
+    assert_eq!(
+        scope["forwarding_scope"],
+        "immediately_containing_func_instance"
+    );
+    assert_eq!(scope["forwarding_same_name"], true);
+    assert_eq!(scope["forwarding_sibling_lookup"], false);
+    assert_eq!(scope["forwarding_recursive"], false);
+    assert_eq!(scope["forwarding_max_helper_levels"], 4);
+    assert!(
+        !scope["rejected"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| value == "ancestor_forwarding")
+    );
     assert_eq!(scope["other_scalar_parameters"], false);
     assert!(server.offscreen.lock().unwrap().renderer.is_none());
 }

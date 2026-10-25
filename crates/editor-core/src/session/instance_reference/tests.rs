@@ -408,3 +408,126 @@ fn instance_reference_creation_uses_fgd_defaults_and_definition_changes_stale_th
         .cancel_instance_reference(Actor::Agent, token)
         .unwrap();
 }
+
+#[test]
+fn forwarding_templates_share_property_authoring_and_editable_reference_forms_but_need_parent_scope()
+ {
+    for actor in [Actor::User, Actor::Agent] {
+        let (_directory, mut session, parent, child, _) = opened();
+        let ObjectId::Entity(id) = session
+            .create_entity(
+                actor,
+                "func_instance",
+                Some(DVec3::ZERO),
+                BTreeMap::from([
+                    ("file".into(), "child.vmf".into()),
+                    ("replace01".into(), "$Lamp $Outer".into()),
+                ]),
+            )
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        session
+            .set_entity_properties(
+                actor,
+                id,
+                &[("replace01".into(), Some("$Lamp $Other".into()))],
+            )
+            .unwrap();
+        let before = session.document.vmf().clone();
+        session
+            .begin_property_edit(PropertyTarget::Entities(vec![id]))
+            .unwrap();
+        let token = session.property_draft().unwrap().token;
+        session
+            .update_property_edit(
+                token,
+                vec![PropertyChange::Set {
+                    key: "replace01".into(),
+                    value: "$Lamp $Lamp".into(),
+                }],
+            )
+            .unwrap();
+        assert_eq!(session.document.vmf(), &before);
+        session.commit_property_edit(actor, token).unwrap();
+        let authored = session.document.vmf().clone();
+        session.undo(actor).unwrap();
+        assert_eq!(session.document.vmf(), &before);
+        session.redo(actor).unwrap();
+        assert_eq!(session.document.vmf(), &authored);
+        session.save(actor, None).unwrap();
+        session.open(actor, &parent, false).unwrap();
+        assert_eq!(
+            session
+                .document
+                .entity(id)
+                .unwrap()
+                .properties
+                .get("replace01"),
+            Some("$Lamp $Lamp")
+        );
+        let token = begin(&mut session, actor, Some(id));
+        assert_eq!(session.get_instance_reference()["valid"], true);
+        assert_eq!(
+            session.get_instance_reference()["contents_validation"],
+            "not_checked"
+        );
+        session
+            .update_instance_reference(
+                actor,
+                token,
+                Changes {
+                    origin: Some("16 8 0".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        session.apply_instance_reference(actor, token).unwrap();
+        assert_eq!(
+            session
+                .document
+                .entity(id)
+                .unwrap()
+                .properties
+                .get("replace01"),
+            Some("$Lamp $Lamp")
+        );
+        let source = session.document.vmf().clone();
+        let history = session.history_snapshot();
+        let disk = std::fs::read(&parent).unwrap();
+        let child_bytes = std::fs::read(&child).unwrap();
+        let error = match session.begin_instance_contents_refresh(actor) {
+            Ok(_) => panic!("Standalone forwarding reached the worker"),
+            Err(error) => error,
+        };
+        assert!(error.contains("parent binding scope"), "{error}");
+        let result = session.begin_compile(actor, None).unwrap().run();
+        session.finish_compile(actor, &result);
+        let result = result.as_ref().unwrap();
+        assert!(result.output.bsp.is_none() && !result.published());
+        assert_eq!(session.document.vmf(), &source);
+        assert_eq!(session.history_snapshot(), history);
+        assert_eq!(std::fs::read(&parent).unwrap(), disk);
+        assert_eq!(std::fs::read(&child).unwrap(), child_bytes);
+        assert_eq!(
+            std::fs::read(parent.with_extension("bsp")).unwrap(),
+            b"previous BSP"
+        );
+        assert_eq!(
+            std::fs::read(parent.with_extension("lin")).unwrap(),
+            b"previous pointfile"
+        );
+        session
+            .set_entity_properties(
+                actor,
+                id,
+                &[("replace01".into(), Some("$Lamp prefix$Lamp".into()))],
+            )
+            .unwrap();
+        let token = begin(&mut session, actor, Some(id));
+        assert_eq!(session.get_instance_reference()["valid"], false);
+        assert!(session.apply_instance_reference(actor, token).is_err());
+        session.cancel_instance_reference(actor, token).unwrap();
+    }
+}

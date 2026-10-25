@@ -68,6 +68,43 @@ fn bound(actor: Actor) -> (tempfile::TempDir, Session, PathBuf, PathBuf, u32) {
             .unwrap();
     }
     session.save(actor, Some(&child)).unwrap();
+    let mut file = "child.vmf".to_owned();
+    for level in 1..=3 {
+        session.new_map(actor, false).unwrap();
+        let mut properties = BTreeMap::from([("file".into(), file)]);
+        for (slot, name) in [
+            "lamp",
+            "hdr",
+            "Tilt",
+            "Inner",
+            "Outer",
+            "Focus",
+            "Coefficient",
+            "Half",
+            "End",
+            "Radius",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            properties.insert(
+                format!("replace{:02}", slot + 1),
+                format!("${name} ${name}"),
+            );
+        }
+        session
+            .create_entity(
+                actor,
+                "func_instance",
+                Some(DVec3::new(8.0, -4.0, 0.0)),
+                properties,
+            )
+            .unwrap();
+        file = format!("forward{level}.vmf");
+        session
+            .save(actor, Some(&directory.path().join(&file)))
+            .unwrap();
+    }
     std::fs::write(
         &parent,
         crate::test_assets::room().write(&Default::default()),
@@ -88,7 +125,7 @@ fn bound(actor: Actor) -> (tempfile::TempDir, Session, PathBuf, PathBuf, u32) {
                 "func_instance",
                 Some(DVec3::X * row as f64 * 32.0),
                 BTreeMap::from([
-                    ("file".into(), "child.vmf".into()),
+                    ("file".into(), file.clone()),
                     ("replace01".into(), ldr.into()),
                     ("replace02".into(), hdr.into()),
                     (
@@ -140,6 +177,13 @@ fn immediate_light_bindings_refresh_after_reference_edits_and_reopen_for_both_ac
     for actor in [Actor::User, Actor::Agent] {
         let (_directory, mut session, parent, child, owner) = bound(actor);
         let child_bytes = std::fs::read(&child).unwrap();
+        let forwarded_sources = (1..=3)
+            .map(|level| {
+                let path = parent.parent().unwrap().join(format!("forward{level}.vmf"));
+                let bytes = std::fs::read(&path).unwrap();
+                (path, bytes)
+            })
+            .collect::<Vec<_>>();
         let original = session.document().entity(owner).unwrap().clone();
         let form = session
             .begin_instance_reference(actor, Some(owner))
@@ -182,7 +226,7 @@ fn immediate_light_bindings_refresh_after_reference_edits_and_reopen_for_both_ac
         assert_eq!(report["state"], "ready", "{report}");
         assert_eq!(report["stats"]["point_lights"], 2);
         assert_eq!(report["stats"]["spot_lights"], 2);
-        assert_eq!(report["stats"]["dependencies"].as_array().unwrap().len(), 1);
+        assert_eq!(report["stats"]["dependencies"].as_array().unwrap().len(), 4);
         assert_eq!(report["available"], false);
         assert_eq!(report["static_light_preview"]["available"], false);
         assert_eq!(report["geometry"]["vertices"], 0);
@@ -205,6 +249,9 @@ fn immediate_light_bindings_refresh_after_reference_edits_and_reopen_for_both_ac
         assert_eq!(session.history_snapshot(), history);
         assert_eq!(std::fs::read(parent).unwrap(), disk);
         assert_eq!(std::fs::read(child).unwrap(), child_bytes);
+        for (path, bytes) in forwarded_sources {
+            assert_eq!(std::fs::read(path).unwrap(), bytes);
+        }
     }
 }
 

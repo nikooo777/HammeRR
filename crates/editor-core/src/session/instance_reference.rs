@@ -63,8 +63,12 @@ pub(super) fn light_value_binding_scope() -> Value {
         "binding_form":"$identifier literal","binding_separator":"first ASCII space",
         "token_form":"whole_value_$identifier","identifier":"1–64 ASCII bytes: letter or underscore first, then letters, digits or underscores",
         "case_insensitive_names":true,"field_bytes":instances::MAX_FIELD_BYTES,
-        "literal_only":true,"empty_replacement_fields":true,
-        "rejected":["duplicates","missing","unused","recursive","embedded","unsupported_context","ancestor_forwarding"],
+        "literal_only":false,"root_literal_only":true,"empty_replacement_fields":true,
+        "nested_forwarding":true,"forwarding_operand":"whole_value_$identifier",
+        "forwarding_scope":"immediately_containing_func_instance","forwarding_same_name":true,
+        "forwarding_sibling_lookup":false,"forwarding_recursive":false,
+        "forwarding_max_helper_levels":instances::MAX_EXPANSION_DEPTH,
+        "rejected":["duplicates","missing","unused","recursive","embedded","unsupported_context","implicit_ancestor_search"],
         "other_parameter_contexts":false,"scalar_parameters":true,
         "scalar_properties":scalar_properties,
         "sun_spread_properties":properties_for_kind(ValueKind::SunSpreadAngle),"sun_spread_classes":classes_for_kind(ValueKind::SunSpreadAngle),"sun_spread_degrees":[0,90],
@@ -199,7 +203,7 @@ impl Session {
                 }
             }
         }
-        instances::helper_admission(&entity)?;
+        instances::helper_template_admission(&entity)?;
         Ok(entity)
     }
 

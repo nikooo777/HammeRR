@@ -492,6 +492,14 @@ fn walk_reference_path(
 }
 
 pub fn helper_admission(entity: &Entity) -> Result<(), String> {
+    admit_helper(entity, false)
+}
+
+pub fn helper_template_admission(entity: &Entity) -> Result<(), String> {
+    admit_helper(entity, true)
+}
+
+fn admit_helper(entity: &Entity, template: bool) -> Result<(), String> {
     if !is_instance(entity) {
         return Err("Only func_instance supports brush-only expansion; parameter helpers remain unsupported".into());
     }
@@ -513,7 +521,7 @@ pub fn helper_admission(entity: &Entity) -> Result<(), String> {
             return Err(format!("Instance repeats property {key}"));
         }
         if lower.starts_with("replace") {
-            bindings::replacement(key, value)
+            bindings::replacement(key, value, template)
                 .map_err(|error| format!("Instance {key}: {error}"))?;
         } else if !matches!(
             lower.as_str(),
@@ -524,7 +532,11 @@ pub fn helper_admission(entity: &Entity) -> Result<(), String> {
             ));
         }
     }
-    bindings::Bindings::new(entity)?;
+    if template {
+        bindings::Bindings::validate_template(entity)?;
+    } else {
+        bindings::Bindings::new(entity)?;
+    }
     filename(
         entity
             .properties
@@ -629,7 +641,7 @@ fn child_admission(
     for entity in child.entities.iter().filter(|entity| !entity.hidden) {
         control.checkpoint()?;
         if is_instance(entity) {
-            helper_admission(entity)
+            helper_template_admission(entity)
                 .map_err(|error| format!("Child instance {}: {error}", entity.id))?;
             continue;
         }

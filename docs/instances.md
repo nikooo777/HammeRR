@@ -121,7 +121,8 @@ For sky ambient gain, use `_AmbientScaleHDR` on `light_environment` and another 
 A gain binding must contain one finite, nonnegative number. Zero is valid.
 An absent gain keeps the normal value of 1. An unresolved token has no evaluated gain.
 
-Use `replace01` through `replace10`. Each value has the form `$name literal`.
+Use `replace01` through `replace10`. Root values have the form `$name literal`.
+Nested helpers may use `$name $ParentName` to [forward one immediate-parent value](instance-authoring.md#forward-light-values-through-nested-references).
 Names are case-insensitive, with 1–64 ASCII letters, digits or underscores; the first character cannot be a digit.
 A parameter must fill the whole supported value field. Each containing reference must supply every used parameter.
 
@@ -135,7 +136,8 @@ Sun lights support `_light`, `_lightHDR`, `_ambient`, `_ambientHDR`, `_lightscal
 See [light falloff bindings](instance-authoring.md#bind-light-falloff-distances) for the distance rules.
 See [legacy attenuation bindings](instance-authoring.md#bind-legacy-light-attenuation) for coefficient rules and percentage-distance precedence.
 Bindings apply only to direct child lights. Other scalar fields remain literal.
-Nested references bind their own direct child lights. Ancestor forwarding, partial replacement and parameter declarations remain unsupported.
+Nested references bind their own direct child lights. Explicit forwarding can pass a literal through each of the supported four helper levels, including same-name passthrough.
+Every hop must declare its binding. Implicit ancestor search, same-helper slot lookup, recursive or partial text replacement and parameter declarations remain unsupported.
 
 ## Names and parameters
 

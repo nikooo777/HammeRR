@@ -223,7 +223,12 @@ Child spotlights can also reference one visible local `info_target`; use explici
 Reference refresh reports `spotlight_targets` and an unavailable `spotlight_target_preview`. Keep lamp and endpoint inside a lit compile region.
 Environment falloff and other unsupported scalar fields remain literal.
 Use `create_entity`, `set_entity_properties` or the property-edit tools.
-Set the containing helper's `replace01` through `replace10` to `$name literal` through the same operations.
+Set a root helper's `replace01` through `replace10` to `$name literal`.
+A nested helper can use `$Local $Outer` to copy one whole value from its immediate parent scope.
+Names are case-insensitive; same-name forwarding is valid. Declare every hop within four helper levels.
+Sibling-slot lookup, implicit ancestor search and recursive or embedded substitution reject.
+The reference form preserves template text; standalone refresh and compile need a containing scope.
+Use at most ten slots; each effective field must fit 512 bytes. `nested_forwarding` and `root_literal_only` report this scope.
 Save the child, refresh contents, then compile the parent. Missing, duplicate and unused bindings fail explicitly.
 Unresolved standalone templates fail in every build mode and are excluded from authored-lighting preview, including distance, sun spread, HDR color or gain tokens with sky ambient off.
 The reference form preserves bindings. Extraction with parameters and general replacements remain unsupported.

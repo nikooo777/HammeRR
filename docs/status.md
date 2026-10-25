@@ -29,7 +29,7 @@ The integrated compiler is experimental. File operations, BSP publication and ga
 | [Sounds](sounds.md) | File/script browsing, short audition and assignment. | Game mixing, soundscapes and sentence synthesis. |
 | [Organization](layers.md) | Groups, layers, clipboard, prefabs, notes and saved views. | Automatic category rules and embedded prefab assets. |
 | [Measurements](measurements.md) | Saved rulers, surface picks and origin/local entity attachments. | Surface attachments, parenting and animated bones. |
-| [Instances](instance-authoring.md) | Saved references, checked contents, light bindings, static child fog, saved child atlas regions and bounded extraction. | In-place child editing and general replacement parameters. |
+| [Instances](instance-authoring.md) | Saved references, checked contents, nested light bindings, static child fog, saved child atlas regions and bounded extraction. | In-place child editing and general replacement parameters. |
 
 ## Compiler
 
@@ -46,7 +46,7 @@ The integrated compiler is experimental. File operations, BSP publication and ga
 | [Detail props](material-detail-scattering.md) | Explicit and generated decorative models, cards, cross/tri shapes and supported lighting. | Editor display of final generated details. |
 | [Reflections](reflections.md) | Private LDR or paired LDR/HDR captures and verified packing. | Recursive reflection bounces and unsupported capture scenes. |
 | [Overlays](overlays.md) | Coplanar flat, isolated planar-terrain and mixed-group fitting, refit, rebind and corner editing; native projections, face splitting and water transitions. | Joined or nonplanar terrain authoring; projected-material viewport preview. |
-| [Assemblies](instances.md) | Checked transforms, stationary child poses, local spotlight targets and per-reference colors, gains, percentage or legacy coefficient/radius/hard falloff, static fog, sun spread, cones, focus and signed spotlight pitch. | General runtime entities, scripting and name fixups. |
+| [Assemblies](instances.md) | Checked transforms, stationary child poses, local spotlight targets, static fog and nested light-value bindings for colors, gains, falloff, sun spread, cones, focus and signed pitch. | General runtime entities, scripting and name fixups. |
 | [Visibility helpers](occluders.md) | Occluders and eligible visibility-cluster volumes. | Unsupported memberships and dynamic child control. |
 | [Inspection](baked-lightmaps.md) | Owned face lightmaps, prop vertex bytes and native light records. | Unreportable physical paths show stale provenance; no full baked-output viewport rendering. |
 | [Publication](compile-regions.md) | Captured build scope, cancellation, checked output writes and private game launch. | General cross-platform file/runtime support. |

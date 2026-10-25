@@ -16,6 +16,23 @@ For an existing helper, use **Edit instance reference…**, then **Apply**.
 Use **Instance contents… → Refresh instance contents** to resolve and inspect the child.
 The file check confirms presence only; it does not validate child contents.
 
+## Forward light values through nested references
+
+1. In the leaf map, use **Advanced properties** to set a supported light field, such as `_light`, to `$Lamp`. Save the leaf.
+2. Open the map containing that leaf's `func_instance`. Set **Property key** to an unused `replace01`–`replace10` slot and **Value** to `$Lamp $RoomLight`, then press Enter and save.
+3. In the next containing map, select its reference and set an unused replacement slot to `$RoomLight 255 220 180 400`.
+4. Save the root map, then use **Instance contents… → Refresh instance contents** or compile.
+
+The nested replacement reads `$RoomLight` only from its immediately containing reference. Names are case-insensitive.
+For more levels, declare an explicit forwarding slot at every step. `$Lamp $Lamp` passes the same name from the parent; it does not refer to itself or another slot in the same helper.
+The root supplies literals. Up to four helper levels and ten replacement slots per helper are supported.
+
+The forwarding operand must be exactly one whole `$identifier`, without surrounding spaces or embedded text. The final `$name literal` field must fit 512 bytes, including its local name and separating space.
+Missing, duplicate or unused declarations fail. Passing a value into an unused descendant slot still fails, and invalid effective light values fail before compile-region filtering.
+Only the supported light value fields consume these bindings. Paths, names, materials and other entity properties remain literal; there is no implicit ancestor search or recursive text substitution.
+
+The ordinary property controls and **Edit instance reference…** retain forwarding text. A map whose own references need parent values cannot refresh or compile alone, including **Fullbright**. **Check file** still confirms presence only.
+
 ## Add static child fog
 
 1. Open the child VMF and use **Entity…** to place an unnamed `env_fog_controller`.
@@ -59,7 +76,7 @@ Both fields keep integer authoring controls for ordinary literals. Replacement s
 
 Unresolved tokens stay as text. They exclude the lamp from authored-lighting preview and prevent standalone compilation, including **Fullbright**.
 Reference inspection resolves values and reports counts. It does not preview child lighting.
-Only immediate child point/spot distances support these bindings. Environment distances, embedded tokens and ancestor forwarding remain unsupported.
+Only immediate child point/spot distances consume these bindings. Use [explicit forwarding](#forward-light-values-through-nested-references) to pass values through more helpers. Environment distances and embedded tokens remain unsupported.
 
 ## Bind legacy light attenuation
 
@@ -73,7 +90,7 @@ An effective all-zero triple uses ordinary constant falloff. Absent or empty coe
 A positive **50 percent falloff distance** selects percentage falloff instead, leaving the legacy coefficients unused.
 Unresolved tokens stay as text, exclude the lamp from authored-lighting preview and prevent standalone compilation, including **Fullbright**.
 Only the immediately containing reference supplies values. See [falloff distance and limit bindings](#bind-light-falloff-distances) for `_distance` and `_hardfalloff`.
-Environment attenuation, embedded tokens and ancestor forwarding remain unsupported binding contexts.
+Use [explicit forwarding](#forward-light-values-through-nested-references) for more helper levels. Environment attenuation and embedded tokens remain unsupported binding contexts.
 
 ## Bind spotlight cones and focus
 
@@ -111,7 +128,7 @@ Only immediate child `light_spot` pitch supports this binding. Sun pitch and ang
 Each reference can supply a finite spread from 0 to 90 degrees. An absent or empty `SunSpreadAngle` property keeps the ordinary default of 0.
 Lit builds retain one global sun across the parent and its children.
 Unresolved tokens stay as text, exclude the sun from authored-lighting preview and prevent standalone compilation, including **Fullbright**.
-Only the immediately containing reference supplies the value. Sun angles and pitch, embedded tokens and ancestor forwarding remain unsupported.
+Only the immediately containing reference supplies the value; use [explicit forwarding](#forward-light-values-through-nested-references) for more helper levels. Sun angles and pitch and embedded tokens remain unsupported.
 
 ## Limits
 

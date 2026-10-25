@@ -81,12 +81,33 @@ fn compiled_lights_controls_share_pages_channels_details_and_owned_build_invalid
     assert_eq!(window.get_details().kind, "spot (2)");
     assert_eq!(window.get_details().style, "7");
     assert_eq!(window.get_details().intensity, "0, 0, 1");
+    assert!(window.get_can_frame());
+    let camera = lock(&shared).camera();
+    for aspect in [0.5, 2.5] {
+        controller.set_aspect(aspect);
+        let origin = glam::Vec3::new(64.0, 32.0, 192.0);
+        let expected = lock(&shared).camera().frame_bounds(
+            origin - glam::Vec3::splat(16.0),
+            origin + glam::Vec3::splat(16.0),
+            aspect,
+        );
+        window.invoke_frame_light();
+        assert_eq!(lock(&shared).camera(), expected);
+        assert_eq!(window.get_details().record, "1");
+        assert!(window.get_diagnostics().contains("Framed LDR record 1"));
+        assert_eq!(lock(&shared).document().vmf(), &before.0);
+        assert_eq!(serde_json::json!(lock(&shared).property_draft()), before.6);
+    }
+    assert_ne!(lock(&shared).camera(), camera);
+    lock(&shared).set_camera(camera);
     let ldr = window.get_details().intensity;
     window.invoke_page_lights(1);
     assert_eq!(ordinals(window), ["2", "3"]);
     assert!(!window.get_has_selection());
     assert!(!window.get_next_lights());
     assert!(window.get_previous_lights());
+    window.invoke_inspect_light(0);
+    assert!(!window.get_can_frame());
     window.invoke_page_lights(-1);
     assert_eq!(ordinals(window), ["0", "1"]);
     window.set_channel("HDR".into());
@@ -158,6 +179,7 @@ fn compiled_lights_controls_share_pages_channels_details_and_owned_build_invalid
     );
     assert!(ordinals(window).is_empty());
     assert!(!window.get_has_selection());
+    assert!(!window.get_can_frame());
     assert_eq!(window.get_details().record, "");
     assert!(!window.get_next_lights());
     controller.window.show().unwrap();
@@ -181,7 +203,15 @@ fn compiled_lights_controls_share_pages_channels_details_and_owned_build_invalid
             },
         )
         .unwrap();
+    window.invoke_refresh_inspection();
+    window.invoke_inspect_light(1);
+    assert!(window.get_can_frame());
+    let camera = lock(&shared).camera();
     std::fs::write(&output, b"changed owned output").unwrap();
+    window.invoke_frame_light();
+    assert_eq!(lock(&shared).camera(), camera);
+    assert!(!window.get_can_frame());
+    assert!(ordinals(window).is_empty());
     window.invoke_change_channel();
     assert!(ordinals(window).is_empty());
     assert!(!window.get_has_selection());

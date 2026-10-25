@@ -162,6 +162,9 @@ fn retained_actions(controller: &Controller, error: &str) {
     assert_eq!(props.get_diagnostics(), error);
     assert_eq!(props.get_vertex_rows().row_count(), 0);
     props.invoke_close_dialog();
+    let lights = controller.compiled_lights.window();
+    lights.invoke_frame_light();
+    assert_eq!(lights.get_diagnostics(), error);
     window.invoke_cancel_capture_edit();
     assert!(!window.get_capture_editing());
     window.invoke_close_dialog();
@@ -265,6 +268,7 @@ fn vanished_compile_windows_and_runtime_are_not_retained_by_callbacks() {
         .baked_prop_vertices
         .window()
         .clone_strong();
+    let lights = fixture.controller.compiled_lights.window().clone_strong();
     drop(fixture.controller);
     assert!(weak_window.upgrade().is_none());
     admitted(&weak_window, &target, |_, _| {
@@ -283,6 +287,9 @@ fn vanished_compile_windows_and_runtime_are_not_retained_by_callbacks() {
     props.invoke_refresh_inspection();
     assert_eq!(props.get_diagnostics(), "the document is closed");
     props.invoke_close_dialog();
+    lights.invoke_frame_light();
+    assert_eq!(lights.get_diagnostics(), "the document is closed");
+    lights.invoke_close_dialog();
 }
 
 #[test]

@@ -1,5 +1,166 @@
 use super::*;
 
+fn rope_presentation_result(result: ToolResult) -> Value {
+    let result = result.unwrap();
+    assert!(!result.is_error.unwrap_or(false), "{:?}", result.content);
+    serde_json::from_str(&result.content[0].as_text().unwrap().text).unwrap()
+}
+
+#[test]
+fn rope_presentation_mcp_queries_area_volume_and_temporary_focus_share_bounds_without_graphics() {
+    let mut session = Session::new(Err("no assets needed".into()));
+    let target = session
+        .create_entity(
+            Actor::User,
+            "keyframe_rope",
+            Some(DVec3::new(256.0, 0.0, 128.0)),
+            BTreeMap::from([("targetname".into(), "end".into())]),
+        )
+        .unwrap();
+    let source = session
+        .create_entity(
+            Actor::User,
+            "move_rope",
+            Some(DVec3::new(0.0, 0.0, 128.0)),
+            BTreeMap::from([
+                ("NextKey".into(), "end".into()),
+                ("Slack".into(), "0".into()),
+                ("Width".into(), "32".into()),
+            ]),
+        )
+        .unwrap();
+    session.select(&[source], SelectMode::Replace).unwrap();
+    session.set_camera(Camera::planar(
+        Projection::Front,
+        Vec3::new(128.0, 0.0, 128.0),
+        512.0,
+    ));
+    let memory = session.document().vmf().clone();
+    let history = session.history_snapshot();
+    let camera = session.camera();
+    let authored = session.object_bounds_in(session.document(), &[source]);
+    let shared = Arc::new(Mutex::new(session));
+    let server = EditorServer::new(shared.clone(), None);
+    let raw = rope_presentation_result(server.get_map_info())["bounds"].clone();
+    let disabled = rope_presentation_result(server.get_selection())["bounds"].clone();
+    rope_presentation_result(server.set_view(Parameters(
+        serde_json::from_value(json!({"rope_preview":true})).unwrap(),
+    )));
+    let visible = json!({"mins":[-16.0,-16.0,112.0],"maxs":[272.0,16.0,144.0]});
+    assert_eq!(
+        rope_presentation_result(server.get_selection())["bounds"],
+        visible
+    );
+    let details = rope_presentation_result(server.get_objects(Parameters(IdsArgs {
+        ids: Some(vec![id_string(source), id_string(target)]),
+    })));
+    assert_eq!(details["objects"][0]["bounds"], visible);
+    assert_eq!(
+        details["objects"][1]["bounds"],
+        json!({"mins":[248.0,-8.0,120.0],"maxs":[264.0,8.0,136.0]})
+    );
+    assert_eq!(
+        rope_presentation_result(server.get_map_info())["bounds"],
+        raw
+    );
+    let volume = rope_presentation_result(
+        server.select_volume(Parameters(
+            serde_json::from_value(json!({"mins":[120,-2,120],"maxs":[136,2,124],"preview":true}))
+                .unwrap(),
+        )),
+    );
+    assert_eq!(volume["preview"]["objects"], json!([id_string(source)]));
+    let token = volume["preview"]["token"].as_str().unwrap().to_owned();
+    rope_presentation_result(server.set_view(Parameters(
+        serde_json::from_value(json!({"rope_preview":false})).unwrap(),
+    )));
+    assert!(
+        server
+            .commit_volume_selection(Parameters(VolumeTokenArgs { token }))
+            .unwrap()
+            .is_error
+            .unwrap_or(false)
+    );
+    assert_eq!(
+        rope_presentation_result(server.get_selection())["bounds"],
+        disabled
+    );
+    let spec = CameraSpec {
+        focus: Some(vec![id_string(source)]),
+        ..Default::default()
+    };
+    {
+        let mut session = lock(&shared);
+        let focused = spec
+            .resolve_with_instance_contents(&session, 0.5, None, Some(true))
+            .unwrap();
+        let expected = camera.frame_bounds(
+            Vec3::new(-16.0, -16.0, 112.0),
+            Vec3::new(272.0, 16.0, 144.0),
+            0.5,
+        );
+        assert_eq!(focused, expected);
+        assert_ne!(focused, spec.resolve(&session, 0.5).unwrap());
+        assert!(!session.view().rope_preview);
+        let view = ViewOptions {
+            rope_preview: true,
+            ..session.view()
+        };
+        session.set_view(view);
+        let excluded = spec
+            .resolve_with_instance_contents(&session, 0.5, None, Some(false))
+            .unwrap();
+        let (mins, maxs) = authored.unwrap();
+        assert_eq!(
+            excluded,
+            camera.frame_bounds(mins.as_vec3(), maxs.as_vec3(), 0.5)
+        );
+        let view = ViewOptions {
+            rope_preview: false,
+            ..session.view()
+        };
+        session.set_view(view);
+    }
+    let hit = rope_presentation_result(
+        server.pick_at_pixel(Parameters(
+            serde_json::from_value(json!({
+                "width":100,"height":100,"x":49.5,"y":49.5,"rope_preview":true,
+                "camera":{"focus":[id_string(source)]}
+            }))
+            .unwrap(),
+        )),
+    );
+    assert_eq!(hit["object"], id_string(source));
+    assert!(hit["point"][0].as_f64().unwrap() > 100.0);
+    rope_presentation_result(server.set_view(Parameters(
+        serde_json::from_value(json!({"rope_preview":true})).unwrap(),
+    )));
+    let area = rope_presentation_result(
+        server.select_area(Parameters(
+            serde_json::from_value(json!({
+                "start":[40,40],"end":[60,60],"width":100,"height":100,"preview":true,
+                "camera":{"projection":"front","center":[128,0,128],"ortho_height":64}
+            }))
+            .unwrap(),
+        )),
+    );
+    assert_eq!(area["matches"]["objects"], json!([id_string(source)]));
+    rope_presentation_result(server.set_view(Parameters(
+        serde_json::from_value(json!({"rope_preview":false})).unwrap(),
+    )));
+    assert!(lock(&shared).commit_area_selection().is_err());
+    let session = lock(&shared);
+    assert_eq!(session.document().vmf(), &memory);
+    assert_eq!(session.history_snapshot(), history);
+    assert_eq!(session.camera(), camera);
+    assert_eq!(session.selected_ids(), [source]);
+    assert_eq!(
+        session.object_bounds_in(session.document(), &[source]),
+        authored
+    );
+    assert_eq!(server.rendering_status()["initialized"], false);
+}
+
 #[test]
 fn resource_visibility_parameters_default_on_and_key_each_temporary_scene_variant() {
     let default = ViewOptions::default();

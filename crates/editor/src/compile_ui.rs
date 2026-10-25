@@ -820,6 +820,10 @@ impl Controller {
         })
     }
 
+    pub(crate) fn set_aspect(&self, aspect: f32) {
+        self.compiled_lights.set_aspect(aspect);
+    }
+
     pub(crate) fn refresh_visible(&self, session: &Session) {
         if self.window.window().is_visible()
             || self.baked_lightmaps.is_visible()

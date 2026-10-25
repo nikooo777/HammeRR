@@ -57,10 +57,19 @@ impl Session {
     }
 
     pub fn volume_selection_bounds(&self) -> [DVec3; 2] {
-        let (mut mins, mut maxs) = self
-            .selection_bounds()
+        let selection = if self.face_mode {
+            self.selection_bounds()
+        } else {
+            self.presentation_object_bounds_in(&self.document, &self.selected_ids(), None)
+        };
+        let (mut mins, mut maxs) = selection
             .or_else(|| {
-                self.object_bounds_in(&self.document, &self.document.objects().collect::<Vec<_>>())
+                let ids = self.document.objects().collect::<Vec<_>>();
+                if self.face_mode {
+                    self.object_bounds_in(&self.document, &ids)
+                } else {
+                    self.presentation_object_bounds_in(&self.document, &ids, None)
+                }
             })
             .unwrap_or((DVec3::splat(-64.0), DVec3::splat(64.0)));
         for axis in 0..3 {
@@ -167,7 +176,7 @@ impl Session {
                 "faces":preview.matches.faces.iter().skip(offset).take(limit.clamp(1,500)).map(|face|json!({"solid":face.solid,"side":face.side})).collect::<Vec<_>>()})
         });
         json!({"preview":preview,"selection_filters":self.selection_filter_state(),"suggested_bounds":self.volume_selection_bounds().map(|point|point.to_array()),
-            "hidden_policy":"Hidden objects, child brushes and hidden tool brushes are excluded; terrain uses actual displaced sheets, excluding ordinary parent faces and volumes. Loaded models use their transformed asset bounds; unsupported models retain helper bounds."})
+            "hidden_policy":"Hidden objects, child brushes and hidden tool brushes are excluded; terrain uses actual displaced sheets, excluding ordinary parent faces and volumes. Loaded models use their transformed asset bounds; unsupported models retain helper bounds. Enabled admitted rope spans use conservative sampled-curve bounds including half Width, unioned with their source helper; targets retain independent ownership. Rope visibility changes retire pending area/volume reviews."})
     }
 
     pub fn append_volume_guide(&self, mesh: &mut render::SceneMesh) {

@@ -18,6 +18,15 @@ pub(in crate::mcp) struct InspectCompiledWorldLightsArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub(in crate::mcp) struct FrameCompiledWorldLightArgs {
+    pub build_token: String,
+    pub channel: String,
+    pub ordinal: usize,
+    pub aspect: Option<f32>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(in crate::mcp) struct InspectBakedLightmapsArgs {
     pub channel: Option<String>,
     pub face: Option<usize>,
@@ -107,7 +116,7 @@ pub struct CameraSpec {
 impl CameraSpec {
     /// Starts from the editor camera and applies the given overrides.
     pub(in crate::mcp) fn resolve(&self, session: &Session, aspect: f32) -> Result<Camera, String> {
-        self.resolve_with_instance_contents(session, aspect, None)
+        self.resolve_with_instance_contents(session, aspect, None, None)
     }
 
     pub(in crate::mcp) fn resolve_with_instance_contents(
@@ -115,6 +124,7 @@ impl CameraSpec {
         session: &Session,
         aspect: f32,
         instance_contents: Option<bool>,
+        rope_preview: Option<bool>,
     ) -> Result<Camera, String> {
         if [self.fov, self.yaw, self.pitch, self.ortho_height]
             .into_iter()
@@ -149,7 +159,12 @@ impl CameraSpec {
         if let Some(focus) = &self.focus {
             let ids = parse_ids(focus)?;
             let (lo, hi) = session
-                .framing_bounds_in(session.render_document(), &ids, instance_contents)
+                .framing_bounds_with_rope_preview(
+                    session.render_document(),
+                    &ids,
+                    instance_contents,
+                    rope_preview,
+                )
                 .ok_or("focus objects have no bounds")?;
             return Ok(camera.frame_bounds(lo.as_vec3(), hi.as_vec3(), aspect));
         }

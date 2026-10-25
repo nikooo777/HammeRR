@@ -78,7 +78,7 @@ See the [tool index and setup](docs/mcp.md).
 | [Water](docs/water.md) | [Ropes](docs/ropes.md) |
 | --- | --- |
 | ![A compiled reflecting pool](docs/images/water-native.png) | ![A rope between masonry posts](docs/images/rope-span.png) |
-| Build pools with native surfaces and optional fluid physics. | Preview linked spans with authored slack and width. |
+| Build pools with native surfaces and optional fluid physics. | Preview and frame linked spans with authored slack and width. |
 
 | [Fog](docs/fog.md) | [Measurement guides](docs/measurements.md) |
 | --- | --- |

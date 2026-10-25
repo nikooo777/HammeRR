@@ -45,12 +45,15 @@ export component CompiledLightsWindow inherits Window {
     in property <bool> previous-lights;
     in property <bool> next-lights;
     in property <bool> has-selection;
+    in property <bool> can-frame;
+    in property <float> aspect: 1;
     in property <CompiledLightDetails> details;
     callback refresh-inspection();
     callback change-channel();
     callback inspect-light(int);
     callback page-lights(int);
     callback reset-sort();
+    callback frame-light();
     callback close-dialog();
     forward-focus: keys;
     keys := FocusScope {
@@ -91,7 +94,11 @@ export component CompiledLightsWindow inherits Window {
                 Rectangle { horizontal-stretch: 1; }
                 Text { text: "Native record order"; vertical-alignment: center; color: #bac2ce; }
             }
-            Text { text: root.has-selection ? "Selected record " + root.details.record : "Select a light to inspect its fields"; font-size: 18px; font-weight: 600; }
+            HorizontalLayout {
+                Text { text: root.has-selection ? "Selected record " + root.details.record : "Select a light to inspect its fields"; font-size: 18px; font-weight: 600; }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Frame light"; enabled: root.can-frame; clicked => { root.frame-light(); } }
+            }
             if root.has-selection: ScrollView {
                 content-width: self.width;
                 min-height: 170px;
@@ -126,7 +133,7 @@ export component CompiledLightsWindow inherits Window {
                     }
                 }
             }
-            Text { text: "Stored native fields, not screen brightness or authored entity IDs. Unapplied drafts are not baked. Choosing a record leaves map selection and camera unchanged."; wrap: word-wrap; color: #bac2ce; font-size: 12px; }
+            Text { text: "Stored native fields, not screen brightness or authored entity IDs. Unapplied drafts are not baked. Choosing a record preserves the camera; Frame light moves it to the current point/spot origin without changing selection."; wrap: word-wrap; color: #bac2ce; font-size: 12px; }
             if root.diagnostics != "": TextEdit { text: root.diagnostics; read-only: true; wrap: word-wrap; min-height: 55px; max-height: 90px; accessible-label: "Compiled light inspection diagnostics"; }
             HorizontalLayout {
                 Rectangle { horizontal-stretch: 1; }

@@ -309,14 +309,14 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Full details of objects: entity key/values, outputs and brushes; brush faces with side ids, materials, normals, planes and texture axes. Defaults to the selection.",
+        description = "Full details of objects: entity key/values, outputs and brushes; brush faces with side ids, materials, normals, planes and texture axes. Defaults to the selection. Reported presentation bounds include each enabled admitted rope's outgoing span and source helper; transform pivots/anchors and raw map statistics remain authored bounds.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_objects(&self, Parameters(args): Parameters<IdsArgs>) -> ToolResult {
         run(|| {
             let session = self.session();
             let ids = ids_or_selection(&session, args.ids.as_deref())?;
-            let model_bounds = session.display_bounds_in(session.document());
+            let model_bounds = session.presentation_bounds_in(session.document(), None);
             let objects = ids
                 .iter()
                 .map(|&id| {

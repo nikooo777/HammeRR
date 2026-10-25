@@ -19,6 +19,19 @@ pub(super) struct Models {
     pub issues: BTreeMap<u32, String>,
 }
 
+pub(super) fn combined_bounds(
+    document: &Document,
+    ids: &[ObjectId],
+    overrides: &BTreeMap<ObjectId, (DVec3, DVec3)>,
+) -> Option<(DVec3, DVec3)> {
+    map_core::query::union(ids.iter().filter_map(|&id| {
+        overrides
+            .get(&id)
+            .copied()
+            .or_else(|| map_core::query::bounds(document, id))
+    }))
+}
+
 fn label(name: &str, fallback: &str) -> String {
     let name = name.rsplit(['/', '\\']).next().unwrap_or(name).trim();
     let name = name.strip_suffix(".smd").unwrap_or(name);
@@ -268,12 +281,7 @@ impl Session {
         ids: &[ObjectId],
     ) -> Option<(DVec3, DVec3)> {
         let bounds = self.display_bounds_in(document);
-        map_core::query::union(ids.iter().filter_map(|&id| {
-            bounds
-                .get(&id)
-                .copied()
-                .or_else(|| map_core::query::bounds(document, id))
-        }))
+        combined_bounds(document, ids, &bounds)
     }
 
     pub fn display_bounds_in(&self, document: &Document) -> BTreeMap<ObjectId, (DVec3, DVec3)> {
@@ -356,7 +364,7 @@ impl Session {
         let bounds = if faces {
             BTreeMap::new()
         } else {
-            self.display_bounds_in(&self.document)
+            self.presentation_bounds_in(&self.document, None)
         };
         let mut matches = region.select_with_entity_bounds(
             &self.document,

@@ -117,7 +117,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Selected objects with their summaries and combined bounds.",
+        description = "Selected objects with their summaries and combined presentation bounds. Enabled admitted rope spans enlarge their source helper bounds for this inspection and framing; authored transform pivots/anchors remain unchanged.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_selection(&self) -> ToolResult {
@@ -127,7 +127,7 @@ impl EditorServer {
         ok(json!({
             "objects": ids.iter().map(|&id| summary(doc, id)).collect::<Vec<_>>(),
             "face_selection": face_state(&session),
-            "bounds": bounds_json(session.object_bounds_in(doc, &ids)),
+            "bounds": bounds_json(session.presentation_object_bounds_in(doc, &ids, None)),
         }))
     }
 

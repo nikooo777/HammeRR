@@ -24,7 +24,7 @@ The integrated compiler is experimental. File operations, BSP publication and ga
 | [Terrain](terrain.md) | Creation, sculpting, blending, masks, handles, resizing, sewing and full/half-edge subdivision. | Holes, triangle removal and general fractional joins. |
 | [Entities](entities.md) | Typed properties, colors, FGD helpers, connections, batch edits and safe rename. | General runtime simulation. |
 | [Models](models.md) | Meshes, reference poses, skins, bodygroups, dynamic scale, tint, opacity and attachments. | Animation, procedural poses, attachment parenting and physics preview. |
-| [Resource previews](sprite-guides.md) | Supported sprites, static ropes, fog and LDR/HDR/3D skies. | Complete native effects and runtime behavior. |
+| [Resource previews](sprite-guides.md) | Supported sprites, [static ropes with sag-aware framing and selection bounds](ropes.md), fog and LDR/HDR/3D skies. | Complete native effects and runtime behavior. |
 | [Particles](particles.md) | Active manifest metadata and effect assignment. | Particle rendering and animation. |
 | [Sounds](sounds.md) | File/script browsing, short audition and assignment. | Game mixing, soundscapes and sentence synthesis. |
 | [Organization](layers.md) | Groups, layers, clipboard, prefabs, notes and saved views. | Automatic category rules and embedded prefab assets. |
@@ -48,7 +48,7 @@ The integrated compiler is experimental. File operations, BSP publication and ga
 | [Overlays](overlays.md) | Coplanar flat, isolated planar-terrain and mixed-group fitting, refit, rebind and corner editing; native projections, face splitting and water transitions. | Joined or nonplanar terrain authoring; projected-material viewport preview. |
 | [Assemblies](instances.md) | Checked transforms, stationary child poses, local spotlight targets, static fog and nested light-value bindings for colors, gains, falloff, sun spread, cones, focus and signed pitch. | General runtime entities, scripting and name fixups. |
 | [Visibility helpers](occluders.md) | Occluders and eligible visibility-cluster volumes. | Unsupported memberships and dynamic child control. |
-| [Inspection](baked-lightmaps.md) | Owned face lightmaps, prop vertex bytes and native light records. | Unreportable physical paths show stale provenance; no full baked-output viewport rendering. |
+| [Inspection](baked-lightmaps.md) | Owned face lightmaps, prop vertex bytes and native light records; [frame current point/spot origins](compiled-lights.md) in the viewport. | Unreportable physical paths show stale provenance; no authored light association or full baked-output viewport rendering. |
 | [Publication](compile-regions.md) | Captured build scope, cancellation, checked output writes and private game launch. | General cross-platform file/runtime support. |
 
 Unsupported input and exceeded resource budgets fail explicitly.

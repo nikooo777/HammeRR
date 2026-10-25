@@ -3,6 +3,31 @@ use super::super::*;
 #[tool_router(router = view_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
+        description = "Frame one native POINT/SPOT light origin from the current successful owned build. Pass explicit build_token, channel ldr/hdr and zero-based native ordinal from inspect_compiled_world_lights; optional aspect defaults to 1 and must be 0.01–100. Rechecks the same bounded owned output and source guards before moving the camera. Returns build provenance, exact record, framing bounds and camera. Stale, replaced, missing, unbaked, out-of-range, global/unknown and out-of-world records refuse. Active viewport gestures and block previews refuse without cancellation. Preserves projection, map, selection, history, settings and ordinary drafts. No authored association, arbitrary path, guide or lighting preview. UI: Compiled lights → select point/spot record → Frame light."
+    )]
+    pub(in crate::mcp) fn frame_compiled_world_light(
+        &self,
+        Parameters(args): Parameters<FrameCompiledWorldLightArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let aspect = args.aspect.unwrap_or(1.0);
+            let frame = session.frame_compiled_world_light(
+                Actor::Agent,
+                args.build_token,
+                crate::session::compiled_world_lights::Channel::parse(&args.channel)?,
+                args.ordinal,
+                aspect,
+            )?;
+            Ok(json!({
+                "build":frame.inspection.build,"channel":frame.inspection.channel,
+                "record":frame.inspection.page.rows[0],"framed_bounds":frame.bounds,"aspect":aspect,
+                "camera":camera_json(&frame.camera),"notes":frame.inspection.notes,
+            }))
+        })
+    }
+
+    #[tool(
         description = "Inspect exact native world-light records from this Session's last successful owned BSP, shared with Build settings… / Build details… → Inspect compiled lights…. CPU-only and read-only, with no path, exposure, camera or source-selection argument. Returns captured current/stale/unavailable build provenance, independent LDR/HDR table status and pages of at most 64 native records with ordinal, kind/code, origin, intensity, normal, cluster, style, cone dots, exponent, radius, attenuation, signed flags, texinfo and owner. Values are stored native fields, not screen brightness or authored entity associations. Unknown kind codes remain exact. Start without build_token only at offset0; retain the returned opaque token for subsequent channel/page requests. Wrong tokens, malformed arguments and invalid ranges reject. Fullbright and unbaked HDR are explicit; a valid lit channel can contain zero records without implying runtime HDR readiness. Intact stale output remains historical; changed/corrupt output clears rows and totals. Pending drafts are not baked and survive inspection. Source freshness covers the committed map/settings and retained guards, not every world material/texture. Original asset-directory changes conservatively mark source evidence stale. No native game or viewport shading.",
         annotations(read_only_hint = true)
     )]
@@ -359,6 +384,7 @@ impl EditorServer {
                     &session,
                     size.0 as f32 / size.1 as f32,
                     args.instance_contents,
+                    args.rope_preview,
                 ) {
                 Ok(camera) => camera,
                 Err(error) => return fail(error),
@@ -409,6 +435,7 @@ impl EditorServer {
                     &session,
                     w as f32 / h as f32,
                     args.instance_contents,
+                    args.rope_preview,
                 )?;
             let ndc_x = 2.0 * (args.x + 0.5) / w as f32 - 1.0;
             let ndc_y = 1.0 - 2.0 * (args.y + 0.5) / h as f32;

@@ -1,10 +1,12 @@
 use std::io::{self, Write};
 
+use glam::Vec3;
+use render::Camera;
 use serde::Serialize;
 use serde_json::{Value, json};
 use source_formats::bsp::{Bsp, MAX_WORLD_LIGHTS, WorldLight, lump, world_light_kind};
 
-use super::{Session, baked_build};
+use super::{Actor, Session, baked_build};
 
 pub use super::baked_lightmaps::Channel;
 
@@ -14,6 +16,7 @@ pub const MAX_CALL_BYTES: usize = 384 * 1024 * 1024;
 pub const MAX_METADATA_BYTES: usize = 32 * 1024 * 1024;
 pub const MAX_DIAGNOSTICS: usize = 64;
 pub const MAX_DIAGNOSTIC_BYTES: usize = baked_build::MAX_DIAGNOSTIC_BYTES;
+const FRAME_HALF_EXTENT: f32 = 16.0;
 const SOURCE_MODE: baked_build::SourceVerification =
     baked_build::SourceVerification::OriginalMetadata {
         maximum_bytes: MAX_METADATA_BYTES,
@@ -77,6 +80,44 @@ pub struct Inspection {
     pub notes: &'static str,
 }
 
+impl Inspection {
+    pub fn frame_origin(&self, ordinal: usize) -> Result<Vec3, String> {
+        if self.build["current"] != true || self.build["status"] != "current" {
+            return Err("Framing requires a current successful owned build; refresh inspection or compile again".into());
+        }
+        if !self
+            .channels
+            .iter()
+            .any(|channel| channel.channel == self.channel && channel.status == "available")
+        {
+            return Err("The requested compiled-light channel was not baked".into());
+        }
+        let light = self
+            .page
+            .rows
+            .iter()
+            .find(|light| light.ordinal == ordinal)
+            .ok_or("Compiled light ordinal is outside the native table")?;
+        if !matches!(light.kind, world_light_kind::POINT | world_light_kind::SPOT) {
+            return Err("Only compiled point and spot light origins can be framed".into());
+        }
+        let origin = Vec3::from_array(light.origin);
+        if !origin.is_finite()
+            || origin.abs().max_element() > map_core::checks::SOURCE_COORDINATE_LIMIT as f32
+        {
+            return Err("Compiled light origin must be finite and inside Source bounds".into());
+        }
+        Ok(origin)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FramedLight {
+    pub inspection: Inspection,
+    pub bounds: [[f32; 3]; 2],
+    pub camera: Camera,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ChannelSummary {
     pub channel: &'static str,
@@ -133,6 +174,57 @@ pub struct Limits {
 }
 
 impl Session {
+    pub fn frame_compiled_world_light(
+        &mut self,
+        actor: Actor,
+        build_token: String,
+        channel: Channel,
+        ordinal: usize,
+        aspect: f32,
+    ) -> Result<FramedLight, String> {
+        self.ensure_not_closing()?;
+        if !aspect.is_finite() || !(0.01..=100.0).contains(&aspect) {
+            return Err("Viewport aspect must be finite and between 0.01 and 100".into());
+        }
+        if self.viewport_pick_conflict()
+            || self.measurement_picking()
+            || self.linked_path_picking()
+            || self.block_preview.is_some()
+            || self.clip_drag.is_some()
+        {
+            return Err("Finish or cancel the active viewport gesture or block preview before framing a compiled light".into());
+        }
+        let inspection = self.inspect_compiled_world_lights(&Query {
+            build_token: Some(build_token),
+            channel,
+            offset: ordinal,
+            limit: 1,
+        })?;
+        let origin = inspection.frame_origin(ordinal)?;
+        let mins = origin - Vec3::splat(FRAME_HALF_EXTENT);
+        let maxs = origin + Vec3::splat(FRAME_HALF_EXTENT);
+        let camera = self.camera.frame_bounds(mins, maxs, aspect);
+        if !camera.position.is_finite()
+            || !camera.view_projection(aspect).is_finite()
+            || !camera.yaw_degrees.is_finite()
+            || !camera.pitch_degrees.is_finite()
+            || !camera.fov_y_degrees.is_finite()
+            || !camera.ortho_height.is_finite()
+        {
+            return Err("Compiled light cannot be framed with the current camera".into());
+        }
+        self.set_camera(camera);
+        self.log(
+            actor,
+            format!("framed compiled {} light record {ordinal}", channel.name()),
+        );
+        Ok(FramedLight {
+            inspection,
+            bounds: [mins.to_array(), maxs.to_array()],
+            camera,
+        })
+    }
+
     /// A no-I/O invalidation key; source and output freshness require an inspection.
     pub fn compiled_world_light_observation(&self) -> Value {
         let build = self.compiled.as_ref();

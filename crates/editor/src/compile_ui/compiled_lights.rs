@@ -68,6 +68,7 @@ fn clear(window: &CompiledLightsWindow, state: &RefCell<State>) {
     window.set_light_rows(slint::ModelRc::default());
     window.set_current_row(-1);
     window.set_has_selection(false);
+    window.set_can_frame(false);
     window.set_details(CompiledLightDetails::default());
     window.set_light_page("No retained light page".into());
     window.set_channels("".into());
@@ -75,7 +76,7 @@ fn clear(window: &CompiledLightsWindow, state: &RefCell<State>) {
     window.set_next_lights(false);
 }
 
-fn details(window: &CompiledLightsWindow, row: &WorldLightRow) {
+fn details(window: &CompiledLightsWindow, row: &WorldLightRow, report: &Inspection) {
     window.set_details(CompiledLightDetails {
         record: row.ordinal.to_string().into(),
         kind: format!("{} ({})", row.kind_name, row.kind).into(),
@@ -96,6 +97,7 @@ fn details(window: &CompiledLightsWindow, row: &WorldLightRow) {
         owner: row.owner.to_string().into(),
     });
     window.set_has_selection(true);
+    window.set_can_frame(report.frame_origin(row.ordinal).is_ok());
 }
 
 fn present(window: &CompiledLightsWindow, report: &Inspection) {
@@ -142,6 +144,7 @@ fn present(window: &CompiledLightsWindow, report: &Inspection) {
     window.set_light_rows(slint::ModelRc::new(slint::VecModel::from(rows)));
     window.set_current_row(-1);
     window.set_has_selection(false);
+    window.set_can_frame(false);
     window.set_details(CompiledLightDetails::default());
     window.set_light_page(
         match report.page.total {
@@ -209,6 +212,7 @@ fn inspect(
         if row.is_none() {
             window.set_current_row(-1);
             window.set_has_selection(false);
+            window.set_can_frame(false);
             window.set_details(CompiledLightDetails::default());
             return;
         }
@@ -260,7 +264,7 @@ fn inspect(
                 && row.ordinal == ordinal
             {
                 window.set_current_row(index as i32);
-                details(window, row);
+                details(window, row, &report);
             }
             *state.borrow_mut() = State {
                 observation: Some(session.compiled_world_light_observation()),
@@ -276,6 +280,52 @@ fn inspect(
             state.borrow_mut().observation = Some(observation);
         }
     }
+}
+
+fn frame_light(
+    window: &CompiledLightsWindow,
+    session: &mut Session,
+    state: &RefCell<State>,
+) -> Result<(), String> {
+    if !current(window, session, state) {
+        return Err("Refresh inspection before framing a compiled light".into());
+    }
+    let (token, channel, ordinal) = {
+        let state = state.borrow();
+        let report = state
+            .report
+            .as_ref()
+            .ok_or("Inspect compiled lights first")?;
+        let index = usize::try_from(window.get_current_row())
+            .map_err(|_| "Select a compiled point or spot light")?;
+        let row = report
+            .page
+            .rows
+            .get(index)
+            .ok_or("Select a compiled point or spot light")?;
+        let token = state
+            .query
+            .build_token
+            .clone()
+            .ok_or("Refresh the owned build inspection first")?;
+        (token, state.query.channel, row.ordinal)
+    };
+    let framed = session.frame_compiled_world_light(
+        crate::session::Actor::User,
+        token,
+        channel,
+        ordinal,
+        window.get_aspect(),
+    )?;
+    window.set_diagnostics(
+        format!(
+            "Framed {} record {} at its stored native origin. Map selection is unchanged.",
+            framed.inspection.channel.to_ascii_uppercase(),
+            ordinal
+        )
+        .into(),
+    );
+    Ok(())
 }
 
 fn handler(
@@ -348,6 +398,22 @@ pub(super) fn bind(
     window.on_change_channel(move || channel(0));
     window.on_page_lights(handler(&window, access, &state, Action::Page));
     window.on_inspect_light(handler(&window, access, &state, Action::Select));
+    window.on_frame_light({
+        let (window, target, state) = (window.as_weak(), access.downgrade(), state.clone());
+        move || {
+            let Some(window) = window.upgrade() else {
+                return;
+            };
+            let result = target.upgrade().and_then(|target| {
+                target.with_session(|session| frame_light(&window, session, &state))
+            });
+            if let Err(error) = result {
+                clear(&window, &state);
+                window.set_build_state("Framing unavailable; refresh inspection".into());
+                window.set_diagnostics(error.into());
+            }
+        }
+    });
     window.on_reset_sort({
         let window = window.as_weak();
         move || {
@@ -373,6 +439,15 @@ pub(super) fn bind(
 }
 
 impl Form {
+    pub(super) fn set_aspect(&self, aspect: f32) {
+        self.window.set_aspect(aspect);
+    }
+
+    #[cfg(test)]
+    pub(super) fn window(&self) -> &CompiledLightsWindow {
+        &self.window
+    }
+
     pub(super) fn hide_window(&self, errors: &mut Vec<String>) {
         crate::ui::hide_window("Compiled lights", self.window.window(), errors);
     }

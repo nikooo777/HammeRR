@@ -10,15 +10,21 @@ Read native light records from the last successful build.
 4. Read **Record**, **Kind**, **Style**, **Origin**, **Intensity** and **Flags**.
 5. Select a row for attenuation, cone, normal and other stored fields.
 6. Use **Previous lights** and **Next lights** to change pages.
+7. Select a current **point** or **spot** record, then click **Frame light** to frame its stored origin in the viewport.
 
 Use **Refresh inspection** after changing sources or building again.
 The inspector is also available from **Build settings…** and explains when no build output is available.
 
+**Frame light** keeps the current projection and frames a 32-unit box around the native origin. It rechecks the owned build and source guards when clicked. Map selection, history, settings and ordinary unapplied drafts remain unchanged. Finish or cancel an active viewport gesture or block preview before framing.
+
 ## Limits
 
 - Record numbers belong to one build and channel, not authored entities.
+- Framing requires current output and an available channel. Historical records remain readable but cannot be framed.
+- Only point and spot origins inside ±16384 units can be framed. Global, surface and unknown kinds are unavailable for framing.
 - Values are native stored fields, without exposure or display normalization.
 - Fullbright has no baked light tables. LDR builds have no HDR table.
 - A valid table can contain zero records; missing or malformed tables fail explicitly.
 - Intact stale output is historical. Missing, replaced or unverifiable output clears the displayed data.
 - Inspection preserves the map, selection, camera and pending drafts.
+- **Frame light** changes the camera only. It adds no authored association, light marker or baked lighting preview.

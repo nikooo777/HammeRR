@@ -186,6 +186,15 @@ Save records the current pivot for new document Sessions. Apply changes only the
 Reload and Reset do not apply a pivot. New/Open within an existing Session retain its current pivot.
 Surface picks save only fixed coordinates when explicitly requested.
 
+## Rope bounds
+
+Set `rope_preview:true` with `set_view` to include admitted spans in source-helper bounds.
+Framing, `get_objects`, `get_selection` and area/volume selection use the same sag and width.
+Bounds are conservative axis-aligned boxes. **Contained** requires the entire span and helper.
+Incoming spans do not enlarge their target. Changing the toggle expires area/volume reviews.
+Temporary `render_view` and `pick_at_pixel` rope overrides also affect camera `focus`.
+Authored pivots, transforms, placement, paint and raw map summaries keep source bounds.
+
 ## Compile and play
 
 1. Call `get_compile_settings`.
@@ -241,6 +250,8 @@ Static child `env_fog_controller` entities use ordinary create/property/save ope
 
 Valid editor-only atlas catalogs can stay in child maps. Their metadata is checked and excluded from expanded geometry and BSPs. Unknown top-level metadata and invalid catalogs reject.
 
+To [frame a compiled point or spot light](compiled-lights.md), inspect the owned records first, then call `frame_compiled_world_light` with explicit `build_token`, `channel` and native `ordinal`. Optional `aspect` defaults to `1` and accepts `0.01`–`100`. The result includes exact build/record provenance, `framed_bounds` and camera state. Current output and an available channel are required; stale, global, unknown or out-of-world records reject before camera movement. Active viewport gestures and block previews also reject without cancellation. Ordinary drafts, map selection, history and settings survive.
+
 ## Tool reference
 
 The server publishes the complete parameter schema for every tool.
@@ -283,7 +294,7 @@ These groups locate the available operations.
 | [3D sky preview](sky.md) | `get_3d_sky_preview`, `set_3d_sky_preview` |
 | [Terrain](terrain.md) | `begin_terrain_move_drag`, `begin_terrain_stroke`, `break_terrain_stroke`, `cancel_terrain_move_handles`, `cancel_terrain_stroke`, `clear_terrain_triangle_highlight`, `create_terrain`, `enable_terrain_move_handles`, `finish_terrain_move_drag`, `finish_terrain_stroke`, `frame_terrain_triangles`, `frame_terrain_vertices`, `get_terrain_creation`, `get_terrain_grids`, `get_terrain_move_handles`, `get_terrain_stroke`, `get_terrain_triangle_highlight`, `get_terrain_triangles`, `get_terrain_vertex_mask`, `get_terrain_vertices`, `get_terrain_volume_triangles`, `get_terrain_volume_vertices`, `highlight_terrain_triangles`, `highlight_terrain_vertices`, `pick_terrain_triangle`, `pick_terrain_vertex`, `preview_terrain_blend`, `preview_terrain_collision`, `preview_terrain_resolution`, `preview_terrain_sculpt`, `preview_terrain_sew`, `preview_terrain_smoothing`, `preview_terrain_subdivision`, `preview_terrain_triangle_tags`, `preview_terrain_vertex_move`, `remove_terrain`, `select_terrain_triangles_in_volume`, `select_terrain_vertices_in_volume`, `update_terrain_move_drag`, `update_terrain_stroke` |
 | [Transform pivots](brushes.md) | `transform_pivot_pick`, `transform_pivot_grid` |
-| [Cameras, rendering and inspection](basics.md) | `clear_pointfile`, `cycle_object_hit`, `delete_camera_view`, `frame_pointfile`, `get_camera`, `get_camera_views`, `get_fog_preview`, `get_lighting_preview`, `get_normal_map_preview`, `get_object_hit_candidates`, `get_pointfile`, `get_rope_preview`, `inspect_baked_lightmaps`, `inspect_baked_prop_vertices`, `inspect_compiled_world_lights`, `inspect_sky_assets`, `load_pointfile`, `navigate_pointfile`, `pick_at_pixel`, `raycast`, `rename_camera_view`, `render_view`, `restore_camera_view`, `save_camera_view`, `set_camera`, `set_fog_preview`, `set_view` |
+| [Cameras, rendering and inspection](basics.md) | `clear_pointfile`, `cycle_object_hit`, `delete_camera_view`, `frame_compiled_world_light`, `frame_pointfile`, `get_camera`, `get_camera_views`, `get_fog_preview`, `get_lighting_preview`, `get_normal_map_preview`, `get_object_hit_candidates`, `get_pointfile`, `get_rope_preview`, `inspect_baked_lightmaps`, `inspect_baked_prop_vertices`, `inspect_compiled_world_lights`, `inspect_sky_assets`, `load_pointfile`, `navigate_pointfile`, `pick_at_pixel`, `raycast`, `rename_camera_view`, `render_view`, `restore_camera_view`, `save_camera_view`, `set_camera`, `set_fog_preview`, `set_view` |
 | [Working region](working-region.md) | `get_editor_visibility`, `get_working_region`, `set_editor_visibility`, `set_working_region` |
 
 ## Limits

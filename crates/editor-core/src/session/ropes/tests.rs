@@ -299,3 +299,417 @@ fn temporary_editor_visibility_removes_rope_spans_and_keeps_authored_nodes_avail
     assert_eq!(session.pick(&ray).unwrap().object, source);
     assert_eq!(session.document().vmf(), &before);
 }
+
+#[test]
+fn rope_presentation_bounds_frame_sag_and_width_without_changing_authored_spatial_operations() {
+    for actor in [Actor::User, Actor::Agent] {
+        let (mut session, source, target) = fixture();
+        let ObjectId::Entity(source_id) = source else {
+            unreachable!()
+        };
+        let authored = session
+            .object_bounds_in(session.document(), &[source])
+            .unwrap();
+        session
+            .set_entity_properties(
+                actor,
+                source_id,
+                &[
+                    ("Slack".into(), Some("0".into())),
+                    ("Width".into(), Some("32".into())),
+                ],
+            )
+            .unwrap();
+        let document = session.document().vmf().clone();
+        let history = session.history_snapshot();
+        session.select(&[source], SelectMode::Replace).unwrap();
+        assert_eq!(
+            session.presentation_object_bounds_in(session.document(), &[source], None),
+            Some(authored)
+        );
+        session.set_view(render::ViewOptions {
+            rope_preview: true,
+            ..session.view()
+        });
+        let straight = (
+            DVec3::new(-16.0, -16.0, 112.0),
+            DVec3::new(272.0, 16.0, 144.0),
+        );
+        assert_eq!(
+            session.presentation_object_bounds_in(session.document(), &[source], None),
+            Some(straight)
+        );
+        assert_eq!(
+            session.framing_bounds_in(session.document(), &[source], None),
+            Some(straight)
+        );
+        assert_eq!(session.volume_selection_bounds(), [straight.0, straight.1]);
+        assert_eq!(
+            session.presentation_object_bounds_in(session.document(), &[target], None),
+            session.object_bounds_in(session.document(), &[target])
+        );
+        assert_eq!(
+            session.object_bounds_in(session.document(), &[source]),
+            Some(authored)
+        );
+        assert_eq!(
+            session.object_bounds_in_basis(session.document(), &[source], glam::DMat3::IDENTITY),
+            Some(authored)
+        );
+        assert_eq!(
+            session.selection_pivot(&[source]).unwrap(),
+            DVec3::new(0.0, 0.0, 128.0)
+        );
+        let snap = session.preview_snap_to_grid(actor, &[source]).unwrap();
+        assert_eq!(snap.bounds_minimum, authored.0.to_array());
+        session.cancel_transform_preview();
+        for projection in [
+            render::Projection::Perspective,
+            render::Projection::Top,
+            render::Projection::Front,
+            render::Projection::Side,
+        ] {
+            session.set_projection(actor, projection);
+            let expected =
+                session
+                    .camera()
+                    .frame_bounds(straight.0.as_vec3(), straight.1.as_vec3(), 0.5);
+            session.frame_selection(actor, 0.5).unwrap();
+            assert_eq!(session.camera(), expected);
+        }
+        assert_eq!(session.document().vmf(), &document);
+        assert_eq!(session.history_snapshot(), history);
+        session
+            .set_entity_properties(
+                actor,
+                source_id,
+                &[
+                    ("Slack".into(), Some("64".into())),
+                    ("Width".into(), Some("1".into())),
+                ],
+            )
+            .unwrap();
+        let sag = session
+            .presentation_object_bounds_in(session.document(), &[source], None)
+            .unwrap();
+        assert_eq!(sag.0.x, authored.0.x);
+        assert_eq!(sag.1.z, authored.1.z);
+        assert!(sag.0.z < authored.0.z - 32.0);
+        let preview = session.rope_preview_geometry();
+        assert!(
+            preview.links[0]
+                .triangles()
+                .flatten()
+                .all(|point| point.cmpge(sag.0).all() && point.cmple(sag.1).all())
+        );
+        let before = session.document().vmf().clone();
+        let history = session.history_snapshot();
+        session
+            .preview_transform(
+                actor,
+                &[source],
+                map_core::edit::Transform {
+                    translation: DVec3::Z * 128.0,
+                    ..Default::default()
+                },
+                None,
+            )
+            .unwrap();
+        let presented = session
+            .framing_bounds_in(session.render_document(), &[source], None)
+            .unwrap();
+        assert!(presented.1.z >= 264.0);
+        assert_ne!(presented, sag);
+        assert_eq!(
+            session.presentation_object_bounds_in(session.document(), &[source], None),
+            Some(sag)
+        );
+        session.cancel_transform_preview();
+        assert_eq!(
+            session.framing_bounds_in(session.document(), &[source], None),
+            Some(sag)
+        );
+        assert_eq!(session.document().vmf(), &before);
+        assert_eq!(session.history_snapshot(), history);
+    }
+}
+
+#[test]
+fn rope_presentation_area_and_volume_use_source_owned_bounds_and_shared_selection_filters() {
+    use crate::session::{Pointer, volume};
+    use glam::DVec2;
+    use map_core::region::{Match, Region};
+
+    for actor in [Actor::User, Actor::Agent] {
+        let (mut session, source, _) = fixture();
+        session.set_view(render::ViewOptions {
+            rope_preview: true,
+            ..session.view()
+        });
+        let preview = session.rope_preview_geometry();
+        let middle = preview.links[0].points[preview.links[0].points.len() / 2];
+        let mins = middle - DVec3::splat(2.0);
+        let maxs = middle + DVec3::splat(2.0);
+        let region = Region::from_bounds(mins, maxs).unwrap();
+        assert_eq!(
+            session
+                .select_region(&region, Match::Intersecting, false)
+                .objects,
+            [source]
+        );
+        assert!(
+            session
+                .select_region(&region, Match::Contained, false)
+                .objects
+                .is_empty()
+        );
+        let all = session
+            .presentation_object_bounds_in(session.document(), &[source], None)
+            .unwrap();
+        let all = Region::from_bounds(all.0, all.1).unwrap();
+        assert_eq!(
+            session.select_region(&all, Match::Contained, false).objects,
+            [source]
+        );
+        assert!(
+            session
+                .select_region(&region, Match::Intersecting, true)
+                .faces
+                .is_empty()
+        );
+        session
+            .set_selection_filters(
+                actor,
+                crate::session::selection_filters::SelectionFilters {
+                    point_entities: false,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert!(
+            session
+                .select_region(&region, Match::Intersecting, false)
+                .objects
+                .is_empty()
+        );
+        session
+            .set_selection_filters(actor, Default::default())
+            .unwrap();
+        let original = session.document().vmf().clone();
+        let history = session.history_snapshot();
+        let token = session
+            .preview_volume_selection(volume::Spec {
+                mins,
+                maxs,
+                rule: Match::Intersecting,
+                mode: SelectMode::Replace,
+                faces: false,
+            })
+            .unwrap();
+        assert_eq!(session.volume_preview().unwrap().matches.objects, [source]);
+        assert_eq!(
+            session
+                .commit_volume_selection(actor, token)
+                .unwrap()
+                .objects,
+            [source]
+        );
+        let camera = render::Camera::planar(render::Projection::Front, middle.as_vec3(), 64.0);
+        let matches = session
+            .preview_area_selection(
+                actor,
+                camera,
+                Pointer {
+                    position: DVec2::splat(40.0),
+                    size: (100, 100),
+                },
+                DVec2::splat(60.0),
+                Match::Intersecting,
+                SelectMode::Replace,
+            )
+            .unwrap();
+        assert_eq!(matches.objects, [source]);
+        assert_eq!(session.commit_area_selection().unwrap().objects, [source]);
+        assert_eq!(session.document().vmf(), &original);
+        assert_eq!(session.history_snapshot(), history);
+    }
+}
+
+#[test]
+fn rope_presentation_disabled_invalid_hidden_and_region_excluded_spans_keep_endpoint_bounds() {
+    for excluded in [
+        "disabled",
+        "invalid",
+        "cycle",
+        "hidden",
+        "editor_hidden",
+        "region",
+    ] {
+        let (mut session, source, target) = fixture();
+        let (ObjectId::Entity(source_id), ObjectId::Entity(target_id)) = (source, target) else {
+            unreachable!()
+        };
+        let authored = session.object_bounds_in(session.document(), &[source]);
+        session.set_view(render::ViewOptions {
+            rope_preview: true,
+            ..session.view()
+        });
+        let preview = session.rope_preview_geometry();
+        let middle = preview.links[0].points[preview.links[0].points.len() / 2];
+        match excluded {
+            "disabled" => session.set_view(render::ViewOptions {
+                rope_preview: false,
+                ..session.view()
+            }),
+            "invalid" => session
+                .set_entity_properties(
+                    Actor::Agent,
+                    source_id,
+                    &[("NextKey".into(), Some("missing".into()))],
+                )
+                .unwrap(),
+            "cycle" => session
+                .set_entity_properties(
+                    Actor::Agent,
+                    target_id,
+                    &[("NextKey".into(), Some("start".into()))],
+                )
+                .unwrap(),
+            "hidden" => session
+                .set_visibility(Actor::Agent, "hide", &[target])
+                .unwrap(),
+            "editor_hidden" => {
+                session
+                    .set_editor_visibility(
+                        Actor::Agent,
+                        crate::session::editor_visibility::Action::Hide(vec![target]),
+                        &session.working_region_stamp(),
+                    )
+                    .unwrap();
+            }
+            "region" => {
+                session
+                    .set_working_region(
+                        Actor::Agent,
+                        working_region::Action::Set {
+                            bounds: [middle - DVec3::splat(4.0), middle + DVec3::splat(4.0)],
+                            enabled: true,
+                        },
+                        &session.working_region_stamp(),
+                    )
+                    .unwrap();
+            }
+            _ => unreachable!(),
+        }
+        assert_eq!(
+            session.presentation_object_bounds_in(session.document(), &[source], None),
+            authored,
+            "{excluded}"
+        );
+        assert_eq!(
+            session.framing_bounds_in(session.document(), &[source], None),
+            authored,
+            "{excluded}"
+        );
+        let region = map_core::region::Region::from_bounds(
+            middle - DVec3::splat(2.0),
+            middle + DVec3::splat(2.0),
+        )
+        .unwrap();
+        assert!(
+            session
+                .select_region(&region, map_core::region::Match::Intersecting, false)
+                .objects
+                .is_empty(),
+            "{excluded}"
+        );
+    }
+}
+
+#[test]
+fn rope_presentation_toggle_retires_area_and_volume_reviews_while_preserving_geometry_drafts() {
+    use crate::session::{Pointer, volume};
+    use glam::DVec2;
+    use map_core::region::Match;
+
+    for enabled in [false, true] {
+        let (mut session, source, _) = fixture();
+        session.set_view(render::ViewOptions {
+            rope_preview: enabled,
+            ..session.view()
+        });
+        let before = session.document().vmf().clone();
+        let history = session.history_snapshot();
+        let camera = render::Camera::planar(
+            render::Projection::Front,
+            glam::Vec3::new(128.0, 0.0, 96.0),
+            512.0,
+        );
+        session
+            .preview_area_selection(
+                Actor::User,
+                camera,
+                Pointer {
+                    position: DVec2::splat(10.0),
+                    size: (100, 100),
+                },
+                DVec2::splat(90.0),
+                Match::Intersecting,
+                SelectMode::Replace,
+            )
+            .unwrap();
+        session.set_view(session.view());
+        assert!(session.area_preview().is_some());
+        session.set_view(render::ViewOptions {
+            rope_preview: !enabled,
+            ..session.view()
+        });
+        assert!(session.commit_area_selection().is_err());
+        let token = session
+            .preview_volume_selection(volume::Spec {
+                mins: DVec3::splat(-512.0),
+                maxs: DVec3::splat(512.0),
+                rule: Match::Intersecting,
+                mode: SelectMode::Replace,
+                faces: false,
+            })
+            .unwrap();
+        session.set_view(session.view());
+        assert_eq!(session.volume_preview().unwrap().token, token);
+        session.set_view(render::ViewOptions {
+            rope_preview: enabled,
+            ..session.view()
+        });
+        assert!(
+            session
+                .commit_volume_selection(Actor::Agent, token)
+                .is_err()
+        );
+        assert!(session.selected_ids().is_empty());
+        session
+            .preview_transform(
+                Actor::User,
+                &[source],
+                map_core::edit::Transform {
+                    translation: DVec3::X * 10.0,
+                    ..Default::default()
+                },
+                None,
+            )
+            .unwrap();
+        let draft = session.render_document().vmf().clone();
+        let selected = session.selected_ids();
+        assert_eq!(selected, [source]);
+        session.set_view(render::ViewOptions {
+            rope_preview: !enabled,
+            ..session.view()
+        });
+        assert_eq!(session.render_document().vmf(), &draft);
+        assert!(session.transform_preview().is_some());
+        assert_eq!(session.selected_ids(), selected);
+        session.cancel_transform_preview();
+        assert_eq!(session.document().vmf(), &before);
+        assert_eq!(session.history_snapshot(), history);
+        assert_eq!(session.selected_ids(), selected);
+    }
+}

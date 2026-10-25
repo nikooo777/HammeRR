@@ -845,18 +845,21 @@ fn create_document_window(
         }
     });
     root_callback!(app, ui, on_build_status, |app| {
+        let app = app.unwrap();
         let mut ui = ui.borrow_mut();
         if ui.compile_status.is_none() {
             match compile_ui::Controller::new_with_access(&ui.session, ui.document_access()) {
                 Ok(controller) => ui.compile_status = Some(controller),
                 Err(error) => {
-                    app.unwrap().set_message(error.to_string().into());
+                    app.set_message(error.to_string().into());
                     return;
                 }
             }
         }
-        if let Err(error) = ui.compile_status.as_ref().unwrap().show(&lock(&ui.session)) {
-            app.unwrap().set_message(error.to_string().into());
+        let controller = ui.compile_status.as_ref().unwrap();
+        controller.set_aspect(app.get_viewport_width() / app.get_viewport_height().max(1.0));
+        if let Err(error) = controller.show(&lock(&ui.session)) {
+            app.set_message(error.to_string().into());
         }
     });
     root_callback!(app, ui, on_cancel_build, |app| {
@@ -3301,6 +3304,9 @@ fn create_document_window(
                     if let Some(controller) = &ui.compile_status
                         && controller.is_visible()
                     {
+                        controller.set_aspect(
+                            app.get_viewport_width() / app.get_viewport_height().max(1.0),
+                        );
                         controller.refresh_visible(&lock(&ui.session));
                     }
                     if let Some(window) = &ui.game_log_window {

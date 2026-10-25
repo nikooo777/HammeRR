@@ -1333,7 +1333,17 @@ impl Session {
         ids: &[ObjectId],
         enabled: Option<bool>,
     ) -> Option<(DVec3, DVec3)> {
-        let ordinary = self.object_bounds_in(document, ids);
+        self.framing_bounds_with_rope_preview(document, ids, enabled, None)
+    }
+
+    pub(crate) fn framing_bounds_with_rope_preview(
+        &self,
+        document: &Document,
+        ids: &[ObjectId],
+        enabled: Option<bool>,
+        rope_preview: Option<bool>,
+    ) -> Option<(DVec3, DVec3)> {
+        let ordinary = self.presentation_object_bounds_in(document, ids, rope_preview);
         if !enabled.unwrap_or(self.view.instance_contents)
             || self.instance_contents_suppression().is_some()
             || !std::ptr::eq(document, &self.document)

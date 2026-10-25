@@ -1932,10 +1932,14 @@ impl Session {
         }
         self.restore_clip_drag();
         self.clear_component_drag();
-        if self.view.tool_textures != view.tool_textures {
-            if self.component_picking().is_some() || !self.component_selection().is_empty() {
-                self.scene_serial += 1;
-            }
+        if self.view.tool_textures != view.tool_textures
+            && (self.component_picking().is_some() || !self.component_selection().is_empty())
+        {
+            self.scene_serial += 1;
+        }
+        if self.view.tool_textures != view.tool_textures
+            || self.view.rope_preview != view.rope_preview
+        {
             self.cancel_area_selection();
             self.clear_volume_selection();
         }

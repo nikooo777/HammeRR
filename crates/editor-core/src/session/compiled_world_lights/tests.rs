@@ -156,6 +156,361 @@ fn rows(inspection: &Inspection) -> Value {
     serde_json::to_value(&inspection.page.rows).unwrap()
 }
 
+fn framing_fixture() -> OwnedFixture {
+    let mut fixture = OwnedFixture::new();
+    let mut bsp = Bsp::new();
+    bsp.lumps[LDR_LUMP].data = literal_records(&[world_light_kind::POINT, world_light_kind::SPOT]);
+    bsp.lumps[HDR_LUMP].data = literal_records(&[world_light_kind::POINT, world_light_kind::SPOT]);
+    fixture.install(&bsp.to_bytes(), LightingMode::DirectLdrHdr, 41);
+    fixture
+}
+
+fn framing_preserved(fixture: &OwnedFixture) -> Value {
+    let session = &fixture.session;
+    let files = [
+        &fixture.source,
+        &fixture.output,
+        &fixture.source.with_extension("lin"),
+    ]
+    .map(|path| std::fs::read(path).map_err(|error| format!("{:?}", error.kind())));
+    serde_json::json!({
+        "map":session.document().vmf().write(&Default::default()),
+        "render":session.render_document().vmf().write(&Default::default()),
+        "history":session.history_snapshot(),"selection":format!("{:?}",session.selected_ids()),
+        "settings":session.compile_settings(),"property":session.property_draft(),
+        "block":session.block_preview().map(|(a,b)|[a.to_array(),b.to_array()]),
+        "files":files,
+    })
+}
+
+fn framing_refusal_state(fixture: &OwnedFixture) -> Value {
+    let session = &fixture.session;
+    serde_json::json!({
+        "preserved":framing_preserved(fixture),"camera":format!("{:?}",session.camera()),
+        "serials":[session.scene_serial,session.view_serial,session.camera_serial,session.clip_epoch,session.brush_epoch,session.interaction_epoch],
+        "measurement":session.measurement_state(),"path":session.linked_path(),
+        "drag":session.transform_drag().map(|drag|drag.close_draft()),
+    })
+}
+
+#[test]
+fn framing_owned_point_and_spot_records_preserves_projection_drafts_and_native_provenance() {
+    let mut fixture = framing_fixture();
+    fixture
+        .session
+        .begin_property_edit(PropertyTarget::World)
+        .unwrap();
+    let draft = fixture.session.property_draft().unwrap().token;
+    fixture
+        .session
+        .append_property_change(
+            draft,
+            PropertyChange::Set {
+                key: "skyname".into(),
+                value: "unapplied_frame_review".into(),
+            },
+        )
+        .unwrap();
+    for projection in [
+        render::Projection::Perspective,
+        render::Projection::Top,
+        render::Projection::Front,
+        render::Projection::Side,
+    ] {
+        fixture.session.set_projection(Actor::User, projection);
+        for channel in [Channel::Ldr, Channel::Hdr] {
+            for ordinal in [0, 1] {
+                let before = framing_preserved(&fixture);
+                let frame = fixture
+                    .session
+                    .frame_compiled_world_light(Actor::Agent, "41".into(), channel, ordinal, 2.0)
+                    .unwrap();
+                let row = &frame.inspection.page.rows[0];
+                assert_eq!(row.ordinal, ordinal);
+                assert_eq!(
+                    row.origin.map(f32::to_bits),
+                    [0x8000_0000, 0x3fa0_0000, 0xc020_0000]
+                );
+                assert_eq!(frame.inspection.build["token"], "41");
+                assert_eq!(frame.inspection.build["status"], "current");
+                assert_eq!(frame.inspection.channel, channel.name());
+                assert_eq!(frame.camera, fixture.session.camera());
+                assert_eq!(frame.camera.projection, projection);
+                let matrix = frame.camera.view_projection(2.0);
+                let center = matrix * Vec3::from_array(row.origin).extend(1.0);
+                let ndc = center.truncate() / center.w;
+                assert!(ndc.x.abs() < 0.001 && ndc.y.abs() < 0.001 && center.w > 0.0);
+                for bits in 0..8 {
+                    let point = Vec3::new(
+                        frame.bounds[usize::from(bits & 1 != 0)][0],
+                        frame.bounds[usize::from(bits & 2 != 0)][1],
+                        frame.bounds[usize::from(bits & 4 != 0)][2],
+                    );
+                    let clip = matrix * point.extend(1.0);
+                    let ndc = clip.truncate() / clip.w;
+                    assert!(
+                        ndc.is_finite()
+                            && clip.w > 0.0
+                            && ndc.x.abs() <= 1.001
+                            && ndc.y.abs() <= 1.001
+                    );
+                }
+                assert_eq!(framing_preserved(&fixture), before);
+            }
+        }
+    }
+    fixture.session.check_property_draft(draft).unwrap();
+    fixture.session.cancel_property_edit(draft).unwrap();
+    let solid = fixture.session.document().vmf().world.solids[0].id;
+    fixture
+        .session
+        .preview_transform(
+            Actor::User,
+            &[ObjectId::Solid(solid)],
+            Transform {
+                translation: DVec3::X * 8.0,
+                ..Default::default()
+            },
+            Some(DVec3::ZERO),
+        )
+        .unwrap();
+    let before = framing_preserved(&fixture);
+    let frame = fixture
+        .session
+        .frame_compiled_world_light(Actor::User, "41".into(), Channel::Ldr, 0, 0.5)
+        .unwrap();
+    assert_eq!(
+        frame.inspection.build["render_context"]["pending_preview"],
+        true
+    );
+    assert!(fixture.session.transform_preview().is_some());
+    assert_eq!(framing_preserved(&fixture), before);
+}
+
+#[test]
+fn framing_refuses_invalid_owned_records_and_changed_sources_before_camera_mutation() {
+    for case in [
+        "missing",
+        "token",
+        "new_build",
+        "empty_token",
+        "end",
+        "overflow",
+        "zero_aspect",
+        "nan_aspect",
+        "wide_aspect",
+        "narrow_aspect",
+        "unbaked_hdr",
+        "fullbright",
+        "empty",
+        "surface",
+        "sky",
+        "ambient",
+        "quake",
+        "unknown",
+        "outside",
+        "nonfinite_off_page",
+        "corrupt",
+        "map",
+        "settings",
+        "content",
+        "source",
+        "output",
+        "missing_output",
+    ] {
+        let mut fixture = framing_fixture();
+        let mut token = "41".to_owned();
+        let mut channel = Channel::Ldr;
+        let mut ordinal = 0;
+        let mut aspect = 1.0;
+        let mut bsp = Bsp::new();
+        bsp.lumps[LDR_LUMP].data =
+            literal_records(&[world_light_kind::POINT, world_light_kind::SPOT]);
+        match case {
+            "missing" => fixture.session.compiled = None,
+            "token" => token = "42".into(),
+            "new_build" => fixture.install(&bsp.to_bytes(), LightingMode::DirectLdr, 42),
+            "empty_token" => token.clear(),
+            "end" => ordinal = 2,
+            "overflow" => ordinal = usize::MAX,
+            "zero_aspect" => aspect = 0.0,
+            "nan_aspect" => aspect = f32::NAN,
+            "wide_aspect" => aspect = 100.1,
+            "narrow_aspect" => aspect = 0.009,
+            "unbaked_hdr" => {
+                fixture.install(&bsp.to_bytes(), LightingMode::DirectLdr, 41);
+                channel = Channel::Hdr;
+            }
+            "fullbright" | "empty" => fixture.install(
+                &Bsp::new().to_bytes(),
+                if case == "fullbright" {
+                    LightingMode::Fullbright
+                } else {
+                    LightingMode::DirectLdr
+                },
+                41,
+            ),
+            "surface" | "sky" | "ambient" | "quake" | "unknown" => {
+                let kind = match case {
+                    "surface" => world_light_kind::SURFACE,
+                    "sky" => world_light_kind::SKY,
+                    "ambient" => world_light_kind::SKY_AMBIENT,
+                    "quake" => world_light_kind::QUAKE,
+                    _ => -1234,
+                };
+                bsp.lumps[LDR_LUMP].data = literal_records(&[kind]);
+                fixture.install(&bsp.to_bytes(), LightingMode::DirectLdr, 41);
+            }
+            "outside" => {
+                bsp.lumps[LDR_LUMP].data[..4].copy_from_slice(&16385.0f32.to_le_bytes());
+                fixture.install(&bsp.to_bytes(), LightingMode::DirectLdr, 41);
+            }
+            "nonfinite_off_page" => {
+                bsp.lumps[LDR_LUMP].data[RECORD_BYTES..RECORD_BYTES + 4]
+                    .copy_from_slice(&f32::NAN.to_le_bytes());
+                fixture.install(&bsp.to_bytes(), LightingMode::DirectLdr, 41);
+            }
+            "corrupt" => {
+                bsp.lumps[LDR_LUMP].data.pop();
+                fixture.install(&bsp.to_bytes(), LightingMode::DirectLdr, 41);
+            }
+            "map" => {
+                fixture
+                    .session
+                    .edit(Actor::User, "changed committed map", |tx| {
+                        map_core::edit::create_entity(
+                            tx,
+                            "info_target",
+                            Some(DVec3::ZERO),
+                            &[],
+                            Vec::new(),
+                        )
+                    })
+                    .unwrap();
+            }
+            "settings" => {
+                fixture
+                    .session
+                    .update_build_settings(
+                        Actor::User,
+                        crate::session::compilation::BuildSettingsUpdate {
+                            bounces: Some(1),
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap();
+            }
+            "content" => fixture.session.content_epoch += 1,
+            "source" => std::fs::write(&fixture.source, b"changed source").unwrap(),
+            "output" => std::fs::write(&fixture.output, b"changed owned output").unwrap(),
+            "missing_output" => std::fs::remove_file(&fixture.output).unwrap(),
+            _ => unreachable!(),
+        }
+        let before = framing_refusal_state(&fixture);
+        assert!(
+            fixture
+                .session
+                .frame_compiled_world_light(Actor::Agent, token, channel, ordinal, aspect)
+                .is_err(),
+            "{case}"
+        );
+        assert_eq!(framing_refusal_state(&fixture), before, "{case}");
+    }
+}
+
+#[test]
+fn framing_refuses_camera_sensitive_owned_work_without_cancelling_it() {
+    for case in ["block", "transform", "measurement", "linked"] {
+        let mut fixture = framing_fixture();
+        let session = &mut fixture.session;
+        match case {
+            "block" => session
+                .preview_block(DVec3::ZERO, DVec3::splat(32.0))
+                .unwrap(),
+            "transform" => {
+                let solid = session.document().vmf().world.solids[0].id;
+                session
+                    .select(
+                        &[ObjectId::Solid(solid)],
+                        crate::session::SelectMode::Replace,
+                    )
+                    .unwrap();
+                session
+                    .set_transform_tool(
+                        Actor::User,
+                        crate::session::TransformTool {
+                            mode: Some(render::handles::Mode::Move),
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap();
+                session
+                    .begin_transform_drag(render::handles::Handle::X, None)
+                    .unwrap();
+                session
+                    .update_transform_drag(None, Some(glam::DVec2::new(8.0, 0.0)))
+                    .unwrap();
+            }
+            "measurement" => {
+                let state = session
+                    .preview_measurement(
+                        Actor::User,
+                        crate::session::measurements::Request {
+                            id: None,
+                            name: "Frame refusal".into(),
+                            start: DVec3::ZERO,
+                            end: DVec3::splat(8.0),
+                        },
+                        &session.measurement_stamp(),
+                    )
+                    .unwrap();
+                session
+                    .begin_measurement_pick(
+                        Actor::User,
+                        state["draft"]["token"].as_u64().unwrap(),
+                        crate::session::measurements::Endpoint::Start,
+                        session.camera(),
+                        (512, 512),
+                        &session.measurement_pick_stamp(),
+                    )
+                    .unwrap();
+            }
+            "linked" => {
+                let state = session
+                    .preview_linked_path(
+                        Actor::User,
+                        crate::session::linked_path::Request {
+                            classname: "path_corner".into(),
+                            prefix: "frame_refusal".into(),
+                            points: vec![DVec3::ZERO, DVec3::splat(8.0)],
+                            closed: false,
+                        },
+                        &session.linked_path_stamp(),
+                    )
+                    .unwrap();
+                session
+                    .begin_linked_path_pick(
+                        Actor::User,
+                        state["preview"]["token"].as_u64().unwrap(),
+                        0,
+                        session.camera(),
+                        (512, 512),
+                        &session.linked_path_pick_stamp(),
+                    )
+                    .unwrap();
+            }
+            _ => unreachable!(),
+        }
+        let before = framing_refusal_state(&fixture);
+        let error = fixture
+            .session
+            .frame_compiled_world_light(Actor::Agent, "41".into(), Channel::Ldr, 0, 1.0)
+            .unwrap_err();
+        assert!(error.contains("active viewport"), "{case}: {error}");
+        assert_eq!(framing_refusal_state(&fixture), before, "{case}");
+    }
+}
+
 fn assert_unavailable(inspection: &Inspection) {
     assert_eq!(inspection.build["status"], "unavailable");
     assert!(inspection.build["token"].is_null());

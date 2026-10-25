@@ -31,7 +31,20 @@ Invalid distances stop the build, including lights outside a build region.
 
 Unresolved tokens stay as text. They exclude the lamp from authored-lighting preview and prevent standalone compilation, including **Fullbright**.
 Reference inspection resolves values and reports counts. It does not preview child lighting.
-Only immediate child point/spot distances support these bindings. Environment distances, attenuation coefficients, embedded tokens and ancestor forwarding remain unsupported.
+Only immediate child point/spot distances support these bindings. Environment distances, embedded tokens and ancestor forwarding remain unsupported.
+
+## Bind legacy light attenuation
+
+1. Open the child VMF and select a `light` or `light_spot`.
+2. Enable **Advanced properties**. Set `_constant_attn` to `$Constant`, `_linear_attn` to `$Linear` and `_quadratic_attn` to `$Quadratic` using **Property key** and **Value**. Press Enter after each value, then save the child.
+3. In the containing reference, set unused `replace01`–`replace10` fields to `$Constant 2`, `$Linear 0.5` and `$Quadratic 0.25`.
+4. Keep **50 percent falloff distance** at `0` to use these coefficients. Refresh the reference contents or compile the parent.
+
+Active coefficients must be finite, nonnegative and representable as native floats. Nonzero values too small for a native float reject.
+An effective all-zero triple uses ordinary constant falloff. Absent or empty coefficient fields retain their ordinary zero values; bindings do not add missing properties.
+A positive **50 percent falloff distance** selects percentage falloff instead, leaving the legacy coefficients unused.
+Unresolved tokens stay as text, exclude the lamp from authored-lighting preview and prevent standalone compilation, including **Fullbright**.
+Only the immediately containing reference supplies values. Environment attenuation, `_distance`, `_hardfalloff`, embedded tokens and ancestor forwarding remain unsupported binding contexts.
 
 ## Bind spotlight cones and focus
 

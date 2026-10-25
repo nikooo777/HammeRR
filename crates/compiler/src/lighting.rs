@@ -1271,6 +1271,81 @@ mod input_tests {
     }
 
     #[test]
+    fn deferred_attenuation_keeps_unknowns_and_ordinary_branch_and_zero_contracts() {
+        for key in ["_constant_attn", "_linear_attn", "_quadratic_attn"] {
+            let source = entity(&[("_light", "255 128 32 200"), (key, "$Coefficient")]);
+            assert!(falloff::Falloff::read(&source, true).unwrap().is_none());
+            for kind in [LightingKind::Ldr, LightingKind::Hdr] {
+                assert!(PointLight::parse(&source, 0, kind, true).unwrap().is_none());
+                assert!(PointLight::from_entity_kind(&source, 0, kind).is_err());
+            }
+        }
+        for (key, value) in [
+            ("_linear_attn", "-1"),
+            ("_linear_attn", "NaN"),
+            ("_linear_attn", "1e40"),
+            ("_linear_attn", "1e-100"),
+            ("_quadratic_attn", "0 1"),
+            ("_distance", "-1"),
+            ("_distance", "1e40"),
+        ] {
+            let source = entity(&[("_constant_attn", "$Constant"), (key, value)]);
+            assert!(
+                falloff::Falloff::read(&source, true).is_err(),
+                "{key} {value}"
+            );
+        }
+        for fields in [
+            vec![],
+            vec![
+                ("_constant_attn", ""),
+                ("_linear_attn", ""),
+                ("_quadratic_attn", ""),
+            ],
+            vec![
+                ("_constant_attn", "0"),
+                ("_linear_attn", "0"),
+                ("_quadratic_attn", "0"),
+            ],
+        ] {
+            let falloff = falloff::Falloff::read(&entity(&fields), true)
+                .unwrap()
+                .unwrap();
+            assert_eq!(falloff.coefficients, [1.0, 0.0, 0.0]);
+            assert_eq!(falloff.gain, 1.0);
+            assert_eq!(falloff.radius, 0.0);
+        }
+        let linear = falloff::Falloff::read(&entity(&[("_linear_attn", "2")]), true)
+            .unwrap()
+            .unwrap();
+        assert_eq!(linear.coefficients, [0.0, 2.0, 0.0]);
+        let fields = [
+            ("_fifty_percent_distance", "64"),
+            ("_zero_percent_distance", "160"),
+        ];
+        let expected = falloff::Falloff::read(&entity(&fields), false)
+            .unwrap()
+            .unwrap();
+        let source = entity(&[
+            fields[0],
+            fields[1],
+            ("_constant_attn", "$Constant"),
+            ("_linear_attn", "NaN"),
+            ("_quadratic_attn", "-1"),
+            ("_distance", "invalid"),
+        ]);
+        let actual = falloff::Falloff::read(&source, true).unwrap().unwrap();
+        assert_eq!(actual.coefficients, expected.coefficients);
+        assert_eq!(actual.gain, expected.gain);
+        assert_eq!(actual.radius, expected.radius);
+        let source = entity(&[
+            ("_fifty_percent_distance", "$Half"),
+            ("_constant_attn", "-1"),
+        ]);
+        assert!(falloff::Falloff::read(&source, true).unwrap().is_none());
+    }
+
+    #[test]
     fn ldr_keeps_first_tuple_and_ignores_hdr_fields() {
         let reference = PointLight::from_entity(&entity(&[("_light", "255 0 0 120")]), 7).unwrap();
         for fields in [

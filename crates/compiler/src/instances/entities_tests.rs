@@ -1427,6 +1427,169 @@ fn sibling_light_bindings_match_independent_literal_dual_bsp_and_preserve_raw_so
 }
 
 #[test]
+fn attenuation_bindings_match_independent_literal_dual_bsp_with_zero_and_percentage_precedence() {
+    let mut point = static_light(20, "light", "-48 16 128");
+    let mut spot = static_light(21, "light_spot", "64 -16 160");
+    for light in [&mut point, &mut spot] {
+        for (key, value) in [
+            ("_constant_attn", "$constant"),
+            ("_linear_attn", "$linear"),
+            ("_quadratic_attn", "$quadratic"),
+            ("_fifty_percent_distance", "$half"),
+            ("_zero_percent_distance", "$end"),
+        ] {
+            light.properties.set(key, value);
+        }
+    }
+    let (directory, mut parent, template, game) = emitter_fixture(vec![point, spot]);
+    let values = [
+        (["2", "0.5", "0.25"], ["0", "0"]),
+        (["0", "0", "0"], ["0", "0"]),
+        (["NaN", "-1", "1e40"], ["64", "160"]),
+    ];
+    let original = parent.entities.pop().unwrap();
+    for (index, (coefficients, distances)) in values.into_iter().enumerate() {
+        let mut helper = original.clone();
+        helper.id += index as u32;
+        helper
+            .properties
+            .set("origin", format!("{} -8 4", index as i32 * 32 - 16));
+        for (slot, (name, value)) in ["constant", "linear", "quadratic", "half", "end"]
+            .into_iter()
+            .zip(coefficients.into_iter().chain(distances))
+            .enumerate()
+        {
+            helper.properties.set(
+                format!("replace{:02}", slot + 1),
+                format!("${name} {value}"),
+            );
+        }
+        parent.entities.push(helper);
+    }
+    let source_parent = parent.clone();
+    write_child(directory.path(), "parent.vmf", &parent);
+    let parent_bytes = std::fs::read(directory.path().join("parent.vmf")).unwrap();
+    let raw = std::fs::read(directory.path().join("child.vmf")).unwrap();
+    let context = source(directory.path());
+    let mut literal = Document::new(parent.clone());
+    literal
+        .edit("independent attenuation literals", |tx| {
+            for (helper, (coefficients, distances)) in parent
+                .entities
+                .iter()
+                .filter(|entity| {
+                    entity
+                        .classname()
+                        .is_some_and(|class| class.eq_ignore_ascii_case("func_instance"))
+                })
+                .zip(values)
+            {
+                for original in &template.entities {
+                    let mut light =
+                        static_light(tx.new_object_id()?, original.classname().unwrap(), "0 0 0");
+                    light.properties.set(
+                        "origin",
+                        format_vec3(original.origin().unwrap() + helper.origin().unwrap()),
+                    );
+                    for (key, value) in [
+                        "_constant_attn",
+                        "_linear_attn",
+                        "_quadratic_attn",
+                        "_fifty_percent_distance",
+                        "_zero_percent_distance",
+                    ]
+                    .into_iter()
+                    .zip(coefficients.into_iter().chain(distances))
+                    {
+                        light.properties.set(key, value);
+                    }
+                    tx.add_entity(light)?;
+                }
+                tx.remove(ObjectId::Entity(helper.id))?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    let expected = emitter_output(
+        literal.vmf(),
+        &game,
+        None,
+        crate::LightingMode::DirectLdrHdr,
+    );
+    let actual = emitter_output(
+        &parent,
+        &game,
+        Some(&context),
+        crate::LightingMode::DirectLdrHdr,
+    );
+    assert_eq!(
+        actual.bsp.as_ref().unwrap().to_bytes(),
+        expected.bsp.unwrap().to_bytes()
+    );
+    let stats = actual.stats.instances.as_ref().unwrap();
+    assert_eq!(
+        (
+            stats.instances,
+            stats.files,
+            stats.point_lights,
+            stats.spot_lights
+        ),
+        (3, 1, 3, 3)
+    );
+    for channel in [LightingKind::Ldr, LightingKind::Hdr] {
+        let lights = actual.bsp.as_ref().unwrap().world_lights(channel).unwrap();
+        assert_eq!(lights.len(), 6);
+        for light in &lights[..2] {
+            assert_eq!(
+                [
+                    light.constant_attenuation,
+                    light.linear_attenuation,
+                    light.quadratic_attenuation
+                ],
+                [2.0, 0.5, 0.25]
+            );
+        }
+        for light in &lights[2..4] {
+            assert_eq!(
+                [
+                    light.constant_attenuation,
+                    light.linear_attenuation,
+                    light.quadratic_attenuation
+                ],
+                [1.0, 0.0, 0.0]
+            );
+        }
+        assert!(
+            lights[4..]
+                .iter()
+                .all(|light| light.constant_attenuation.is_finite()
+                    && light.quadratic_attenuation.is_finite())
+        );
+    }
+    assert_eq!(parent, source_parent);
+    assert_eq!(
+        std::fs::read(directory.path().join("parent.vmf")).unwrap(),
+        parent_bytes
+    );
+    assert_eq!(
+        std::fs::read(directory.path().join("child.vmf")).unwrap(),
+        raw
+    );
+    let destination = directory.path().join("attenuation.bsp");
+    std::fs::write(&destination, b"previous BSP").unwrap();
+    let staged = actual
+        .prepare_write_controlled(&destination, &Control::default())
+        .unwrap()
+        .unwrap();
+    let changed = String::from_utf8(raw)
+        .unwrap()
+        .replace("$constant", "$other");
+    std::fs::write(directory.path().join("child.vmf"), changed).unwrap();
+    assert!(staged.commit(&Control::default()).is_err());
+    assert_eq!(std::fs::read(destination).unwrap(), b"previous BSP");
+}
+
+#[test]
 fn nested_light_bindings_are_local_even_when_names_repeat() {
     for class in ["func_instance", "FUNC_INSTANCE", "Func_Instance"] {
         let mut leaf = parameter_light(20, "light_spot", "0 0 96");
@@ -1434,6 +1597,9 @@ fn nested_light_bindings_are_local_even_when_names_repeat() {
         leaf.properties.set("_cone", "$outer");
         leaf.properties.set("_exponent", "$focus");
         leaf.properties.set("pitch", "$pitch");
+        leaf.properties.set("_constant_attn", "$constant");
+        leaf.properties.set("_linear_attn", "$linear");
+        leaf.properties.set("_quadratic_attn", "$quadratic");
         let mut direct = leaf.clone();
         direct.id = 200;
         direct.properties.set("origin", "-32 0 96");
@@ -1445,6 +1611,9 @@ fn nested_light_bindings_are_local_even_when_names_repeat() {
         nested.properties.set("replace05", "$outer 180");
         nested.properties.set("replace06", "$focus 3");
         nested.properties.set("replace03", "$pitch -90");
+        nested.properties.set("replace07", "$constant 0");
+        nested.properties.set("replace08", "$linear 0");
+        nested.properties.set("replace09", "$quadratic 1");
         write_child(
             directory.path(),
             "middle.vmf",
@@ -1457,6 +1626,9 @@ fn nested_light_bindings_are_local_even_when_names_repeat() {
         root.properties.set("replace05", "$outer 60");
         root.properties.set("replace06", "$focus 2");
         root.properties.set("replace03", "$pitch 45");
+        root.properties.set("replace07", "$CONSTANT 2");
+        root.properties.set("replace08", "$linear 0.5");
+        root.properties.set("replace09", "$quadratic 0");
         let context = source(directory.path());
         let resolved = resolve(
             &parent,
@@ -1483,6 +1655,14 @@ fn nested_light_bindings_are_local_even_when_names_repeat() {
         assert_eq!(lights[1].properties.get("_exponent"), Some("3"));
         assert_eq!(lights[0].properties.get("pitch"), Some("45"));
         assert_eq!(lights[1].properties.get("pitch"), Some("-90"));
+        for (light, expected) in lights.iter().zip([["2", "0.5", "0"], ["0", "0", "1"]]) {
+            for (key, value) in ["_constant_attn", "_linear_attn", "_quadratic_attn"]
+                .into_iter()
+                .zip(expected)
+            {
+                assert_eq!(light.properties.get(key), Some(value));
+            }
+        }
         assert_eq!(resolved.stats().unwrap().max_expansion_depth, 2);
         for light in lights {
             entities::admit(light, entities::kind(light).unwrap()).unwrap();
@@ -1492,7 +1672,7 @@ fn nested_light_bindings_are_local_even_when_names_repeat() {
             .last_mut()
             .unwrap()
             .properties
-            .remove("replace01");
+            .remove("replace07");
         assert!(
             resolve(
                 &parent,
@@ -1528,7 +1708,16 @@ fn bound_templates_reject_grouped_semantic_and_context_failures_before_fullbrigh
         "distance ordering",
         "distance outside region",
         "distance native overflow",
-        "coefficient token",
+        "coefficient color tuple",
+        "missing coefficient",
+        "unused coefficient",
+        "duplicate coefficient binding",
+        "negative coefficient",
+        "nonfinite coefficient",
+        "coefficient native overflow",
+        "coefficient native underflow",
+        "coefficient outside region",
+        "unsupported radius token",
         "bad ldr",
         "bad hdr",
         "bad hdr outside region",
@@ -1563,6 +1752,7 @@ fn bound_templates_reject_grouped_semantic_and_context_failures_before_fullbrigh
                 | "distance outside region"
                 | "cone outside region"
                 | "pitch outside region"
+                | "coefficient outside region"
         ) {
             parent.cordon = Some(Node::block(
                 "cordon",
@@ -1617,7 +1807,37 @@ fn bound_templates_reject_grouped_semantic_and_context_failures_before_fullbrigh
                 );
                 helper.properties.set("replace08", "$end 32");
             }
-            "coefficient token" => child.entities[0].properties.set("_quadratic_attn", "$lamp"),
+            "coefficient color tuple" => {
+                child.entities[0].properties.set("_quadratic_attn", "$lamp")
+            }
+            "missing coefficient" => child.entities[0]
+                .properties
+                .set("_constant_attn", "$constant"),
+            "unused coefficient" => helper.properties.set("replace07", "$constant 1"),
+            "unsupported radius token" => child.entities[0].properties.set("_distance", "$lamp"),
+            "duplicate coefficient binding"
+            | "negative coefficient"
+            | "nonfinite coefficient"
+            | "coefficient native overflow"
+            | "coefficient native underflow"
+            | "coefficient outside region" => {
+                child.entities[0]
+                    .properties
+                    .set("_constant_attn", "$constant");
+                helper.properties.set(
+                    "replace07",
+                    match issue {
+                        "negative coefficient" | "coefficient outside region" => "$constant -1",
+                        "nonfinite coefficient" => "$constant NaN",
+                        "coefficient native overflow" => "$constant 1e40",
+                        "coefficient native underflow" => "$constant 1e-100",
+                        _ => "$constant 1",
+                    },
+                );
+                if issue == "duplicate coefficient binding" {
+                    helper.properties.set("replace08", "$CONSTANT 2");
+                }
+            }
             "bad ldr" => helper.properties.set("replace01", "$lamp 300 96 32 300"),
             "bad hdr" | "bad hdr outside region" => {
                 helper.properties.set("replace10", "$hdr 1 2 3 -1")
@@ -1758,6 +1978,9 @@ fn unresolved_standalone_light_templates_fail_in_every_compile_mode() {
         ("light_spot", "_cone"),
         ("light_spot", "_exponent"),
         ("light_spot", "pitch"),
+        ("light", "_constant_attn"),
+        ("light_spot", "_linear_attn"),
+        ("light", "_quadratic_attn"),
     ] {
         let mut vmf = test_common::room();
         let mut light = static_light(vmf.object_ids().max().unwrap() + 1, class, "0 0 96");

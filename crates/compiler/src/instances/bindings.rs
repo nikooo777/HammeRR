@@ -306,6 +306,38 @@ mod tests {
     }
 
     #[test]
+    fn attenuation_binding_preserves_absent_optional_properties_and_original_template() {
+        let mut original = light("255 128 32 300");
+        original.properties.set("_constant_attn", "$constant");
+        let before = original.clone();
+        for value in ["0", "0.5"] {
+            let owner = helper(&format!("$constant {value}"));
+            let bindings = Bindings::new(&owner).unwrap();
+            let mut work = 0;
+            let effective = bindings
+                .resolve(
+                    &original,
+                    entities::Kind::Point,
+                    &map_core::light::Targets::new(),
+                    &mut work,
+                    &Control::default(),
+                )
+                .unwrap();
+            assert_eq!(effective.properties.get("_constant_attn"), Some(value));
+            for key in [
+                "_linear_attn",
+                "_quadratic_attn",
+                "_distance",
+                "_fifty_percent_distance",
+                "_zero_percent_distance",
+            ] {
+                assert_eq!(effective.properties.get(key), None);
+            }
+            assert_eq!(original, before);
+        }
+    }
+
+    #[test]
     fn literal_fast_path_is_borrowed_and_binding_work_is_reserved_before_scan_copy_and_validation()
     {
         let mut child = Document::empty().into_vmf();

@@ -194,19 +194,20 @@ Save the child, then compile its parent. Compilation lowers the initial pose int
 `brush_model_preview.deferred_checks` includes `initial_pose`; reference inspection still provides no child model mesh.
 
 In the `get_compile_settings` response, use `light_value_bindings.class_properties` for each light class.
-Its `properties` list contains only fields valid for every listed class; specialized lists give distance, sun-spread, spotlight-shape and signed-pitch scope.
+Its `properties` list contains only fields valid for every listed class; specialized lists give distance, attenuation-coefficient, sun-spread, spotlight-shape and signed-pitch scope.
 
 For [light colors per reference](instances.md#light-colors-per-reference), set a child light's `_light` or `_lightHDR` to `$name`.
 Child `light_environment` also supports `_ambient` and `_ambientHDR`.
 Bind `_lightscaleHDR` on point/spot/sun lights or `_AmbientScaleHDR` on sun lights to one finite, nonnegative scalar literal.
 For point/spot [falloff bindings](instance-authoring.md#bind-light-falloff-distances), bind `_fifty_percent_distance` and `_zero_percent_distance` to finite, nonnegative literals. Their effective pair uses the normal falloff rules; zero near-zero distance selects the automatic value.
+For legacy falloff, bind `_constant_attn`, `_linear_attn` and `_quadratic_attn` with whole-value tokens. Use `attenuation_coefficient_properties` and `attenuation_coefficient_classes` for discovery. Active coefficients must be finite, nonnegative and fit native floats without nonzero underflow. An all-zero triple keeps ordinary constant falloff. Positive percentage-distance falloff takes precedence.
 For [sun spread](instance-authoring.md#bind-sun-spread), bind `SunSpreadAngle` on child `light_environment` to one finite literal from 0 to 90 degrees.
 For [spotlight shape](instance-authoring.md#bind-spotlight-cones-and-focus), bind `_inner_cone`, `_cone` and `_exponent` on child `light_spot`.
 Use class-specific discovery for angle/focus scope and ordinary cone rules. Unresolved integer rows retain text tokens without an evaluated value.
 For [spotlight pitch](instance-authoring.md#bind-spotlight-pitch), use `spotlight_pitch_properties`, `spotlight_pitch_classes` and `spotlight_pitch_degrees`. Bind `pitch` to one finite signed value from −90 to 90. A value of `0` requires the first `angles` component to be `0`, including targeted and point-mode child lights. Other scalar ranges stay unchanged.
 Child spotlights can also reference one visible local `info_target`; use explicit Prefix names on every containing helper.
 Reference refresh reports `spotlight_targets` and an unavailable `spotlight_target_preview`. Keep lamp and endpoint inside a lit compile region.
-Environment distances, attenuation coefficients and other unsupported scalar fields remain literal.
+Environment distances and attenuation coefficients, point/spot `_distance` and other unsupported scalar fields remain literal.
 Use `create_entity`, `set_entity_properties` or the property-edit tools.
 Set the containing helper's `replace01` through `replace10` to `$name literal` through the same operations.
 Save the child, refresh contents, then compile the parent. Missing, duplicate and unused bindings fail explicitly.

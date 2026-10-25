@@ -12,6 +12,9 @@ const FGD: &str = r#"
     _lightscaleHDR(float) : "HDR scale" : "1"
     _fifty_percent_distance(string) : "50 percent distance" : "0"
     _zero_percent_distance(string) : "Near-zero distance" : "0"
+    _constant_attn(string) : "Constant" : "0"
+    _linear_attn(string) : "Linear" : "0"
+    _quadratic_attn(string) : "Quadratic" : "1"
     SunSpreadAngle(float) : "SunSpreadAngle" : "0"
     _inner_cone(integer) : "Inner (bright) angle" : 30
     _cone(integer) : "Outer (fading) angle" : 45
@@ -46,6 +49,9 @@ fn create(session: &mut Session, actor: Actor, classname: &str) -> u32 {
     if matches!(classname, "light" | "light_spot") {
         properties.insert("_fifty_percent_distance".into(), "$Half".into());
         properties.insert("_zero_percent_distance".into(), "$End".into());
+        for key in ["_constant_attn", "_linear_attn", "_quadratic_attn"] {
+            properties.insert(key.into(), "$Coefficient".into());
+        }
     }
     if classname == "light_spot" {
         for (key, value) in [
@@ -82,6 +88,15 @@ fn light_value_templates_share_create_set_draft_undo_and_save_reopen_for_both_ac
                     ],
                 )
                 .unwrap();
+            if classname != "light_environment" {
+                session
+                    .set_entity_properties(
+                        actor,
+                        id,
+                        &[("_constant_attn".into(), Some("$OtherCoefficient".into()))],
+                    )
+                    .unwrap();
+            }
             let before = session.document().vmf().clone();
             let history = session.history_snapshot();
             session
@@ -118,6 +133,16 @@ fn light_value_templates_share_create_set_draft_undo_and_save_reopen_for_both_ac
                         PropertyChange::Set {
                             key: key.into(),
                             value: "$DistanceDraft".into(),
+                        }
+                    }),
+                );
+            }
+            if classname != "light_environment" {
+                changes.extend(
+                    ["_constant_attn", "_linear_attn", "_quadratic_attn"].map(|key| {
+                        PropertyChange::Set {
+                            key: key.into(),
+                            value: "$CoefficientDraft".into(),
                         }
                     }),
                 );
@@ -178,6 +203,11 @@ fn light_value_templates_share_create_set_draft_undo_and_save_reopen_for_both_ac
                 reopened.properties.get("_lightscaleHDR"),
                 Some("$GainDraft")
             );
+            if classname != "light_environment" {
+                for key in ["_constant_attn", "_linear_attn", "_quadratic_attn"] {
+                    assert_eq!(reopened.properties.get(key), Some("$CoefficientDraft"));
+                }
+            }
             let keys: &[_] = if classname == "light_environment" {
                 assert_eq!(reopened.properties.get("_ambient"), Some("$SkyDraft"));
                 assert_eq!(reopened.properties.get("_ambientHDR"), Some("$SkyDraft"));
@@ -208,6 +238,9 @@ fn light_value_templates_share_create_set_draft_undo_and_save_reopen_for_both_ac
                     "_lightscaleHDR",
                     "_fifty_percent_distance",
                     "_zero_percent_distance",
+                    "_constant_attn",
+                    "_linear_attn",
+                    "_quadratic_attn",
                     "_inner_cone",
                     "_cone",
                     "_exponent",
@@ -228,6 +261,9 @@ fn light_value_templates_share_create_set_draft_undo_and_save_reopen_for_both_ac
                     "_lightscaleHDR",
                     "_fifty_percent_distance",
                     "_zero_percent_distance",
+                    "_constant_attn",
+                    "_linear_attn",
+                    "_quadratic_attn",
                 ]
             };
             let field = session.entity_inspector(id).unwrap();
@@ -241,12 +277,13 @@ fn light_value_templates_share_create_set_draft_undo_and_save_reopen_for_both_ac
                 assert!(field.color.is_none() && field.intensity.is_none());
                 if key.to_ascii_lowercase().contains("scalehdr")
                     || key.ends_with("_distance")
+                    || key.ends_with("_attn")
                     || key == "SunSpreadAngle"
                     || matches!(key, "_inner_cone" | "_cone" | "_exponent" | "pitch")
                 {
                     assert_eq!(
                         field.kind,
-                        if key.ends_with("_distance") {
+                        if key.ends_with("_distance") || key.ends_with("_attn") {
                             "string"
                         } else if matches!(key, "_inner_cone" | "_cone" | "_exponent" | "pitch") {
                             "integer"
@@ -446,6 +483,12 @@ fn light_value_template_exception_preserves_readonly_schema_and_generic_color_va
             ),
             (
                 "_zero_percent_distance",
+                ["string) readonly", "integer)", "float)"],
+            ),
+            ("_constant_attn", ["string) readonly", "integer)", "float)"]),
+            ("_linear_attn", ["string) readonly", "integer)", "float)"]),
+            (
+                "_quadratic_attn",
                 ["string) readonly", "integer)", "float)"],
             ),
         ] {

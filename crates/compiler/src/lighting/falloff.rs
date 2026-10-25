@@ -15,15 +15,15 @@ pub(super) struct Falloff {
 
 impl Falloff {
     pub(super) fn read(entity: &MapEntity, defer_parameters: bool) -> Result<Option<Self>, String> {
-        let distance = |name| {
+        let scalar = |name| {
             if unresolved_value(entity, name, defer_parameters) {
                 Ok(None)
             } else {
                 number(entity, name).map(Some)
             }
         };
-        let half = distance("_fifty_percent_distance")?;
-        let end = distance("_zero_percent_distance")?;
+        let half = scalar("_fifty_percent_distance")?;
+        let end = scalar("_zero_percent_distance")?;
         let hard = number(entity, "_hardfalloff")?;
         if hard != 0.0 && hard != 1.0 {
             return Err("Light hard falloff must be zero or one".into());
@@ -31,7 +31,7 @@ impl Falloff {
         if half
             .into_iter()
             .chain(end)
-            .any(|value| value > f64::from(f32::MAX))
+            .any(|value| !native_value(value))
         {
             return Err("Light falloff exceeds finite native float limits".into());
         }
@@ -66,11 +66,24 @@ impl Falloff {
                 fade,
             }
         } else {
-            let mut coefficients = [
-                number(entity, "_constant_attn")?,
-                number(entity, "_linear_attn")?,
-                number(entity, "_quadratic_attn")?,
+            let coefficients = [
+                scalar("_constant_attn")?,
+                scalar("_linear_attn")?,
+                scalar("_quadratic_attn")?,
             ];
+            let radius = number(entity, "_distance")?;
+            if !native_value(radius)
+                || coefficients
+                    .into_iter()
+                    .flatten()
+                    .any(|value| !native_coefficient(value))
+            {
+                return Err("Light falloff exceeds finite native float limits".into());
+            }
+            let [Some(constant), Some(linear), Some(quadratic)] = coefficients else {
+                return Ok(None);
+            };
+            let mut coefficients = [constant, linear, quadratic];
             if coefficients == [0.0; 3] {
                 coefficients[0] = 1.0;
             }
@@ -79,7 +92,7 @@ impl Falloff {
                 gain: coefficients[0]
                     + REFERENCE_DISTANCE * coefficients[1]
                     + REFERENCE_DISTANCE.powi(2) * coefficients[2],
-                radius: number(entity, "_distance")?,
+                radius,
                 cap: None,
                 fade: None,
             }
@@ -89,11 +102,11 @@ impl Falloff {
             .chain(result.coefficients)
             .chain(result.cap)
             .chain(result.fade.into_iter().flatten())
-            .any(|value| !value.is_finite() || value.abs() > f64::from(f32::MAX))
+            .any(|value| !native_value(value))
             || result
                 .coefficients
                 .iter()
-                .any(|&value| value != 0.0 && value as f32 == 0.0)
+                .any(|&value| !native_coefficient(value))
             || !result.gain.is_finite()
         {
             return Err("Light falloff exceeds finite native float limits".into());
@@ -123,6 +136,14 @@ impl Falloff {
         });
         Ok(fade / divisor)
     }
+}
+
+fn native_value(value: f64) -> bool {
+    value.is_finite() && value.abs() <= f64::from(f32::MAX)
+}
+
+fn native_coefficient(value: f64) -> bool {
+    native_value(value) && (value == 0.0 || value as f32 != 0.0)
 }
 
 fn percentage_curve(half: f64, end: f64) -> Result<[f64; 3], String> {

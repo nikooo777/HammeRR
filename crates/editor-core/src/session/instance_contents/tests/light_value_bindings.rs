@@ -8,6 +8,9 @@ const FGD: &str = r#"
     _lightHDR(color255) : "BrightnessHDR" : "-1 -1 -1 1"
     _fifty_percent_distance(string) : "50 percent distance" : "0"
     _zero_percent_distance(string) : "Near-zero distance" : "0"
+    _constant_attn(string) : "Constant" : "0"
+    _linear_attn(string) : "Linear" : "0"
+    _quadratic_attn(string) : "Quadratic" : "1"
 ]
 @PointClass base(Light) = light []
 @PointClass base(Light) = light_spot [
@@ -31,6 +34,13 @@ fn bound(actor: Actor) -> (tempfile::TempDir, Session, PathBuf, PathBuf, u32) {
             ("_fifty_percent_distance".into(), "$Half".into()),
             ("_zero_percent_distance".into(), "$End".into()),
         ]);
+        if classname == "light" {
+            properties.insert("_fifty_percent_distance".into(), "0".into());
+            properties.insert("_zero_percent_distance".into(), "0".into());
+        }
+        for key in ["_constant_attn", "_linear_attn", "_quadratic_attn"] {
+            properties.insert(key.into(), "$Coefficient".into());
+        }
         if classname == "light_spot" {
             for (key, value) in [
                 ("_inner_cone", "$Inner"),
@@ -86,6 +96,10 @@ fn bound(actor: Actor) -> (tempfile::TempDir, Session, PathBuf, PathBuf, u32) {
                         format!("$Focus {}", if row == 0 { 2 } else { 0 }),
                     ),
                     (
+                        "replace07".into(),
+                        format!("$Coefficient {}", if row == 0 { "0" } else { "0.5" }),
+                    ),
+                    (
                         "replace08".into(),
                         format!("$Half {}", if row == 0 { 64 } else { 96 }),
                     ),
@@ -137,6 +151,7 @@ fn immediate_light_bindings_refresh_after_reference_edits_and_reopen_for_both_ac
             "replace04",
             "replace05",
             "replace06",
+            "replace07",
             "replace08",
             "replace09",
             "replace10",
@@ -181,13 +196,15 @@ fn immediate_light_bindings_refresh_after_reference_edits_and_reopen_for_both_ac
 #[test]
 fn unused_and_invalid_bindings_still_fail_refresh_and_compile_without_publication() {
     for actor in [Actor::User, Actor::Agent] {
-        for (binding, invalid_syntax) in [
-            ("$Unused 255 220 180 400", false),
-            ("$1invalid 255 220 180 400", true),
+        for (field, binding, invalid_syntax) in [
+            ("replace03", "$Unused 255 220 180 400", false),
+            ("replace03", "$1invalid 255 220 180 400", true),
+            ("replace07", "$Coefficient NaN", false),
+            ("replace07", "$Coefficient 1e-100", false),
         ] {
             let (_directory, mut session, parent, child, owner) = bound(actor);
             session
-                .set_entity_properties(actor, owner, &[("replace03".into(), Some(binding.into()))])
+                .set_entity_properties(actor, owner, &[(field.into(), Some(binding.into()))])
                 .unwrap();
             let source = session.document().vmf().clone();
             let history = session.history_snapshot();

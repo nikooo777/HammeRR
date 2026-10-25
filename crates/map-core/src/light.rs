@@ -24,6 +24,7 @@ pub enum ValueKind {
     Color,
     HdrGain,
     FalloffDistance,
+    AttenuationCoefficient,
     SunSpreadAngle,
     SpotlightAngle,
     SpotlightFocus,
@@ -34,7 +35,7 @@ const ALL_VALUE_CLASSES: &[&str] = &["light", "light_spot", "light_environment"]
 const POINT_VALUE_CLASSES: &[&str] = &["light", "light_spot"];
 const SUN_VALUE_CLASSES: &[&str] = &["light_environment"];
 const SPOT_VALUE_CLASSES: &[&str] = &["light_spot"];
-static VALUE_FIELDS: [(&str, &[&str], ValueKind); 13] = [
+static VALUE_FIELDS: [(&str, &[&str], ValueKind); 16] = [
     ("_light", ALL_VALUE_CLASSES, ValueKind::Color),
     ("_lightHDR", ALL_VALUE_CLASSES, ValueKind::Color),
     ("_ambient", SUN_VALUE_CLASSES, ValueKind::Color),
@@ -60,6 +61,21 @@ static VALUE_FIELDS: [(&str, &[&str], ValueKind); 13] = [
     ("_cone", SPOT_VALUE_CLASSES, ValueKind::SpotlightAngle),
     ("_exponent", SPOT_VALUE_CLASSES, ValueKind::SpotlightFocus),
     ("pitch", SPOT_VALUE_CLASSES, ValueKind::SpotlightPitch),
+    (
+        "_constant_attn",
+        POINT_VALUE_CLASSES,
+        ValueKind::AttenuationCoefficient,
+    ),
+    (
+        "_linear_attn",
+        POINT_VALUE_CLASSES,
+        ValueKind::AttenuationCoefficient,
+    ),
+    (
+        "_quadratic_attn",
+        POINT_VALUE_CLASSES,
+        ValueKind::AttenuationCoefficient,
+    ),
 ];
 
 pub fn value_fields() -> impl Iterator<Item = (&'static str, &'static [&'static str], ValueKind)> {
@@ -251,7 +267,7 @@ mod tests {
             ("light", "_AmbientScaleHDR"),
             ("light_spot", "_AmbientScaleHDR"),
             ("light_environment", "pitch"),
-            ("light", "_quadratic_attn"),
+            ("light_environment", "_quadratic_attn"),
             ("light_dynamic", "_lightscaleHDR"),
         ] {
             assert_eq!(value_kind(class, key), None);
@@ -277,10 +293,36 @@ mod tests {
             ("light_environment", "_zero_percent_distance"),
             ("light_dynamic", "_fifty_percent_distance"),
             ("light", "_distance"),
-            ("light", "_quadratic_attn"),
+            ("light_environment", "_quadratic_attn"),
             ("light", "_cone"),
         ] {
             assert_eq!(value_kind(class, key), None);
+        }
+    }
+
+    #[test]
+    fn attenuation_parameters_are_only_whole_point_and_spot_coefficients() {
+        for class in ["light", "light_spot"] {
+            for key in ["_constant_attn", "_LINEAR_ATTN", "_quadratic_attn"] {
+                assert_eq!(
+                    value_kind(class, key),
+                    Some(ValueKind::AttenuationCoefficient)
+                );
+                assert_eq!(
+                    value_parameter(class, key, "$Coefficient_1"),
+                    Some("Coefficient_1")
+                );
+                assert_eq!(value_parameter(class, key, "$Coefficient suffix"), None);
+                assert_eq!(color_parameter(class, key, "$Coefficient_1"), None);
+            }
+        }
+        for class in ["light_environment", "light_dynamic", "Light", "prop_static"] {
+            for key in ["_constant_attn", "_linear_attn", "_quadratic_attn"] {
+                assert_eq!(value_parameter(class, key, "$Coefficient"), None);
+            }
+        }
+        for key in ["_distance", "_hardfalloff", "angles", "angle"] {
+            assert_eq!(value_parameter("light", key, "$Coefficient"), None);
         }
     }
 

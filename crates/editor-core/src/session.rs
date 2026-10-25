@@ -1275,7 +1275,8 @@ impl Session {
                         map_core::light::ValueKind::Color => "color255",
                         map_core::light::ValueKind::HdrGain
                         | map_core::light::ValueKind::SunSpreadAngle => "float",
-                        map_core::light::ValueKind::FalloffDistance => "string",
+                        map_core::light::ValueKind::FalloffDistance
+                        | map_core::light::ValueKind::AttenuationCoefficient => "string",
                         map_core::light::ValueKind::SpotlightAngle
                         | map_core::light::ValueKind::SpotlightFocus
                         | map_core::light::ValueKind::SpotlightPitch => "integer",

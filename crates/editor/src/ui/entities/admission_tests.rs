@@ -49,6 +49,9 @@ fn unresolved_light_scalar_rows_keep_declared_types_and_raw_text_controls() {
     @PointClass = light [
         _fifty_percent_distance(string) : "50 percent distance" : "0"
         _zero_percent_distance(string) : "Near-zero distance" : "0"
+        _constant_attn(string) : "Constant" : "0"
+        _linear_attn(string) : "Linear" : "0"
+        _quadratic_attn(string) : "Quadratic" : "1"
     ]
     @PointClass = light_spot [
         _inner_cone(integer) : "Inner (bright) angle" : 30
@@ -82,6 +85,9 @@ fn unresolved_light_scalar_rows_keep_declared_types_and_raw_text_controls() {
             std::collections::BTreeMap::from([
                 ("_fifty_percent_distance".into(), "$Half".into()),
                 ("_zero_percent_distance".into(), "$End".into()),
+                ("_constant_attn".into(), "$Constant".into()),
+                ("_linear_attn".into(), "$Linear".into()),
+                ("_quadratic_attn".into(), "$Quadratic".into()),
             ]),
         )
         .unwrap()
@@ -114,6 +120,7 @@ fn unresolved_light_scalar_rows_keep_declared_types_and_raw_text_controls() {
         .filter(|field| {
             field.key.to_ascii_lowercase().contains("scalehdr")
                 || field.key.ends_with("_distance")
+                || field.key.ends_with("_attn")
                 || field.key == "SunSpreadAngle"
                 || matches!(
                     field.key.as_str(),
@@ -122,11 +129,14 @@ fn unresolved_light_scalar_rows_keep_declared_types_and_raw_text_controls() {
         })
         .map(property_row)
         .collect();
-    assert_eq!(rows.len(), 9);
+    assert_eq!(rows.len(), 12);
     for row in rows {
         assert_eq!(
             row.type_name,
-            if matches!(row.value.as_str(), "$Half" | "$End") {
+            if matches!(
+                row.value.as_str(),
+                "$Half" | "$End" | "$Constant" | "$Linear" | "$Quadratic"
+            ) {
                 "string"
             } else if matches!(row.value.as_str(), "$Inner" | "$Outer" | "$Focus" | "$Tilt") {
                 "integer"

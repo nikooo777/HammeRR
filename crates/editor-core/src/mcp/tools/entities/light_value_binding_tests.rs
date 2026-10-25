@@ -17,6 +17,9 @@ fn light_value_binding_mcp_uses_existing_string_schemas_and_shared_drafts() {
                 _lightHDR(color255) : "HDR brightness" : "-1 -1 -1 1"
                 _fifty_percent_distance(string) : "50 percent distance" : "0"
                 _zero_percent_distance(string) : "Near-zero distance" : "0"
+                _constant_attn(string) : "Constant" : "0"
+                _linear_attn(string) : "Linear" : "0"
+                _quadratic_attn(string) : "Quadratic" : "1"
                 _inner_cone(integer) : "Inner (bright) angle" : 30
                 _cone(integer) : "Outer (fading) angle" : 45
                 _exponent(integer) : "Focus" : 1
@@ -36,6 +39,7 @@ fn light_value_binding_mcp_uses_existing_string_schemas_and_shared_drafts() {
         assert!(description.contains("replace01–replace10"));
         assert!(description.contains("_lightHDR"));
         assert!(description.contains("_inner_cone/_cone/_exponent"));
+        assert!(description.contains("_constant_attn/_linear_attn/_quadratic_attn"));
     }
     let schema = serde_json::to_value(schemars::schema_for!(PropertyChange)).unwrap();
     let set = schema["oneOf"]
@@ -49,7 +53,7 @@ fn light_value_binding_mcp_uses_existing_string_schemas_and_shared_drafts() {
         server.create_entity(Parameters(
             serde_json::from_value(json!({
                 "classname":"light_spot","origin":[0,0,64],
-                "properties":{"_light":"$Lamp","_lightHDR":"$HDR","_fifty_percent_distance":"$Half","_zero_percent_distance":"$End","_inner_cone":"$Inner","_cone":"$Outer","_exponent":"$Focus","pitch":"$Tilt"}
+                "properties":{"_light":"$Lamp","_lightHDR":"$HDR","_fifty_percent_distance":"$Half","_zero_percent_distance":"$End","_inner_cone":"$Inner","_cone":"$Outer","_exponent":"$Focus","pitch":"$Tilt","_constant_attn":"$Constant","_linear_attn":"$Linear","_quadratic_attn":"$Quadratic"}
             }))
             .unwrap(),
         )),
@@ -58,7 +62,7 @@ fn light_value_binding_mcp_uses_existing_string_schemas_and_shared_drafts() {
     report(
         server.set_entity_properties(Parameters(
             serde_json::from_value(
-                json!({"id":id,"set":{"_light":"$Other","_fifty_percent_distance":"$OtherHalf","_inner_cone":"$OtherInner","_exponent":"$OtherFocus","pitch":"$OtherTilt"}}),
+                json!({"id":id,"set":{"_light":"$Other","_fifty_percent_distance":"$OtherHalf","_inner_cone":"$OtherInner","_exponent":"$OtherFocus","pitch":"$OtherTilt","_constant_attn":"$OtherConstant"}}),
             )
             .unwrap(),
         )),
@@ -77,7 +81,10 @@ fn light_value_binding_mcp_uses_existing_string_schemas_and_shared_drafts() {
                 {"action":"set","key":"_inner_cone","value":"$InnerDraft"},
                 {"action":"set","key":"_cone","value":"$OuterDraft"},
                 {"action":"set","key":"_exponent","value":"$FocusDraft"},
-                {"action":"set","key":"pitch","value":"$TiltDraft"}
+                {"action":"set","key":"pitch","value":"$TiltDraft"},
+                {"action":"set","key":"_constant_attn","value":"$ConstantDraft"},
+                {"action":"set","key":"_linear_attn","value":"$LinearDraft"},
+                {"action":"set","key":"_quadratic_attn","value":"$QuadraticDraft"}
             ]}))
             .unwrap(),
         )),
@@ -105,6 +112,9 @@ fn light_value_binding_mcp_uses_existing_string_schemas_and_shared_drafts() {
     assert_eq!(distance["field"]["control"], "text");
     assert_eq!(distance["field"]["value"], "$EndDraft");
     for (key, value) in [
+        ("_constant_attn", "$ConstantDraft"),
+        ("_linear_attn", "$LinearDraft"),
+        ("_quadratic_attn", "$QuadraticDraft"),
         ("_inner_cone", "$InnerDraft"),
         ("_cone", "$OuterDraft"),
         ("_exponent", "$FocusDraft"),
@@ -116,7 +126,14 @@ fn light_value_binding_mcp_uses_existing_string_schemas_and_shared_drafts() {
             .iter()
             .find(|property| property["field"]["key"] == key)
             .unwrap()["field"];
-        assert_eq!(field["kind"], "integer");
+        assert_eq!(
+            field["kind"],
+            if key.ends_with("_attn") {
+                "string"
+            } else {
+                "integer"
+            }
+        );
         assert_eq!(field["control"], "text");
         assert_eq!(field["value"], value);
         assert!(
@@ -277,8 +294,8 @@ fn environment_color_binding_mcp_uses_shared_create_set_and_ambient_drafts() {
     assert_eq!(
         scope["class_properties"],
         json!({
-            "light":["_light","_lightHDR","_lightscaleHDR","_fifty_percent_distance","_zero_percent_distance"],
-            "light_spot":["_light","_lightHDR","_lightscaleHDR","_fifty_percent_distance","_zero_percent_distance","_inner_cone","_cone","_exponent","pitch"],
+            "light":["_light","_lightHDR","_lightscaleHDR","_fifty_percent_distance","_zero_percent_distance","_constant_attn","_linear_attn","_quadratic_attn"],
+            "light_spot":["_light","_lightHDR","_lightscaleHDR","_fifty_percent_distance","_zero_percent_distance","_inner_cone","_cone","_exponent","pitch","_constant_attn","_linear_attn","_quadratic_attn"],
             "light_environment":["_light","_lightHDR","_ambient","_ambientHDR","_lightscaleHDR","_AmbientScaleHDR","SunSpreadAngle"]
         })
     );
@@ -293,7 +310,10 @@ fn environment_color_binding_mcp_uses_shared_create_set_and_ambient_drafts() {
             "_inner_cone",
             "_cone",
             "_exponent",
-            "pitch"
+            "pitch",
+            "_constant_attn",
+            "_linear_attn",
+            "_quadratic_attn"
         ])
     );
     assert_eq!(scope["sun_spread_properties"], json!(["SunSpreadAngle"]));
@@ -330,6 +350,29 @@ fn environment_color_binding_mcp_uses_shared_create_set_and_ambient_drafts() {
             .unwrap()
             .iter()
             .any(|key| key == "_fifty_percent_distance" || key == "_zero_percent_distance")
+    );
+    assert_eq!(
+        scope["attenuation_coefficient_properties"],
+        json!(["_constant_attn", "_linear_attn", "_quadratic_attn"])
+    );
+    assert_eq!(
+        scope["attenuation_coefficient_classes"],
+        json!(["light", "light_spot"])
+    );
+    assert_eq!(
+        scope["attenuation_coefficient_precedence"],
+        "positive 50% distance selects percentage falloff instead"
+    );
+    assert_eq!(
+        scope["attenuation_coefficient_all_zero"],
+        "ordinary constant falloff"
+    );
+    assert!(
+        !scope["class_properties"]["light_environment"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|key| key.as_str().unwrap().ends_with("_attn"))
     );
     assert_eq!(scope["other_scalar_parameters"], false);
     assert!(server.offscreen.lock().unwrap().renderer.is_none());

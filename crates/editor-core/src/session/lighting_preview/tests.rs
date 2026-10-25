@@ -144,6 +144,35 @@ fn unresolved_template_lights_have_explicit_diagnostics_without_hiding_valid_lam
             Some(DVec3::Z * 64.0),
             &[("_light", "255 255 255 10"), ("pitch", "$Tilt")],
         ),
+        add(
+            &mut session,
+            "light",
+            Some(DVec3::Z * 64.0),
+            &[
+                ("_light", "255 255 255 10"),
+                ("_constant_attn", "$Constant"),
+            ],
+        ),
+        add(
+            &mut session,
+            "light_spot",
+            Some(DVec3::Z * 64.0),
+            &[
+                ("_light", "255 255 255 10"),
+                ("_linear_attn", "$Linear"),
+                ("pitch", "-90"),
+            ],
+        ),
+        add(
+            &mut session,
+            "light",
+            Some(DVec3::Z * 64.0),
+            &[
+                ("_light", "255 255 255 10"),
+                ("_quadratic_attn", "$Quadratic"),
+                ("_fifty_percent_distance", "64"),
+            ],
+        ),
     ];
     enable(&mut session);
     let source = session.document().vmf().clone();

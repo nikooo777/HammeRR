@@ -116,10 +116,11 @@ Missing, duplicate or unused bindings fail. Invalid effective light values also 
 An unresolved child template can be edited and saved, but cannot compile alone.
 Preview excludes unresolved lamps and reports a reason; the parent still has no child-light preview.
 
-Point and spot lights support `_light`, `_lightHDR`, `_lightscaleHDR`, `_fifty_percent_distance` and `_zero_percent_distance`.
+Point and spot lights support `_light`, `_lightHDR`, `_lightscaleHDR`, `_fifty_percent_distance`, `_zero_percent_distance`, `_constant_attn`, `_linear_attn` and `_quadratic_attn`.
 Spotlights also support `_inner_cone`, `_cone`, `_exponent` and signed `pitch`; see [cone and focus bindings](instance-authoring.md#bind-spotlight-cones-and-focus) and [pitch bindings](instance-authoring.md#bind-spotlight-pitch).
 Sun lights support `_light`, `_lightHDR`, `_ambient`, `_ambientHDR`, `_lightscaleHDR`, `_AmbientScaleHDR` and `SunSpreadAngle`.
 See [light falloff bindings](instance-authoring.md#bind-light-falloff-distances) for the distance rules.
+See [legacy attenuation bindings](instance-authoring.md#bind-legacy-light-attenuation) for coefficient rules and percentage-distance precedence.
 Bindings apply only to direct child lights. Other scalar fields remain literal.
 Nested references bind their own direct child lights. Ancestor forwarding, partial replacement and parameter declarations remain unsupported.
 

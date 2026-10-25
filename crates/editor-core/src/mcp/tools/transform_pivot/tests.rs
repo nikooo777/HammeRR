@@ -39,6 +39,35 @@ fn mcp_surface_pivot_shares_human_settings_provenance_and_lazy_graphics() {
         lock(&shared).transform_tool().pivot,
         Some(DVec3::new(3.125, -5.25, 0.0))
     );
+    let grid = value(server.transform_pivot_grid(Parameters(TransformPivotGridArgs::Inspect {})));
+    assert_eq!(grid["before"], picked["current_pivot"]);
+    assert_eq!(grid["after"], json!([0.0, 0.0, 0.0]));
+    assert_eq!(grid["grid"], 16.0);
+    assert_eq!(grid["changed"], false);
+    let snapped = value(
+        server.transform_pivot_grid(Parameters(TransformPivotGridArgs::Snap {
+            snapshot: grid["snapshot"].as_str().unwrap().into(),
+        })),
+    );
+    assert_eq!(snapped["before"], grid["before"]);
+    assert_eq!(snapped["after"], grid["after"]);
+    assert_eq!(snapped["changed"], true);
+    assert_eq!(lock(&shared).transform_tool().pivot, Some(DVec3::ZERO));
+    assert!(
+        lock(&shared)
+            .transform_pivot_pick_state()
+            .last_pick
+            .is_none()
+    );
+    assert!(
+        server
+            .transform_pivot_grid(Parameters(TransformPivotGridArgs::Snap {
+                snapshot: grid["snapshot"].as_str().unwrap().into(),
+            }))
+            .unwrap()
+            .is_error
+            .unwrap_or(false)
+    );
     assert!(
         server
             .transform_pivot_pick(args(json!({"action":"cancel","token":token})))
@@ -77,5 +106,12 @@ fn mcp_surface_pivot_shares_human_settings_provenance_and_lazy_graphics() {
         json!({"action":"unknown"}),
     ] {
         assert!(serde_json::from_value::<TransformPivotPickArgs>(invalid).is_err());
+    }
+    for invalid in [
+        json!({"action":"snap"}),
+        json!({"action":"inspect","grid":1}),
+        json!({"action":"unknown"}),
+    ] {
+        assert!(serde_json::from_value::<TransformPivotGridArgs>(invalid).is_err());
     }
 }

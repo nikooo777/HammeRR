@@ -13,6 +13,9 @@ pub(super) fn refresh_pivot_pick_controls(
     camera: render::Camera,
 ) {
     let state = session.transform_pivot_pick_state();
+    let grid = session.transform_pivot_grid_state();
+    app.set_can_snap_pivot(grid.error.is_none());
+    app.set_pivot_grid_error(grid.error.unwrap_or_default().into());
     let interactive =
         session.transform_pivot_pick_interactive(Actor::User, camera, viewport_size(app));
     app.set_pivot_picking(interactive);
@@ -53,6 +56,29 @@ pub(super) fn bind_pivot_pick_controls_with_access(
     app: &AppWindow,
     access: &runtime::DocumentAccess,
 ) {
+    app.on_snap_transform_pivot_to_grid({
+        let callback = admission::SessionCallback::new(app, access);
+        move || {
+            callback.input(|app, session| {
+                let snapshot = session.transform_pivot_grid_stamp();
+                match session.snap_transform_pivot_to_grid(Actor::User, &snapshot) {
+                    Ok(report) => {
+                        refresh_interaction(&app, session);
+                        let point = report.after.unwrap();
+                        app.set_message(
+                            format!(
+                                "Pivot at X {} · Y {} · Z {} on grid {}. Fixed world point.",
+                                point[0], point[1], point[2], report.grid
+                            )
+                            .into(),
+                        );
+                    }
+                    Err(error) => app.set_message(error.into()),
+                }
+                refresh_pivot_pick_controls(&app, session, session.camera());
+            })
+        }
+    });
     app.on_pick_transform_pivot({
         let callback = admission::SessionCallback::new(app, access);
         move || {

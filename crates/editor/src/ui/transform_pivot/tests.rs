@@ -37,6 +37,16 @@ fn surface_pivot_ui_arms_cancels_picks_and_releases_foreign_or_stale_input() {
         300.0,
     );
     session.set_camera(camera);
+    session
+        .set_spatial(
+            Actor::User,
+            editor_core::spatial::Update {
+                grid_size: Some(0.25),
+                snap: Some(false),
+                ..Default::default()
+            },
+        )
+        .unwrap();
     let source = session.document().vmf().clone();
     let history = session.document().undo_labels().count();
     let selection = session.selected_ids();
@@ -55,6 +65,9 @@ fn surface_pivot_ui_arms_cancels_picks_and_releases_foreign_or_stale_input() {
     assert!(app.get_pivot_picking());
     assert!(app.get_can_cancel_pivot_pick());
     assert!(app.get_pivot_pick_notice().contains("Click a visible"));
+    assert!(!app.get_can_snap_pivot());
+    app.invoke_snap_transform_pivot_to_grid();
+    assert!(lock(&shared).transform_pivot_pick_owned(Actor::User));
     crate::ui::tests::assert_dialog_button_visible(&app, "Cancel pivot pick");
     crate::ui::tests::save_ui_snapshot(app.window(), "surface-picked-transform-pivot");
     app.invoke_cancel_transform_pivot_pick();
@@ -76,6 +89,22 @@ fn surface_pivot_ui_arms_cancels_picks_and_releases_foreign_or_stale_input() {
     assert_eq!(app.get_transform_pivot_mode(), 2);
     assert_eq!(app.get_pivot_x().as_str(), pivot.x.to_string().as_str());
     assert!(app.get_pivot_pick_source().contains("Picked solid:"));
+    assert!(app.get_can_snap_pivot());
+    crate::ui::tests::assert_dialog_button_visible(&app, "Snap pivot to grid");
+    app.invoke_snap_transform_pivot_to_grid();
+    let snapped = DVec3::new(3.25, -5.25, 0.0);
+    assert!(
+        lock(&shared)
+            .transform_tool()
+            .pivot
+            .unwrap()
+            .abs_diff_eq(snapped, 1e-5)
+    );
+    assert_eq!(app.get_transform_pivot_mode(), 2);
+    assert_eq!(app.get_pivot_x(), "3.25");
+    assert!(app.get_pivot_pick_source().is_empty());
+    assert!(app.get_message().contains("on grid 0.25"));
+    crate::ui::tests::save_ui_snapshot(app.window(), "grid-snapped-transform-pivot");
     {
         let mut session = lock(&shared);
         let snapshot = session.transform_pivot_pick_stamp();

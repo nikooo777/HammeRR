@@ -1,3 +1,4 @@
+use glam::DVec3;
 use map_core::{
     ObjectId,
     query::{Ray, SurfaceHit},
@@ -61,7 +62,139 @@ pub struct Report {
     pub policy: &'static str,
 }
 
+#[derive(Debug, PartialEq, Serialize)]
+pub struct GridReport {
+    pub snapshot: String,
+    pub before: Option<[f64; 3]>,
+    pub after: Option<[f64; 3]>,
+    pub grid: f64,
+    pub changed: bool,
+    pub error: Option<String>,
+}
+
 impl Session {
+    fn transform_pivot_grid_admission(&self) -> Result<(), String> {
+        self.ensure_not_closing()?;
+        self.ensure_entity_placement_resolved()?;
+        if self.history_navigation_blocked().is_some()
+            || self.viewport_pick_conflict()
+            || self.measurement_picking()
+            || self.linked_path_picking()
+            || self.paint_enabled()
+            || !self.component_selection().is_empty()
+        {
+            return Err("Finish or cancel the active tool, preview, build or launch before snapping the transform pivot".into());
+        }
+        Ok(())
+    }
+
+    fn transform_pivot_grid_points(&self) -> Result<(DVec3, DVec3), String> {
+        let before = match self.transform_tool.pivot {
+            Some(point) => point,
+            None => {
+                let ids = self.selected_ids();
+                if self.face_mode || ids.is_empty() {
+                    return Err("Select objects to snap the selection-center pivot".into());
+                }
+                let display = self.display_bounds_in(&self.document);
+                let mut bounds = Vec::with_capacity(ids.len());
+                for id in ids {
+                    if !self.document.contains(id) {
+                        return Err(format!("{id} does not exist"));
+                    }
+                    let (mins, maxs) = display
+                        .get(&id)
+                        .copied()
+                        .or_else(|| map_core::query::bounds(&self.document, id))
+                        .ok_or_else(|| format!("{id} has no valid bounds for a transform pivot"))?;
+                    if !mins.is_finite() || !maxs.is_finite() || !mins.cmple(maxs).all() {
+                        return Err(format!("{id} has no valid bounds for a transform pivot"));
+                    }
+                    bounds.push((mins, maxs));
+                }
+                let (mins, maxs) = map_core::query::union(bounds)
+                    .ok_or("Selected objects have no valid bounds for a transform pivot")?;
+                (mins + maxs) * 0.5
+            }
+        };
+        let maximum = map_core::primitive::MAX_COORDINATE;
+        if !before.is_finite() || before.abs().max_element() > maximum {
+            return Err(format!(
+                "Transform pivot snapping requires finite coordinates within ±{maximum} units"
+            ));
+        }
+        let after = crate::spatial::Settings {
+            snap: true,
+            ..self.spatial
+        }
+        .snap_point(before);
+        if !after.is_finite() || after.abs().max_element() > maximum {
+            return Err(format!(
+                "Snapped transform pivot must stay within ±{maximum} units"
+            ));
+        }
+        Ok((before, after))
+    }
+
+    pub fn transform_pivot_grid_stamp(&self) -> String {
+        format!(
+            "{}:{}:{}",
+            self.transform_pivot_pick_stamp(),
+            self.spatial.grid_size,
+            self.pivot_preferences.local_serial
+        )
+    }
+
+    pub fn transform_pivot_grid_state(&self) -> GridReport {
+        let points = self.transform_pivot_grid_points();
+        let error = self
+            .transform_pivot_grid_admission()
+            .err()
+            .or_else(|| points.as_ref().err().cloned());
+        GridReport {
+            snapshot: self.transform_pivot_grid_stamp(),
+            before: points.as_ref().ok().map(|(before, _)| before.to_array()),
+            after: points.ok().map(|(_, after)| after.to_array()),
+            grid: self.spatial.grid_size,
+            changed: false,
+            error,
+        }
+    }
+
+    pub fn snap_transform_pivot_to_grid(
+        &mut self,
+        actor: Actor,
+        snapshot: &str,
+    ) -> Result<GridReport, String> {
+        if snapshot != self.transform_pivot_grid_stamp() {
+            return Err(
+                "Transform pivot, selection or grid changed; inspect pivot snapping again".into(),
+            );
+        }
+        self.transform_pivot_grid_admission()?;
+        let (before, after) = self.transform_pivot_grid_points()?;
+        let changed = self.transform_tool.pivot != Some(after);
+        self.set_transform_tool(
+            actor,
+            TransformTool {
+                pivot: Some(after),
+                ..self.transform_tool
+            },
+        )?;
+        if self.transform_pivot.last_pick.take().is_some() {
+            self.transform_pivot.serial += 1;
+        }
+        self.log(actor, "snapped transform pivot to grid");
+        Ok(GridReport {
+            snapshot: self.transform_pivot_grid_stamp(),
+            before: Some(before.to_array()),
+            after: Some(after.to_array()),
+            grid: self.spatial.grid_size,
+            changed,
+            error: None,
+        })
+    }
+
     fn pivot_pick_context(&self) -> Result<(), String> {
         if self.face_mode || self.selected_ids().is_empty() {
             return Err("Select objects before picking a transform pivot".into());

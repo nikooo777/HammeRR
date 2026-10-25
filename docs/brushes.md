@@ -68,6 +68,23 @@ Scale factors must be positive. Whole-object scaling changes point-entity spacin
 The pivot stays at its world position. It does not follow the surface.
 **Cancel pivot pick** or Escape stops an unfinished pick.
 
+### Snap the pivot to the grid
+
+1. Set **Grid** to the required spacing.
+2. Under **Pivot**, choose **Selection center**, **World origin** or **Custom**.
+3. Click **Snap pivot to grid**.
+4. Inspect the fixed pivot coordinates, then rotate, scale, mirror or shear around that point.
+
+Each world coordinate rounds to the nearest grid multiple, even when **Snap** is off.
+Half steps round away from zero. A selection-center pivot becomes a fixed world point;
+changing the selection does not move it. A zero result appears as **World origin**.
+Snapping a surface-picked pivot clears its old picked-surface label.
+
+Finish or cancel active tools, previews, builds and launches first.
+The pivot and snapped result must stay within ±65536 units.
+This changes only the current pivot. It does not move geometry, create an Undo step
+or save startup defaults.
+
 ### Save pivot defaults
 
 1. Choose **Selection center**, **World origin** or a **Custom** point under **Pivot**.

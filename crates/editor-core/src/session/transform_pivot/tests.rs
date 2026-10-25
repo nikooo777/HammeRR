@@ -52,6 +52,349 @@ fn ray() -> Ray {
 }
 
 #[test]
+fn grid_pivot_rounds_fractional_world_coordinates_and_freezes_selection_center() {
+    for actor in [Actor::User, Actor::Agent] {
+        for mode in ["selection", "world", "custom"] {
+            let mut session = fixture();
+            session
+                .create_block(
+                    actor,
+                    DVec3::new(-8.0, -4.0, -2.0),
+                    DVec3::new(8.25, 3.75, 2.75),
+                    "brick/test",
+                    false,
+                )
+                .unwrap();
+            session
+                .set_spatial(
+                    actor,
+                    crate::spatial::Update {
+                        grid_size: Some(0.25),
+                        snap: Some(false),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            let before = DVec3::new(0.125, -0.125, 0.375);
+            session
+                .set_transform_tool(
+                    actor,
+                    TransformTool {
+                        pivot: match mode {
+                            "selection" => None,
+                            "world" => Some(DVec3::ZERO),
+                            _ => Some(before),
+                        },
+                        ..session.transform_tool
+                    },
+                )
+                .unwrap();
+            if mode != "selection" {
+                session.select(&[], SelectMode::Replace).unwrap();
+            }
+            let tool = session.transform_tool;
+            let document = session.document.vmf().clone();
+            let history = session.history_snapshot();
+            let camera = session.camera;
+            let preferences = session.pivot_preferences_stamp();
+            let expected = if mode == "world" {
+                DVec3::ZERO
+            } else {
+                DVec3::new(0.25, -0.25, 0.5)
+            };
+            let inspected = session.transform_pivot_grid_state();
+            assert!(inspected.error.is_none(), "{mode}: {inspected:?}");
+            assert!(!inspected.changed);
+            let report = session
+                .snap_transform_pivot_to_grid(actor, &inspected.snapshot)
+                .unwrap();
+            assert_eq!(
+                report.before,
+                Some(if mode == "world" { DVec3::ZERO } else { before }.to_array())
+            );
+            assert_eq!(report.after, Some(expected.to_array()));
+            assert_eq!(report.grid, 0.25);
+            assert_eq!(report.changed, mode != "world");
+            assert_eq!(
+                session.transform_tool,
+                TransformTool {
+                    pivot: Some(expected),
+                    ..tool
+                }
+            );
+            assert_eq!(session.document.vmf(), &document);
+            assert_eq!(session.history_snapshot(), history);
+            assert_eq!(session.camera, camera);
+            assert!(!session.spatial.snap);
+            assert_eq!(
+                session.pivot_preferences_stamp() != preferences,
+                report.changed
+            );
+            let preferences = session.pivot_preferences_stamp();
+            assert!(
+                !session
+                    .snap_transform_pivot_to_grid(actor, &report.snapshot)
+                    .unwrap()
+                    .changed
+            );
+            assert_eq!(session.pivot_preferences_stamp(), preferences);
+            session.select(&[], SelectMode::Replace).unwrap();
+            assert_eq!(session.transform_tool.pivot, Some(expected));
+        }
+    }
+}
+
+#[test]
+fn grid_pivot_clears_surface_provenance_without_writing_saved_defaults() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut session = fixture();
+    session.configure_recovery(Ok(directory.path().into()));
+    session
+        .change_pivot_preferences(Actor::User, "save", &session.pivot_preferences_stamp())
+        .unwrap();
+    let path = directory.path().join(crate::pivot_preferences::FILE_NAME);
+    let saved = std::fs::read(&path).unwrap();
+    let camera = session.camera;
+    let token = begin(&mut session, Actor::User, camera);
+    session
+        .pick_transform_pivot_ray(
+            Actor::User,
+            token,
+            Ray {
+                origin: DVec3::new(16.0, -16.0, 96.0),
+                direction: -DVec3::Z,
+            },
+        )
+        .unwrap();
+    assert!(session.transform_pivot_pick_state().last_pick_matches_pivot);
+    let preferences = session.pivot_preferences_stamp();
+    let inspected = session.transform_pivot_grid_state();
+    let report = session
+        .snap_transform_pivot_to_grid(Actor::Agent, &inspected.snapshot)
+        .unwrap();
+    assert!(!report.changed);
+    assert_ne!(report.snapshot, inspected.snapshot);
+    assert!(session.transform_pivot_pick_state().last_pick.is_none());
+    assert_eq!(session.pivot_preferences_stamp(), preferences);
+    assert_eq!(std::fs::read(path).unwrap(), saved);
+}
+
+#[test]
+fn grid_pivot_rejects_stale_context_and_preserves_owned_work() {
+    for active in [
+        "transform",
+        "drag",
+        "pick",
+        "block",
+        "paint",
+        "build",
+        "launch",
+        "closing",
+    ] {
+        let mut session = fixture();
+        let camera = session.camera;
+        match active {
+            "transform" => {
+                session
+                    .preview_transform(
+                        Actor::User,
+                        &session.selected_ids(),
+                        map_core::edit::Transform {
+                            translation: DVec3::X,
+                            ..Default::default()
+                        },
+                        None,
+                    )
+                    .unwrap();
+            }
+            "drag" => session
+                .begin_transform_drag(render::handles::Handle::X, None)
+                .unwrap(),
+            "pick" => {
+                begin(&mut session, Actor::User, camera);
+            }
+            "block" => session
+                .preview_block(DVec3::ZERO, DVec3::splat(32.0))
+                .unwrap(),
+            "paint" => session
+                .set_paint_operation(
+                    Actor::User,
+                    true,
+                    8.0,
+                    super::super::paint::Operation::Selection,
+                )
+                .unwrap(),
+            "build" => session.compiling = true,
+            "launch" => {
+                session.pending_launch = Some(crate::session::LaunchOrigin::new(
+                    session.document_generation,
+                ))
+            }
+            "closing" => session.closing = true,
+            _ => unreachable!(),
+        }
+        let tool = session.transform_tool;
+        let epoch = session.interaction_epoch();
+        let inspected = session.transform_pivot_grid_state();
+        assert!(inspected.error.is_some(), "{active}");
+        assert!(
+            session
+                .snap_transform_pivot_to_grid(Actor::Agent, &inspected.snapshot)
+                .is_err(),
+            "{active}"
+        );
+        assert_eq!(session.transform_tool, tool, "{active}");
+        assert_eq!(session.interaction_epoch(), epoch, "{active}");
+        match active {
+            "transform" => assert!(session.transform_preview().is_some()),
+            "drag" => assert!(session.transform_drag().is_some()),
+            "pick" => assert!(session.transform_pivot_pick_owned(Actor::User)),
+            "block" => assert!(session.block_preview().is_some()),
+            "paint" => assert!(session.paint_enabled()),
+            _ => {}
+        }
+    }
+    for change in [
+        "grid",
+        "pivot",
+        "selection",
+        "document",
+        "definitions",
+        "models",
+    ] {
+        let mut session = fixture();
+        let snapshot = session.transform_pivot_grid_stamp();
+        match change {
+            "grid" => {
+                session
+                    .set_spatial(
+                        Actor::User,
+                        crate::spatial::Update {
+                            grid_size: Some(0.25),
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap();
+            }
+            "pivot" => {
+                session
+                    .set_transform_tool(
+                        Actor::User,
+                        TransformTool {
+                            pivot: Some(DVec3::ZERO),
+                            ..session.transform_tool
+                        },
+                    )
+                    .unwrap();
+            }
+            "selection" => {
+                session.select(&[], SelectMode::Replace).unwrap();
+            }
+            "document" => session.new_map(Actor::User, true).unwrap(),
+            "definitions" => session.set_definitions(
+                Actor::User,
+                source_formats::fgd::Catalog::parse("@PointClass = info_target []").unwrap(),
+            ),
+            "models" => {
+                session.refresh_model_assets(Actor::User);
+            }
+            _ => unreachable!(),
+        }
+        let state = session.transform_pivot_grid_state();
+        assert!(
+            session
+                .snap_transform_pivot_to_grid(Actor::Agent, &snapshot)
+                .is_err(),
+            "{change}"
+        );
+        assert_eq!(session.transform_pivot_grid_state(), state, "{change}");
+    }
+}
+
+#[test]
+fn grid_pivot_checks_every_selection_member_and_bounded_rounding() {
+    let mut session = fixture();
+    let solid = session.selected_ids()[0];
+    let invalid = session
+        .edit(Actor::User, "missing origin fixture", |tx| {
+            map_core::edit::create_entity(tx, "info_target", None, &[], Vec::new())
+        })
+        .unwrap();
+    session
+        .select(&[solid, invalid], SelectMode::Replace)
+        .unwrap();
+    session
+        .set_transform_tool(
+            Actor::User,
+            TransformTool {
+                pivot: None,
+                ..session.transform_tool
+            },
+        )
+        .unwrap();
+    for selection in [&[solid, invalid][..], &[]] {
+        session.select(selection, SelectMode::Replace).unwrap();
+        let report = session.transform_pivot_grid_state();
+        assert!(report.error.is_some());
+        assert!(
+            session
+                .snap_transform_pivot_to_grid(Actor::User, &report.snapshot)
+                .is_err()
+        );
+        assert_eq!(session.transform_tool.pivot, None);
+    }
+    session
+        .set_spatial(
+            Actor::User,
+            crate::spatial::Update {
+                grid_size: Some(6.0),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    for point in [
+        DVec3::NAN,
+        DVec3::INFINITY,
+        DVec3::splat(65_537.0),
+        DVec3::splat(65_536.0),
+    ] {
+        session.transform_tool.pivot = Some(point);
+        let report = session.transform_pivot_grid_state();
+        assert!(report.error.is_some(), "{point}");
+        assert!(
+            session
+                .snap_transform_pivot_to_grid(Actor::User, &report.snapshot)
+                .is_err()
+        );
+    }
+    session
+        .set_spatial(
+            Actor::User,
+            crate::spatial::Update {
+                grid_size: Some(0.25),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    for (point, expected) in [
+        (
+            DVec3::new(0.125 - f64::EPSILON, -0.125 + f64::EPSILON, 0.375),
+            DVec3::new(0.0, 0.0, 0.5),
+        ),
+        (
+            DVec3::new(0.125 + f64::EPSILON, -0.125 - f64::EPSILON, -0.375),
+            DVec3::new(0.25, -0.25, -0.5),
+        ),
+    ] {
+        session.transform_tool.pivot = Some(point);
+        let report = session
+            .snap_transform_pivot_to_grid(Actor::User, &session.transform_pivot_grid_stamp())
+            .unwrap();
+        assert_eq!(report.after, Some(expected.to_array()));
+    }
+}
+
+#[test]
 fn exact_surface_pivot_changes_only_shared_settings_and_preserves_framing_inputs() {
     for actor in [Actor::User, Actor::Agent] {
         let mut session = fixture();

@@ -15,7 +15,7 @@ The integrated compiler is experimental. File operations, BSP publication and ga
 | [History](history.md) | Shared Undo/Redo and change summaries. | Persistent history and full property diffs. |
 | [Selection](selection.md) | Type filters, startup defaults, named profiles, overlap cycling, area, volume and paint selection. | Separate solid/group modes. |
 | [Keyboard shortcuts](keyboard-shortcuts.md) | Configurable viewport commands, including temporary editor hide/show. | File, clipboard, physical-key and multi-key bindings. |
-| [Brushes](brushes.md) | Shapes, handles, exact transforms, pivots and saved pivot defaults, mirror, shear and grid snapping. | Magnetic snapping and surface-attached pivots. |
+| [Brushes](brushes.md) | Shapes, handles, exact transforms, pivots with explicit grid snapping and saved defaults, mirror and shear. | Magnetic snapping and surface-attached pivots. |
 | [Brush tools](brush-tools.md) | Hollow, carve, clip, convex merge and polygon extrusion. | Concave merge and holes. |
 | [Components](components.md) | Move, rotate, scale, weld, split, ridges and partitions. | General topology editing and arbitrary dividing lines. |
 | [Materials](textures.md) | Grouped browsing, favorites, mapping, painting, wrapping, replacement, image-picked padded atlas rectangles with coplanar continuity and face lighting. | Full native shader preview. |

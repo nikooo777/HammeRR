@@ -1989,10 +1989,13 @@ export component AppWindow inherits Window {
     in-out property <string> pivot-z: "0";
     in property <bool> pivot-picking;
     in property <bool> can-pick-pivot;
+    in property <bool> can-snap-pivot;
+    in property <string> pivot-grid-error;
     in property <bool> can-cancel-pivot-pick;
     in property <string> pivot-pick-notice;
     in property <string> pivot-pick-source;
     callback pick-transform-pivot();
+    callback snap-transform-pivot-to-grid();
     callback cancel-transform-pivot-pick();
     in-out property <bool> transform-texture-lock: true;
     in-out property <bool> transform-texture-scale-lock: true;
@@ -3085,6 +3088,8 @@ export component AppWindow inherits Window {
                             }
                             if root.transform-pivot-mode == 0: Text { text: root.selection-pivot; color: #8a909c; font-size: 12px; }
                             Button { text: "Pick pivot…"; enabled: root.can-pick-pivot; clicked => { root.pick-transform-pivot(); } }
+                            Button { text: "Snap pivot to grid"; enabled: root.can-snap-pivot; clicked => { root.snap-transform-pivot-to-grid(); } }
+                            if root.pivot-grid-error != "": Text { text: root.pivot-grid-error; color: #8a909c; font-size: 12px; wrap: word-wrap; }
                             if root.pivot-pick-source != "": Text { text: root.pivot-pick-source; color: #8a909c; font-size: 12px; wrap: word-wrap; }
                             if root.transform-pivot-mode == 2: TransformVector {
                                 enabled: !root.has-transform-preview;

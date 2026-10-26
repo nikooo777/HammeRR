@@ -133,6 +133,27 @@ fn baked_prop_vertices_controls_inspect_real_pages_channels_disabled_props_and_s
     controller.set_aspect(1.7);
     assert!(window.get_can_frame());
     assert!(window.get_can_select_source());
+    assert!(window.get_can_show_leaf_bounds());
+    assert!(!window.get_can_clear_leaf_bounds());
+    window.invoke_show_leaf_bounds();
+    assert!(window.get_leaf_bounds_state().contains("Prop 0"));
+    assert!(
+        window
+            .get_leaf_bounds_state()
+            .contains("native leaf membership bounds")
+    );
+    assert!(window.get_can_clear_leaf_bounds());
+    let guide = lock(&shared).compiled_prop_leaf_bounds();
+    assert_eq!(guide["prop"], 0);
+    assert_eq!(guide["displayed"], true);
+    assert!(guide["leaf_count"].as_u64().unwrap() > 0);
+    window.invoke_clear_leaf_bounds();
+    assert!(!window.get_can_clear_leaf_bounds());
+    assert_eq!(
+        lock(&shared).compiled_prop_leaf_bounds()["requested"],
+        false
+    );
+    window.invoke_show_leaf_bounds();
     assert_eq!(window.get_source_selection_label(), "Select source");
     let camera = lock(&shared).camera();
     window.invoke_select_source();
@@ -177,6 +198,13 @@ fn baked_prop_vertices_controls_inspect_real_pages_channels_disabled_props_and_s
             .unwrap();
     }
     controller.refresh(&lock(&shared));
+    assert!(window.get_leaf_bounds_state().contains("suppressed"));
+    assert!(window.get_can_clear_leaf_bounds());
+    assert!(!window.get_can_show_leaf_bounds());
+    assert_eq!(
+        lock(&shared).compiled_prop_leaf_bounds()["displayed"],
+        false
+    );
     assert_eq!(window.get_vertex_rows().row_count(), 0);
     window.invoke_inspect_section(1);
     assert_eq!(window.get_vertex_rows().row_count(), 0);
@@ -184,6 +212,7 @@ fn baked_prop_vertices_controls_inspect_real_pages_channels_disabled_props_and_s
     assert!(window.get_build_state().contains("stale"));
     assert!(!window.get_can_frame());
     assert!(!window.get_can_select_source());
+    assert!(!window.get_can_show_leaf_bounds());
     assert!(
         window
             .get_selected()
@@ -212,6 +241,11 @@ fn baked_prop_vertices_controls_inspect_real_pages_channels_disabled_props_and_s
     assert_eq!(window.get_section_rows().row_count(), 0);
     assert_eq!(window.get_vertex_rows().row_count(), 0);
     std::fs::write(&output, original).unwrap();
+    window.invoke_clear_leaf_bounds();
+    assert_eq!(
+        lock(&shared).compiled_prop_leaf_bounds()["requested"],
+        false
+    );
     window.invoke_close_dialog();
     assert!(!window.window().is_visible());
     let session = lock(&shared);

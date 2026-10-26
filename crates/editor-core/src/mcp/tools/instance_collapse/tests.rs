@@ -8,7 +8,8 @@ fn value(result: ToolResult) -> Value {
 
 #[test]
 fn instance_collapse_mcp_shares_owned_all_root_preview_cancel_apply_and_undo() {
-    let (_directory, game, parent, child) = crate::test_assets::instance_map(false);
+    let (_directory, _game, parent, child) = crate::test_assets::instance_map(false);
+    let (_assets, game) = crate::test_assets::model_lighting::game();
     let mut content =
         source_formats::vmf::Vmf::parse(&std::fs::read_to_string(&child).unwrap()).unwrap();
     let mut light = source_formats::vmf::Entity::new(1000, "light");
@@ -21,6 +22,12 @@ fn instance_collapse_mcp_shares_owned_all_root_preview_cancel_apply_and_undo() {
     cube.properties
         .set("sides", content.world.solids[0].sides[0].id.to_string());
     content.entities.push(cube);
+    let mut prop = source_formats::vmf::Entity::new(1002, "prop_static");
+    prop.properties.set("origin", "16 8 32");
+    prop.properties.set("model", "models/test/receiver.mdl");
+    prop.properties.set("solid", "0");
+    prop.properties.set("skin", "1");
+    content.entities.push(prop);
     std::fs::write(&child, content.write(&Default::default())).unwrap();
     let mut session = Session::new(Ok(game));
     session.open(Actor::User, &parent, true).unwrap();
@@ -42,6 +49,11 @@ fn instance_collapse_mcp_shares_owned_all_root_preview_cancel_apply_and_undo() {
     assert_eq!(ready["entity_provenance"][0]["original_entity"], 1000);
     assert_eq!(ready["helper_id_map"].as_array().unwrap().len(), 1);
     assert_eq!(ready["stats"]["cubemaps"], 1);
+    assert_eq!(ready["stats"]["static_props"], 1);
+    assert_eq!(ready["static_prop_id_map"].as_array().unwrap().len(), 1);
+    assert_eq!(ready["entity_provenance"][2]["classname"], "prop_static");
+    assert_eq!(ready["entity_provenance"][2]["emitted"], false);
+    assert_eq!(ready["entity_provenance"][2]["compiler_handled"], true);
     assert_eq!(ready["entity_provenance"][1]["classname"], "env_cubemap");
     assert_eq!(ready["entity_provenance"][1]["emitted"], false);
     let token = ready["token"].as_u64().unwrap();

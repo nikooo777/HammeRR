@@ -256,6 +256,7 @@ pub fn bounce_label(count: u8) -> &'static str {
 impl Options {
     pub fn requires_guarded_publication_for(self, vmf: &Vmf) -> bool {
         self.requires_guarded_publication()
+            || vmf.solids().next().is_some()
             || instances::requires_source(vmf)
             || vmf.entities.iter().any(|entity| {
                 !entity.hidden
@@ -1103,14 +1104,23 @@ fn build(
             return Ok(());
         }
     };
-    let material_sources = prepared_instances.material_sources.clone().or_else(|| {
-        (!caster_requests.is_empty()
-            || options.pack_water_assets
-            || options.pack_static_prop_assets
-            || options.brush_texture_shadows
-            || prepared_instances.has_brush_models())
-        .then(asset_sources::BuildMaterialSources::default)
-    });
+    let material_sources = Some(
+        prepared_instances
+            .material_sources
+            .clone()
+            .unwrap_or_else(|| {
+                if !caster_requests.is_empty()
+                    || options.pack_water_assets
+                    || options.pack_static_prop_assets
+                    || options.brush_texture_shadows
+                    || prepared_instances.has_brush_models()
+                {
+                    asset_sources::BuildMaterialSources::default()
+                } else {
+                    asset_sources::BuildMaterialSources::without_retained_payloads()
+                }
+            }),
+    );
     if let Some(sources) = &material_sources
         && let Err(diagnostic) = brush_shadow_casters::validate(
             &caster_requests,

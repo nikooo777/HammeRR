@@ -209,9 +209,10 @@ Call `get_instance_collapse`, then `set_instance_collapse` with
 root reference in one batch; there is no selected-only mode.
 Inspect counts and fresh object IDs. The complete `entity_id_map` pairs
 `expanded` compiler entity IDs with fresh `authored` emitted light/target IDs.
-The separate complete `helper_id_map` pairs newly materialized cubemap helper IDs;
-these have no emitted runtime `hammerid`. `entity_provenance` includes an
-`emitted` flag and reports up to 64 original root/file/entity rows with
+The separate complete `helper_id_map` pairs newly materialized cubemap helper IDs.
+`static_prop_id_map` pairs expanded prop IDs with fresh authored prop IDs.
+Neither gains an emitted runtime `hammerid`. `entity_provenance` includes
+`emitted` and `compiler_handled` flags and reports up to 64 original root/file/entity rows with
 `entity_provenance_total` for the full count. Face provenance remains bounded.
 These mappings are retained in Apply's `captured_preview`.
 Face and entity provenance also include `occurrence`, ordered `{helper,file}`
@@ -225,8 +226,12 @@ Prepare and Apply accept optional `background:true`; poll the getter for complet
 Apply rechecks the original saved parent and dependency bytes before one Undo edit.
 Reference markers and their validated color/layout are consumed; child object
 editor fields stay attached. Supported content includes world/detail brushes,
-terrain, checked static point/spot lights with local `info_target` helpers,
-and cubemap samples. Manual cubemap `sides` remap through the reviewed fresh
+terrain, supported static props with empty `lightingorigin`, checked static
+point/spot lights with local `info_target` helpers, and cubemap samples.
+Collapse retains the original MDL guard and checks every intermediate model pose.
+Changed models expire the plan. `info_lighting` helpers remain unsupported.
+Meshes, PHY files and materials keep their separate Compile checks.
+Manual cubemap `sides` remap through the reviewed fresh
 side IDs; automatic samples preserve absence of that field. Light scope includes
 existing HDR values, literal bindings and scoped target names. Fresh emitted
 entity IDs intentionally change their compiled `hammerid` values; other entity
@@ -301,6 +306,8 @@ Game launches use `-insecure` and private validation uses `sv_lan 1`.
 Reflection capture also needs a ready `get_native_capture_runtime` result.
 See [Compile and play](compile-and-play.md).
 
+`get_compile_status` marks a completed job stale when its consumed material sources change. `job.material_source_issue` gives the cause; unused runtime assets remain outside this check.
+
 For [stationary child brush rotation](instances.md#rotate-a-stationary-child-brush), set canonical `angles` through `set_entity_properties` or property-edit tools.
 Save the child, then compile its parent. Compilation lowers the initial pose into body geometry and emits zero angles.
 `brush_model_preview.deferred_checks` includes `initial_pose`; reference inspection still provides no child model mesh.
@@ -339,6 +346,21 @@ Cutout vertex-lighting receivers accept the same bounded nested basetexture edit
 Static child `env_fog_controller` entities use ordinary create/property/save operations. Set literal primary RGB, start/end, density and enable values; keep blend, radial, `use_angles` and transition time at `0`, HDR/zoom gains at `1` and far-Z nonpositive. Names, I/O and Master/DX flags are unavailable. Refresh reports `fog_controllers` and unavailable parent fog preview. Multiple controllers keep ordinary order; compile regions select their transformed origins.
 
 Valid editor-only atlas catalogs can stay in child maps. Their metadata is checked and excluded from expanded geometry and BSPs. Unknown top-level metadata and invalid catalogs reject.
+
+Use `frame_compiled_face` with the current `build_token`, explicit `channel`,
+native `face` ordinal and optional `aspect` from `0.01` through `100`.
+It frames flat Model0 world/detail geometry using the owned BSP vertices.
+It preserves projection, selection, history and drafts. Stale output, terrain,
+model-local faces, invalid geometry and active viewport work refuse atomically.
+Several authored contributors do not prevent valid native face framing.
+
+Use `set_compiled_prop_leaf_bounds` with `build_token` and native `prop` to show
+its complete native leaf membership bounds. Call `get_compiled_prop_leaf_bounds`
+to read exact ordinals, bounds and displayed state. Omit both arguments to clear.
+The purple guide is independent of the cyan visibility guide and needs no baked
+vertex colors. Sets above 512 leaves or 256 KiB refuse without replacing the
+previous guide. Stale guides are suppressed. These boxes do not show exact mesh
+clipping, convex leaf cells or runtime visibility.
 
 `frame_compiled_prop_origin` requires the current `build_token` and native
 `prop` ordinal from `inspect_baked_prop_vertices`. Optional `aspect` defaults to
@@ -388,7 +410,7 @@ For [compiler-owned visibility](visibility.md), call `inspect_compiled_visibilit
 
 The same inspection accepts `target: {"kind":"position","source":{"kind":"position","position":[x,y,z]}}` or `target: {"kind":"position","source":{"kind":"camera"}}`, always with the retained token. Camera source samples the current Perspective camera and refuses orthographic views; explicit world coordinates work in every view. One owned BSP read/seal supplies Model 0's actual plane/node walk. The returned `position` reports requested/effective f32 coordinates, native leaf/cluster/contents, classification and the declared f32 arithmetic/tie policy. Inputs narrow to f32; classification uses `((nx*x + ny*y) + nz*z) - dist`, with negative distance choosing child 1 and zero child 0. Nonfinite values, arithmetic overflow and malformed/cyclic routes refuse; engine boundary bit parity is not claimed. Cluster -1 has no PVS/PAS row, and reserved leaf 0 gets no invented bounds. Use the returned resolved Leaf `target` for later pages, framing or showing a guide. Intact historical builds remain explicitly historical; camera/position lookup changes no view, draft, selection or history.
 
-`frame_compiled_visibility` takes an explicit token, leaf/portal target and optional `aspect` (default 1). `set_compiled_visibility_overlay` defaults to `mode: {"kind":"selected"}` for one selected leaf box or portal ring. With `mode: {"kind":"destinations","visibility":"pvs"}` or `"pas"`, pass a clustered leaf or cluster target to show every native world-leaf bounds box joined to that complete native destination row. Camera/position sources first resolve through inspection; use the returned Leaf target. Guide membership is independent of report pages. The response includes mode, source cluster, destination cluster count, leaf count, exact bounded `native_leaves`, retained bytes, line vertices and caps. Complete sets above 512 leaves or the 256 KiB bounds/renderer allowance refuse without replacing the previous guide; ordinary inspection still works. Potential destination bounds are not rendered faces, exact cells or current game occlusion. Omit/null `target` to clear either guide. Both require current owned data when showing or framing, preserve ordinary drafts and refuse active viewport gestures. Stale guides are suppressed during scene updates. Historical intact inspection stays read-only; missing, changed or unverifiable output clears rows/totals. These tools accept no file path. Freshness covers the committed map/settings and retained source guards, not every world VMT.
+`frame_compiled_visibility` takes an explicit token, leaf/portal target and optional `aspect` (default 1). `set_compiled_visibility_overlay` defaults to `mode: {"kind":"selected"}` for one selected leaf box or portal ring. With `mode: {"kind":"destinations","visibility":"pvs"}` or `"pas"`, pass a clustered leaf or cluster target to show every native world-leaf bounds box joined to that complete native destination row. Camera/position sources first resolve through inspection; use the returned Leaf target. Guide membership is independent of report pages. The response includes mode, source cluster, destination cluster count, leaf count, exact bounded `native_leaves`, retained bytes, line vertices and caps. Complete sets above 512 leaves or the 256 KiB bounds/renderer allowance refuse without replacing the previous guide; ordinary inspection still works. Potential destination bounds are not rendered faces, exact cells or current game occlusion. Omit/null `target` to clear either guide. Both require current owned data when showing or framing, preserve ordinary drafts and refuse active viewport gestures. Stale guides are suppressed during scene updates. Historical intact inspection stays read-only; missing, changed or unverifiable output clears rows/totals. These tools accept no file path. Freshness covers committed map/settings and consumed compiler-source guards, not an entire runtime asset closure.
 
 `inspect_entity_graph` accepts explicit root entity IDs and `direction` (`outgoing`, `incoming`, `both`), with `depth` defaulting to 2 (1–16). It returns authored nodes, concrete exact-name fan-out/`!self` edges, explicit unresolved records and an owned `snapshot`. Node, edge and unresolved pages have independent offsets and at most 64 rows; nonzero offsets require the returned snapshot. Unresolved pages cover the admitted whole map. Optional `search` filters displayed rows only.
 
@@ -439,8 +461,9 @@ These groups locate the available operations.
 | [Color correction](color-correction.md) | `get_color_correction_preview`, `load_color_correction_lut`, `set_color_correction_preview`, `clear_color_correction_lut` |
 | [Terrain](terrain.md) | `begin_terrain_move_drag`, `begin_terrain_stroke`, `break_terrain_stroke`, `cancel_terrain_move_handles`, `cancel_terrain_stroke`, `clear_terrain_triangle_highlight`, `create_terrain`, `enable_terrain_move_handles`, `finish_terrain_move_drag`, `finish_terrain_stroke`, `frame_terrain_triangles`, `frame_terrain_vertices`, `get_terrain_creation`, `get_terrain_grids`, `get_terrain_move_handles`, `get_terrain_stroke`, `get_terrain_triangle_highlight`, `get_terrain_triangles`, `get_terrain_vertex_mask`, `get_terrain_vertices`, `get_terrain_volume_triangles`, `get_terrain_volume_vertices`, `highlight_terrain_triangles`, `highlight_terrain_vertices`, `pick_terrain_triangle`, `pick_terrain_vertex`, `preview_terrain_blend`, `preview_terrain_collision`, `preview_terrain_resolution`, `preview_terrain_sculpt`, `preview_terrain_sew`, `preview_terrain_smoothing`, `preview_terrain_subdivision`, `preview_terrain_triangle_tags`, `preview_terrain_vertex_move`, `remove_terrain`, `select_terrain_triangles_in_volume`, `select_terrain_vertices_in_volume`, `update_terrain_move_drag`, `update_terrain_stroke` |
 | [Transform pivots](brushes.md) | `transform_pivot_pick`, `transform_pivot_grid` |
-| [Cameras, rendering and inspection](basics.md) | `clear_pointfile`, `cycle_object_hit`, `delete_camera_view`, `frame_compiled_prop_origin`, `frame_compiled_world_light`, `frame_pointfile`, `get_camera`, `get_camera_views`, `get_fog_preview`, `get_lighting_preview`, `get_normal_map_preview`, `get_object_hit_candidates`, `get_pointfile`, `get_rope_preview`, `inspect_baked_lightmaps`, `inspect_baked_prop_vertices`, `inspect_compiled_world_lights`, `inspect_sky_assets`, `load_pointfile`, `navigate_pointfile`, `pick_at_pixel`, `raycast`, `rename_camera_view`, `render_view`, `restore_camera_view`, `select_compiled_prop_source`, `select_compiled_world_light_source`, `save_camera_view`, `set_camera`, `set_fog_preview`, `set_view` |
+| [Cameras, rendering and inspection](basics.md) | `clear_pointfile`, `cycle_object_hit`, `delete_camera_view`, `frame_compiled_face`, `frame_compiled_prop_origin`, `frame_compiled_world_light`, `frame_pointfile`, `get_camera`, `get_camera_views`, `get_fog_preview`, `get_lighting_preview`, `get_normal_map_preview`, `get_object_hit_candidates`, `get_pointfile`, `get_rope_preview`, `inspect_baked_lightmaps`, `inspect_baked_prop_vertices`, `inspect_compiled_world_lights`, `inspect_sky_assets`, `load_pointfile`, `navigate_pointfile`, `pick_at_pixel`, `raycast`, `rename_camera_view`, `render_view`, `restore_camera_view`, `select_compiled_prop_source`, `select_compiled_world_light_source`, `save_camera_view`, `set_camera`, `set_fog_preview`, `set_view` |
 | [Working region](working-region.md) | `get_editor_visibility`, `get_working_region`, `set_editor_visibility`, `set_working_region` |
+| [Prop leaf bounds](baked-prop-vertices.md) | `get_compiled_prop_leaf_bounds`, `set_compiled_prop_leaf_bounds` |
 | [Compiled visibility](visibility.md) | `frame_compiled_visibility`, `inspect_compiled_visibility`, `set_compiled_visibility_overlay` |
 
 ## Limits

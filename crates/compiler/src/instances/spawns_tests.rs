@@ -536,6 +536,7 @@ fn spawn_child_drift_and_cancellation_preserve_original_sources_and_publication(
     std::fs::write(&destination, b"previous BSP").unwrap();
     std::fs::write(destination.with_extension("lin"), b"previous LIN").unwrap();
     let before = parent.clone();
+    let reservation = crate::WriteReservation::new(&destination, &Control::default()).unwrap();
     let context = source(directory.path());
     let output = spawn_output(
         &parent,
@@ -550,7 +551,7 @@ fn spawn_child_drift_and_cancellation_preserve_original_sources_and_publication(
         .verify(&Control::default())
         .unwrap();
     let staged = output
-        .prepare_write_controlled(&destination, &Control::default())
+        .prepare_write_reserved(reservation, &Control::default())
         .unwrap()
         .unwrap();
     let mut changed = child.clone();

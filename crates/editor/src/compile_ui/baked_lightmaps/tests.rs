@@ -79,11 +79,27 @@ fn baked_lightmap_controls_inspect_successful_build_and_clear_changed_output() {
     window.invoke_inspect_face();
     assert!(window.get_has_preview());
     assert!(window.get_selected().contains("HDR"));
+    assert!(window.get_can_frame());
+    controller.set_aspect(1.7);
+    assert_eq!(window.get_aspect(), 1.7);
+    window.invoke_frame_face();
+    assert!(
+        window
+            .get_diagnostics()
+            .contains("Framed compiled HDR face")
+    );
+    assert_ne!(lock(&shared).camera(), camera);
+    assert_eq!(lock(&shared).camera().projection, camera.projection);
+    lock(&shared).set_camera(camera);
     assert!(window.get_mapping_status().contains("available"));
     assert!(!controller.baked_lightmaps.lists.borrow().origins.is_empty());
     assert_eq!(window.get_page_size(), 32);
     window.set_page_size(1);
     window.invoke_query_changed();
+    assert!(!window.get_can_frame());
+    window.invoke_frame_face();
+    assert!(window.get_diagnostics().contains("Inspect face"));
+    assert_eq!(lock(&shared).camera(), camera);
     let single_query = query(window, false);
     assert_eq!(single_query.limit, 1);
     let single = lock(&shared)
@@ -179,6 +195,9 @@ fn baked_lightmap_controls_inspect_successful_build_and_clear_changed_output() {
     controller.refresh(&lock(&shared));
     assert!(!window.get_has_preview());
     assert!(window.get_build_state().contains("unavailable"));
+    assert!(!window.get_can_frame());
+    window.invoke_frame_face();
+    assert_eq!(lock(&shared).camera(), camera);
     window.invoke_inspect_face();
     assert!(!window.get_has_preview());
     window.invoke_close_dialog();

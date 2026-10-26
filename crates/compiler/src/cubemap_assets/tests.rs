@@ -991,12 +991,13 @@ fn ambiguous_native_patch_edits_fail_without_synthesizing_reflectivity() {
 fn prepared_output_in_a_content_mount_does_not_invalidate_its_final_source_guard() {
     let (directory, game) = game();
     let (vmf, _) = source();
-    let output = merge(pending(&vmf, &game), &game);
     let path = directory.path().join("reflections.bsp");
     let control = Control::default();
     let lease = crate::OutputLease::acquire(&path, &control).unwrap();
+    let reservation = crate::WriteReservation::new(&path, &control).unwrap();
+    let output = merge(pending(&vmf, &game), &game);
     let prepared = output
-        .prepare_write_controlled(&path, &control)
+        .prepare_write_reserved(reservation, &control)
         .unwrap()
         .unwrap();
     let guard =

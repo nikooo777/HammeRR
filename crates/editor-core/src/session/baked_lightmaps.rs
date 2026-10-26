@@ -7,7 +7,9 @@ use source_formats::vtf::RgbaImage;
 
 use super::Session;
 
+mod framing;
 mod origins;
+pub use framing::FramedFace;
 pub use origins::{OccurrenceReference, SourceReference};
 
 pub const MAX_PAGE_FACES: usize = 32;
@@ -163,13 +165,7 @@ impl Session {
                 image: None,
             });
         }
-        let identity = build
-            .lightmap_identity
-            .output
-            .as_ref()
-            .map_err(Clone::clone)?;
-        let result = read_owned_bytes(identity)
-            .and_then(|bytes| Bsp::parse(&bytes).map_err(|error| error.to_string()));
+        let result = read_owned_bsp(build);
         let bsp = match result {
             Ok(bsp) => bsp,
             Err(error) => {
@@ -275,6 +271,16 @@ impl Session {
             }
         }
     }
+}
+
+fn read_owned_bsp(build: &super::CompiledMap) -> Result<Bsp, String> {
+    let identity = build
+        .lightmap_identity
+        .output
+        .as_ref()
+        .map_err(Clone::clone)?;
+    let bytes = read_owned_bytes(identity)?;
+    Bsp::parse(&bytes).map_err(|error| error.to_string())
 }
 
 fn merge(target: &mut Value, value: Value) {

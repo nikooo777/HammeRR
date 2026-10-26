@@ -23,7 +23,8 @@ fn software_instance_collapse_callbacks_preview_cancel_apply_and_undo_the_shared
         },
     )))
     .unwrap();
-    let (_directory, game, parent, child) = crate::test_assets::instance_map(false);
+    let (_directory, _game, parent, child) = crate::test_assets::instance_map(false);
+    let (_assets, game) = crate::test_assets::model_lighting::game();
     let mut content =
         source_formats::vmf::Vmf::parse(&std::fs::read_to_string(&child).unwrap()).unwrap();
     let mut light = source_formats::vmf::Entity::new(1000, "light");
@@ -36,6 +37,12 @@ fn software_instance_collapse_callbacks_preview_cancel_apply_and_undo_the_shared
     cube.properties
         .set("sides", content.world.solids[0].sides[0].id.to_string());
     content.entities.push(cube);
+    let mut prop = source_formats::vmf::Entity::new(1002, "prop_static");
+    prop.properties.set("origin", "16 8 32");
+    prop.properties.set("model", "models/test/receiver.mdl");
+    prop.properties.set("solid", "0");
+    prop.properties.set("skin", "1");
+    content.entities.push(prop);
     std::fs::write(child, content.write(&Default::default())).unwrap();
     let mut session = Session::new(Ok(game));
     session.open(Actor::User, &parent, true).unwrap();
@@ -59,6 +66,7 @@ fn software_instance_collapse_callbacks_preview_cancel_apply_and_undo_the_shared
     assert!(controller.window.get_ready());
     assert!(controller.window.get_contents().contains("1 point lights"));
     assert!(controller.window.get_contents().contains("1 cubemaps"));
+    assert!(controller.window.get_contents().contains("1 static props"));
     assert_eq!(lock(&shared).document().vmf(), &source);
     controller
         .window

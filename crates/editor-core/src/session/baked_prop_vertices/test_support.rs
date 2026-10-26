@@ -151,3 +151,27 @@ pub fn fixture() -> (tempfile::TempDir, GameFs, Vmf) {
     }
     (directory, game, vmf)
 }
+
+pub fn leaf_membership_fixture() -> (tempfile::TempDir, GameFs, Vmf) {
+    let (directory, game, vmf) = fixture();
+    let mut document = Document::new(vmf);
+    document
+        .edit("prop leaf membership partition", |tx| {
+            edit::create_block(
+                tx,
+                DVec3::new(-8., -256., 0.),
+                DVec3::new(8., 256., 256.),
+                "test/checker",
+            )?;
+            edit::create_entity(
+                tx,
+                "info_player_terrorist",
+                Some(DVec3::new(128., 0., 8.)),
+                &[],
+                Vec::new(),
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    (directory, game, document.into_vmf())
+}

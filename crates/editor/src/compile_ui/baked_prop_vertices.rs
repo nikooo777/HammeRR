@@ -81,6 +81,7 @@ fn clear(window: &BakedPropVerticesWindow, state: &RefCell<State>) {
     window.set_channels("".into());
     window.set_can_frame(false);
     window.set_can_select_source(false);
+    window.set_can_show_leaf_bounds(false);
     window.set_previous_props(false);
     window.set_next_props(false);
     window.set_previous_sections(false);
@@ -126,6 +127,7 @@ fn present(window: &BakedPropVerticesWindow, report: &Value) {
             && report["selected_prop"]["ordinal"].is_u64()
             && report["selected_prop"]["source_association"]["status"] == "available",
     );
+    window.set_can_show_leaf_bounds(window.get_can_frame());
     window.set_source_selection_label(
         if report["selected_prop"]["source_association"]["origin"]["kind"] == "instance" {
             "Select containing reference"
@@ -248,12 +250,32 @@ fn current(window: &BakedPropVerticesWindow, session: &Session, state: &RefCell<
     false
 }
 
+fn present_leaf_bounds(window: &BakedPropVerticesWindow, session: &Session) {
+    let guide = session.compiled_prop_leaf_bounds();
+    window.set_can_clear_leaf_bounds(guide["requested"] == true);
+    let text = if guide["requested"] != true {
+        "No prop leaf bounds guide".into()
+    } else if guide["displayed"] == true {
+        format!(
+            "Prop {} · {} native leaf membership bounds · purple guide",
+            guide["prop"], guide["leaf_count"]
+        )
+    } else {
+        format!(
+            "Prop {} leaf bounds suppressed: the owned build is no longer current",
+            guide["prop"]
+        )
+    };
+    window.set_leaf_bounds_state(text.into());
+}
+
 fn inspect(
     window: &BakedPropVerticesWindow,
     session: &Session,
     state: &RefCell<State>,
     action: Action,
 ) {
+    present_leaf_bounds(window, session);
     let mut query = if matches!(action, Action::Refresh) {
         Query::default()
     } else {
@@ -420,6 +442,21 @@ fn frame_prop(
     Ok(())
 }
 
+fn show_leaf_bounds(
+    window: &BakedPropVerticesWindow,
+    session: &mut Session,
+    state: &RefCell<State>,
+) -> Result<(), String> {
+    let (token, ordinal) = current_prop(window, session, state)?;
+    session.set_compiled_prop_leaf_bounds(
+        crate::session::Actor::User,
+        Some(token),
+        Some(ordinal),
+    )?;
+    present_leaf_bounds(window, session);
+    Ok(())
+}
+
 fn handler(
     window: &BakedPropVerticesWindow,
     access: &DocumentAccess,
@@ -512,6 +549,42 @@ pub(super) fn bind(
             }
         }
     });
+    window.on_show_leaf_bounds({
+        let (window, target, state) = (window.as_weak(), access.downgrade(), state.clone());
+        move || {
+            let Some(window) = window.upgrade() else {
+                return;
+            };
+            let result = target.upgrade().and_then(|target| {
+                target.with_session(|session| show_leaf_bounds(&window, session, &state))
+            });
+            if let Err(error) = result {
+                window.set_diagnostics(error.into());
+            }
+        }
+    });
+    window.on_clear_leaf_bounds({
+        let (window, target) = (window.as_weak(), access.downgrade());
+        move || {
+            let Some(window) = window.upgrade() else {
+                return;
+            };
+            let result = target.upgrade().and_then(|target| {
+                target.with_session(|session| {
+                    session.set_compiled_prop_leaf_bounds(
+                        crate::session::Actor::User,
+                        None,
+                        None,
+                    )?;
+                    present_leaf_bounds(&window, session);
+                    Ok(())
+                })
+            });
+            if let Err(error) = result {
+                window.set_diagnostics(error.into());
+            }
+        }
+    });
     window.on_close_dialog({
         let window = window.as_weak();
         move || {
@@ -540,6 +613,7 @@ impl Form {
         if !self.is_visible() {
             return;
         }
+        present_leaf_bounds(&self.window, session);
         let changed = self.state.borrow().observation.as_ref()
             != Some(&session.baked_prop_vertex_build_state());
         if changed {

@@ -536,32 +536,42 @@ fn instance_helper_checks_track_save_and_save_as_without_loading_children() {
 }
 
 #[test]
-fn no_instance_builds_keep_direct_publication_and_existing_status_shape() {
-    let (directory, game, source, child) = crate::test_assets::instance_map(false);
-    std::fs::remove_file(child).unwrap();
-    let vmf = crate::test_assets::room();
-    std::fs::write(&source, vmf.write(&Default::default())).unwrap();
-    let mut session = Session::new(Ok(game));
-    session.open(Actor::User, &source, true).unwrap();
-    let request = session.begin_compile(Actor::User, None).unwrap();
-    assert!(request.instance_source.is_none());
-    assert!(request.source_stamp.is_none());
-    assert!(request.destination_stamp.is_none());
-    assert!(request.pointfile_stamp.is_none());
-    std::fs::write(&source, b"source changed after ordinary snapshot capture").unwrap();
-    let result = request.run().unwrap();
-    assert!(result.published(), "{:?}", result.output.report);
-    assert!(result.output.instance_dependencies.is_none());
-    assert!(result.output.stats.instances.is_none());
-    assert!(result.publication.lock().unwrap().pending.is_none());
-    let result = Ok(result);
-    session.finish_compile(Actor::User, &result);
-    let status = session.compile_status();
-    assert_eq!(status["job"]["status"], "completed");
-    assert_eq!(status["job"]["stale"], false);
-    assert!(status["job"].get("instance_dependencies").is_none());
-    assert!(status["job"]["result"]["stats"].get("instances").is_none());
-    assert!(directory.path().join("instances.bsp").is_file());
+fn ordinary_brush_builds_defer_publication_and_reject_changed_saved_sources() {
+    for mutate in [false, true] {
+        let (directory, game, source, child) = crate::test_assets::instance_map(false);
+        std::fs::remove_file(child).unwrap();
+        let vmf = crate::test_assets::room();
+        std::fs::write(&source, vmf.write(&Default::default())).unwrap();
+        let mut session = Session::new(Ok(game));
+        session.open(Actor::User, &source, true).unwrap();
+        let request = session.begin_compile(Actor::User, None).unwrap();
+        assert!(request.instance_source.is_none());
+        assert!(request.source_stamp.is_some());
+        assert!(request.destination_stamp.is_some());
+        assert!(request.pointfile_stamp.is_some());
+        let path = source.with_extension("bsp");
+        let previous = std::fs::read(&path).ok();
+        if mutate {
+            std::fs::write(&source, b"source changed after ordinary snapshot capture").unwrap();
+            assert!(request.run().is_err());
+            assert_eq!(std::fs::read(&path).ok(), previous);
+            continue;
+        }
+        let result = request.run().unwrap();
+        assert!(!result.published(), "{:?}", result.output.report);
+        assert!(result.output.instance_dependencies.is_none());
+        assert!(result.output.stats.instances.is_none());
+        assert!(result.publication.lock().unwrap().pending.is_some());
+        assert_eq!(std::fs::read(&path).ok(), previous);
+        let result = Ok(result);
+        session.finish_compile(Actor::User, &result);
+        let status = session.compile_status();
+        assert_eq!(status["job"]["status"], "completed");
+        assert_eq!(status["job"]["stale"], false);
+        assert!(status["job"].get("instance_dependencies").is_none());
+        assert!(status["job"]["result"]["stats"].get("instances").is_none());
+        assert!(directory.path().join("instances.bsp").is_file());
+    }
 }
 
 #[cfg(unix)]

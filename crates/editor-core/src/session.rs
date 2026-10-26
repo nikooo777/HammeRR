@@ -181,9 +181,24 @@ struct CompiledMap {
     content_epoch: u64,
     lightmap_identity: baked_lightmaps::BuildIdentity,
     prop_lighting_guard: Option<compiler::asset_sources::AssetSourceGuard>,
+    material_sources: Option<MaterialSources>,
     static_prop_sources: Option<StaticPropSources>,
     instance_dependencies: Option<compiler::instances::DependencyGuard>,
     instance_source_path: Option<PathBuf>,
+}
+
+#[derive(Clone)]
+struct MaterialSources {
+    guard: compiler::asset_sources::AssetSourceGuard,
+    game: Arc<GameFs>,
+}
+
+impl MaterialSources {
+    fn verify(&self, control: &compiler::Control) -> Result<(), String> {
+        self.guard
+            .verify_resolved_sources(&self.game, control)
+            .map_err(|error| format!("Consumed compiler material source changed: {error}"))
+    }
 }
 
 #[derive(Clone)]
@@ -363,6 +378,7 @@ pub struct Session {
     launch_serial: u64,
     compiled: Option<CompiledMap>,
     compiled_visibility: compiled_visibility::State,
+    compiled_prop_leaf_bounds: baked_prop_vertices::leaf_bounds::State,
     leak: Option<(Snapshot, compiler::Leak)>,
     game_run: Option<game::Run>,
     game_exit_reported: bool,
@@ -383,6 +399,7 @@ pub struct LaunchRequest {
     install: game::Install,
     bsp: PathBuf,
     instance_dependencies: Option<compiler::instances::DependencyGuard>,
+    material_sources: Option<MaterialSources>,
     static_prop_sources: Option<StaticPropSources>,
 }
 
@@ -400,18 +417,21 @@ struct LaunchTicket {
 }
 
 impl LaunchOrigin {
-    fn verify_static_prop_sources(
+    fn verify_compiled_sources(
         &self,
         sources: Option<&StaticPropSources>,
+        materials: Option<&MaterialSources>,
     ) -> Result<(), String> {
         if self.ticket.content_changed.load(Ordering::Acquire) {
-            return Err(
-                "Content changed since static-prop compilation; compile again before launching"
-                    .into(),
-            );
+            return Err("Content changed since compilation; compile again before launching".into());
         }
         if let Some(sources) = sources {
             sources.verify(&compiler::Control::default())?;
+        }
+        if let Some(error) =
+            baked_build::material_source_issue(materials, &compiler::Control::default())
+        {
+            return Err(error);
         }
         Ok(())
     }
@@ -463,9 +483,11 @@ impl LaunchRequest {
         Ok(())
     }
 
-    fn verify_static_prop_sources(&self) -> Result<(), String> {
-        self.origin
-            .verify_static_prop_sources(self.static_prop_sources.as_ref())
+    fn verify_compiled_sources(&self) -> Result<(), String> {
+        self.origin.verify_compiled_sources(
+            self.static_prop_sources.as_ref(),
+            self.material_sources.as_ref(),
+        )
     }
 
     fn checkpoint(&self, phase: game::LaunchCheckpoint) -> Result<(), String> {
@@ -485,7 +507,7 @@ impl LaunchRequest {
         } else {
             self.check_instance_dependencies(false)?;
         }
-        self.verify_static_prop_sources()?;
+        self.verify_compiled_sources()?;
         if self.origin.cancelled() {
             return Err("game launch cancelled".into());
         }
@@ -688,6 +710,7 @@ impl Session {
             launch_serial: 0,
             compiled: None,
             compiled_visibility: compiled_visibility::State::default(),
+            compiled_prop_leaf_bounds: baked_prop_vertices::leaf_bounds::State::default(),
             leak: None,
             game_run: None,
             game_exit_reported: false,
@@ -1569,6 +1592,7 @@ impl Session {
         self.document_generation += 1;
         self.compiled = None;
         self.compiled_visibility = compiled_visibility::State::default();
+        self.compiled_prop_leaf_bounds = baked_prop_vertices::leaf_bounds::State::default();
         self.compilation.retained_pointfile = None;
         self.file_claims.source = None;
         self.leak = None;
@@ -2280,6 +2304,12 @@ impl Session {
         if compiled.options.generate_reflections && compiled.content_epoch != self.content_epoch {
             return Err("Content or native runtime changed since reflection capture; compile again before launching".into());
         }
+        if let Some(error) = baked_build::material_source_issue(
+            compiled.material_sources.as_ref(),
+            &compiler::Control::default(),
+        ) {
+            return Err(format!("{error}; compile again before launching"));
+        }
         if compiled.options != self.compile_options() {
             return Err("Build settings changed since compilation; compile again or restore the previous settings before launching".into());
         }
@@ -2345,6 +2375,10 @@ impl Session {
             .compiled
             .as_ref()
             .and_then(|compiled| compiled.static_prop_sources.clone());
+        let material_sources = self
+            .compiled
+            .as_ref()
+            .and_then(|compiled| compiled.material_sources.clone());
         let mut origin = LaunchOrigin::new(self.document_generation);
         origin.static_props = static_prop_sources.is_some();
         let request = LaunchRequest {
@@ -2371,6 +2405,7 @@ impl Session {
                 .as_ref()
                 .and_then(|compiled| compiled.instance_dependencies.clone()),
             static_prop_sources,
+            material_sources,
         };
         self.launch_serial = self
             .launch_serial
@@ -2681,6 +2716,7 @@ impl Session {
 
     pub fn build_scene_for_view(&mut self, view: ViewOptions) -> SceneMesh {
         self.preflight_compiled_visibility();
+        self.preflight_compiled_prop_leaf_bounds();
         let sky3d = self.sky3d_preview_scene();
         let skybox = self.skybox_preview_for(view);
         let selected: HashSet<ObjectId> = self.geometry.clip_preview.as_ref().map_or_else(
@@ -2914,6 +2950,7 @@ impl Session {
         self.append_volume_guide(&mut mesh);
         self.append_compile_region_guide(&mut mesh);
         self.append_compiled_visibility_guide(&mut mesh);
+        self.append_compiled_prop_leaf_bounds(&mut mesh);
         self.append_overlay_guide(&mut mesh);
         self.append_component_guides(&mut mesh);
         self.append_terrain_triangle_guides(&mut mesh);

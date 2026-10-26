@@ -167,9 +167,9 @@ fn build_state_with_mode(
         ));
     }
     let asset_issue = match mode {
-        SourceVerification::Resolved => {
-            session.static_prop_source_issue(build.static_prop_sources.as_ref())
-        }
+        SourceVerification::Resolved => session
+            .static_prop_source_issue(build.static_prop_sources.as_ref())
+            .or_else(|| material_source_issue(build.material_sources.as_ref(), control)),
         SourceVerification::OriginalMetadata { .. } => {
             if build
                 .static_prop_sources
@@ -317,7 +317,8 @@ fn asset_source_issue(
         SourceVerification::Resolved => build
             .static_prop_sources
             .as_ref()
-            .and_then(|sources| sources.verify(control).err()),
+            .and_then(|sources| sources.verify(control).err())
+            .or_else(|| material_source_issue(build.material_sources.as_ref(), control)),
         SourceVerification::OriginalMetadata { maximum_bytes } => {
             for guard in build
                 .static_prop_sources
@@ -325,6 +326,12 @@ fn asset_source_issue(
                 .map(|sources| &sources.guard)
                 .into_iter()
                 .chain(build.prop_lighting_guard.as_ref())
+                .chain(
+                    build
+                        .material_sources
+                        .as_ref()
+                        .map(|sources| &sources.guard),
+                )
             {
                 if let Err(error) = guard.verify_original_metadata(control, maximum_bytes) {
                     return Some(format!(
@@ -373,6 +380,12 @@ pub(super) fn source_issue(build: &super::CompiledMap) -> Option<String> {
     {
         return Some(error);
     }
+    if let Some(error) = material_source_issue(
+        build.material_sources.as_ref(),
+        &compiler::Control::default(),
+    ) {
+        return Some(error);
+    }
     if let Some(dependencies) = &build.instance_dependencies {
         dependencies
             .verify(&compiler::Control::default())
@@ -385,6 +398,13 @@ pub(super) fn source_issue(build: &super::CompiledMap) -> Option<String> {
     } else {
         None
     }
+}
+
+pub(super) fn material_source_issue(
+    sources: Option<&super::MaterialSources>,
+    control: &compiler::Control,
+) -> Option<String> {
+    sources.and_then(|sources| sources.verify(control).err())
 }
 
 pub(super) struct Recheck {

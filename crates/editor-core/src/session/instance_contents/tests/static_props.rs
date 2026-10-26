@@ -694,10 +694,10 @@ fn child_vphysics_first_read_guards_refuse_staging_and_queued_launch_drift_until
             .clone();
         let launch = session.begin_launch(actor).unwrap();
         let origin = launch.origin();
-        launch.verify_static_prop_sources().unwrap();
+        launch.verify_compiled_sources().unwrap();
         std::fs::write(&physics, &changed).unwrap();
         assert!(retained.verify(&compiler::Control::default()).is_err());
-        assert!(launch.verify_static_prop_sources().is_err());
+        assert!(launch.verify_compiled_sources().is_err());
         assert!(
             session
                 .finish_launch(

@@ -5,6 +5,7 @@ mod checks;
 mod clipboard;
 mod color_correction;
 mod color_palette;
+mod compiled_face_framing;
 mod components;
 mod context;
 mod cubemap_bindings;
@@ -34,6 +35,7 @@ mod placement;
 #[cfg(test)]
 mod preview_handle_tests;
 mod preview_preferences;
+mod prop_leaf_bounds;
 mod recovery;
 mod selection;
 mod shortcuts;

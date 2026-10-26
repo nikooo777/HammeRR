@@ -656,6 +656,10 @@ fn unsupported_automatic_class_parent_origin_and_bounds_preserve_previous_bsp() 
         DVec3::new(16.0, 128.0, 24.0),
     ];
     let (baseline, _, model) = fixture(PIVOT, Some("0 90 0"), samples);
+    let destination = directory.path().join("previous.bsp");
+    let control = Control::default();
+    let lease = crate::OutputLease::acquire(&destination, &control).unwrap();
+    let reservation = crate::WriteReservation::new(&destination, &control).unwrap();
     let previous = crate::compile_with_options(
         &baseline,
         &game,
@@ -665,8 +669,14 @@ fn unsupported_automatic_class_parent_origin_and_bounds_preserve_previous_bsp() 
         },
     );
     assert!(!previous.report.has_errors(), "{:?}", previous.report);
-    let destination = directory.path().join("previous.bsp");
-    assert!(previous.write(&destination).unwrap());
+    assert!(
+        previous
+            .prepare_write_reserved(reservation, &control)
+            .unwrap()
+            .unwrap()
+            .commit_checked(&lease, &control)
+            .unwrap()
+    );
     let previous_bytes = std::fs::read(&destination).unwrap();
     for case in ["class", "parent", "duplicate-origin", "bounds"] {
         let mut vmf = baseline.clone();

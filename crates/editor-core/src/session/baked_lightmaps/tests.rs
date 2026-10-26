@@ -1,6 +1,6 @@
 use super::*;
 use crate::session::{Actor, CompiledMap, Snapshot};
-use source_formats::bsp::surf;
+use source_formats::bsp::{Edge, Model, Plane, lump, surf};
 
 #[test]
 fn repeated_grandchild_origins_remain_grouped_and_stale_after_same_byte_replacement() {
@@ -216,11 +216,36 @@ fn color(rgb: [u8; 3], exponent: i8) -> RgbExp32 {
 
 fn fixture() -> Bsp {
     let mut bsp = Bsp::new();
+    bsp.set_records(&[Plane {
+        normal: [0.0, 0.0, 1.0],
+        dist: 32.0,
+        kind: 2,
+    }]);
+    bsp.set_values(
+        lump::VERTEXES,
+        &[
+            [-40.0_f32, 12.0, 32.0],
+            [24.0, 12.0, 32.0],
+            [24.0, 60.0, 32.0],
+            [-40.0, 60.0, 32.0],
+        ],
+    );
+    bsp.set_records(&[Edge([0, 1]), Edge([2, 1]), Edge([2, 3]), Edge([0, 3])]);
+    bsp.set_values(lump::SURFEDGES, &[0_i32, -1, 2, -3]);
+    bsp.set_records(&[Model {
+        first_face: 0,
+        face_count: 1,
+        ..Default::default()
+    }]);
     bsp.set_records(&[TexInfo {
         flags: surf::BUMPLIGHT,
         ..TexInfo::default()
     }]);
     let face = Face {
+        first_edge: 0,
+        edge_count: 4,
+        dispinfo: -1,
+        area: 3072.0,
         texinfo: 0,
         styles: [0, 255, 255, 255],
         light_offset: 4,
@@ -365,6 +390,10 @@ fn baked_lightmap_preview_is_bounded_and_handles_extreme_rgbexp_values() {
 }
 
 fn install_build(session: &mut Session, path: &Path, source: &Path) {
+    install_build_with_bsp(session, path, source, &fixture());
+}
+
+fn install_build_with_bsp(session: &mut Session, path: &Path, source: &Path, bsp: &Bsp) {
     let source_identity =
         compiler::FileIdentity::capture(source, &compiler::Control::default()).unwrap();
     session.compiled = Some(CompiledMap {
@@ -372,11 +401,12 @@ fn install_build(session: &mut Session, path: &Path, source: &Path) {
         world_light_origins: None,
         static_prop_origins: Err("Prop source metadata not retained in this fixture".into()),
         prop_lighting_guard: None,
+        material_sources: None,
         static_prop_sources: None,
         claim: None,
         output_identity: super::super::baked_build::capture_output_identity(
             path,
-            Some(&fixture()),
+            Some(bsp),
             source_formats::bsp::PakLimits::default().max_bsp_bytes as u64,
             "Run",
         ),
@@ -390,12 +420,7 @@ fn install_build(session: &mut Session, path: &Path, source: &Path) {
         },
         options: session.compile_options(),
         content_epoch: session.content_epoch,
-        lightmap_identity: BuildIdentity::capture(
-            17,
-            path,
-            Ok(Some(source_identity)),
-            Some(&fixture()),
-        ),
+        lightmap_identity: BuildIdentity::capture(17, path, Ok(Some(source_identity)), Some(bsp)),
     });
 }
 
@@ -422,9 +447,22 @@ fn baked_lightmap_state_guards_source_settings_content_and_owned_bsp_without_edi
     let inspected = session.inspect_baked_lightmaps(&Query::default()).unwrap();
     assert_eq!(inspected.report["build"]["status"], "current");
     assert!(inspected.image.is_some());
+    for channel in [Channel::Ldr, Channel::Hdr] {
+        let framed = session
+            .frame_compiled_face(Actor::User, "17".into(), channel, 0, 1.6)
+            .unwrap();
+        assert_eq!(framed.bounds, [[-40.0, 12.0, 32.0], [24.0, 60.0, 32.0]]);
+        assert_eq!(framed.camera.projection, camera.projection);
+    }
+    session.set_camera(camera);
     session
         .update_compile_settings(Actor::User, Some("direct_ldr"), None)
         .unwrap();
+    assert!(
+        session
+            .frame_compiled_face(Actor::Agent, "17".into(), Channel::Ldr, 0, 1.0)
+            .is_err()
+    );
     assert_eq!(
         session
             .inspect_baked_lightmaps(&Query::default())
@@ -439,10 +477,20 @@ fn baked_lightmap_state_guards_source_settings_content_and_owned_bsp_without_edi
     assert_eq!(session.baked_lightmap_build_state()["status"], "stale");
     session.content_epoch -= 1;
     std::fs::write(&source, "external change").unwrap();
+    assert!(
+        session
+            .frame_compiled_face(Actor::Agent, "17".into(), Channel::Ldr, 0, 1.0)
+            .is_err()
+    );
     let changed = session.inspect_baked_lightmaps(&Query::default()).unwrap();
     assert_eq!(changed.report["build"]["status"], "stale");
     assert!(changed.image.is_some());
     std::fs::write(&path, b"changed BSP").unwrap();
+    assert!(
+        session
+            .frame_compiled_face(Actor::Agent, "17".into(), Channel::Ldr, 0, 1.0)
+            .is_err()
+    );
     let changed = session.inspect_baked_lightmaps(&Query::default()).unwrap();
     assert_eq!(changed.report["build"]["status"], "unavailable");
     assert!(changed.image.is_none());
@@ -482,16 +530,141 @@ fn baked_lightmap_publication_identity_rejects_replacement_before_completion() {
 }
 
 #[test]
+fn compiled_face_framing_refuses_invalid_geometry_and_active_work_atomically() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("source.vmf");
+    let output = directory.path().join("owned.bsp");
+    std::fs::write(
+        &source,
+        map_core::Document::empty().vmf().write(&Default::default()),
+    )
+    .unwrap();
+    fixture().write(&output).unwrap();
+    let mut session = Session::new(Err("no assets".into()));
+    session.open(Actor::User, &source, false).unwrap();
+    install_build(&mut session, &output, &source);
+    session
+        .begin_property_edit(crate::session::PropertyTarget::World)
+        .unwrap();
+    let token = session.property_draft().unwrap().token;
+    session
+        .append_property_change(
+            token,
+            crate::session::PropertyChange::Set {
+                key: "skyname".into(),
+                value: "unapplied_face_frame".into(),
+            },
+        )
+        .unwrap();
+    let preserved = (
+        session.camera(),
+        session.document().vmf().clone(),
+        session.history_snapshot(),
+        session.selected_ids(),
+        json!(session.property_draft()),
+    );
+    for (token, face, aspect) in [("foreign", 0, 1.0), ("17", 99, 1.0), ("17", 0, f32::NAN)] {
+        assert!(
+            session
+                .frame_compiled_face(Actor::Agent, token.into(), Channel::Ldr, face, aspect)
+                .is_err()
+        );
+    }
+    session
+        .preview_block(glam::DVec3::ZERO, glam::DVec3::splat(32.0))
+        .unwrap();
+    let preview = session.block_preview;
+    assert!(
+        session
+            .frame_compiled_face(Actor::User, "17".into(), Channel::Ldr, 0, 1.0)
+            .unwrap_err()
+            .contains("viewport")
+    );
+    assert_eq!(session.block_preview, preview);
+    session.cancel_block_preview();
+    let mut malformed_edge = fixture();
+    malformed_edge.set_values(lump::SURFEDGES, &[0_i32, i32::MIN, 2, -3]);
+    let mut disconnected_edge = fixture();
+    disconnected_edge.set_values(lump::SURFEDGES, &[0_i32, 1, 2, -3]);
+    let mut nonplanar = fixture();
+    let mut vertices = nonplanar.vertices().unwrap();
+    vertices[0][2] = 33.0;
+    nonplanar.set_values(lump::VERTEXES, &vertices);
+    let mut terrain = fixture();
+    let mut faces = terrain.lighting_faces(LightingKind::Ldr).unwrap();
+    faces[0].dispinfo = 0;
+    terrain
+        .set_lighting_faces(LightingKind::Ldr, &faces)
+        .unwrap();
+    let mut model_local = fixture();
+    model_local.set_records(&[
+        Model::default(),
+        Model {
+            first_face: 0,
+            face_count: 2,
+            ..Default::default()
+        },
+    ]);
+    for (bsp, message) in [
+        (malformed_edge, "out-of-range edge"),
+        (disconnected_edge, "connected"),
+        (nonplanar, "flat plane"),
+        (terrain, "Terrain"),
+        (model_local, "model-local"),
+    ] {
+        bsp.write(&output).unwrap();
+        install_build_with_bsp(&mut session, &output, &source, &bsp);
+        assert!(
+            session
+                .frame_compiled_face(Actor::Agent, "17".into(), Channel::Ldr, 0, 1.0)
+                .unwrap_err()
+                .contains(message)
+        );
+        assert_eq!(
+            (
+                session.camera(),
+                session.document().vmf().clone(),
+                session.history_snapshot(),
+                session.selected_ids(),
+                json!(session.property_draft()),
+            ),
+            preserved
+        );
+    }
+}
+
+#[test]
 fn authored_queries_retain_build_origins_and_preserve_the_selected_face_draft() {
     use crate::session::SelectMode;
     use map_core::surface::{FaceId, SurfaceEdit};
     let (directory, game) = crate::test_assets::game();
     let source = directory.path().join("source.vmf");
-    std::fs::write(
-        &source,
-        crate::test_assets::room().write(&Default::default()),
-    )
-    .unwrap();
+    let mut document = map_core::Document::new(crate::test_assets::room());
+    let mut tops = Vec::new();
+    document
+        .edit("merged detail plates", |tx| {
+            for x in [-128.0, 0.0] {
+                let map_core::ObjectId::Solid(id) = map_core::edit::create_block(
+                    tx,
+                    glam::DVec3::new(x, -64.0, 16.0),
+                    glam::DVec3::new(x + 128.0, 64.0, 32.0),
+                    "test/checker",
+                )?
+                else {
+                    unreachable!()
+                };
+                for side in &mut tx.solid_mut(id)?.sides {
+                    side.lightmap_scale = 1;
+                    if map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99 {
+                        tops.push(side.id);
+                    }
+                }
+                map_core::edit::tie_to_entity(tx, &[id], "func_detail", &[])?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    std::fs::write(&source, document.vmf().write(&Default::default())).unwrap();
     let mut session = Session::new(Ok(game));
     session.open(Actor::Agent, &source, false).unwrap();
     session
@@ -560,6 +733,51 @@ fn authored_queries_retain_build_origins_and_preserve_the_selected_face_draft() 
         hdr.report["mapping"]["contributors"],
         first.report["mapping"]["contributors"]
     );
+    let origins = session
+        .compiled
+        .as_ref()
+        .unwrap()
+        .face_origins
+        .as_ref()
+        .unwrap();
+    let merged = (0..origins.len()).find(|&face| {
+        let mut contributors = origins.contributors(face).unwrap();
+        contributors.len() == tops.len() && contributors.all(|origin| {
+            matches!(origin, compiler::face_origins::Origin::Root { side, .. } if tops.contains(side))
+        })
+    }).expect("the adjacent detail tops retain both authored contributors");
+    let build_token = first.report["build"]["token"].as_str().unwrap().to_owned();
+    let mut framed_bounds = None;
+    for (channel, projection) in [
+        (Channel::Ldr, render::Projection::Perspective),
+        (Channel::Hdr, render::Projection::Top),
+    ] {
+        session.set_projection(Actor::User, projection);
+        let frame = session
+            .frame_compiled_face(Actor::Agent, build_token.clone(), channel, merged, 1.7)
+            .unwrap();
+        assert_eq!(frame.face, merged);
+        assert_eq!(frame.camera.projection, projection);
+        assert_eq!(frame.bounds[0][2], 32.0);
+        assert_eq!(frame.bounds[1][2], 32.0);
+        assert!(frame.bounds[0][0] >= -128.0 && frame.bounds[1][0] <= 128.0);
+        assert!(frame.bounds[0][1] >= -64.0 && frame.bounds[1][1] <= 64.0);
+        if let Some(bounds) = framed_bounds {
+            assert_eq!(frame.bounds, bounds);
+        }
+        framed_bounds = Some(frame.bounds);
+        let matrix = frame.camera.view_projection(1.7);
+        for bounds in frame.bounds {
+            let clip = matrix * glam::Vec3::from_array(bounds).extend(1.0);
+            let ndc = clip.truncate() / clip.w;
+            assert!(
+                clip.w > 0.0 && ndc.is_finite() && ndc.x.abs() <= 1.001 && ndc.y.abs() <= 1.001
+            );
+        }
+        assert_eq!(session.render_document().vmf(), &rendered);
+        assert_eq!(session.face_preview_token(), token);
+    }
+    session.set_camera(camera);
     let no_match = session
         .inspect_baked_lightmaps(&Query {
             source: Some(SourceReference::Root {
@@ -586,6 +804,11 @@ fn authored_queries_retain_build_origins_and_preserve_the_selected_face_draft() 
     )
     .unwrap();
     let stale = session.inspect_baked_lightmaps(&query).unwrap();
+    assert!(
+        session
+            .frame_compiled_face(Actor::Agent, build_token, Channel::Ldr, merged, 1.7)
+            .is_err()
+    );
     assert_eq!(stale.report["build"]["status"], "stale");
     assert_eq!(
         stale.report["mapping"]["source"],

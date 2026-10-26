@@ -110,6 +110,7 @@ impl OwnedFixture {
                 source: Ok(Some(source)),
             },
             prop_lighting_guard: None,
+            material_sources: None,
             static_prop_sources: None,
             instance_dependencies: None,
             instance_source_path: None,

@@ -11,6 +11,8 @@ use render::Camera;
 
 pub use super::baked_lightmaps::Channel;
 
+pub(super) mod leaf_bounds;
+
 pub const FRAME_HALF_EXTENT: f32 = super::inspection_framing::ORIGIN_HALF_EXTENT;
 pub const MAX_PAGE_PROPS: usize = 32;
 pub const MAX_PAGE_SECTIONS: usize = 32;
@@ -247,6 +249,16 @@ impl Session {
         query: &Query,
         control: &compiler::Control,
     ) -> Result<Inspection, String> {
+        self.inspect_baked_prop_vertices_prepared(query, control, false)
+            .map(|(inspection, _)| inspection)
+    }
+
+    fn inspect_baked_prop_vertices_prepared(
+        &self,
+        query: &Query,
+        control: &compiler::Control,
+        prepare_leaf_bounds: bool,
+    ) -> Result<(Inspection, Option<leaf_bounds::Guide>), String> {
         control.checkpoint()?;
         query.validate()?;
         let mut report = empty_report(query, self.baked_prop_vertex_build_state());
@@ -254,7 +266,7 @@ impl Session {
             if query.build_token.is_some() {
                 return Err("The requested successful build is no longer retained".into());
             }
-            return finish_controlled(report, control);
+            return finish_controlled(report, control).map(|inspection| (inspection, None));
         };
         let token = build.lightmap_identity.token.to_string();
         if query
@@ -271,7 +283,7 @@ impl Session {
         report["build"]["bake_static_prop_vertices"] =
             json!(build.options.bake_static_prop_vertices);
         if report["build"]["status"] == "unavailable" {
-            return finish_controlled(report, control);
+            return finish_controlled(report, control).map(|inspection| (inspection, None));
         }
         let identity = build
             .lightmap_identity
@@ -283,20 +295,28 @@ impl Session {
             Err(error) => {
                 control.checkpoint()?;
                 unavailable(&mut report, error);
-                return finish_controlled(report, control);
+                return finish_controlled(report, control).map(|inspection| (inspection, None));
             }
         };
         let decoded = match baked_build::decoded_bsp_bound(&bytes) {
             Ok(bound) => bound,
             Err(error) => {
                 unavailable(&mut report, error);
-                return finish_controlled(report, control);
+                return finish_controlled(report, control).map(|inspection| (inspection, None));
             }
         };
         let peak = decoded
             .checked_add(PakLimits::default().max_total_bytes)
             .and_then(|bytes| bytes.checked_add(baked_build::MAX_BSP_BYTES as usize))
             .and_then(|bytes| bytes.checked_add(METADATA_BYTES))
+            .and_then(|bytes| bytes.checked_add(self.compiled_prop_leaf_bounds.retained_bytes()))
+            .and_then(|bytes| {
+                bytes.checked_add(if prepare_leaf_bounds {
+                    leaf_bounds::MAX_PREPARATION_BYTES
+                } else {
+                    0
+                })
+            })
             .ok_or("Baked prop inspection allocation bound overflow")?;
         if peak > MAX_CALL_BYTES {
             return Err("Baked prop inspection exceeds its 384 MiB live allocation bound".into());
@@ -306,7 +326,7 @@ impl Session {
             Ok(bsp) => bsp,
             Err(error) => {
                 unavailable(&mut report, error.to_string());
-                return finish_controlled(report, control);
+                return finish_controlled(report, control).map(|inspection| (inspection, None));
             }
         };
         drop(bytes);
@@ -324,7 +344,7 @@ impl Session {
                 );
                 recheck_output(build, identity, control, &mut report);
                 control.checkpoint()?;
-                return finish_controlled(report, control);
+                return finish_controlled(report, control).map(|inspection| (inspection, None));
             }
         };
         let mut closure = if bundle.manifest().is_some() {
@@ -365,6 +385,17 @@ impl Session {
                 )
             });
         inspect_bundle(&bundle, query, closure, &source_associations, &mut report)?;
+        let leaf_bounds = if prepare_leaf_bounds {
+            Some(leaf_bounds::prepare(
+                &bsp,
+                bundle.static_props(),
+                build.lightmap_identity.token,
+                query.prop.ok_or("Choose a native static prop")?,
+                control,
+            )?)
+        } else {
+            None
+        };
         if let Some(error) = baked_build::source_issue_controlled(build, control) {
             control.checkpoint()?;
             stale(&mut report, error);
@@ -383,7 +414,7 @@ impl Session {
         recheck_output(build, identity, control, &mut report);
         control.checkpoint()?;
         report["historical"] = json!(report["build"]["status"] == "stale");
-        finish_controlled(report, control)
+        finish_controlled(report, control).map(|inspection| (inspection, leaf_bounds))
     }
 }
 

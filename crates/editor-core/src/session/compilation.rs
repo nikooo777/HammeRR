@@ -404,6 +404,25 @@ impl CompileRequest {
             stamp
                 .verify_lease(lease.as_ref().ok_or("Guarded output lease missing")?)
                 .map_err(|e| e.to_string())?;
+            if let Some(stamp) = &self.pointfile_stamp {
+                stamp.verify_metadata().map_err(|error| error.to_string())?;
+            }
+            pointfile_lease = Some(
+                compiler::OutputLease::acquire(
+                    self.output_claims.pointfile.destination().physical_path(),
+                    &self.control,
+                )
+                .map_err(|error| error.to_string())?,
+            );
+            if let Some(stamp) = &self.pointfile_stamp {
+                stamp
+                    .verify_lease(
+                        pointfile_lease
+                            .as_ref()
+                            .ok_or("Guarded pointfile lease missing")?,
+                    )
+                    .map_err(|error| error.to_string())?;
+            }
         }
         let path = lease
             .as_ref()
@@ -520,10 +539,6 @@ impl CompileRequest {
                 if let Some(stamp) = &self.pointfile_stamp {
                     stamp.verify_metadata().map_err(|error| error.to_string())?;
                 }
-                pointfile_lease = Some(
-                    compiler::OutputLease::acquire(&path.with_extension("lin"), &self.control)
-                        .map_err(|e| e.to_string())?,
-                );
                 if let Some(stamp) = &self.pointfile_stamp {
                     stamp
                         .verify_lease(
@@ -1114,7 +1129,7 @@ impl Session {
         } else {
             None
         };
-        let pointfile_stamp = instances
+        let pointfile_stamp = guarded
             .then(|| {
                 compiler::FileStamp::capture(&path.with_extension("lin"))
                     .map_err(|error| error.to_string())
@@ -1314,11 +1329,13 @@ impl Session {
                 .pending
                 .take()
                 .ok_or("Prepared guarded output missing")?;
-            let lease = publication
-                .pointfile_lease
-                .as_ref()
-                .or(publication.lease.as_ref())
-                .ok_or("Guarded destination lease missing")?;
+            let leak_output = result.output.bsp.is_none() && result.output.leak.is_some();
+            let lease = if leak_output {
+                publication.pointfile_lease.as_ref()
+            } else {
+                publication.lease.as_ref()
+            }
+            .ok_or("Guarded destination lease missing")?;
             let receipt = pending
                 .commit_checked_with_receipt(lease, &result.control, || {
                     if let Some(source) = &result.source {
@@ -1338,9 +1355,7 @@ impl Session {
                     if let Some(stamp) = &result.destination_stamp {
                         stamp.verify_metadata()?;
                     }
-                    if publication.pointfile_lease.is_some()
-                        && let Some(stamp) = &publication.pointfile_stamp
-                    {
+                    if leak_output && let Some(stamp) = &publication.pointfile_stamp {
                         stamp.verify_metadata()?;
                     }
                     Ok(())
@@ -1465,6 +1480,12 @@ impl Session {
                     world_light_origins: result.output.world_light_origins.clone(),
                     static_prop_origins: result.output.static_prop_origins.clone(),
                     prop_lighting_guard,
+                    material_sources: result.output.material_sources.clone().map(|guard| {
+                        super::MaterialSources {
+                            guard,
+                            game: self.game.clone(),
+                        }
+                    }),
                     static_prop_sources: result.static_prop_sources.clone(),
                     claim: result.take_artifact_claim(),
                     output_identity: baked_build::capture_output_identity(
@@ -1495,6 +1516,8 @@ impl Session {
                     ),
                 });
                 self.compiled_visibility = super::compiled_visibility::State::default();
+                self.compiled_prop_leaf_bounds =
+                    super::baked_prop_vertices::leaf_bounds::State::default();
                 self.scene_serial += 1;
             } else if result.output.leak.is_some()
                 && let Some(claim) = result.take_artifact_claim()
@@ -1576,17 +1599,30 @@ impl Session {
         }
     }
 
+    fn compiled_material_source_issue(&self, token: u64) -> Option<String> {
+        self.compiled
+            .as_ref()
+            .filter(|build| build.lightmap_identity.token == token)
+            .and_then(|build| {
+                baked_build::material_source_issue(
+                    build.material_sources.as_ref(),
+                    &compiler::Control::default(),
+                )
+            })
+    }
+
     pub fn compile_status(&self) -> Value {
         let job = self.compilation.job.as_ref().map(|job| {
             let progress = job.control.progress();
             let dependency_issue=self.instance_dependency_issue(job.instance_dependencies.as_ref(),&job.source_path);
             let static_prop_source_issue=self.static_prop_source_issue(job.static_prop_sources.as_ref());
+            let material_source_issue=self.compiled_material_source_issue(job.token);
             let mut status=json!({"token":job.token.to_string(),"status":if matches!(job.status(), "queued" | "running") && progress.cancel_requested {"cancelling"} else {job.status()},
                 "stage":progress.stage.name(),"stage_label":progress.stage.label(),"cancellable":matches!(job.status(), "queued" | "running") && progress.cancellable && !progress.cancel_requested,
                 "elapsed_ms":job.elapsed().as_millis(),
                 "path":job.path.display().to_string(),"generation":job.snapshot.generation,"revision":job.snapshot.revision,
                 "compile_region":job.region,"recipe":job.recipe,"native_runtime":job.native_runtime,"reflections":{"channel":if job.options.lighting==compiler::LightingMode::DirectLdrHdr {"ldr_hdr"} else {"ldr"},"samples_complete":progress.reflection_samples_complete,"samples_total":progress.reflection_samples_total},"settings":{"bake_static_prop_vertices":job.options.bake_static_prop_vertices,"pack_sky_assets":job.options.pack_sky_assets,"pack_water_assets":job.options.pack_water_assets,"pack_static_prop_assets":job.options.pack_static_prop_assets,"generate_reflections":job.options.generate_reflections,"smoothing_angle":job.options.smoothing_angle,"bounces":job.options.bounces,"lighting":job.options.lighting.name(),"physics":job.options.physics.name(),"sky_quality":job.options.sky_quality.name(),"visibility":job.options.visibility.name()},
-                "stale":!self.current_snapshot(&job.snapshot) || job.options != self.compilation.options || (job.guarded && job.content_epoch != self.content_epoch) || dependency_issue.is_some() || static_prop_source_issue.is_some(),"static_prop_source_issue":static_prop_source_issue,"result":job.result()});
+                "stale":!self.current_snapshot(&job.snapshot) || job.options != self.compilation.options || (job.guarded && job.content_epoch != self.content_epoch) || dependency_issue.is_some() || static_prop_source_issue.is_some() || material_source_issue.is_some(),"static_prop_source_issue":static_prop_source_issue,"material_source_issue":material_source_issue,"result":job.result()});
             status["settings"]["lighting_work_limit"] = job.options.lighting_work_limit.into();
             status["settings"]["brush_texture_shadows"] = job.options.brush_texture_shadows.into();
             status["settings"]["refine_ambient_probes"] = job.options.refine_ambient_probes.into();
@@ -1649,6 +1685,7 @@ impl Session {
             return String::new();
         };
         let progress = job.control.progress();
+        let material_source_issue = self.compiled_material_source_issue(job.token);
         match job.status() {
             "running" | "queued" if progress.cancel_requested => "Cancelling compilation…".into(),
             "queued" => "Queued · Waiting to compile".into(),
@@ -1667,9 +1704,12 @@ impl Session {
                     && self
                         .static_prop_source_issue(job.static_prop_sources.as_ref())
                         .is_none()
+                    && material_source_issue.is_none()
                     && !(job.guarded && job.content_epoch != self.content_epoch)
                 {
                     ""
+                } else if material_source_issue.is_some() {
+                    " · earlier material sources"
                 } else if job.static_prop_sources.is_some() {
                     " · earlier map snapshot, build settings or model/physics sources"
                 } else if job.instance_dependencies.is_some() {

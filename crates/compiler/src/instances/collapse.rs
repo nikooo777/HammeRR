@@ -42,6 +42,68 @@ pub(super) fn helper(helper: &Entity) -> Result<(), String> {
     editor(helper.editor.as_ref())
 }
 
+impl PreparedInstances<'_> {
+    pub fn validate_collapse_static_prop_poses(
+        &self,
+        game: &source_formats::gamefs::GameFs,
+        control: &Control,
+    ) -> Result<Option<crate::asset_sources::AssetSourceGuard>, String> {
+        control.checkpoint()?;
+        if self.static_prop_poses.is_empty() {
+            return Ok(None);
+        }
+        let sources = crate::asset_sources::BuildMaterialSources::without_retained_payloads();
+        let mut models = BTreeMap::new();
+        for entity in &self.vmf().entities {
+            control.checkpoint()?;
+            let Some(poses) = self.static_prop_poses(entity.id) else {
+                continue;
+            };
+            let path = source_formats::gamefs::asset_relative(
+                entity
+                    .properties
+                    .get("model")
+                    .ok_or("Static child prop requires model")?,
+            )
+            .map_err(|error| error.to_string())?;
+            let result: Result<(), String> = (|| {
+                let header = if let Some(header) = models.get(&path) {
+                    *header
+                } else {
+                    if models.len() >= source_formats::bsp::MAX_STATIC_PROP_MODELS {
+                        return Err("Static-prop model dictionary exceeds the native limit".into());
+                    }
+                    let asset = sources
+                        .read_asset(game, &path, source_formats::mdl::MAX_MODEL_BYTES)
+                        .map_err(|error| error.to_string())?
+                        .ok_or_else(|| format!("model {path} was not found"))?;
+                    let header = source_formats::mdl::ModelHeader::parse(asset.bytes())
+                        .map_err(|error| error.to_string())?;
+                    models.insert(path.clone(), header);
+                    header
+                };
+                for (index, pose) in poses.iter().enumerate() {
+                    control.checkpoint()?;
+                    pose.validate_model_bounds(header).map_err(|error| {
+                        let stage = if index == 0 {
+                            "source pose".to_owned()
+                        } else {
+                            format!("intermediate pose {index}")
+                        };
+                        format!("{stage}: {error}")
+                    })?;
+                }
+                Ok(())
+            })();
+            result.map_err(|error| format!("Static child prop {} ({path}): {error}", entity.id))?;
+        }
+        sources
+            .source_guard(game, control)
+            .map(Some)
+            .map_err(|error| error.to_string())
+    }
+}
+
 pub(super) fn child(child: &Vmf) -> Result<(), String> {
     if !child.world.groups.is_empty()
         || child
@@ -116,6 +178,15 @@ pub(super) fn child(child: &Vmf) -> Result<(), String> {
         }
         if is_instance(entity) {
             helper(entity)?;
+        } else if matches!(entities::kind(entity), Some(entities::Kind::StaticProp)) {
+            if entity
+                .properties
+                .get("lightingorigin")
+                .is_some_and(|value| !value.is_empty())
+            {
+                return Err("Collapse requires empty child prop lightingorigin; remove its binding before collapse".into());
+            }
+            editor(entity.editor.as_ref())?;
         } else if entity
             .classname()
             .is_some_and(|class| class.eq_ignore_ascii_case("func_detail"))
@@ -135,7 +206,7 @@ pub(super) fn child(child: &Vmf) -> Result<(), String> {
             editor(entity.editor.as_ref())?;
         } else {
             return Err(format!(
-                "Collapse supports world/detail geometry, checked light assemblies and cubemaps; child entity {} ({}) requires its own editable semantics",
+                "Collapse supports world/detail geometry, checked static props, light assemblies and cubemaps; child entity {} ({}) requires its own editable semantics",
                 entity.id,
                 entity.classname().unwrap_or("missing class")
             ));

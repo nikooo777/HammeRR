@@ -798,6 +798,14 @@ fn transitive_dependency_changes_after_staging_preserve_bsp_and_leak_outputs() {
             }
             let before = parent.clone();
             let source_bytes = std::fs::read(directory.path().join("parent.vmf")).unwrap();
+            let destination = directory.path().join("previous.bsp");
+            let lin = destination.with_extension("lin");
+            std::fs::write(&destination, b"previous complete BSP").unwrap();
+            std::fs::write(&lin, b"previous complete LIN").unwrap();
+            let control = Control::default();
+            let lease_path = if leaking { &lin } else { &destination };
+            let lease = crate::OutputLease::acquire(lease_path, &control).unwrap();
+            let reservation = crate::WriteReservation::new(&destination, &control).unwrap();
             let output = compiled(&parent, &game, &source(directory.path()));
             assert_eq!(output.bsp.is_some(), !leaking, "{:?}", output.report);
             assert_eq!(output.leak.is_some(), leaking, "{:?}", output.report);
@@ -815,15 +823,8 @@ fn transitive_dependency_changes_after_staging_preserve_bsp_and_leak_outputs() {
                     .collect::<Vec<_>>(),
                 ["modules/leaf.vmf", "modules/middle.vmf"],
             );
-            let destination = directory.path().join("previous.bsp");
-            let lin = destination.with_extension("lin");
-            std::fs::write(&destination, b"previous complete BSP").unwrap();
-            std::fs::write(&lin, b"previous complete LIN").unwrap();
-            let control = Control::default();
-            let lease_path = if leaking { &lin } else { &destination };
-            let lease = crate::OutputLease::acquire(lease_path, &control).unwrap();
             let staged = output
-                .prepare_write_controlled(&destination, &control)
+                .prepare_write_reserved(reservation, &control)
                 .unwrap()
                 .unwrap();
             match mutation {
@@ -898,11 +899,12 @@ fn accepted_cancellation_after_a_real_nested_branch_rolls_back_the_detached_tran
     std::fs::write(&destination, b"previous complete BSP").unwrap();
     let context = source(directory.path());
     let control = Control::default();
+    let lease = crate::OutputLease::acquire(&destination, &control).unwrap();
+    let reservation = crate::WriteReservation::new(&destination, &control).unwrap();
     let output = compiled(&parent, &game, &context);
     assert!(output.bsp.is_some(), "{:?}", output.report);
-    let lease = crate::OutputLease::acquire(&destination, &control).unwrap();
     let staged = output
-        .prepare_write_controlled(&destination, &control)
+        .prepare_write_reserved(reservation, &control)
         .unwrap()
         .unwrap();
     let mut report = Report::default();
@@ -1296,14 +1298,15 @@ fn translation_bsp_matches_manual_and_region_uses_geometry_outside_marker() {
 fn staged_writes_reject_dependency_edits_and_output_replacement() {
     for mutation in ["same_size", "rename", "missing", "parent", "output"] {
         let (directory, parent, _, game) = fixture();
-        let output = compiled(&parent, &game, &source(directory.path()));
-        assert!(output.bsp.is_some(), "{:?}", output.report);
         let path = directory.path().join("previous.bsp");
         let lin = path.with_extension("lin");
         std::fs::write(&path, b"previous BSP").unwrap();
         std::fs::write(&lin, b"previous LIN").unwrap();
+        let reservation = crate::WriteReservation::new(&path, &Control::default()).unwrap();
+        let output = compiled(&parent, &game, &source(directory.path()));
+        assert!(output.bsp.is_some(), "{:?}", output.report);
         let staged = output
-            .prepare_write_controlled(&path, &Control::default())
+            .prepare_write_reserved(reservation, &Control::default())
             .unwrap()
             .unwrap();
         let child = directory.path().join("child.vmf");
@@ -1349,9 +1352,6 @@ fn staged_writes_reject_output_alias_retarget_and_cancel_for_bsp_and_leak() {
         if leaking {
             parent.world.solids.remove(0);
         }
-        let output = compiled(&parent, &game, &source(directory.path()));
-        assert_eq!(output.leak.is_some(), leaking, "{:?}", output.report);
-        assert_eq!(output.bsp.is_some(), !leaking, "{:?}", output.report);
         let original = directory.path().join("original");
         let replacement = directory.path().join("replacement");
         let alias = directory.path().join("output");
@@ -1363,14 +1363,21 @@ fn staged_writes_reject_output_alias_retarget_and_cancel_for_bsp_and_leak() {
         }
         symlink(&original, &alias).unwrap();
         let control = Control::default();
+        let cancelled_reservation =
+            crate::WriteReservation::new(&alias.join("map.bsp"), &control).unwrap();
+        let reservation =
+            crate::WriteReservation::new(&alias.join("map.bsp"), &Control::default()).unwrap();
+        let output = compiled(&parent, &game, &source(directory.path()));
+        assert_eq!(output.leak.is_some(), leaking, "{:?}", output.report);
+        assert_eq!(output.bsp.is_some(), !leaking, "{:?}", output.report);
         let cancelled = output
-            .prepare_write_controlled(&alias.join("map.bsp"), &control)
+            .prepare_write_reserved(cancelled_reservation, &control)
             .unwrap()
             .unwrap();
         control.cancel().unwrap();
         assert!(cancelled.commit(&control).is_err());
         let staged = output
-            .prepare_write_controlled(&alias.join("map.bsp"), &Control::default())
+            .prepare_write_reserved(reservation, &Control::default())
             .unwrap()
             .unwrap();
         std::fs::remove_file(&alias).unwrap();
@@ -1392,20 +1399,21 @@ fn staged_writes_reject_output_alias_retarget_and_cancel_for_bsp_and_leak() {
 #[test]
 fn leak_publication_retains_guard_and_context_free_apis_stay_rejected() {
     let (directory, mut parent, _, game) = fixture();
-    let context = source(directory.path());
     assert!(crate::compile(&parent, &game).bsp.is_none());
     parent.world.solids.remove(0);
-    let output = compiled(&parent, &game, &context);
-    assert!(output.bsp.is_none());
-    assert!(output.leak.is_some(), "{:?}", output.report);
-    assert!(output.instance_dependencies.is_some());
     let path = directory.path().join("previous.bsp");
     std::fs::write(&path, b"previous BSP").unwrap();
     std::fs::write(path.with_extension("lin"), b"previous LIN").unwrap();
     let lease =
         crate::OutputLease::acquire(&path.with_extension("lin"), &Control::default()).unwrap();
+    let reservation = crate::WriteReservation::new(&path, &Control::default()).unwrap();
+    let context = source(directory.path());
+    let output = compiled(&parent, &game, &context);
+    assert!(output.bsp.is_none());
+    assert!(output.leak.is_some(), "{:?}", output.report);
+    assert!(output.instance_dependencies.is_some());
     let staged = output
-        .prepare_write_controlled(&path, &Control::default())
+        .prepare_write_reserved(reservation, &Control::default())
         .unwrap()
         .unwrap();
     std::fs::remove_file(directory.path().join("child.vmf")).unwrap();
@@ -1484,16 +1492,18 @@ fn root_symlink_uses_referring_directory_and_rejects_retarget_or_child_alias() {
     std::fs::write(physical.join("root.vmf"), parent.write(&Default::default())).unwrap();
     let alias = directory.path().join("alias.vmf");
     symlink(physical.join("root.vmf"), &alias).unwrap();
+    let path = directory.path().join("result.bsp");
+    let lease = crate::OutputLease::acquire(&path, &Control::default()).unwrap();
+    let reservation = crate::WriteReservation::new(&path, &Control::default()).unwrap();
     let context = SourceContext::capture(&alias, &Control::default()).unwrap();
     assert_eq!(context.path(), alias);
     let output = compiled(&parent, &game, &context);
     assert!(output.bsp.is_some(), "{:?}", output.report);
-    let path = directory.path().join("result.bsp");
     let staged = output
-        .prepare_write_controlled(&path, &Control::default())
+        .prepare_write_reserved(reservation, &Control::default())
         .unwrap()
         .unwrap();
-    assert!(staged.commit(&Control::default()).unwrap());
+    assert!(staged.commit_checked(&lease, &Control::default()).unwrap());
     std::fs::remove_file(&alias).unwrap();
     symlink(directory.path().join("parent.vmf"), &alias).unwrap();
     assert!(

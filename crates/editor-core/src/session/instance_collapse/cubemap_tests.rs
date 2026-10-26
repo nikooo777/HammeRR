@@ -1,13 +1,27 @@
 use super::*;
 use compiler::cubemap_assets::MANIFEST_PATH;
 use compiler::{CompileContext, CubemapAssetManifest, CubemapAssetPhase, LightingMode, Options};
-use glam::DVec3;
+use glam::{DMat3, DQuat, DVec3, EulerRot};
 use map_core::edit;
 use source_formats::bsp::{Cubemap, PakLimits, lump};
 use source_formats::vmf::{Properties, Vmf};
 
-fn fixture() -> (tempfile::TempDir, Session, PathBuf, PathBuf, PathBuf) {
-    let (directory, game) = crate::test_assets::game();
+fn fixture(dx_levels: [&str; 2]) -> (tempfile::TempDir, Session, PathBuf, PathBuf, PathBuf) {
+    let (directory, game, _) = super::super::baked_prop_vertices::test_support::fixture();
+    std::fs::copy(
+        directory.path().join("materials/models/test/one.vmt"),
+        directory.path().join("materials/models/test/two.vmt"),
+    )
+    .unwrap();
+    let mut physics = [16_i32, 0, 1, 7].map(i32::to_le_bytes).concat();
+    physics.extend_from_slice(&32_i32.to_le_bytes());
+    physics.extend_from_slice(b"VPHY");
+    physics.extend_from_slice(&0x100_u16.to_le_bytes());
+    physics.extend_from_slice(&0_u16.to_le_bytes());
+    physics.extend_from_slice(&4_u32.to_le_bytes());
+    physics.extend_from_slice(&[0; 20]);
+    physics.extend_from_slice(b"solid {}\0");
+    std::fs::write(directory.path().join("models/test/receiver.phy"), physics).unwrap();
     std::fs::write(
         directory.path().join("materials/test/reflective.vmt"),
         "LightmappedGeneric { $basetexture test/checker $envmap env_cubemap }",
@@ -64,6 +78,28 @@ fn fixture() -> (tempfile::TempDir, Session, PathBuf, PathBuf, PathBuf) {
     light.properties.set("_light", "255 128 64 200");
     light.properties.set("_lightHDR", "64 128 255 300");
     leaf.entities = vec![far, detail, light, near];
+    for (id, origin, skin, solid) in [(203, "80 8 32", "1", "2"), (204, "-80 8 32", "0", "6")] {
+        let mut prop = Entity::new(id, "prop_static");
+        for (key, value) in [
+            ("origin", origin),
+            ("angles", "0 0 0"),
+            ("model", "models/test/receiver.mdl"),
+            ("skin", skin),
+            ("solid", solid),
+            ("lightingorigin", ""),
+            ("ignorenormals", "1"),
+            ("disableselfshadowing", "1"),
+            ("fademindist", "128"),
+            ("fademaxdist", "1024"),
+            ("fadescale", "0.5"),
+            ("mindxlevel", dx_levels[0]),
+            ("maxdxlevel", dx_levels[1]),
+        ] {
+            prop.properties.set(key, value);
+        }
+        prop.editor = leaf.entities[0].editor.clone();
+        leaf.entities.push(prop);
+    }
     let child = directory.path().join("leaf.vmf");
     std::fs::write(&child, leaf.write(&Default::default())).unwrap();
     let mut middle = Document::empty().into_vmf();
@@ -152,264 +188,465 @@ fn remap_manifest(
 }
 
 #[test]
-fn collapsed_cubemaps_remap_direct_bindings_and_preserve_native_and_pending_payloads() {
-    let (_directory, mut session, parent, child, middle) = fixture();
-    let source = session.document.vmf().clone();
-    let history = session.document.undo_labels().count();
-    let disk = [&parent, &child, &middle].map(|path| std::fs::read(path).unwrap());
-    let ready = preview(&mut session);
-    assert_eq!(ready["stats"]["cubemaps"], 4);
-    let helpers = id_map(&ready["helper_id_map"]);
-    let emitted = id_map(&ready["entity_id_map"]);
-    assert_eq!((helpers.len(), emitted.len()), (4, 2));
-    assert!(helpers.keys().all(|id| !emitted.contains_key(id)));
-    assert_eq!(
-        ready["entity_provenance"]
+fn collapsed_props_and_cubemaps_preserve_native_lighting_collision_and_separate_source_maps() {
+    for (bake_static_prop_vertices, dx_levels) in [(false, ["80", "95"]), (true, ["0", "0"])] {
+        let (_directory, mut session, parent, child, middle) = fixture(dx_levels);
+        let source = session.document.vmf().clone();
+        let history = session.document.undo_labels().count();
+        let disk = [&parent, &child, &middle].map(|path| std::fs::read(path).unwrap());
+        let ready = preview(&mut session);
+        assert_eq!(ready["stats"]["cubemaps"], 4);
+        let helpers = id_map(&ready["helper_id_map"]);
+        let emitted = id_map(&ready["entity_id_map"]);
+        let props = id_map(&ready["static_prop_id_map"]);
+        assert_eq!((helpers.len(), emitted.len()), (4, 2));
+        assert_eq!(props.len(), 4);
+        assert!(
+            props
+                .iter()
+                .any(|(expanded, authored)| expanded != authored)
+        );
+        assert_eq!(ready["stats"]["static_props"], 4);
+        assert!(helpers.keys().all(|id| !emitted.contains_key(id)));
+        assert!(
+            props
+                .keys()
+                .all(|id| !emitted.contains_key(id) && !helpers.contains_key(id))
+        );
+        assert_eq!(
+            emitted
+                .values()
+                .chain(helpers.values())
+                .chain(props.values())
+                .collect::<BTreeSet<_>>()
+                .len(),
+            emitted.len() + helpers.len() + props.len()
+        );
+        assert_eq!(
+            ready["entity_provenance"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|row| row["classname"]
+                    .as_str()
+                    .is_some_and(|class| class.eq_ignore_ascii_case("env_cubemap"))
+                    && row["emitted"] == false)
+                .count(),
+            4
+        );
+        let shown = session.render_document().vmf().clone();
+        let prop_origins = ready["entity_provenance"]
             .as_array()
             .unwrap()
             .iter()
-            .filter(|row| row["classname"]
-                .as_str()
-                .is_some_and(|class| class.eq_ignore_ascii_case("env_cubemap"))
-                && row["emitted"] == false)
-            .count(),
-        4
-    );
-    let shown = session.render_document().vmf().clone();
-    let control = Control::default();
-    let context = instances::SourceContext::capture(&parent, &control).unwrap();
-    let prepared = instances::resolve_for_collapse(
-        &source,
-        Some(&context),
-        &control,
-        &mut compiler::Report::default(),
-    )
-    .unwrap();
-    let mut sides = BTreeMap::new();
-    assert_eq!(prepared.vmf().solids().count(), shown.solids().count());
-    for (expanded, authored) in prepared.vmf().solids().zip(shown.solids()) {
-        assert_eq!(expanded.sides.len(), authored.sides.len());
-        for (before, after) in expanded.sides.iter().zip(&authored.sides) {
-            assert_eq!(before.plane, after.plane);
-            assert_eq!(before.material, after.material);
-            assert!(sides.insert(before.id, after.id).is_none());
-        }
-    }
-    assert!(
-        sides
-            .values()
-            .zip(sides.values().skip(1))
-            .all(|(before, after)| before < after)
-    );
-    let mut manual = BTreeSet::new();
-    for before in prepared.vmf().entities.iter().filter(|entity| {
-        entity
-            .classname()
-            .is_some_and(|class| class.eq_ignore_ascii_case("env_cubemap"))
-    }) {
-        let after = shown
-            .entities
-            .iter()
-            .find(|entity| entity.id == helpers[&before.id])
-            .unwrap();
-        assert_eq!(before.origin(), after.origin());
-        assert_eq!(before.editor, after.editor);
-        if let Some(text) = before.properties.get("sides") {
-            let expected = text
-                .split_whitespace()
-                .map(|value| sides[&value.parse::<u32>().unwrap()])
-                .collect::<Vec<_>>();
-            let actual = after
-                .properties
-                .get("sides")
+            .filter(|row| row["classname"] == "prop_static")
+            .collect::<Vec<_>>();
+        assert_eq!(prop_origins.len(), 4);
+        let rotation = DMat3::from_cols(-DVec3::Z, -DVec3::X, DVec3::Y);
+        for (row, expected) in prop_origins.iter().zip([
+            [-8., -32., 48.],
+            [-8., -32., 208.],
+            [-8., 96., 48.],
+            [-8., 96., 208.],
+        ]) {
+            let ObjectId::Entity(id) =
+                crate::identity::parse_id(row["entity"].as_str().unwrap()).unwrap()
+            else {
+                panic!("authored prop ID");
+            };
+            let entity = shown
+                .entities
+                .iter()
+                .find(|entity| entity.id == id)
+                .unwrap();
+            assert!(
+                entity
+                    .origin()
+                    .unwrap()
+                    .abs_diff_eq(DVec3::from_array(expected), 1e-8)
+            );
+            let angles = source_formats::vmf::parse_vec3(entity.properties.get("angles").unwrap())
                 .unwrap()
-                .split_whitespace()
-                .map(|value| value.parse::<u32>().unwrap())
-                .collect::<Vec<_>>();
-            assert_eq!(actual, expected);
-            manual.extend(actual.into_iter().map(|side| (side, after.id)));
-            assert_ne!(
-                before.properties.get("sides"),
-                after.properties.get("sides")
+                .map(f64::to_radians);
+            let actual = DMat3::from_quat(DQuat::from_euler(
+                EulerRot::ZYX,
+                angles.y,
+                angles.x,
+                angles.z,
+            ));
+            assert!(actual.abs_diff_eq(rotation, 1e-8));
+            assert_eq!(
+                entity.editor.as_ref().unwrap().get("color"),
+                Some("50 110 220")
+            );
+            assert_eq!(row["emitted"], false);
+            assert_eq!(row["compiler_handled"], true);
+            assert_eq!(
+                row["occurrence"],
+                json!([
+                    {"helper":500,"file":"middle.vmf"},
+                    {"helper":if expected[1] < 0. {10} else {11},"file":"leaf.vmf"}
+                ])
+            );
+            assert_eq!(
+                row["original_entity"],
+                if expected[2] == 48. { 203 } else { 204 }
+            );
+        }
+        let control = Control::default();
+        let context = instances::SourceContext::capture(&parent, &control).unwrap();
+        let prepared = instances::resolve_for_collapse(
+            &source,
+            Some(&context),
+            &control,
+            &mut compiler::Report::default(),
+        )
+        .unwrap();
+        let mut sides = BTreeMap::new();
+        assert_eq!(prepared.vmf().solids().count(), shown.solids().count());
+        for (expanded, authored) in prepared.vmf().solids().zip(shown.solids()) {
+            assert_eq!(expanded.sides.len(), authored.sides.len());
+            for (before, after) in expanded.sides.iter().zip(&authored.sides) {
+                assert_eq!(before.plane, after.plane);
+                assert_eq!(before.material, after.material);
+                assert!(sides.insert(before.id, after.id).is_none());
+            }
+        }
+        assert!(
+            sides
+                .values()
+                .zip(sides.values().skip(1))
+                .all(|(before, after)| before < after)
+        );
+        let mut manual = BTreeSet::new();
+        for before in prepared.vmf().entities.iter().filter(|entity| {
+            entity
+                .classname()
+                .is_some_and(|class| class.eq_ignore_ascii_case("env_cubemap"))
+        }) {
+            let after = shown
+                .entities
+                .iter()
+                .find(|entity| entity.id == helpers[&before.id])
+                .unwrap();
+            assert_eq!(before.origin(), after.origin());
+            assert_eq!(before.editor, after.editor);
+            if let Some(text) = before.properties.get("sides") {
+                let expected = text
+                    .split_whitespace()
+                    .map(|value| sides[&value.parse::<u32>().unwrap()])
+                    .collect::<Vec<_>>();
+                let actual = after
+                    .properties
+                    .get("sides")
+                    .unwrap()
+                    .split_whitespace()
+                    .map(|value| value.parse::<u32>().unwrap())
+                    .collect::<Vec<_>>();
+                assert_eq!(actual, expected);
+                manual.extend(actual.into_iter().map(|side| (side, after.id)));
+                assert_ne!(
+                    before.properties.get("sides"),
+                    after.properties.get("sides")
+                );
+            } else {
+                assert_eq!(after.properties.get("sides"), None);
+            }
+        }
+        assert_eq!(manual.len(), 4);
+        let options = Options {
+            lighting: LightingMode::DirectLdrHdr,
+            generate_reflections: true,
+            bake_static_prop_vertices,
+            ..Default::default()
+        };
+        let output_context = CompileContext::new("collapsed_cubes").unwrap();
+        let expanded = compiler::compile_with_source_controlled(
+            &source,
+            &session.game,
+            options,
+            Some(&output_context),
+            Some(&context),
+            &control,
+        );
+        let authored = compiler::compile_with_context_controlled(
+            &shown,
+            &session.game,
+            options,
+            Some(&output_context),
+            &control,
+        );
+        assert!(!expanded.report.has_errors(), "{:?}", expanded.report);
+        assert!(!authored.report.has_errors(), "{:?}", authored.report);
+        if bake_static_prop_vertices {
+            assert_eq!(
+                expanded.stats.prop_vertex_lighting.as_ref().unwrap().props,
+                4
+            );
+            assert!(
+                expanded
+                    .stats
+                    .prop_vertex_lighting
+                    .as_ref()
+                    .unwrap()
+                    .hdr_bytes
+                    > 0
             );
         } else {
-            assert_eq!(after.properties.get("sides"), None);
+            assert!(expanded.stats.prop_vertex_lighting.is_none());
         }
-    }
-    assert_eq!(manual.len(), 4);
-    let options = Options {
-        lighting: LightingMode::DirectLdrHdr,
-        generate_reflections: true,
-        ..Default::default()
-    };
-    let output_context = CompileContext::new("collapsed_cubes").unwrap();
-    let expanded = compiler::compile_with_source_controlled(
-        &source,
-        &session.game,
-        options,
-        Some(&output_context),
-        Some(&context),
-        &control,
-    );
-    let authored = compiler::compile_with_context_controlled(
-        &shown,
-        &session.game,
-        options,
-        Some(&output_context),
-        &control,
-    );
-    assert!(!expanded.report.has_errors(), "{:?}", expanded.report);
-    assert!(!authored.report.has_errors(), "{:?}", authored.report);
-    let original_manifest = expanded.cubemap_assets.as_ref().unwrap();
-    let manifest = authored.cubemap_assets.as_ref().unwrap();
-    assert_eq!(manifest.phase, CubemapAssetPhase::Pending);
-    assert_eq!((manifest.samples.len(), manifest.hdr_samples.len()), (4, 4));
-    assert!(
-        !manifest.aliases.is_empty()
-            && !manifest.texinfo_bindings.is_empty()
-            && !manifest.face_bindings.is_empty()
-    );
-    assert_eq!(
-        remap_manifest(original_manifest.clone(), &helpers, &sides),
-        *manifest
-    );
-    assert_eq!(
-        manifest
-            .assignments
-            .iter()
-            .filter(|assignment| assignment.manual)
-            .map(|assignment| (assignment.face_id, assignment.helper_id))
-            .collect::<BTreeSet<_>>(),
-        manual
-    );
-    let mut automatic = shown.clone();
-    for entity in &mut automatic.entities {
-        if entity
-            .classname()
-            .is_some_and(|class| class.eq_ignore_ascii_case("env_cubemap"))
-        {
-            entity.properties.remove("sides");
+        let expanded_bsp = expanded.bsp.as_ref().unwrap();
+        let authored_bsp = authored.bsp.as_ref().unwrap();
+        let native = authored_bsp.static_props().unwrap().unwrap();
+        assert_eq!(
+            native
+                .props
+                .iter()
+                .map(|prop| (prop.skin, prop.solid))
+                .collect::<Vec<_>>(),
+            [(1, 2), (0, 6), (1, 2), (0, 6)]
+        );
+        assert!(native.props.iter().all(|prop| prop.fade_min == 128.
+            && prop.fade_max == 1024.
+            && prop.fade_scale == 0.5
+            && prop.dx_levels
+                == if bake_static_prop_vertices {
+                    [0, 0]
+                } else {
+                    [80, 95]
+                }
+            && prop.flags & (8 | 128) == (8 | 128)));
+        let before = expanded
+            .static_prop_origins
+            .as_ref()
+            .unwrap()
+            .associations(expanded_bsp, 4)
+            .unwrap();
+        let after = authored
+            .static_prop_origins
+            .as_ref()
+            .unwrap()
+            .associations(authored_bsp, 4)
+            .unwrap();
+        for (before, after) in before.iter().zip(after) {
+            let compiler::entity_origins::Origin::Instance {
+                instance,
+                file,
+                entity,
+                expanded_entity,
+                occurrence,
+            } = before
+            else {
+                panic!("instance prop source");
+            };
+            assert_eq!(*instance, 500);
+            assert_eq!(file, "leaf.vmf");
+            assert!(matches!(entity, 203 | 204));
+            assert_eq!(
+                serde_json::to_value(occurrence.as_ref()).unwrap(),
+                prop_origins
+                    .iter()
+                    .find(|row| row["expanded"]
+                        == crate::identity::id_string(ObjectId::Entity(*expanded_entity)))
+                    .unwrap()["occurrence"]
+            );
+            assert_eq!(
+                *after,
+                compiler::entity_origins::Origin::Root {
+                    entity: props[expanded_entity]
+                }
+            );
         }
-    }
-    let automatic = compiler::compile_with_context_controlled(
-        &automatic,
-        &session.game,
-        options,
-        Some(&output_context),
-        &control,
-    );
-    assert!(!automatic.report.has_errors(), "{:?}", automatic.report);
-    for (side, helper) in &manual {
-        assert_ne!(
-            automatic
-                .cubemap_assets
-                .as_ref()
-                .unwrap()
+        let original_manifest = expanded.cubemap_assets.as_ref().unwrap();
+        let manifest = authored.cubemap_assets.as_ref().unwrap();
+        assert_eq!(manifest.phase, CubemapAssetPhase::Pending);
+        assert_eq!((manifest.samples.len(), manifest.hdr_samples.len()), (4, 4));
+        assert!(
+            !manifest.aliases.is_empty()
+                && !manifest.texinfo_bindings.is_empty()
+                && !manifest.face_bindings.is_empty()
+        );
+        assert_eq!(
+            remap_manifest(original_manifest.clone(), &helpers, &sides),
+            *manifest
+        );
+        assert_eq!(
+            manifest
                 .assignments
                 .iter()
-                .find(|assignment| assignment.face_id == *side)
-                .unwrap()
-                .helper_id,
-            *helper
+                .filter(|assignment| assignment.manual)
+                .map(|assignment| (assignment.face_id, assignment.helper_id))
+                .collect::<BTreeSet<_>>(),
+            manual
         );
-    }
-    let expanded = expanded.bsp.unwrap();
-    let authored = authored.bsp.unwrap();
-    assert_eq!(
-        authored
-            .records::<Cubemap>()
-            .unwrap()
-            .iter()
-            .map(|sample| sample.origin)
-            .collect::<Vec<_>>(),
-        [[0, -160, 128], [0, 0, 128], [0, -32, 128], [0, 128, 128]]
-    );
-    assert_eq!(
-        (expanded.version, expanded.map_revision),
-        (authored.version, authored.map_revision)
-    );
-    assert_eq!(expanded.game_lumps, authored.game_lumps);
-    for (index, expected) in authored.lumps.iter().enumerate() {
-        if index != lump::PAKFILE && index != lump::ENTITIES {
-            assert_eq!(&expanded.lumps[index], expected, "lump {index}");
+        let mut automatic = shown.clone();
+        for entity in &mut automatic.entities {
+            if entity
+                .classname()
+                .is_some_and(|class| class.eq_ignore_ascii_case("env_cubemap"))
+            {
+                entity.properties.remove("sides");
+            }
         }
-    }
-    let replacements = emitted
-        .iter()
-        .map(|(before, after)| {
-            (
-                format!("\"hammerid\" \"{before}\"\n"),
-                format!("\"hammerid\" \"{after}\"\n"),
-            )
-        })
-        .collect::<BTreeMap<_, _>>();
-    let entity_text = expanded
-        .entities()
-        .unwrap()
-        .split_inclusive('\n')
-        .map(|line| replacements.get(line).map_or(line, String::as_str))
-        .collect::<String>();
-    assert_eq!(entity_text, authored.entities().unwrap());
-    assert!(!entity_text.to_ascii_lowercase().contains("env_cubemap"));
-    let source_pak = expanded.pak_data(PakLimits::default()).unwrap();
-    let authored_pak = authored.pak_data(PakLimits::default()).unwrap();
-    let actual = source_pak
-        .entries
-        .iter()
-        .map(|entry| (entry.name.as_str(), entry.data.as_slice()))
-        .collect::<BTreeMap<_, _>>();
-    let expected = authored_pak
-        .entries
-        .iter()
-        .map(|entry| (entry.name.as_str(), entry.data.as_slice()))
-        .collect::<BTreeMap<_, _>>();
-    assert_eq!(actual.len(), source_pak.entries.len());
-    assert_eq!(expected.len(), authored_pak.entries.len());
-    assert_eq!(
-        actual.keys().collect::<Vec<_>>(),
-        expected.keys().collect::<Vec<_>>()
-    );
-    for (name, data) in actual {
-        if name == MANIFEST_PATH {
-            assert_eq!(
-                remap_manifest(serde_json::from_slice(data).unwrap(), &helpers, &sides),
-                serde_json::from_slice::<CubemapAssetManifest>(expected[name]).unwrap()
+        let automatic = compiler::compile_with_context_controlled(
+            &automatic,
+            &session.game,
+            options,
+            Some(&output_context),
+            &control,
+        );
+        assert!(!automatic.report.has_errors(), "{:?}", automatic.report);
+        for (side, helper) in &manual {
+            assert_ne!(
+                automatic
+                    .cubemap_assets
+                    .as_ref()
+                    .unwrap()
+                    .assignments
+                    .iter()
+                    .find(|assignment| assignment.face_id == *side)
+                    .unwrap()
+                    .helper_id,
+                *helper
             );
-        } else {
-            assert_eq!(data, expected[name], "packed asset {name}");
         }
-    }
-    session
-        .cancel_instance_collapse(Actor::User, ready["token"].as_u64().unwrap())
-        .unwrap();
-    assert_eq!(session.render_document().vmf(), &source);
-    let ready = preview(&mut session);
-    let request = session
-        .apply_instance_collapse(Actor::User, ready["token"].as_u64().unwrap())
-        .unwrap();
-    let applied = session
-        .finish_instance_collapse(Actor::User, request.run())
-        .unwrap();
-    assert_eq!(
-        applied["captured_preview"]["helper_id_map"],
-        ready["helper_id_map"]
-    );
-    assert_eq!(session.document.vmf(), &shown);
-    session.undo(Actor::User).unwrap();
-    assert_eq!(session.document.vmf(), &source);
-    assert_eq!(session.document.undo_labels().count(), history);
-    for (path, bytes) in [&parent, &child, &middle].into_iter().zip(disk) {
-        assert_eq!(std::fs::read(path).unwrap(), bytes);
+        let expanded = expanded.bsp.unwrap();
+        let authored = authored.bsp.unwrap();
+        assert_eq!(
+            authored
+                .records::<Cubemap>()
+                .unwrap()
+                .iter()
+                .map(|sample| sample.origin)
+                .collect::<Vec<_>>(),
+            [[0, -160, 128], [0, 0, 128], [0, -32, 128], [0, 128, 128]]
+        );
+        assert_eq!(
+            (expanded.version, expanded.map_revision),
+            (authored.version, authored.map_revision)
+        );
+        assert_eq!(expanded.game_lumps, authored.game_lumps);
+        for (index, expected) in authored.lumps.iter().enumerate() {
+            if index != lump::PAKFILE && index != lump::ENTITIES {
+                assert_eq!(&expanded.lumps[index], expected, "lump {index}");
+            }
+        }
+        let replacements = emitted
+            .iter()
+            .map(|(before, after)| {
+                (
+                    format!("\"hammerid\" \"{before}\"\n"),
+                    format!("\"hammerid\" \"{after}\"\n"),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let entity_text = expanded
+            .entities()
+            .unwrap()
+            .split_inclusive('\n')
+            .map(|line| replacements.get(line).map_or(line, String::as_str))
+            .collect::<String>();
+        assert_eq!(entity_text, authored.entities().unwrap());
+        assert!(!entity_text.to_ascii_lowercase().contains("env_cubemap"));
+        assert!(!entity_text.contains("prop_static"));
+        let source_pak = expanded.pak_data(PakLimits::default()).unwrap();
+        let authored_pak = authored.pak_data(PakLimits::default()).unwrap();
+        let actual = source_pak
+            .entries
+            .iter()
+            .map(|entry| (entry.name.as_str(), entry.data.as_slice()))
+            .collect::<BTreeMap<_, _>>();
+        let expected = authored_pak
+            .entries
+            .iter()
+            .map(|entry| (entry.name.as_str(), entry.data.as_slice()))
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(actual.len(), source_pak.entries.len());
+        assert_eq!(expected.len(), authored_pak.entries.len());
+        assert_eq!(
+            actual.keys().collect::<Vec<_>>(),
+            expected.keys().collect::<Vec<_>>()
+        );
+        for (name, data) in actual {
+            if name == MANIFEST_PATH {
+                assert_eq!(
+                    remap_manifest(serde_json::from_slice(data).unwrap(), &helpers, &sides),
+                    serde_json::from_slice::<CubemapAssetManifest>(expected[name]).unwrap()
+                );
+            } else {
+                assert_eq!(data, expected[name], "packed asset {name}");
+            }
+        }
+        session
+            .cancel_instance_collapse(Actor::User, ready["token"].as_u64().unwrap())
+            .unwrap();
+        assert_eq!(session.render_document().vmf(), &source);
+        let ready = preview(&mut session);
+        let request = session
+            .apply_instance_collapse(Actor::User, ready["token"].as_u64().unwrap())
+            .unwrap();
+        let applied = session
+            .finish_instance_collapse(Actor::User, request.run())
+            .unwrap();
+        assert_eq!(
+            applied["captured_preview"]["helper_id_map"],
+            ready["helper_id_map"]
+        );
+        assert_eq!(
+            applied["captured_preview"]["static_prop_id_map"],
+            ready["static_prop_id_map"]
+        );
+        assert_eq!(session.document.vmf(), &shown);
+        session.undo(Actor::User).unwrap();
+        assert_eq!(session.document.vmf(), &source);
+        assert_eq!(session.document.undo_labels().count(), history);
+        for (path, bytes) in [&parent, &child, &middle].into_iter().zip(disk) {
+            assert_eq!(std::fs::read(path).unwrap(), bytes);
+        }
     }
 }
 
 #[test]
-fn collapsed_cubemaps_refuse_changed_or_nonlocal_bindings_without_partial_preview() {
-    let (_directory, mut session, _parent, child, _middle) = fixture();
+fn collapsed_assemblies_refuse_changed_models_and_nonlocal_bindings_without_partial_preview() {
+    let (_directory, mut session, _parent, child, _middle) = fixture(["80", "95"]);
     let source = session.document.vmf().clone();
     let ready = preview(&mut session);
     let shown = session.render_document().vmf().clone();
     let history = session.history_snapshot();
+    let model = session.game.game_dir.join("models/test/receiver.mdl");
+    let original_model = std::fs::read(&model).unwrap();
+    let mut changed_model = original_model.clone();
+    changed_model[116..120].copy_from_slice(&25f32.to_le_bytes());
+    std::fs::write(&model, &changed_model).unwrap();
+    assert_eq!(session.get_instance_collapse()["ready"], false);
+    let request = session
+        .apply_instance_collapse(Actor::User, ready["token"].as_u64().unwrap())
+        .unwrap();
+    assert!(
+        session
+            .finish_instance_collapse(Actor::User, request.run())
+            .is_err()
+    );
+    assert_eq!(session.document.vmf(), &source);
+    assert_eq!(session.render_document().vmf(), &shown);
+    assert_eq!(session.history_snapshot(), history);
+    std::fs::write(&model, &original_model).unwrap();
+    let ready = preview(&mut session);
+    let request = session
+        .apply_instance_collapse(Actor::User, ready["token"].as_u64().unwrap())
+        .unwrap();
+    let completed = request.run();
+    std::fs::write(&model, changed_model).unwrap();
+    assert!(
+        session
+            .finish_instance_collapse(Actor::User, completed)
+            .is_err()
+    );
+    assert_eq!(session.document.vmf(), &source);
+    assert_eq!(session.render_document().vmf(), &shown);
+    assert_eq!(session.history_snapshot(), history);
+    std::fs::write(&model, original_model).unwrap();
+    let ready = preview(&mut session);
     let bytes = std::fs::read(&child).unwrap();
     let mut invalid = Vmf::parse(std::str::from_utf8(&bytes).unwrap()).unwrap();
     invalid

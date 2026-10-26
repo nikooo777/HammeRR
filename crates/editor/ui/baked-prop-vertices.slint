@@ -9,6 +9,9 @@ export component BakedPropVerticesWindow inherits Window {
     in property <float> aspect: 1;
     in property <bool> can-frame;
     in property <bool> can-select-source;
+    in property <bool> can-show-leaf-bounds;
+    in property <bool> can-clear-leaf-bounds;
+    in property <string> leaf-bounds-state;
     in property <string> source-selection-label: "Select source";
     in property <string> build-state;
     in property <string> channels;
@@ -36,6 +39,8 @@ export component BakedPropVerticesWindow inherits Window {
     callback page-vertices(int);
     callback frame-prop-origin();
     callback select-source();
+    callback show-leaf-bounds();
+    callback clear-leaf-bounds();
     callback close-dialog();
     forward-focus: keys;
     keys := FocusScope {
@@ -86,6 +91,14 @@ export component BakedPropVerticesWindow inherits Window {
                     Button { text: "Frame prop origin"; enabled: root.can-frame; clicked => { root.frame-prop-origin(); } }
                     Button { text: root.source-selection-label; enabled: root.can-select-source; clicked => { root.select-source(); } }
                     Text { text: "Frames a 32-unit box around the emitted native origin, not model or collision bounds. Selection stays unchanged."; wrap: word-wrap; color: #bac2ce; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Button { text: "Show leaf bounds"; enabled: root.can-show-leaf-bounds; clicked => { root.show-leaf-bounds(); } }
+                        Button { text: "Clear leaf bounds"; enabled: root.can-clear-leaf-bounds; clicked => { root.clear-leaf-bounds(); } }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+                    Text { text: root.leaf-bounds-state; wrap: word-wrap; }
+                    Text { text: "Purple boxes show every native leaf membership bound for this prop. These conservative bounds do not show its exact mesh or runtime visibility. The cyan visibility guide is separate."; wrap: word-wrap; color: #bac2ce; }
                     Text { text: "Vertex colors"; font-size: 18px; font-weight: 600; }
                     Text { text: "Local index · hardware index · R · G · B · A"; }
                     Text { text: root.vertex-page; }

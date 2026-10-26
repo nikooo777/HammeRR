@@ -344,9 +344,9 @@ fn completed_prop_builds_stale_inspections_and_refuse_already_admitted_launches(
             let output = std::fs::read(&fixture.output).unwrap();
             let request = fixture.session.begin_launch(actor).unwrap();
             let origin = request.origin();
-            request.verify_static_prop_sources().unwrap();
+            request.verify_compiled_sources().unwrap();
             fixture.mutate(change);
-            assert!(request.verify_static_prop_sources().is_err(), "{change}");
+            assert!(request.verify_compiled_sources().is_err(), "{change}");
             let launch = request.run();
             assert!(launch.is_err());
             assert!(
@@ -548,7 +548,7 @@ fn content_reload_retires_only_prop_launches_and_requires_a_fresh_build() {
                 .unwrap();
             assert!(
                 request
-                    .verify_static_prop_sources()
+                    .verify_compiled_sources()
                     .unwrap_err()
                     .contains("Content changed")
             );
@@ -585,7 +585,7 @@ fn content_reload_retires_only_prop_launches_and_requires_a_fresh_build() {
     session.finish_compile(Actor::Agent, &result);
     let request = session.begin_launch(Actor::Agent).unwrap();
     session.refresh_model_assets(Actor::Agent);
-    request.verify_static_prop_sources().unwrap();
+    request.verify_compiled_sources().unwrap();
     let origin = request.origin();
     session
         .finish_launch(
@@ -712,9 +712,9 @@ fn unused_phy_hidden_props_and_mixed_case_classes_follow_actual_consumption() {
         })
         .unwrap();
     let request = fixture.request(Actor::Agent);
-    assert!(request.destination_stamp.is_none());
+    assert!(request.destination_stamp.is_some());
     let result = request.run().unwrap();
-    assert!(result.published());
+    assert!(!result.published());
     assert!(result.output.static_prop_sources.is_none());
     fixture.session.finish_compile(Actor::Agent, &Ok(result));
     fixture.mutate("model");

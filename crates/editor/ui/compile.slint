@@ -269,6 +269,7 @@ export component BakedLightmapsWindow inherits Window {
     title: "Baked lightmaps - HammeRR";
     width: 760px;
     height: 980px;
+    in property <float> aspect: 1;
     in-out property <string> channel: "LDR";
     in-out property <int> compiled-face;
     in-out property <int> style-index;
@@ -294,7 +295,9 @@ export component BakedLightmapsWindow inherits Window {
     in property <string> diagnostics;
     in property <image> preview;
     in property <bool> has-preview;
+    in property <bool> can-frame;
     callback inspect-face();
+    callback frame-face();
     callback query-changed();
     callback close-dialog();
     forward-focus: keys;
@@ -317,6 +320,7 @@ export component BakedLightmapsWindow inherits Window {
               Text { text: "Compiled face"; vertical-alignment: center; }
               SpinBox { minimum: 0; maximum: 65535; value <=> root.compiled-face; edited => { root.query-changed(); } }
               Button { text: "Inspect face"; clicked => { root.inspect-face(); } }
+              Button { text: "Frame face"; enabled: root.can-frame; clicked => { root.frame-face(); } }
           }
           HorizontalLayout {
               spacing: 8px;

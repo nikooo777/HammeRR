@@ -10,6 +10,7 @@ Inspect face-lighting samples from the last successful build.
 4. Click **Inspect face**.
 5. Choose **Style index** and **Map index**.
 6. Inspect sample values and source contributors.
+7. Click **Frame face** to fit the compiled flat world or detail face in the viewport.
 
 Use **Inspect selected authored face** to find compiled matches for the selected source face.
 Use page controls for long match and contributor lists.
@@ -28,4 +29,7 @@ to leaf. Repeated uses of the same leaf face have distinct routes.
 - Captured routes stay with that build. They do not identify current expanded objects or open source files.
 - Face-source storage caps at 8 MiB; contributor route copies cap at 512 KiB per page. A smaller contributor page can admit a refused route page.
 - Channel, style and directional-map availability depend on the build.
-- Inspection does not change source, selection, camera or history.
+- **Frame face** requires the current build. It uses the compiled face bounds and keeps the current projection.
+- **Frame face** refuses terrain, model-local faces and active viewport gestures. Finish or cancel the gesture, then try again.
+- Multiple source contributors do not prevent framing a valid compiled face.
+- Inspection keeps the camera unchanged. Framing keeps source, selection, drafts and history unchanged.

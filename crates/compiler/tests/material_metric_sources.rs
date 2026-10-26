@@ -1,12 +1,12 @@
 mod common;
 
 use compiler::materials::{DimensionSource, Materials, ReflectivitySource};
-use compiler::{LightingMode, Options, SkyQuality};
+use compiler::{Control, LightingMode, Options, OutputLease, SkyQuality, WriteReservation};
 use glam::DVec3;
 use map_core::{Document, Plane, edit};
 use source_formats::bsp::{self, Bsp, LightingKind, TexData, TexInfo};
 use source_formats::gamefs::{GameFs, Mount, MountedPath};
-use source_formats::vmf::Vmf;
+use source_formats::vmf::{Entity, Vmf};
 
 const MATERIAL: &str = "dev/dev_measuregeneric01";
 const GREEN: [f32; 3] = [0.0, 0.5, 0.0];
@@ -97,6 +97,23 @@ fn write_material(root: &std::path::Path, fields: &str) {
     .unwrap();
 }
 
+fn patch_game() -> (tempfile::TempDir, GameFs) {
+    let (directory, fs) =
+        game("$basetexture dev/base $bumpmap dev/corrupt $albedo dev/albedo %tooltexture dev/tool");
+    let path = directory.path().join("materials/dev");
+    let mut parent = std::fs::read(path.join("dev_measuregeneric01.vmt")).unwrap();
+    parent.extend_from_slice(b"\n// a");
+    std::fs::write(path.join("metric_parent.vmt"), parent).unwrap();
+    for name in ["dev_measuregeneric01", "detail"] {
+        std::fs::write(
+            path.join(format!("{name}.vmt")),
+            "Patch { include materials/dev/metric_parent.vmt }\n// a",
+        )
+        .unwrap();
+    }
+    (directory, fs)
+}
+
 fn scene() -> Vmf {
     let mut document = Document::new(common::room());
     document
@@ -148,6 +165,175 @@ fn compiled(source: &Vmf, fs: &GameFs, lighting: LightingMode, bounces: u8) -> c
     assert!(!output.report.has_errors(), "{:?}", output.report);
     assert!(output.bsp.is_some());
     output
+}
+
+#[test]
+fn ordinary_consumed_materials_keep_original_guards_through_publication() {
+    for path in [
+        "materials/dev/dev_measuregeneric01.vmt",
+        "materials/dev/detail.vmt",
+        "materials/dev/metric_parent.vmt",
+        "materials/dev/tool.vtf",
+        "materials/dev/albedo.vtf",
+    ] {
+        let (directory, fs) = patch_game();
+        let mut source = scene();
+        let detail_id = source.object_ids().max().unwrap() + 1;
+        let mut detail = Entity::new(detail_id, "func_detail");
+        let mut solid = source.world.solids.pop().unwrap();
+        for side in &mut solid.sides {
+            side.material = "DEV/DETAIL".into();
+        }
+        detail.solids.push(solid);
+        source.entities.push(detail);
+        let original = source.clone();
+        let outputs = directory.path().join("outputs");
+        std::fs::create_dir(&outputs).unwrap();
+        let destination = outputs.join("previous.bsp");
+        std::fs::write(&destination, b"previous BSP").unwrap();
+        std::fs::write(destination.with_extension("lin"), b"previous LIN").unwrap();
+        let control = Control::default();
+        let lease = OutputLease::acquire(&destination, &control).unwrap();
+        let reservation = WriteReservation::new(&destination, &control).unwrap();
+        let stale_reservation = WriteReservation::new(&destination, &control).unwrap();
+        let output = compiled(&source, &fs, LightingMode::DirectLdr, 0);
+        assert!(output.water_assets.is_none());
+        assert!(output.static_prop_assets.is_none());
+        assert!(output.prop_lighting_assets.is_none());
+        assert_metrics(output.bsp.as_ref().unwrap(), (8, 1), BLUE);
+        let before = output.bsp.as_ref().unwrap().to_bytes();
+        let guard =
+            compiler::asset_sources::capture_output_asset_source_guard(&output, &fs, &control)
+                .unwrap();
+        let prepared = output
+            .prepare_write_reserved(reservation, &control)
+            .unwrap()
+            .unwrap();
+        let file = directory.path().join(path);
+        let mut bytes = std::fs::read(&file).unwrap();
+        if path.ends_with(".vtf") {
+            bytes[80] ^= 1;
+        } else {
+            *bytes.last_mut().unwrap() = b'b';
+        }
+        std::fs::write(file, bytes).unwrap();
+        assert!(guard.verify_metadata().is_err(), "{path}");
+        assert!(
+            compiler::asset_sources::capture_output_asset_source_guard(&output, &fs, &control)
+                .is_err(),
+            "{path}",
+        );
+        assert!(
+            output
+                .prepare_write_reserved(stale_reservation, &control)
+                .is_err(),
+            "{path}",
+        );
+        assert!(prepared.commit_checked(&lease, &control).is_err(), "{path}");
+        assert_eq!(std::fs::read(&destination).unwrap(), b"previous BSP");
+        assert_eq!(
+            std::fs::read(destination.with_extension("lin")).unwrap(),
+            b"previous LIN",
+        );
+        assert_eq!(
+            compiled(&source, &fs, LightingMode::DirectLdr, 0)
+                .bsp
+                .unwrap()
+                .to_bytes(),
+            before,
+            "{path}",
+        );
+        assert_eq!(source, original);
+    }
+}
+
+#[test]
+fn ordinary_material_guards_reject_changed_winning_and_missing_lookups() {
+    for missing in [false, true] {
+        let (directory, mut fs) = game("");
+        let higher = tempfile::tempdir_in(directory.path().parent().unwrap()).unwrap();
+        let path = "materials/dev/dev_measuregeneric01.vmt";
+        let bytes = std::fs::read(directory.path().join(path)).unwrap();
+        std::fs::create_dir_all(higher.path().join("materials/dev")).unwrap();
+        std::fs::write(higher.path().join(path), bytes).unwrap();
+        if missing {
+            std::fs::remove_file(directory.path().join(path)).unwrap();
+        }
+        let source = common::room();
+        let output = compiled(&source, &fs, LightingMode::Fullbright, 0);
+        let before = output.bsp.as_ref().unwrap().to_bytes();
+        assert_metrics(output.bsp.as_ref().unwrap(), (64, 64), [0.5; 3]);
+        let control = Control::default();
+        let guard =
+            compiler::asset_sources::capture_output_asset_source_guard(&output, &fs, &control)
+                .unwrap();
+        fs.mounts.insert(
+            0,
+            MountedPath {
+                ids: vec!["game".into()],
+                mount: Mount::Directory(higher.path().to_owned()),
+            },
+        );
+        guard.verify_metadata().unwrap();
+        assert!(
+            output
+                .material_sources
+                .as_ref()
+                .unwrap()
+                .verify_sources(&fs, &control)
+                .is_err(),
+            "missing: {missing}",
+        );
+        assert!(
+            compiler::asset_sources::capture_output_asset_source_guard(&output, &fs, &control)
+                .is_err(),
+            "missing: {missing}",
+        );
+        assert_eq!(
+            compiled(&source, &fs, LightingMode::Fullbright, 0)
+                .bsp
+                .unwrap()
+                .to_bytes(),
+            before,
+            "missing: {missing}",
+        );
+    }
+}
+
+#[test]
+fn ordinary_material_guards_exclude_unconsumed_textures() {
+    let (directory, fs) = patch_game();
+    let source = scene();
+    let output = compiled(&source, &fs, LightingMode::DirectLdr, 0);
+    let before = output.bsp.as_ref().unwrap().to_bytes();
+    let control = Control::default();
+    let guard =
+        compiler::asset_sources::capture_output_asset_source_guard(&output, &fs, &control).unwrap();
+    for path in [
+        "materials/dev/base.vtf",
+        "materials/dev/corrupt.vtf",
+        "materials/dev/reference_green.vtf",
+        "materials/_rt_metric.vtf",
+    ] {
+        let file = directory.path().join(path);
+        let mut bytes = std::fs::read(&file).unwrap();
+        bytes[0] ^= 1;
+        std::fs::write(file, bytes).unwrap();
+    }
+    output
+        .material_sources
+        .as_ref()
+        .unwrap()
+        .verify_sources(&fs, &control)
+        .unwrap();
+    guard.verify_metadata().unwrap();
+    assert_eq!(
+        compiled(&source, &fs, LightingMode::DirectLdr, 0)
+            .bsp
+            .unwrap()
+            .to_bytes(),
+        before,
+    );
 }
 
 fn assert_metrics(bsp: &Bsp, dimensions: (i32, i32), rho: [f32; 3]) {

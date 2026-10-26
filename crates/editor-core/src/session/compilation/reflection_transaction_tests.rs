@@ -110,6 +110,7 @@ fn prepared_assets(
         world_light_origins: None,
         static_prop_origins: Err("Prop source metadata not retained in this fixture".into()),
         prop_lighting_guard: None,
+        material_sources: None,
         static_prop_sources: None,
         claim: None,
         output_identity: Err("Fixture has no successful BSP identity".into()),

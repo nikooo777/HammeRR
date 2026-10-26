@@ -103,9 +103,10 @@ fn raw_abandoned_request_retires_under_session_guard_and_keeps_exact_terminal_st
 
 #[test]
 fn foreign_equal_counter_results_preserve_both_origins_and_pending_publication() {
-    for guarded in [false, true] {
-        let (_first_directory, mut first, source) = fixture(guarded);
-        let (_second_directory, mut second, _) = fixture(guarded);
+    for instances in [false, true] {
+        let (_first_directory, mut first, source) = fixture(instances);
+        let (_second_directory, mut second, _) = fixture(instances);
+        std::fs::write(source.with_extension("bsp"), b"previous BSP").unwrap();
         let first_request = first.begin_compile(Actor::Agent, None).unwrap();
         let second_request = second.begin_compile(Actor::User, None).unwrap();
         let result = first_request.run();
@@ -124,9 +125,9 @@ fn foreign_equal_counter_results_preserve_both_origins_and_pending_publication()
         assert_eq!(stable(&second), second_before);
         assert!(first.compiling() && second.compiling());
         let publication = output.publication.lock().unwrap();
-        assert_eq!(publication.pending.is_some(), guarded);
-        assert_eq!(publication.claims.is_some(), guarded);
-        assert_eq!(publication.artifact.is_some(), !guarded);
+        assert!(publication.pending.is_some());
+        assert!(publication.claims.is_some());
+        assert!(publication.artifact.is_none());
         assert!(publication.ticket.is_some());
         drop(publication);
         assert_eq!(std::fs::read(&output.path).unwrap(), bytes);

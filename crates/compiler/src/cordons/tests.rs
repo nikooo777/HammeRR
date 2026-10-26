@@ -364,12 +364,22 @@ fn contained_world_water_compiles_but_crossing_and_entity_liquids_preserve_prior
         })
         .unwrap();
     let source = document.into_vmf();
+    let path = game.game_dir.join("previous.bsp");
+    let publish_control = Control::default();
+    let lease = crate::OutputLease::acquire(&path, &publish_control).unwrap();
+    let reservation = crate::WriteReservation::new(&path, &publish_control).unwrap();
     let output = crate::compile(&source, &game);
     assert!(output.bsp.is_some(), "{:?}", output.report);
     assert_eq!(output.stats.water_regions, 1);
     assert!(output.stats.water_leaves > 0);
-    let path = game.game_dir.join("previous.bsp");
-    assert!(output.write(&path).unwrap());
+    assert!(
+        output
+            .prepare_write_reserved(reservation, &publish_control)
+            .unwrap()
+            .unwrap()
+            .commit_checked(&lease, &publish_control)
+            .unwrap()
+    );
     let previous = std::fs::read(&path).unwrap();
     for (classname, offset, message) in [
         (None, DVec3::X, "crosses a compile-region boundary"),
@@ -452,12 +462,22 @@ fn whole_terrain_retains_world_and_detail_meshes_but_rejects_crossing_cages_and_
         })
         .unwrap();
     let source = document.into_vmf();
+    let path = game.game_dir.join("terrain.bsp");
+    let publish_control = Control::default();
+    let lease = crate::OutputLease::acquire(&path, &publish_control).unwrap();
+    let reservation = crate::WriteReservation::new(&path, &publish_control).unwrap();
     let output = crate::compile(&source, &game);
     assert!(output.bsp.is_some(), "{:?}", output.report);
     assert_eq!(output.stats.displacements, 1);
     assert_eq!(output.stats.displacement_triangles, 32);
-    let path = game.game_dir.join("terrain.bsp");
-    assert!(output.write(&path).unwrap());
+    assert!(
+        output
+            .prepare_write_reserved(reservation, &publish_control)
+            .unwrap()
+            .unwrap()
+            .commit_checked(&lease, &publish_control)
+            .unwrap()
+    );
     let bytes = std::fs::read(&path).unwrap();
     let mut detail = Document::new(source.clone());
     detail

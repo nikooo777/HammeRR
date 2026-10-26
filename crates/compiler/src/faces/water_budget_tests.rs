@@ -76,6 +76,10 @@ fn successful(vmf: &Vmf, game: &GameFs) -> Output {
 fn crossed_water_partitions_reject_each_injected_budget_and_preserve_publication() {
     let (directory, game, source) = crossed_partitions();
     let original = source.clone();
+    let path = directory.path().join("previous.bsp");
+    let publish_control = Control::default();
+    let lease = crate::OutputLease::acquire(&path, &publish_control).unwrap();
+    let reservation = crate::WriteReservation::new(&path, &publish_control).unwrap();
     let baseline = successful(&source, &game);
     let bsp = baseline.bsp.as_ref().unwrap();
     let names = bsp.texdata_strings().unwrap();
@@ -99,8 +103,14 @@ fn crossed_water_partitions_reject_each_injected_budget_and_preserve_publication
         }
     }
 
-    let path = directory.path().join("previous.bsp");
-    assert!(baseline.write(&path).unwrap());
+    assert!(
+        baseline
+            .prepare_write_reserved(reservation, &publish_control)
+            .unwrap()
+            .unwrap()
+            .commit_checked(&lease, &publish_control)
+            .unwrap()
+    );
     let previous = std::fs::read(&path).unwrap();
     for (limits, expected) in [
         (
@@ -150,9 +160,19 @@ fn crossed_water_partitions_reject_each_injected_budget_and_preserve_publication
 #[test]
 fn generated_water_cancellation_interrupts_active_visits_and_preserves_previous_output() {
     let (directory, game, source) = crossed_partitions();
-    let baseline = successful(&source, &game);
     let path = directory.path().join("previous.bsp");
-    assert!(baseline.write(&path).unwrap());
+    let publish_control = Control::default();
+    let lease = crate::OutputLease::acquire(&path, &publish_control).unwrap();
+    let reservation = crate::WriteReservation::new(&path, &publish_control).unwrap();
+    let baseline = successful(&source, &game);
+    assert!(
+        baseline
+            .prepare_write_reserved(reservation, &publish_control)
+            .unwrap()
+            .unwrap()
+            .commit_checked(&lease, &publish_control)
+            .unwrap()
+    );
     let previous = std::fs::read(&path).unwrap();
     let original = source.clone();
     let control = Control::default();
@@ -251,9 +271,19 @@ fn vertical_only_generated_water_is_budgeted_and_cancellable_before_publication(
         }
     }
     let original = source.clone();
-    let baseline = successful(&source, &game);
     let path = directory.path().join("vertical-previous.bsp");
-    assert!(baseline.write(&path).unwrap());
+    let publish_control = Control::default();
+    let lease = crate::OutputLease::acquire(&path, &publish_control).unwrap();
+    let reservation = crate::WriteReservation::new(&path, &publish_control).unwrap();
+    let baseline = successful(&source, &game);
+    assert!(
+        baseline
+            .prepare_write_reserved(reservation, &publish_control)
+            .unwrap()
+            .unwrap()
+            .commit_checked(&lease, &publish_control)
+            .unwrap()
+    );
     let previous = std::fs::read(&path).unwrap();
     for config in [
         TestConfig {
@@ -316,6 +346,10 @@ fn authored_bottom_only_generation_obeys_all_budgets_and_cancellation_before_pub
         .unwrap();
     let source = document.into_vmf();
     let original = source.clone();
+    let path = directory.path().join("bottom-previous.bsp");
+    let publish_control = Control::default();
+    let lease = crate::OutputLease::acquire(&path, &publish_control).unwrap();
+    let reservation = crate::WriteReservation::new(&path, &publish_control).unwrap();
     let baseline = successful(&source, &game);
     let bsp = baseline.bsp.as_ref().unwrap();
     let names = bsp.texdata_strings().unwrap();
@@ -338,8 +372,14 @@ fn authored_bottom_only_generation_obeys_all_budgets_and_cancellation_before_pub
         assert_eq!(plane.dist, 32.0);
         assert!(face.fog_volume >= 0);
     }
-    let path = directory.path().join("bottom-previous.bsp");
-    assert!(baseline.write(&path).unwrap());
+    assert!(
+        baseline
+            .prepare_write_reserved(reservation, &publish_control)
+            .unwrap()
+            .unwrap()
+            .commit_checked(&lease, &publish_control)
+            .unwrap()
+    );
     let previous = std::fs::read(&path).unwrap();
     let pointfile = path.with_extension("lin");
     let previous_pointfile = b"retained pointfile\n";

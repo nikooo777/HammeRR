@@ -1329,6 +1329,9 @@ fn sibling_light_bindings_match_independent_literal_dual_bsp_and_preserve_raw_so
             Ok(())
         })
         .unwrap();
+    let destination = directory.path().join("bound.bsp");
+    std::fs::write(&destination, b"previous BSP").unwrap();
+    let reservation = crate::WriteReservation::new(&destination, &Control::default()).unwrap();
     let expected = emitter_output(
         literal.vmf(),
         &game,
@@ -1386,10 +1389,8 @@ fn sibling_light_bindings_match_independent_literal_dual_bsp_and_preserve_raw_so
         .unwrap()
         .verify(&Control::default())
         .unwrap();
-    let destination = directory.path().join("bound.bsp");
-    std::fs::write(&destination, b"previous BSP").unwrap();
     let staged = actual
-        .prepare_write_controlled(&destination, &Control::default())
+        .prepare_write_reserved(reservation, &Control::default())
         .unwrap()
         .unwrap();
     let changed = String::from_utf8(raw.clone())
@@ -1564,6 +1565,9 @@ fn forwarded_light_bindings_match_independent_literal_dual_bsp_through_four_help
             Ok(())
         })
         .unwrap();
+    let destination = directory.path().join("forwarded.bsp");
+    std::fs::write(&destination, b"previous BSP").unwrap();
+    let reservation = crate::WriteReservation::new(&destination, &Control::default()).unwrap();
     let expected = emitter_output(
         literal.vmf(),
         &game,
@@ -1638,10 +1642,8 @@ fn forwarded_light_bindings_match_independent_literal_dual_bsp_through_four_help
     for (file, bytes) in &intermediate_bytes {
         assert_eq!(std::fs::read(directory.path().join(file)).unwrap(), *bytes);
     }
-    let destination = directory.path().join("forwarded.bsp");
-    std::fs::write(&destination, b"previous BSP").unwrap();
     let staged = actual
-        .prepare_write_controlled(&destination, &Control::default())
+        .prepare_write_reserved(reservation, &Control::default())
         .unwrap()
         .unwrap();
     let changed = String::from_utf8(raw)

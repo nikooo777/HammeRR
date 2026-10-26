@@ -121,6 +121,9 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
     let lease = guarded
         .then(|| OutputLease::acquire(&path, control))
         .transpose()?;
+    let pointfile_lease = guarded
+        .then(|| OutputLease::acquire(pointfile.physical_path(), control))
+        .transpose()?;
     let source_identity = (guarded && !has_instances)
         .then(|| FileIdentity::capture(&map, control))
         .transpose()?;
@@ -201,9 +204,6 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
             identity.verify(control)?;
         }
         let prepared = output.prepare_write_reserved(reservation.unwrap(), control)?;
-        let pointfile = (output.bsp.is_none() && output.leak.is_some())
-            .then(|| OutputLease::acquire(&path.with_extension("lin"), control))
-            .transpose()?;
         let assets =
             compiler::asset_sources::capture_output_asset_source_guard(&output, &fs, control)?;
         lease.verify(control)?;
@@ -216,8 +216,10 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         };
         match prepared {
-            Some(prepared) if pointfile.is_some() => {
-                let pointfile = pointfile.as_ref().unwrap();
+            Some(prepared) if output.bsp.is_none() && output.leak.is_some() => {
+                let pointfile = pointfile_lease
+                    .as_ref()
+                    .ok_or("Guarded pointfile lease missing")?;
                 pointfile.verify(control)?;
                 prepared.commit_checked_with(pointfile, control, validate)?
             }

@@ -89,6 +89,10 @@ impl EntityOrigin {
     fn emitted(&self) -> bool {
         matches!(self.class.as_str(), "light" | "light_spot" | "info_target")
     }
+
+    fn static_prop(&self) -> bool {
+        self.class == "prop_static"
+    }
 }
 
 #[derive(Clone)]
@@ -105,7 +109,22 @@ struct Ready {
     document: Document,
     plan: Plan,
     dependencies: DependencyGuard,
+    prop_sources: Option<compiler::asset_sources::AssetSourceGuard>,
     stats: InstanceStats,
+}
+
+impl Ready {
+    fn verify_metadata(&self) -> Result<(), String> {
+        self.dependencies
+            .verify_metadata()
+            .map_err(|error| error.to_string())?;
+        if let Some(sources) = &self.prop_sources {
+            sources
+                .verify_metadata()
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
 }
 
 enum Work {
@@ -123,6 +142,7 @@ pub struct Request {
     identity: Arc<()>,
     key: Key,
     control: Control,
+    game: Arc<source_formats::gamefs::GameFs>,
     work: Work,
     _worker: Ticket,
 }
@@ -160,7 +180,7 @@ impl Request {
                     if has_incoming_checked(&document, &catalog, &targets, &mut || self.control.checkpoint())? {
                         return Err("A parent reference targets an instance helper; remove the binding before collapse".into());
                     }
-                    Arc::new(prepare(*document, *source, removed, &self.control)?)
+                    Arc::new(prepare(*document, *source, removed, &self.game, &self.control)?)
                 },
                 Work::Apply(ready) => ready,
             };
@@ -168,6 +188,11 @@ impl Request {
                 .dependencies
                 .verify(&self.control)
                 .map_err(|error| error.to_string())?;
+            if let Some(sources) = &ready.prop_sources {
+                sources
+                    .verify_sources(&self.game, &self.control)
+                    .map_err(|error| error.to_string())?;
+            }
             self.control.checkpoint()?;
             Ok(ready)
         }))
@@ -188,6 +213,7 @@ fn prepare(
     mut document: Document,
     source: SourceLocation,
     removed: Vec<ObjectId>,
+    game: &source_formats::gamefs::GameFs,
     control: &Control,
 ) -> Result<Ready, String> {
     let source = source.hydrate(control).map_err(|error| error.to_string())?;
@@ -203,6 +229,7 @@ fn prepare(
         .stats()
         .cloned()
         .ok_or("Instance collapse statistics are missing")?;
+    let prop_sources = prepared.validate_collapse_static_prop_poses(game, control)?;
     let mut plan_bytes =
         admit_collapse_snapshot(prepared.vmf(), MAX_PLAN_BYTES, &mut || control.checkpoint())?;
     plan_bytes = plan_bytes
@@ -230,7 +257,7 @@ fn prepare(
         control.checkpoint()?;
         if !matches!(
             entity.classname(),
-            Some("light" | "light_spot" | "info_target")
+            Some("light" | "light_spot" | "info_target" | "prop_static")
         ) && !entity
             .classname()
             .is_some_and(|class| class.eq_ignore_ascii_case("env_cubemap"))
@@ -296,7 +323,10 @@ fn prepare(
         .cloned()
         .collect::<Vec<_>>();
     if world.is_empty() && entities.is_empty() {
-        return Err("Visible references contain no editable geometry, lights or cubemaps".into());
+        return Err(
+            "Visible references contain no editable geometry, static props, lights or cubemaps"
+                .into(),
+        );
     }
     let mut plan = Plan {
         removed,
@@ -316,6 +346,7 @@ fn prepare(
         document,
         plan,
         dependencies,
+        prop_sources,
         stats,
     })
 }
@@ -607,6 +638,7 @@ impl Session {
             identity,
             key,
             control,
+            game: self.game.clone(),
             work: Work::Prepare {
                 document: Box::new(self.document.preview_snapshot_uncached()),
                 source: Box::new(source),
@@ -635,6 +667,7 @@ impl Session {
             identity: form.identity.clone(),
             key: form.key.clone(),
             control: form.control.clone(),
+            game: self.game.clone(),
             work: Work::Apply(ready),
             _worker: worker,
         };
@@ -689,10 +722,7 @@ impl Session {
             return Err("Instance collapse result is stale or cancelled".into());
         }
         let result = completed.result.and_then(|ready| {
-            ready
-                .dependencies
-                .verify_metadata()
-                .map_err(|error| error.to_string())?;
+            ready.verify_metadata()?;
             Ok(ready)
         });
         let ready = match result {
@@ -734,12 +764,7 @@ impl Session {
                 }
                 Ok(())
             },
-            |_| {
-                ready
-                    .dependencies
-                    .verify_metadata()
-                    .map_err(|error| EditError::Invalid(error.to_string()))
-            },
+            |_| ready.verify_metadata().map_err(EditError::Invalid),
         );
         if let Err(error) = applied {
             let error = error.to_string();
@@ -812,13 +837,9 @@ impl Session {
         let blocked = if !form.key.current(self) {
             Some("Map, selection or saved source changed".to_owned())
         } else {
-            form.ready.as_ref().and_then(|ready| {
-                ready
-                    .dependencies
-                    .verify_metadata()
-                    .err()
-                    .map(|error| error.to_string())
-            })
+            form.ready
+                .as_ref()
+                .and_then(|ready| ready.verify_metadata().err())
         };
         let ready = form.ready.as_ref();
         let provenance_error = ready.and_then(|ready| {
@@ -846,7 +867,7 @@ impl Session {
                 .is_none()
                 .then_some("Captured provenance routes exceed the bounded response-copy budget")
         });
-        json!({"snapshot":self.instance_collapse_stamp(),"token":form.token,"owner":form.owner.label(),"status":form.status,"error":blocked.as_ref().or(form.error.as_ref()),"ready":ready.is_some() && blocked.is_none() && form.status=="ready","worker_active":state.worker.busy(),"scope":"all_visible_references","recursive":true,"source":form.key.path,"stats":ready.map(|ready|&ready.stats),"removed":ready.map(|ready|ready.plan.removed.iter().copied().map(crate::identity::id_string).collect::<Vec<_>>()),"objects":ready.map(|ready|ready.plan.added.iter().copied().map(crate::identity::id_string).collect::<Vec<_>>()),"face_provenance":ready.filter(|_|provenance_error.is_none()).map(|ready|ready.plan.faces.iter().take(MAX_ROWS).map(|face|json!({"side":face.side,"owner":crate::identity::id_string(ObjectId::Entity(face.owner)),"file":face.file,"original_solid":face.original_solid,"original_side":face.original_side,"occurrence":face.occurrence.as_ref(),"occurrence_label":face.occurrence.label()})).collect::<Vec<_>>()),"face_provenance_total":ready.map(|ready|ready.plan.faces.len()),"entity_id_map":ready.map(|ready|ready.plan.entity_origins.iter().filter(|origin|origin.emitted()).map(|origin|json!({"expanded":crate::identity::id_string(ObjectId::Entity(origin.expanded)),"authored":crate::identity::id_string(ObjectId::Entity(origin.entity))})).collect::<Vec<_>>()),"helper_id_map":ready.map(|ready|ready.plan.entity_origins.iter().filter(|origin|!origin.emitted()).map(|origin|json!({"expanded":crate::identity::id_string(ObjectId::Entity(origin.expanded)),"authored":crate::identity::id_string(ObjectId::Entity(origin.entity))})).collect::<Vec<_>>()),"entity_provenance":ready.filter(|_|provenance_error.is_none()).map(|ready|ready.plan.entity_origins.iter().take(MAX_ROWS).map(|origin|json!({"entity":crate::identity::id_string(ObjectId::Entity(origin.entity)),"expanded":crate::identity::id_string(ObjectId::Entity(origin.expanded)),"owner":crate::identity::id_string(ObjectId::Entity(origin.owner)),"file":origin.file,"original_entity":origin.original,"classname":origin.class,"emitted":origin.emitted(),"occurrence":origin.occurrence.as_ref(),"occurrence_label":origin.occurrence.label()})).collect::<Vec<_>>()),"entity_provenance_total":ready.map(|ready|ready.plan.entity_origins.len()),"provenance_error":provenance_error,"limits":{"plan_bytes":MAX_PLAN_BYTES,"provenance_source_bytes":MAX_PROVENANCE_SOURCE_BYTES,"occurrence_bytes":instances::MAX_OCCURRENCE_BYTES,"rows":MAX_ROWS,"helper_levels":instances::MAX_EXPANSION_DEPTH},"writes_child_files":false})
+        json!({"snapshot":self.instance_collapse_stamp(),"token":form.token,"owner":form.owner.label(),"status":form.status,"error":blocked.as_ref().or(form.error.as_ref()),"ready":ready.is_some() && blocked.is_none() && form.status=="ready","worker_active":state.worker.busy(),"scope":"all_visible_references","recursive":true,"source":form.key.path,"stats":ready.map(|ready|&ready.stats),"removed":ready.map(|ready|ready.plan.removed.iter().copied().map(crate::identity::id_string).collect::<Vec<_>>()),"objects":ready.map(|ready|ready.plan.added.iter().copied().map(crate::identity::id_string).collect::<Vec<_>>()),"face_provenance":ready.filter(|_|provenance_error.is_none()).map(|ready|ready.plan.faces.iter().take(MAX_ROWS).map(|face|json!({"side":face.side,"owner":crate::identity::id_string(ObjectId::Entity(face.owner)),"file":face.file,"original_solid":face.original_solid,"original_side":face.original_side,"occurrence":face.occurrence.as_ref(),"occurrence_label":face.occurrence.label()})).collect::<Vec<_>>()),"face_provenance_total":ready.map(|ready|ready.plan.faces.len()),"entity_id_map":ready.map(|ready|ready.plan.entity_origins.iter().filter(|origin|origin.emitted()).map(|origin|json!({"expanded":crate::identity::id_string(ObjectId::Entity(origin.expanded)),"authored":crate::identity::id_string(ObjectId::Entity(origin.entity))})).collect::<Vec<_>>()),"helper_id_map":ready.map(|ready|ready.plan.entity_origins.iter().filter(|origin|origin.class.eq_ignore_ascii_case("env_cubemap")).map(|origin|json!({"expanded":crate::identity::id_string(ObjectId::Entity(origin.expanded)),"authored":crate::identity::id_string(ObjectId::Entity(origin.entity))})).collect::<Vec<_>>()),"static_prop_id_map":ready.map(|ready|ready.plan.entity_origins.iter().filter(|origin|origin.static_prop()).map(|origin|json!({"expanded":crate::identity::id_string(ObjectId::Entity(origin.expanded)),"authored":crate::identity::id_string(ObjectId::Entity(origin.entity))})).collect::<Vec<_>>()),"entity_provenance":ready.filter(|_|provenance_error.is_none()).map(|ready|ready.plan.entity_origins.iter().take(MAX_ROWS).map(|origin|json!({"entity":crate::identity::id_string(ObjectId::Entity(origin.entity)),"expanded":crate::identity::id_string(ObjectId::Entity(origin.expanded)),"owner":crate::identity::id_string(ObjectId::Entity(origin.owner)),"file":origin.file,"original_entity":origin.original,"classname":origin.class,"emitted":origin.emitted(),"compiler_handled":!origin.emitted(),"occurrence":origin.occurrence.as_ref(),"occurrence_label":origin.occurrence.label()})).collect::<Vec<_>>()),"entity_provenance_total":ready.map(|ready|ready.plan.entity_origins.len()),"provenance_error":provenance_error,"limits":{"plan_bytes":MAX_PLAN_BYTES,"provenance_source_bytes":MAX_PROVENANCE_SOURCE_BYTES,"occurrence_bytes":instances::MAX_OCCURRENCE_BYTES,"rows":MAX_ROWS,"helper_levels":instances::MAX_EXPANSION_DEPTH},"writes_child_files":false})
     }
 }
 
@@ -889,3 +910,6 @@ mod light_tests;
 
 #[cfg(test)]
 mod cubemap_tests;
+
+#[cfg(test)]
+mod static_prop_tests;

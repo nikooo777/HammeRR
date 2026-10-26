@@ -20,6 +20,14 @@ struct Lists {
     matches: Vec<usize>,
     source: Option<SourceReference>,
     match_summary: String,
+    frame: Option<FrameTarget>,
+}
+
+#[derive(Clone)]
+struct FrameTarget {
+    token: String,
+    channel: Channel,
+    face: usize,
 }
 
 fn admitted(
@@ -48,6 +56,7 @@ fn clear_lists(window: &BakedLightmapsWindow, lists: &RefCell<Lists>) {
     window.set_origin_selectable(slint::ModelRc::default());
     window.set_match_rows(slint::ModelRc::default());
     window.set_has_source(false);
+    window.set_can_frame(false);
 }
 
 fn source_reference(value: &Value) -> Option<SourceReference> {
@@ -248,6 +257,18 @@ fn present(
             .into(),
     );
     let selected = &report["selected"];
+    lists.borrow_mut().frame = report["build"]["token"]
+        .as_str()
+        .zip(selected["face"].as_u64())
+        .filter(|_| report["build"]["current"] == true && selected["status"] != "invalid")
+        .and_then(|(token, face)| {
+            Some(FrameTarget {
+                token: token.into(),
+                channel: Channel::parse(report["channel"].as_str()?).ok()?,
+                face: usize::try_from(face).ok()?,
+            })
+        });
+    window.set_can_frame(lists.borrow().frame.is_some());
     if let Some(face) = selected["face"].as_u64() {
         window.set_compiled_face(face as i32);
     }
@@ -388,6 +409,10 @@ fn lists_current(
 }
 
 impl Form {
+    pub(super) fn set_aspect(&self, aspect: f32) {
+        self.window.set_aspect(aspect);
+    }
+
     pub(super) fn hide_window(&self, errors: &mut Vec<String>) {
         crate::ui::hide_window("Baked lightmaps", self.window.window(), errors);
     }
@@ -475,6 +500,51 @@ pub(super) fn bind(
                     &baseline,
                     &lists,
                     query(&window, false),
+                );
+            });
+        }
+    });
+    window.on_frame_face({
+        let (window, target, baseline, lists) = (
+            window.as_weak(),
+            access.downgrade(),
+            baseline.clone(),
+            lists.clone(),
+        );
+        move || {
+            admitted(&window, &target, |window, shared| {
+                let mut session = lock(shared);
+                if !lists_current(&window, &session, &baseline, &lists) {
+                    return;
+                }
+                let frame = lists.borrow().frame.clone();
+                let entered = query(&window, false);
+                let result = frame
+                    .filter(|frame| {
+                        entered.channel == frame.channel && entered.face == Some(frame.face)
+                    })
+                    .ok_or_else(|| {
+                        "Inspect face before framing the entered channel and face".to_owned()
+                    })
+                    .and_then(|frame| {
+                        session.frame_compiled_face(
+                            crate::session::Actor::User,
+                            frame.token,
+                            frame.channel,
+                            frame.face,
+                            window.get_aspect(),
+                        )
+                    });
+                window.set_diagnostics(
+                    match result {
+                        Ok(frame) => format!(
+                            "Framed compiled {} face {}. Selection is unchanged.",
+                            frame.channel.to_ascii_uppercase(),
+                            frame.face
+                        ),
+                        Err(error) => error,
+                    }
+                    .into(),
                 );
             });
         }
@@ -573,11 +643,14 @@ pub(super) fn bind(
     });
     window.on_query_changed({
         let window = window.as_weak();
+        let lists = lists.clone();
         move || {
             let Some(window) = window.upgrade() else {
                 return;
             };
             window.set_has_preview(false);
+            window.set_can_frame(false);
+            lists.borrow_mut().frame = None;
             window.set_preview(slint::Image::default());
             window.set_selected(
                 "Choose Inspect face to inspect the entered channel, face, style and map indices."

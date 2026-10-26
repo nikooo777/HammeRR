@@ -16,6 +16,7 @@ mod grid_preferences;
 mod groups;
 mod handle_report;
 mod history;
+mod instance_collapse;
 mod instance_contents;
 mod instance_extraction;
 mod instance_reference;

@@ -63,6 +63,7 @@ impl Controller {
     }
 
     fn present(&self, report: &serde_json::Value) {
+        self.window.set_collapse_active(false);
         self.token.set(report["token"].as_u64());
         let owned = report["owner"].as_str() == Some(Actor::User.label());
         self.window.set_owned(owned);
@@ -70,6 +71,12 @@ impl Controller {
             .set_shared_form(self.token.get().is_some() && !owned);
         self.window.set_edit_mode(report["mode"] == "edit");
         self.window.set_ready(report["valid"] == true);
+        self.window.set_can_collapse(
+            owned
+                && report["mode"] == "edit"
+                && report["valid"] == true
+                && report["modified"] != true,
+        );
         self.window.set_source(
             format!(
                 "Parent: {}\nRelative to: {}",
@@ -159,6 +166,35 @@ impl Controller {
 
     fn refresh_admitted(&self, shared: &SharedSession) {
         let mut session = lock(shared);
+        let collapse = session.get_instance_collapse();
+        if collapse["token"].is_number() {
+            self.token.set(collapse["token"].as_u64());
+            self.window.set_collapse_active(true);
+            let owned = collapse["owner"].as_str() == Some(Actor::User.label());
+            self.window.set_owned(owned);
+            self.window.set_shared_form(!owned);
+            self.window.set_ready(collapse["ready"] == true);
+            self.window.set_source(
+                format!(
+                    "Parent: {}",
+                    collapse["source"].as_str().unwrap_or("Unavailable")
+                )
+                .into(),
+            );
+            self.window.set_status(
+                collapse["error"]
+                    .as_str()
+                    .unwrap_or(collapse["status"].as_str().unwrap_or("Unavailable"))
+                    .into(),
+            );
+            self.window.set_contents(format!("All visible references · {} helper occurrences · {} world brushes · {} detail brushes · {} terrain patches\nCollapse does not write child files.", collapse["stats"]["instances"].as_u64().unwrap_or_default(), collapse["stats"]["world_brushes"].as_u64().unwrap_or_default(), collapse["stats"]["detail_brushes"].as_u64().unwrap_or_default(), collapse["stats"]["terrain_patches"].as_u64().unwrap_or_default()).into());
+            return;
+        }
+        if self.window.get_collapse_active() {
+            self.window.set_collapse_active(false);
+            self.token.set(None);
+            let _ = self.window.hide();
+        }
         let report = session.get_instance_reference();
         self.present(&report);
         self.window.set_contents(
@@ -187,6 +223,11 @@ impl Controller {
     }
 
     fn open_admitted(&self, shared: &SharedSession, entity: Option<u32>) {
+        if lock(shared).get_instance_collapse()["token"].is_number() {
+            self.refresh_admitted(shared);
+            let _ = self.window.show();
+            return;
+        }
         self.generation.set(self.generation.get().wrapping_add(1));
         self.edits.set(self.edits.get().wrapping_add(1));
         self.reset_fields();
@@ -333,8 +374,61 @@ impl Controller {
         });
     }
 
+    fn collapse(&self, applying: bool) {
+        self.with_shared(true, |shared| {
+            let request = {
+                let mut session = lock(shared);
+                if applying {
+                    self.token
+                        .get()
+                        .ok_or_else(|| "Instance collapse token is missing".to_string())
+                        .and_then(|token| session.apply_instance_collapse(Actor::User, token))
+                } else {
+                    let snapshot = session.instance_collapse_stamp();
+                    session.begin_instance_collapse(Actor::User, &snapshot)
+                }
+            };
+            match request {
+                Ok(request) => {
+                    let token = request.token();
+                    self.generation.set(self.generation.get().wrapping_add(1));
+                    self.edits.set(self.edits.get().wrapping_add(1));
+                    self.picker.set(self.picker.get().wrapping_add(1));
+                    let worker_session = shared.clone();
+                    let spawned = std::thread::Builder::new()
+                        .name("instance-collapse".into())
+                        .spawn(move || {
+                            let completed = request.run();
+                            let _ = lock(&worker_session)
+                                .finish_instance_collapse(Actor::User, completed);
+                        });
+                    if let Err(error) = spawned {
+                        let _ = lock(shared).cancel_instance_collapse(Actor::User, token);
+                        self.window.set_message(
+                            format!("Could not start collapse worker: {error}").into(),
+                        );
+                    } else {
+                        self.window.set_message("".into());
+                    }
+                }
+                Err(error) => self.window.set_message(error.into()),
+            }
+            self.refresh_admitted(shared);
+        });
+    }
+
     fn cancel(&self) {
         let accepted = self.with_shared(true, |shared| {
+            if self.window.get_collapse_active() {
+                if self.window.get_owned()
+                    && let Some(token) = self.token.get()
+                    && let Err(error) = lock(shared).cancel_instance_collapse(Actor::User, token)
+                {
+                    self.window.set_message(error.into());
+                    return false;
+                }
+                return true;
+            }
             if self.window.get_owned()
                 && let Some(token) = self.token.get()
                 && let Err(error) = lock(shared).cancel_instance_reference(Actor::User, token)
@@ -404,6 +498,15 @@ impl Controller {
                 if let Some(controller) = weak.upgrade() {
                     controller.with_shared(true, |shared| {
                         if let Some(token) = controller.token.get() {
+                            if controller.window.get_collapse_active() {
+                                if let Err(error) =
+                                    lock(shared).review_instance_collapse(Actor::User, token)
+                                {
+                                    controller.window.set_message(error.into());
+                                }
+                                controller.refresh_admitted(shared);
+                                return;
+                            }
                             let result = lock(shared).review_instance_reference(Actor::User, token);
                             controller
                                 .generation
@@ -426,6 +529,10 @@ impl Controller {
             let weak = Rc::downgrade(&controller);
             move || {
                 if let Some(controller) = weak.upgrade() {
+                    if controller.window.get_collapse_active() {
+                        controller.collapse(true);
+                        return;
+                    }
                     controller.with_shared(true, |shared| {
                         if let Some(token) = controller.token.get() {
                             let result = lock(shared).apply_instance_reference(Actor::User, token);
@@ -441,6 +548,14 @@ impl Controller {
                             }
                         }
                     });
+                }
+            }
+        });
+        controller.window.on_preview_collapse({
+            let weak = Rc::downgrade(&controller);
+            move || {
+                if let Some(controller) = weak.upgrade() {
+                    controller.collapse(false);
                 }
             }
         });

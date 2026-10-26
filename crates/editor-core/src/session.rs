@@ -65,6 +65,7 @@ pub mod grid_preferences;
 pub mod groups;
 pub mod history;
 pub mod hollowing;
+pub mod instance_collapse;
 pub mod instance_contents;
 pub mod instance_extraction;
 pub mod instance_reference;
@@ -2493,6 +2494,7 @@ impl Session {
         self.reset_instance_contents();
         self.shutdown_sky3d_preview();
         self.shutdown_instance_extraction();
+        self.clear_instance_collapse();
         self.shutdown_sound_preview();
         self.cancel_compile_on_shutdown();
         if let Some(run) = self.game_run.take()
@@ -2513,6 +2515,7 @@ impl Session {
     pub(crate) fn instance_workers_busy(&self) -> bool {
         self.instance_contents.worker.busy()
             || self.instance_extraction.worker.busy()
+            || self.geometry.instance_collapse.worker.busy()
             || self.sky3d_preview.worker.busy()
     }
 
@@ -2694,6 +2697,11 @@ impl Session {
             .map_or(selected, |preview| {
                 preview.result.objects.iter().copied().collect()
             });
+        let selected = self
+            .geometry
+            .instance_collapse
+            .selection()
+            .map_or(selected, |ids| ids.iter().copied().collect());
         let selected = self
             .area_preview
             .as_ref()

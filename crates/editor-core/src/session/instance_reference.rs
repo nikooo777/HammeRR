@@ -127,6 +127,18 @@ struct Form {
 }
 
 impl Session {
+    pub(super) fn retire_clean_instance_reference(&mut self, actor: Actor) -> Result<(), String> {
+        if let Some(form) = &self.instance_reference.form {
+            self.instance_reference_form(form.token, Some(actor))?;
+            if form.values != form.original {
+                return Err(
+                    "Apply or cancel edited instance reference fields before collapse".into(),
+                );
+            }
+            self.cancel_instance_reference(actor, form.token)?;
+        }
+        Ok(())
+    }
     fn instance_reference_context(&self) -> Result<(), String> {
         if self.history_navigation_blocked().is_some()
             || self.property_draft.is_some()
@@ -326,7 +338,7 @@ impl Session {
         };
         json!({
             "token":form.token,"owner":form.owner.label(),"entity":form.entity.map(|id|format!("entity:{id}")),
-            "mode":if form.entity.is_some(){"edit"}else{"create"},"valid":error.is_none() && presence_error.is_none(),"error":error,
+            "mode":if form.entity.is_some(){"edit"}else{"create"},"modified":form.values!=form.original,"valid":error.is_none() && presence_error.is_none(),"error":error,
             "file":form.values[0],"origin":form.values[1],"angles":form.values[2],
             "origin_components":components(&form.values[1]),"angle_components":components(&form.values[2]),
             "source":form.path.as_ref().map(|path|path.display().to_string()),

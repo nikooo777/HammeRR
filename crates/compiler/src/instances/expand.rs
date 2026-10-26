@@ -149,6 +149,9 @@ impl<'a> Expansion<'a> {
         let positions = targets.positions(&mut self.work, self.control)?;
         child_admission(&child, self.control, &positions)
             .map_err(|error| format!("Instance {relative}: {error}"))?;
+        if matches!(self.purpose, PreparationPurpose::Collapse) {
+            collapse::child(&child).map_err(|error| format!("Instance {relative}: {error}"))?;
+        }
         drop(positions);
         let ignored = child
             .world
@@ -447,7 +450,7 @@ impl<'a> Expansion<'a> {
                     })?;
                 } else {
                     for solid in entity.solids.iter().filter(|solid| !solid.hidden) {
-                        self.solid(
+                        let generated = self.solid(
                             tx,
                             solid,
                             true,
@@ -457,6 +460,12 @@ impl<'a> Expansion<'a> {
                             local_sides.as_mut(),
                             displacement_sides.as_mut(),
                         )?;
+                        if matches!(self.purpose, PreparationPurpose::Collapse) {
+                            let ObjectId::Entity(id) = generated else {
+                                unreachable!()
+                            };
+                            tx.entity_mut(id)?.editor = entity.editor.clone();
+                        }
                     }
                 }
             }
@@ -1086,7 +1095,7 @@ impl<'a> Expansion<'a> {
         transforms: &[edit::Transform],
         local_sides: Option<&mut BTreeMap<u32, u32>>,
         mut displacement_sides: Option<&mut BTreeMap<u32, u32>>,
-    ) -> Result<(), EditError> {
+    ) -> Result<ObjectId, EditError> {
         self.control.checkpoint().map_err(EditError::Invalid)?;
         self.objects = self.objects.saturating_add(1 + usize::from(detail));
         self.sides = self.sides.saturating_add(original.sides.len());
@@ -1132,7 +1141,9 @@ impl<'a> Expansion<'a> {
         });
         let mut solid = original.clone();
         solid.id = tx.new_object_id()?;
-        solid.editor = None;
+        if !matches!(self.purpose, PreparationPurpose::Collapse) {
+            solid.editor = None;
+        }
         self.provenance.insert(
             format!("solid:{}", solid.id),
             (owner, relative.to_owned(), original.id, None),
@@ -1178,7 +1189,7 @@ impl<'a> Expansion<'a> {
             }
             .map_err(EditError::Invalid)?;
         }
-        Ok(())
+        Ok(id)
     }
 
     pub fn finish(mut self) -> ExpandedSources {

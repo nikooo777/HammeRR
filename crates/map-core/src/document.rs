@@ -212,6 +212,13 @@ impl Document {
 
     /// An independent draft with the same identity/revision state and no edit history.
     pub fn preview_snapshot(&self) -> Self {
+        let mut snapshot = self.preview_snapshot_uncached();
+        snapshot.context_cache = self.context_cache.clone();
+        snapshot.context_fingerprint = self.context_fingerprint.clone();
+        snapshot
+    }
+
+    pub fn preview_snapshot_uncached(&self) -> Self {
         Self {
             vmf: self.vmf.clone(),
             undo: Vec::new(),
@@ -221,8 +228,8 @@ impl Document {
             next_object_id: self.next_object_id,
             next_side_id: self.next_side_id,
             next_visgroup_id: self.next_visgroup_id,
-            context_cache: self.context_cache.clone(),
-            context_fingerprint: self.context_fingerprint.clone(),
+            context_cache: OnceLock::new(),
+            context_fingerprint: OnceLock::new(),
         }
     }
 

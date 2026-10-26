@@ -1,6 +1,70 @@
 use super::*;
 use std::sync::{Arc, Mutex};
 
+fn wait_for_collapse(controller: &Controller, shared: &SharedSession) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while lock(shared).get_instance_collapse()["worker_active"] == true {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "collapse worker did not finish"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    controller.refresh_admitted(shared);
+}
+
+#[test]
+fn software_instance_collapse_callbacks_preview_cancel_apply_and_undo_the_shared_draft() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: false,
+        },
+    )))
+    .unwrap();
+    let (_directory, game, parent, _child) = crate::test_assets::instance_map(false);
+    let mut session = Session::new(Ok(game));
+    session.open(Actor::User, &parent, true).unwrap();
+    let owner = session
+        .document()
+        .vmf()
+        .entities
+        .iter()
+        .find(|entity| entity.classname() == Some("func_instance"))
+        .unwrap()
+        .id;
+    let source = session.document().vmf().clone();
+    let history = session.document().undo_labels().count();
+    let shared = Arc::new(Mutex::new(session));
+    let controller = Controller::new(shared.clone()).unwrap();
+    controller.open(Some(owner));
+    assert!(controller.window.get_can_collapse());
+    controller.window.invoke_preview_collapse();
+    wait_for_collapse(&controller, &shared);
+    assert!(controller.window.get_collapse_active());
+    assert!(controller.window.get_ready());
+    assert_eq!(lock(&shared).document().vmf(), &source);
+    controller
+        .window
+        .window()
+        .set_size(slint::PhysicalSize::new(800, 950));
+    crate::ui::tests::save_ui_snapshot(controller.window.window(), "instance-collapse-review");
+    controller.window.invoke_cancel();
+    assert_eq!(lock(&shared).render_document().vmf(), &source);
+    controller.open(Some(owner));
+    controller.window.invoke_preview_collapse();
+    wait_for_collapse(&controller, &shared);
+    let shown = lock(&shared).render_document().vmf().clone();
+    controller.window.invoke_apply();
+    wait_for_collapse(&controller, &shared);
+    assert_eq!(lock(&shared).document().vmf(), &shown);
+    assert_eq!(lock(&shared).document().undo_labels().count(), history + 1);
+    lock(&shared).undo(Actor::User).unwrap();
+    assert_eq!(lock(&shared).document().vmf(), &source);
+    controller.stop_timer();
+}
+
 #[test]
 fn software_instance_reference_callbacks_share_creation_edits_and_expire_picker_results() {
     slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(

@@ -550,6 +550,13 @@ impl Entity {
         }
     }
 
+    pub fn layout_storage_bytes(&self) -> usize {
+        self.layout
+            .0
+            .len()
+            .saturating_mul(std::mem::size_of::<Slot>())
+    }
+
     pub fn classname(&self) -> Option<&str> {
         self.properties.get("classname")
     }

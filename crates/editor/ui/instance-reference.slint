@@ -32,7 +32,7 @@ component ReferenceVector inherits HorizontalLayout {
 }
 
 export component InstanceReferenceWindow inherits Window {
-    title: root.edit-mode ? "Edit instance reference - HammeRR" : "Instance reference - HammeRR";
+    title: root.collapse-active ? "Collapse all references - HammeRR" : root.edit-mode ? "Edit instance reference - HammeRR" : "Instance reference - HammeRR";
     preferred-width: 760px;
     preferred-height: 690px;
     background: #20242b;
@@ -40,6 +40,8 @@ export component InstanceReferenceWindow inherits Window {
     in property <bool> owned;
     in property <bool> ready;
     in property <bool> shared-form;
+    in property <bool> collapse-active;
+    in property <bool> can-collapse;
     in property <string> source;
     in property <string> status;
     in property <string> contents;
@@ -58,6 +60,7 @@ export component InstanceReferenceWindow inherits Window {
     callback check-file();
     callback review();
     callback refresh-contents();
+    callback preview-collapse();
     callback apply();
     callback cancel();
     forward-focus: dialog-focus;
@@ -68,42 +71,46 @@ export component InstanceReferenceWindow inherits Window {
         VerticalLayout {
             padding: 22px;
             spacing: 14px;
-            Text { text: root.edit-mode ? "Edit instance reference" : "Create instance reference"; font-size: 23px; font-weight: 600; color: #e1e7ef; }
+            Text { text: root.collapse-active ? "Collapse all references" : root.edit-mode ? "Edit instance reference" : "Create instance reference"; font-size: 23px; font-weight: 600; color: #e1e7ef; }
             Text { text: root.source; color: #9eafc5; wrap: word-wrap; font-size: 12px; }
+            if !root.collapse-active: VerticalLayout {
+            spacing: 14px;
             Text { text: "VMF reference"; color: #cbd6e4; }
             HorizontalLayout {
                 spacing: 8px;
-                LineEdit { text <=> root.file; enabled: root.owned; placeholder-text: "parts/arch.vmf"; edited => { root.edited(0); } }
-                Button { text: "Browse…"; enabled: root.owned; clicked => { root.browse(); } }
+                LineEdit { text <=> root.file; enabled: root.owned && !root.collapse-active; placeholder-text: "parts/arch.vmf"; edited => { root.edited(0); } }
+                Button { text: "Browse…"; enabled: root.owned && !root.collapse-active; clicked => { root.browse(); } }
             }
             ReferenceVector {
-                label: "Position"; label-x: "X"; label-y: "Y"; label-z: "Z"; enabled: root.owned;
+                label: "Position"; label-x: "X"; label-y: "Y"; label-z: "Z"; enabled: root.owned && !root.collapse-active;
                 value-x <=> root.origin-x; value-y <=> root.origin-y; value-z <=> root.origin-z;
                 edited => { root.edited(1); }
             }
             if root.raw-origin != "": Text { text: "Invalid stored Position: " + root.raw-origin; color: #efb28a; wrap: word-wrap; }
             ReferenceVector {
-                label: "Rotation"; label-x: "Pitch"; label-y: "Yaw"; label-z: "Roll"; enabled: root.owned;
+                label: "Rotation"; label-x: "Pitch"; label-y: "Yaw"; label-z: "Roll"; enabled: root.owned && !root.collapse-active;
                 value-x <=> root.pitch; value-y <=> root.yaw; value-z <=> root.roll;
                 edited => { root.edited(2); }
             }
             if root.raw-angles != "": Text { text: "Invalid stored Rotation: " + root.raw-angles; color: #efb28a; wrap: word-wrap; }
+            }
             HorizontalLayout {
                 spacing: 8px;
-                Button { text: "Check file"; enabled: root.owned; clicked => { root.check-file(); } }
-                if root.shared-form: Button { text: "Review shared form"; clicked => { root.review(); } }
+                if !root.collapse-active: Button { text: "Check file"; enabled: root.owned; clicked => { root.check-file(); } }
+                if root.shared-form: Button { text: root.collapse-active ? "Review collapse" : "Review shared form"; clicked => { root.review(); } }
             }
             Text { text: root.status; color: #e4c19d; wrap: word-wrap; }
-            Button { text: "Refresh instance contents"; clicked => { root.refresh-contents(); } }
+            if !root.collapse-active: Button { text: "Refresh instance contents"; clicked => { root.refresh-contents(); } }
+            if root.edit-mode && !root.collapse-active: Button { text: "Preview collapse all references…"; enabled: root.can-collapse; clicked => { root.preview-collapse(); } }
             Text { text: root.contents; color: #a9bed5; wrap: word-wrap; }
             Rectangle { vertical-stretch: 1; }
-            Text { text: "File checks confirm path and presence only. Refresh or Compile validates committed child contents.\nFour helper levels · root-relative paths · world and func_detail brushes\nNo child editing, replacements or search fallback."; color: #9eafc5; wrap: word-wrap; font-size: 12px; }
+            Text { text: root.collapse-active ? "Converts every visible reference recursively to editable world/detail brushes and terrain. Reference markers and their color/layout are removed; child object settings remain. Hidden root references and child files stay intact. Unsupported child content stops the whole batch. Apply is one Undo step." : "File checks confirm path and presence only. Refresh or Compile validates committed child contents.\nFour helper levels · root-relative paths · world and func_detail brushes\nNo child editing, replacements or search fallback."; color: #9eafc5; wrap: word-wrap; font-size: 12px; }
             if root.message != "": Text { text: root.message; color: #f0b377; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 8px;
-                Button { text: "Cancel"; clicked => { root.cancel(); } }
+                Button { text: root.collapse-active ? "Cancel collapse" : "Cancel"; clicked => { root.cancel(); } }
                 Rectangle { horizontal-stretch: 1; }
-                Button { text: root.edit-mode ? "Apply" : "Create"; enabled: root.ready && root.owned; clicked => { root.apply(); } }
+                Button { text: root.collapse-active ? "Apply collapse" : root.edit-mode ? "Apply" : "Create"; enabled: root.ready && root.owned; clicked => { root.apply(); } }
             }
         }
     }

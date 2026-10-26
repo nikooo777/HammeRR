@@ -89,6 +89,10 @@ impl Session {
             ("model_choice", self.model_browser.close_draft()),
             ("instance_reference", self.instance_reference.close_draft()),
             (
+                "instance_collapse",
+                self.geometry.instance_collapse.close_draft(),
+            ),
+            (
                 "instance_extraction",
                 self.instance_extraction.close_draft(),
             ),
@@ -185,6 +189,7 @@ impl Session {
                 "contents": self.instance_contents.close_work(),
                 "sky3d": self.sky3d_preview.close_work(),
                 "extraction": self.instance_extraction.close_work(),
+                "collapse": self.geometry.instance_collapse.close_work(),
                 "definitions": self.definitions_load.close_work(),
                 "recovery": self.recovery.close_work(),
                 "native_cleanup_error": self.native_cleanup_error,

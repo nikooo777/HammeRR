@@ -30,6 +30,39 @@ Compile supported contents of saved child VMFs into a parent map.
 Compiler support does not imply a full parent viewport preview of each child entity.
 Read [instance contents](instance-contents.md) for display limits.
 
+## Collapse references into editable geometry
+
+1. Select a visible reference and open **Edit instance reference…**.
+2. Apply or cancel any edited reference fields first.
+3. Click **Preview collapse all references…**.
+4. Inspect the materialized geometry and world/detail/terrain counts.
+5. Click **Apply collapse**, or **Cancel collapse** to discard the preview.
+
+![Two collapsed arches; one arch's individual brushes are selected](images/collapsed-assembly.png)
+
+This converts **every visible root reference**, recursively, in one Undo step.
+Selection does not limit the batch. Hidden root references and child files stay
+unchanged. **Review collapse** transfers an idle shared preview to you before
+Apply or Cancel. Source or dependency changes require a new preview.
+
+Collapse supports world and ordinary `func_detail` brushes and checked terrain
+through the same four-level preparation used by compilation. Child object color
+and logical layout remain attached to the new objects. Each detail brush becomes
+an individual `func_detail` owner. Reference markers are
+removed, consuming their file, transform, name, marker color and marker layout.
+Child file version/view settings remain local to the unchanged child files;
+the parent's settings stay authoritative.
+
+Lights, props, other child entities, hidden child content, groups/layers, saved
+atlas regions, nondefault child world settings and custom metadata require
+separate preservation rules and refuse the whole batch. Reference group/layer
+membership, attached notes and incoming bindings also refuse. The preview
+reports fresh object IDs and bounded original leaf-face provenance.
+
+Use a UTF-8 path for the saved parent. Snapshot and plan storage each cap at
+64 MiB. Input text and metadata cap at 8 MiB and 131,072 items; work limits can
+refuse smaller maps.
+
 ## Keep saved atlas regions in a child
 
 1. Open the child VMF and [save named atlas regions](atlas-texturing.md#save-and-reuse-named-regions).

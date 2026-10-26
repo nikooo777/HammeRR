@@ -11,6 +11,7 @@ use crate::{Control, Diagnostic, FileIdentity, FileStamp, Report};
 
 mod bindings;
 pub(crate) mod brush_models;
+mod collapse;
 mod cubemaps;
 mod editor_metadata;
 mod entities;
@@ -743,6 +744,7 @@ pub enum BrushModelPreparation {
 #[derive(Clone, Copy)]
 enum PreparationPurpose<'a> {
     Reference,
+    Collapse,
     Compile(&'a source_formats::gamefs::GameFs, bool),
 }
 
@@ -894,6 +896,28 @@ pub fn resolve<'a>(
     report: &mut Report,
 ) -> Result<PreparedInstances<'a>, Diagnostic> {
     resolve_purpose(vmf, source, control, report, PreparationPurpose::Reference)
+}
+
+pub fn resolve_for_collapse<'a>(
+    vmf: &'a Vmf,
+    source: Option<&SourceContext>,
+    control: &Control,
+    report: &mut Report,
+) -> Result<PreparedInstances<'a>, Diagnostic> {
+    for helper in vmf
+        .entities
+        .iter()
+        .filter(|entity| !entity.hidden && is_instance(entity))
+    {
+        collapse::helper(helper).map_err(|message| {
+            Diagnostic::error(
+                message,
+                Some(format!("entity:{}", helper.id)),
+                helper.origin(),
+            )
+        })?;
+    }
+    resolve_purpose(vmf, source, control, report, PreparationPurpose::Collapse)
 }
 
 /// Resolve material-aware expanded geometry for inspection.

@@ -170,6 +170,19 @@ The same tools accept multiple isolated planar displacements and mixed flat targ
 Every prepared and native sample must lie on the common projection plane, with straight quad borders. Each terrain base must be separate from every other terrain base. Touching or overlapping bounds and visible instance references reject.
 The fit follows actual displaced coordinates. Refit after moving the plane; rebind can switch between eligible flat and terrain sources.
 
+## Collapse all visible references
+
+Call `get_instance_collapse`, then `set_instance_collapse` with
+`action:"prepare"` and its `snapshot`. This recursively converts every visible
+root reference in one batch; there is no selected-only mode.
+Inspect counts, fresh object IDs and original leaf-face provenance.
+Use `action:"apply"` with the owned `token`, or `action:"cancel"` to discard it.
+`action:"review"` transfers an idle draft to a fresh token.
+Prepare and Apply accept optional `background:true`; poll the getter for completion.
+Apply rechecks the original saved parent and dependency bytes before one Undo edit.
+Reference markers and their validated color/layout are consumed; child object
+editor fields stay attached. Unsupported child content refuses the whole batch.
+
 ## Selection defaults
 
 Selection defaults use `get_selection_defaults` and `set_selection_defaults`.
@@ -298,6 +311,7 @@ These groups locate the available operations.
 | [Instance contents](instance-contents.md) | `inspect_instance_contents`, `set_instance_contents` |
 | [Instance extraction](instance-extraction.md) | `get_instance_extraction`, `set_instance_extraction` |
 | [Instance authoring](instance-authoring.md) | `get_instance_reference`, `set_instance_reference` |
+| [Collapse references](instances.md#collapse-references-into-editable-geometry) | `get_instance_collapse`, `set_instance_collapse` |
 | [Linked paths](path-authoring.md) | `get_linked_path`, `set_linked_path` |
 | [Materials and face textures](textures.md) | `apply_surface_placement`, `begin_surface_placement_pick`, `begin_texture_stroke`, `browse_materials`, `cancel_face_preview`, `cancel_surface_placement`, `cancel_texture_stroke`, `commit_face_preview`, `commit_texture_stroke`, `edit_faces`, `find_material_faces`, `get_face_selection`, `get_material_search`, `get_material_source`, `get_surface_placement`, `get_surface_placement_sources`, `get_surface_sample`, `get_texture_stroke`, `paint_face_texture`, `pick_surface_placement`, `preview_material`, `preview_surface_placement`, `project_face_group`, `propagate_face_texture`, `reload_material_assets`, `reload_material_favorites`, `replace_materials`, `sample_face_texture`, `search_materials`, `select_faces`, `select_material_faces`, `set_material`, `set_material_favorite`, `update_texture_stroke`, `vary_face_uv` |
 | [Measurements](measurements.md) | `get_measurements`, `set_measurement` |

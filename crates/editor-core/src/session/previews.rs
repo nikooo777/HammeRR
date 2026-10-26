@@ -5,6 +5,7 @@ mod tests;
 
 #[derive(Default)]
 pub(super) struct State {
+    pub(super) instance_collapse: instance_collapse::State,
     pub(super) entity_placement: entity_placement::State,
     pub(super) primitives: primitives::State,
     pub(super) repeat: repeat::State,
@@ -22,8 +23,9 @@ pub(super) struct State {
 
 impl State {
     pub(super) fn document<'a>(&'a self, committed: &'a Document) -> &'a Document {
-        self.entity_placement
+        self.instance_collapse
             .document()
+            .or_else(|| self.entity_placement.document())
             .or_else(|| {
                 self.primitives
                     .preview
@@ -92,6 +94,7 @@ impl State {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Kind {
+    InstanceCollapse,
     EntityPlacement,
     Paste,
     Repeat,
@@ -152,6 +155,9 @@ impl Session {
     }
 
     pub(super) fn clear_geometry_previews_except(&mut self, retained: &[Kind]) {
+        if !retained.contains(&Kind::InstanceCollapse) {
+            self.clear_instance_collapse();
+        }
         if !retained.contains(&Kind::EntityPlacement) {
             self.clear_entity_placement();
         }

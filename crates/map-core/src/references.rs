@@ -1,7 +1,10 @@
 use std::collections::BTreeMap;
 use std::ops::Range;
 
-use source_formats::fgd::Catalog;
+use source_formats::fgd::{Catalog, Class};
+
+mod checked;
+pub use checked::{CollapseCatalog, admit_collapse_snapshot, has_incoming_checked};
 
 use crate::{Document, EditError, Transaction, connections};
 
@@ -55,11 +58,149 @@ fn reference_kind(kind: &str) -> bool {
     matches!(kind, "target_destination" | "target_name_or_class")
 }
 
-pub fn scan(document: &Document, catalog: &Catalog) -> Vec<Reference> {
-    let mut references = Vec::new();
+#[derive(Clone, Copy)]
+enum BorrowedLocation<'a> {
+    Property {
+        index: usize,
+        key: &'a str,
+    },
+    Connection {
+        index: usize,
+        output: &'a str,
+        field: usize,
+    },
+}
+
+struct BorrowedReference<'a> {
+    source: u32,
+    location: BorrowedLocation<'a>,
+    value: &'a str,
+    target: &'a str,
+    span: Range<usize>,
+    declared: bool,
+    certain: bool,
+    reason: &'a str,
+    hidden: bool,
+}
+
+impl BorrowedReference<'_> {
+    fn to_owned(&self) -> Reference {
+        Reference {
+            source: self.source,
+            location: match self.location {
+                BorrowedLocation::Property { index, key } => Location::Property {
+                    index,
+                    key: key.into(),
+                },
+                BorrowedLocation::Connection {
+                    index,
+                    output,
+                    field,
+                } => Location::Connection {
+                    index,
+                    output: output.into(),
+                    field,
+                },
+            },
+            value: self.value.into(),
+            target: self.target.into(),
+            span: self.span.clone(),
+            declared: self.declared,
+            certain: self.certain,
+            reason: self.reason.into(),
+            hidden: self.hidden,
+        }
+    }
+}
+
+fn incoming_match(source: u32, value: &str, declared: bool, target: u32, name: &str) -> bool {
+    if value == "!self" && declared {
+        source == target
+    } else if declared {
+        connections::name_matches(name, value)
+    } else {
+        !name.is_empty() && value.eq_ignore_ascii_case(name)
+    }
+}
+
+fn properties_work(entity: &source_formats::vmf::Entity, key: &str) -> usize {
+    entity.properties.0.iter().fold(0usize, |work, (name, _)| {
+        work.saturating_add(name.len())
+            .saturating_add(key.len())
+            .saturating_add(1)
+    })
+}
+
+struct ScanWork<'a> {
+    remaining: usize,
+    checkpoint: Option<&'a mut dyn FnMut() -> Result<(), String>>,
+}
+
+impl ScanWork<'_> {
+    fn properties(
+        &mut self,
+        entity: &source_formats::vmf::Entity,
+        key: &str,
+    ) -> Result<(), String> {
+        if self.checkpoint.is_some() {
+            self.charge(properties_work(entity, key))?;
+        }
+        Ok(())
+    }
+
+    fn charge(&mut self, amount: usize) -> Result<(), String> {
+        if let Some(checkpoint) = &mut self.checkpoint {
+            checkpoint()?;
+            self.remaining = self
+                .remaining
+                .checked_sub(amount)
+                .ok_or("Reference inspection exceeds its work limit")?;
+        }
+        Ok(())
+    }
+}
+
+fn scan_visit<'a>(
+    document: &'a Document,
+    class: &impl Fn(&str) -> Option<&'a Class>,
+    catalog_work: (usize, usize),
+    work: &mut ScanWork<'_>,
+    visit: &mut impl FnMut(BorrowedReference<'_>, &mut ScanWork<'_>) -> Result<bool, String>,
+) -> Result<bool, String> {
+    let lookup = |name: &str, work: &mut ScanWork<'_>| {
+        work.charge(
+            catalog_work
+                .0
+                .saturating_add(catalog_work.1.saturating_mul(name.len())),
+        )?;
+        Ok::<_, String>(class(name))
+    };
+    let checked = work.checkpoint.is_some();
+    let target_work = if checked {
+        document.vmf().entities.iter().fold(0usize, |sum, entity| {
+            sum.saturating_add(properties_work(entity, "targetname"))
+                .saturating_add(1)
+        })
+    } else {
+        0
+    };
     for entity in &document.vmf().entities {
-        let class = entity.classname().and_then(|name| catalog.class(name));
+        work.properties(entity, "classname")?;
+        let class = entity
+            .classname()
+            .map(|name| lookup(name, work))
+            .transpose()?
+            .flatten();
         for (index, (key, value)) in entity.properties.0.iter().enumerate() {
+            if let Some(class) = class.filter(|_| checked) {
+                work.charge(class.properties.iter().fold(0usize, |sum, property| {
+                    sum.saturating_add(property.name.len())
+                        .saturating_add(key.len())
+                        .saturating_add(1)
+                }))?;
+            } else {
+                work.charge(1)?;
+            }
             let property = class.and_then(|class| class.property(key));
             if key.eq_ignore_ascii_case("targetname")
                 || key.eq_ignore_ascii_case("classname")
@@ -68,6 +209,7 @@ pub fn scan(document: &Document, catalog: &Catalog) -> Vec<Reference> {
             {
                 continue;
             }
+            work.charge(value.len().saturating_add(key.len()))?;
             let parent = key.eq_ignore_ascii_case("parentname");
             let target = if parent {
                 value
@@ -80,45 +222,55 @@ pub fn scan(document: &Document, catalog: &Catalog) -> Vec<Reference> {
                 parent || property.is_some_and(|property| reference_kind(&property.kind));
             let mut certain = declared;
             let mut reason = if certain {
-                property.map_or_else(
-                    || "Parent reference".into(),
-                    |property| property.label.clone(),
-                )
+                property.map_or("Parent reference", |property| property.label.as_str())
             } else {
-                "Text match; this property is not declared as an entity reference".into()
+                "Text match; this property is not declared as an entity reference"
             };
             if property.is_some_and(|property| property.read_only) {
                 certain = false;
-                reason = "Read-only FGD property; review manually".into();
+                reason = "Read-only FGD property; review manually";
             }
-            if property.is_some_and(|property| property.kind == "target_name_or_class")
-                && document.vmf().entities.iter().any(|entity| {
-                    entity
+            if property.is_some_and(|property| property.kind == "target_name_or_class") {
+                for other in &document.vmf().entities {
+                    work.properties(other, "classname")?;
+                    work.charge(target.len())?;
+                    if other
                         .classname()
                         .is_some_and(|name| name.eq_ignore_ascii_case(target))
-                })
-            {
-                certain = false;
-                reason = "May address an entity class rather than a name; review manually".into();
+                    {
+                        certain = false;
+                        reason = "May address an entity class rather than a name; review manually";
+                        break;
+                    }
+                }
             }
-            references.push(Reference {
-                source: entity.id,
-                location: Location::Property {
-                    index,
-                    key: key.clone(),
+            if visit(
+                BorrowedReference {
+                    source: entity.id,
+                    location: BorrowedLocation::Property { index, key },
+                    value,
+                    target,
+                    span: 0..target.len(),
+                    declared,
+                    certain,
+                    reason,
+                    hidden: entity.hidden,
                 },
-                value: value.clone(),
-                target: target.into(),
-                span: 0..target.len(),
-                declared,
-                certain,
-                reason,
-                hidden: entity.hidden,
-            });
+                work,
+            )? {
+                return Ok(true);
+            }
         }
         for (index, connection) in entity.connections.iter().flatten().enumerate() {
+            work.charge(
+                connection
+                    .value
+                    .len()
+                    .saturating_add(connection.output.len())
+                    .saturating_add(1),
+            )?;
             let separator = connections::separator(connection);
-            let fields: Vec<_> = connection.value.split(separator).collect();
+            let fields: Vec<_> = connection.value.split(separator).take(6).collect();
             for field in [0, 2] {
                 let Some(target) = fields.get(field).filter(|target| !target.is_empty()) else {
                     continue;
@@ -130,52 +282,106 @@ pub fn scan(document: &Document, catalog: &Catalog) -> Vec<Reference> {
                 } else if fields[1].eq_ignore_ascii_case("SetParent") {
                     true
                 } else {
-                    let targets = connections::targets(document, entity.id, fields[0]);
-                    !targets.is_empty()
-                        && targets.iter().all(|id| {
+                    work.charge(
+                        target_work.saturating_add(
                             document
-                                .entity(*id)
-                                .and_then(|entity| entity.classname())
-                                .and_then(|name| catalog.class(name))
-                                .and_then(|class| {
-                                    class
-                                        .inputs
-                                        .iter()
-                                        .find(|input| input.name.eq_ignore_ascii_case(fields[1]))
-                                })
-                                .is_some_and(|input| reference_kind(&input.kind))
-                        })
+                                .vmf()
+                                .entities
+                                .len()
+                                .saturating_mul(fields[0].len()),
+                        ),
+                    )?;
+                    let targets = connections::targets(document, entity.id, fields[0]);
+                    let mut certain = !targets.is_empty();
+                    for id in targets {
+                        work.charge(document.vmf().entities.len())?;
+                        let Some(target_entity) = document.entity(id) else {
+                            certain = false;
+                            break;
+                        };
+                        work.properties(target_entity, "classname")?;
+                        let target_class = target_entity
+                            .classname()
+                            .map(|name| lookup(name, work))
+                            .transpose()?
+                            .flatten();
+                        if let Some(target_class) = target_class.filter(|_| checked) {
+                            work.charge(target_class.inputs.iter().fold(0usize, |sum, input| {
+                                sum.saturating_add(input.name.len())
+                                    .saturating_add(fields[1].len())
+                                    .saturating_add(1)
+                            }))?;
+                        }
+                        if !target_class
+                            .and_then(|class| {
+                                class
+                                    .inputs
+                                    .iter()
+                                    .find(|input| input.name.eq_ignore_ascii_case(fields[1]))
+                            })
+                            .is_some_and(|input| reference_kind(&input.kind))
+                        {
+                            certain = false;
+                            break;
+                        }
+                    }
+                    certain
                 };
                 let start = fields[..field]
                     .iter()
                     .map(|value| value.len() + separator.len_utf8())
                     .sum();
-                references.push(Reference {
-                    source: entity.id,
-                    location: Location::Connection {
-                        index,
-                        output: connection.output.clone(),
-                        field,
+                if visit(
+                    BorrowedReference {
+                        source: entity.id,
+                        location: BorrowedLocation::Connection {
+                            index,
+                            output: &connection.output,
+                            field,
+                        },
+                        value: &connection.value,
+                        target,
+                        span: start..start + target.len(),
+                        declared: field == 0 || certain,
+                        certain,
+                        reason: if fields.len() != 5 {
+                            "Malformed imported connection; review manually"
+                        } else if field == 0 {
+                            "Output target"
+                        } else if certain {
+                            "Entity reference in the input parameter"
+                        } else {
+                            "Parameter text match; its reference semantics are unknown"
+                        },
+                        hidden: entity.hidden,
                     },
-                    value: connection.value.clone(),
-                    target: (*target).into(),
-                    span: start..start + target.len(),
-                    declared: field == 0 || certain,
-                    certain,
-                    reason: if fields.len() != 5 {
-                        "Malformed imported connection; review manually".into()
-                    } else if field == 0 {
-                        "Output target".into()
-                    } else if certain {
-                        "Entity reference in the input parameter".into()
-                    } else {
-                        "Parameter text match; its reference semantics are unknown".into()
-                    },
-                    hidden: entity.hidden,
-                });
+                    work,
+                )? {
+                    return Ok(true);
+                }
             }
         }
     }
+    Ok(false)
+}
+
+pub fn scan(document: &Document, catalog: &Catalog) -> Vec<Reference> {
+    let mut references = Vec::new();
+    let mut work = ScanWork {
+        remaining: 0,
+        checkpoint: None,
+    };
+    scan_visit(
+        document,
+        &|name| catalog.class(name),
+        (0, 0),
+        &mut work,
+        &mut |reference, _| {
+            references.push(reference.to_owned());
+            Ok(false)
+        },
+    )
+    .expect("Unbounded reference collection is infallible");
     references
 }
 
@@ -189,13 +395,13 @@ pub fn incoming(
     Ok(scan(document, catalog)
         .into_iter()
         .filter(|reference| {
-            if reference.target == "!self" && reference.declared {
-                reference.source == target
-            } else if reference.declared {
-                connections::name_matches(name, &reference.target)
-            } else {
-                !name.is_empty() && reference.target.eq_ignore_ascii_case(name)
-            }
+            incoming_match(
+                reference.source,
+                &reference.target,
+                reference.declared,
+                target,
+                name,
+            )
         })
         .collect())
 }

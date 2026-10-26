@@ -79,6 +79,7 @@ fn clear(window: &BakedPropVerticesWindow, state: &RefCell<State>) {
     window.set_selected("No stored color selected".into());
     window.set_statistics("".into());
     window.set_channels("".into());
+    window.set_can_frame(false);
     window.set_previous_props(false);
     window.set_next_props(false);
     window.set_previous_sections(false);
@@ -113,6 +114,11 @@ fn source_text(association: &Value, historical: bool, compact: bool) -> String {
 }
 
 fn present(window: &BakedPropVerticesWindow, report: &Value) {
+    window.set_can_frame(
+        report["build"]["current"] == true
+            && report["build"]["status"] == "current"
+            && report["selected_prop"]["ordinal"].is_u64(),
+    );
     window.set_build_state(build_text(&report["build"]).into());
     window.set_channels(
         report["channels"]
@@ -338,6 +344,40 @@ fn inspect(
     }
 }
 
+fn frame_prop(
+    window: &BakedPropVerticesWindow,
+    session: &mut Session,
+    state: &RefCell<State>,
+) -> Result<(), String> {
+    if !current(window, session, state) {
+        return Err("Refresh the current prop inspection before framing".into());
+    }
+    let (token, ordinal) = {
+        let state = state.borrow();
+        let report = state
+            .report
+            .as_ref()
+            .ok_or("Inspect compiled props first")?;
+        let token = report["build"]["token"]
+            .as_str()
+            .ok_or("Refresh the retained build token")?
+            .to_owned();
+        let ordinal = report["selected_prop"]["ordinal"]
+            .as_u64()
+            .and_then(|value| u32::try_from(value).ok())
+            .ok_or("Choose a native prop row")?;
+        (token, ordinal)
+    };
+    session.frame_compiled_prop_origin(
+        crate::session::Actor::User,
+        token,
+        ordinal,
+        window.get_aspect(),
+    )?;
+    window.set_diagnostics(format!("Framed native prop {ordinal} origin with a 16-unit half-extent. Selection is unchanged.").into());
+    Ok(())
+}
+
 fn handler(
     window: &BakedPropVerticesWindow,
     access: &DocumentAccess,
@@ -401,6 +441,20 @@ pub(super) fn bind(
     window.on_page_vertices(handler(&window, access, &state, |n| {
         Action::Page("vertices", n)
     }));
+    window.on_frame_prop_origin({
+        let (window, target, state) = (window.as_weak(), access.downgrade(), state.clone());
+        move || {
+            let Some(window) = window.upgrade() else {
+                return;
+            };
+            let result = target.upgrade().and_then(|target| {
+                target.with_session(|session| frame_prop(&window, session, &state))
+            });
+            if let Err(error) = result {
+                window.set_diagnostics(error.into());
+            }
+        }
+    });
     window.on_close_dialog({
         let window = window.as_weak();
         move || {
@@ -413,6 +467,10 @@ pub(super) fn bind(
 }
 
 impl Form {
+    pub(super) fn set_aspect(&self, aspect: f32) {
+        self.window.set_aspect(aspect);
+    }
+
     pub(super) fn hide_window(&self, errors: &mut Vec<String>) {
         crate::ui::hide_window("Baked prop vertices", self.window.window(), errors);
     }

@@ -402,6 +402,18 @@ fn no_owner_and_a_successful_non_baked_owner_have_explicit_empty_states() {
     assert_eq!(report["vertices"]["returned"], 0);
     assert_eq!(report["source_associations"]["status"], "available");
     assert_eq!(report["selected_prop"]["ordinal"], 0);
+    let camera = session.camera();
+    let framed = session
+        .frame_compiled_prop_origin(Actor::User, token(&report), 0, 1.)
+        .unwrap();
+    assert_eq!(
+        framed.inspection.report["props"]["rows"][0]["status"],
+        "disabled_by_prop"
+    );
+    session
+        .frame_compiled_prop_origin(Actor::Agent, token(&report), 1, 1.)
+        .unwrap();
+    session.set_camera(camera);
     assert!(
         report["channels"]
             .as_array()
@@ -668,4 +680,150 @@ fn one_bounce_world_vtf_mutation_keeps_old_rows_and_original_captured_settings()
     assert_eq!(after["bake"]["source_closure"], "changed");
     assert_eq!(after["historical"], true);
     assert_eq!(after["vertices"]["rows"], before["vertices"]["rows"]);
+}
+
+#[test]
+fn compiled_prop_origin_framing_preserves_projection_native_identity_and_owned_state() {
+    let (_directory, mut session, source) = compiled(false);
+    let report = session
+        .inspect_baked_prop_vertices(&Query::default())
+        .unwrap()
+        .report;
+    let build_token = token(&report);
+    session.compiled.as_mut().unwrap().static_prop_origins =
+        Err("Association intentionally unavailable".into());
+    session
+        .begin_property_edit(crate::session::PropertyTarget::World)
+        .unwrap();
+    let draft = session.property_draft().unwrap().token;
+    session
+        .append_property_change(
+            draft,
+            crate::session::PropertyChange::Set {
+                key: "skyname".into(),
+                value: "unapplied_prop_frame".into(),
+            },
+        )
+        .unwrap();
+    let preserved = (
+        session.document.vmf().clone(),
+        session.history_snapshot(),
+        session.selected_ids(),
+        json!(session.property_draft()),
+        std::fs::read(&source).unwrap(),
+    );
+    for (index, projection) in [
+        render::Projection::Perspective,
+        render::Projection::Top,
+        render::Projection::Front,
+        render::Projection::Side,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        session.set_projection(Actor::User, projection);
+        let ordinal = [0, 1, 2, 0][index];
+        let origin = Vec3::new([-64., 0., 64., -64.][index], 0., 32.);
+        let actor = if index % 2 == 0 {
+            Actor::User
+        } else {
+            Actor::Agent
+        };
+        let frame = session
+            .frame_compiled_prop_origin(actor, build_token.clone(), ordinal, 1.7)
+            .unwrap();
+        assert_eq!(
+            frame.inspection.report["props"]["rows"][0]["ordinal"],
+            ordinal
+        );
+        assert_eq!(
+            frame.inspection.report["props"]["rows"][0]["source_association"]["status"],
+            "unavailable"
+        );
+        assert_eq!(
+            frame.bounds,
+            [
+                (origin - Vec3::splat(16.)).to_array(),
+                (origin + Vec3::splat(16.)).to_array()
+            ]
+        );
+        assert_eq!(frame.camera.projection, projection);
+        let matrix = frame.camera.view_projection(1.7);
+        let center = matrix * origin.extend(1.);
+        let ndc = center.truncate() / center.w;
+        assert!(center.w > 0. && ndc.x.abs() < 0.001 && ndc.y.abs() < 0.001);
+        for bits in 0..8 {
+            let point = Vec3::new(
+                frame.bounds[usize::from(bits & 1 != 0)][0],
+                frame.bounds[usize::from(bits & 2 != 0)][1],
+                frame.bounds[usize::from(bits & 4 != 0)][2],
+            );
+            let clip = matrix * point.extend(1.);
+            let ndc = clip.truncate() / clip.w;
+            assert!(clip.w > 0. && ndc.is_finite() && ndc.x.abs() <= 1.001 && ndc.y.abs() <= 1.001);
+        }
+        assert_eq!(
+            (
+                session.document.vmf().clone(),
+                session.history_snapshot(),
+                session.selected_ids(),
+                json!(session.property_draft()),
+                std::fs::read(&source).unwrap()
+            ),
+            preserved
+        );
+    }
+    let camera = session.camera();
+    for (requested, prop, aspect) in [
+        ("foreign".to_owned(), 0, 1.),
+        (build_token.clone(), 3, 1.),
+        (build_token.clone(), 0, f32::NAN),
+        (build_token.clone(), 0, 0.),
+        (build_token.clone(), 0, 101.),
+    ] {
+        assert!(
+            session
+                .frame_compiled_prop_origin(Actor::Agent, requested, prop, aspect)
+                .is_err()
+        );
+        assert_eq!(session.camera(), camera);
+    }
+    session
+        .preview_block(glam::DVec3::ZERO, glam::DVec3::splat(32.))
+        .unwrap();
+    let preview = session.block_preview;
+    assert!(
+        session
+            .frame_compiled_prop_origin(Actor::User, build_token.clone(), 0, 1.)
+            .unwrap_err()
+            .contains("viewport")
+    );
+    assert_eq!(session.block_preview, preview);
+    assert_eq!(session.camera(), camera);
+    session.cancel_block_preview();
+    let output = session.compiled.as_ref().unwrap().path.clone();
+    let bytes = std::fs::read(&output).unwrap();
+    std::fs::write(&output, b"replaced").unwrap();
+    assert!(
+        session
+            .frame_compiled_prop_origin(Actor::User, build_token.clone(), 0, 1.)
+            .is_err()
+    );
+    assert_eq!(session.camera(), camera);
+    std::fs::write(output, bytes).unwrap();
+    session
+        .update_build_settings(
+            Actor::User,
+            BuildSettingsUpdate {
+                bounces: Some(1),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert!(
+        session
+            .frame_compiled_prop_origin(Actor::User, build_token, 0, 1.)
+            .is_err()
+    );
+    assert_eq!(session.camera(), camera);
 }

@@ -88,6 +88,27 @@ impl EditorServer {
     }
 
     #[tool(
+        description = "Frame one emitted native static-prop origin from the current successful owned build. Require build_token and zero-based prop ordinal from inspect_baked_prop_vertices; optional aspect defaults to 1 and must be finite 0.01–100. Reuses bounded owned BSP/native-table inspection and current source/output guards. Disabled/non-baked receivers can frame; unavailable source association does not remove a valid native origin. Uses a fixed 16-unit half-extent around the point, not model/mesh/collision bounds or current source-object resolution. Preserves projection, selection, map/history/settings and ordinary drafts. Stale/missing/replaced/out-of-range data or active viewport work refuses before camera mutation. UI: Baked prop vertices → select prop → Frame prop origin."
+    )]
+    pub(in crate::mcp) fn frame_compiled_prop_origin(
+        &self,
+        Parameters(args): Parameters<FrameCompiledPropOriginArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let aspect = args.aspect.unwrap_or(1.0);
+            let frame = self.session().frame_compiled_prop_origin(
+                Actor::Agent,
+                args.build_token,
+                args.prop,
+                aspect,
+            )?;
+            Ok(
+                json!({"build":frame.inspection.report["build"],"record":frame.inspection.report["props"]["rows"][0],"framed_bounds":frame.bounds,"point_half_extent":crate::session::baked_prop_vertices::FRAME_HALF_EXTENT,"aspect":aspect,"camera":camera_json(&frame.camera)}),
+            )
+        })
+    }
+
+    #[tool(
         description = "Inspect exact native world-light records from this Session's last successful owned BSP, shared with Build settings… / Build details… → Inspect compiled lights…. CPU-only and read-only, with no path, exposure, camera or source-selection argument. Returns captured current/stale/unavailable build provenance, independent LDR/HDR table status and pages of at most 64 native records with ordinal, kind/code, origin, intensity, normal, cluster, style, cone dots, exponent, radius, attenuation, signed flags, texinfo and owner. Values are stored native fields, not screen brightness. Each point/spot row includes source_association: available with captured root entity ID or outer helper, leaf file, original entity ID, build-local expanded entity ID and occurrence (ordered authored helper/file steps through every nested level); otherwise unavailable with a reason. Associations are paired with exact native channel count/digest and retain historical source identity, without resolving against the current document. Repeated same-file/same-ID leaf entities retain distinct captured helper routes. Other native kinds and absent/inconsistent metadata remain explicitly unassociated. Unknown kind codes remain exact. Start without build_token only at offset0; retain the returned opaque token for subsequent channel/page requests. Wrong tokens, malformed arguments and invalid ranges reject. Fullbright and unbaked HDR are explicit; a valid lit channel can contain zero records without implying runtime HDR readiness. Intact stale output remains historical; changed/corrupt output clears rows and totals. Pending drafts are not baked and survive inspection. Source freshness covers the committed map/settings and retained guards, not every world material/texture. Original asset-directory changes conservatively mark source evidence stale. No native game or viewport shading.",
         annotations(read_only_hint = true)
     )]

@@ -579,42 +579,26 @@ impl Session {
         if !matches!(target, Target::Leaf { .. } | Target::Portal { .. }) {
             return Err("Choose compiled leaf bounds or a portal to frame".into());
         }
-        if !aspect.is_finite() || !(0.01..=100.0).contains(&aspect) {
-            return Err("Viewport aspect must be finite and between 0.01 and 100".into());
-        }
+        super::inspection_framing::validate_aspect(aspect)?;
         let report = self.inspect_compiled_visibility(&Query {
             build_token: Some(build_token),
             target,
             ..Query::default()
         })?;
         let [mins, maxs] = report.current_bounds()?.map(DVec3::from_array);
-        let camera = self
-            .camera
-            .frame_bounds(mins.as_vec3(), maxs.as_vec3(), aspect);
-        if !camera.position.is_finite()
-            || !camera.view_projection(aspect).is_finite()
-            || !camera.yaw_degrees.is_finite()
-            || !camera.pitch_degrees.is_finite()
-            || !camera.fov_y_degrees.is_finite()
-            || !camera.ortho_height.is_finite()
-        {
-            return Err("Compiled visibility cannot be framed with the current camera".into());
-        }
+        let camera = self.inspection_frame_camera(
+            mins.as_vec3(),
+            maxs.as_vec3(),
+            aspect,
+            "Compiled visibility",
+        )?;
         self.set_camera(camera);
         self.log(actor, "Frame compiled visibility bounds");
         Ok(report)
     }
 
     fn visibility_view_ready(&self) -> Result<(), String> {
-        if self.viewport_pick_conflict()
-            || self.measurement_picking()
-            || self.linked_path_picking()
-            || self.block_preview.is_some()
-            || self.clip_drag.is_some()
-        {
-            return Err("Finish or cancel the active viewport gesture or block preview before framing or showing compiled visibility".into());
-        }
-        Ok(())
+        self.inspection_viewport_ready("framing or showing compiled visibility")
     }
 
     pub fn preflight_compiled_visibility(&mut self) {

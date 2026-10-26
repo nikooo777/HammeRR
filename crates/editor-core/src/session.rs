@@ -31,6 +31,7 @@ mod buffer_replacement;
 pub mod compiled_visibility;
 pub mod compiled_world_lights;
 mod document_close;
+mod inspection_framing;
 #[cfg(test)]
 mod launch_custody_tests;
 #[cfg(test)]

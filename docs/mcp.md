@@ -309,6 +309,16 @@ Static child `env_fog_controller` entities use ordinary create/property/save ope
 
 Valid editor-only atlas catalogs can stay in child maps. Their metadata is checked and excluded from expanded geometry and BSPs. Unknown top-level metadata and invalid catalogs reject.
 
+`frame_compiled_prop_origin` requires the current `build_token` and native
+`prop` ordinal from `inspect_baked_prop_vertices`. Optional `aspect` defaults to
+1 and must be finite from 0.01 through 100. It returns the exact native `record`,
+`build`, `framed_bounds`, `point_half_extent:16`, `aspect` and `camera`. The
+32-unit point frame preserves projection, selection, map/history/settings and
+ordinary drafts; it reports no model bounds or source-object resolution.
+Disabled/non-baked props and unavailable source associations can still frame
+valid native origins. Stale, missing, replaced or out-of-range owned data and
+active viewport work refuse before camera mutation.
+
 `inspect_baked_prop_vertices` returns captured authored source addresses in each
 `props.rows[].source_association` and in `selected_prop.source_association`,
 including disabled props without color files. Available associations contain
@@ -384,7 +394,7 @@ These groups locate the available operations.
 | [3D sky preview](sky.md) | `get_3d_sky_preview`, `set_3d_sky_preview` |
 | [Terrain](terrain.md) | `begin_terrain_move_drag`, `begin_terrain_stroke`, `break_terrain_stroke`, `cancel_terrain_move_handles`, `cancel_terrain_stroke`, `clear_terrain_triangle_highlight`, `create_terrain`, `enable_terrain_move_handles`, `finish_terrain_move_drag`, `finish_terrain_stroke`, `frame_terrain_triangles`, `frame_terrain_vertices`, `get_terrain_creation`, `get_terrain_grids`, `get_terrain_move_handles`, `get_terrain_stroke`, `get_terrain_triangle_highlight`, `get_terrain_triangles`, `get_terrain_vertex_mask`, `get_terrain_vertices`, `get_terrain_volume_triangles`, `get_terrain_volume_vertices`, `highlight_terrain_triangles`, `highlight_terrain_vertices`, `pick_terrain_triangle`, `pick_terrain_vertex`, `preview_terrain_blend`, `preview_terrain_collision`, `preview_terrain_resolution`, `preview_terrain_sculpt`, `preview_terrain_sew`, `preview_terrain_smoothing`, `preview_terrain_subdivision`, `preview_terrain_triangle_tags`, `preview_terrain_vertex_move`, `remove_terrain`, `select_terrain_triangles_in_volume`, `select_terrain_vertices_in_volume`, `update_terrain_move_drag`, `update_terrain_stroke` |
 | [Transform pivots](brushes.md) | `transform_pivot_pick`, `transform_pivot_grid` |
-| [Cameras, rendering and inspection](basics.md) | `clear_pointfile`, `cycle_object_hit`, `delete_camera_view`, `frame_compiled_world_light`, `frame_pointfile`, `get_camera`, `get_camera_views`, `get_fog_preview`, `get_lighting_preview`, `get_normal_map_preview`, `get_object_hit_candidates`, `get_pointfile`, `get_rope_preview`, `inspect_baked_lightmaps`, `inspect_baked_prop_vertices`, `inspect_compiled_world_lights`, `inspect_sky_assets`, `load_pointfile`, `navigate_pointfile`, `pick_at_pixel`, `raycast`, `rename_camera_view`, `render_view`, `restore_camera_view`, `save_camera_view`, `set_camera`, `set_fog_preview`, `set_view` |
+| [Cameras, rendering and inspection](basics.md) | `clear_pointfile`, `cycle_object_hit`, `delete_camera_view`, `frame_compiled_prop_origin`, `frame_compiled_world_light`, `frame_pointfile`, `get_camera`, `get_camera_views`, `get_fog_preview`, `get_lighting_preview`, `get_normal_map_preview`, `get_object_hit_candidates`, `get_pointfile`, `get_rope_preview`, `inspect_baked_lightmaps`, `inspect_baked_prop_vertices`, `inspect_compiled_world_lights`, `inspect_sky_assets`, `load_pointfile`, `navigate_pointfile`, `pick_at_pixel`, `raycast`, `rename_camera_view`, `render_view`, `restore_camera_view`, `save_camera_view`, `set_camera`, `set_fog_preview`, `set_view` |
 | [Working region](working-region.md) | `get_editor_visibility`, `get_working_region`, `set_editor_visibility`, `set_working_region` |
 | [Compiled visibility](visibility.md) | `frame_compiled_visibility`, `inspect_compiled_visibility`, `set_compiled_visibility_overlay` |
 

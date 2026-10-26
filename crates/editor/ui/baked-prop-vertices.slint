@@ -6,6 +6,8 @@ export component BakedPropVerticesWindow inherits Window {
     height: 900px;
     in-out property <string> channel: "LDR";
     in-out property <int> prop-limit: 32;
+    in property <float> aspect: 1;
+    in property <bool> can-frame;
     in property <string> build-state;
     in property <string> channels;
     in property <string> selected;
@@ -30,6 +32,7 @@ export component BakedPropVerticesWindow inherits Window {
     callback page-props(int);
     callback page-sections(int);
     callback page-vertices(int);
+    callback frame-prop-origin();
     callback close-dialog();
     forward-focus: keys;
     keys := FocusScope {
@@ -77,6 +80,8 @@ export component BakedPropVerticesWindow inherits Window {
                         Rectangle { horizontal-stretch: 1; }
                     }
                     Text { text: root.selected; wrap: word-wrap; }
+                    Button { text: "Frame prop origin"; enabled: root.can-frame; clicked => { root.frame-prop-origin(); } }
+                    Text { text: "Frames a 32-unit box around the emitted native origin, not model or collision bounds. Selection stays unchanged."; wrap: word-wrap; color: #bac2ce; }
                     Text { text: "Vertex colors"; font-size: 18px; font-weight: 600; }
                     Text { text: "Local index · hardware index · R · G · B · A"; }
                     Text { text: root.vertex-page; }

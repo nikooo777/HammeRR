@@ -130,6 +130,17 @@ fn baked_prop_vertices_controls_inspect_real_pages_channels_disabled_props_and_s
     assert!(window.get_selected().contains("LOD 1"));
     window.invoke_inspect_prop(0);
     assert_eq!(window.get_vertex_rows().row_count(), 0);
+    controller.set_aspect(1.7);
+    assert!(window.get_can_frame());
+    let camera = lock(&shared).camera();
+    window.invoke_frame_prop_origin();
+    assert!(window.get_diagnostics().contains("Framed native prop 0"));
+    assert_ne!(lock(&shared).camera(), camera);
+    let framed = lock(&shared).camera();
+    let clip = framed.view_projection(1.7) * glam::Vec3::new(-64., 0., 32.).extend(1.);
+    let ndc = clip.truncate() / clip.w;
+    assert!(clip.w > 0. && ndc.x.abs() < 0.001 && ndc.y.abs() < 0.001);
+    lock(&shared).set_camera(camera);
     assert!(
         window
             .get_selected()
@@ -157,6 +168,7 @@ fn baked_prop_vertices_controls_inspect_real_pages_channels_disabled_props_and_s
     assert_eq!(window.get_vertex_rows().row_count(), 0);
     window.invoke_refresh_inspection();
     assert!(window.get_build_state().contains("stale"));
+    assert!(!window.get_can_frame());
     assert!(
         window
             .get_selected()

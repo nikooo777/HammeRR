@@ -828,6 +828,7 @@ impl Controller {
     pub(crate) fn set_aspect(&self, aspect: f32) {
         self.compiled_lights.set_aspect(aspect);
         self.compiled_visibility.set_aspect(aspect);
+        self.baked_prop_vertices.set_aspect(aspect);
     }
 
     pub(crate) fn refresh_visible(&self, session: &Session) {

@@ -16,7 +16,7 @@ pub const MAX_CALL_BYTES: usize = 384 * 1024 * 1024;
 pub const MAX_METADATA_BYTES: usize = 32 * 1024 * 1024;
 pub const MAX_DIAGNOSTICS: usize = 64;
 pub const MAX_DIAGNOSTIC_BYTES: usize = baked_build::MAX_DIAGNOSTIC_BYTES;
-const FRAME_HALF_EXTENT: f32 = 16.0;
+const FRAME_HALF_EXTENT: f32 = super::inspection_framing::ORIGIN_HALF_EXTENT;
 const SOURCE_MODE: baked_build::SourceVerification =
     baked_build::SourceVerification::OriginalMetadata {
         maximum_bytes: MAX_METADATA_BYTES,
@@ -199,17 +199,8 @@ impl Session {
         aspect: f32,
     ) -> Result<FramedLight, String> {
         self.ensure_not_closing()?;
-        if !aspect.is_finite() || !(0.01..=100.0).contains(&aspect) {
-            return Err("Viewport aspect must be finite and between 0.01 and 100".into());
-        }
-        if self.viewport_pick_conflict()
-            || self.measurement_picking()
-            || self.linked_path_picking()
-            || self.block_preview.is_some()
-            || self.clip_drag.is_some()
-        {
-            return Err("Finish or cancel the active viewport gesture or block preview before framing a compiled light".into());
-        }
+        super::inspection_framing::validate_aspect(aspect)?;
+        self.inspection_viewport_ready("framing a compiled light")?;
         let inspection = self.inspect_compiled_world_lights(&Query {
             build_token: Some(build_token),
             channel,
@@ -219,16 +210,7 @@ impl Session {
         let origin = inspection.frame_origin(ordinal)?;
         let mins = origin - Vec3::splat(FRAME_HALF_EXTENT);
         let maxs = origin + Vec3::splat(FRAME_HALF_EXTENT);
-        let camera = self.camera.frame_bounds(mins, maxs, aspect);
-        if !camera.position.is_finite()
-            || !camera.view_projection(aspect).is_finite()
-            || !camera.yaw_degrees.is_finite()
-            || !camera.pitch_degrees.is_finite()
-            || !camera.fov_y_degrees.is_finite()
-            || !camera.ortho_height.is_finite()
-        {
-            return Err("Compiled light cannot be framed with the current camera".into());
-        }
+        let camera = self.inspection_frame_camera(mins, maxs, aspect, "Compiled light")?;
         self.set_camera(camera);
         self.log(
             actor,

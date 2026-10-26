@@ -72,6 +72,16 @@ pub(in crate::mcp) struct InspectBakedLightmapsArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub(in crate::mcp) struct FrameCompiledPropOriginArgs {
+    pub build_token: String,
+    /// Native zero-based static-prop ordinal, including disabled/non-baked receivers.
+    pub prop: u32,
+    /// Finite viewport aspect from 0.01 through 100; default 1.
+    pub aspect: Option<f32>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(in crate::mcp) struct InspectBakedPropVerticesArgs {
     /// Opaque successful-build token; required for explicit prop/section or nonzero page offsets.
     pub build_token: Option<String>,

@@ -2,14 +2,15 @@
 
 # Baked prop vertices
 
-Read the exact vertex-color bytes emitted for static props and their captured authored source addresses.
+Inspect captured static-prop sources and baked vertex colors.
 
-1. Enable **Bake static-prop vertex lighting** in **Build settings…**.
-2. Choose **Direct LDR** or **Direct LDR + HDR**.
-3. Compile.
-4. Open **Build details… → Inspect baked prop vertices…**.
-5. Choose **Channel**, a compiled prop and a hardware section.
-6. Read the source address above **Vertex colors**, then inspect the stored colors.
+1. To read colors, enable **Bake static-prop vertex lighting** in **Build settings…**.
+   Choose **Direct LDR** or **Direct LDR + HDR**.
+2. Compile. Source addresses and framing also work without baked colors.
+3. Open **Build details… → Inspect baked prop vertices…**.
+4. Choose a compiled prop. For colors, choose **Channel** and a hardware section.
+5. Read the captured source and **Vertex colors**.
+6. Click **Frame prop origin** to center its compiled position.
 
 Use **Previous props**, **Next props**, section controls and vertex controls to page through results.
 Use **Refresh inspection** after a new build or source change.
@@ -20,6 +21,12 @@ every nested helper/file occurrence, the original leaf entity ID and the expande
 ID used by that build. Repeated references to the same child remain distinct.
 Disabled props retain their source address even when they have no stored colors.
 **Historical source** describes the captured build after source changes.
+
+**Frame prop origin** centers a 32-unit point box. It keeps projection,
+selection, history and ordinary drafts. It works for disabled or unbaked props
+and does not need source metadata. It does not fit model bounds or select an
+authored object. Finish active viewport work first. Refresh or compile again
+after source changes.
 
 ## Limits
 

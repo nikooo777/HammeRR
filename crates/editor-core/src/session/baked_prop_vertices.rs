@@ -5,10 +5,13 @@ use serde_json::{Value, json};
 use source_formats::bsp::{Bsp, PakLimits};
 use source_formats::vhv;
 
-use super::{Session, baked_build};
+use super::{Actor, Session, baked_build};
+use glam::Vec3;
+use render::Camera;
 
 pub use super::baked_lightmaps::Channel;
 
+pub const FRAME_HALF_EXTENT: f32 = super::inspection_framing::ORIGIN_HALF_EXTENT;
 pub const MAX_PAGE_PROPS: usize = 32;
 pub const MAX_PAGE_SECTIONS: usize = 32;
 pub const MAX_PAGE_VERTICES: usize = 256;
@@ -51,8 +54,16 @@ impl Default for Query {
     }
 }
 
+#[derive(Debug)]
 pub struct Inspection {
     pub report: Value,
+}
+
+#[derive(Debug)]
+pub struct FramedProp {
+    pub inspection: Inspection,
+    pub bounds: [[f32; 3]; 2],
+    pub camera: Camera,
 }
 
 impl Query {
@@ -102,6 +113,63 @@ impl Query {
 }
 
 impl Session {
+    pub fn frame_compiled_prop_origin(
+        &mut self,
+        actor: Actor,
+        build_token: String,
+        prop: u32,
+        aspect: f32,
+    ) -> Result<FramedProp, String> {
+        self.ensure_not_closing()?;
+        super::inspection_framing::validate_aspect(aspect)?;
+        self.inspection_viewport_ready("framing a compiled prop origin")?;
+        let inspection = self.inspect_baked_prop_vertices(&Query {
+            build_token: Some(build_token),
+            prop: Some(prop),
+            prop_offset: usize::try_from(prop).map_err(|_| "Native prop ordinal is too large")?,
+            prop_limit: 1,
+            section_limit: 1,
+            vertex_limit: 1,
+            ..Query::default()
+        })?;
+        if inspection.report["build"]["current"] != true
+            || inspection.report["build"]["status"] != "current"
+        {
+            return Err("Framing requires a current successful owned build; refresh inspection or compile again".into());
+        }
+        let row = inspection.report["props"]["rows"]
+            .as_array()
+            .and_then(|rows| {
+                rows.iter()
+                    .find(|row| row["ordinal"].as_u64() == Some(u64::from(prop)))
+            })
+            .ok_or("Compiled prop ordinal is outside the native table")?;
+        let values = row["origin"]
+            .as_array()
+            .filter(|values| values.len() == 3)
+            .ok_or("Compiled prop origin is unavailable")?;
+        let mut origin = [0f32; 3];
+        for (component, value) in origin.iter_mut().zip(values) {
+            *component = value.as_f64().ok_or("Compiled prop origin is invalid")? as f32;
+        }
+        let origin = Vec3::from_array(origin);
+        if !origin.is_finite()
+            || origin.abs().max_element() > map_core::checks::SOURCE_COORDINATE_LIMIT as f32
+        {
+            return Err("Compiled prop origin must be finite and inside Source bounds".into());
+        }
+        let mins = origin - Vec3::splat(FRAME_HALF_EXTENT);
+        let maxs = origin + Vec3::splat(FRAME_HALF_EXTENT);
+        let camera = self.inspection_frame_camera(mins, maxs, aspect, "Compiled prop origin")?;
+        self.set_camera(camera);
+        self.log(actor, format!("framed compiled prop origin {prop}"));
+        Ok(FramedProp {
+            inspection,
+            bounds: [mins.to_array(), maxs.to_array()],
+            camera,
+        })
+    }
+
     pub fn baked_prop_vertex_build_state(&self) -> Value {
         let mut state = baked_build::build_state(self);
         if self.compiled.is_none() {

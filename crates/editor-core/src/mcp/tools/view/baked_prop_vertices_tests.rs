@@ -14,6 +14,14 @@ fn baked_prop_vertices_mcp_schema_and_real_publication_match_read_only_session()
     let schema = serde_json::to_value(schemars::schema_for!(InspectBakedPropVerticesArgs)).unwrap();
     assert_eq!(schema["additionalProperties"], false);
     assert!(schema["properties"]["path"].is_null());
+    for invalid in [
+        json!({}),
+        json!({"build_token":"1"}),
+        json!({"build_token":"1","prop":-1}),
+        json!({"build_token":"1","prop":0,"path":"foreign.bsp"}),
+    ] {
+        assert!(serde_json::from_value::<FrameCompiledPropOriginArgs>(invalid).is_err());
+    }
     let (directory, game, vmf) = test_support::fixture();
     let source = directory.path().join("maps/inspection.vmf");
     let output = directory.path().join("maps/inspection.bsp");
@@ -103,6 +111,22 @@ fn baked_prop_vertices_mcp_schema_and_real_publication_match_read_only_session()
                 .unwrap_or(false)
         );
     }
+    assert!(server.get_tool("frame_compiled_prop_origin").is_some());
+    let frame = server
+        .frame_compiled_prop_origin(Parameters(
+            serde_json::from_value(json!({"build_token":token,"prop":0,"aspect":1.7})).unwrap(),
+        ))
+        .unwrap();
+    assert!(!frame.is_error.unwrap_or(false));
+    let frame: Value = serde_json::from_str(&frame.content[0].as_text().unwrap().text).unwrap();
+    assert_eq!(frame["record"]["ordinal"], 0);
+    assert_eq!(frame["record"]["origin"], json!([-64., 0., 32.]));
+    assert_eq!(
+        frame["framed_bounds"],
+        json!([[-80., -16., 16.], [-48., 16., 48.]])
+    );
+    assert_eq!(frame["point_half_extent"], 16.);
+    lock(&shared).set_camera(before.2);
     assert!(!server.rendering_status()["initialized"].as_bool().unwrap());
     let session = lock(&shared);
     assert_eq!(

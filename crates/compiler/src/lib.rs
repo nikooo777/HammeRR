@@ -32,6 +32,7 @@ mod static_props;
 pub mod tree;
 mod visclusters;
 mod visibility;
+pub mod visibility_inspection;
 mod water;
 mod water_analog;
 pub mod water_assets;
@@ -659,6 +660,7 @@ fn serialize_elapsed<S: serde::Serializer>(
 
 #[derive(Debug)]
 pub struct Output {
+    pub visibility_inspection: Result<std::sync::Arc<visibility_inspection::Snapshot>, String>,
     pub world_light_origins: Option<std::sync::Arc<world_light_origins::WorldLightOrigins>>,
     pub face_origins: Result<std::sync::Arc<face_origins::FaceOrigins>, String>,
     pub instance_dependencies: Option<instances::DependencyGuard>,
@@ -1519,6 +1521,14 @@ fn build(
         face_origins,
         &mut output.report,
     )?;
+    let visibility_inspection = visibility_inspection::Pending::capture(
+        portals,
+        &emission.world_leaf_nodes,
+        &models[0].tree,
+        &visibility.clusters,
+        control,
+    );
+    control.checkpoint()?;
     let mut bsp = emission.bsp;
     if let Some(data) = bsp.occlusion().map_err(|error| error.to_string())? {
         output.stats.occluders = data.occluders.len();
@@ -1815,6 +1825,10 @@ fn build(
         .face_origins
         .and_then(|origins| origins.finish(&bsp))
         .map(std::sync::Arc::new);
+    output.visibility_inspection = visibility_inspection
+        .and_then(|pending| pending.finish(&bsp, control))
+        .map(std::sync::Arc::new);
+    control.checkpoint()?;
     output.bsp = Some(bsp);
     Ok(())
 }
@@ -1860,6 +1874,7 @@ pub fn compile_with_source_controlled(
 ) -> Output {
     let start = Instant::now();
     let mut output = Output {
+        visibility_inspection: Err("No successful compiler visibility mapping was retained".into()),
         world_light_origins: None,
         face_origins: Err("No successful face emission mapping was retained".into()),
         instance_dependencies: None,

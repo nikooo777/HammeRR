@@ -379,6 +379,7 @@ fn prepare_scene_refresh(
     options: &mut render::ViewOptions,
 ) -> Option<render::SceneKey> {
     session.preflight_instance_contents();
+    session.preflight_compiled_visibility();
     let view = session.view();
     let next = session.render_scene_key(view);
     if next == previous {

@@ -274,6 +274,7 @@ fn install_build(session: &mut Session, path: &Path, source: &Path) {
     let source_identity =
         compiler::FileIdentity::capture(source, &compiler::Control::default()).unwrap();
     session.compiled = Some(CompiledMap {
+        visibility_inspection: Err("Literal fixture has no compiler visibility mapping".into()),
         world_light_origins: None,
         prop_lighting_guard: None,
         static_prop_sources: None,

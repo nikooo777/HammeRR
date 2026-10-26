@@ -75,6 +75,7 @@ fn prepared_assets(
         output
     } else {
         compiler::Output {
+            visibility_inspection: Err("Literal fixture has no compiler visibility mapping".into()),
             world_light_origins: None,
             face_origins: Err("Fixture has no retained source mapping".into()),
             bsp: (!leak).then(Bsp::new),
@@ -104,6 +105,7 @@ fn prepared_assets(
     )
     .unwrap();
     session.compiled = Some(CompiledMap {
+        visibility_inspection: Err("Literal fixture has no compiler visibility mapping".into()),
         world_light_origins: None,
         prop_lighting_guard: None,
         static_prop_sources: None,

@@ -78,6 +78,7 @@ See [Status](status.md) for supported features and limits.
 - [Baked lightmaps](baked-lightmaps.md)
 - [Baked prop vertices](baked-prop-vertices.md)
 - [Compiled lights](compiled-lights.md)
+- [Visibility inspection](visibility.md)
 - [Model detail props](model-detail-props.md)
 - [Detail sprites](detail-sprites.md)
 - [Material detail scattering](material-detail-scattering.md)

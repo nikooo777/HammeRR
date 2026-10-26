@@ -180,6 +180,17 @@ fn native_bsp_quotient_preserves_geometry_visibility_and_unaffected_occlusion() 
         );
         let old_leaves = baseline.records::<Leaf>().unwrap();
         let new_leaves = result.records::<Leaf>().unwrap();
+        let topology = output.visibility_inspection.as_ref().unwrap();
+        topology
+            .validate(&result, &compiler::Control::default())
+            .unwrap();
+        for leaf in topology.leaves() {
+            assert_eq!(leaf.cluster, new_leaves[leaf.ordinal as usize].cluster);
+        }
+        assert!(topology.portals().iter().any(|portal| {
+            new_leaves[portal.leaves[0] as usize].cluster
+                == new_leaves[portal.leaves[1] as usize].cluster
+        }));
         assert_eq!(old_leaves.len(), new_leaves.len());
         let old_vis = baseline.visibility().unwrap().unwrap();
         let new_vis = result.visibility().unwrap().unwrap();

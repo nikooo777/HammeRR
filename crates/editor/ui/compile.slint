@@ -91,6 +91,7 @@ export component CompileWindow inherits Window {
     callback inspect-baked-lightmaps();
     callback inspect-baked-prop-vertices();
     callback inspect-compiled-lights();
+    callback inspect-visibility();
     callback close-dialog();
     callback change-lighting(int);
     callback change-physics(int);
@@ -247,6 +248,7 @@ export component CompileWindow inherits Window {
             padding-right: 24px;
             padding-top: 8px;
             Button { text: "Inspect compiled lights…"; clicked => { root.inspect-compiled-lights(); } }
+            Button { text: "Inspect visibility…"; clicked => { root.inspect-visibility(); } }
             Rectangle { horizontal-stretch: 1; }
         }
         HorizontalLayout {

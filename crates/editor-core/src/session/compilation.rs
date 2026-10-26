@@ -1461,6 +1461,7 @@ impl Session {
                     .map(|job| job.inspection_source.clone())
                     .unwrap_or_else(|| Err("Build source identity is unavailable".into()));
                 self.compiled = Some(CompiledMap {
+                    visibility_inspection: result.output.visibility_inspection.clone(),
                     world_light_origins: result.output.world_light_origins.clone(),
                     prop_lighting_guard,
                     static_prop_sources: result.static_prop_sources.clone(),
@@ -1492,6 +1493,8 @@ impl Session {
                         result.output.bsp.as_ref(),
                     ),
                 });
+                self.compiled_visibility = super::compiled_visibility::State::default();
+                self.scene_serial += 1;
             } else if result.output.leak.is_some()
                 && let Some(claim) = result.take_artifact_claim()
             {

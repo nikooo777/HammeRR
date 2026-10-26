@@ -91,6 +91,7 @@ impl OwnedFixture {
         let output = compiler::FileIdentity::capture(&self.output, &Control::default()).unwrap();
         let source = compiler::FileIdentity::capture(&self.source, &Control::default()).unwrap();
         self.session.compiled = Some(CompiledMap {
+            visibility_inspection: Err("Literal fixture has no compiler visibility mapping".into()),
             world_light_origins: None,
             claim: None,
             output_identity: Ok(output.clone()),

@@ -3,6 +3,65 @@ use super::super::*;
 #[tool_router(router = view_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
+        description = "Inspect compiler-owned visibility from this Session's last successfully published BSP. UI: Build details… → Inspect visibility…. No path argument. Start without build_token for summary; explicit targets {kind:leaf|cluster|portal,ordinal:N} and retained pages require its opaque token. Default target {kind:summary}; kind pvs (default) or pas decodes separate exact native rows. offset and visibility_offset page independently; limit 1–64. Summary pages world leaves, leaf pages incident portals, cluster pages member leaves, portal pages its two native endpoints and returns its complete bounded ring. Leaf boxes are native bounds, not convex cells. Original portal slots and final clusters survive authored coarsening, including internal same-cluster portals. Historical intact output remains explicitly stale; changed/corrupt/missing output clears rows/totals. Snapshot/map/settings/content/retained-source guards apply, not every world VMT. Drafts are not compiled. Read-only CPU inspection, no camera/selection/history changes.",
+        annotations(read_only_hint = true)
+    )]
+    pub(in crate::mcp) fn inspect_compiled_visibility(
+        &self,
+        Parameters(args): Parameters<InspectCompiledVisibilityArgs>,
+    ) -> ToolResult {
+        use crate::session::compiled_visibility::Query;
+        run(|| {
+            let defaults = Query::default();
+            let query = Query {
+                build_token: args.build_token,
+                target: args.target.unwrap_or(defaults.target),
+                kind: args.kind.unwrap_or(defaults.kind),
+                offset: args.offset.unwrap_or(0),
+                visibility_offset: args.visibility_offset.unwrap_or(0),
+                limit: args.limit.unwrap_or(defaults.limit),
+            };
+            let report = self.session().inspect_compiled_visibility(&query)?;
+            serde_json::to_value(report).map_err(|error| error.to_string())
+        })
+    }
+
+    #[tool(
+        description = "Frame one compiler-owned world-leaf bounds box or portal ring from inspect_compiled_visibility. Explicit build_token and target {kind:leaf|portal,ordinal:N} required; aspect defaults to1 (0.01–100). Rechecks owned BSP/source/snapshot before camera movement. Stale/missing/replaced/unavailable data, cluster/summary targets and active viewport gestures refuse. Preserves camera projection, selection, history and ordinary drafts. UI: Visibility inspection → Frame selection."
+    )]
+    pub(in crate::mcp) fn frame_compiled_visibility(
+        &self,
+        Parameters(args): Parameters<FrameCompiledVisibilityArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let inspection = session.frame_compiled_visibility(
+                Actor::Agent,
+                args.build_token,
+                args.target,
+                args.aspect.unwrap_or(1.0),
+            )?;
+            Ok(json!({"inspection":inspection,"camera":camera_json(&session.camera())}))
+        })
+    }
+
+    #[tool(
+        description = "Show ONE selected compiler-owned world-leaf bounds box or portal ring through the shared viewport guide state. Explicit build_token plus target {kind:leaf|portal,ordinal:N} required. Omit/null target to clear. Current owned output/source/snapshot required; stale/missing/replaced guides are suppressed. Bounds are not convex leaf cells. Preserves map/history/selection/ordinary drafts; active viewport gestures refuse showing. CPU state operation; no game or arbitrary file. UI: Visibility inspection → Show selected guide / Clear guide."
+    )]
+    pub(in crate::mcp) fn set_compiled_visibility_overlay(
+        &self,
+        Parameters(args): Parameters<SetCompiledVisibilityOverlayArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session().set_compiled_visibility_overlay(
+                Actor::Agent,
+                args.build_token,
+                args.target,
+            )
+        })
+    }
+
+    #[tool(
         description = "Frame one native POINT/SPOT light origin from the current successful owned build. Pass explicit build_token, channel ldr/hdr and zero-based native ordinal from inspect_compiled_world_lights; optional aspect defaults to 1 and must be 0.01–100. Rechecks the same bounded owned output and source guards before moving the camera. Returns build provenance, exact record, framing bounds and camera. Stale, replaced, missing, unbaked, out-of-range, global/unknown and out-of-world records refuse. Active viewport gestures and block previews refuse without cancellation. Preserves projection, map, selection, history, settings and ordinary drafts. The returned record includes any captured source association. No arbitrary path, source selection, guide or lighting preview. UI: Compiled lights → select point/spot record → Frame light."
     )]
     pub(in crate::mcp) fn frame_compiled_world_light(
@@ -509,5 +568,7 @@ impl EditorServer {
 
 #[cfg(test)]
 mod baked_prop_vertices_tests;
+#[cfg(test)]
+mod compiled_visibility_tests;
 #[cfg(test)]
 mod compiled_world_lights_tests;

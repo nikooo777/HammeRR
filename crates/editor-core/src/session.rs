@@ -28,6 +28,7 @@ mod baked_build;
 pub mod baked_lightmaps;
 pub mod baked_prop_vertices;
 mod buffer_replacement;
+pub mod compiled_visibility;
 pub mod compiled_world_lights;
 mod document_close;
 #[cfg(test)]
@@ -162,6 +163,7 @@ struct Snapshot {
 }
 
 struct CompiledMap {
+    visibility_inspection: Result<Arc<compiler::visibility_inspection::Snapshot>, String>,
     world_light_origins: Option<Arc<compiler::world_light_origins::WorldLightOrigins>>,
     claim: Option<crate::path_claims::Claim>,
     output_identity: Result<compiler::FileIdentity, String>,
@@ -351,6 +353,7 @@ pub struct Session {
     pending_launch: Option<LaunchOrigin>,
     launch_serial: u64,
     compiled: Option<CompiledMap>,
+    compiled_visibility: compiled_visibility::State,
     leak: Option<(Snapshot, compiler::Leak)>,
     game_run: Option<game::Run>,
     game_exit_reported: bool,
@@ -673,6 +676,7 @@ impl Session {
             pending_launch: None,
             launch_serial: 0,
             compiled: None,
+            compiled_visibility: compiled_visibility::State::default(),
             leak: None,
             game_run: None,
             game_exit_reported: false,
@@ -1552,6 +1556,7 @@ impl Session {
         self.saved_cameras = [None; 4];
         self.document_generation += 1;
         self.compiled = None;
+        self.compiled_visibility = compiled_visibility::State::default();
         self.compilation.retained_pointfile = None;
         self.file_claims.source = None;
         self.leak = None;
@@ -2659,6 +2664,7 @@ impl Session {
     }
 
     pub fn build_scene_for_view(&mut self, view: ViewOptions) -> SceneMesh {
+        self.preflight_compiled_visibility();
         let sky3d = self.sky3d_preview_scene();
         let skybox = self.skybox_preview_for(view);
         let selected: HashSet<ObjectId> = self.geometry.clip_preview.as_ref().map_or_else(
@@ -2878,6 +2884,7 @@ impl Session {
         self.append_entity_placement_guide(&mut mesh);
         self.append_volume_guide(&mut mesh);
         self.append_compile_region_guide(&mut mesh);
+        self.append_compiled_visibility_guide(&mut mesh);
         self.append_overlay_guide(&mut mesh);
         self.append_component_guides(&mut mesh);
         self.append_terrain_triangle_guides(&mut mesh);

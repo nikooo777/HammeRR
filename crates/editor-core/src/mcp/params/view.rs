@@ -2,6 +2,32 @@ use super::*;
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub(in crate::mcp) struct InspectCompiledVisibilityArgs {
+    pub build_token: Option<String>,
+    pub target: Option<crate::session::compiled_visibility::Target>,
+    pub kind: Option<crate::session::compiled_visibility::Kind>,
+    pub offset: Option<usize>,
+    pub visibility_offset: Option<usize>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(in crate::mcp) struct FrameCompiledVisibilityArgs {
+    pub build_token: String,
+    pub target: crate::session::compiled_visibility::Target,
+    pub aspect: Option<f32>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(in crate::mcp) struct SetCompiledVisibilityOverlayArgs {
+    pub build_token: Option<String>,
+    pub target: Option<crate::session::compiled_visibility::Target>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(in crate::mcp) struct InspectSkyAssetsArgs {}
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

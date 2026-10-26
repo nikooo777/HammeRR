@@ -84,6 +84,7 @@ const DEFAULT_RENDER_SIZE: (u32, u32) = (1024, 576);
 const MAX_RENDER_SIDE: u32 = 2048;
 
 const INSTRUCTIONS: &str = "\
+inspect_compiled_visibility reads owned compiler world-leaf/cluster joins, original portal rings and separate native PVS/PAS pages. Start with a summary, retain build_token for explicit leaf/cluster/portal targets and pages. frame_compiled_visibility and set_compiled_visibility_overlay share current-only framing and one selected leaf-bounds box or portal-ring guide with Build details → Inspect visibility; omit the overlay target to clear it. Native bounds are not exact leaf cells. Stale intact records are historical; changed output clears data and stale guides are suppressed. No file-path input or authored selection mapping. \
 HammeRR, a map editor for Counter-Strike: Source (Valve Source engine, Hammer-compatible VMF files). \
 The desktop HTTP server shares the live editor session; a stdio server owns a private \
 session. Edits use the session's shared undo history.\n\

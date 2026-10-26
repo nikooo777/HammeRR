@@ -1,5 +1,5 @@
 use glam::DVec3;
-use std::ops::Range;
+use std::ops::{ControlFlow, Range};
 
 use super::Occluder;
 
@@ -12,6 +12,31 @@ pub(super) const CONTACT_EPSILON: f64 = 1e-6;
 pub(super) enum Visit {
     Continue(f64),
     Stop,
+}
+
+#[derive(Clone, Copy)]
+enum Query {
+    Segment { start: DVec3, delta: DVec3 },
+    Bounds { mins: DVec3, maxs: DVec3 },
+}
+
+impl Query {
+    fn bounds(mins: DVec3, maxs: DVec3) -> Result<Self, String> {
+        if !mins.is_finite() || !maxs.is_finite() || !mins.cmple(maxs).all() {
+            return Err("Shadow query bounds must be finite and ordered".into());
+        }
+        Ok(Self::Bounds { mins, maxs })
+    }
+
+    fn overlaps(self, mins: DVec3, maxs: DVec3, limit: f64) -> bool {
+        match self {
+            Self::Segment { start, delta } => ray_box(start, delta, mins, maxs, limit),
+            Self::Bounds {
+                mins: low,
+                maxs: high,
+            } => low.cmple(maxs).all() && mins.cmple(high).all(),
+        }
+    }
 }
 
 fn ray_box(start: DVec3, delta: DVec3, mins: DVec3, maxs: DVec3, limit: f64) -> bool {
@@ -335,12 +360,49 @@ impl<T: ShadowObject> ShadowIndex<T> {
         if !start.is_finite() || !end.is_finite() {
             return Err("Shadow ray must be finite".into());
         }
-        if self.nodes.is_empty() {
-            return Ok(false);
-        }
         let delta = end - start;
-        if !delta.is_finite() {
+        if !self.nodes.is_empty() && !delta.is_finite() {
             return Err("Shadow ray arithmetic must be finite".into());
+        }
+        self.traverse(
+            Query::Segment { start, delta },
+            consume,
+            &mut |_, object| visitor(object),
+        )
+    }
+
+    /// Visits stored-box candidates; only Continue certifies complete enumeration, not geometry bounds.
+    pub(super) fn visit_bounds(
+        &self,
+        mins: DVec3,
+        maxs: DVec3,
+        consume: &mut impl FnMut(usize) -> Result<(), String>,
+        visitor: &mut impl FnMut(usize, &T) -> Result<ControlFlow<()>, String>,
+    ) -> Result<ControlFlow<()>, String> {
+        let query = Query::bounds(mins, maxs)?;
+        let stopped = self.traverse(query, consume, &mut |slot, object| {
+            Ok(match visitor(slot, object)? {
+                ControlFlow::Continue(()) => Visit::Continue(1.0),
+                ControlFlow::Break(()) => Visit::Stop,
+            })
+        })?;
+        consume(0)?;
+        Ok(if stopped {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        })
+    }
+
+    fn traverse(
+        &self,
+        query: Query,
+        consume: &mut impl FnMut(usize) -> Result<(), String>,
+        visitor: &mut impl FnMut(usize, &T) -> Result<Visit, String>,
+    ) -> Result<bool, String> {
+        if self.nodes.is_empty() {
+            consume(0)?;
+            return Ok(false);
         }
         let mut limit = 1.0;
         let mut pending = [0; STACK_SIZE];
@@ -349,7 +411,7 @@ impl<T: ShadowObject> ShadowIndex<T> {
             count -= 1;
             let node = &self.nodes[pending[count]];
             consume(1)?;
-            if !ray_box(start, delta, node.mins, node.maxs, limit) {
+            if !query.overlaps(node.mins, node.maxs, limit) {
                 continue;
             }
             if let Some([left, right]) = node.children {
@@ -360,15 +422,17 @@ impl<T: ShadowObject> ShadowIndex<T> {
                 pending[count + 1] = left;
                 count += 2;
             } else {
-                for &hull in &self.order[node.range.clone()] {
-                    let hull = &self.hulls[hull];
+                for &slot in &self.order[node.range.clone()] {
+                    let hull = &self.hulls[slot];
                     consume(1)?;
                     let (mins, maxs) = hull.bounds();
-                    if !ray_box(start, delta, mins, maxs, limit) {
+                    if !query.overlaps(mins, maxs, limit) {
                         continue;
                     }
-                    consume(hull.work())?;
-                    match visitor(hull)? {
+                    if matches!(query, Query::Segment { .. }) {
+                        consume(hull.work())?;
+                    }
+                    match visitor(slot, hull)? {
                         Visit::Stop => return Ok(true),
                         Visit::Continue(fraction) => limit = limit.min(fraction),
                     }
@@ -452,6 +516,27 @@ mod tests {
     use super::*;
     use map_core::Plane;
 
+    struct BoundsOnly {
+        mins: DVec3,
+        maxs: DVec3,
+    }
+
+    impl ShadowObject for BoundsOnly {
+        const MAX_OBJECTS: usize = MAX_OCCLUDERS;
+
+        fn bounds(&self) -> (DVec3, DVec3) {
+            (self.mins, self.maxs)
+        }
+
+        fn work(&self) -> usize {
+            panic!("Box enumeration must not charge an unperformed intersection");
+        }
+
+        fn intersects(&self, _: DVec3, _: DVec3) -> Result<bool, String> {
+            panic!("Box enumeration must not intersect geometry");
+        }
+    }
+
     fn cube(center: DVec3, half: f64) -> Occluder {
         let planes = [DVec3::X, DVec3::Y, DVec3::Z]
             .into_iter()
@@ -467,6 +552,253 @@ mod tests {
             center + DVec3::splat(half),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn box_candidates_keep_slots_touching_bounds_and_original_borrows() {
+        let boxes = [12.0, 2.0, 8.0, 0.0, 10.0, 4.0, 6.0, 14.0].map(|x| BoundsOnly {
+            mins: DVec3::new(x - 0.25, -0.25, -0.25),
+            maxs: DVec3::new(x + 0.25, 0.25, 0.25),
+        });
+        let index = ShadowIndex::new(boxes.into(), &mut |_| Ok(())).unwrap();
+        let mins = DVec3::new(2.25, 0.0, 0.0);
+        let maxs = DVec3::new(9.75, 0.0, 0.0);
+        for _ in 0..2 {
+            let mut slots = Vec::new();
+            let completion = index
+                .visit_bounds(mins, maxs, &mut |_| Ok(()), &mut |slot, object| {
+                    assert!(std::ptr::eq(object, &index.hulls[slot]));
+                    slots.push(slot);
+                    Ok(ControlFlow::Continue(()))
+                })
+                .unwrap();
+            assert_eq!(completion, ControlFlow::Continue(()));
+            assert_eq!(slots, [1, 5, 6, 2, 4]);
+        }
+        let mut inner = Vec::new();
+        let completion = index
+            .visit_bounds(
+                DVec3::new(mins.x.next_up(), 0.0, 0.0),
+                DVec3::new(maxs.x.next_down(), 0.0, 0.0),
+                &mut |_| Ok(()),
+                &mut |slot, _| {
+                    inner.push(slot);
+                    Ok(ControlFlow::Continue(()))
+                },
+            )
+            .unwrap();
+        assert_eq!(completion, ControlFlow::Continue(()));
+        assert_eq!(inner, [5, 6, 2]);
+        let mut work = 0;
+        let mut visits = 0;
+        let completion = index
+            .visit_bounds(
+                DVec3::splat(-20.0),
+                DVec3::splat(20.0),
+                &mut |amount| {
+                    work += amount;
+                    Ok(())
+                },
+                &mut |_, _| {
+                    visits += 1;
+                    Ok(ControlFlow::Continue(()))
+                },
+            )
+            .unwrap();
+        assert_eq!(completion, ControlFlow::Continue(()));
+        assert_eq!(visits, 8);
+        assert_eq!(work, 11);
+    }
+
+    #[test]
+    fn bundle_boxes_keep_off_axis_blockers_and_conservative_false_positives() {
+        let hulls = vec![
+            cube(DVec3::new(2.0, 0.0, 5.0), 0.25),
+            cube(DVec3::new(8.0, 0.0, 2.0), 0.25),
+        ];
+        let corners = [
+            DVec3::new(-10.0, -10.0, 10.0),
+            DVec3::new(-10.0, 10.0, 10.0),
+            DVec3::new(10.0, -10.0, 10.0),
+            DVec3::new(10.0, 10.0, 10.0),
+        ];
+        for hull in &hulls {
+            for endpoint in corners.into_iter().chain([DVec3::Z * 10.0]) {
+                assert!(!hull.intersects(DVec3::ZERO, endpoint).unwrap());
+            }
+        }
+        assert!(
+            hulls[0]
+                .intersects(DVec3::ZERO, DVec3::new(4.0, 0.0, 10.0))
+                .unwrap()
+        );
+        assert!(hulls[1].mins.x > hulls[1].maxs.z);
+        let index = ShadowIndex::new(hulls, &mut |_| Ok(())).unwrap();
+        let mut slots = Vec::new();
+        let completion = index
+            .visit_bounds(
+                DVec3::new(-10.0, -10.0, 0.0),
+                DVec3::new(10.0, 10.0, 10.0),
+                &mut |_| Ok(()),
+                &mut |slot, _| {
+                    slots.push(slot);
+                    Ok(ControlFlow::Continue(()))
+                },
+            )
+            .unwrap();
+        assert_eq!(completion, ControlFlow::Continue(()));
+        assert_eq!(slots, [0, 1]);
+    }
+
+    #[test]
+    fn bounds_visits_propagate_shared_limits_cancellation_and_callback_failure() {
+        use super::super::bake::Budget;
+        use crate::Control;
+
+        let empty = ShadowIndex::new(Vec::<BoundsOnly>::new(), &mut |_| Ok(())).unwrap();
+        let completion = empty
+            .visit_bounds(DVec3::ZERO, DVec3::ZERO, &mut |_| Ok(()), &mut |_, _| {
+                panic!("An empty index must have no candidates");
+            })
+            .unwrap();
+        assert_eq!(completion, ControlFlow::Continue(()));
+        let control = Control::default();
+        let mut budget = Budget::new(&control);
+        control.cancel().unwrap();
+        assert!(
+            empty
+                .visit_bounds(
+                    DVec3::ZERO,
+                    DVec3::ZERO,
+                    &mut |amount| budget.consume(amount),
+                    &mut |_, _| Ok(ControlFlow::Continue(())),
+                )
+                .is_err()
+        );
+        assert!(
+            empty
+                .blocked(DVec3::ZERO, DVec3::ZERO, &mut |amount| budget
+                    .consume(amount))
+                .is_err()
+        );
+        let index = ShadowIndex::new(vec![cube(DVec3::ZERO, 1.0); 2], &mut |_| Ok(())).unwrap();
+        let control = Control::default();
+        let mut budget = Budget::with_limit(&control, 2);
+        let mut visits = 0;
+        let result = index.visit_bounds(
+            DVec3::ZERO,
+            DVec3::ZERO,
+            &mut |amount| budget.consume(amount),
+            &mut |_, _| {
+                visits += 1;
+                Ok(ControlFlow::Continue(()))
+            },
+        );
+        assert!(result.unwrap_err().contains("shared 2 work-unit limit"));
+        assert_eq!(visits, 1);
+        for (cancel_on, stop) in [(1, false), (2, false), (1, true)] {
+            let control = Control::default();
+            let mut cancelled_budget = Budget::new(&control);
+            let mut visits = 0;
+            let result = index.visit_bounds(
+                DVec3::ZERO,
+                DVec3::ZERO,
+                &mut |amount| cancelled_budget.consume(amount),
+                &mut |_, _| {
+                    visits += 1;
+                    if visits == cancel_on {
+                        control.cancel()?;
+                    }
+                    Ok(if stop {
+                        ControlFlow::Break(())
+                    } else {
+                        ControlFlow::Continue(())
+                    })
+                },
+            );
+            assert!(result.is_err());
+            assert_eq!(visits, cancel_on);
+        }
+        let error = index
+            .visit_bounds(DVec3::ZERO, DVec3::ZERO, &mut |_| Ok(()), &mut |_, _| {
+                Err("provider refused".into())
+            })
+            .unwrap_err();
+        assert_eq!(error, "provider refused");
+        let result = index.visit_bounds(
+            DVec3::ZERO,
+            DVec3::ZERO,
+            &mut |amount| budget.consume(amount),
+            &mut |_, _| Ok(ControlFlow::Continue(())),
+        );
+        assert!(result.is_err());
+        for (mins, maxs) in [
+            (DVec3::splat(f64::NAN), DVec3::ONE),
+            (DVec3::ZERO, DVec3::splat(f64::INFINITY)),
+            (DVec3::X, DVec3::ZERO),
+        ] {
+            assert!(
+                empty
+                    .visit_bounds(mins, maxs, &mut |_| Ok(()), &mut |_, _| Ok(
+                        ControlFlow::Continue(())
+                    ))
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn bounds_visits_stop_at_the_fixed_traversal_stack_limit() {
+        let mut index = ShadowIndex::new(
+            (0..=STACK_SIZE)
+                .map(|_| BoundsOnly {
+                    mins: DVec3::ZERO,
+                    maxs: DVec3::ONE,
+                })
+                .collect(),
+            &mut |_| Ok(()),
+        )
+        .unwrap();
+        index.nodes = (0..=STACK_SIZE)
+            .map(|depth| Node {
+                mins: DVec3::ZERO,
+                maxs: DVec3::ONE,
+                range: 0..STACK_SIZE + 1 - depth,
+                children: (depth < STACK_SIZE).then_some([depth + 1, STACK_SIZE + 1 + depth]),
+            })
+            .chain((0..STACK_SIZE).map(|depth| Node {
+                mins: DVec3::ZERO,
+                maxs: DVec3::ONE,
+                range: STACK_SIZE - depth..STACK_SIZE + 1 - depth,
+                children: None,
+            }))
+            .collect();
+        let error = index
+            .visit_bounds(DVec3::ZERO, DVec3::ONE, &mut |_| Ok(()), &mut |_, _| {
+                panic!("Stack exhaustion must refuse before reaching this deep leaf");
+            })
+            .unwrap_err();
+        assert_eq!(error, "Shadow traversal stack limit exceeded");
+    }
+
+    #[test]
+    fn shared_traversal_preserves_dynamic_segment_limits() {
+        let index = ShadowIndex::new(
+            (1..=8)
+                .map(|i| cube(DVec3::X * (i * 2) as f64, 0.5))
+                .collect(),
+            &mut |_| Ok(()),
+        )
+        .unwrap();
+        let mut visits = 0;
+        let stopped = index
+            .visit(DVec3::ZERO, DVec3::X * 20.0, &mut |_| Ok(()), &mut |_| {
+                visits += 1;
+                Ok(Visit::Continue(0.1))
+            })
+            .unwrap();
+        assert!(!stopped);
+        assert_eq!(visits, 1);
     }
 
     #[test]

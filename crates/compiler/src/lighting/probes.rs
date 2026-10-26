@@ -131,7 +131,7 @@ fn candidates(
         if blocked
             || ctx
                 .prop_bounds
-                .blocked(point, point, &mut |work| budget.consume(work))?
+                .contains_point(point, &mut |work| budget.consume(work))?
         {
             continue;
         }

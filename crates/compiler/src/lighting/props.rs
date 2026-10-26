@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
+    ops::ControlFlow,
     sync::Arc,
 };
 
@@ -178,6 +179,20 @@ impl ShadowIndex<PropTriangle> {
 pub(super) struct ProbeBounds {
     mins: DVec3,
     maxs: DVec3,
+}
+
+impl ShadowIndex<ProbeBounds> {
+    pub(super) fn contains_point(
+        &self,
+        point: DVec3,
+        consume: &mut impl FnMut(usize) -> Result<(), String>,
+    ) -> Result<bool, String> {
+        Ok(self
+            .visit_bounds(point, point, consume, &mut |_, _| {
+                Ok(ControlFlow::Break(()))
+            })?
+            .is_break())
+    }
 }
 
 impl ShadowObject for ProbeBounds {
@@ -676,6 +691,91 @@ mod tests {
     use super::*;
     use crate::Control;
     use source_formats::model::{Part, Vertex};
+
+    #[test]
+    fn probe_bound_point_queries_preserve_closed_boxes_and_empty_cancellation() {
+        let bounds = [0.0, 4.0, 8.0, 12.0, 16.0].map(|x| ProbeBounds {
+            mins: DVec3::new(x - 1.0, -1.0, -1.0),
+            maxs: DVec3::new(x + 1.0, 1.0, 1.0),
+        });
+        let index = ShadowIndex::new(bounds.into(), &mut |_| Ok(())).unwrap();
+        for (point, expected) in [
+            (DVec3::ZERO, true),
+            (-DVec3::ONE, true),
+            (DVec3::ONE, true),
+            (DVec3::new(17.0, 1.0, 1.0), true),
+            (DVec3::new(17.0_f64.next_up(), 1.0, 1.0), false),
+            (DVec3::new(0.0, 1.0_f64.next_up(), 0.0), false),
+            (DVec3::new(0.0, 0.0, (-1.0_f64).next_down()), false),
+            (DVec3::X * 2.0, false),
+        ] {
+            assert_eq!(
+                index.contains_point(point, &mut |_| Ok(())).unwrap(),
+                expected
+            );
+            assert_eq!(
+                index.blocked(point, point, &mut |_| Ok(())).unwrap(),
+                expected
+            );
+        }
+        assert!(
+            index
+                .contains_point(DVec3::splat(f64::NAN), &mut |_| Ok(()))
+                .is_err()
+        );
+        let empty = ShadowIndex::new(Vec::<ProbeBounds>::new(), &mut |_| Ok(())).unwrap();
+        let control = Control::default();
+        let mut budget = Budget::new(&control);
+        control.cancel().unwrap();
+        assert!(
+            empty
+                .contains_point(DVec3::ZERO, &mut |amount| budget.consume(amount))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn probe_bound_point_queries_stop_after_the_first_overlapping_box() {
+        let index = ShadowIndex::new(
+            (0..16)
+                .map(|_| ProbeBounds {
+                    mins: -DVec3::ONE,
+                    maxs: DVec3::ONE,
+                })
+                .collect(),
+            &mut |_| Ok(()),
+        )
+        .unwrap();
+        let mut work = 0;
+        assert!(
+            index
+                .contains_point(DVec3::ZERO, &mut |amount| {
+                    work += amount;
+                    Ok(())
+                })
+                .unwrap()
+        );
+        assert_eq!(work, 4);
+        let mut complete_work = 0;
+        let mut visits = 0;
+        let completion = index
+            .visit_bounds(
+                DVec3::ZERO,
+                DVec3::ZERO,
+                &mut |amount| {
+                    complete_work += amount;
+                    Ok(())
+                },
+                &mut |_, _| {
+                    visits += 1;
+                    Ok(ControlFlow::Continue(()))
+                },
+            )
+            .unwrap();
+        assert_eq!(completion, ControlFlow::Continue(()));
+        assert_eq!(visits, 16);
+        assert_eq!(complete_work, 23);
+    }
 
     fn triangle_model() -> Model {
         let header = source_formats::mdl::ModelHeader {

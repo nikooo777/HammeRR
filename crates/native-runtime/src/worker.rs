@@ -12,7 +12,7 @@ use regex::Regex;
 use serde_json::json;
 
 use crate::guard::{self, Baseline};
-use crate::process::{WorkerRequest, WorkerResult};
+use crate::process::{WorkerProfile, WorkerRequest, WorkerResult};
 use crate::util::{self, invalid};
 
 const PREMAP: &str = "HAMMERR_PRIVATE_PREMAP_READY";
@@ -46,7 +46,7 @@ function HammeRRCaptureThink() {
 }
 "#;
 
-fn game_directory(directory: &Path, request: &WorkerRequest) -> io::Result<PathBuf> {
+pub(crate) fn game_directory(directory: &Path, request: &WorkerRequest) -> io::Result<PathBuf> {
     let game = directory.join("cstrike");
     if game.exists() {
         return Err(invalid("Private native game directory already exists"));
@@ -94,6 +94,17 @@ fn game_directory(directory: &Path, request: &WorkerRequest) -> io::Result<PathB
     for name in ["config.cfg", "autoexec.cfg"] {
         util::atomic_write(&game.join("cfg").join(name), b"")?;
     }
+    if matches!(request.profile, WorkerProfile::PplUv857(_)) {
+        crate::diagnostic::configure_game(directory, &game)?;
+        fs::copy(
+            directory.join("staged.bsp"),
+            game.join("maps/hammerr_runtime.bsp"),
+        )?;
+        return Ok(game);
+    }
+    let WorkerProfile::Reflection(profile) = &request.profile else {
+        return Err(invalid("Expected reflection profile"));
+    };
     let postmap=b"toggle sv_lan 1\ntoggle mat_fullbright 0\ntoggle mat_envmapsize 128\nhelp sv_lan\nhelp mat_hdr_level\nhelp mat_fullbright\nhelp mat_envmapsize\n";
     for name in [
         "server.cfg",
@@ -119,17 +130,20 @@ fn game_directory(directory: &Path, request: &WorkerRequest) -> io::Result<PathB
         &game.join("cfg/hammerr_capture_once.cfg"),
         b"echo HAMMERR_CUBEMAP_WAITING\n",
     )?;
-    let profile = format!(
+    let launch_profile = format!(
         "toggle con_logfile hammerr-capture.log\ntoggle sv_cheats 1\ntoggle sv_lan 1\ntoggle mat_hdr_level {}\ntoggle mat_fullbright 0\ntoggle mat_envmapsize 128\ntoggle fps_max 60\ntoggle servercfgfile hammerr_capture_postmap.cfg\nhelp sv_lan\nhelp mat_hdr_level\nhelp mat_fullbright\nhelp mat_envmapsize\necho {PREMAP}\nmap {}\n",
-        request.channel.hdr_level(),
-        request.map_name
+        profile.channel.hdr_level(),
+        profile.map_name
     );
-    guard::reject_writes(&profile, false)?;
-    util::atomic_write(&game.join("cfg").join(PRIVATE_PROFILE), profile.as_bytes())?;
+    guard::reject_writes(&launch_profile, false)?;
+    util::atomic_write(
+        &game.join("cfg").join(PRIVATE_PROFILE),
+        launch_profile.as_bytes(),
+    )?;
     util::atomic_write(&game.join("cfg/valve.rc"), b"stuffcmds\n")?;
     fs::copy(
         directory.join("staged.bsp"),
-        game.join("maps").join(format!("{}.bsp", request.map_name)),
+        game.join("maps").join(format!("{}.bsp", profile.map_name)),
     )?;
     Ok(game)
 }
@@ -183,7 +197,7 @@ fn verify_markers(text: &str, channel: crate::CaptureChannel) -> io::Result<()> 
     verify_controls(text, channel)
 }
 
-fn private_launch_options(command: &mut Command) {
+pub(crate) fn private_launch_options(command: &mut Command) {
     command.args([
         "-default",
         "-condebug",
@@ -193,7 +207,7 @@ fn private_launch_options(command: &mut Command) {
     ]);
 }
 
-fn verify_native_diagnostics(text: &str) -> io::Result<()> {
+pub(crate) fn verify_native_diagnostics(text: &str) -> io::Result<()> {
     for message in [
         "Host_Error:",
         "ValidateLump:",
@@ -257,7 +271,7 @@ fn viewport(directory: &Path, largest: u16) -> io::Result<()> {
     Ok(())
 }
 
-fn loader_budget(directory: &Path) -> io::Result<()> {
+pub(crate) fn loader_budget(directory: &Path) -> io::Result<()> {
     let mut count = 0usize;
     let mut bytes = 0u64;
     for entry in fs::read_dir(directory)? {
@@ -329,7 +343,7 @@ fn modules(directory: &Path, root: &Path, native_pid: u32) -> io::Result<()> {
     Ok(())
 }
 
-fn cancelled(directory: &Path, request: &WorkerRequest) -> bool {
+pub(crate) fn cancelled(directory: &Path, request: &WorkerRequest) -> bool {
     directory.join("cancel").exists()
         || crate::process::start_time(request.supervisor)
             .ok()
@@ -338,12 +352,12 @@ fn cancelled(directory: &Path, request: &WorkerRequest) -> bool {
 }
 
 fn execute(directory: &Path, request: &WorkerRequest) -> io::Result<()> {
-    if request.version != 1
+    if request.version != crate::process::WORKER_VERSION
         || directory.file_name().and_then(|n| n.to_str()) != Some(&request.nonce)
     {
         return Err(invalid("Invalid private worker protocol identity"));
     }
-    util::validate_name(&request.map_name)?;
+    util::validate_name(request.map_name())?;
     if std::env::var_os("WAYLAND_DISPLAY").is_none()
         || std::env::var_os("XDG_RUNTIME_DIR").as_deref()
             != Some(directory.join("wayland").as_os_str())
@@ -351,6 +365,15 @@ fn execute(directory: &Path, request: &WorkerRequest) -> io::Result<()> {
         return Err(invalid("Native worker requires its private compositor"));
     }
     guard::validate_environment(&request.environment)?;
+    match &request.profile {
+        WorkerProfile::PplUv857(case) => {
+            return crate::diagnostic::execute(directory, request, *case);
+        }
+        WorkerProfile::Reflection(_) => {}
+    }
+    let WorkerProfile::Reflection(profile) = &request.profile else {
+        return Err(invalid("Expected reflection profile"));
+    };
     let game = game_directory(directory, request)?;
     for name in ["config", "cache", "data"] {
         fs::create_dir_all(directory.join("settings").join(name))?;
@@ -435,7 +458,7 @@ fn execute(directory: &Path, request: &WorkerRequest) -> io::Result<()> {
 
             loader_budget(directory)?;
             util::private_budget(directory, &root)?;
-            let largest = request
+            let largest = profile
                 .samples
                 .iter()
                 .map(|s| s.dimension)
@@ -454,9 +477,9 @@ fn execute(directory: &Path, request: &WorkerRequest) -> io::Result<()> {
                 {
                     return Err(invalid("Private controls were not applied before map load"));
                 }
-                verify_controls(&text, request.channel)?;
+                verify_controls(&text, profile.channel)?;
                 viewport(directory, largest)?;
-                for sample in &request.samples {
+                for sample in &profile.samples {
                     let name = sample
                         .texture
                         .trim_start_matches("materials/")
@@ -483,14 +506,14 @@ fn execute(directory: &Path, request: &WorkerRequest) -> io::Result<()> {
             for capture in progress.captures_iter(&text) {
                 let count = capture[1].parse::<usize>().map_err(io::Error::other)?;
                 let total = capture[2].parse::<usize>().map_err(io::Error::other)?;
-                if total != request.samples.len() || count == 0 || count > total {
+                if total != profile.samples.len() || count == 0 || count > total {
                     return Err(invalid("Native sample progress differs from the manifest"));
                 }
                 current = current.max(count);
             }
             util::json_write(
                 &directory.join("progress.json"),
-                &[current, request.samples.len()],
+                &[current, profile.samples.len()],
             )?;
             if let Some(status) = child.try_wait()? {
                 if !status.success() {
@@ -511,11 +534,11 @@ fn execute(directory: &Path, request: &WorkerRequest) -> io::Result<()> {
         }
         let text = util::diagnostic_text(&console, util::MAX_LOG)?;
         verify_native_diagnostics(&text)?;
-        verify_markers(&text, request.channel)?;
-        for index in 1..=request.samples.len() {
+        verify_markers(&text, profile.channel)?;
+        for index in 1..=profile.samples.len() {
             if !text.contains(&format!(
                 "bounce: 1/1 sample: {index}/{}",
-                request.samples.len()
+                profile.samples.len()
             )) {
                 return Err(invalid("Native capture did not report every sample"));
             }
@@ -524,7 +547,7 @@ fn execute(directory: &Path, request: &WorkerRequest) -> io::Result<()> {
             native.ok_or_else(|| invalid("Native capture has no isolated process receipt"))?;
         modules(directory, &root, native.pid)?;
         stop_client_group(&mut child)?;
-        let captured = game.join("maps").join(format!("{}.bsp", request.map_name));
+        let captured = game.join("maps").join(format!("{}.bsp", profile.map_name));
         if fs::metadata(&captured)?.len() > util::MAX_BSP as u64 {
             return Err(invalid("Native captured BSP exceeds its file budget"));
         }
@@ -540,7 +563,7 @@ fn execute(directory: &Path, request: &WorkerRequest) -> io::Result<()> {
     }
 }
 
-fn stop_client_group(child: &mut std::process::Child) -> io::Result<()> {
+pub(crate) fn stop_client_group(child: &mut std::process::Child) -> io::Result<()> {
     crate::process::stop_group(child)
 }
 
@@ -605,8 +628,7 @@ mod tests {
         fs::write(mod_only.join("shared.txt"), b"mod only").unwrap();
         fs::write(game_content.join("shared.txt"), b"game content").unwrap();
         let request = WorkerRequest {
-            version: 1,
-            channel: crate::CaptureChannel::Ldr,
+            version: crate::process::WORKER_VERSION,
             nonce: "fixture".into(),
             supervisor: 1,
             supervisor_start: "0".into(),
@@ -628,8 +650,11 @@ mod tests {
                     },
                 ],
             },
-            map_name: "fixture".into(),
-            samples: vec![],
+            profile: WorkerProfile::Reflection(crate::process::ReflectionProfile {
+                channel: crate::CaptureChannel::Ldr,
+                map_name: "fixture".into(),
+                samples: vec![],
+            }),
         };
         let game = game_directory(&output, &request).unwrap();
         assert_eq!(fs::read(game.join("cfg/valve.rc")).unwrap(), b"stuffcmds\n");

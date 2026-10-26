@@ -16,18 +16,46 @@ use crate::guard::{self, Baseline};
 use crate::util::{self, invalid};
 use crate::{CaptureEnvironment, CaptureObserver, CaptureReceipt, CaptureRequest, CaptureSample};
 
+pub(crate) const WORKER_VERSION: u32 = 2;
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkerRequest {
     pub version: u32,
-    #[serde(default)]
-    pub channel: crate::CaptureChannel,
     pub nonce: String,
     pub supervisor: u32,
     pub supervisor_start: String,
     pub environment: CaptureEnvironment,
+    pub profile: WorkerProfile,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    content = "parameters",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+pub(crate) enum WorkerProfile {
+    Reflection(ReflectionProfile),
+    PplUv857(crate::PplUv857Case),
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ReflectionProfile {
+    pub channel: crate::CaptureChannel,
     pub map_name: String,
     pub samples: Vec<CaptureSample>,
+}
+
+impl WorkerRequest {
+    pub fn map_name(&self) -> &str {
+        match &self.profile {
+            WorkerProfile::Reflection(profile) => &profile.map_name,
+            WorkerProfile::PplUv857(_) => crate::diagnostic::MAP_NAME,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -427,7 +455,7 @@ pub(crate) fn supervise(directory: &Path) -> io::Result<()> {
     let directory = directory.canonicalize()?;
     validate_capture_socket_path(&directory)?;
     let request: WorkerRequest = util::json_read(&directory.join("request.json"), 2 * 1024 * 1024)?;
-    if request.version != 1
+    if request.version != WORKER_VERSION
         || directory.file_name().and_then(|name| name.to_str()) != Some(&request.nonce)
     {
         return Err(invalid("Invalid native supervisor request"));
@@ -678,7 +706,6 @@ fn capture_inner(
     }
     request.environment = guard::resolve_environment(&request.environment)?;
     guard::validate_environment(&request.environment)?;
-    let helper = helper()?;
     let directory = directory.keep().canonicalize()?;
     let staged = crate::adapter::capture_staging_bsp_for_channel(&request.bsp, request.channel)?;
     if staged
@@ -695,8 +722,7 @@ fn capture_inner(
     util::atomic_write(&directory.join("staged.bsp"), &staged)?;
     let input_hash = util::hash(&staged);
     let worker = WorkerRequest {
-        version: 1,
-        channel: request.channel,
+        version: WORKER_VERSION,
         nonce: directory
             .file_name()
             .and_then(|name| name.to_str())
@@ -705,16 +731,44 @@ fn capture_inner(
         supervisor: std::process::id(),
         supervisor_start: start_time(std::process::id())?,
         environment: request.environment,
-        map_name: request.map_name,
-        samples: request.samples,
+        profile: WorkerProfile::Reflection(ReflectionProfile {
+            channel: request.channel,
+            map_name: request.map_name,
+            samples: request.samples,
+        }),
     };
-    util::json_write(&directory.join("request.json"), &worker)?;
+    let result = run_owned(&directory, &worker, &lease, observer, disposition)?;
+    observer.checkpoint()?;
+    if util::hash_file(&directory.join("staged.bsp"), util::MAX_BSP)? != input_hash {
+        return Err(invalid("Native capture mutated its staged baseline"));
+    }
+    let bsp = util::read(&directory.join("captured.bsp"), util::MAX_BSP)?;
+    Ok(CaptureReceipt {
+        channel: request.channel,
+        bsp,
+        staged_bsp: staged,
+        artifacts: directory,
+        elapsed_ms: result.elapsed_ms,
+        verified_controls: true,
+        preservation_passed: true,
+    })
+}
+
+fn run_owned(
+    directory: &Path,
+    worker: &WorkerRequest,
+    lease: &Lease,
+    observer: &mut dyn CaptureObserver,
+    disposition: &mut crate::CleanupDisposition,
+) -> io::Result<WorkerResult> {
+    let helper = helper()?;
+    util::json_write(&directory.join("request.json"), worker)?;
     let log = File::create(directory.join("supervisor.log"))?;
     let mut command = Command::new(&helper);
     command
         .arg("--capture-supervisor")
-        .arg(&directory)
-        .current_dir(&directory)
+        .arg(directory)
+        .current_dir(directory)
         .stdin(Stdio::null())
         .stdout(log.try_clone()?)
         .stderr(log);
@@ -736,7 +790,7 @@ fn capture_inner(
     }
     let mut owned = CallerChild {
         child: command.spawn()?,
-        directory: directory.clone(),
+        directory: directory.to_owned(),
         audited: false,
     };
     *disposition = crate::CleanupDisposition::Unconfirmed;
@@ -809,20 +863,84 @@ fn capture_inner(
             "Native supervisor returned incomplete capture evidence",
         ));
     }
+    Ok(result)
+}
+
+pub fn diagnose_ppl_uv857_with_cleanup(
+    request: crate::PplUv857Request,
+    observer: &mut dyn CaptureObserver,
+) -> Result<crate::PplUv857Receipt, crate::CaptureFailure> {
+    let mut cleanup = crate::CleanupDisposition::Confirmed;
+    diagnose_ppl_uv857_inner(request, observer, &mut cleanup)
+        .map_err(|error| crate::CaptureFailure { error, cleanup })
+}
+
+fn diagnose_ppl_uv857_inner(
+    request: crate::PplUv857Request,
+    observer: &mut dyn CaptureObserver,
+    disposition: &mut crate::CleanupDisposition,
+) -> io::Result<crate::PplUv857Receipt> {
     observer.checkpoint()?;
-    if util::hash_file(&directory.join("staged.bsp"), util::MAX_BSP)? != input_hash {
-        return Err(invalid("Native capture mutated its staged baseline"));
+    crate::diagnostic::validate_request_paths(&request)?;
+    let parent = request.artifacts_parent.canonicalize()?;
+    crate::diagnostic::path_text(&parent, "canonical artifact parent")?;
+    if parent.starts_with("/tmp") || parent.starts_with("/dev/shm") {
+        return Err(invalid(
+            "Native diagnostics require retained artifacts on disk",
+        ));
     }
-    let bsp = util::read(&directory.join("captured.bsp"), util::MAX_BSP)?;
-    Ok(CaptureReceipt {
-        channel: request.channel,
-        bsp,
-        staged_bsp: staged,
-        artifacts: directory,
-        elapsed_ms: result.elapsed_ms,
-        verified_controls: true,
-        preservation_passed: true,
-    })
+    let directory = capture_directory_in(&parent)?;
+    let lease = lease()?;
+    let environment = crate::diagnostic::environment(&request.environment)?;
+    let directory = directory.keep().canonicalize()?;
+    let prepare = crate::diagnostic::stage(&directory, &request);
+    if let Err(error) = prepare {
+        return Err(invalid(format!("{error}; inspect {}", directory.display())));
+    }
+    let worker = WorkerRequest {
+        version: WORKER_VERSION,
+        nonce: directory
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| invalid("Invalid diagnostic directory"))?
+            .to_owned(),
+        supervisor: std::process::id(),
+        supervisor_start: start_time(std::process::id())?,
+        environment,
+        profile: WorkerProfile::PplUv857(request.case),
+    };
+    let result = run_owned(&directory, &worker, &lease, observer, disposition);
+    let sources = crate::diagnostic::verify_sources(&request);
+    let sources_evidence = util::json_write(
+        &directory.join("source-preservation.json"),
+        &json!({
+            "success":sources.is_ok(),"error":sources.as_ref().err().map(ToString::to_string),
+        }),
+    );
+    let audit = combine([
+        ("frozen source preservation".into(), sources),
+        ("source preservation evidence".into(), sources_evidence),
+    ]);
+    match (result, audit) {
+        (Ok(result), Ok(())) => {
+            observer.checkpoint()?;
+            Ok(crate::PplUv857Receipt {
+                case: request.case,
+                artifacts: directory,
+                elapsed_ms: result.elapsed_ms,
+                verified_controls: true,
+                hardware_observed: true,
+                preservation_passed: true,
+            })
+        }
+        (Err(a), Err(b)) => Err(invalid(format!(
+            "{a}; {b}; inspect {}",
+            directory.display()
+        ))),
+        (Err(error), _) | (_, Err(error)) => {
+            Err(invalid(format!("{error}; inspect {}", directory.display())))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -860,6 +978,64 @@ mod tests {
             .unwrap();
         assert_eq!(failure.cleanup, crate::CleanupDisposition::Confirmed);
         assert_eq!(failure.error.kind(), io::ErrorKind::Interrupted);
+    }
+
+    #[test]
+    fn diagnostic_prestart_cancellation_preserves_confirmed_cleanup() {
+        let request = crate::PplUv857Request {
+            case: crate::PplUv857Case::MissingUv,
+            environment: CaptureEnvironment {
+                engine_root: PathBuf::new(),
+                steam_root: PathBuf::new(),
+                mounts: Vec::new(),
+            },
+            bsp: PathBuf::new(),
+            fixture_game: PathBuf::new(),
+            observer_library: PathBuf::new(),
+            artifacts_parent: PathBuf::new(),
+        };
+        let failure = diagnose_ppl_uv857_with_cleanup(request, &mut CancelledObserver).unwrap_err();
+        assert_eq!(failure.cleanup, crate::CleanupDisposition::Confirmed);
+        assert_eq!(failure.error.kind(), io::ErrorKind::Interrupted);
+    }
+
+    #[test]
+    fn diagnostic_non_utf8_source_path_is_rejected_before_staging() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let request = crate::PplUv857Request {
+            case: crate::PplUv857Case::MissingUv,
+            environment: CaptureEnvironment {
+                engine_root: PathBuf::new(),
+                steam_root: PathBuf::new(),
+                mounts: Vec::new(),
+            },
+            bsp: PathBuf::from(std::ffi::OsString::from_vec(b"missing-\xff.bsp".to_vec())),
+            fixture_game: PathBuf::new(),
+            observer_library: PathBuf::new(),
+            artifacts_parent: PathBuf::from("missing-diagnostic-parent"),
+        };
+        let stage_error =
+            crate::diagnostic::stage(Path::new("unused-diagnostic-directory"), &request)
+                .unwrap_err();
+        assert_eq!(stage_error.kind(), io::ErrorKind::InvalidData);
+        assert!(
+            stage_error
+                .to_string()
+                .contains("BSP path is not valid UTF-8")
+        );
+        let mut observer = PrestartObserver::default();
+        let failure = diagnose_ppl_uv857_with_cleanup(request, &mut observer).unwrap_err();
+        assert_eq!(failure.cleanup, crate::CleanupDisposition::Confirmed);
+        assert_eq!(failure.error.kind(), io::ErrorKind::InvalidData);
+        assert!(
+            failure
+                .error
+                .to_string()
+                .contains("BSP path is not valid UTF-8")
+        );
+        assert_eq!(observer.checkpoints, 1);
+        assert_eq!(observer.progress, 0);
     }
 
     #[test]

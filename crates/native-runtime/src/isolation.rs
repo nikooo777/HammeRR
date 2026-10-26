@@ -49,6 +49,14 @@ pub(crate) struct Launch {
 
 impl Launch {
     pub fn new(directory: &Path, program: &Path) -> io::Result<Self> {
+        Self::configured(directory, program, false)
+    }
+
+    pub fn ppl_uv857(directory: &Path, program: &Path) -> io::Result<Self> {
+        Self::configured(directory, program, true)
+    }
+
+    fn configured(directory: &Path, program: &Path, diagnostic: bool) -> io::Result<Self> {
         if directory.canonicalize()? != directory {
             return Err(invalid(
                 "Native isolation requires its canonical owned capture directory",
@@ -89,8 +97,11 @@ impl Launch {
             ])
             .arg(directory)
             .arg(directory)
-            .args(["--info-fd", &INFO_FD.to_string(), "--"])
-            .arg(program);
+            .args(["--info-fd", &INFO_FD.to_string()]);
+        if diagnostic {
+            crate::diagnostic::observer_arguments(&mut command, directory, program)?;
+        }
+        command.arg("--").arg(program);
         Ok(Self {
             command,
             info,

@@ -99,6 +99,7 @@ pub trait CaptureObserver {
 }
 
 mod adapter;
+mod diagnostic;
 mod guard;
 mod isolation;
 mod process;
@@ -107,7 +108,9 @@ mod vdf;
 mod worker;
 
 pub use adapter::{capture_staging_bsp, capture_staging_bsp_for_channel, preflight_vmf};
+pub use diagnostic::{PplUv857Case, PplUv857Receipt, PplUv857Request};
 pub use guard::{resolve_environment, validate_environment};
+pub use process::diagnose_ppl_uv857_with_cleanup;
 pub use process::{capture, capture_with_cleanup};
 
 pub fn worker_entry(arguments: Vec<std::ffi::OsString>) -> io::Result<()> {
@@ -127,9 +130,12 @@ pub fn worker_entry(arguments: Vec<std::ffi::OsString>) -> io::Result<()> {
         [mode, directory] if mode == "--capture-worker" => {
             worker::run(std::path::Path::new(directory))
         }
+        [mode, request] if mode == "--diagnose-ppl-uv857" => {
+            diagnostic::cli(std::path::Path::new(request))
+        }
         _ => Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "Native runtime expects an owned capture-worker or read-only Steam-identity request",
+            "Native runtime expects an owned worker, read-only Steam identity, or frozen857 diagnostic request",
         )),
     }
 }

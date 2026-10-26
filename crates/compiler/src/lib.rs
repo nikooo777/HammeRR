@@ -1760,7 +1760,13 @@ fn build(
             &map,
             &models,
             &water,
-            physics::Settings { vmf, fs },
+            physics::Settings {
+                vmf,
+                fs,
+                sources: material_sources
+                    .as_ref()
+                    .ok_or("Engine physics source owner is missing")?,
+            },
             &mut bsp,
             &mut output.report,
             control,

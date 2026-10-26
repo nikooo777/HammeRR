@@ -13,6 +13,7 @@ Build collision bodies with the installed CS:S physics library.
 Materials select contact properties through `$surfaceprop`.
 A valid material without that field uses the defined `default` surface property.
 Missing or malformed required definitions fail the build.
+Changes to the consumed surface manifest or definition files require a new build.
 
 ## Brush-model mass
 

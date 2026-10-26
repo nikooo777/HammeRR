@@ -117,6 +117,75 @@ fn solid(bsp: &Bsp) -> BTreeMap<String, String> {
 }
 
 #[test]
+fn consumed_physics_definitions_guard_publication_without_tracking_disabled_physics() {
+    let Some(root) = installed_game() else {
+        eprintln!("CS:S not installed; skipping native mass fixture");
+        return;
+    };
+    for path in [
+        "scripts/surfaceproperties_manifest.txt",
+        "scripts/base.txt",
+        "scripts/mod.txt",
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let fs = assets(directory.path(), root.clone());
+        let source = fixture();
+        let destination = directory.path().join("previous.bsp");
+        std::fs::write(&destination, b"previous BSP").unwrap();
+        std::fs::write(destination.with_extension("lin"), b"previous LIN").unwrap();
+        let control = compiler::Control::default();
+        let lease = compiler::OutputLease::acquire(&destination, &control).unwrap();
+        let reservation = compiler::WriteReservation::new(&destination, &control).unwrap();
+        let stale_reservation = compiler::WriteReservation::new(&destination, &control).unwrap();
+        let disabled = compiler::compile(&source, &fs);
+        assert!(!disabled.report.has_errors(), "{:?}", disabled.report);
+        let unconsumed =
+            compiler::asset_sources::capture_output_asset_source_guard(&disabled, &fs, &control)
+                .unwrap();
+        let output = compiler::compile_with_options(
+            &source,
+            &fs,
+            Options {
+                physics: PhysicsMode::Engine,
+                ..Default::default()
+            },
+        );
+        assert!(!output.report.has_errors(), "{:?}", output.report);
+        assert_eq!(solid(output.bsp.as_ref().unwrap())["surfaceprop"], "bulk");
+        let guard =
+            compiler::asset_sources::capture_output_asset_source_guard(&output, &fs, &control)
+                .unwrap();
+        let prepared = output
+            .prepare_write_reserved(reservation, &control)
+            .unwrap()
+            .unwrap();
+        let file = directory.path().join(path);
+        let mut bytes = std::fs::read(&file).unwrap();
+        bytes.extend_from_slice(b"\n// changed compile input\n");
+        std::fs::write(file, bytes).unwrap();
+        unconsumed.verify_metadata().unwrap();
+        assert!(guard.verify_metadata().is_err(), "{path}");
+        assert!(
+            compiler::asset_sources::capture_output_asset_source_guard(&output, &fs, &control)
+                .is_err(),
+            "{path}"
+        );
+        assert!(
+            output
+                .prepare_write_reserved(stale_reservation, &control)
+                .is_err(),
+            "{path}"
+        );
+        assert!(prepared.commit_checked(&lease, &control).is_err(), "{path}");
+        assert_eq!(std::fs::read(&destination).unwrap(), b"previous BSP");
+        assert_eq!(
+            std::fs::read(destination.with_extension("lin")).unwrap(),
+            b"previous LIN"
+        );
+    }
+}
+
+#[test]
 fn native_base_masses_follow_inherited_density_shell_area_and_mixed_material_dominance() {
     let Some(root) = installed_game() else {
         eprintln!("CS:S not installed; skipping native mass fixture");

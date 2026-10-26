@@ -306,7 +306,7 @@ Game launches use `-insecure` and private validation uses `sv_lan 1`.
 Reflection capture also needs a ready `get_native_capture_runtime` result.
 See [Compile and play](compile-and-play.md).
 
-`get_compile_status` marks a completed job stale when its consumed material sources change. `job.material_source_issue` gives the cause; unused runtime assets remain outside this check.
+`get_compile_status` marks a completed job stale when consumed material, detail or physics-definition inputs change. `job.material_source_issue` gives the cause; unused runtime assets remain outside this check.
 
 For [stationary child brush rotation](instances.md#rotate-a-stationary-child-brush), set canonical `angles` through `set_entity_properties` or property-edit tools.
 Save the child, then compile its parent. Compilation lowers the initial pose into body geometry and emits zero angles.

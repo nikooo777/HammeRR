@@ -21,6 +21,7 @@ pub(crate) struct Observation {
     sha256: String,
 }
 
+#[derive(Debug)]
 pub(super) struct Appended {
     pub lines: Vec<String>,
     pub uploads: Vec<String>,
@@ -61,9 +62,17 @@ fn snapshot(path: &Path) -> io::Result<(Metadata, Vec<u8>)> {
     Ok((before, bytes))
 }
 
+fn require_complete_records(bytes: &[u8]) -> io::Result<()> {
+    if !bytes.is_empty() && !bytes.ends_with(b"\n") {
+        return Err(invalid("Steam Cloud log ends with an incomplete record"));
+    }
+    Ok(())
+}
+
 impl Observation {
     pub(super) fn capture(steam: &Path) -> io::Result<Self> {
         let (metadata, bytes) = snapshot(&steam.join("logs/cloud_log.txt"))?;
+        require_complete_records(&bytes)?;
         let sha256 = hash(&bytes);
         Ok(Self {
             device: metadata.dev(),
@@ -112,6 +121,12 @@ impl Observation {
                 "Steam Cloud log rotated, truncated or its observed prefix changed",
             ));
         }
+        if self.start > 0 && bytes[self.start as usize - 1] != b'\n' {
+            return Err(invalid(
+                "Steam Cloud log observation starts inside a record",
+            ));
+        }
+        require_complete_records(&bytes)?;
         let appended = &bytes[self.start as usize..];
         if appended.len() > MAX_APPENDED_BYTES {
             return Err(invalid(
@@ -149,11 +164,52 @@ mod tests {
     use std::io::Write;
 
     #[test]
+    fn incomplete_records_and_legacy_midrecord_cursors_cannot_pass_observation() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::create_dir(directory.path().join("logs")).unwrap();
+        let path = directory.path().join("logs/cloud_log.txt");
+        fs::write(&path, "previous complete record\n").unwrap();
+        let mut observed = Observation::capture(directory.path()).unwrap();
+        let prefix = observed.length();
+        let mut writer = OpenOptions::new().append(true).open(&path).unwrap();
+        writer.write_all(b"[AppID 240] ").unwrap();
+        assert!(
+            Observation::capture(directory.path())
+                .unwrap_err()
+                .to_string()
+                .contains("incomplete record")
+        );
+        assert!(observed.read(directory.path()).is_err());
+        assert_eq!(observed.length(), prefix);
+        writer.write_all(b"Upload OK fixture\n").unwrap();
+        assert_eq!(
+            observed.read(directory.path()).unwrap().uploads,
+            ["[AppID 240] Upload OK fixture"]
+        );
+        let complete = fs::read(&path).unwrap();
+        let baseline = Observation::capture(directory.path()).unwrap();
+        for start in [prefix + 1, prefix + 11, complete.len() as u64 - 1] {
+            let mut legacy = serde_json::to_value(&baseline).unwrap();
+            legacy["start"] = start.into();
+            legacy["start_sha256"] = hash(&complete[..start as usize]).into();
+            let mut legacy: Observation = serde_json::from_value(legacy).unwrap();
+            assert!(
+                legacy
+                    .read(directory.path())
+                    .unwrap_err()
+                    .to_string()
+                    .contains("inside a record")
+            );
+        }
+    }
+
+    #[test]
     fn observations_retain_append_history_and_refuse_lost_log_continuity() {
         let directory = tempfile::tempdir().unwrap();
         fs::create_dir(directory.path().join("logs")).unwrap();
         let path = directory.path().join("logs/cloud_log.txt");
-        let original = vec![b'x'; 128];
+        let mut original = vec![b'x'; 128];
+        original[127] = b'\n';
         let upload = b"[AppID 240] Upload OK fixture\n";
         for replacement in [false, true] {
             for length in [64, 128, 192] {
@@ -194,6 +250,7 @@ mod tests {
         assert!(resumed.read(directory.path()).is_err());
         let mut regrown = original;
         regrown.resize(regrown.len() + upload.len(), b'z');
+        *regrown.last_mut().unwrap() = b'\n';
         fs::write(&path, regrown).unwrap();
         assert!(resumed.read(directory.path()).is_err());
         assert!(

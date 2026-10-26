@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use source_formats::{gamefs::GameFs, keyvalues};
 
 use super::{MAX_SURFACE_PROPERTIES, SurfaceData, valid_surface_property};
-use crate::Control;
+use crate::{Control, asset_sources::BuildMaterialSources};
 
 const MANIFEST: &str = "scripts/surfaceproperties_manifest.txt";
 const MAX_FILES: usize = 64;
@@ -58,10 +58,16 @@ impl Properties {
     }
 }
 
-pub(super) fn load(fs: &GameFs, control: &Control) -> Result<Vec<SurfaceData>, String> {
-    let manifest = fs.read_limited(MANIFEST, MAX_TEXT_BYTES).map_err(|error| error.to_string())?
+pub(super) fn load(
+    fs: &GameFs,
+    sources: &BuildMaterialSources,
+    control: &Control,
+) -> Result<Vec<SurfaceData>, String> {
+    control.checkpoint()?;
+    let manifest = sources.read_asset(fs, MANIFEST, MAX_TEXT_BYTES).map_err(|error| error.to_string())?
         .ok_or("Brush-model mass requires scripts/surfaceproperties_manifest.txt on the GAME search path")?;
-    let text = std::str::from_utf8(&manifest).map_err(|_| "Surface manifest must be UTF-8")?;
+    let text =
+        std::str::from_utf8(manifest.bytes()).map_err(|_| "Surface manifest must be UTF-8")?;
     let nodes = keyvalues::parse_bounded(text, 2, MAX_NODES).map_err(|error| error.to_string())?;
     let [root] = nodes.as_slice() else {
         return Err("Surface manifest needs one surfaceproperties_manifest block".into());
@@ -74,7 +80,7 @@ pub(super) fn load(fs: &GameFs, control: &Control) -> Result<Vec<SurfaceData>, S
         return Err("Surface manifest requires 1–64 definition files".into());
     }
     let mut seen = BTreeSet::new();
-    let mut bytes = manifest.len();
+    let mut bytes = manifest.bytes().len();
     let mut files = Vec::with_capacity(entries.len());
     for entry in entries {
         control.checkpoint()?;
@@ -87,13 +93,14 @@ pub(super) fn load(fs: &GameFs, control: &Control) -> Result<Vec<SurfaceData>, S
         {
             return Err("Surface manifest needs unique bounded file paths".into());
         }
-        let data = fs
-            .read_limited(name, MAX_TEXT_BYTES.saturating_sub(bytes))
+        let data = sources
+            .read_asset(fs, name, MAX_TEXT_BYTES.saturating_sub(bytes))
             .map_err(|error| format!("Cannot read surface definitions {name:?}: {error}"))?
             .ok_or_else(|| format!("Surface manifest references missing definitions {name:?}"))?;
-        bytes += data.len();
-        let text = String::from_utf8(data)
-            .map_err(|_| format!("Surface definitions {name:?} must be UTF-8"))?;
+        bytes += data.bytes().len();
+        let text = std::str::from_utf8(data.bytes())
+            .map_err(|_| format!("Surface definitions {name:?} must be UTF-8"))?
+            .to_owned();
         files.push(SurfaceData {
             name: name.to_owned(),
             text,
@@ -371,7 +378,7 @@ mod tests {
         };
         let manifest = directory.path().join(MANIFEST);
         assert!(
-            load(&fs, &Control::default())
+            load(&fs, &BuildMaterialSources::default(), &Control::default())
                 .unwrap_err()
                 .contains("manifest")
         );
@@ -386,7 +393,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            load(&fs, &Control::default())
+            load(&fs, &BuildMaterialSources::default(), &Control::default())
                 .unwrap_err()
                 .contains("missing definitions")
         );
@@ -395,7 +402,7 @@ mod tests {
             "wood { density 800 }",
         )
         .unwrap();
-        let files = load(&fs, &Control::default()).unwrap();
+        let files = load(&fs, &BuildMaterialSources::default(), &Control::default()).unwrap();
         assert_eq!(resolve(&files).unwrap()["wood"].density, 800.0);
     }
 }

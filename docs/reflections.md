@@ -52,7 +52,7 @@ Supported samples and ordinary world/detail bindings can also come from [referen
 - Steam, the supported CS:S runtime and the private capture dependencies must be available.
 - Capture uses private clients with `-insecure` and `sv_lan 1`.
 - Missing channels, unsupported capture scenes, failed verification or cleanup errors stop publication.
-- Replaced or rewritten Cloud logs stop capture. Audit limits are 64 MiB total and 8 MiB added during capture.
+- Incomplete records and replaced or rewritten Cloud logs stop capture. Audit limits are 64 MiB total and 8 MiB added during capture.
 - **Cancel build** waits for owned capture cleanup.
 - Generation captures one reflection bounce, not repeated recursive reflection builds.
 - Root binding inspection is unavailable with visible instance references; generation can still use supported assembled samples.

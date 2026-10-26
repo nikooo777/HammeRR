@@ -270,7 +270,7 @@ fn plan(
     bsp: &Bsp,
     report: &mut Report,
     control: &Control,
-    fs: &source_formats::gamefs::GameFs,
+    settings: &Settings<'_>,
 ) -> Result<Request, String> {
     let mut request = Request {
         model_count: models.len(),
@@ -418,7 +418,7 @@ fn plan(
                             ));
                         }
                         if terrain_properties.is_none() {
-                            request.surface_data = surface_data::load(fs, control).map_err(|error| {
+                            request.surface_data = surface_data::load(settings.fs, settings.sources, control).map_err(|error| {
                                 format!("Terrain secondary physics surface properties require mounted surface definitions: {error}")
                             })?;
                             terrain_properties =
@@ -512,7 +512,7 @@ fn plan(
         }
     }
     if request.surface_data.is_empty() && request.models.iter().any(|model| model.index > 0) {
-        request.surface_data = surface_data::load(fs, control)?;
+        request.surface_data = surface_data::load(settings.fs, settings.sources, control)?;
     }
     for &carrier in &map.water_analogs {
         let index = crate::water_analog::model_index(carrier, models).inspect_err(|message| {
@@ -925,6 +925,7 @@ fn execute(
 pub(crate) struct Settings<'a> {
     pub vmf: &'a source_formats::vmf::Vmf,
     pub fs: &'a source_formats::gamefs::GameFs,
+    pub sources: &'a crate::asset_sources::BuildMaterialSources,
 }
 
 pub(crate) fn bake(
@@ -936,8 +937,8 @@ pub(crate) fn bake(
     report: &mut Report,
     control: &Control,
 ) -> Result<Stats, String> {
-    let Settings { vmf, fs } = settings;
-    let request = plan(map, models, water, bsp, report, control, fs)?;
+    let request = plan(map, models, water, bsp, report, control, &settings)?;
+    let Settings { vmf, fs, .. } = settings;
     let directory = fs.base_dir.join("bin/linux64");
     if !directory.join("vphysics.so").is_file() {
         return Err(

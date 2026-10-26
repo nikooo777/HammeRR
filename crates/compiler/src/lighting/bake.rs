@@ -28,6 +28,7 @@ pub(super) const SAMPLE_BIAS: f64 = 0.5;
 
 #[derive(Debug, Default)]
 pub(crate) struct BakeStats {
+    pub world_light_origins: crate::world_light_origins::WorldLightOrigins,
     pub brush_shadow_models: usize,
     pub prop_lighting_assets: Option<crate::prop_lighting_assets::PropLightingPlan>,
     pub prop_vertex_lighting: Option<crate::PropVertexLightingStats>,
@@ -976,6 +977,7 @@ fn mapped_colors(
 
 pub(crate) struct Settings<'a> {
     pub control: &'a Control,
+    pub instances: &'a crate::instances::Prepared<'a>,
     pub fs: &'a source_formats::gamefs::GameFs,
     pub vmf: &'a source_formats::vmf::Vmf,
     pub options: crate::Options,
@@ -1092,6 +1094,7 @@ fn bake_inner(
     let control = budget.control;
     let options = settings.options.validate()?;
     let dual = options.lighting == crate::LightingMode::DirectLdrHdr;
+    let _origin_allocation = budget.reserve_bytes(crate::world_light_origins::MAX_BYTES)?;
     let _shared_geometry_allocation = shared_geometry_allocation(
         map,
         bsp,
@@ -1362,6 +1365,7 @@ fn bake_inner(
         detail_lighting_origins: settings.detail_lighting_origins,
         detail_lighting_tints: settings.detail_lighting_tints,
         face_sources: settings.face_sources,
+        instances: settings.instances,
         brush_textures: brush_textures.as_ref(),
         options,
     };
@@ -1382,7 +1386,7 @@ fn bake_inner(
     stats.normal_work = normal_work;
     stats.prop_shadows = prop_stats;
     if dual && !report.has_errors() {
-        let hdr = bake_channel(
+        let mut hdr = bake_channel(
             &ctx,
             LightingKind::Hdr,
             bsp,
@@ -1391,6 +1395,7 @@ fn bake_inner(
             &mut detail_hdr,
             &mut prop_vertices,
         )?;
+        stats.world_light_origins.channels[1] = hdr.world_light_origins.channels[1].take();
         stats.hdr = Some(crate::HdrLightingStats {
             world_lights: hdr.lights,
             light_styles: hdr.light_styles,
@@ -1451,6 +1456,7 @@ fn bake_inner(
 }
 
 struct ChannelContext<'a> {
+    instances: &'a crate::instances::Prepared<'a>,
     brush_textures: Option<&'a super::brush_alpha::Prepared>,
     face_sources: &'a [std::sync::Arc<[u32]>],
     world_leaf_nodes: &'a [Option<usize>],
@@ -1485,6 +1491,7 @@ fn bake_channel(
     budget.channel(kind);
     let start_work = budget.work;
     let ChannelContext {
+        instances,
         brush_textures,
         face_sources,
         world_leaf_nodes,
@@ -1511,15 +1518,34 @@ fn bake_channel(
     if report.has_errors() {
         return Ok(BakeStats::default());
     }
-    let world_lights = lights
+    let count = lights
         .iter()
         .flat_map(Emitter::world_lights)
         .flatten()
-        .collect::<Vec<_>>();
-    if world_lights.len() > MAX_WORLD_LIGHTS {
+        .count();
+    if count > MAX_WORLD_LIGHTS {
         return Err(
             "Direct lighting exceeds the 8,192 world-light limit including sky ambient".into(),
         );
+    }
+    let _native_light_allocation = budget.reserve::<bsp::WorldLight>(count)?;
+    let mut world_lights = Vec::new();
+    world_lights
+        .try_reserve_exact(count)
+        .map_err(|_| "Native world lights cannot be allocated")?;
+    let mut origins = crate::world_light_origins::ChannelOrigins::new(count)?;
+    for emitter in &lights {
+        budget.consume(1)?;
+        for light in emitter.world_lights().into_iter().flatten() {
+            origins.push(
+                match emitter {
+                    Emitter::Point(light) => Some(light.source_id),
+                    Emitter::Sky(_) => None,
+                },
+                instances,
+            )?;
+            world_lights.push(light);
+        }
     }
     let _candidate_allocation = budget.reserve_bytes(super::culling::allocation_bytes(
         visibility.count,
@@ -1770,6 +1796,11 @@ fn bake_channel(
         .map_err(|error| error.to_string())?;
     bsp.set_world_lights(kind, &world_lights)
         .map_err(|error| error.to_string())?;
+    let origin_lump = match kind {
+        LightingKind::Ldr => bsp::lump::WORLDLIGHTS,
+        LightingKind::Hdr => bsp::lump::WORLDLIGHTS_HDR,
+    };
+    origins.finish(&bsp.lumps[origin_lump].data)?;
     bsp.set_lighting_faces(kind, &faces)
         .map_err(|error| error.to_string())?;
     budget.phase(LightingPhase::Bounce);
@@ -1927,7 +1958,10 @@ fn bake_channel(
         report,
         budget,
     )?;
+    let mut world_light_origins = crate::world_light_origins::WorldLightOrigins::default();
+    world_light_origins.channels[usize::from(kind == LightingKind::Hdr)] = Some(origins);
     Ok(BakeStats {
+        world_light_origins,
         lights: world_lights.len(),
         light_styles: used_styles.len(),
         styled_faces,

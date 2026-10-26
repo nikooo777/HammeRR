@@ -76,9 +76,55 @@ fn clear(window: &CompiledLightsWindow, state: &RefCell<State>) {
     window.set_next_lights(false);
 }
 
+fn association_text(row: &WorldLightRow, historical: bool, compact: bool) -> String {
+    use compiler::world_light_origins::Origin;
+    use editor_core::session::compiled_world_lights::SourceAssociation;
+    let prefix = if historical {
+        "Historical source: "
+    } else {
+        "Captured source: "
+    };
+    match &row.source_association {
+        SourceAssociation::Available {
+            origin: Origin::Root { entity },
+        } => {
+            if compact {
+                format!("entity:{entity}")
+            } else {
+                format!("{prefix}root entity:{entity}")
+            }
+        }
+        SourceAssociation::Available {
+            origin:
+                Origin::Instance {
+                    instance,
+                    file,
+                    entity,
+                    expanded_entity,
+                },
+        } => {
+            if compact {
+                format!("instance:{instance} / entity:{entity}")
+            } else {
+                format!(
+                    "{prefix}outer helper entity:{instance}\nLeaf file: {file}\nOriginal entity:{entity} · expanded entity:{expanded_entity} (this build)"
+                )
+            }
+        }
+        SourceAssociation::Unavailable { reason } => {
+            if compact {
+                "Unavailable".into()
+            } else {
+                format!("Unavailable: {reason}")
+            }
+        }
+    }
+}
+
 fn details(window: &CompiledLightsWindow, row: &WorldLightRow, report: &Inspection) {
     window.set_details(CompiledLightDetails {
         record: row.ordinal.to_string().into(),
+        source_association: association_text(row, report.historical, false).into(),
         kind: format!("{} ({})", row.kind_name, row.kind).into(),
         style: row.style.to_string().into(),
         origin: vector(row.origin).into(),
@@ -133,6 +179,7 @@ fn present(window: &CompiledLightsWindow, report: &Inspection) {
                 vector(row.origin),
                 vector(row.intensity),
                 row.flags.to_string(),
+                association_text(row, report.historical, true),
             ];
             let cells = cells
                 .iter()
@@ -365,6 +412,7 @@ pub(super) fn bind(
         ("Origin", 195.0),
         ("Intensity", 195.0),
         ("Flags", 80.0),
+        ("Source", 220.0),
     ]
     .map(|(title, width)| {
         let mut column = slint::language::TableColumn::default();

@@ -75,6 +75,7 @@ fn prepared_assets(
         output
     } else {
         compiler::Output {
+            world_light_origins: None,
             face_origins: Err("Fixture has no retained source mapping".into()),
             bsp: (!leak).then(Bsp::new),
             report: Default::default(),
@@ -103,6 +104,7 @@ fn prepared_assets(
     )
     .unwrap();
     session.compiled = Some(CompiledMap {
+        world_light_origins: None,
         prop_lighting_guard: None,
         static_prop_sources: None,
         claim: None,

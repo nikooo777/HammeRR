@@ -91,6 +91,7 @@ impl OwnedFixture {
         let output = compiler::FileIdentity::capture(&self.output, &Control::default()).unwrap();
         let source = compiler::FileIdentity::capture(&self.source, &Control::default()).unwrap();
         self.session.compiled = Some(CompiledMap {
+            world_light_origins: None,
             claim: None,
             output_identity: Ok(output.clone()),
             face_origins: Err("Literal world-light fixture has no authored face mapping".into()),
@@ -621,6 +622,9 @@ fn literal_native_records_and_real_dual_publication_preserve_fields_and_channels
     assert_eq!(hdr.channel, "hdr");
     assert_eq!(hdr.page.rows[0].intensity[0].to_bits(), 0x40a0_0000);
     assert_eq!(hdr.page.rows[0].kind_name, "spot");
+    assert!(
+        matches!(&hdr.page.rows[0].source_association, SourceAssociation::Unavailable { reason } if reason.contains("not retained"))
+    );
 
     let (_directory, session, source) = test_support::compiled(true);
     let before = (
@@ -663,6 +667,15 @@ fn literal_native_records_and_real_dual_publication_preserve_fields_and_channels
         assert_eq!(inspected.page.rows.len(), 4);
         for (ordinal, row) in inspected.page.rows.iter().enumerate() {
             assert_eq!(row.ordinal, ordinal);
+            let association = serde_json::to_value(&row.source_association).unwrap();
+            if ordinal < 2 {
+                assert_eq!(
+                    association,
+                    serde_json::json!({"status":"available","origin":{"kind":"root","entity":9001 + ordinal}})
+                );
+            } else {
+                assert_eq!(association["status"], "unavailable");
+            }
             assert_eq!(row.intensity, intensities[ordinal]);
             assert_eq!(
                 (row.kind, row.kind_name),
@@ -1222,5 +1235,172 @@ fn captured_modes_and_complete_table_validation_bound_empty_corrupt_and_cancelle
         fixture
             .inspect_controlled(&Query::default(), &control)
             .is_err()
+    );
+}
+
+#[test]
+fn missing_or_mismatched_source_metadata_preserves_intact_native_tables() {
+    let (_directory, mut session, source) = test_support::compiled(true);
+    let output = source.with_extension("bsp");
+    let original = Bsp::parse(&std::fs::read(&output).unwrap()).unwrap();
+    let origins = session
+        .compiled
+        .as_ref()
+        .unwrap()
+        .world_light_origins
+        .clone()
+        .unwrap();
+    for (case, reason) in [(0, "not retained"), (1, "count"), (2, "digest")] {
+        let mut bsp = original.clone();
+        match case {
+            1 => {
+                bsp.lumps[LDR_LUMP].data.truncate(3 * RECORD_BYTES);
+            }
+            2 => {
+                bsp.lumps[LDR_LUMP].data[12] ^= 1;
+            }
+            _ => {}
+        }
+        std::fs::write(&output, bsp.to_bytes()).unwrap();
+        let identity = compiler::FileIdentity::capture(&output, &Control::default()).unwrap();
+        let build = session.compiled.as_mut().unwrap();
+        build.output_identity = Ok(identity.clone());
+        build.lightmap_identity.output = Ok(identity);
+        build.world_light_origins = (case != 0).then(|| origins.clone());
+        let report = session
+            .inspect_compiled_world_lights(&Query::default())
+            .unwrap();
+        assert_eq!(report.build["status"], "current");
+        let native = bsp
+            .world_lights(source_formats::bsp::LightingKind::Ldr)
+            .unwrap();
+        assert_eq!(report.page.total, Some(native.len()));
+        assert_eq!(report.page.rows[0].intensity, native[0].intensity);
+        assert!(
+            matches!(&report.page.rows[0].source_association, SourceAssociation::Unavailable { reason: actual } if actual.contains(reason))
+        );
+        assert!(report.frame_origin(0).is_ok());
+        if case != 0 {
+            let hdr = session
+                .inspect_compiled_world_lights(&Query {
+                    channel: Channel::Hdr,
+                    ..Default::default()
+                })
+                .unwrap();
+            assert!(matches!(
+                hdr.page.rows[0].source_association,
+                SourceAssociation::Available { .. }
+            ));
+        }
+    }
+    std::fs::write(&output, b"replaced output").unwrap();
+    let unavailable = session
+        .inspect_compiled_world_lights(&Query::default())
+        .unwrap();
+    assert_eq!(unavailable.build["status"], "unavailable");
+    assert!(unavailable.page.rows.is_empty());
+}
+
+#[test]
+fn source_associations_remain_captured_across_failed_cancelled_and_historical_builds() {
+    let (_directory, mut session, source) = test_support::compiled(true);
+    let baseline = session
+        .inspect_compiled_world_lights(&Query::default())
+        .unwrap();
+    let captured = rows(&baseline);
+    let origins = session
+        .compiled
+        .as_ref()
+        .unwrap()
+        .world_light_origins
+        .clone()
+        .unwrap();
+    let native_bytes = std::fs::read(source.with_extension("bsp")).unwrap();
+    session
+        .update_build_settings(
+            Actor::User,
+            crate::session::compilation::BuildSettingsUpdate {
+                lighting_work_limit: Some(1),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let failed = session.begin_compile(Actor::User, None).unwrap().run();
+    session.finish_compile(Actor::User, &failed);
+    assert_eq!(session.compile_status()["job"]["status"], "failed");
+    assert!(Arc::ptr_eq(
+        &origins,
+        session
+            .compiled
+            .as_ref()
+            .unwrap()
+            .world_light_origins
+            .as_ref()
+            .unwrap()
+    ));
+    let request = session.begin_compile(Actor::User, None).unwrap();
+    session
+        .cancel_compile(Actor::User, session.compile_token().unwrap())
+        .unwrap();
+    let cancelled = request.run();
+    session.finish_compile(Actor::User, &cancelled);
+    assert!(Arc::ptr_eq(
+        &origins,
+        session
+            .compiled
+            .as_ref()
+            .unwrap()
+            .world_light_origins
+            .as_ref()
+            .unwrap()
+    ));
+    assert_eq!(
+        std::fs::read(source.with_extension("bsp")).unwrap(),
+        native_bytes
+    );
+    let stale = session
+        .inspect_compiled_world_lights(&Query::default())
+        .unwrap();
+    assert!(stale.historical);
+    assert_eq!(rows(&stale), captured);
+    assert_eq!(token(&stale), token(&baseline));
+    session
+        .update_build_settings(
+            Actor::User,
+            crate::session::compilation::BuildSettingsUpdate {
+                lighting_work_limit: Some(compiler::DEFAULT_LIGHTING_WORK_LIMIT),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    session
+        .edit(Actor::User, "replace captured lamp class", |tx| {
+            let entity = tx.entity_mut(9001)?;
+            entity.properties.set("classname", "info_target");
+            Ok(())
+        })
+        .unwrap();
+    let historical = session
+        .inspect_compiled_world_lights(&Query::default())
+        .unwrap();
+    assert!(historical.historical);
+    assert_eq!(rows(&historical), captured);
+    let successful = session.begin_compile(Actor::User, None).unwrap().run();
+    session.finish_compile(Actor::User, &successful);
+    assert!(successful.as_ref().unwrap().published());
+    assert!(
+        session
+            .inspect_compiled_world_lights(&Query {
+                build_token: Some(token(&baseline)),
+                ..Default::default()
+            })
+            .is_err()
+    );
+    let current = session
+        .inspect_compiled_world_lights(&Query::default())
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(&current.page.rows[0].source_association).unwrap(),
+        serde_json::json!({"status":"available","origin":{"kind":"root","entity":9002}})
     );
 }

@@ -72,13 +72,35 @@ fn compiled_lights_controls_share_pages_channels_details_and_owned_build_invalid
             .iter()
             .map(|column| column.title.to_string())
             .collect::<Vec<_>>(),
-        ["Record", "Kind", "Style", "Origin", "Intensity", "Flags"]
+        [
+            "Record",
+            "Kind",
+            "Style",
+            "Origin",
+            "Intensity",
+            "Flags",
+            "Source"
+        ]
     );
     assert!(window.get_next_lights());
     window.invoke_inspect_light(1);
     assert!(window.get_has_selection());
     assert_eq!(window.get_details().record, "1");
     assert_eq!(window.get_details().kind, "spot (2)");
+    assert_eq!(
+        window.get_details().source_association,
+        "Captured source: root entity:9002"
+    );
+    assert_eq!(
+        window
+            .get_light_rows()
+            .row_data(1)
+            .unwrap()
+            .row_data(6)
+            .unwrap()
+            .text,
+        "entity:9002"
+    );
     assert_eq!(window.get_details().style, "7");
     assert_eq!(window.get_details().intensity, "0, 0, 1");
     assert!(window.get_can_frame());
@@ -108,6 +130,12 @@ fn compiled_lights_controls_share_pages_channels_details_and_owned_build_invalid
     assert!(window.get_previous_lights());
     window.invoke_inspect_light(0);
     assert!(!window.get_can_frame());
+    assert!(
+        window
+            .get_details()
+            .source_association
+            .starts_with("Unavailable:")
+    );
     window.invoke_page_lights(-1);
     assert_eq!(ordinals(window), ["0", "1"]);
     window.set_channel("HDR".into());
@@ -181,6 +209,7 @@ fn compiled_lights_controls_share_pages_channels_details_and_owned_build_invalid
     assert!(!window.get_has_selection());
     assert!(!window.get_can_frame());
     assert_eq!(window.get_details().record, "");
+    assert_eq!(window.get_details().source_association, "");
     assert!(!window.get_next_lights());
     controller.window.show().unwrap();
     controller.refresh_visible(&lock(&shared));
@@ -194,6 +223,12 @@ fn compiled_lights_controls_share_pages_channels_details_and_owned_build_invalid
     window.invoke_refresh_inspection();
     assert!(window.get_build_state().contains("stale"));
     assert_eq!(ordinals(window), ["0", "1", "2", "3"]);
+    window.invoke_inspect_light(1);
+    assert_eq!(
+        window.get_details().source_association,
+        "Historical source: root entity:9002"
+    );
+    assert!(!window.get_can_frame());
     lock(&shared)
         .update_build_settings(
             Actor::User,

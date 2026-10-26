@@ -155,6 +155,18 @@ fn compiled_world_lights_mcp_matches_the_owned_read_only_session_query() {
     let expected = serde_json::to_value(expected).unwrap();
     assert_eq!(expected["build"]["status"], "current");
     assert_eq!(expected["page"]["total"], 4);
+    assert_eq!(
+        expected["page"]["rows"][0]["source_association"],
+        json!({"status":"available","origin":{"kind":"root","entity":9001}})
+    );
+    assert_eq!(
+        expected["page"]["rows"][1]["source_association"],
+        json!({"status":"available","origin":{"kind":"root","entity":9002}})
+    );
+    assert_eq!(
+        expected["page"]["rows"][2]["source_association"]["status"],
+        "unavailable"
+    );
     let token = expected["build"]["token"].as_str().unwrap().to_owned();
     let before = (
         session.document().vmf().clone(),

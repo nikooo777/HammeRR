@@ -37,6 +37,7 @@ mod water_analog;
 pub mod water_assets;
 pub mod water_dependencies;
 pub mod winding;
+pub mod world_light_origins;
 
 #[cfg(test)]
 #[path = "../tests/common/mod.rs"]
@@ -658,6 +659,7 @@ fn serialize_elapsed<S: serde::Serializer>(
 
 #[derive(Debug)]
 pub struct Output {
+    pub world_light_origins: Option<std::sync::Arc<world_light_origins::WorldLightOrigins>>,
     pub face_origins: Result<std::sync::Arc<face_origins::FaceOrigins>, String>,
     pub instance_dependencies: Option<instances::DependencyGuard>,
     pub bsp: Option<Bsp>,
@@ -1617,6 +1619,7 @@ fn build(
             &mut output.report,
             lighting::Settings {
                 control,
+                instances: prepared_instances,
                 fs,
                 vmf,
                 options,
@@ -1651,6 +1654,7 @@ fn build(
         if output.report.has_errors() {
             return Ok(());
         }
+        output.world_light_origins = Some(std::sync::Arc::new(stats.world_light_origins));
         output.stats.world_lights = stats.lights;
         output.stats.light_styles = stats.light_styles;
         output.stats.styled_faces = stats.styled_faces;
@@ -1856,6 +1860,7 @@ pub fn compile_with_source_controlled(
 ) -> Output {
     let start = Instant::now();
     let mut output = Output {
+        world_light_origins: None,
         face_origins: Err("No successful face emission mapping was retained".into()),
         instance_dependencies: None,
         bsp: None,

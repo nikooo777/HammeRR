@@ -21,7 +21,7 @@ const SOURCE_MODE: baked_build::SourceVerification =
     baked_build::SourceVerification::OriginalMetadata {
         maximum_bytes: MAX_METADATA_BYTES,
     };
-const NOTES: &str = "Native 88-byte world-light records in file order. Positions/radius use Hammer units; intensity is stored native RGB, not display brightness or illuminance. Owner/cluster/texinfo are native integers, not authored identities. Channel availability does not establish runtime HDR activation. Currentness covers the committed map, captured settings/content epoch and tracked original source guards, not a complete world-material closure. Changed lookup directories conservatively make source evidence stale. Unapplied drafts are not baked; pending_preview describes rendered geometry drafts only.";
+const NOTES: &str = "Native 88-byte world-light records in file order. Positions/radius use Hammer units; intensity is stored native RGB, not display brightness or illuminance. Owner/cluster/texinfo are native integers, not authored identities. Available point/spot source associations are captured at compilation and paired with exact channel bytes; historical IDs describe that captured source only. Instance identity records the outer helper, leaf file, original entity and build-local expanded entity, not a full nested occurrence address. Channel availability does not establish runtime HDR activation. Currentness covers the committed map, captured settings/content epoch and tracked original source guards, not a complete world-material closure. Changed lookup directories conservatively make source evidence stale. Unapplied drafts are not baked; pending_preview describes rendered geometry drafts only.";
 
 #[derive(Debug, Clone)]
 pub struct Query {
@@ -138,7 +138,19 @@ pub struct Page {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum SourceAssociation {
+    Available {
+        origin: compiler::world_light_origins::Origin,
+    },
+    Unavailable {
+        reason: &'static str,
+    },
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct WorldLightRow {
+    pub source_association: SourceAssociation,
     pub ordinal: usize,
     pub kind_name: &'static str,
     pub origin: [f32; 3],
@@ -166,6 +178,8 @@ pub struct Limits {
     pub call_bytes: usize,
     pub metadata_bytes: usize,
     pub report_bytes: usize,
+    pub source_association_bytes: usize,
+    pub page_source_bytes: usize,
     pub page_lights: usize,
     pub lights_per_channel: usize,
     pub diagnostics: usize,
@@ -323,6 +337,13 @@ impl Session {
             };
         }
         let table = &tables[usize::from(query.channel == Channel::Hdr)];
+        control.checkpoint()?;
+        let associations = build
+            .world_light_origins
+            .as_ref()
+            .ok_or("Source associations were not retained for this build")
+            .and_then(|origins| origins.associations(&bsp, query.channel.kind(), table.len()));
+        control.checkpoint()?;
         if query.offset > table.len() {
             return Err("Light page offset exceeds the native table count".into());
         }
@@ -332,12 +353,14 @@ impl Session {
             .rows
             .try_reserve_exact(end - query.offset)
             .map_err(|_| "Light page cannot be allocated")?;
+        let mut source_bytes = 0usize;
         for (ordinal, light) in table.iter().enumerate().take(end).skip(query.offset) {
             control.checkpoint()?;
+            let association = source_association(&associations, ordinal, light, &mut source_bytes)?;
             report
                 .page
                 .rows
-                .push(WorldLightRow::from_native(ordinal, light));
+                .push(WorldLightRow::from_native(ordinal, light, association));
         }
         report.page.total = Some(table.len());
         report.page.returned = report.page.rows.len();
@@ -391,6 +414,7 @@ fn call_bound(decoded: usize) -> Result<usize, String> {
         .and_then(|bytes| bytes.checked_add(MAX_METADATA_BYTES))
         .and_then(|bytes| bytes.checked_add(2 * MAX_WORLD_LIGHTS * size_of::<WorldLight>()))
         .and_then(|bytes| bytes.checked_add(MAX_PAGE_LIGHTS * size_of::<WorldLightRow>()))
+        .and_then(|bytes| bytes.checked_add(MAX_REPORT_BYTES))
         .and_then(|bytes| bytes.checked_add(4 * MAX_REPORT_BYTES))
         .ok_or("Compiled light inspection allocation bound overflow")?;
     if bytes > MAX_CALL_BYTES {
@@ -472,9 +496,63 @@ fn channel_baked(lighting: compiler::LightingMode, channel: Channel) -> bool {
     }
 }
 
+fn source_association(
+    associations: &Result<&[Option<compiler::world_light_origins::Origin>], &'static str>,
+    ordinal: usize,
+    light: &WorldLight,
+    bytes: &mut usize,
+) -> Result<SourceAssociation, String> {
+    use compiler::world_light_origins::Origin;
+    let unavailable = |reason| SourceAssociation::Unavailable { reason };
+    if !matches!(light.kind, world_light_kind::POINT | world_light_kind::SPOT) {
+        return Ok(unavailable(
+            "Source associations are available only for emitted point and spot lights",
+        ));
+    }
+    let entries = match associations {
+        Ok(entries) => entries,
+        Err(reason) => return Ok(unavailable(reason)),
+    };
+    let Some(origin) = entries.get(ordinal).and_then(Option::as_ref) else {
+        return Ok(unavailable(
+            "No source association was captured for this native record",
+        ));
+    };
+    let origin = match origin {
+        Origin::Root { entity } => Origin::Root { entity: *entity },
+        Origin::Instance {
+            instance,
+            file,
+            entity,
+            expanded_entity,
+        } => {
+            *bytes = bytes
+                .checked_add(file.len())
+                .filter(|&bytes| bytes <= MAX_REPORT_BYTES)
+                .ok_or("Compiled light source paths exceed the page storage budget")?;
+            let mut path = String::new();
+            path.try_reserve_exact(file.len())
+                .map_err(|_| "Compiled light source path cannot be allocated")?;
+            path.push_str(file);
+            Origin::Instance {
+                instance: *instance,
+                file: path,
+                entity: *entity,
+                expanded_entity: *expanded_entity,
+            }
+        }
+    };
+    Ok(SourceAssociation::Available { origin })
+}
+
 impl WorldLightRow {
-    fn from_native(ordinal: usize, light: &WorldLight) -> Self {
+    fn from_native(
+        ordinal: usize,
+        light: &WorldLight,
+        source_association: SourceAssociation,
+    ) -> Self {
         Self {
+            source_association,
             ordinal,
             kind_name: match light.kind {
                 world_light_kind::SURFACE => "surface",
@@ -536,6 +614,8 @@ fn empty_report(query: &Query, build: Value, live_bytes: usize) -> Inspection {
             call_bytes: MAX_CALL_BYTES,
             metadata_bytes: MAX_METADATA_BYTES,
             report_bytes: MAX_REPORT_BYTES,
+            source_association_bytes: compiler::world_light_origins::MAX_BYTES,
+            page_source_bytes: MAX_REPORT_BYTES,
             page_lights: MAX_PAGE_LIGHTS,
             lights_per_channel: MAX_WORLD_LIGHTS,
             diagnostics: MAX_DIAGNOSTICS,

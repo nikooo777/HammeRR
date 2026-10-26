@@ -1461,6 +1461,7 @@ impl Session {
                     .map(|job| job.inspection_source.clone())
                     .unwrap_or_else(|| Err("Build source identity is unavailable".into()));
                 self.compiled = Some(CompiledMap {
+                    world_light_origins: result.output.world_light_origins.clone(),
                     prop_lighting_guard,
                     static_prop_sources: result.static_prop_sources.clone(),
                     claim: result.take_artifact_claim(),

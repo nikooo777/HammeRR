@@ -250,6 +250,8 @@ Static child `env_fog_controller` entities use ordinary create/property/save ope
 
 Valid editor-only atlas catalogs can stay in child maps. Their metadata is checked and excluded from expanded geometry and BSPs. Unknown top-level metadata and invalid catalogs reject.
 
+`inspect_compiled_world_lights` rows include `source_association`. Available point/spot origins identify a captured root `entity`, or an instance's outer `instance` helper, leaf `file`, original `entity` and build-local `expanded_entity`. Historical IDs remain attached to their captured source snapshot. Missing or inconsistent metadata and other native kinds return `status: "unavailable"` with a reason while intact native rows remain readable. Associations are checked against each channel's exact table count and digest. These IDs do not provide a full nested occurrence path or select/open current source files. The existing framing result carries the same enriched record.
+
 To [frame a compiled point or spot light](compiled-lights.md), inspect the owned records first, then call `frame_compiled_world_light` with explicit `build_token`, `channel` and native `ordinal`. Optional `aspect` defaults to `1` and accepts `0.01`–`100`. The result includes exact build/record provenance, `framed_bounds` and camera state. Current output and an available channel are required; stale, global, unknown or out-of-world records reject before camera movement. Active viewport gestures and block previews also reject without cancellation. Ordinary drafts, map selection, history and settings survive.
 
 ## Tool reference

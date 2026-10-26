@@ -1441,3 +1441,148 @@ fn immediate_environment_bindings_validate_all_effective_channels_before_region_
         raw
     );
 }
+
+#[test]
+fn emitted_light_origins_follow_each_native_channel_after_omission_and_nested_expansion() {
+    use compiler::world_light_origins::Origin;
+    let directory = tempfile::tempdir().unwrap();
+    let game = game(directory.path());
+    let mut zero = Entity::new(10, "light");
+    for (key, value) in [("origin", "0 0 128"), ("_light", "0 0 0 0")] {
+        zero.properties.set(key, value);
+    }
+    let mut wide = Entity::new(11, "light_spot");
+    for (key, value) in [
+        ("origin", "0 0 160"),
+        ("angles", "0 0 0"),
+        ("pitch", "0"),
+        ("_light", "255 255 255 20"),
+        ("_inner_cone", "180"),
+        ("_cone", "180"),
+    ] {
+        wide.properties.set(key, value);
+    }
+    let mut child = leaf(zero.clone());
+    child.entities.push(wide.clone());
+    write_source(directory.path(), "leaf.vmf", &child);
+    let mut middle = Document::empty().into_vmf();
+    instance(&mut middle, "leaf.vmf", "-32 0 0", "0 0 0");
+    instance(&mut middle, "leaf.vmf", "32 0 0", "0 0 0");
+    write_source(directory.path(), "middle.vmf", &middle);
+    let mut document = Document::new(room(true, false));
+    document
+        .edit("solid light exclusion", |tx| {
+            edit::create_block(
+                tx,
+                DVec3::new(20.0, 20.0, 80.0),
+                DVec3::new(40.0, 40.0, 120.0),
+                "dev/dev_measuregeneric01",
+            )
+        })
+        .unwrap();
+    let mut parent = document.into_vmf();
+    for side in parent
+        .world
+        .solids
+        .iter_mut()
+        .flat_map(|solid| &mut solid.sides)
+    {
+        side.lightmap_scale = 128;
+    }
+    for (id, origin, hidden) in [
+        (300, "0 -64 160", false),
+        (302, "0 0 128", true),
+        (303, "192 0 128", false),
+        (304, "30 30 100", false),
+    ] {
+        let mut lamp = wide.clone();
+        lamp.id = id;
+        lamp.hidden = hidden;
+        lamp.properties.set("origin", origin);
+        parent.entities.push(lamp);
+    }
+    let mut sky = environment("0 0 224", Some("0 0 0"), "-90");
+    sky.id = 301;
+    sky.properties.set("_ambient", "0");
+    sky.properties.set("_ambientHDR", "255 255 255 10");
+    parent.entities.insert(3, sky);
+    let mut outer = Entity::new(400, "func_instance");
+    outer.properties.set("file", "middle.vmf");
+    outer.properties.set("origin", "0 0 0");
+    parent.entities.push(outer);
+    region(&mut parent);
+    let context = saved_parent(directory.path(), &parent);
+    let expanded = resolve(&parent, &context);
+    let expanded_ids = expanded
+        .vmf()
+        .entities
+        .iter()
+        .filter(|entity| matches!(entity.id, 401..=404))
+        .map(|entity| entity.id)
+        .collect::<Vec<_>>();
+    assert_eq!(expanded_ids, [401, 402, 403, 404]);
+    let mut copies = Vec::new();
+    for x in [-32, 32] {
+        for (source, z) in [(&zero, 128), (&wide, 160)] {
+            let mut source = source.clone();
+            source.properties.set("origin", format!("{x} 0 {z}"));
+            copies.push(source);
+        }
+    }
+    let expected = literal(&parent, &copies);
+    let output = compile_saved(&parent, &game, LightingMode::DirectLdrHdr, &context);
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    let bsp = output.bsp.as_ref().unwrap();
+    let expected = successful(compiler::compile_with_options(
+        &expected,
+        &game,
+        options(LightingMode::DirectLdrHdr),
+    ));
+    assert_eq!(bsp.to_bytes(), expected.to_bytes());
+    let origins = output.world_light_origins.as_ref().unwrap();
+    for (kind, prefix) in [(LightingKind::Ldr, 2), (LightingKind::Hdr, 3)] {
+        let lights = bsp.world_lights(kind).unwrap();
+        let associations = origins.associations(bsp, kind, lights.len()).unwrap();
+        assert_eq!(lights.len(), prefix + 4);
+        assert_eq!(associations[0], Some(Origin::Root { entity: 300 }));
+        assert!(associations[1..prefix].iter().all(Option::is_none));
+        for (offset, (entity, expanded_entity)) in [(10, 401), (11, 402), (10, 403), (11, 404)]
+            .into_iter()
+            .enumerate()
+        {
+            assert_eq!(
+                associations[prefix + offset],
+                Some(Origin::Instance {
+                    instance: 400,
+                    file: "leaf.vmf".into(),
+                    entity,
+                    expanded_entity,
+                })
+            );
+            assert_eq!(lights[prefix + offset].kind, bsp::world_light_kind::POINT);
+            assert_eq!(lights[prefix + offset].owner, -1);
+            if entity == 10 {
+                assert_eq!(lights[prefix + offset].intensity, [0.0; 3]);
+            }
+        }
+        let lump = match kind {
+            LightingKind::Ldr => bsp::lump::WORLDLIGHTS,
+            LightingKind::Hdr => bsp::lump::WORLDLIGHTS_HDR,
+        };
+        assert_eq!(bsp.lumps[lump].data, expected.lumps[lump].data);
+        let mut changed = bsp.clone();
+        changed.lumps[lump].data[12] ^= 1;
+        assert!(
+            origins
+                .associations(&changed, kind, lights.len())
+                .unwrap_err()
+                .contains("digest")
+        );
+        assert!(
+            origins
+                .associations(bsp, kind, lights.len() - 1)
+                .unwrap_err()
+                .contains("count")
+        );
+    }
+}

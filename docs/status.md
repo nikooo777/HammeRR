@@ -48,7 +48,7 @@ The integrated compiler is experimental. File operations, BSP publication and ga
 | [Overlays](overlays.md) | Coplanar flat, isolated planar-terrain and mixed-group fitting, refit, rebind and corner editing; native projections, face splitting and water transitions. | Joined or nonplanar terrain authoring; projected-material viewport preview. |
 | [Assemblies](instances.md) | Checked transforms, stationary child poses, local spotlight targets, static fog and nested light-value bindings for colors, gains, falloff, sun spread, cones, focus and signed pitch. | General runtime entities, scripting and name fixups. |
 | [Visibility helpers](occluders.md) | Occluders and eligible visibility-cluster volumes. | Unsupported memberships and dynamic child control. |
-| [Inspection](baked-lightmaps.md) | Owned face lightmaps, prop vertex bytes and native light records; [frame current point/spot origins](compiled-lights.md) in the viewport. | Unreportable physical paths show stale provenance; no authored light association or full baked-output viewport rendering. |
+| [Inspection](baked-lightmaps.md) | Owned face lightmaps, prop vertex bytes, native light records and captured point/spot source identities; [frame current point/spot origins](compiled-lights.md) in the viewport. | Unreportable physical paths show stale provenance; instance source identity lacks full nested occurrence paths; no full baked-output viewport rendering. |
 | [Publication](compile-regions.md) | Captured build scope, cancellation, checked output writes and private game launch. | General cross-platform file/runtime support. |
 
 Unsupported input and exceeded resource budgets fail explicitly.

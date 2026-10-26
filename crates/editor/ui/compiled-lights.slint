@@ -2,6 +2,7 @@ import { Button, ComboBox, ScrollView, StandardTableView, TextEdit } from "std-w
 
 export struct CompiledLightDetails {
     record: string,
+    source-association: string,
     kind: string,
     style: string,
     origin: string,
@@ -104,36 +105,40 @@ export component CompiledLightsWindow inherits Window {
                 min-height: 170px;
                 preferred-height: 240px;
                 vertical-stretch: 1;
-                HorizontalLayout {
-                    spacing: 20px;
-                    VerticalLayout {
-                        spacing: 8px;
-                        DetailField { label: "Kind (native code)"; value: root.details.kind; }
-                        DetailField { label: "Origin"; value: root.details.origin; }
-                        DetailField { label: "Intensity (native RGB)"; value: root.details.intensity; }
-                        DetailField { label: "Normal"; value: root.details.normal; }
-                        DetailField { label: "Style"; value: root.details.style; }
-                    }
-                    VerticalLayout {
-                        spacing: 8px;
-                        DetailField { label: "Inner cone dot"; value: root.details.stop-dot; }
-                        DetailField { label: "Outer cone dot"; value: root.details.stop-dot2; }
-                        DetailField { label: "Exponent"; value: root.details.exponent; }
-                        DetailField { label: "Radius"; value: root.details.radius; }
-                        DetailField { label: "Cluster"; value: root.details.cluster; }
-                    }
-                    VerticalLayout {
-                        spacing: 8px;
-                        DetailField { label: "Constant attenuation"; value: root.details.constant-attenuation; }
-                        DetailField { label: "Linear attenuation"; value: root.details.linear-attenuation; }
-                        DetailField { label: "Quadratic attenuation"; value: root.details.quadratic-attenuation; }
-                        DetailField { label: "Flags (signed / hexadecimal)"; value: root.details.flags; }
-                        DetailField { label: "Texinfo"; value: root.details.texinfo; }
-                        DetailField { label: "Owner"; value: root.details.owner; }
+                VerticalLayout {
+                    spacing: 10px;
+                    DetailField { label: "Source association"; value: root.details.source-association; }
+                    HorizontalLayout {
+                        spacing: 20px;
+                        VerticalLayout {
+                            spacing: 8px;
+                            DetailField { label: "Kind (native code)"; value: root.details.kind; }
+                            DetailField { label: "Origin"; value: root.details.origin; }
+                            DetailField { label: "Intensity (native RGB)"; value: root.details.intensity; }
+                            DetailField { label: "Normal"; value: root.details.normal; }
+                            DetailField { label: "Style"; value: root.details.style; }
+                        }
+                        VerticalLayout {
+                            spacing: 8px;
+                            DetailField { label: "Inner cone dot"; value: root.details.stop-dot; }
+                            DetailField { label: "Outer cone dot"; value: root.details.stop-dot2; }
+                            DetailField { label: "Exponent"; value: root.details.exponent; }
+                            DetailField { label: "Radius"; value: root.details.radius; }
+                            DetailField { label: "Cluster"; value: root.details.cluster; }
+                        }
+                        VerticalLayout {
+                            spacing: 8px;
+                            DetailField { label: "Constant attenuation"; value: root.details.constant-attenuation; }
+                            DetailField { label: "Linear attenuation"; value: root.details.linear-attenuation; }
+                            DetailField { label: "Quadratic attenuation"; value: root.details.quadratic-attenuation; }
+                            DetailField { label: "Flags (signed / hexadecimal)"; value: root.details.flags; }
+                            DetailField { label: "Texinfo"; value: root.details.texinfo; }
+                            DetailField { label: "Owner"; value: root.details.owner; }
+                        }
                     }
                 }
             }
-            Text { text: "Stored native fields, not screen brightness or authored entity IDs. Unapplied drafts are not baked. Choosing a record preserves the camera; Frame light moves it to the current point/spot origin without changing selection."; wrap: word-wrap; color: #bac2ce; font-size: 12px; }
+            Text { text: "Captured source IDs belong to this build; instance IDs omit full nested paths. Native values are not screen brightness. Unapplied drafts are not baked. Choosing a row preserves the camera; Frame light moves it without changing selection."; wrap: word-wrap; color: #bac2ce; font-size: 12px; }
             if root.diagnostics != "": TextEdit { text: root.diagnostics; read-only: true; wrap: word-wrap; min-height: 55px; max-height: 90px; accessible-label: "Compiled light inspection diagnostics"; }
             HorizontalLayout {
                 Rectangle { horizontal-stretch: 1; }

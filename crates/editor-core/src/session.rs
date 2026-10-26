@@ -161,6 +161,7 @@ struct Snapshot {
 }
 
 struct CompiledMap {
+    world_light_origins: Option<Arc<compiler::world_light_origins::WorldLightOrigins>>,
     claim: Option<crate::path_claims::Claim>,
     output_identity: Result<compiler::FileIdentity, String>,
     face_origins: Result<std::sync::Arc<compiler::face_origins::FaceOrigins>, String>,

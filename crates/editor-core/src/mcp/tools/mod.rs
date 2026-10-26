@@ -8,6 +8,7 @@ mod components;
 mod context;
 mod cubemap_bindings;
 mod entities;
+mod entity_graph;
 mod entity_placement;
 mod files;
 mod geometry;

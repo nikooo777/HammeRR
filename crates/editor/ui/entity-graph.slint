@@ -1,0 +1,104 @@
+import { Button, ComboBox, LineEdit, ScrollView } from "std-widgets.slint";
+
+export struct EntityGraphRow { title: string, details: string }
+export component EntityGraphWindow inherits Window {
+    title: "Entity graph - HammeRR";
+    preferred-width: 960px;
+    preferred-height: 900px;
+    min-width: 760px;
+    min-height: 820px;
+    in-out property <string> roots;
+    in property <string> root-summary;
+    in-out property <string> direction: "Outgoing";
+    in-out property <string> depth: "2";
+    in-out property <string> search;
+    in-out property <string> section: "Nodes";
+    in-out property <string> mode: "Replace";
+    in property <string> summary;
+    in property <string> message;
+    in property <string> page-summary;
+    in property <[EntityGraphRow]> rows;
+    in property <bool> can-act;
+    in property <bool> has-previous;
+    in property <bool> has-next;
+    in-out property <float> aspect: 1;
+    callback inspect();
+    callback fields-changed();
+    callback roots-from-selection();
+    callback change-section();
+    callback page(int);
+    callback select-connected();
+    callback frame-connected();
+    callback close-dialog();
+    forward-focus: keys;
+    keys := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape { root.close-dialog(); return accept; }
+            return reject;
+        }
+        VerticalLayout {
+            padding: 20px;
+            spacing: 10px;
+            Text { text: "Entity graph"; font-size: 24px; font-weight: 600; }
+            Text { text: "Inspect applied I/O between authored entities in this map, excluding saved Hide. Unapplied drafts and expanded instance contents are excluded."; wrap: word-wrap; color: #bac2ce; }
+            HorizontalLayout {
+                spacing: 8px;
+                Button { text: "Use selected entities"; clicked => { root.roots-from-selection(); } }
+                Text { text: "Captured roots stay fixed when graph selection changes."; wrap: word-wrap; color: #bac2ce; }
+            }
+            Text { text: root.root-summary; wrap: word-wrap; font-weight: 600; }
+            HorizontalLayout {
+                spacing: 8px;
+                Text { text: "Root IDs (advanced)"; vertical-alignment: center; color: #bac2ce; font-size: 12px; }
+                LineEdit { text <=> root.roots; placeholder-text: "entity:12, entity:34"; edited => { root.fields-changed(); } accessible-label: "Graph root entity IDs"; }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                Text { text: "Direction"; vertical-alignment: center; }
+                ComboBox { model: ["Outgoing", "Incoming", "Both"]; current-value <=> root.direction; selected => { root.fields-changed(); } }
+                Text { text: "Depth"; vertical-alignment: center; }
+                LineEdit { text <=> root.depth; preferred-width: 60px; edited => { root.fields-changed(); } accessible-label: "Graph depth"; }
+                Button { text: "Inspect graph"; clicked => { root.inspect(); } }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                Text { text: "Search rows"; vertical-alignment: center; }
+                LineEdit { text <=> root.search; placeholder-text: "Name, class, entity ID, output or input"; edited => { root.fields-changed(); } accessible-label: "Search graph rows"; }
+                ComboBox { model: ["Nodes", "Relationships", "Unresolved (whole map)"]; current-value <=> root.section; selected => { root.change-section(); } }
+            }
+            Text { text: root.summary; wrap: word-wrap; }
+            Text { text: root.page-summary; }
+            ScrollView {
+                content-width: self.width;
+                vertical-stretch: 1;
+                min-height: 180px;
+                VerticalLayout {
+                    spacing: 8px;
+                    for row in root.rows: VerticalLayout {
+                        padding: 8px;
+                        spacing: 4px;
+                        Text { text: row.title; font-weight: 600; wrap: word-wrap; }
+                        Text { text: row.details; wrap: word-wrap; color: #bac2ce; }
+                    }
+                }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                Button { text: "Previous page"; enabled: root.has-previous; clicked => { root.page(-1); } }
+                Button { text: "Next page"; enabled: root.has-next; clicked => { root.page(1); } }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            Text { text: "Exact names fan out to every matching visible entity. Runtime, class and wildcard candidates remain unresolved. Actions use all reached nodes within the depth, including roots, independent of search and pages."; wrap: word-wrap; color: #bac2ce; }
+            Text { text: root.message; wrap: word-wrap; color: #ffcb80; }
+            HorizontalLayout {
+                spacing: 8px;
+                ComboBox { model: ["Replace", "Add", "Remove", "Toggle"]; current-value <=> root.mode; }
+                Button { text: "Select connected"; enabled: root.can-act; clicked => { root.select-connected(); } }
+                Button { text: "Frame connected"; enabled: root.can-act; clicked => { root.frame-connected(); } }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Close"; clicked => { root.close-dialog(); } }
+            }
+        }
+    }
+}

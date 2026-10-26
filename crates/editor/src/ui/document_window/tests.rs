@@ -33,6 +33,7 @@ struct Fixture {
 
 struct OpenWindows {
     app: AppWindow,
+    graph: EntityGraphWindow,
     properties: PropertiesWindow,
     color: ColorWindow,
     property_material: MaterialWindow,
@@ -52,9 +53,10 @@ struct OpenWindows {
 }
 
 impl OpenWindows {
-    fn windows(&self) -> [&slint::Window; 17] {
+    fn windows(&self) -> [&slint::Window; 18] {
         [
             self.app.window(),
+            self.graph.window(),
             self.properties.window(),
             self.color.window(),
             self.property_material.window(),
@@ -149,8 +151,18 @@ fn fixture(ctx: GpuContext) -> Fixture {
 fn open_windows(f: &Fixture) -> OpenWindows {
     let app = f.owner.app().clone_strong();
     app.show().unwrap();
-    app.invoke_batch_properties();
+    app.invoke_entity_graph();
     let ui = f.owner.ui.as_ref().unwrap();
+    let graph = ui
+        .borrow()
+        .entity_graph
+        .as_ref()
+        .unwrap()
+        .window()
+        .clone_strong();
+    graph.invoke_inspect();
+    assert!(graph.get_can_act());
+    app.invoke_batch_properties();
     let properties = ui
         .borrow()
         .properties_window
@@ -250,6 +262,7 @@ fn open_windows(f: &Fixture) -> OpenWindows {
     let extraction = f.owner.extraction.as_ref().unwrap().window().clone_strong();
     let opened = OpenWindows {
         app,
+        graph,
         properties,
         color,
         property_material,
@@ -815,6 +828,54 @@ fn failed_host_schedule_repeats_its_error_until_actual_owner_finish() {
 }
 
 #[test]
+fn graph_retirement_propagates_hide_errors_and_refuses_retained_callbacks() {
+    software();
+    let directory = tempfile::tempdir().unwrap();
+    let mut session = Session::new(Err("graph retirement needs no assets".into()));
+    session.configure_recovery(Ok(directory.path().join("recovery")));
+    let entity = session
+        .create_entity(
+            Actor::User,
+            "logic_relay",
+            Some(DVec3::ZERO),
+            BTreeMap::new(),
+        )
+        .unwrap();
+    session.select(&[entity], SelectMode::Replace).unwrap();
+    let shared = Arc::new(Mutex::new(session));
+    let document = crate::test_assets::document(shared.clone());
+    let form =
+        crate::entity_graph_ui::Form::new(&runtime::DocumentAccess::for_document(document.clone()))
+            .unwrap();
+    form.show(&lock(&shared), 1.0).unwrap();
+    let window = form.window().clone_strong();
+    window.invoke_inspect();
+    assert!(window.get_can_act());
+    let before = state(&shared);
+    inject_hide_failure("Entity graph");
+    let mut errors = Vec::new();
+    form.hide_windows(&mut errors);
+    assert_eq!(errors, ["Entity graph: injected hide failure"]);
+    assert!(window.window().is_visible());
+    assert_eq!(document.lifecycle(), DocumentLifecycle::Live);
+    window.invoke_inspect();
+    window.invoke_select_connected();
+    window.invoke_frame_connected();
+    assert!(window.get_message().contains("retired"));
+    assert!(!window.get_can_act());
+    assert_eq!(state(&shared), before);
+    errors.clear();
+    form.hide_windows(&mut errors);
+    assert!(errors.is_empty());
+    assert!(!window.window().is_visible());
+    drop(form);
+    window.invoke_inspect();
+    assert!(!window.get_can_act());
+    assert_eq!(state(&shared), before);
+    document.shutdown().unwrap();
+}
+
+#[test]
 #[ignore = "requires a GPU adapter for the real DocumentWindow viewport"]
 fn owned_document_retirement_hides_nested_windows_stops_timers_and_preserves_peer() {
     software();
@@ -892,6 +953,11 @@ fn owned_document_retirement_hides_nested_windows_stops_timers_and_preserves_pee
     windows.app.invoke_create_instance_reference();
     windows.app.invoke_extract_instance();
     windows.app.invoke_map_checks();
+    windows.graph.invoke_inspect();
+    windows.graph.invoke_select_connected();
+    windows.graph.invoke_frame_connected();
+    assert!(windows.graph.get_message().contains("retired"));
+    assert!(!windows.graph.get_can_act());
     assert_eq!(state(&target.shared), target_before);
     windows.app.show().unwrap();
     windows

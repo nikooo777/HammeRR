@@ -1,3 +1,4 @@
+export { EntityGraphWindow, EntityGraphRow } from "entity-graph.slint";
 export { OpenDocumentsWindow, OpenDocumentRow } from "open-documents.slint";
 export { InstanceContentsWindow } from "instance-contents.slint";
 export { MaterialSourceWindow } from "material-source.slint";
@@ -2199,6 +2200,7 @@ export component AppWindow inherits Window {
     callback property-removed(key: string);
     callback flag-toggled(key: string, flag: string, checked: bool);
     callback place-entity();
+    callback entity-graph();
     callback edit-connections();
     callback edit-references();
     callback world-settings();
@@ -3148,6 +3150,7 @@ export component AppWindow inherits Window {
                     Button { text: "Create linked path…"; clicked => { root.create-linked-path(); } }
                     Button { text: "Design context…"; clicked => { root.design-context(); } }
                     Button { text: "Edit selected entity properties…"; clicked => { root.batch-properties(); } }
+                    Button { text: "Entity graph…"; clicked => { root.entity-graph(); } }
                     if root.entity-selected: Button {
                         text: "Connections…";
                         clicked => { root.edit-connections(); }

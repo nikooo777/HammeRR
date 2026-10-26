@@ -54,6 +54,7 @@ pub mod components;
 pub mod context;
 pub mod cubemap_bindings;
 pub mod definitions;
+pub mod entity_graph;
 pub mod entity_placement;
 mod favorites;
 pub mod fgd_helpers;

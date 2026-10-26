@@ -24,12 +24,21 @@ pub(super) fn combined_bounds(
     ids: &[ObjectId],
     overrides: &BTreeMap<ObjectId, (DVec3, DVec3)>,
 ) -> Option<(DVec3, DVec3)> {
-    map_core::query::union(ids.iter().filter_map(|&id| {
-        overrides
-            .get(&id)
-            .copied()
-            .or_else(|| map_core::query::bounds(document, id))
-    }))
+    map_core::query::union(
+        ids.iter()
+            .filter_map(|&id| object_bounds(document, id, overrides)),
+    )
+}
+
+pub(super) fn object_bounds(
+    document: &Document,
+    id: ObjectId,
+    overrides: &BTreeMap<ObjectId, (DVec3, DVec3)>,
+) -> Option<(DVec3, DVec3)> {
+    overrides
+        .get(&id)
+        .copied()
+        .or_else(|| map_core::query::bounds(document, id))
 }
 
 fn label(name: &str, fallback: &str) -> String {

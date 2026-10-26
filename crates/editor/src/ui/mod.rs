@@ -67,6 +67,7 @@ struct Ui {
     game_log_window: Option<GameLogWindow>,
     last_log_refresh: Instant,
     entity_window: Option<EntityWindow>,
+    entity_graph: Option<entity_graph_ui::Form>,
     connection_window: Option<ConnectionWindow>,
     seen_connections: (u64, u64, u64),
     properties_window: Option<PropertiesWindow>,
@@ -197,6 +198,7 @@ impl Ui {
             game_log_window: None,
             last_log_refresh: Instant::now(),
             entity_window: None,
+            entity_graph: None,
             connection_window: None,
             seen_connections: (0, 0, 0),
             properties_window: None,
@@ -1246,6 +1248,29 @@ fn create_document_window(
         window.set_message("".into());
         recovery_ui::refresh(&window, &lock(&session_of(&ui)));
         if let Err(error) = window.show() {
+            app.set_message(error.to_string().into());
+        }
+    });
+    root_callback!(app, ui, on_entity_graph, |app| {
+        let app = app.unwrap();
+        if ui.borrow().entity_graph.is_none() {
+            match entity_graph_ui::Form::new(&file_access(&ui)) {
+                Ok(form) => ui.borrow_mut().entity_graph = Some(form),
+                Err(error) => {
+                    app.set_message(error.to_string().into());
+                    return;
+                }
+            }
+        }
+        let shared = session_of(&ui);
+        let aspect = (app.get_viewport_width() / app.get_viewport_height().max(1.0)).max(0.01);
+        if let Err(error) = ui
+            .borrow()
+            .entity_graph
+            .as_ref()
+            .unwrap()
+            .show(&lock(&shared), aspect)
+        {
             app.set_message(error.to_string().into());
         }
     });
@@ -3057,6 +3082,13 @@ fn create_document_window(
                             );
                         }
                         panel_dirty = true;
+                    }
+                    if let Some(form) = &ui.entity_graph {
+                        form.refresh_visible(
+                            &session,
+                            (app.get_viewport_width() / app.get_viewport_height().max(1.0))
+                                .max(0.01),
+                        );
                     }
                     let connections = (
                         session.connection_serial(),

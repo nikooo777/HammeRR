@@ -142,6 +142,7 @@ get_clip_handles and set_clip_handle_options expose shared cut-plane movement/ro
 Discover entity classes with search_entity_classes and get_entity_class. create_entity \
 applies FGD defaults, including light brightness; set_entity_properties validates declared \
 types. Custom classes and keys remain supported. Placed lights are stored in the VMF; \
+inspect_entity_graph queries bounded committed authored I/O nodes/edges from explicit roots, direction and depth; use its snapshot for select_entity_graph or frame_entity_graph. Exact named fan-out and !self are followed; runtime/class/prefix-pattern candidates remain explicit unresolved records. Search and pages affect presentation only; selection/framing use the complete bounded traversal. \
 get_entity_connections inspects outgoing and incoming links, parsed fields and warnings. \
 get_connection_choices provides map target names and FGD inputs/outputs. Begin a shared form \
 with begin_connection_edit, change fields with update_connection_draft, then commit_connection_edit \
@@ -738,6 +739,7 @@ impl EditorServer {
             + Self::terrain_tools()
             + Self::transform_pivot_tools()
             + Self::sky3d_preview_tools()
+            + Self::entity_graph_tools()
             + Self::view_tools()
             + Self::working_region_tools()
     }

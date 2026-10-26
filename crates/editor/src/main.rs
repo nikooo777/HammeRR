@@ -11,6 +11,7 @@ mod components_ui;
 mod connection_ui;
 mod context_ui;
 mod cubemap_ui;
+mod entity_graph_ui;
 mod entity_placement_ui;
 mod face_edit_ui;
 mod fog_ui;

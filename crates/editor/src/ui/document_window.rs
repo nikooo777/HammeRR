@@ -259,6 +259,9 @@ impl Ui {
             navigation_defaults,
             shortcuts,
         );
+        if let Some(graph) = &self.entity_graph {
+            graph.hide_windows(errors);
+        }
         if let Some(compile) = &self.compile_status {
             compile.hide_windows(errors);
         }

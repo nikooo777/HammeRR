@@ -154,6 +154,10 @@ pub(super) fn prepare(
     sources: &BuildMaterialSources,
     budget: &mut Budget<'_>,
 ) -> Result<Prepared, String> {
+    budget.consume(0)?;
+    if !map.materials.uses_build_sources(sources) {
+        return Err("Brush texture shadows require the original prepared material owner".into());
+    }
     let sides = map
         .brushes
         .iter()
@@ -259,6 +263,78 @@ pub(super) fn test_face(alpha: [u8; 4]) -> Face {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preparation_requires_the_original_material_capture_before_reading_or_allocating() {
+        use crate::{Control, Report};
+        use source_formats::gamefs::{Mount, MountedPath};
+
+        let root =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/validation/901");
+        std::fs::create_dir_all(&root).unwrap();
+        let directory = tempfile::tempdir_in(root).unwrap();
+        let materials = directory.path().join("materials/dev");
+        std::fs::create_dir_all(&materials).unwrap();
+        std::fs::write(
+            materials.join("dev_measuregeneric01.vmt"),
+            "LightmappedGeneric { }",
+        )
+        .unwrap();
+        let game = GameFs {
+            game_dir: directory.path().to_owned(),
+            base_dir: directory.path().to_owned(),
+            mounts: vec![MountedPath {
+                ids: vec!["game".into()],
+                mount: Mount::Directory(directory.path().to_owned()),
+            }],
+        };
+        let vmf = crate::test_common::room();
+        let control = Control::default();
+        let sources = BuildMaterialSources::default();
+        let map = Map::load_with_material_sources_controlled(
+            &vmf,
+            &game,
+            &mut Report::default(),
+            &control,
+            None,
+            &sources,
+        )
+        .unwrap();
+        let mut budget = Budget::new(&control);
+        let prepared = prepare(&map, &game, &sources.clone(), &mut budget).unwrap();
+        assert_eq!(prepared.materials.len(), 1);
+        assert!(prepared.materials.values().all(Option::is_none));
+        drop(prepared);
+        assert_eq!(budget.live_bytes(), 0);
+
+        let foreign = BuildMaterialSources::default();
+        let path = "materials/dev/dev_measuregeneric01.vmt";
+        let same_bytes = foreign.read_asset(&game, path, 4096).unwrap().unwrap();
+        let original = sources.retained(path).unwrap().unwrap();
+        assert_eq!(same_bytes.bytes(), original.bytes());
+        assert_eq!(same_bytes.origin(), original.origin());
+        let work = budget.work();
+        let error = prepare(&map, &game, &foreign, &mut budget).err().unwrap();
+        assert!(error.contains("original prepared material owner"));
+        assert_eq!(budget.work(), work);
+        assert_eq!(budget.live_bytes(), 0);
+
+        let untracked = Map::load(&vmf, &game, &mut Report::default()).unwrap();
+        let error = prepare(&untracked, &game, &sources, &mut budget)
+            .err()
+            .unwrap();
+        assert!(error.contains("original prepared material owner"));
+        assert_eq!(budget.work(), work);
+        assert_eq!(budget.live_bytes(), 0);
+
+        control.cancel().unwrap();
+        assert_eq!(
+            prepare(&map, &game, &foreign, &mut budget).err().unwrap(),
+            "Compilation cancelled"
+        );
+        assert_eq!(budget.work(), work);
+        assert_eq!(budget.live_bytes(), 0);
+    }
 
     #[test]
     fn model_alpha_requires_an_actual_receiver_scope_and_existing_shadow_contents() {

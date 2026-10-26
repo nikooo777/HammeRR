@@ -225,6 +225,15 @@ impl<'a> Materials<'a> {
         materials
     }
 
+    pub(crate) fn uses_build_sources(
+        &self,
+        sources: &crate::asset_sources::BuildMaterialSources,
+    ) -> bool {
+        self.geometry_reads.uses_build_sources(sources)
+            && self.compile_reads.uses_build_sources(sources)
+            && self.texture_reads.uses_build_sources(sources)
+    }
+
     pub fn get(&self, index: usize) -> &MaterialInfo {
         &self.infos[index]
     }

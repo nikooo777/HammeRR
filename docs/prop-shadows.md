@@ -17,6 +17,11 @@ Flagged models can use supported alpha-tested or translucent texture shadows.
 Unsupported requested texture-shadow effects fail the build.
 Unflagged models cast opaque triangle shadows and report approximation warnings for unevaluated transparency.
 
+The build records the model, mesh files, materials and alpha textures read for
+these shadows. If a source or its lookup changes, the old build cannot replace
+the BSP or start through **Play built map**. This check also applies when vertex
+lighting and asset packing are off. It covers the sources used by the build.
+
 ## Limits
 
 - Static LOD0 geometry only; runtime animation is not baked.

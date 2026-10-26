@@ -371,6 +371,12 @@ fn selected_material_discriminates_skin_and_remains_guarded_after_output_drop() 
         .unwrap()
         .verify_sources(&game, &control)
         .unwrap();
+    selected
+        .static_prop_sources
+        .as_ref()
+        .unwrap()
+        .verify_sources(&game, &control)
+        .unwrap();
     std::fs::write(&selected_path, "VertexLitGeneric { $basetexture changed }").unwrap();
     assert!(
         selected
@@ -380,12 +386,14 @@ fn selected_material_discriminates_skin_and_remains_guarded_after_output_drop() 
             .verify_sources(&game, &control)
             .is_err()
     );
-    selected
-        .static_prop_sources
-        .as_ref()
-        .unwrap()
-        .verify_sources(&game, &control)
-        .unwrap();
+    assert!(
+        selected
+            .static_prop_sources
+            .as_ref()
+            .unwrap()
+            .verify_sources(&game, &control)
+            .is_err()
+    );
     drop(selected);
     assert!(prepared.commit(&control).is_err());
     assert_eq!(std::fs::read(&destination).unwrap(), previous);

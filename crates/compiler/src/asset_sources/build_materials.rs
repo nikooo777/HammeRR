@@ -172,6 +172,10 @@ pub struct BuildMaterialSources {
 }
 
 impl BuildMaterialSources {
+    pub(crate) fn same_capture(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.state, &other.state)
+    }
+
     pub(crate) fn without_retained_payloads() -> Self {
         Self {
             state: Arc::new(Mutex::new(State {

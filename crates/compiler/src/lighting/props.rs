@@ -257,21 +257,29 @@ pub(super) struct Assets<'fs, 'tracking> {
     allocations: Vec<Allocation>,
 }
 
-impl<'fs> Assets<'fs, '_> {
-    pub(super) fn for_brushes(
+impl<'fs, 'tracking> Assets<'fs, 'tracking> {
+    pub(super) fn for_props(
         fs: &'fs GameFs,
-        sources: &'fs crate::asset_sources::BuildMaterialSources,
+        sources: Option<&'fs crate::asset_sources::BuildMaterialSources>,
+        tracking: Option<&'tracking mut Tracker<'fs>>,
     ) -> Self {
         Self {
             fs,
-            tracking: None,
-            material_sources: Some(sources),
+            tracking,
+            material_sources: sources,
             bytes: 0,
             lookups: 0,
             textures: BTreeMap::new(),
             alpha_bytes: 0,
             allocations: Vec::new(),
         }
+    }
+
+    pub(super) fn for_brushes(
+        fs: &'fs GameFs,
+        sources: &'fs crate::asset_sources::BuildMaterialSources,
+    ) -> Self {
+        Self::for_props(fs, Some(sources), None)
     }
 
     pub(super) fn into_allocations(self) -> Vec<Allocation> {
@@ -315,7 +323,9 @@ impl<'fs> Assets<'fs, '_> {
 
     fn read(&mut self, path: &str, budget: &mut Budget<'_>) -> Result<Vec<u8>, String> {
         let limit = source_formats::mdl::MAX_MODEL_BYTES.min(MAX_ASSET_BYTES - self.bytes);
-        let data = if let Some(sources) = self.material_sources {
+        let data = if let Some(tracking) = &mut self.tracking {
+            tracking.read(path, limit, budget)?
+        } else if let Some(sources) = self.material_sources {
             budget.consume(1)?;
             let data = sources
                 .read_asset(self.fs, path, limit)
@@ -326,18 +336,8 @@ impl<'fs> Assets<'fs, '_> {
                     .push(budget.reserve_bytes(data.bytes().len())?);
             }
             data.map(|asset| asset.bytes().to_vec())
-        } else if let Some(tracking) = &mut self.tracking {
-            tracking.read(path, limit, budget)?
         } else {
-            budget.consume(1)?;
-            let data = self
-                .fs
-                .read_limited(path, limit)
-                .map_err(|error| format!("{path}: {error}"))?;
-            if let Some(data) = &data {
-                budget.consume(data.len().div_ceil(64))?;
-            }
-            data
+            return Err("Static-prop shadows are missing original asset sources".into());
         }
         .ok_or_else(|| format!("Static-prop shadow asset {path} was not found"))?;
         self.bytes += data.len();
@@ -383,24 +383,42 @@ impl<'fs> Assets<'fs, '_> {
                     "Static-prop shadow material lookup exceeds its 65,536 lookup limit".into(),
                 );
             }
-            let material = if let Some(tracking) = &mut self.tracking {
-                Material::load_with_reader(
-                    &source_formats::vmt::material_path(&candidate),
-                    &mut |path| {
-                        tracking
-                            .read(path, MAX_MATERIAL_BYTES, budget)
-                            .map_err(std::io::Error::other)
-                    },
-                )
-            } else {
-                Material::load_limited(self.fs, &candidate, MAX_MATERIAL_BYTES)
-            }
+            let material = Material::load_with_reader(
+                &source_formats::vmt::material_path(&candidate),
+                &mut |path| {
+                    self.read_material(path, budget)
+                        .map_err(std::io::Error::other)
+                },
+            )
             .map_err(|error| format!("Static-prop shadow material {candidate}: {error}"))?;
             if let Some(material) = material {
                 return Ok(Some(material));
             }
         }
         Ok(None)
+    }
+
+    fn read_material(
+        &mut self,
+        path: &str,
+        budget: &mut Budget<'_>,
+    ) -> Result<Option<Vec<u8>>, String> {
+        if let Some(tracking) = &mut self.tracking {
+            return tracking.read(path, MAX_MATERIAL_BYTES, budget);
+        }
+        budget.consume(1)?;
+        let sources = self
+            .material_sources
+            .ok_or("Static-prop shadows are missing original asset sources")?;
+        let asset = sources
+            .read_asset(self.fs, path, MAX_MATERIAL_BYTES)
+            .map_err(|error| format!("{path}: {error}"))?;
+        if let Some(asset) = &asset {
+            budget.consume(asset.bytes().len().div_ceil(64))?;
+            self.allocations
+                .push(budget.reserve_bytes(asset.bytes().len())?);
+        }
+        Ok(asset.map(|asset| asset.bytes().to_vec()))
     }
 }
 
@@ -481,11 +499,10 @@ fn append(
     Ok(degenerate)
 }
 
-pub(super) fn build<'a>(
+pub(super) fn build(
     bsp: &Bsp,
     vmf: &Vmf,
-    fs: &'a GameFs,
-    tracking: Option<&mut Tracker<'a>>,
+    mut assets: Assets<'_, '_>,
     generate_reflections: bool,
     report: &mut Report,
     budget: &mut Budget<'_>,
@@ -509,16 +526,6 @@ pub(super) fn build<'a>(
         if entities.len() != props.props.len() {
             return Err("Static-prop shadow source records do not match emitted props".into());
         }
-        let mut assets = Assets {
-            material_sources: None,
-            fs,
-            tracking,
-            bytes: 0,
-            lookups: 0,
-            textures: BTreeMap::new(),
-            alpha_bytes: 0,
-            allocations: Vec::new(),
-        };
         stats.disabled = props
             .props
             .iter()
@@ -691,6 +698,70 @@ mod tests {
     use super::*;
     use crate::Control;
     use source_formats::model::{Part, Vertex};
+
+    #[test]
+    fn guarded_shadow_reads_cannot_replace_original_assets_or_bypass_budgets() {
+        use crate::asset_sources::BuildMaterialSources;
+        use source_formats::gamefs::{Mount, MountedPath};
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = "source.vmt";
+        std::fs::write(directory.path().join(path), b"original").unwrap();
+        let mut game = crate::test_common::empty_game();
+        game.mounts.push(MountedPath {
+            ids: vec!["game".into()],
+            mount: Mount::Directory(directory.path().to_owned()),
+        });
+        for material in [false, true] {
+            let sources = BuildMaterialSources::without_retained_payloads();
+            sources.read_asset(&game, path, 8).unwrap().unwrap();
+            std::fs::write(directory.path().join(path), b"modified").unwrap();
+            let control = Control::default();
+            let mut budget = Budget::new(&control);
+            let mut assets = Assets::for_props(&game, Some(&sources), None);
+            let error = if material {
+                assets.read_material(path, &mut budget).unwrap_err()
+            } else {
+                assets.read(path, &mut budget).unwrap_err()
+            };
+            assert!(error.contains("changed") && error.contains(path), "{error}");
+            assert_eq!(budget.live_bytes(), 0);
+            std::fs::write(directory.path().join(path), b"original").unwrap();
+        }
+        for material in [false, true] {
+            for cancellation in [false, true] {
+                let sources = BuildMaterialSources::without_retained_payloads();
+                let control = Control::default();
+                let mut budget = Budget::new(&control);
+                let allocation = if cancellation {
+                    control.cancel().unwrap();
+                    None
+                } else {
+                    Some(
+                        budget
+                            .reserve_bytes(super::super::bake::MAX_LIGHTING_LIVE_BYTES)
+                            .unwrap(),
+                    )
+                };
+                let mut assets = Assets::for_props(&game, Some(&sources), None);
+                let error = if material {
+                    assets.read_material(path, &mut budget).unwrap_err()
+                } else {
+                    assets.read(path, &mut budget).unwrap_err()
+                };
+                assert!(error.contains(if cancellation {
+                    "cancelled"
+                } else {
+                    "live channel-allocation budget"
+                }));
+                assert_eq!(sources.is_observed(path).unwrap(), !cancellation);
+                assert!(assets.allocations.is_empty());
+                drop(assets);
+                drop(allocation);
+                assert_eq!(budget.live_bytes(), 0);
+            }
+        }
+    }
 
     #[test]
     fn probe_bound_point_queries_preserve_closed_boxes_and_empty_cancellation() {

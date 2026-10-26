@@ -842,7 +842,7 @@ impl Output {
     ) -> io::Result<Option<&asset_sources::AssetSourceGuard>> {
         if self.stats.static_props > 0 && self.static_prop_sources.is_none() {
             return Err(io::Error::other(
-                "Static-prop output is missing its original model/physics source guard",
+                "Static-prop output is missing its original asset source guard",
             ));
         }
         Ok(self.static_prop_sources.as_ref())
@@ -1558,12 +1558,6 @@ fn build(
             .sum::<usize>();
     }
     control.advance(Stage::StaticProps)?;
-    if options.pack_static_prop_assets
-        && let Some(reads) = map.materials.prop_lighting_sources_mut()
-        && let Some(sources) = &material_sources
-    {
-        reads.share_sources(sources.clone());
-    }
     let prop_stats = static_props::bake(
         vmf,
         fs,
@@ -1628,7 +1622,12 @@ fn build(
     output.stats.detail_prop_sprites = detail_stats.sprites;
     if options.lighting.performs_lighting() {
         control.advance(Stage::Lighting)?;
-        let prop_material_sources = map.materials.take_prop_lighting_sources();
+        let mut prop_material_sources = map.materials.take_prop_lighting_sources();
+        if let Some(reads) = &mut prop_material_sources
+            && let Some(sources) = &prop_stats.source_owner
+        {
+            reads.share_sources(sources.clone());
+        }
         let result = lighting::bake(
             &map,
             &models[0].tree,
@@ -1650,6 +1649,7 @@ fn build(
                 detail_lighting_tints: &detail_stats.lighting_tints,
                 prop_sources: &prop_stats.sources,
                 prop_material_sources,
+                prop_asset_sources: prop_stats.source_owner.as_ref(),
                 brush_material_sources: material_sources
                     .as_ref()
                     .filter(|_| options.brush_texture_shadows),
@@ -1822,8 +1822,12 @@ fn build(
                 .map_err(|error| error.to_string())?,
         );
     }
-    if options.pack_static_prop_assets && output.stats.static_props > 0 {
-        output.static_prop_sources = output.material_sources.clone();
+    if let Some(sources) = &prop_stats.source_owner {
+        output.static_prop_sources = Some(
+            sources
+                .source_guard(fs, control)
+                .map_err(|error| error.to_string())?,
+        );
     }
     output.stats.nodes = bsp.records::<bsp::Node>().map_err(|e| e.to_string())?.len();
     output.stats.leaves = bsp.records::<bsp::Leaf>().map_err(|e| e.to_string())?.len();

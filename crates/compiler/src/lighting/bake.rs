@@ -984,6 +984,7 @@ pub(crate) struct Settings<'a> {
     pub model_entities: &'a [usize],
     pub prop_sources: &'a [usize],
     pub prop_material_sources: Option<super::asset_tracking::SourceReads>,
+    pub prop_asset_sources: Option<&'a crate::asset_sources::BuildMaterialSources>,
     pub brush_material_sources: Option<&'a crate::asset_sources::BuildMaterialSources>,
     pub world_leaf_nodes: &'a [Option<usize>],
     pub detail_model_centers: &'a [DVec3],
@@ -1269,8 +1270,11 @@ fn bake_inner(
     } = super::props::build(
         bsp,
         settings.vmf,
-        settings.fs,
-        prop_assets.as_mut(),
+        super::props::Assets::for_props(
+            settings.fs,
+            settings.prop_asset_sources,
+            prop_assets.as_mut(),
+        ),
         options.generate_reflections,
         report,
         budget,

@@ -34,6 +34,12 @@ impl ReadBudget {
         self.build_sources = Some(sources.clone());
     }
 
+    pub fn uses_build_sources(&self, sources: &BuildMaterialSources) -> bool {
+        self.build_sources
+            .as_ref()
+            .is_some_and(|owner| owner.same_capture(sources))
+    }
+
     pub fn read(
         &mut self,
         fs: &GameFs,

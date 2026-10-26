@@ -20,6 +20,7 @@ pub(crate) struct Stats {
     pub leaf_refs: usize,
     pub sources: Vec<usize>,
     pub source_guard: Option<crate::asset_sources::AssetSourceGuard>,
+    pub source_owner: Option<crate::asset_sources::BuildMaterialSources>,
 }
 
 struct ModelAsset {
@@ -400,9 +401,7 @@ pub(crate) fn bake(
             {
                 for (index, pose) in poses.iter().enumerate() {
                     control.checkpoint()?;
-                    let angles = pose.angles.map(f64::to_radians);
-                    let rotation = DQuat::from_euler(EulerRot::ZYX, angles.y, angles.x, angles.z);
-                    bounds(asset.header, pose.origin, rotation).map_err(|error| {
+                    pose.validate_model_bounds(asset.header).map_err(|error| {
                         let stage = if index == 0 {
                             "source pose".to_owned()
                         } else {
@@ -492,6 +491,7 @@ pub(crate) fn bake(
         leaf_refs: props.leaves.len(),
         sources,
         source_guard: Some(source_guard),
+        source_owner: Some(source_owner),
     })
 }
 

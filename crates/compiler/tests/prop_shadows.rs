@@ -1,7 +1,7 @@
 mod common;
 
 use compiler::lighting::LuxelFrame;
-use compiler::{LightingMode, Options};
+use compiler::{Control, LightingMode, Options, OutputLease, WriteReservation};
 use glam::DVec3;
 use map_core::Plane;
 use source_formats::{
@@ -291,6 +291,186 @@ fn compile(vmf: &Vmf, game: &GameFs) -> compiler::Output {
     let output = compiler::compile_with_options(vmf, game, options());
     assert!(!output.report.has_errors(), "{:?}", output.report);
     output
+}
+
+#[test]
+fn consumed_shadow_sources_keep_original_guards_without_vertex_baking_or_packing() {
+    for path in [
+        "models/props/test.vvd",
+        "models/props/test.dx90.vtx",
+        "materials/models/test/two.vmt",
+        "materials/models/test/alpha.vmt",
+        "materials/test.vtf",
+    ] {
+        let (directory, game) = alpha_game();
+        for (name, material) in [
+            (
+                "two",
+                "Patch { include materials/models/test/alpha.vmt }\n// a",
+            ),
+            (
+                "alpha",
+                "VertexLitGeneric { $alphatest 1 $basetexture test }\n// a",
+            ),
+        ] {
+            std::fs::write(
+                directory
+                    .path()
+                    .join(format!("materials/models/test/{name}.vmt")),
+                material,
+            )
+            .unwrap();
+        }
+        let mut vmf = scene();
+        vmf.entities.last_mut().unwrap().properties.set("skin", "1");
+        let original = vmf.clone();
+        let outputs = directory.path().join("outputs");
+        std::fs::create_dir(&outputs).unwrap();
+        let destination = outputs.join("existing.bsp");
+        std::fs::write(&destination, b"previous BSP").unwrap();
+        std::fs::write(destination.with_extension("lin"), b"previous LIN").unwrap();
+        let control = Control::default();
+        let lease = OutputLease::acquire(&destination, &control).unwrap();
+        let reservation = WriteReservation::new(&destination, &control).unwrap();
+        let stale_reservation = WriteReservation::new(&destination, &control).unwrap();
+        let output = compile(&vmf, &game);
+        assert_eq!(output.stats.prop_shadow_alpha_triangles, 1);
+        assert!(output.prop_lighting_assets.is_none());
+        assert!(output.static_prop_assets.is_none());
+        let before = output.bsp.as_ref().unwrap().to_bytes();
+        let guard =
+            compiler::asset_sources::capture_output_asset_source_guard(&output, &game, &control)
+                .unwrap();
+        let prepared = output
+            .prepare_write_reserved(reservation, &control)
+            .unwrap()
+            .unwrap();
+        let file = directory.path().join(path);
+        let mut bytes = std::fs::read(&file).unwrap();
+        match path {
+            "models/props/test.vvd" => put_float(&mut bytes, 100, 0.5),
+            "models/props/test.dx90.vtx" => bytes[98] ^= 1,
+            "materials/test.vtf" => bytes[80] ^= 1,
+            _ => *bytes.last_mut().unwrap() = b'b',
+        }
+        std::fs::write(file, bytes).unwrap();
+        assert!(guard.verify_metadata().is_err(), "{path}");
+        assert!(
+            compiler::asset_sources::capture_output_asset_source_guard(&output, &game, &control,)
+                .is_err(),
+            "{path}",
+        );
+        assert!(
+            output
+                .prepare_write_reserved(stale_reservation, &control)
+                .is_err(),
+            "{path}",
+        );
+        assert!(prepared.commit_checked(&lease, &control).is_err(), "{path}");
+        assert_eq!(std::fs::read(&destination).unwrap(), b"previous BSP");
+        assert_eq!(
+            std::fs::read(destination.with_extension("lin")).unwrap(),
+            b"previous LIN",
+        );
+        assert_eq!(
+            compile(&vmf, &game).bsp.unwrap().to_bytes(),
+            before,
+            "{path}"
+        );
+        assert_eq!(vmf, original);
+    }
+}
+
+#[test]
+fn shadow_guard_rejects_equal_payloads_from_changed_winning_or_missing_lookups() {
+    for missing_material in [false, true] {
+        let (directory, mut game) = alpha_game();
+        let higher = tempfile::tempdir().unwrap();
+        let path = if missing_material {
+            "materials/models/test/two.vmt"
+        } else {
+            "models/props/test.vvd"
+        };
+        let bytes = std::fs::read(directory.path().join(path)).unwrap();
+        std::fs::create_dir_all(higher.path().join(path).parent().unwrap()).unwrap();
+        std::fs::write(higher.path().join(path), &bytes).unwrap();
+        if missing_material {
+            std::fs::rename(
+                directory.path().join(path),
+                directory.path().join("materials/two.vmt"),
+            )
+            .unwrap();
+        }
+        let mut vmf = scene();
+        vmf.entities.last_mut().unwrap().properties.set("skin", "1");
+        let output = compile(&vmf, &game);
+        let before = output.bsp.as_ref().unwrap().to_bytes();
+        let control = Control::default();
+        let guard =
+            compiler::asset_sources::capture_output_asset_source_guard(&output, &game, &control)
+                .unwrap();
+        game.mounts.insert(
+            0,
+            MountedPath {
+                ids: vec!["game".into()],
+                mount: Mount::Directory(higher.path().to_owned()),
+            },
+        );
+        guard.verify_metadata().unwrap();
+        assert!(
+            guard
+                .static_prop_guard()
+                .unwrap()
+                .verify_sources(&game, &control)
+                .is_err(),
+            "{path}",
+        );
+        assert!(
+            compiler::asset_sources::capture_output_asset_source_guard(&output, &game, &control,)
+                .is_err(),
+            "{path}",
+        );
+        assert_eq!(compile(&vmf, &game).bsp.unwrap().to_bytes(), before);
+    }
+}
+
+#[test]
+fn unconsumed_skin_textures_and_disabled_shadow_meshes_stay_outside_the_guard() {
+    for disabled in [false, true] {
+        let (directory, game) = alpha_game();
+        let mut vmf = scene();
+        if disabled {
+            vmf.entities
+                .last_mut()
+                .unwrap()
+                .properties
+                .set("disableshadows", "1");
+        }
+        let output = compile(&vmf, &game);
+        let before = output.bsp.as_ref().unwrap().to_bytes();
+        let control = Control::default();
+        let guard =
+            compiler::asset_sources::capture_output_asset_source_guard(&output, &game, &control)
+                .unwrap();
+        let paths = if disabled {
+            ["models/props/test.vvd", "models/props/test.dx90.vtx"]
+        } else {
+            ["materials/models/test/two.vmt", "materials/test.vtf"]
+        };
+        for path in paths {
+            let file = directory.path().join(path);
+            let mut bytes = std::fs::read(&file).unwrap();
+            bytes[0] ^= 1;
+            std::fs::write(file, bytes).unwrap();
+        }
+        guard
+            .static_prop_guard()
+            .unwrap()
+            .verify_sources(&game, &control)
+            .unwrap();
+        guard.verify_metadata().unwrap();
+        assert_eq!(compile(&vmf, &game).bsp.unwrap().to_bytes(), before);
+    }
 }
 
 #[test]

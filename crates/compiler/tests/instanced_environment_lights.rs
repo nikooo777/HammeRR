@@ -1465,9 +1465,17 @@ fn emitted_light_origins_follow_each_native_channel_after_omission_and_nested_ex
     let mut child = leaf(zero.clone());
     child.entities.push(wide.clone());
     write_source(directory.path(), "leaf.vmf", &child);
+    let mut inner = Document::empty().into_vmf();
+    let inner_helper = instance(&mut inner, "leaf.vmf", "0 0 0", "0 0 0");
+    write_source(directory.path(), "inner.vmf", &inner);
+    let mut bridge = Document::empty().into_vmf();
+    let bridge_helper = instance(&mut bridge, "inner.vmf", "0 0 0", "0 0 0");
+    write_source(directory.path(), "bridge.vmf", &bridge);
     let mut middle = Document::empty().into_vmf();
-    instance(&mut middle, "leaf.vmf", "-32 0 0", "0 0 0");
-    instance(&mut middle, "leaf.vmf", "32 0 0", "0 0 0");
+    let middle_helpers = [
+        instance(&mut middle, "bridge.vmf", "-32 0 0", "0 0 0"),
+        instance(&mut middle, "bridge.vmf", "32 0 0", "0 0 0"),
+    ];
     write_source(directory.path(), "middle.vmf", &middle);
     let mut document = Document::new(room(true, false));
     document
@@ -1550,15 +1558,69 @@ fn emitted_light_origins_follow_each_native_channel_after_omission_and_nested_ex
             .into_iter()
             .enumerate()
         {
+            let Some(Origin::Instance {
+                instance,
+                file,
+                entity: original,
+                expanded_entity: expanded,
+                occurrence,
+            }) = &associations[prefix + offset]
+            else {
+                panic!("Expected captured instance light");
+            };
             assert_eq!(
-                associations[prefix + offset],
-                Some(Origin::Instance {
-                    instance: 400,
-                    file: "leaf.vmf".into(),
-                    entity,
-                    expanded_entity,
-                })
+                (*instance, file.as_str(), *original, *expanded),
+                (400, "leaf.vmf", entity, expanded_entity)
             );
+            assert_eq!(
+                serde_json::to_value(occurrence.as_ref()).unwrap(),
+                serde_json::json!([
+                    {"helper":400,"file":"middle.vmf"},
+                    {"helper":middle_helpers[offset / 2],"file":"bridge.vmf"},
+                    {"helper":bridge_helper,"file":"inner.vmf"},
+                    {"helper":inner_helper,"file":"leaf.vmf"},
+                ])
+            );
+            let other_kind = if kind == LightingKind::Ldr {
+                LightingKind::Hdr
+            } else {
+                LightingKind::Ldr
+            };
+            let other_count = bsp.world_lights(other_kind).unwrap().len();
+            let other = origins.associations(bsp, other_kind, other_count).unwrap();
+            let other_prefix = if other_kind == LightingKind::Ldr {
+                2
+            } else {
+                3
+            };
+            let Some(Origin::Instance {
+                occurrence: other_path,
+                ..
+            }) = &other[other_prefix + offset]
+            else {
+                panic!();
+            };
+            assert!(std::sync::Arc::ptr_eq(occurrence, other_path));
+            let Some(Origin::Instance {
+                occurrence: sibling_path,
+                ..
+            }) = &associations[prefix + (offset ^ 1)]
+            else {
+                panic!();
+            };
+            assert!(std::sync::Arc::ptr_eq(occurrence, sibling_path));
+            let Some(Origin::Instance {
+                occurrence: repeated_path,
+                ..
+            }) = &associations[prefix + ((offset + 2) % 4)]
+            else {
+                panic!();
+            };
+            assert!(!std::sync::Arc::ptr_eq(occurrence, repeated_path));
+            assert!(std::ptr::eq(
+                occurrence.steps().next().unwrap(),
+                repeated_path.steps().next().unwrap()
+            ));
             assert_eq!(lights[prefix + offset].kind, bsp::world_light_kind::POINT);
             assert_eq!(lights[prefix + offset].owner, -1);
             if entity == 10 {

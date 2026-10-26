@@ -23,6 +23,7 @@ struct EntitySpec {
 pub(super) struct ExpandedSources {
     pub stats: InstanceStats,
     pub provenance: Provenance,
+    pub light_occurrences: occurrences::LightOccurrences,
     pub static_prop_poses: StaticPropPoses,
     pub static_prop_bindings: StaticPropBindings,
     pub files: Vec<(String, FileIdentity)>,
@@ -42,6 +43,8 @@ pub(super) struct Expansion<'a> {
     terrain: terrain::Budget,
     stats: InstanceStats,
     provenance: Provenance,
+    light_occurrences: occurrences::LightOccurrences,
+    current_occurrence: Option<Arc<OccurrencePath>>,
     static_prop_poses: StaticPropPoses,
     static_prop_bindings: StaticPropBindings,
     name_scopes: Vec<names::Scope>,
@@ -73,6 +76,8 @@ impl<'a> Expansion<'a> {
             terrain: terrain::Budget::default(),
             stats: InstanceStats::default(),
             provenance: BTreeMap::new(),
+            light_occurrences: occurrences::LightOccurrences::default(),
+            current_occurrence: None,
             static_prop_poses: BTreeMap::new(),
             static_prop_bindings: BTreeMap::new(),
             name_scopes: Vec::new(),
@@ -245,6 +250,17 @@ impl<'a> Expansion<'a> {
         ancestors.push(child.identity.clone());
         self.stats.instances += 1;
         self.stats.max_expansion_depth = self.stats.max_expansion_depth.max(depth);
+        let previous_occurrence = self.current_occurrence.clone();
+        self.current_occurrence = Some(
+            self.light_occurrences
+                .enter(
+                    previous_occurrence.clone(),
+                    helper.id,
+                    &relative,
+                    self.control,
+                )
+                .map_err(EditError::Invalid)?,
+        );
         let result: Result<(), EditError> = (|| {
             let target_positions = child
                 .targets
@@ -496,6 +512,7 @@ impl<'a> Expansion<'a> {
             }
             Ok(())
         })();
+        self.current_occurrence = previous_occurrence;
         ancestors.pop();
         transforms.pop();
         self.name_scopes.pop();
@@ -1044,6 +1061,14 @@ impl<'a> Expansion<'a> {
             entity.properties.remove("angle");
         }
         let generated = entity.id;
+        if matches!(kind, entities::Kind::Point | entities::Kind::Spot) {
+            let occurrence = self.current_occurrence.as_ref().ok_or_else(|| {
+                EditError::Invalid("Expanded light has no captured helper occurrence".into())
+            })?;
+            self.light_occurrences
+                .attach(generated, occurrence, self.control)
+                .map_err(EditError::Invalid)?;
+        }
         self.provenance.insert(
             format!("entity:{}", entity.id),
             (owner, relative.to_owned(), original.id, None),
@@ -1208,6 +1233,7 @@ impl<'a> Expansion<'a> {
         ExpandedSources {
             stats: self.stats,
             provenance: self.provenance,
+            light_occurrences: self.light_occurrences,
             static_prop_poses: self.static_prop_poses,
             static_prop_bindings: self.static_prop_bindings,
             material_sources: self.material_sources,

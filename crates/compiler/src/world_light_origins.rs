@@ -2,7 +2,11 @@ use sha2::{Digest, Sha256};
 use source_formats::bsp::{Bsp, LightingKind, MAX_WORLD_LIGHTS, WorldLight, lump};
 
 pub const MAX_BYTES: usize = 8 * 1024 * 1024;
-pub(crate) const MAX_CHANNEL_BYTES: usize = (MAX_BYTES - size_of::<WorldLightOrigins>()) / 2;
+pub(crate) const MAX_CHANNEL_BYTES: usize = (MAX_BYTES
+    - size_of::<WorldLightOrigins>()
+    - 2 * size_of::<usize>()
+    - crate::instances::MAX_OCCURRENCE_BYTES)
+    / 2;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -15,7 +19,16 @@ pub enum Origin {
         file: String,
         entity: u32,
         expanded_entity: u32,
+        #[serde(serialize_with = "serialize_occurrence")]
+        occurrence: std::sync::Arc<crate::instances::OccurrencePath>,
     },
+}
+
+fn serialize_occurrence<S: serde::Serializer>(
+    path: &std::sync::Arc<crate::instances::OccurrencePath>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serde::Serialize::serialize(path.as_ref(), serializer)
 }
 
 #[derive(Debug, Default)]
@@ -58,6 +71,9 @@ impl ChannelOrigins {
         }
         let origin = if let Some(entity) = source {
             if let Some((instance, file, original)) = instances.entity_origin(entity) {
+                let occurrence = instances
+                    .light_occurrence(entity)
+                    .ok_or("Expanded light source has no retained occurrence path")?;
                 self.bytes = self
                     .bytes
                     .checked_add(file.len())
@@ -72,6 +88,7 @@ impl ChannelOrigins {
                     file: path,
                     entity: original,
                     expanded_entity: entity,
+                    occurrence: std::sync::Arc::clone(occurrence),
                 })
             } else {
                 Some(Origin::Root { entity })

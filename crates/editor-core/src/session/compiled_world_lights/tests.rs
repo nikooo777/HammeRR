@@ -1405,3 +1405,97 @@ fn source_associations_remain_captured_across_failed_cancelled_and_historical_bu
         serde_json::json!({"status":"available","origin":{"kind":"root","entity":9002}})
     );
 }
+
+#[test]
+fn nested_occurrence_rows_keep_captured_addresses_after_authored_sources_change() {
+    let mut fixture = OwnedFixture::new();
+    let maps = fixture.source.parent().unwrap();
+    std::fs::write(
+        maps.join("leaf.vmf"),
+        r#"world { "id" "1" "classname" "worldspawn" }
+entity { "id" "10" "classname" "light" "origin" "0 0 128" "_light" "255 255 255 20" }
+"#,
+    )
+    .unwrap();
+    std::fs::write(maps.join("middle.vmf"), r#"world { "id" "1" "classname" "worldspawn" }
+entity { "id" "2" "classname" "func_instance" "file" "leaf.vmf" "origin" "-32 0 0" "angles" "0 0 0" }
+entity { "id" "3" "classname" "func_instance" "file" "leaf.vmf" "origin" "32 0 0" "angles" "0 0 0" }
+"#).unwrap();
+    fixture
+        .session
+        .edit(Actor::User, "nested light occurrences", |tx| {
+            let mut helper = source_formats::vmf::Entity::new(10001, "func_instance");
+            for (key, value) in [
+                ("file", "middle.vmf"),
+                ("origin", "0 0 0"),
+                ("angles", "0 0 0"),
+            ] {
+                helper.properties.set(key, value);
+            }
+            tx.add_entity(helper)?;
+            Ok(())
+        })
+        .unwrap();
+    fixture.session.save(Actor::User, None).unwrap();
+    fixture
+        .session
+        .update_build_settings(
+            Actor::User,
+            crate::session::compilation::BuildSettingsUpdate {
+                lighting: Some("direct_ldr_hdr"),
+                physics: Some("none"),
+                sky_quality: Some("fast"),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let context =
+        compiler::instances::SourceContext::capture(&fixture.source, &Control::default()).unwrap();
+    let output = compiler::compile_with_source_controlled(
+        fixture.session.document().vmf(),
+        &fixture.session.game,
+        fixture.session.compile_options(),
+        None,
+        Some(&context),
+        &Control::default(),
+    );
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    let bytes = output.bsp.as_ref().unwrap().to_bytes();
+    fixture.install(&bytes, LightingMode::DirectLdrHdr, 81);
+    let build = fixture.session.compiled.as_mut().unwrap();
+    build.world_light_origins = output.world_light_origins;
+    build.instance_dependencies = output.instance_dependencies;
+    build.instance_source_path = Some(fixture.source.clone());
+    let baseline = fixture.inspect(&Query::default()).unwrap();
+    assert_eq!(baseline.build["status"], "current");
+    assert_eq!(baseline.page.total, Some(6));
+    for channel in [Channel::Ldr, Channel::Hdr] {
+        let inspected = fixture
+            .inspect(&Query {
+                channel,
+                ..Default::default()
+            })
+            .unwrap();
+        for (ordinal, helper) in [(4, 2), (5, 3)] {
+            let origin =
+                serde_json::to_value(&inspected.page.rows[ordinal].source_association).unwrap();
+            assert_eq!(origin["origin"]["entity"], 10);
+            assert_eq!(
+                origin["origin"]["occurrence"],
+                serde_json::json!([
+                    {"helper":10001,"file":"middle.vmf"},{"helper":helper,"file":"leaf.vmf"},
+                ])
+            );
+        }
+    }
+    fixture
+        .session
+        .edit(Actor::User, "replace current helper source", |tx| {
+            tx.entity_mut(10001)?.properties.set("file", "changed.vmf");
+            Ok(())
+        })
+        .unwrap();
+    let historical = fixture.inspect(&Query::default()).unwrap();
+    assert!(historical.historical);
+    assert_eq!(rows(&historical), rows(&baseline));
+}

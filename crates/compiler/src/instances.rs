@@ -19,12 +19,15 @@ mod expand;
 mod fog;
 mod names;
 mod occluders;
+mod occurrences;
 mod overlays;
 mod props;
 mod spawns;
 mod targets;
 mod terrain;
 mod visclusters;
+
+pub use occurrences::{MAX_OCCURRENCE_BYTES, OccurrencePath, OccurrenceStep};
 
 pub const MAX_INSTANCES: usize = 256;
 pub const MAX_EXPANSION_DEPTH: usize = 4;
@@ -755,6 +758,7 @@ pub struct PreparedInstances<'a> {
     pub(crate) static_prop_poses: StaticPropPoses,
     static_prop_bindings: StaticPropBindings,
     provenance: Provenance,
+    light_occurrences: occurrences::LightOccurrences,
     pub(crate) material_sources: Option<crate::asset_sources::BuildMaterialSources>,
 }
 
@@ -815,6 +819,13 @@ impl PreparedInstances<'_> {
     pub(crate) fn entity_origin(&self, generated: u32) -> Option<(u32, &str, u32)> {
         let (owner, file, original, _) = self.provenance.get(&format!("entity:{generated}"))?;
         Some((*owner, file, *original))
+    }
+
+    pub(crate) fn light_occurrence(
+        &self,
+        generated: u32,
+    ) -> Option<&std::sync::Arc<OccurrencePath>> {
+        self.light_occurrences.get(generated)
     }
 
     pub(crate) fn has_brush_models(&self) -> bool {
@@ -1008,6 +1019,7 @@ fn prepare_purpose<'a>(
         static_prop_poses: BTreeMap::new(),
         static_prop_bindings: BTreeMap::new(),
         provenance: BTreeMap::new(),
+        light_occurrences: occurrences::LightOccurrences::default(),
         material_sources: None,
     };
     if !requires_source(vmf) {
@@ -1088,6 +1100,7 @@ fn prepare_purpose<'a>(
     let expanded_sources = expansion.finish();
     let stats = expanded_sources.stats;
     prepared.provenance = expanded_sources.provenance;
+    prepared.light_occurrences = expanded_sources.light_occurrences;
     prepared.static_prop_poses = expanded_sources.static_prop_poses;
     prepared.static_prop_bindings = expanded_sources.static_prop_bindings;
     prepared.material_sources = expanded_sources.material_sources;

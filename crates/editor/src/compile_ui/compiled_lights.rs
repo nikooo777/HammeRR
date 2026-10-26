@@ -101,13 +101,19 @@ fn association_text(row: &WorldLightRow, historical: bool, compact: bool) -> Str
                     file,
                     entity,
                     expanded_entity,
+                    occurrence,
                 },
         } => {
             if compact {
                 format!("instance:{instance} / entity:{entity}")
             } else {
+                let route = occurrence
+                    .steps()
+                    .map(|step| format!("entity:{} → {}", step.helper, step.file))
+                    .collect::<Vec<_>>()
+                    .join(" / ");
                 format!(
-                    "{prefix}outer helper entity:{instance}\nLeaf file: {file}\nOriginal entity:{entity} · expanded entity:{expanded_entity} (this build)"
+                    "{prefix}outer helper entity:{instance}\nOccurrence: {route}\nLeaf file: {file}\nOriginal entity:{entity} · expanded entity:{expanded_entity} (this build)"
                 )
             }
         }

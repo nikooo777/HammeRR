@@ -21,7 +21,7 @@ const SOURCE_MODE: baked_build::SourceVerification =
     baked_build::SourceVerification::OriginalMetadata {
         maximum_bytes: MAX_METADATA_BYTES,
     };
-const NOTES: &str = "Native 88-byte world-light records in file order. Positions/radius use Hammer units; intensity is stored native RGB, not display brightness or illuminance. Owner/cluster/texinfo are native integers, not authored identities. Available point/spot source associations are captured at compilation and paired with exact channel bytes; historical IDs describe that captured source only. Instance identity records the outer helper, leaf file, original entity and build-local expanded entity, not a full nested occurrence address. Channel availability does not establish runtime HDR activation. Currentness covers the committed map, captured settings/content epoch and tracked original source guards, not a complete world-material closure. Changed lookup directories conservatively make source evidence stale. Unapplied drafts are not baked; pending_preview describes rendered geometry drafts only.";
+const NOTES: &str = "Native 88-byte world-light records in file order. Positions/radius use Hammer units; intensity is stored native RGB, not display brightness or illuminance. Owner/cluster/texinfo are native integers, not authored identities. Available point/spot source associations are captured at compilation and paired with exact channel bytes; historical IDs describe that captured source only. Instance identity records the outer helper, leaf file, original entity and build-local expanded entity, with an ordered captured occurrence path of authored helper IDs and referenced files, from the root helper to the leaf source. Historical paths describe the captured snapshot, not current files. Channel availability does not establish runtime HDR activation. Currentness covers the committed map, captured settings/content epoch and tracked original source guards, not a complete world-material closure. Changed lookup directories conservatively make source evidence stale. Unapplied drafts are not baked; pending_preview describes rendered geometry drafts only.";
 
 #[derive(Debug, Clone)]
 pub struct Query {
@@ -180,6 +180,8 @@ pub struct Limits {
     pub report_bytes: usize,
     pub source_association_bytes: usize,
     pub page_source_bytes: usize,
+    pub occurrence_bytes: usize,
+    pub occurrence_depth: usize,
     pub page_lights: usize,
     pub lights_per_channel: usize,
     pub diagnostics: usize,
@@ -525,9 +527,11 @@ fn source_association(
             file,
             entity,
             expanded_entity,
+            occurrence,
         } => {
             *bytes = bytes
                 .checked_add(file.len())
+                .and_then(|bytes| bytes.checked_add(occurrence.response_bytes()))
                 .filter(|&bytes| bytes <= MAX_REPORT_BYTES)
                 .ok_or("Compiled light source paths exceed the page storage budget")?;
             let mut path = String::new();
@@ -539,6 +543,7 @@ fn source_association(
                 file: path,
                 entity: *entity,
                 expanded_entity: *expanded_entity,
+                occurrence: std::sync::Arc::clone(occurrence),
             }
         }
     };
@@ -616,6 +621,8 @@ fn empty_report(query: &Query, build: Value, live_bytes: usize) -> Inspection {
             report_bytes: MAX_REPORT_BYTES,
             source_association_bytes: compiler::world_light_origins::MAX_BYTES,
             page_source_bytes: MAX_REPORT_BYTES,
+            occurrence_bytes: compiler::instances::MAX_OCCURRENCE_BYTES,
+            occurrence_depth: compiler::instances::MAX_EXPANSION_DEPTH,
             page_lights: MAX_PAGE_LIGHTS,
             lights_per_channel: MAX_WORLD_LIGHTS,
             diagnostics: MAX_DIAGNOSTICS,

@@ -138,7 +138,7 @@ export component CompiledLightsWindow inherits Window {
                     }
                 }
             }
-            Text { text: "Captured source IDs belong to this build; instance IDs omit full nested paths. Native values are not screen brightness. Unapplied drafts are not baked. Choosing a row preserves the camera; Frame light moves it without changing selection."; wrap: word-wrap; color: #bac2ce; font-size: 12px; }
+            Text { text: "Captured source IDs and ordered instance occurrence paths belong to this build. Native values are not screen brightness. Unapplied drafts are not baked. Choosing a row preserves the camera; Frame light moves it without changing selection."; wrap: word-wrap; color: #bac2ce; font-size: 12px; }
             if root.diagnostics != "": TextEdit { text: root.diagnostics; read-only: true; wrap: word-wrap; min-height: 55px; max-height: 90px; accessible-label: "Compiled light inspection diagnostics"; }
             HorizontalLayout {
                 Rectangle { horizontal-stretch: 1; }

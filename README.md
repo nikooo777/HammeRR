@@ -55,10 +55,10 @@ See the [tool index and setup](docs/mcp.md).
 | ![Different materials on one brush](docs/images/face-materials.png) | ![Normal-map surface detail on brick](docs/images/normal-maps-on.png) |
 | Apply, paint, wrap and fit native materials. | Inspect supported surface detail before compiling. |
 
-| [Atlas texturing](docs/atlas-texturing.md) |
-| --- |
-| ![Equal faces show full-image mapping and a padded atlas region](docs/images/atlas-padding.png) |
-| Save named image regions and fit padded areas across faces. |
+| [Atlas texturing](docs/atlas-texturing.md) | [Grid snapping](docs/brushes.md#snap-objects-to-grid) |
+| --- | --- |
+| ![Equal faces show full-image mapping and a padded atlas region](docs/images/atlas-padding.png) | ![Separate objects aligned to the grid](docs/images/independent-grid-snapping.png) |
+| Save named image regions and fit padded areas across faces. | Align objects together or snap each object separately. |
 
 | [Terrain](docs/terrain.md) | [Compiled terrain](docs/terrain.md#compile-split-borders) |
 | --- | --- |
@@ -89,5 +89,10 @@ See the [tool index and setup](docs/mcp.md).
 | --- | --- |
 | ![One projection spans two panels with a clear gap](docs/images/overlay-native.png) | ![Two references to one arch use different baked light colors](docs/images/instance-light-colors.png) |
 | Fit projections across flat faces and separate planar terrain patches. | Reuse transformed assemblies with light settings, scoped spotlight targets and static fog. |
+
+| [Compiler visibility](docs/visibility.md) | [Editable instances](docs/instances.md#collapse-references-into-editable-geometry) |
+| --- | --- |
+| ![A compiled portal ring in a three-room map](docs/images/visibility-portals.png) | ![Editable brush arches after instance collapse](docs/images/collapsed-assembly.png) |
+| Inspect compiled leaves, portal rings and visibility sets. | Turn supported references into editable geometry. |
 
 Counter-Strike: Source and its assets are not included.

@@ -109,6 +109,8 @@ Finish active tools, previews, builds and launches before Apply.
 4. Click **Preview snap to grid** and inspect the movement.
 5. Click **Apply transform**, or **Cancel** to discard the preview.
 
+![Separate objects aligned to the grid](images/independent-grid-snapping.png)
+
 **Selection** moves everything by one offset from the selection bounds minimum,
 preserving internal spacing. **Each object** aligns each object's bounds minimum
 separately. Group members move independently; every brush entity keeps all its

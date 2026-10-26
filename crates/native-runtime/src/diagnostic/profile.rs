@@ -13,6 +13,8 @@ use source_formats::vpk::Vpk;
 use crate::util::{self, invalid};
 use crate::{CaptureEnvironment, ContentMount};
 
+use super::midrange::{PplMidrange909Case, PplMidrange909Request};
+
 pub(crate) const MAP_NAME: &str = "hammerr_runtime";
 pub(super) const PROBE: &str = "pinned-hardware-observer.so";
 pub(super) const PROBE_SHA: &str =
@@ -85,17 +87,75 @@ pub struct PplUv857Receipt {
     pub preservation_passed: bool,
 }
 
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(untagged)]
+pub(crate) enum DiagnosticCase {
+    Uv857(PplUv857Case),
+    Midrange909(PplMidrange909Case),
+}
+
+impl DiagnosticCase {
+    pub(crate) fn bsp_sha(self) -> &'static str {
+        match self {
+            Self::Uv857(case) => case.bsp_sha(),
+            Self::Midrange909(case) => case.bsp_sha(),
+        }
+    }
+
+    pub(crate) fn profile_name(self) -> &'static str {
+        match self {
+            Self::Uv857(_) => "frozen_ppl_uv857",
+            Self::Midrange909(_) => "frozen_ppl_midrange909",
+        }
+    }
+}
+
+pub(crate) struct DiagnosticRequest<'a> {
+    pub case: DiagnosticCase,
+    pub environment: &'a CaptureEnvironment,
+    pub bsp: &'a Path,
+    pub fixture_game: &'a Path,
+    pub observer_library: &'a Path,
+    pub artifacts_parent: &'a Path,
+}
+
+impl<'a> From<&'a PplUv857Request> for DiagnosticRequest<'a> {
+    fn from(request: &'a PplUv857Request) -> Self {
+        Self {
+            case: DiagnosticCase::Uv857(request.case),
+            environment: &request.environment,
+            bsp: &request.bsp,
+            fixture_game: &request.fixture_game,
+            observer_library: &request.observer_library,
+            artifacts_parent: &request.artifacts_parent,
+        }
+    }
+}
+
+impl<'a> From<&'a PplMidrange909Request> for DiagnosticRequest<'a> {
+    fn from(request: &'a PplMidrange909Request) -> Self {
+        Self {
+            case: DiagnosticCase::Midrange909(request.case),
+            environment: &request.environment,
+            bsp: &request.bsp,
+            fixture_game: &request.fixture_game,
+            observer_library: &request.observer_library,
+            artifacts_parent: &request.artifacts_parent,
+        }
+    }
+}
+
 pub(crate) fn path_text<'a>(path: &'a Path, label: &str) -> io::Result<&'a str> {
     path.to_str()
         .ok_or_else(|| invalid(format!("Frozen857 {label} path is not valid UTF-8")))
 }
 
-pub(crate) fn validate_request_paths(request: &PplUv857Request) -> io::Result<()> {
+pub(crate) fn validate_request_paths(request: &DiagnosticRequest<'_>) -> io::Result<()> {
     for (label, path) in [
-        ("BSP", request.bsp.as_path()),
-        ("fixture", request.fixture_game.as_path()),
-        ("observer", request.observer_library.as_path()),
-        ("artifact parent", request.artifacts_parent.as_path()),
+        ("BSP", request.bsp),
+        ("fixture", request.fixture_game),
+        ("observer", request.observer_library),
+        ("artifact parent", request.artifacts_parent),
         ("engine root", request.environment.engine_root.as_path()),
         ("Steam root", request.environment.steam_root.as_path()),
     ] {
@@ -273,12 +333,12 @@ pub(super) fn verify_installed(root: &Path) -> io::Result<()> {
     Ok(())
 }
 
-pub(crate) fn stage(directory: &Path, request: &PplUv857Request) -> io::Result<()> {
+pub(crate) fn stage(directory: &Path, request: &DiagnosticRequest<'_>) -> io::Result<()> {
     validate_request_paths(request)?;
     path_text(directory, "artifact directory")?;
-    let bsp = pinned_bytes(&request.bsp, request.case.bsp_sha(), MAX_INPUT)?;
+    let bsp = pinned_bytes(request.bsp, request.case.bsp_sha(), MAX_INPUT)?;
     util::atomic_write(&directory.join("staged.bsp"), &bsp)?;
-    let probe = pinned_bytes(&request.observer_library, PROBE_SHA, MAX_INPUT)?;
+    let probe = pinned_bytes(request.observer_library, PROBE_SHA, MAX_INPUT)?;
     util::atomic_write(&directory.join(PROBE), &probe)?;
     for &(name, expected) in FIXTURE_FILES {
         let bytes = pinned_bytes(&request.fixture_game.join(name), expected, MAX_INPUT)?;
@@ -300,16 +360,16 @@ pub(crate) fn stage(directory: &Path, request: &PplUv857Request) -> io::Result<(
     )
 }
 
-pub(crate) fn verify_sources(request: &PplUv857Request) -> io::Result<()> {
-    pinned_bytes(&request.bsp, request.case.bsp_sha(), MAX_INPUT)?;
-    pinned_bytes(&request.observer_library, PROBE_SHA, MAX_INPUT)?;
+pub(crate) fn verify_sources(request: &DiagnosticRequest<'_>) -> io::Result<()> {
+    pinned_bytes(request.bsp, request.case.bsp_sha(), MAX_INPUT)?;
+    pinned_bytes(request.observer_library, PROBE_SHA, MAX_INPUT)?;
     for &(name, expected) in FIXTURE_FILES {
         pinned_bytes(&request.fixture_game.join(name), expected, MAX_INPUT)?;
     }
     Ok(())
 }
 
-pub(super) fn verify_staging(directory: &Path, case: PplUv857Case) -> io::Result<()> {
+pub(super) fn verify_staging(directory: &Path, case: DiagnosticCase) -> io::Result<()> {
     pinned_bytes(&directory.join("staged.bsp"), case.bsp_sha(), MAX_INPUT)?;
     pinned_bytes(&directory.join(PROBE), PROBE_SHA, MAX_INPUT)?;
     for &(name, expected) in FIXTURE_FILES {

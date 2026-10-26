@@ -15,17 +15,19 @@ use crate::util::{self, invalid};
 use crate::{CaptureEnvironment, CaptureObserver};
 
 mod hardware;
+mod midrange;
 mod profile;
 
 use hardware::{hardware_records, loaded_observer, verify_hardware};
+pub use midrange::{PplMidrange909Case, PplMidrange909Receipt, PplMidrange909Request};
 use profile::{
     COMPLETE, DISCONNECTED, MAX_INPUT, PROBE_SHA, READY, TIMEOUT, pinned_bytes, private_write,
     verify_controls, verify_installed, verify_loads, verify_order, verify_private_fixture,
     verify_staging,
 };
 pub(crate) use profile::{
-    MAP_NAME, configure_game, environment, observer_arguments, path_text, stage,
-    validate_request_paths, verify_sources,
+    DiagnosticCase, DiagnosticRequest, MAP_NAME, configure_game, environment, observer_arguments,
+    path_text, stage, validate_request_paths, verify_sources,
 };
 pub use profile::{PplUv857Case, PplUv857Receipt, PplUv857Request};
 
@@ -119,7 +121,7 @@ fn check_cancelled(directory: &Path, request: &WorkerRequest) -> io::Result<()> 
 pub(crate) fn execute(
     directory: &Path,
     request: &WorkerRequest,
-    case: PplUv857Case,
+    case: DiagnosticCase,
 ) -> io::Result<()> {
     path_text(directory, "artifact directory")?;
     verify_staging(directory, case)?;
@@ -174,7 +176,7 @@ pub(crate) fn execute(
     util::json_write(
         &directory.join("command.json"),
         &json!({
-            "profile":"frozen_ppl_uv857", "case":case,"program":command.get_program().to_string_lossy(),
+            "profile":case.profile_name(), "case":case,"program":command.get_program().to_string_lossy(),
             "args":command.get_args().map(|arg|arg.to_string_lossy().into_owned()).collect::<Vec<_>>(),
             "native_program":executable,"cwd":root,"desktop_input":false,
             "filesystem_isolation":{"external_paths":"read_only","writable_capture_directory":directory},
@@ -248,7 +250,7 @@ pub(crate) fn execute(
                 util::json_write(
                     &directory.join("diagnostic-observation.json"),
                     &json!({
-                        "profile":"frozen_ppl_uv857","case":case,"camera_origin":[-192,-240,160],"camera_angles":[25,50,0],
+                        "profile":case.profile_name(),"case":case,"camera_origin":[-192,-240,160],"camera_angles":[25,50,0],
                         "controls":controls,"hardware":hardware,"bsp_sha256":case.bsp_sha(),
                         "png_sha256":util::hash_file(&directory.join("game.png"),8*1024*1024)?,
                         "ppm_sha256":util::hash_file(&directory.join("game.ppm"),8*1024*1024)?,
@@ -302,8 +304,8 @@ pub(crate) fn execute(
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CliRequest {
-    case: PplUv857Case,
+struct CliRequest<C> {
+    case: C,
     engine_root: PathBuf,
     steam_root: PathBuf,
     bsp: PathBuf,
@@ -322,7 +324,7 @@ impl CaptureObserver for CliObserver {
 }
 
 pub(crate) fn cli(path: &Path) -> io::Result<()> {
-    let request: CliRequest = util::json_read(path, 16 * 1024)?;
+    let request: CliRequest<PplUv857Case> = util::json_read(path, 16 * 1024)?;
     let request = PplUv857Request {
         case: request.case,
         environment: CaptureEnvironment {
@@ -339,6 +341,29 @@ pub(crate) fn cli(path: &Path) -> io::Result<()> {
         .map_err(|failure| failure.error)?;
     println!(
         "HAMMERR_PPL_UV857 {}",
+        serde_json::to_string(&receipt).map_err(io::Error::other)?
+    );
+    Ok(())
+}
+
+pub(crate) fn cli_midrange(path: &Path) -> io::Result<()> {
+    let request: CliRequest<PplMidrange909Case> = util::json_read(path, 16 * 1024)?;
+    let request = PplMidrange909Request {
+        case: request.case,
+        environment: CaptureEnvironment {
+            engine_root: request.engine_root,
+            steam_root: request.steam_root,
+            mounts: Vec::new(),
+        },
+        bsp: request.bsp,
+        fixture_game: request.fixture_game,
+        observer_library: request.observer_library,
+        artifacts_parent: request.artifacts_parent,
+    };
+    let receipt = crate::diagnose_ppl_midrange909_with_cleanup(request, &mut CliObserver)
+        .map_err(|failure| failure.error)?;
+    println!(
+        "HAMMERR_PPL_MIDRANGE909 {}",
         serde_json::to_string(&receipt).map_err(io::Error::other)?
     );
     Ok(())
@@ -495,6 +520,114 @@ mod tests {
         );
         assert_eq!(command.get_args().count(), 0);
         assert!(!directory.path().join("hardware.jsonl").exists());
+    }
+
+    #[test]
+    fn midrange_profile_admits_only_six_fixed_cases_and_keeps_uv_profile_separate() {
+        let cases = [
+            (
+                "target-032",
+                PplMidrange909Case::Target032,
+                "07c753fed495d190e2c1503d5542e39dd108e5bf5a4e00bd9ceb642ff7f3de64",
+            ),
+            (
+                "reference-032",
+                PplMidrange909Case::Reference032,
+                "0c874539fa958dceb88a26ad672e1d9f45381086c8ebf58472ac0cfa112483fd",
+            ),
+            (
+                "target-064",
+                PplMidrange909Case::Target064,
+                "587d5aeb6303eafbf19e9c645eb9f6f87f6c0a6207ef94b03b6d095701b203e3",
+            ),
+            (
+                "reference-064",
+                PplMidrange909Case::Reference064,
+                "106a54090ed0a7a43f7a99356400f6a8de74df49cf17c541bbd43ac1078d4f35",
+            ),
+            (
+                "target-096",
+                PplMidrange909Case::Target096,
+                "8777f70084f9b66e52bb7288eb506a20dda64f0315f5508edae0b13a4a609fb7",
+            ),
+            (
+                "reference-096",
+                PplMidrange909Case::Reference096,
+                "69ec5d8d64f39c00f1e416cdccfb1fd832a0dc772cd248b5904f94ee898faf7c",
+            ),
+        ];
+        let uv_cases = [
+            PplUv857Case::MissingUv,
+            PplUv857Case::UniformR,
+            PplUv857Case::UniformB,
+            PplUv857Case::UniformG,
+            PplUv857Case::UniformW,
+            PplUv857Case::QuadrantR,
+            PplUv857Case::QuadrantB,
+            PplUv857Case::QuadrantG,
+            PplUv857Case::QuadrantW,
+        ];
+        let directory = tempfile::tempdir().unwrap();
+        let bsp = directory.path().join("wrong-case.bsp");
+        fs::write(&bsp, b"unapproved BSP").unwrap();
+        for (name, case, expected) in cases {
+            assert_eq!(serde_json::to_value(case).unwrap(), json!(name));
+            assert_eq!(
+                serde_json::from_value::<PplMidrange909Case>(json!(name)).unwrap(),
+                case
+            );
+            assert_eq!(case.bsp_sha(), expected);
+            assert!(pinned_bytes(&bsp, case.bsp_sha(), MAX_INPUT).is_err());
+            assert!(serde_json::from_value::<PplUv857Case>(json!(name)).is_err());
+            assert!(
+                serde_json::from_value::<crate::process::WorkerProfile>(
+                    json!({"kind":"ppl_uv857", "parameters":name})
+                )
+                .is_err()
+            );
+            let profile = crate::process::WorkerProfile::PplMidrange909(case);
+            assert_eq!(
+                serde_json::to_value(profile).unwrap(),
+                json!({"kind":"ppl_midrange909", "parameters":name})
+            );
+            assert!(
+                serde_json::from_value::<crate::process::WorkerProfile>(
+                    json!({"kind":"ppl_midrange909", "parameters":name})
+                )
+                .is_ok()
+            );
+            for uv in uv_cases {
+                assert_ne!(case.bsp_sha(), uv.bsp_sha());
+            }
+        }
+        for uv in uv_cases {
+            let value = serde_json::to_value(uv).unwrap();
+            assert!(serde_json::from_value::<PplMidrange909Case>(value).is_err());
+        }
+        for value in [
+            json!({"kind":"ppl_midrange909","parameters":"target-128"}),
+            json!({"kind":"ppl_midrange909","parameters":{"case":"target-032","bsp_sha256":"anything"}}),
+            json!({"kind":"ppl_midrange909","parameters":"target-032","command":"anything"}),
+        ] {
+            assert!(serde_json::from_value::<crate::process::WorkerProfile>(value).is_err());
+        }
+        assert_eq!(fs::read(bsp).unwrap(), b"unapproved BSP");
+    }
+
+    #[test]
+    fn midrange_cli_rejects_hash_override_and_uv_case() {
+        let request = json!({
+            "case":"target-032", "engine_root":"/engine", "steam_root":"/steam",
+            "bsp":"/case.bsp", "fixture_game":"/fixture", "observer_library":"/observer.so",
+            "artifacts_parent":"/artifacts",
+        });
+        assert!(serde_json::from_value::<CliRequest<PplMidrange909Case>>(request.clone()).is_ok());
+        let mut changed = request.clone();
+        changed["bsp_sha256"] = json!("anything");
+        assert!(serde_json::from_value::<CliRequest<PplMidrange909Case>>(changed).is_err());
+        let mut changed = request;
+        changed["case"] = json!("missing-uv");
+        assert!(serde_json::from_value::<CliRequest<PplMidrange909Case>>(changed).is_err());
     }
 
     #[test]

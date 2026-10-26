@@ -39,6 +39,7 @@ pub(crate) struct WorkerRequest {
 pub(crate) enum WorkerProfile {
     Reflection(ReflectionProfile),
     PplUv857(crate::PplUv857Case),
+    PplMidrange909(crate::PplMidrange909Case),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -53,7 +54,9 @@ impl WorkerRequest {
     pub fn map_name(&self) -> &str {
         match &self.profile {
             WorkerProfile::Reflection(profile) => &profile.map_name,
-            WorkerProfile::PplUv857(_) => crate::diagnostic::MAP_NAME,
+            WorkerProfile::PplUv857(_) | WorkerProfile::PplMidrange909(_) => {
+                crate::diagnostic::MAP_NAME
+            }
         }
     }
 }
@@ -870,16 +873,46 @@ pub fn diagnose_ppl_uv857_with_cleanup(
     request: crate::PplUv857Request,
     observer: &mut dyn CaptureObserver,
 ) -> Result<crate::PplUv857Receipt, crate::CaptureFailure> {
+    let (artifacts, elapsed_ms) = diagnose_ppl_with_cleanup((&request).into(), observer)?;
+    Ok(crate::PplUv857Receipt {
+        case: request.case,
+        artifacts,
+        elapsed_ms,
+        verified_controls: true,
+        hardware_observed: true,
+        preservation_passed: true,
+    })
+}
+
+pub fn diagnose_ppl_midrange909_with_cleanup(
+    request: crate::PplMidrange909Request,
+    observer: &mut dyn CaptureObserver,
+) -> Result<crate::PplMidrange909Receipt, crate::CaptureFailure> {
+    let (artifacts, elapsed_ms) = diagnose_ppl_with_cleanup((&request).into(), observer)?;
+    Ok(crate::PplMidrange909Receipt {
+        case: request.case,
+        artifacts,
+        elapsed_ms,
+        verified_controls: true,
+        hardware_observed: true,
+        preservation_passed: true,
+    })
+}
+
+fn diagnose_ppl_with_cleanup(
+    request: crate::diagnostic::DiagnosticRequest<'_>,
+    observer: &mut dyn CaptureObserver,
+) -> Result<(PathBuf, u64), crate::CaptureFailure> {
     let mut cleanup = crate::CleanupDisposition::Confirmed;
-    diagnose_ppl_uv857_inner(request, observer, &mut cleanup)
+    diagnose_ppl_inner(request, observer, &mut cleanup)
         .map_err(|error| crate::CaptureFailure { error, cleanup })
 }
 
-fn diagnose_ppl_uv857_inner(
-    request: crate::PplUv857Request,
+fn diagnose_ppl_inner(
+    request: crate::diagnostic::DiagnosticRequest<'_>,
     observer: &mut dyn CaptureObserver,
     disposition: &mut crate::CleanupDisposition,
-) -> io::Result<crate::PplUv857Receipt> {
+) -> io::Result<(PathBuf, u64)> {
     observer.checkpoint()?;
     crate::diagnostic::validate_request_paths(&request)?;
     let parent = request.artifacts_parent.canonicalize()?;
@@ -891,7 +924,7 @@ fn diagnose_ppl_uv857_inner(
     }
     let directory = capture_directory_in(&parent)?;
     let lease = lease()?;
-    let environment = crate::diagnostic::environment(&request.environment)?;
+    let environment = crate::diagnostic::environment(request.environment)?;
     let directory = directory.keep().canonicalize()?;
     let prepare = crate::diagnostic::stage(&directory, &request);
     if let Err(error) = prepare {
@@ -907,7 +940,12 @@ fn diagnose_ppl_uv857_inner(
         supervisor: std::process::id(),
         supervisor_start: start_time(std::process::id())?,
         environment,
-        profile: WorkerProfile::PplUv857(request.case),
+        profile: match request.case {
+            crate::diagnostic::DiagnosticCase::Uv857(case) => WorkerProfile::PplUv857(case),
+            crate::diagnostic::DiagnosticCase::Midrange909(case) => {
+                WorkerProfile::PplMidrange909(case)
+            }
+        },
     };
     let result = run_owned(&directory, &worker, &lease, observer, disposition);
     let sources = crate::diagnostic::verify_sources(&request);
@@ -924,14 +962,7 @@ fn diagnose_ppl_uv857_inner(
     match (result, audit) {
         (Ok(result), Ok(())) => {
             observer.checkpoint()?;
-            Ok(crate::PplUv857Receipt {
-                case: request.case,
-                artifacts: directory,
-                elapsed_ms: result.elapsed_ms,
-                verified_controls: true,
-                hardware_observed: true,
-                preservation_passed: true,
-            })
+            Ok((directory, result.elapsed_ms))
         }
         (Err(a), Err(b)) => Err(invalid(format!(
             "{a}; {b}; inspect {}",
@@ -1000,6 +1031,26 @@ mod tests {
     }
 
     #[test]
+    fn midrange_prestart_cancellation_preserves_confirmed_cleanup() {
+        let request = crate::PplMidrange909Request {
+            case: crate::PplMidrange909Case::Target032,
+            environment: CaptureEnvironment {
+                engine_root: PathBuf::new(),
+                steam_root: PathBuf::new(),
+                mounts: Vec::new(),
+            },
+            bsp: PathBuf::new(),
+            fixture_game: PathBuf::new(),
+            observer_library: PathBuf::new(),
+            artifacts_parent: PathBuf::new(),
+        };
+        let failure =
+            diagnose_ppl_midrange909_with_cleanup(request, &mut CancelledObserver).unwrap_err();
+        assert_eq!(failure.cleanup, crate::CleanupDisposition::Confirmed);
+        assert_eq!(failure.error.kind(), io::ErrorKind::Interrupted);
+    }
+
+    #[test]
     fn diagnostic_non_utf8_source_path_is_rejected_before_staging() {
         use std::os::unix::ffi::OsStringExt;
 
@@ -1016,7 +1067,7 @@ mod tests {
             artifacts_parent: PathBuf::from("missing-diagnostic-parent"),
         };
         let stage_error =
-            crate::diagnostic::stage(Path::new("unused-diagnostic-directory"), &request)
+            crate::diagnostic::stage(Path::new("unused-diagnostic-directory"), &(&request).into())
                 .unwrap_err();
         assert_eq!(stage_error.kind(), io::ErrorKind::InvalidData);
         assert!(

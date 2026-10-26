@@ -94,7 +94,10 @@ pub(crate) fn game_directory(directory: &Path, request: &WorkerRequest) -> io::R
     for name in ["config.cfg", "autoexec.cfg"] {
         util::atomic_write(&game.join("cfg").join(name), b"")?;
     }
-    if matches!(request.profile, WorkerProfile::PplUv857(_)) {
+    if matches!(
+        request.profile,
+        WorkerProfile::PplUv857(_) | WorkerProfile::PplMidrange909(_)
+    ) {
         crate::diagnostic::configure_game(directory, &game)?;
         fs::copy(
             directory.join("staged.bsp"),
@@ -367,7 +370,18 @@ fn execute(directory: &Path, request: &WorkerRequest) -> io::Result<()> {
     guard::validate_environment(&request.environment)?;
     match &request.profile {
         WorkerProfile::PplUv857(case) => {
-            return crate::diagnostic::execute(directory, request, *case);
+            return crate::diagnostic::execute(
+                directory,
+                request,
+                crate::diagnostic::DiagnosticCase::Uv857(*case),
+            );
+        }
+        WorkerProfile::PplMidrange909(case) => {
+            return crate::diagnostic::execute(
+                directory,
+                request,
+                crate::diagnostic::DiagnosticCase::Midrange909(*case),
+            );
         }
         WorkerProfile::Reflection(_) => {}
     }

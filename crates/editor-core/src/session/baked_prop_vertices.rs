@@ -113,6 +113,44 @@ impl Query {
 }
 
 impl Session {
+    pub fn select_compiled_prop_source(
+        &mut self,
+        actor: Actor,
+        build_token: String,
+        prop: u32,
+    ) -> Result<Value, String> {
+        self.compiled_source_selection_ready()?;
+        let inspection = self.inspect_baked_prop_vertices(&Query {
+            build_token: Some(build_token),
+            prop: Some(prop),
+            prop_offset: usize::try_from(prop).map_err(|_| "Native prop ordinal is too large")?,
+            prop_limit: 1,
+            section_limit: 1,
+            vertex_limit: 1,
+            ..Query::default()
+        })?;
+        if inspection.report["build"]["current"] != true
+            || inspection.report["build"]["status"] != "current"
+        {
+            return Err("Source selection requires a current successful owned build; refresh inspection or compile again".into());
+        }
+        if inspection.report["selected_prop"]["ordinal"].as_u64() != Some(u64::from(prop))
+            || inspection.report["selected_prop"]["source_association"]["status"] != "available"
+        {
+            return Err(
+                "The selected native prop has no verified captured source association".into(),
+            );
+        }
+        let origin = self
+            .compiled
+            .as_ref()
+            .and_then(|build| build.static_prop_origins.as_ref().ok())
+            .and_then(|origins| origins.captured_origin(prop as usize))
+            .ok_or("The selected native prop has no captured source association")?;
+        let target = super::compiled_source_selection::captured_root_target(origin);
+        self.select_compiled_source_target(actor, target)
+    }
+
     pub fn frame_compiled_prop_origin(
         &mut self,
         actor: Actor,

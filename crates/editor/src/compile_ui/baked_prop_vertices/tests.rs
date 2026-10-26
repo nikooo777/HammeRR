@@ -132,7 +132,21 @@ fn baked_prop_vertices_controls_inspect_real_pages_channels_disabled_props_and_s
     assert_eq!(window.get_vertex_rows().row_count(), 0);
     controller.set_aspect(1.7);
     assert!(window.get_can_frame());
+    assert!(window.get_can_select_source());
+    assert_eq!(window.get_source_selection_label(), "Select source");
     let camera = lock(&shared).camera();
+    window.invoke_select_source();
+    assert_eq!(
+        lock(&shared).selected_ids(),
+        [map_core::ObjectId::Entity(9100)]
+    );
+    assert!(!lock(&shared).face_mode());
+    assert_eq!(lock(&shared).camera(), camera);
+    assert_eq!(serde_json::json!(lock(&shared).property_draft()), before.6);
+    lock(&shared)
+        .select(&before.3, crate::session::SelectMode::Replace)
+        .unwrap();
+
     window.invoke_frame_prop_origin();
     assert!(window.get_diagnostics().contains("Framed native prop 0"));
     assert_ne!(lock(&shared).camera(), camera);
@@ -169,6 +183,7 @@ fn baked_prop_vertices_controls_inspect_real_pages_channels_disabled_props_and_s
     window.invoke_refresh_inspection();
     assert!(window.get_build_state().contains("stale"));
     assert!(!window.get_can_frame());
+    assert!(!window.get_can_select_source());
     assert!(
         window
             .get_selected()

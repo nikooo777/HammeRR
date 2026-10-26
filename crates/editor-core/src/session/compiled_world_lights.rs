@@ -190,6 +190,41 @@ pub struct Limits {
 }
 
 impl Session {
+    pub fn select_compiled_world_light_source(
+        &mut self,
+        actor: Actor,
+        build_token: String,
+        channel: Channel,
+        ordinal: usize,
+    ) -> Result<Value, String> {
+        self.compiled_source_selection_ready()?;
+        let inspection = self.inspect_compiled_world_lights(&Query {
+            build_token: Some(build_token),
+            channel,
+            offset: ordinal,
+            limit: 1,
+        })?;
+        if inspection.build["current"] != true || inspection.build["status"] != "current" {
+            return Err("Source selection requires a current successful owned build; refresh inspection or compile again".into());
+        }
+        let row = inspection
+            .page
+            .rows
+            .iter()
+            .find(|row| row.ordinal == ordinal)
+            .ok_or("Compiled light ordinal is outside the native table")?;
+        if !matches!(row.kind, world_light_kind::POINT | world_light_kind::SPOT) {
+            return Err("Only compiled point and spot lights have selectable sources".into());
+        }
+        let SourceAssociation::Available { origin } = &row.source_association else {
+            return Err(
+                "The selected native light has no verified captured source association".into(),
+            );
+        };
+        let target = super::compiled_source_selection::captured_root_target(origin);
+        self.select_compiled_source_target(actor, target)
+    }
+
     pub fn frame_compiled_world_light(
         &mut self,
         actor: Actor,

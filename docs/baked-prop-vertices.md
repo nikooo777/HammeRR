@@ -11,6 +11,7 @@ Inspect captured static-prop sources and baked vertex colors.
 4. Choose a compiled prop. For colors, choose **Channel** and a hardware section.
 5. Read the captured source and **Vertex colors**.
 6. Click **Frame prop origin** to center its compiled position.
+7. For an available current source, click **Select source** or **Select containing reference**.
 
 Use **Previous props**, **Next props**, section controls and vertex controls to page through results.
 Use **Refresh inspection** after a new build or source change.
@@ -28,10 +29,17 @@ and does not need source metadata. It does not fit model bounds or select an
 authored object. Finish active viewport work first. Refresh or compile again
 after source changes.
 
+**Select source** selects one root entity. For an instanced prop,
+**Select containing reference** selects its outer root helper. Both replace
+selection in **Objects** mode and keep the camera, map, Undo history and property
+drafts. Finish geometry drafts and viewport work first. Selection does not expand
+groups, reveal hidden objects or open child files. Missing source metadata blocks
+selection; native framing keeps its separate rules.
+
 ## Limits
 
 - Physical paths that cannot be reported show stale provenance and omitted path fields.
-- Prop ordinals and hardware sections belong to one build. Source addresses identify captured authored entities; they do not resolve, select or frame current objects.
+- Prop ordinals and hardware sections belong to one build. Source addresses identify captured authored entities; selection uses only a current verified capture.
 - Missing or unverified source metadata is reported separately; valid native prop and color rows remain available.
 - Captured prop metadata is limited to 8 MiB, including shared occurrence storage once. Source copies are admitted before allocation within 128 KiB per report; each report is limited to 256 KiB.
 - Hardware vertices are not mapped to model vertex positions.

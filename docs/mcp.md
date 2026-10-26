@@ -319,6 +319,19 @@ Disabled/non-baked props and unavailable source associations can still frame
 valid native origins. Stale, missing, replaced or out-of-range owned data and
 active viewport work refuse before camera mutation.
 
+`select_compiled_prop_source` requires `build_token` and native `prop` ordinal.
+`select_compiled_world_light_source` requires `build_token`, explicit `channel`
+(`ldr`/`hdr`) and native `ordinal`. Both re-run current owned inspection and require
+an available verified captured source. They replace selection with exactly one
+root entity, or only the captured outer containing reference for an instance,
+in Objects mode. Groups do not expand; objects are not unhidden and child files
+are not opened. The camera, map, Undo history and ordinary property drafts stay
+unchanged. Active viewport work and geometry drafts refuse before selection.
+Historical, changed, missing and invalid data or metadata refuses atomically.
+Results contain `target` (`entity:<id>`), `source_kind` (`root_entity` or
+`containing_reference`), `mode:"objects"` and `selected_count:1`.
+Unavailable source metadata does not change native framing availability.
+
 `inspect_baked_prop_vertices` returns captured authored source addresses in each
 `props.rows[].source_association` and in `selected_prop.source_association`,
 including disabled props without color files. Available associations contain
@@ -329,8 +342,8 @@ is the complete ordered `{helper,file}` route, with IDs scoped to each authored
 file. Top-level `source_associations` reports availability and diagnostics;
 unavailable rows contain `status:"unavailable"` and `reason`. Missing or
 unverified metadata leaves valid native/color inspection available. Addresses
-remain captured and historical after source changes; they never select or
-resolve current objects. Source copies cap at 128 KiB per report, within the
+remain captured and historical after source changes; selection uses only a current
+verified capture. Source copies cap at 128 KiB per report, within the
 256 KiB report cap. Reduce the existing `prop_limit` (1–32) after a page-budget
 refusal; the desktop uses **Props per page** for the same operation.
 
@@ -394,7 +407,7 @@ These groups locate the available operations.
 | [3D sky preview](sky.md) | `get_3d_sky_preview`, `set_3d_sky_preview` |
 | [Terrain](terrain.md) | `begin_terrain_move_drag`, `begin_terrain_stroke`, `break_terrain_stroke`, `cancel_terrain_move_handles`, `cancel_terrain_stroke`, `clear_terrain_triangle_highlight`, `create_terrain`, `enable_terrain_move_handles`, `finish_terrain_move_drag`, `finish_terrain_stroke`, `frame_terrain_triangles`, `frame_terrain_vertices`, `get_terrain_creation`, `get_terrain_grids`, `get_terrain_move_handles`, `get_terrain_stroke`, `get_terrain_triangle_highlight`, `get_terrain_triangles`, `get_terrain_vertex_mask`, `get_terrain_vertices`, `get_terrain_volume_triangles`, `get_terrain_volume_vertices`, `highlight_terrain_triangles`, `highlight_terrain_vertices`, `pick_terrain_triangle`, `pick_terrain_vertex`, `preview_terrain_blend`, `preview_terrain_collision`, `preview_terrain_resolution`, `preview_terrain_sculpt`, `preview_terrain_sew`, `preview_terrain_smoothing`, `preview_terrain_subdivision`, `preview_terrain_triangle_tags`, `preview_terrain_vertex_move`, `remove_terrain`, `select_terrain_triangles_in_volume`, `select_terrain_vertices_in_volume`, `update_terrain_move_drag`, `update_terrain_stroke` |
 | [Transform pivots](brushes.md) | `transform_pivot_pick`, `transform_pivot_grid` |
-| [Cameras, rendering and inspection](basics.md) | `clear_pointfile`, `cycle_object_hit`, `delete_camera_view`, `frame_compiled_prop_origin`, `frame_compiled_world_light`, `frame_pointfile`, `get_camera`, `get_camera_views`, `get_fog_preview`, `get_lighting_preview`, `get_normal_map_preview`, `get_object_hit_candidates`, `get_pointfile`, `get_rope_preview`, `inspect_baked_lightmaps`, `inspect_baked_prop_vertices`, `inspect_compiled_world_lights`, `inspect_sky_assets`, `load_pointfile`, `navigate_pointfile`, `pick_at_pixel`, `raycast`, `rename_camera_view`, `render_view`, `restore_camera_view`, `save_camera_view`, `set_camera`, `set_fog_preview`, `set_view` |
+| [Cameras, rendering and inspection](basics.md) | `clear_pointfile`, `cycle_object_hit`, `delete_camera_view`, `frame_compiled_prop_origin`, `frame_compiled_world_light`, `frame_pointfile`, `get_camera`, `get_camera_views`, `get_fog_preview`, `get_lighting_preview`, `get_normal_map_preview`, `get_object_hit_candidates`, `get_pointfile`, `get_rope_preview`, `inspect_baked_lightmaps`, `inspect_baked_prop_vertices`, `inspect_compiled_world_lights`, `inspect_sky_assets`, `load_pointfile`, `navigate_pointfile`, `pick_at_pixel`, `raycast`, `rename_camera_view`, `render_view`, `restore_camera_view`, `select_compiled_prop_source`, `select_compiled_world_light_source`, `save_camera_view`, `set_camera`, `set_fog_preview`, `set_view` |
 | [Working region](working-region.md) | `get_editor_visibility`, `get_working_region`, `set_editor_visibility`, `set_working_region` |
 | [Compiled visibility](visibility.md) | `frame_compiled_visibility`, `inspect_compiled_visibility`, `set_compiled_visibility_overlay` |
 

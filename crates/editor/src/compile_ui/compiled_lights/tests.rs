@@ -104,7 +104,21 @@ fn compiled_lights_controls_share_pages_channels_details_and_owned_build_invalid
     assert_eq!(window.get_details().style, "7");
     assert_eq!(window.get_details().intensity, "0, 0, 1");
     assert!(window.get_can_frame());
+    assert!(window.get_can_select_source());
+    assert_eq!(window.get_source_selection_label(), "Select source");
     let camera = lock(&shared).camera();
+    window.invoke_select_source();
+    assert_eq!(
+        lock(&shared).selected_ids(),
+        [map_core::ObjectId::Entity(9002)]
+    );
+    assert!(!lock(&shared).face_mode());
+    assert_eq!(lock(&shared).camera(), camera);
+    assert_eq!(serde_json::json!(lock(&shared).property_draft()), before.6);
+    lock(&shared)
+        .select(&before.3, crate::session::SelectMode::Replace)
+        .unwrap();
+
     for aspect in [0.5, 2.5] {
         controller.set_aspect(aspect);
         let origin = glam::Vec3::new(64.0, 32.0, 192.0);
@@ -130,6 +144,7 @@ fn compiled_lights_controls_share_pages_channels_details_and_owned_build_invalid
     assert!(window.get_previous_lights());
     window.invoke_inspect_light(0);
     assert!(!window.get_can_frame());
+    assert!(!window.get_can_select_source());
     assert!(
         window
             .get_details()
@@ -208,6 +223,7 @@ fn compiled_lights_controls_share_pages_channels_details_and_owned_build_invalid
     assert!(ordinals(window).is_empty());
     assert!(!window.get_has_selection());
     assert!(!window.get_can_frame());
+    assert!(!window.get_can_select_source());
     assert_eq!(window.get_details().record, "");
     assert_eq!(window.get_details().source_association, "");
     assert!(!window.get_next_lights());
@@ -229,6 +245,7 @@ fn compiled_lights_controls_share_pages_channels_details_and_owned_build_invalid
         "Historical source: root entity:9002"
     );
     assert!(!window.get_can_frame());
+    assert!(!window.get_can_select_source());
     lock(&shared)
         .update_build_settings(
             Actor::User,
@@ -246,6 +263,7 @@ fn compiled_lights_controls_share_pages_channels_details_and_owned_build_invalid
     window.invoke_frame_light();
     assert_eq!(lock(&shared).camera(), camera);
     assert!(!window.get_can_frame());
+    assert!(!window.get_can_select_source());
     assert!(ordinals(window).is_empty());
     window.invoke_change_channel();
     assert!(ordinals(window).is_empty());

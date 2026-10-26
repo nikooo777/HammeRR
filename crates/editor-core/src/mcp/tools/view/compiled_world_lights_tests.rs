@@ -10,6 +10,9 @@ fn compiled_light_framing_mcp_uses_explicit_owned_records_and_shared_camera_oper
         json!({"build_token":"1","channel":"ldr","ordinal":-1}),
         json!({"build_token":"1","channel":"ldr","ordinal":0,"path":"foreign.bsp"}),
     ] {
+        assert!(
+            serde_json::from_value::<SelectCompiledWorldLightSourceArgs>(invalid.clone()).is_err()
+        );
         assert!(serde_json::from_value::<FrameCompiledWorldLightArgs>(invalid).is_err());
     }
     let schema = serde_json::to_value(schemars::schema_for!(FrameCompiledWorldLightArgs)).unwrap();
@@ -48,6 +51,47 @@ fn compiled_light_framing_mcp_uses_explicit_owned_records_and_shared_camera_oper
     let shared = Arc::new(Mutex::new(session));
     let server = EditorServer::new(shared.clone(), None);
     assert!(server.get_tool("frame_compiled_world_light").is_some());
+    assert!(
+        server
+            .get_tool("select_compiled_world_light_source")
+            .is_some()
+    );
+    let source_camera = lock(&shared).camera();
+    for (channel, ordinal, entity) in [("ldr", 0, 9001), ("hdr", 1, 9002)] {
+        let selected = server
+            .select_compiled_world_light_source(Parameters(
+                serde_json::from_value(
+                    json!({"build_token":token,"channel":channel,"ordinal":ordinal}),
+                )
+                .unwrap(),
+            ))
+            .unwrap();
+        assert!(!selected.is_error.unwrap_or(false));
+        let selected: Value =
+            serde_json::from_str(&selected.content[0].as_text().unwrap().text).unwrap();
+        assert_eq!(
+            selected,
+            json!({"target":format!("entity:{entity}"),"source_kind":"root_entity","mode":"objects","selected_count":1})
+        );
+        assert_eq!(lock(&shared).selected_ids(), [ObjectId::Entity(entity)]);
+        assert_eq!(lock(&shared).camera(), source_camera);
+    }
+    let source_selection = lock(&shared).selected_ids();
+    for args in [
+        json!({"build_token":token,"channel":"ldr","ordinal":2}),
+        json!({"build_token":"wrong","channel":"ldr","ordinal":0}),
+        json!({"build_token":token,"channel":"automatic","ordinal":0}),
+    ] {
+        let refused = server
+            .select_compiled_world_light_source(Parameters(serde_json::from_value(args).unwrap()))
+            .unwrap();
+        assert!(refused.is_error.unwrap_or(false));
+        assert_eq!(lock(&shared).selected_ids(), source_selection);
+    }
+    lock(&shared)
+        .select(&before.2, crate::session::SelectMode::Replace)
+        .unwrap();
+
     for (channel, name, ordinal) in [(Channel::Ldr, "ldr", 0), (Channel::Hdr, "hdr", 1)] {
         let expected = {
             let mut session = lock(&shared);

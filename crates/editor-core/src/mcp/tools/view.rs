@@ -3,6 +3,36 @@ use super::super::*;
 #[tool_router(router = view_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
+        description = "Select the captured authored source of one native static prop from the current successful owned build. Require build_token and zero-based prop ordinal from inspect_baked_prop_vertices. Rechecks owned native output, current sources and sealed available association. Replaces selection with exactly one root entity or the captured outer containing reference in Objects mode, without group expansion, unhiding or opening children. Disabled/non-baked props can select when their mapping is available. Stale/missing/invalid output or metadata, geometry drafts and active viewport work refuse atomically. Preserves camera, map/history/settings and ordinary property drafts. Returns target, source_kind, mode and selected_count. UI: Baked prop vertices → Select source / Select containing reference."
+    )]
+    pub(in crate::mcp) fn select_compiled_prop_source(
+        &self,
+        Parameters(args): Parameters<SelectCompiledPropSourceArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session()
+                .select_compiled_prop_source(Actor::Agent, args.build_token, args.prop)
+        })
+    }
+
+    #[tool(
+        description = "Select the captured authored source of one native point/spot light from the current successful owned build. Require build_token, explicit channel ldr/hdr and zero-based ordinal from inspect_compiled_world_lights. Rechecks owned native output, current sources and available channel-sealed association. Replaces selection with exactly one root entity or the captured outer containing reference in Objects mode, without group expansion, unhiding or opening children. Native owner/position/name are not authored source IDs. Stale/missing/invalid output or metadata, other light kinds, geometry drafts and active viewport work refuse atomically. Preserves camera, map/history/settings and ordinary property drafts. Returns target, source_kind, mode and selected_count. UI: Compiled lights → Select source / Select containing reference."
+    )]
+    pub(in crate::mcp) fn select_compiled_world_light_source(
+        &self,
+        Parameters(args): Parameters<SelectCompiledWorldLightSourceArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session().select_compiled_world_light_source(
+                Actor::Agent,
+                args.build_token,
+                crate::session::compiled_world_lights::Channel::parse(&args.channel)?,
+                args.ordinal,
+            )
+        })
+    }
+
+    #[tool(
         description = "Inspect compiler-owned visibility from this Session's last successfully published BSP. UI: Build details… → Inspect visibility…. No path argument. Start without build_token for summary; explicit targets {kind:leaf|cluster|portal,ordinal:N} and retained pages require its opaque token. Default target {kind:summary}. Position target {kind:position,source:{kind:position,position:[x,y,z]}} or {kind:position,source:{kind:camera}} resolves through native Model0 planes/nodes on that same owned BSP read. Camera source requires Perspective and samples the shared camera once; explicit world positions work in every view. Returned position data includes requested/effective f32 point, native leaf/cluster and declared ordered f32 arithmetic/tie policy without engine bit-parity claims. Solid/exterior cluster -1 has no PVS/PAS row; reserved leaf0 has no invented bounds or guide. Use the returned resolved Leaf target for subsequent pages, framing or showing a guide. kind pvs (default) or pas decodes separate exact native rows. offset and visibility_offset page independently; limit 1–64. Summary pages world leaves, leaf pages incident portals, cluster pages member leaves, portal pages its two native endpoints and returns its complete bounded ring. Leaf boxes are native bounds, not convex cells. Original portal slots and final clusters survive authored coarsening, including internal same-cluster portals. Historical intact output remains explicitly stale; changed/corrupt/missing output clears rows/totals. Snapshot/map/settings/content/retained-source guards apply, not every world VMT. Drafts are not compiled. Read-only CPU inspection, no camera/selection/history changes.",
         annotations(read_only_hint = true)
     )]

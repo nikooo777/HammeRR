@@ -69,6 +69,7 @@ fn clear(window: &CompiledLightsWindow, state: &RefCell<State>) {
     window.set_current_row(-1);
     window.set_has_selection(false);
     window.set_can_frame(false);
+    window.set_can_select_source(false);
     window.set_details(CompiledLightDetails::default());
     window.set_light_page("No retained light page".into());
     window.set_channels("".into());
@@ -124,6 +125,32 @@ fn details(window: &CompiledLightsWindow, row: &WorldLightRow, report: &Inspecti
     });
     window.set_has_selection(true);
     window.set_can_frame(report.frame_origin(row.ordinal).is_ok());
+    window.set_can_select_source(
+        report.build["current"] == true
+            && report.build["status"] == "current"
+            && matches!(
+                row.kind,
+                source_formats::bsp::world_light_kind::POINT
+                    | source_formats::bsp::world_light_kind::SPOT
+            )
+            && matches!(
+                &row.source_association,
+                editor_core::session::compiled_world_lights::SourceAssociation::Available { .. }
+            ),
+    );
+    window.set_source_selection_label(
+        if matches!(
+            &row.source_association,
+            editor_core::session::compiled_world_lights::SourceAssociation::Available {
+                origin: compiler::entity_origins::Origin::Instance { .. }
+            }
+        ) {
+            "Select containing reference"
+        } else {
+            "Select source"
+        }
+        .into(),
+    );
 }
 
 fn present(window: &CompiledLightsWindow, report: &Inspection) {
@@ -172,6 +199,7 @@ fn present(window: &CompiledLightsWindow, report: &Inspection) {
     window.set_current_row(-1);
     window.set_has_selection(false);
     window.set_can_frame(false);
+    window.set_can_select_source(false);
     window.set_details(CompiledLightDetails::default());
     window.set_light_page(
         match report.page.total {
@@ -240,6 +268,7 @@ fn inspect(
             window.set_current_row(-1);
             window.set_has_selection(false);
             window.set_can_frame(false);
+            window.set_can_select_source(false);
             window.set_details(CompiledLightDetails::default());
             return;
         }
@@ -309,15 +338,15 @@ fn inspect(
     }
 }
 
-fn frame_light(
+fn current_light(
     window: &CompiledLightsWindow,
-    session: &mut Session,
+    session: &Session,
     state: &RefCell<State>,
-) -> Result<(), String> {
+) -> Result<(String, Channel, usize), String> {
     if !current(window, session, state) {
-        return Err("Refresh inspection before framing a compiled light".into());
+        return Err("Refresh inspection before acting on a compiled light".into());
     }
-    let (token, channel, ordinal) = {
+    let selection = {
         let state = state.borrow();
         let report = state
             .report
@@ -337,6 +366,37 @@ fn frame_light(
             .ok_or("Refresh the owned build inspection first")?;
         (token, state.query.channel, row.ordinal)
     };
+    Ok(selection)
+}
+
+fn select_source(
+    window: &CompiledLightsWindow,
+    session: &mut Session,
+    state: &RefCell<State>,
+) -> Result<(), String> {
+    let (token, channel, ordinal) = current_light(window, session, state)?;
+    let selected = session.select_compiled_world_light_source(
+        crate::session::Actor::User,
+        token,
+        channel,
+        ordinal,
+    )?;
+    window.set_diagnostics(
+        format!(
+            "Selected {} in Objects mode. Camera is unchanged.",
+            selected["target"].as_str().unwrap_or("source")
+        )
+        .into(),
+    );
+    Ok(())
+}
+
+fn frame_light(
+    window: &CompiledLightsWindow,
+    session: &mut Session,
+    state: &RefCell<State>,
+) -> Result<(), String> {
+    let (token, channel, ordinal) = current_light(window, session, state)?;
     let framed = session.frame_compiled_world_light(
         crate::session::Actor::User,
         token,
@@ -438,6 +498,21 @@ pub(super) fn bind(
             if let Err(error) = result {
                 clear(&window, &state);
                 window.set_build_state("Framing unavailable; refresh inspection".into());
+                window.set_diagnostics(error.into());
+            }
+        }
+    });
+    window.on_select_source({
+        let (window, target, state) = (window.as_weak(), access.downgrade(), state.clone());
+        move || {
+            let Some(window) = window.upgrade() else {
+                return;
+            };
+            let result = target.upgrade().and_then(|target| {
+                target.with_session(|session| select_source(&window, session, &state))
+            });
+            if let Err(error) = result {
+                window.set_can_select_source(false);
                 window.set_diagnostics(error.into());
             }
         }

@@ -20,6 +20,7 @@ fn baked_prop_vertices_mcp_schema_and_real_publication_match_read_only_session()
         json!({"build_token":"1","prop":-1}),
         json!({"build_token":"1","prop":0,"path":"foreign.bsp"}),
     ] {
+        assert!(serde_json::from_value::<SelectCompiledPropSourceArgs>(invalid.clone()).is_err());
         assert!(serde_json::from_value::<FrameCompiledPropOriginArgs>(invalid).is_err());
     }
     let (directory, game, vmf) = test_support::fixture();
@@ -127,6 +128,41 @@ fn baked_prop_vertices_mcp_schema_and_real_publication_match_read_only_session()
     );
     assert_eq!(frame["point_half_extent"], 16.);
     lock(&shared).set_camera(before.2);
+    assert!(server.get_tool("select_compiled_prop_source").is_some());
+    for prop in [0, 1] {
+        let selected = server
+            .select_compiled_prop_source(Parameters(
+                serde_json::from_value(json!({"build_token":token,"prop":prop})).unwrap(),
+            ))
+            .unwrap();
+        assert!(!selected.is_error.unwrap_or(false));
+        let selected: Value =
+            serde_json::from_str(&selected.content[0].as_text().unwrap().text).unwrap();
+        assert_eq!(
+            selected,
+            json!({"target":format!("entity:{}",9100+prop),"source_kind":"root_entity","mode":"objects","selected_count":1})
+        );
+        assert_eq!(
+            lock(&shared).selected_ids(),
+            [ObjectId::Entity(9100 + prop)]
+        );
+        assert_eq!(lock(&shared).camera(), before.2);
+    }
+    let selected = lock(&shared).selected_ids();
+    for args in [
+        json!({"build_token":"wrong","prop":0}),
+        json!({"build_token":token,"prop":3}),
+    ] {
+        let refused = server
+            .select_compiled_prop_source(Parameters(serde_json::from_value(args).unwrap()))
+            .unwrap();
+        assert!(refused.is_error.unwrap_or(false));
+        assert_eq!(lock(&shared).selected_ids(), selected);
+    }
+    lock(&shared)
+        .select(&before.3, crate::session::SelectMode::Replace)
+        .unwrap();
+
     assert!(!server.rendering_status()["initialized"].as_bool().unwrap());
     let session = lock(&shared);
     assert_eq!(

@@ -24,6 +24,11 @@ fn table(bsp: &Bsp) -> Result<&GameLump, &'static str> {
 }
 
 impl StaticPropOrigins {
+    /// Captured metadata only; callers must verify current native output before acting.
+    pub fn captured_origin(&self, ordinal: usize) -> Option<&Origin> {
+        self.entries.get(ordinal)
+    }
+
     pub(crate) fn prepare(
         sources: &[usize],
         instances: &Prepared<'_>,

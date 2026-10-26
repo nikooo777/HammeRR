@@ -80,6 +80,7 @@ fn clear(window: &BakedPropVerticesWindow, state: &RefCell<State>) {
     window.set_statistics("".into());
     window.set_channels("".into());
     window.set_can_frame(false);
+    window.set_can_select_source(false);
     window.set_previous_props(false);
     window.set_next_props(false);
     window.set_previous_sections(false);
@@ -118,6 +119,20 @@ fn present(window: &BakedPropVerticesWindow, report: &Value) {
         report["build"]["current"] == true
             && report["build"]["status"] == "current"
             && report["selected_prop"]["ordinal"].is_u64(),
+    );
+    window.set_can_select_source(
+        report["build"]["current"] == true
+            && report["build"]["status"] == "current"
+            && report["selected_prop"]["ordinal"].is_u64()
+            && report["selected_prop"]["source_association"]["status"] == "available",
+    );
+    window.set_source_selection_label(
+        if report["selected_prop"]["source_association"]["origin"]["kind"] == "instance" {
+            "Select containing reference"
+        } else {
+            "Select source"
+        }
+        .into(),
     );
     window.set_build_state(build_text(&report["build"]).into());
     window.set_channels(
@@ -344,15 +359,15 @@ fn inspect(
     }
 }
 
-fn frame_prop(
+fn current_prop(
     window: &BakedPropVerticesWindow,
-    session: &mut Session,
+    session: &Session,
     state: &RefCell<State>,
-) -> Result<(), String> {
+) -> Result<(String, u32), String> {
     if !current(window, session, state) {
-        return Err("Refresh the current prop inspection before framing".into());
+        return Err("Refresh the current prop inspection before acting".into());
     }
-    let (token, ordinal) = {
+    let selection = {
         let state = state.borrow();
         let report = state
             .report
@@ -368,6 +383,33 @@ fn frame_prop(
             .ok_or("Choose a native prop row")?;
         (token, ordinal)
     };
+    Ok(selection)
+}
+
+fn select_source(
+    window: &BakedPropVerticesWindow,
+    session: &mut Session,
+    state: &RefCell<State>,
+) -> Result<(), String> {
+    let (token, ordinal) = current_prop(window, session, state)?;
+    let selected =
+        session.select_compiled_prop_source(crate::session::Actor::User, token, ordinal)?;
+    window.set_diagnostics(
+        format!(
+            "Selected {} in Objects mode. Camera is unchanged.",
+            selected["target"].as_str().unwrap_or("source")
+        )
+        .into(),
+    );
+    Ok(())
+}
+
+fn frame_prop(
+    window: &BakedPropVerticesWindow,
+    session: &mut Session,
+    state: &RefCell<State>,
+) -> Result<(), String> {
+    let (token, ordinal) = current_prop(window, session, state)?;
     session.frame_compiled_prop_origin(
         crate::session::Actor::User,
         token,
@@ -451,6 +493,21 @@ pub(super) fn bind(
                 target.with_session(|session| frame_prop(&window, session, &state))
             });
             if let Err(error) = result {
+                window.set_diagnostics(error.into());
+            }
+        }
+    });
+    window.on_select_source({
+        let (window, target, state) = (window.as_weak(), access.downgrade(), state.clone());
+        move || {
+            let Some(window) = window.upgrade() else {
+                return;
+            };
+            let result = target.upgrade().and_then(|target| {
+                target.with_session(|session| select_source(&window, session, &state))
+            });
+            if let Err(error) = result {
+                window.set_can_select_source(false);
                 window.set_diagnostics(error.into());
             }
         }

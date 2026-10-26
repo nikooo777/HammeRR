@@ -57,6 +57,22 @@ pub(in crate::mcp) struct FrameCompiledWorldLightArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub(in crate::mcp) struct SelectCompiledWorldLightSourceArgs {
+    pub build_token: String,
+    pub channel: String,
+    pub ordinal: usize,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(in crate::mcp) struct SelectCompiledPropSourceArgs {
+    pub build_token: String,
+    /// Native zero-based static-prop ordinal from inspect_baked_prop_vertices.
+    pub prop: u32,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(in crate::mcp) struct InspectBakedLightmapsArgs {
     pub channel: Option<String>,
     pub face: Option<usize>,

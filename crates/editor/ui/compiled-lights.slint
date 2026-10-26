@@ -47,6 +47,8 @@ export component CompiledLightsWindow inherits Window {
     in property <bool> next-lights;
     in property <bool> has-selection;
     in property <bool> can-frame;
+    in property <bool> can-select-source;
+    in property <string> source-selection-label: "Select source";
     in property <float> aspect: 1;
     in property <CompiledLightDetails> details;
     callback refresh-inspection();
@@ -55,6 +57,7 @@ export component CompiledLightsWindow inherits Window {
     callback page-lights(int);
     callback reset-sort();
     callback frame-light();
+    callback select-source();
     callback close-dialog();
     forward-focus: keys;
     keys := FocusScope {
@@ -99,6 +102,7 @@ export component CompiledLightsWindow inherits Window {
                 Text { text: root.has-selection ? "Selected record " + root.details.record : "Select a light to inspect its fields"; font-size: 18px; font-weight: 600; }
                 Rectangle { horizontal-stretch: 1; }
                 Button { text: "Frame light"; enabled: root.can-frame; clicked => { root.frame-light(); } }
+                Button { text: root.source-selection-label; enabled: root.can-select-source; clicked => { root.select-source(); } }
             }
             if root.has-selection: ScrollView {
                 content-width: self.width;
@@ -138,7 +142,7 @@ export component CompiledLightsWindow inherits Window {
                     }
                 }
             }
-            Text { text: "Captured source IDs and ordered instance occurrence paths belong to this build. Native values are not screen brightness. Unapplied drafts are not baked. Choosing a row preserves the camera; Frame light moves it without changing selection."; wrap: word-wrap; color: #bac2ce; font-size: 12px; }
+            Text { text: "Captured source IDs and ordered instance occurrence paths belong to this build. Native values are not screen brightness. Unapplied drafts are not baked. Choosing a row preserves the camera; Frame light moves it without changing selection. Select source replaces selection with the current root entity or its outer containing reference in Objects mode, without group expansion, unhiding or opening children."; wrap: word-wrap; color: #bac2ce; font-size: 12px; }
             if root.diagnostics != "": TextEdit { text: root.diagnostics; read-only: true; wrap: word-wrap; min-height: 55px; max-height: 90px; accessible-label: "Compiled light inspection diagnostics"; }
             HorizontalLayout {
                 Rectangle { horizontal-stretch: 1; }

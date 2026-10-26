@@ -300,11 +300,69 @@ fn repeated_nested_prop_addresses_survive_child_edits_without_changing_native_by
         before["props"]["rows"][7]["source_association"]
     );
     assert_eq!(selected["selected"]["ordinal"], 7);
+    let source_camera = session.camera();
+    let source_map = session.document().vmf().clone();
+    let source_history = session.history_snapshot();
+    let face = map_core::surface::FaceId {
+        solid: source_map.world.solids[0].id,
+        side: source_map.world.solids[0].sides[0].id,
+    };
+
+    for (actor, ordinal, expected) in [
+        (Actor::User, 0, 9101),
+        (Actor::Agent, 1, 9200),
+        (Actor::User, 4, 9200),
+        (Actor::Agent, 7, 9201),
+        (Actor::User, 8, 9201),
+    ] {
+        session
+            .select_faces(&[face], crate::session::SelectMode::Replace)
+            .unwrap();
+        assert!(!session.selected_faces().is_empty());
+        let result = session
+            .select_compiled_prop_source(actor, token(&before), ordinal)
+            .unwrap();
+        assert_eq!(result["target"], format!("entity:{expected}"));
+        assert_eq!(
+            session.selected_ids(),
+            [map_core::ObjectId::Entity(expected)]
+        );
+        assert!(!session.face_mode());
+        assert!(session.selected_faces().is_empty());
+        assert_eq!(session.camera(), source_camera);
+        assert_eq!(session.document().vmf(), &source_map);
+        assert_eq!(session.history_snapshot(), source_history);
+    }
+    let request = session
+        .begin_instance_collapse(Actor::User, &session.instance_collapse_stamp())
+        .unwrap();
+    let collapse = session.get_instance_collapse();
+    let selection = session.selected_ids();
+    assert!(
+        session
+            .select_compiled_prop_source(Actor::Agent, token(&before), 7)
+            .is_err()
+    );
+    assert_eq!(session.get_instance_collapse(), collapse);
+    assert_eq!(session.selected_ids(), selection);
+    session
+        .cancel_instance_collapse(Actor::User, request.token())
+        .unwrap();
+    drop(request);
     leaf.entities[0].id = 44;
     std::fs::write(&leaf_path, leaf.write(&Default::default())).unwrap();
     let historical = session.inspect_baked_prop_vertices(&query).unwrap().report;
     assert_eq!(historical["historical"], true);
     assert_eq!(historical["selected_prop"], selected["selected_prop"]);
+    let selection = session.selected_ids();
+    assert!(
+        session
+            .select_compiled_prop_source(Actor::Agent, token(&before), 7)
+            .is_err()
+    );
+    assert_eq!(session.selected_ids(), selection);
+    assert_eq!(session.camera(), source_camera);
+
     assert_eq!(historical["props"]["rows"], before["props"]["rows"]);
     assert_eq!(std::fs::read(&output).unwrap(), native_before);
 }
@@ -414,6 +472,14 @@ fn no_owner_and_a_successful_non_baked_owner_have_explicit_empty_states() {
         .frame_compiled_prop_origin(Actor::Agent, token(&report), 1, 1.)
         .unwrap();
     session.set_camera(camera);
+    for (actor, ordinal, entity) in [(Actor::User, 0, 9100), (Actor::Agent, 1, 9101)] {
+        session
+            .select_compiled_prop_source(actor, token(&report), ordinal)
+            .unwrap();
+        assert_eq!(session.selected_ids(), [map_core::ObjectId::Entity(entity)]);
+        assert_eq!(session.camera(), camera);
+    }
+
     assert!(
         report["channels"]
             .as_array()
@@ -690,6 +756,12 @@ fn compiled_prop_origin_framing_preserves_projection_native_identity_and_owned_s
         .unwrap()
         .report;
     let build_token = token(&report);
+    let source_origins = session
+        .compiled
+        .as_ref()
+        .unwrap()
+        .static_prop_origins
+        .clone();
     session.compiled.as_mut().unwrap().static_prop_origins =
         Err("Association intentionally unavailable".into());
     session
@@ -705,6 +777,26 @@ fn compiled_prop_origin_framing_preserves_projection_native_identity_and_owned_s
             },
         )
         .unwrap();
+    let source_camera = session.camera();
+    let selection_before = session.selected_ids();
+    assert!(
+        session
+            .select_compiled_prop_source(Actor::User, build_token.clone(), 0)
+            .is_err()
+    );
+    assert_eq!(session.selected_ids(), selection_before);
+    session.compiled.as_mut().unwrap().static_prop_origins = source_origins.clone();
+    session
+        .select_compiled_prop_source(Actor::User, build_token.clone(), 0)
+        .unwrap();
+    assert_eq!(session.selected_ids(), [map_core::ObjectId::Entity(9100)]);
+    assert_eq!(session.camera(), source_camera);
+    assert_eq!(session.property_draft().unwrap().token, draft);
+    session
+        .select(&selection_before, crate::session::SelectMode::Replace)
+        .unwrap();
+    session.compiled.as_mut().unwrap().static_prop_origins =
+        Err("Association intentionally unavailable".into());
     let preserved = (
         session.document.vmf().clone(),
         session.history_snapshot(),
@@ -774,6 +866,39 @@ fn compiled_prop_origin_framing_preserves_projection_native_identity_and_owned_s
         );
     }
     let camera = session.camera();
+    session.compiled.as_mut().unwrap().static_prop_origins = source_origins;
+    session
+        .preview_transform(
+            Actor::User,
+            &[map_core::ObjectId::Entity(9101)],
+            map_core::transform::Transform {
+                translation: glam::DVec3::X,
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+    let geometry = session.render_document().vmf().clone();
+    let selection = session.selected_ids();
+    assert!(
+        session
+            .select_compiled_prop_source(Actor::User, build_token.clone(), 0)
+            .unwrap_err()
+            .contains("geometry")
+    );
+    assert_eq!(session.render_document().vmf(), &geometry);
+    assert!(session.transform_preview().is_some());
+    assert_eq!(session.selected_ids(), selection);
+    session.cancel_transform_preview();
+    for (requested, prop) in [("foreign".into(), 0), (build_token.clone(), 3)] {
+        assert!(
+            session
+                .select_compiled_prop_source(Actor::Agent, requested, prop)
+                .is_err()
+        );
+        assert_eq!(session.selected_ids(), selection);
+        assert_eq!(session.camera(), camera);
+    }
     for (requested, prop, aspect) in [
         ("foreign".to_owned(), 0, 1.),
         (build_token.clone(), 3, 1.),
@@ -794,6 +919,14 @@ fn compiled_prop_origin_framing_preserves_projection_native_identity_and_owned_s
     let preview = session.block_preview;
     assert!(
         session
+            .select_compiled_prop_source(Actor::Agent, build_token.clone(), 0)
+            .is_err()
+    );
+    assert_eq!(session.block_preview, preview);
+    assert_eq!(session.selected_ids(), selection);
+
+    assert!(
+        session
             .frame_compiled_prop_origin(Actor::User, build_token.clone(), 0, 1.)
             .unwrap_err()
             .contains("viewport")
@@ -804,6 +937,13 @@ fn compiled_prop_origin_framing_preserves_projection_native_identity_and_owned_s
     let output = session.compiled.as_ref().unwrap().path.clone();
     let bytes = std::fs::read(&output).unwrap();
     std::fs::write(&output, b"replaced").unwrap();
+    assert!(
+        session
+            .select_compiled_prop_source(Actor::Agent, build_token.clone(), 0)
+            .is_err()
+    );
+    assert_eq!(session.selected_ids(), selection);
+
     assert!(
         session
             .frame_compiled_prop_origin(Actor::User, build_token.clone(), 0, 1.)
@@ -820,6 +960,12 @@ fn compiled_prop_origin_framing_preserves_projection_native_identity_and_owned_s
             },
         )
         .unwrap();
+    assert!(
+        session
+            .select_compiled_prop_source(Actor::Agent, build_token.clone(), 0)
+            .is_err()
+    );
+    assert_eq!(session.selected_ids(), selection);
     assert!(
         session
             .frame_compiled_prop_origin(Actor::User, build_token, 0, 1.)

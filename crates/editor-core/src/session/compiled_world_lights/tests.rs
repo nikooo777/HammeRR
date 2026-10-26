@@ -1243,6 +1243,62 @@ fn captured_modes_and_complete_table_validation_bound_empty_corrupt_and_cancelle
 #[test]
 fn missing_or_mismatched_source_metadata_preserves_intact_native_tables() {
     let (_directory, mut session, source) = test_support::compiled(true);
+    session.begin_property_edit(PropertyTarget::World).unwrap();
+    let draft = session.property_draft().unwrap().token;
+    session
+        .append_property_change(
+            draft,
+            PropertyChange::Set {
+                key: "skyname".into(),
+                value: "keep_source_selection_draft".into(),
+            },
+        )
+        .unwrap();
+    let preserved = (
+        session.document().vmf().clone(),
+        session.history_snapshot(),
+        session.camera(),
+        serde_json::json!(session.property_draft()),
+    );
+    let build_token = token(
+        &session
+            .inspect_compiled_world_lights(&Query::default())
+            .unwrap(),
+    );
+    for (actor, channel, ordinal, expected) in [
+        (Actor::User, Channel::Ldr, 0, 9001),
+        (Actor::Agent, Channel::Hdr, 1, 9002),
+    ] {
+        session.set_face_mode(true);
+        let result = session
+            .select_compiled_world_light_source(actor, build_token.clone(), channel, ordinal)
+            .unwrap();
+        assert_eq!(result["target"], format!("entity:{expected}"));
+        assert_eq!(session.selected_ids(), [ObjectId::Entity(expected)]);
+        assert!(!session.face_mode());
+        assert_eq!(
+            (
+                session.document().vmf().clone(),
+                session.history_snapshot(),
+                session.camera(),
+                serde_json::json!(session.property_draft())
+            ),
+            preserved
+        );
+    }
+    let selection = session.selected_ids();
+    for (requested, channel, ordinal) in [
+        ("wrong".into(), Channel::Ldr, 0),
+        (build_token.clone(), Channel::Ldr, 2),
+        (build_token.clone(), Channel::Ldr, 99),
+    ] {
+        assert!(
+            session
+                .select_compiled_world_light_source(Actor::Agent, requested, channel, ordinal)
+                .is_err()
+        );
+        assert_eq!(session.selected_ids(), selection);
+    }
     let output = source.with_extension("bsp");
     let original = Bsp::parse(&std::fs::read(&output).unwrap()).unwrap();
     let origins = session
@@ -1282,6 +1338,22 @@ fn missing_or_mismatched_source_metadata_preserves_intact_native_tables() {
             matches!(&report.page.rows[0].source_association, SourceAssociation::Unavailable { reason: actual } if actual.contains(reason))
         );
         assert!(report.frame_origin(0).is_ok());
+        assert!(
+            session
+                .select_compiled_world_light_source(
+                    Actor::Agent,
+                    build_token.clone(),
+                    Channel::Ldr,
+                    0
+                )
+                .is_err()
+        );
+        assert_eq!(session.selected_ids(), selection);
+        session
+            .frame_compiled_world_light(Actor::User, build_token.clone(), Channel::Ldr, 0, 1.)
+            .unwrap();
+        session.set_camera(preserved.2);
+
         if case != 0 {
             let hdr = session
                 .inspect_compiled_world_lights(&Query {
@@ -1296,6 +1368,12 @@ fn missing_or_mismatched_source_metadata_preserves_intact_native_tables() {
         }
     }
     std::fs::write(&output, b"replaced output").unwrap();
+    assert!(
+        session
+            .select_compiled_world_light_source(Actor::Agent, build_token, Channel::Ldr, 0)
+            .is_err()
+    );
+    assert_eq!(session.selected_ids(), selection);
     let unavailable = session
         .inspect_compiled_world_lights(&Query::default())
         .unwrap();
@@ -1489,6 +1567,31 @@ entity { "id" "3" "classname" "func_instance" "file" "leaf.vmf" "origin" "32 0 0
             );
         }
     }
+    let preserved = (
+        fixture.session.document().vmf().clone(),
+        fixture.session.history_snapshot(),
+        fixture.session.camera(),
+    );
+    for (actor, channel, ordinal) in [
+        (Actor::User, Channel::Ldr, 4),
+        (Actor::Agent, Channel::Hdr, 5),
+    ] {
+        let result = fixture
+            .session
+            .select_compiled_world_light_source(actor, token(&baseline), channel, ordinal)
+            .unwrap();
+        assert_eq!(result["target"], "entity:10001");
+        assert_eq!(result["source_kind"], "containing_reference");
+        assert_eq!(fixture.session.selected_ids(), [ObjectId::Entity(10001)]);
+        assert_eq!(
+            (
+                fixture.session.document().vmf().clone(),
+                fixture.session.history_snapshot(),
+                fixture.session.camera()
+            ),
+            preserved
+        );
+    }
     fixture
         .session
         .edit(Actor::User, "replace current helper source", |tx| {
@@ -1499,4 +1602,12 @@ entity { "id" "3" "classname" "func_instance" "file" "leaf.vmf" "origin" "32 0 0
     let historical = fixture.inspect(&Query::default()).unwrap();
     assert!(historical.historical);
     assert_eq!(rows(&historical), rows(&baseline));
+    let selection = fixture.session.selected_ids();
+    assert!(
+        fixture
+            .session
+            .select_compiled_world_light_source(Actor::Agent, token(&baseline), Channel::Ldr, 4)
+            .is_err()
+    );
+    assert_eq!(fixture.session.selected_ids(), selection);
 }

@@ -8,6 +8,8 @@ export component BakedPropVerticesWindow inherits Window {
     in-out property <int> prop-limit: 32;
     in property <float> aspect: 1;
     in property <bool> can-frame;
+    in property <bool> can-select-source;
+    in property <string> source-selection-label: "Select source";
     in property <string> build-state;
     in property <string> channels;
     in property <string> selected;
@@ -33,6 +35,7 @@ export component BakedPropVerticesWindow inherits Window {
     callback page-sections(int);
     callback page-vertices(int);
     callback frame-prop-origin();
+    callback select-source();
     callback close-dialog();
     forward-focus: keys;
     keys := FocusScope {
@@ -81,6 +84,7 @@ export component BakedPropVerticesWindow inherits Window {
                     }
                     Text { text: root.selected; wrap: word-wrap; }
                     Button { text: "Frame prop origin"; enabled: root.can-frame; clicked => { root.frame-prop-origin(); } }
+                    Button { text: root.source-selection-label; enabled: root.can-select-source; clicked => { root.select-source(); } }
                     Text { text: "Frames a 32-unit box around the emitted native origin, not model or collision bounds. Selection stays unchanged."; wrap: word-wrap; color: #bac2ce; }
                     Text { text: "Vertex colors"; font-size: 18px; font-weight: 600; }
                     Text { text: "Local index · hardware index · R · G · B · A"; }
@@ -96,7 +100,7 @@ export component BakedPropVerticesWindow inherits Window {
                         Rectangle { horizontal-stretch: 1; }
                     }
                     Text { text: root.statistics; wrap: word-wrap; }
-                    Text { text: "Stored encoded RGB bytes, range 0–255. HDR is baked independently with the same byte encoding. Values do not measure linear irradiance or game screen brightness. Native ordinals and hardware rows belong to this build. Source addresses describe captured authored entities and helper routes; they do not select current objects. Inspection leaves editor selection unchanged."; wrap: word-wrap; color: #bac2ce; }
+                    Text { text: "Stored encoded RGB bytes, range 0–255. HDR is baked independently with the same byte encoding. Values do not measure linear irradiance or game screen brightness. Native ordinals and hardware rows belong to this build. Source addresses describe captured authored entities and helper routes. Select source replaces selection with the current root entity or its outer containing reference in Objects mode; it does not expand groups, unhide objects or open children. Reading rows and framing preserve selection."; wrap: word-wrap; color: #bac2ce; }
                     TextEdit { text: root.diagnostics; read-only: true; min-height: 65px; max-height: 100px; }
                 }
             }

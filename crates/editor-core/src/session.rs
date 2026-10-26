@@ -28,6 +28,7 @@ mod baked_build;
 pub mod baked_lightmaps;
 pub mod baked_prop_vertices;
 mod buffer_replacement;
+mod compiled_source_selection;
 pub mod compiled_visibility;
 pub mod compiled_world_lights;
 mod document_close;

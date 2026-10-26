@@ -11,13 +11,21 @@ Read native light records and captured point/spot source identities from the las
 5. Select a row for **Source association**, attenuation, cone, normal and other stored fields.
 6. Use **Previous lights** and **Next lights** to change pages.
 7. Select a current **point** or **spot** record, then click **Frame light** to frame its stored origin in the viewport.
+8. For an available current source, click **Select source** or **Select containing reference**.
 
 Use **Refresh inspection** after changing sources or building again.
 The inspector is also available from **Build settings…** and explains when no build output is available.
 
 **Frame light** keeps the current projection and frames a 32-unit box around the native origin. It rechecks the owned build and source guards when clicked. Map selection, history, settings and ordinary unapplied drafts remain unchanged. Finish or cancel an active viewport gesture or block preview before framing.
 
-**Source association** identifies a captured root entity, or an instance's outer helper, leaf file, original entity and expanded entity for that build. **Occurrence** lists each authored helper ID and its referenced file in order from the root map to the leaf. Repeated uses of the same leaf file and entity remain distinct through their helper routes. Zero-intensity lights keep their identities; a wide authored spotlight may appear as a native point. Historical source IDs describe the build's original snapshot. They do not select or open today's source.
+**Source association** identifies a captured root entity, or an instance's outer helper, leaf file, original entity and expanded entity for that build. **Occurrence** lists each authored helper ID and its referenced file in order from the root map to the leaf. Repeated uses of the same leaf file and entity remain distinct through their helper routes. Zero-intensity lights keep their identities; a wide authored spotlight may appear as a native point. Historical source IDs describe the build's original snapshot and cannot select today's source.
+
+**Select source** selects one root entity. For an instanced light,
+**Select containing reference** selects its outer root helper. Both replace
+selection in **Objects** mode and keep the camera, map, Undo history and property
+drafts. Finish geometry drafts and viewport work first. Selection does not expand
+groups, reveal hidden objects or open child files. Missing source metadata blocks
+selection; native framing keeps its separate rules.
 
 ## Limits
 

@@ -43,6 +43,143 @@ fn complete(result: Result<CallToolResponse, ErrorData>) -> CallToolResult {
     }
 }
 
+async fn snap_request(
+    server: &EditorServer,
+    running: &RunningService<rmcp::RoleServer, EditorServer>,
+    name: &'static str,
+    arguments: Value,
+) -> CallToolResult {
+    let request =
+        CallToolRequestParams::new(name).with_arguments(arguments.as_object().unwrap().clone());
+    complete(server.call_tool(request, context(running)).await)
+}
+
+fn snap_value(result: CallToolResult) -> Value {
+    assert!(!result.is_error.unwrap_or(false), "{result:?}");
+    serde_json::from_str(&result.content[0].as_text().unwrap().text).unwrap()
+}
+
+#[tokio::test]
+async fn independent_grid_snap_protocol_shares_selection_deltas_preview_cancel_apply_and_undo() {
+    let (_directory, document, server) = fixture();
+    let (ids, source, history, camera, rigid, independent) = {
+        let mut session = lock(document.session());
+        let mut ids = Vec::new();
+        for minimum in [
+            DVec3::new(-3.125, 5.25, 7.5),
+            DVec3::new(34.25, -19.5, 9.75),
+        ] {
+            ids.push(
+                session
+                    .create_block(
+                        Actor::User,
+                        minimum,
+                        minimum + DVec3::splat(16.0),
+                        "brick/test",
+                        false,
+                    )
+                    .unwrap(),
+            );
+        }
+        session.select(&ids, SelectMode::Replace).unwrap();
+        let source = session.document().vmf().clone();
+        let history = session.history_snapshot();
+        let camera = session.camera();
+        let rigid =
+            serde_json::to_value(session.preview_snap_to_grid(Actor::User, &ids).unwrap()).unwrap();
+        session.cancel_transform_preview();
+        let independent = serde_json::to_value(
+            session
+                .preview_snap_to_grid_mode(
+                    Actor::User,
+                    &ids,
+                    crate::session::GridSnapMode::EachObject,
+                )
+                .unwrap(),
+        )
+        .unwrap();
+        session.cancel_transform_preview();
+        (ids, source, history, camera, rigid, independent)
+    };
+    let (running, _client) = service(server.clone());
+    let default =
+        snap_value(snap_request(&server, &running, "preview_snap_to_grid", json!({})).await);
+    assert_eq!(default["grid_snap"], rigid);
+    snap_value(snap_request(&server, &running, "cancel_transform_preview", json!({})).await);
+    let preview = snap_value(
+        snap_request(
+            &server,
+            &running,
+            "preview_snap_to_grid",
+            json!({"mode":"each_object"}),
+        )
+        .await,
+    );
+    assert_eq!(preview["grid_snap"], independent);
+    assert_eq!(preview["grid_snap"]["objects"][0]["id"], id_string(ids[0]));
+    assert_ne!(
+        preview["grid_snap"]["objects"][0]["delta"],
+        preview["grid_snap"]["objects"][1]["delta"]
+    );
+    let inspected =
+        snap_value(snap_request(&server, &running, "get_transform_handles", json!({})).await);
+    assert_eq!(inspected["state"]["preview"]["grid_snap"], independent);
+    for arguments in [json!({"mode":"per_object"}), json!({"independent":true})] {
+        let result = server
+            .call_tool(
+                CallToolRequestParams::new("preview_snap_to_grid")
+                    .with_arguments(arguments.as_object().unwrap().clone()),
+                context(&running),
+            )
+            .await;
+        assert!(result.is_err() || result.as_ref().is_ok_and(|response| matches!(response, CallToolResponse::Complete(result) if result.is_error == Some(true))));
+    }
+    let failed = snap_request(
+        &server,
+        &running,
+        "preview_snap_to_grid",
+        json!({"mode":"each_object","ids":[id_string(ids[0]),"entity:4294967295"]}),
+    )
+    .await;
+    assert_eq!(failed.is_error, Some(true));
+    assert_eq!(lock(document.session()).document().vmf(), &source);
+    assert_eq!(lock(document.session()).history_snapshot(), history);
+    assert_eq!(lock(document.session()).camera(), camera);
+    assert_eq!(lock(document.session()).selected_ids(), ids);
+    assert_eq!(
+        serde_json::to_value(
+            &lock(document.session())
+                .transform_preview()
+                .unwrap()
+                .grid_snap
+        )
+        .unwrap(),
+        independent
+    );
+    snap_value(snap_request(&server, &running, "cancel_transform_preview", json!({})).await);
+    assert_eq!(lock(document.session()).render_document().vmf(), &source);
+    assert_eq!(lock(document.session()).history_snapshot(), history);
+    let explicit =
+        json!({"mode":"each_object","ids":[id_string(ids[1]),id_string(ids[0]),id_string(ids[1])]});
+    let repeated =
+        snap_value(snap_request(&server, &running, "preview_snap_to_grid", explicit).await);
+    assert_eq!(repeated["grid_snap"], independent);
+    let displayed = lock(document.session()).render_document().vmf().clone();
+    let count = lock(document.session()).document().undo_labels().count();
+    snap_value(snap_request(&server, &running, "commit_transform_preview", json!({})).await);
+    assert_eq!(lock(document.session()).document().vmf(), &displayed);
+    assert_eq!(
+        lock(document.session()).document().undo_labels().count(),
+        count + 1
+    );
+    snap_value(snap_request(&server, &running, "undo", json!({})).await);
+    assert_eq!(lock(document.session()).document().vmf(), &source);
+    assert_eq!(lock(document.session()).camera(), camera);
+    assert!(server.offscreen.lock().unwrap().renderer.is_none());
+    running.cancel().await.unwrap();
+    document.shutdown().unwrap();
+}
+
 #[tokio::test]
 async fn map_info_exposes_the_same_fixed_document_close_observation() {
     let (_directory, document, server) = fixture();

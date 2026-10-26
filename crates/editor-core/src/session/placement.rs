@@ -167,6 +167,13 @@ pub(super) struct SupportPoint {
     helper_offset: DVec3,
 }
 
+pub(super) struct PlacementSupportContext {
+    models: BTreeMap<ObjectId, render::models::Instance>,
+    pub bounds: BTreeMap<ObjectId, (DVec3, DVec3)>,
+    hidden: HashSet<u32>,
+    points_used: usize,
+}
+
 fn object_id(id: ObjectId) -> String {
     match id {
         ObjectId::Solid(id) => format!("solid:{id}"),
@@ -220,18 +227,28 @@ fn precise_corner(solid: &Solid, component: &Component, approximate: DVec3) -> O
     Some(point)
 }
 
-fn push(points: &mut Vec<SupportPoint>, point: DVec3, helper_offset: DVec3) -> Result<(), String> {
-    if points.len() >= MAX_POINTS || !point.is_finite() || !helper_offset.is_finite() {
+fn push(
+    points: &mut Vec<SupportPoint>,
+    point: DVec3,
+    helper_offset: DVec3,
+    points_used: &mut usize,
+) -> Result<(), String> {
+    if *points_used >= MAX_POINTS || !point.is_finite() || !helper_offset.is_finite() {
         return Err("Surface placement exceeds one million finite support points".into());
     }
     points.push(SupportPoint {
         point,
         helper_offset,
     });
+    *points_used += 1;
     Ok(())
 }
 
-fn solid_points(points: &mut Vec<SupportPoint>, solid: &Solid) -> Result<(), String> {
+fn solid_points(
+    points: &mut Vec<SupportPoint>,
+    solid: &Solid,
+    points_used: &mut usize,
+) -> Result<(), String> {
     if solid.hidden {
         return Err("Show selected brushes before placing them".into());
     }
@@ -243,11 +260,11 @@ fn solid_points(points: &mut Vec<SupportPoint>, solid: &Solid) -> Result<(), Str
                 .map_err(|error| error.to_string())?
                 .positions
             {
-                push(points, point, DVec3::ZERO)?;
+                push(points, point, DVec3::ZERO, points_used)?;
             }
         } else if !displaced {
             for &point in &face.vertices {
-                push(points, point, DVec3::ZERO)?;
+                push(points, point, DVec3::ZERO, points_used)?;
             }
         }
     }
@@ -303,8 +320,13 @@ impl Session {
     }
 
     fn corner_placement_roots(&self, ids: &[ObjectId]) -> Result<(), String> {
+        self.whole_translation_roots(ids)?;
+        self.object_translation_bounds(ids, DVec3::ZERO)
+    }
+
+    pub(super) fn whole_translation_roots(&self, ids: &[ObjectId]) -> Result<(), String> {
         if ids.is_empty() {
-            return Err("Select whole objects to snap together".into());
+            return Err("Select whole objects to snap".into());
         }
         for &id in ids {
             match id {
@@ -312,7 +334,9 @@ impl Session {
                     let (owner, brush) = subobject::solid(&self.document, solid)
                         .map_err(|error| error.to_string())?;
                     if owner != id {
-                        return Err("Select whole brush entities rather than their child brushes for corner snapping".into());
+                        return Err(
+                            "Select whole brush entities rather than their child brushes".into(),
+                        );
                     }
                     if brush.hidden {
                         return Err("Show selected brushes before placing them".into());
@@ -339,7 +363,7 @@ impl Session {
                 }
             }
         }
-        self.corner_translation_bounds(ids, DVec3::ZERO)
+        Ok(())
     }
 
     pub fn surface_placement_source_corners(
@@ -390,14 +414,27 @@ impl Session {
         Ok(corners)
     }
 
-    fn corner_translation_bounds(&self, ids: &[ObjectId], delta: DVec3) -> Result<(), String> {
+    pub(super) fn object_translation_bounds(
+        &self,
+        ids: &[ObjectId],
+        delta: DVec3,
+    ) -> Result<(), String> {
+        self.object_translation_bounds_prepared(ids, delta, None)
+    }
+
+    pub(super) fn object_translation_bounds_prepared(
+        &self,
+        ids: &[ObjectId],
+        delta: DVec3,
+        context: Option<&mut PlacementSupportContext>,
+    ) -> Result<(), String> {
         let check = |point: DVec3| {
-            let point = point + delta;
-            if !point.is_finite() || point.abs().max_element() > crate::spatial::MAX_EXTENT {
-                return Err(
-                    "Corner snapping would move part of the selection outside ±65536 units"
-                        .to_string(),
-                );
+            for point in [point, point + delta] {
+                if !point.is_finite() || point.abs().max_element() > crate::spatial::MAX_EXTENT {
+                    return Err(
+                        "Original or snapped geometry would fall outside ±65536 units".to_string(),
+                    );
+                }
             }
             Ok(())
         };
@@ -456,7 +493,11 @@ impl Session {
             }
         }
         if !points.is_empty() {
-            for point in self.placement_points_in(&self.document, &points)? {
+            let support = match context {
+                Some(context) => Self::placement_points_prepared(&self.document, &points, context)?,
+                None => self.placement_points_in(&self.document, &points)?,
+            };
+            for point in support {
                 check(point.point + point.helper_offset)?;
             }
         }
@@ -488,8 +529,17 @@ impl Session {
         if ids.is_empty() {
             return Err("Select objects to place".into());
         }
-        let models = self
-            .model_instances(document)
+        let mut context = self.placement_support_context(document);
+        Self::placement_points_prepared(document, ids, &mut context)
+    }
+
+    pub(super) fn placement_support_context(
+        &self,
+        document: &map_core::Document,
+    ) -> PlacementSupportContext {
+        let models = self.model_instances(document);
+        let bounds = self.display_bounds_with_models(document, &models);
+        let models = models
             .instances
             .into_iter()
             .map(|instance| (instance.id, instance))
@@ -501,6 +551,25 @@ impl Session {
             .filter(|entity| entity.hidden)
             .flat_map(|entity| entity.solids.iter().map(|solid| solid.id))
             .collect::<HashSet<_>>();
+        PlacementSupportContext {
+            models,
+            bounds,
+            hidden,
+            points_used: 0,
+        }
+    }
+
+    fn placement_points_prepared(
+        document: &map_core::Document,
+        ids: &[ObjectId],
+        context: &mut PlacementSupportContext,
+    ) -> Result<Vec<SupportPoint>, String> {
+        let PlacementSupportContext {
+            models,
+            bounds,
+            hidden,
+            points_used,
+        } = context;
         let mut points = Vec::new();
         for &id in ids {
             match id {
@@ -511,6 +580,7 @@ impl Session {
                     solid_points(
                         &mut points,
                         document.solid(id).ok_or("Selected brush is missing")?,
+                        points_used,
                     )?;
                 }
                 ObjectId::Entity(id) => {
@@ -523,7 +593,7 @@ impl Session {
                             if ids.contains(&ObjectId::Solid(solid.id)) {
                                 return Err("Select the owning entity or its child brushes, rather than both".into());
                             }
-                            solid_points(&mut points, solid)?;
+                            solid_points(&mut points, solid, points_used)?;
                         }
                     } else if let Some(instance) = models
                         .get(&ObjectId::Entity(id))
@@ -538,18 +608,31 @@ impl Session {
                         }
                         for (vertex, used) in model.vertices.iter().zip(used) {
                             if used {
-                                push(&mut points, instance.point(vertex.position), DVec3::ZERO)?;
+                                push(
+                                    &mut points,
+                                    instance.point(vertex.position),
+                                    DVec3::ZERO,
+                                    points_used,
+                                )?;
                             }
                         }
                     } else {
-                        let (low, high) = self
-                            .object_bounds_in(document, &[ObjectId::Entity(id)])
-                            .ok_or("Selected entity has no finite placement bounds")?;
+                        let (low, high) = super::models::combined_bounds(
+                            document,
+                            &[ObjectId::Entity(id)],
+                            bounds,
+                        )
+                        .ok_or("Selected entity has no finite placement bounds")?;
                         let center = (low + high) * 0.5;
                         for x in [low.x, high.x] {
                             for y in [low.y, high.y] {
                                 for z in [low.z, high.z] {
-                                    push(&mut points, center, DVec3::new(x, y, z) - center)?;
+                                    push(
+                                        &mut points,
+                                        center,
+                                        DVec3::new(x, y, z) - center,
+                                        points_used,
+                                    )?;
                                 }
                             }
                         }
@@ -715,7 +798,7 @@ impl Session {
                     delta[axis] = 0.0;
                 }
             }
-            self.corner_translation_bounds(ids, delta)?;
+            self.object_translation_bounds(ids, delta)?;
             return Ok(Plan {
                 method,
                 surface,

@@ -130,6 +130,15 @@ An old Cancel cannot discard another actor's replacement draft.
 Applying a map edit creates one Undo step. Cancel leaves the source unchanged.
 Saving does not apply a preview.
 
+For [grid snapping](brushes.md#snap-objects-to-grid), `preview_snap_to_grid` uses
+`mode:"selection"` by default, preserving relative positions.
+Set `mode:"each_object"` to align each whole object's bounds minimum independently.
+Groups contribute separate objects; brush entities retain their child brushes.
+Inspect `grid_snap.objects` for each canonical ID, original/snapped bounds minimum
+and delta, then use `commit_transform_preview` or `cancel_transform_preview`.
+IDs default to the current selection. The entire batch must validate before
+replacing a draft; Apply creates one Undo step.
+
 For [atlas fitting](atlas-texturing.md), pass the snapshot from `inspect_material_atlas` to `preview_atlas_fit`.
 Its optional integer `padding` defaults to `0` and insets all four rectangle edges in original source image pixels.
 Nonzero padding returns `padding` and `usable_rectangle`; `uv_bounds` describes the usable area.

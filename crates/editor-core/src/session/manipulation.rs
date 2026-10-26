@@ -10,6 +10,9 @@ use super::{Actor, SelectMode, Session};
 
 const GRID_SNAP_ROUNDOFF_ULPS: f64 = 4.0;
 
+#[cfg(test)]
+mod grid_snap_tests;
+
 pub(super) fn combined_selection<T: Copy + Eq + std::hash::Hash>(
     before: &std::collections::HashSet<T>,
     matches: &[T],
@@ -65,7 +68,7 @@ pub struct TransformPreview {
     pub document: Document,
     pub ids: Vec<ObjectId>,
     pub transform: Transform,
-    pub grid_snap: Option<GridSnap>,
+    pub grid_snap: Option<GridSnapPreview>,
     generation: u64,
     revision: u64,
     surface_owner: Option<u64>,
@@ -77,6 +80,101 @@ pub struct GridSnap {
     pub bounds_minimum: [f64; 3],
     pub snapped_bounds_minimum: [f64; 3],
     pub delta: [f64; 3],
+}
+
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    serde::Deserialize,
+    serde::Serialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum GridSnapMode {
+    #[default]
+    Selection,
+    EachObject,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct ObjectGridSnap {
+    #[serde(serialize_with = "serialize_snap_id")]
+    pub id: ObjectId,
+    #[serde(flatten)]
+    pub snap: GridSnap,
+}
+
+fn serialize_snap_id<S: serde::Serializer>(
+    id: &ObjectId,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.serialize_str(&crate::identity::id_string(*id))
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+#[serde(untagged)]
+pub enum GridSnapPreview {
+    Selection(GridSnap),
+    EachObject {
+        mode: GridSnapMode,
+        grid: f64,
+        objects: Vec<ObjectGridSnap>,
+    },
+}
+
+impl GridSnapPreview {
+    pub fn mode(&self) -> GridSnapMode {
+        match self {
+            Self::Selection(_) => GridSnapMode::Selection,
+            Self::EachObject { .. } => GridSnapMode::EachObject,
+        }
+    }
+}
+
+fn grid_snap(anchor: DVec3, grid: f64) -> GridSnap {
+    let snapped = (anchor / grid).round() * grid;
+    let mut delta = snapped - anchor;
+    for axis in 0..3 {
+        let scale = anchor[axis].abs().max(snapped[axis].abs()).max(grid);
+        if delta[axis].abs() <= GRID_SNAP_ROUNDOFF_ULPS * f64::EPSILON * scale {
+            delta[axis] = 0.0;
+        }
+    }
+    GridSnap {
+        grid,
+        bounds_minimum: anchor.to_array(),
+        snapped_bounds_minimum: snapped.to_array(),
+        delta: delta.to_array(),
+    }
+}
+
+fn apply_transform_plan(
+    tx: &mut map_core::Transaction,
+    ids: &[ObjectId],
+    transform: Transform,
+    snap: Option<&GridSnapPreview>,
+) -> Result<(), map_core::EditError> {
+    if let Some(GridSnapPreview::EachObject { objects, .. }) = snap {
+        let transforms = objects
+            .iter()
+            .map(|object| {
+                (
+                    object.id,
+                    Transform {
+                        translation: DVec3::from_array(object.snap.delta),
+                        ..transform
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        map_core::edit::transform_each(tx, &transforms)
+    } else {
+        map_core::edit::transform(tx, ids, transform)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -112,6 +210,29 @@ pub struct TransformPresentation {
 
 impl TransformPreview {
     pub fn presentation(&self) -> TransformPresentation {
+        if let Some(GridSnapPreview::EachObject { grid, objects, .. }) = &self.grid_snap {
+            let moved = objects
+                .iter()
+                .filter(|object| object.snap.delta != [0.0; 3])
+                .count();
+            return TransformPresentation {
+                primary: TransformOperation::Move,
+                operations: if moved == 0 {
+                    Vec::new()
+                } else {
+                    vec![TransformOperation::Move]
+                },
+                summary: format!(
+                    "Snap each object's bounds minimum to grid {grid}\n{} objects · {moved} to move{}",
+                    objects.len(),
+                    if moved == 0 {
+                        "\nAlready on grid; no geometry change"
+                    } else {
+                        ""
+                    },
+                ),
+            };
+        }
         let spec = self.transform;
         let mut operations = Vec::new();
         let mut lines = Vec::new();
@@ -167,7 +288,7 @@ impl TransformPreview {
                 axes[shear.axis], axes[shear.reference], shear.factor
             ));
         }
-        if let Some(snap) = self.grid_snap {
+        if let Some(GridSnapPreview::Selection(snap)) = &self.grid_snap {
             lines.insert(
                 0,
                 format!(
@@ -491,29 +612,67 @@ impl Session {
             .object_bounds_in(&self.document, ids)
             .ok_or("Selected objects have no valid bounds")?;
         let grid = self.spatial.grid_size;
-        let snapped = (anchor / grid).round() * grid;
-        let mut delta = snapped - anchor;
-        for axis in 0..3 {
-            let scale = anchor[axis].abs().max(snapped[axis].abs()).max(grid);
-            if delta[axis].abs() <= GRID_SNAP_ROUNDOFF_ULPS * f64::EPSILON * scale {
-                delta[axis] = 0.0;
-            }
-        }
-        let snap = GridSnap {
-            grid,
-            bounds_minimum: anchor.to_array(),
-            snapped_bounds_minimum: snapped.to_array(),
-            delta: delta.to_array(),
-        };
+        let snap = grid_snap(anchor, grid);
         let transform = Transform {
-            translation: delta,
+            translation: DVec3::from_array(snap.delta),
             texture_lock: self.transform_tool.texture_lock,
             texture_scale_lock: self.transform_tool.texture_scale_lock,
             ..Transform::default()
         };
         self.preview_transform(actor, ids, transform, Some(anchor))?;
-        self.geometry.transform_preview.as_mut().unwrap().grid_snap = Some(snap);
+        self.geometry.transform_preview.as_mut().unwrap().grid_snap =
+            Some(GridSnapPreview::Selection(snap));
         self.view_serial += 1;
+        Ok(snap)
+    }
+
+    pub fn preview_snap_to_grid_mode(
+        &mut self,
+        actor: Actor,
+        ids: &[ObjectId],
+        mode: GridSnapMode,
+    ) -> Result<GridSnapPreview, String> {
+        if mode == GridSnapMode::Selection {
+            return self
+                .preview_snap_to_grid(actor, ids)
+                .map(GridSnapPreview::Selection);
+        }
+        let ids = ids
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        self.whole_translation_roots(&ids)?;
+        let mut context = self.placement_support_context(&self.document);
+        let grid = self.spatial.grid_size;
+        let mut objects = Vec::with_capacity(ids.len());
+        for &id in &ids {
+            let (anchor, maximum) =
+                super::models::combined_bounds(&self.document, &[id], &context.bounds)
+                    .ok_or_else(|| format!("{id} has no valid bounds"))?;
+            if !anchor.is_finite() || !maximum.is_finite() {
+                return Err(format!("{id} has nonfinite bounds"));
+            }
+            let snap = grid_snap(anchor, grid);
+            self.object_translation_bounds_prepared(
+                &[id],
+                DVec3::from_array(snap.delta),
+                Some(&mut context),
+            )?;
+            objects.push(ObjectGridSnap { id, snap });
+        }
+        let snap = GridSnapPreview::EachObject {
+            mode,
+            grid,
+            objects,
+        };
+        let transform = Transform {
+            texture_lock: self.transform_tool.texture_lock,
+            texture_scale_lock: self.transform_tool.texture_scale_lock,
+            ..Transform::default()
+        };
+        self.preview_transform_plan(actor, &ids, transform, None, None, Some(snap.clone()))?;
         Ok(snap)
     }
 
@@ -549,9 +708,21 @@ impl Session {
         &mut self,
         actor: Actor,
         ids: &[ObjectId],
+        transform: Transform,
+        pivot: Option<DVec3>,
+        surface_owner: Option<u64>,
+    ) -> Result<DVec3, String> {
+        self.preview_transform_plan(actor, ids, transform, pivot, surface_owner, None)
+    }
+
+    fn preview_transform_plan(
+        &mut self,
+        actor: Actor,
+        ids: &[ObjectId],
         mut transform: Transform,
         pivot: Option<DVec3>,
         surface_owner: Option<u64>,
+        grid_snap: Option<GridSnapPreview>,
     ) -> Result<DVec3, String> {
         transform.pivot = pivot.unwrap_or(self.selection_pivot(ids)?);
         if self
@@ -562,7 +733,7 @@ impl Session {
                 previous.ids == ids
                     && previous.transform == transform
                     && previous.surface_owner == surface_owner
-                    && previous.grid_snap.is_none()
+                    && previous.grid_snap == grid_snap
             })
         {
             if actor == Actor::Agent && self.transform_drag.take().is_some() {
@@ -574,7 +745,7 @@ impl Session {
         let mut document = self.document.preview_snapshot();
         document
             .edit("preview transform", |tx| {
-                map_core::edit::transform(tx, ids, transform)
+                apply_transform_plan(tx, ids, transform, grid_snap.as_ref())
             })
             .map_err(|error| error.to_string())?;
         if actor == Actor::Agent && self.transform_drag.is_some() {
@@ -596,7 +767,7 @@ impl Session {
             document,
             ids: ids.to_vec(),
             transform,
-            grid_snap: None,
+            grid_snap,
             generation: self.document_generation,
             revision: self.document.revision(),
             surface_owner,
@@ -630,6 +801,21 @@ impl Session {
             || preview.revision != self.document.revision()
         {
             return Err("Map changed; start the transform again".into());
+        }
+        if matches!(preview.grid_snap, Some(GridSnapPreview::EachObject { .. })) {
+            self.edit(
+                actor,
+                &format!("snap {} objects to grid", preview.ids.len()),
+                |tx| {
+                    apply_transform_plan(
+                        tx,
+                        &preview.ids,
+                        preview.transform,
+                        preview.grid_snap.as_ref(),
+                    )
+                },
+            )?;
+            return Ok(preview.transform.pivot);
         }
         self.transform_objects(
             actor,
@@ -1096,7 +1282,7 @@ mod tests {
                     assert_eq!(session.document.vmf(), &before);
                     assert_eq!(session.document.undo_labels().count(), history);
                     let draft = session.transform_preview().unwrap();
-                    assert_eq!(draft.grid_snap, Some(snap));
+                    assert_eq!(draft.grid_snap, Some(GridSnapPreview::Selection(snap)));
                     assert_eq!(draft.transform.translation, delta);
                     assert_eq!(draft.transform.basis, DMat3::IDENTITY);
                     assert!(draft.presentation().summary.contains("bounds minimum"));
@@ -1185,6 +1371,12 @@ mod tests {
             let before = session.document.vmf().clone();
             let history = session.document.undo_labels().count();
             session.preview_snap_to_grid(actor, &[id]).unwrap();
+            assert!(session.refresh_model_assets(actor));
+            assert!(session.transform_preview().is_none());
+            assert!(session.commit_transform_preview(actor).is_err());
+            session
+                .preview_snap_to_grid_mode(actor, &[id], GridSnapMode::EachObject)
+                .unwrap();
             assert!(session.refresh_model_assets(actor));
             assert!(session.transform_preview().is_none());
             assert!(session.commit_transform_preview(actor).is_err());

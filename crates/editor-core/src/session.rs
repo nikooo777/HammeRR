@@ -139,7 +139,8 @@ mod selection_outline_tests;
 #[cfg(test)]
 mod water_analog_tests;
 pub use manipulation::{
-    AreaPreview, GridSnap, Pointer, TransformDrag, TransformPreview, TransformTool,
+    AreaPreview, GridSnap, GridSnapMode, GridSnapPreview, ObjectGridSnap, Pointer, TransformDrag,
+    TransformPreview, TransformTool,
 };
 
 const LOG_LENGTH: usize = 50;

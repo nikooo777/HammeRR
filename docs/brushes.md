@@ -101,15 +101,24 @@ Save stores only the pivot mode and fixed world coordinates. It does not attach 
 Other open documents keep their current pivots. **New** and **Open** in the same document window also retain its current pivot.
 Finish active tools, previews, builds and launches before Apply.
 
-### Snap selection to grid
+### Snap objects to grid
 
 1. Set **Grid**.
 2. Enable **Transform selection**.
-3. Click **Preview snap to grid**.
-4. Inspect **Anchor: selection bounds minimum** and the movement.
-5. Click **Apply transform**.
+3. Under **Snap**, choose **Selection** or **Each object**.
+4. Click **Preview snap to grid** and inspect the movement.
+5. Click **Apply transform**, or **Cancel** to discard the preview.
 
-The group moves by one offset. Its shape and internal spacing remain unchanged.
+**Selection** moves everything by one offset from the selection bounds minimum,
+preserving internal spacing. **Each object** aligns each object's bounds minimum
+separately. Group members move independently; every brush entity keeps all its
+child brushes together, including hidden children. Brush shapes remain unchanged.
+Both modes use the current grid even when automatic **Snap** is off.
+Apply creates one Undo step; an already aligned selection adds none.
+
+Each object requires whole visible roots with valid geometry inside ±65536 units.
+Invalid requests retain the previous preview. Model and point-entity anchors use
+their existing model or helper bounds. Reloading model assets cancels a snap preview.
 For exact corner matching, use [Surface placement](placement.md#snap-a-real-corner).
 
 ### Textures during transforms

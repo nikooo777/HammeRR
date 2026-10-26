@@ -44,7 +44,7 @@ Users and agents share the selection, previews and Undo history.
 
 Grid spacing is 0.125–4096 units. Numeric fields retain the values you enter.
 To align existing objects, use **Transform selection → Preview snap to grid**.
-See [Brushes and transforms](brushes.md#snap-selection-to-grid).
+See [Brushes and transforms](brushes.md#snap-objects-to-grid).
 
 ## Viewport modes
 

@@ -286,7 +286,15 @@ impl Session {
 
     pub fn display_bounds_in(&self, document: &Document) -> BTreeMap<ObjectId, (DVec3, DVec3)> {
         let models = self.model_instances(document);
-        let helpers = self.fgd_helper_appearances(document, &models);
+        self.display_bounds_with_models(document, &models)
+    }
+
+    pub(super) fn display_bounds_with_models(
+        &self,
+        document: &Document,
+        models: &Models,
+    ) -> BTreeMap<ObjectId, (DVec3, DVec3)> {
+        let helpers = self.fgd_helper_appearances(document, models);
         let mut bounds = models
             .instances
             .iter()

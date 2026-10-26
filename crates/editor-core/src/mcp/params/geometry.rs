@@ -84,6 +84,16 @@ pub struct MoveArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GridSnapArgs {
+    /// Whole object IDs; omitted uses the shared selection. Repeated IDs snap once.
+    pub ids: Option<Vec<String>>,
+    /// selection (default) keeps relative positions; each_object snaps each object's bounds minimum independently.
+    #[serde(default)]
+    pub mode: crate::session::GridSnapMode,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct TransformArgs {
     /// Object IDs; omitted uses the shared selection. Repeated IDs are applied once.
     pub ids: Option<Vec<String>>,

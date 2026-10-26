@@ -215,16 +215,16 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Preview a rigid move that places the selection's world bounds minimum on the nearest shared grid coordinates. IDs default to the shared selection. Uses the current grid spacing and transform texture-lock policy, even when automatic Snap is off; keeps every relative offset and brush shape. Returns grid_snap with bounds_minimum, snapped_bounds_minimum, grid and delta, plus the normal transform draft. Review with get_transform_handles/render_view, then commit_transform_preview or cancel_transform_preview. Already aligned selections create no map history. Reloading model assets cancels snap drafts; preview again after reload. UI: Transform selection → Preview snap to grid; Anchor: selection bounds minimum."
+        description = "Preview grid snapping using the current spacing and transform texture policy, even when Snap is off. mode=selection (default) moves the selection's world bounds minimum by one offset, preserving relative positions and the existing grid_snap result. mode=each_object computes a separate bounds-minimum move per whole object; returns grid_snap.mode, grid and objects with canonical id, bounds_minimum, snapped_bounds_minimum and delta. Group members snap separately; each brush entity moves all its children together. Child-brush IDs and ambiguous, hidden, invalid or out-of-bounds roots reject the independent batch without replacing a valid draft. IDs default to the shared selection; duplicates snap once. Review get_transform_handles/render_view, then commit_transform_preview or cancel_transform_preview. Apply is one Undo step; aligned objects retain exact data and add no history. Reloading model assets cancels snap drafts. UI: Transform selection → Snap: Selection / Each object → Preview snap to grid."
     )]
     pub(in crate::mcp) fn preview_snap_to_grid(
         &self,
-        Parameters(args): Parameters<IdsArgs>,
+        Parameters(args): Parameters<GridSnapArgs>,
     ) -> ToolResult {
         run(|| {
             let mut session = self.session();
             let ids = ids_or_selection(&session, args.ids.as_deref())?;
-            let snap = session.preview_snap_to_grid(Actor::Agent, &ids)?;
+            let snap = session.preview_snap_to_grid_mode(Actor::Agent, &ids, args.mode)?;
             Ok(json!({"grid_snap": snap, "state": transform_state(&session)}))
         })
     }

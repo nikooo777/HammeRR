@@ -6935,7 +6935,7 @@ pub(crate) fn snap_to_grid_control_previews_the_named_anchor_before_apply() {
     .unwrap();
     let app = AppWindow::new().unwrap();
     let mut state = Session::new(Err("no assets needed".into()));
-    state
+    let first = state
         .create_block(
             Actor::User,
             DVec3::new(-3.0, 5.0, 7.0),
@@ -6944,11 +6944,22 @@ pub(crate) fn snap_to_grid_control_previews_the_named_anchor_before_apply() {
             false,
         )
         .unwrap();
+    let second = state
+        .create_block(
+            Actor::User,
+            DVec3::new(82.0, 101.0, 103.0),
+            DVec3::new(146.0, 165.0, 167.0),
+            "brick/test",
+            false,
+        )
+        .unwrap();
+    state.select(&[first, second], SelectMode::Replace).unwrap();
     let before = state.document().vmf().clone();
     let history = state.document().undo_labels().count();
     let shared = Arc::new(Mutex::new(state));
     bind_manipulation_controls(&app, shared.clone());
     app.set_show_transform(true);
+    assert_eq!(app.get_grid_snap_mode(), 0);
     app.invoke_preview_snap_to_grid();
     assert!(app.get_has_transform_preview());
     assert!(
@@ -6961,11 +6972,45 @@ pub(crate) fn snap_to_grid_control_previews_the_named_anchor_before_apply() {
     app.show().unwrap();
     save_ui_snapshot(app.window(), "snap-to-grid-preview");
     app.invoke_apply_transform_preview();
-    let state = lock(&shared);
-    let bounds = state.selection_bounds().unwrap();
-    assert!(bounds.0.abs_diff_eq(DVec3::ZERO, 1e-8));
+    {
+        let mut state = lock(&shared);
+        let bounds = state.selection_bounds().unwrap();
+        assert!(bounds.0.abs_diff_eq(DVec3::ZERO, 1e-8));
+        assert_eq!(state.document().undo_labels().count(), history + 1);
+        assert!(state.transform_preview().is_none());
+        state.undo(Actor::User).unwrap();
+        assert_eq!(state.document().vmf(), &before);
+    }
+    app.set_grid_snap_mode(1);
+    app.invoke_preview_snap_to_grid();
+    assert!(
+        app.get_transform_preview_summary()
+            .contains("each object's bounds minimum")
+    );
+    assert!(
+        app.get_transform_preview_summary()
+            .contains("2 objects · 2 to move")
+    );
+    let displayed = lock(&shared).render_document().vmf().clone();
+    assert_eq!(lock(&shared).document().vmf(), &before);
+    app.invoke_cancel_interaction();
+    assert!(!app.get_has_transform_preview());
+    assert_eq!(lock(&shared).render_document().vmf(), &before);
+    app.invoke_preview_snap_to_grid();
+    app.window().set_size(slint::PhysicalSize::new(1600, 1000));
+    scroll_inspector_to_control(&app, "Preview snap to grid");
+    assert_dialog_button_visible(&app, "Preview snap to grid");
+    save_ui_snapshot(app.window(), "independent-grid-snap-preview");
+    app.invoke_apply_transform_preview();
+    let mut state = lock(&shared);
+    assert_eq!(state.document().vmf(), &displayed);
     assert_eq!(state.document().undo_labels().count(), history + 1);
-    assert!(state.transform_preview().is_none());
+    for id in [first, second] {
+        let bounds = state.object_bounds_in(state.document(), &[id]).unwrap();
+        assert!((bounds.0 / 16.0).abs_diff_eq((bounds.0 / 16.0).round(), 1e-8));
+    }
+    state.undo(Actor::User).unwrap();
+    assert_eq!(state.document().vmf(), &before);
 }
 
 #[test]

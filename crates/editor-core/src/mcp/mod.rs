@@ -108,7 +108,7 @@ and undo history untouched. Inspect get_map_info.block_preview and cancel with c
 transform_objects applies exact move/rotation/positive scale, brush reflection and single-axis shear, with an optional world-space pivot \
 (default: selection bounds center) and independent texture_lock (move/rotation) and texture_scale_lock (stretch); omitted scale lock inherits movement locking. Rotation is world X/Y/Z, in degrees. \
 space: local uses the first selected object's frame; preview: true creates a shared transform draft. \
-preview_snap_to_grid rigidly aligns the world selection bounds minimum with the shared grid; inspect grid_snap and use the normal transform commit/cancel. \
+preview_snap_to_grid aligns the world selection bounds minimum with the shared grid by default; mode=each_object snaps each whole object independently. Inspect grid_snap and use the normal transform commit/cancel. \
 set_transform_tool configures move/rotate/scale handles, pivots and angle snap. Inspect \
 get_transform_handles, begin_transform_drag, then update_transform_drag with total amounts \
 or viewport pointers. Apply with commit_transform_preview or cancel_transform_preview. \

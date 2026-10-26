@@ -458,6 +458,23 @@ pub fn transform(
     Ok(())
 }
 
+pub fn transform_each(
+    tx: &mut Transaction,
+    transforms: &[(ObjectId, Transform)],
+) -> Result<(), EditError> {
+    if transforms.is_empty() {
+        return Err(invalid("Select objects to transform"));
+    }
+    let mut visited = BTreeSet::new();
+    for &(id, transform_spec) in transforms {
+        if !visited.insert(id) {
+            return Err(invalid("Each object must have exactly one transform"));
+        }
+        transform(tx, &[id], transform_spec)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

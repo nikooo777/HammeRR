@@ -6,7 +6,7 @@ use source_formats::vmf::{Entity, Plane, Side, Solid, UvAxis, format_vec3, parse
 
 use crate::document::{EditError, Object, ObjectId, Transaction};
 
-pub use crate::transform::{Transform, transform};
+pub use crate::transform::{Transform, transform, transform_each};
 
 /// Hammer's default texture scale for new faces.
 pub const DEFAULT_TEXTURE_SCALE: f64 = 0.25;

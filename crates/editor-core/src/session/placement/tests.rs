@@ -11,6 +11,35 @@ fn options() -> Options {
     }
 }
 
+#[test]
+fn independent_grid_snap_shared_support_budget_rejects_the_next_root() {
+    const HELPER_CORNERS: usize = 8;
+    let mut session = Session::new(Err("no assets needed".into()));
+    let mut ids = Vec::new();
+    for origin in [DVec3::splat(32.0), DVec3::splat(64.0)] {
+        ids.push(
+            session
+                .create_entity(Actor::User, "info_target", Some(origin), BTreeMap::new())
+                .unwrap(),
+        );
+    }
+    let source = session.document.vmf().clone();
+    let history = session.history_snapshot();
+    let mut context = session.placement_support_context(session.document());
+    context.points_used = MAX_POINTS - HELPER_CORNERS;
+    session
+        .object_translation_bounds_prepared(&ids[..1], DVec3::X, Some(&mut context))
+        .unwrap();
+    assert_eq!(context.points_used, MAX_POINTS);
+    let error = session
+        .object_translation_bounds_prepared(&ids[1..], DVec3::Y, Some(&mut context))
+        .unwrap_err();
+    assert!(error.contains("one million finite support points"));
+    assert_eq!(context.points_used, MAX_POINTS);
+    assert_eq!(session.document.vmf(), &source);
+    assert_eq!(session.history_snapshot(), history);
+}
+
 fn corner_options(session: &Session, solid: u32) -> Options {
     let (_, brush) = subobject::solid(session.document(), solid).unwrap();
     let shape = subobject::topology(brush).unwrap();

@@ -80,6 +80,9 @@ pub(super) fn refresh_interaction(app: &AppWindow, session: &Session) {
         SelectMode::Toggle => 3,
     });
     if let Some(preview) = session.transform_preview() {
+        if let Some(snap) = &preview.grid_snap {
+            app.set_grid_snap_mode(i32::from(snap.mode() == session::GridSnapMode::EachObject));
+        }
         let spec = preview.transform;
         let presentation = preview.presentation();
         app.set_transform_mode(presentation.primary.index());
@@ -358,7 +361,14 @@ pub(super) fn bind_manipulation_controls_with_access(
         move || {
             callback.input(|app, session| {
                 let ids = session.selected_ids();
-                if let Err(error) = session.preview_snap_to_grid(Actor::User, &ids) {
+                let mode = match app.get_grid_snap_mode() {
+                    0 => Ok(session::GridSnapMode::Selection),
+                    1 => Ok(session::GridSnapMode::EachObject),
+                    _ => Err("Choose Selection or Each object for grid snapping".to_string()),
+                };
+                let result = mode
+                    .and_then(|mode| session.preview_snap_to_grid_mode(Actor::User, &ids, mode));
+                if let Err(error) = result {
                     app.set_message(error.into());
                 }
                 refresh_panel(&app, session);

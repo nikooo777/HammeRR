@@ -1980,6 +1980,7 @@ export component AppWindow inherits Window {
     in property <string> selection-pivot;
     in-out property <bool> show-transform;
     in-out property <int> transform-mode;
+    in-out property <int> grid-snap-mode;
     in-out property <int> transform-pivot-mode;
     in-out property <string> transform-x: "0";
     in-out property <string> transform-y: "0";
@@ -3110,12 +3111,21 @@ export component AppWindow inherits Window {
                             enabled: !root.has-transform-preview;
                             clicked => { root.apply-transform(); }
                         }
+                        HorizontalLayout {
+                            Text { text: "Snap"; color: #c8ccd4; vertical-alignment: center; }
+                            ComboBox {
+                                horizontal-stretch: 1;
+                                enabled: !root.has-transform-preview;
+                                model: ["Selection", "Each object"];
+                                current-index <=> root.grid-snap-mode;
+                            }
+                        }
                         Button {
                             text: "Preview snap to grid";
                             enabled: !root.has-transform-preview;
                             clicked => { root.preview-snap-to-grid(); }
                         }
-                        Text { text: "Anchor: selection bounds minimum. Moves the whole selection to the nearest grid point. Relative positions and brush shapes stay fixed."; color: #8a909c; font-size: 12px; wrap: word-wrap; }
+                        Text { text: root.grid-snap-mode == 1 ? "Anchor: each object's bounds minimum. Group members snap separately; each brush entity stays together." : "Anchor: selection bounds minimum. Moves the whole selection to the nearest grid point. Relative positions and brush shapes stay fixed."; color: #8a909c; font-size: 12px; wrap: word-wrap; }
                     }
 
                     HorizontalLayout {

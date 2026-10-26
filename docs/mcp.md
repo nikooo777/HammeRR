@@ -195,8 +195,10 @@ Call `get_instance_collapse`, then `set_instance_collapse` with
 `action:"prepare"` and its `snapshot`. This recursively converts every visible
 root reference in one batch; there is no selected-only mode.
 Inspect counts and fresh object IDs. The complete `entity_id_map` pairs
-`expanded` compiler entity IDs with fresh `authored` light/target IDs;
-`entity_provenance` reports up to 64 original root/file/entity rows with
+`expanded` compiler entity IDs with fresh `authored` emitted light/target IDs.
+The separate complete `helper_id_map` pairs newly materialized cubemap helper IDs;
+these have no emitted runtime `hammerid`. `entity_provenance` includes an
+`emitted` flag and reports up to 64 original root/file/entity rows with
 `entity_provenance_total` for the full count. Face provenance remains bounded.
 These mappings are retained in Apply's `captured_preview`.
 Face and entity provenance also include `occurrence`, ordered `{helper,file}`
@@ -210,8 +212,10 @@ Prepare and Apply accept optional `background:true`; poll the getter for complet
 Apply rechecks the original saved parent and dependency bytes before one Undo edit.
 Reference markers and their validated color/layout are consumed; child object
 editor fields stay attached. Supported content includes world/detail brushes,
-terrain and checked static point/spot lights with local `info_target` helpers,
-including existing HDR values, literal bindings and scoped target names. Fresh
+terrain, checked static point/spot lights with local `info_target` helpers,
+and cubemap samples. Manual cubemap `sides` remap through the reviewed fresh
+side IDs; automatic samples preserve absence of that field. Light scope includes
+existing HDR values, literal bindings and scoped target names. Fresh emitted
 entity IDs intentionally change their compiled `hammerid` values; other entity
 fields/order and native light payloads retain shared preparation. Other child
 entities and unsupported metadata refuse the whole batch.

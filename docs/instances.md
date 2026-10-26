@@ -35,7 +35,7 @@ Read [instance contents](instance-contents.md) for display limits.
 1. Select a visible reference and open **Edit instance reference…**.
 2. Apply or cancel any edited reference fields first.
 3. Click **Preview collapse all references…**.
-4. Inspect the materialized content and brush, terrain, light and target counts.
+4. Inspect the materialized content and brush, terrain, light, target and cubemap counts.
 5. Click **Apply collapse**, or **Cancel collapse** to discard the preview.
 
 ![Two collapsed arches; one arch's individual brushes are selected](images/collapsed-assembly.png)
@@ -46,10 +46,11 @@ unchanged. **Review collapse** transfers an idle shared preview to you before
 Apply or Cancel. Source or dependency changes require a new preview.
 
 Collapse supports world and ordinary `func_detail` brushes, checked terrain,
-and static `light`/`light_spot` assemblies with checked local `info_target`
-helpers through the same four-level preparation used by compilation. Child
-object color and logical layout remain attached to the new objects. Each detail brush becomes
-an individual `func_detail` owner. Reference markers are
+static `light`/`light_spot` assemblies with checked local `info_target`
+helpers, and checked `env_cubemap` samples through the same four-level
+preparation used by compilation. Child object color and logical layout remain
+attached to the new objects. Each detail brush becomes an individual
+`func_detail` owner. Reference markers are
 removed, consuming their file, transform, name, marker color and marker layout.
 Child file version/view settings remain local to the unchanged child files;
 the parent's settings stay authoritative.
@@ -57,16 +58,23 @@ the parent's settings stay authoritative.
 Light assemblies retain independent LDR/HDR values, appearances 0–11, composed
 poses, whole-value bindings and scoped local spotlight targets. Targeted spots
 require the compiler's named ancestor scopes. Named/switchable lights and
-runtime connections remain unsupported. New entities receive fresh editor IDs;
-their compiled `hammerid` follows those IDs. Other prepared entity fields,
+runtime connections remain unsupported. New light/target entities receive fresh
+editor IDs; their compiled `hammerid` follows those IDs. Other prepared entity fields,
 references and ordering stay intact.
+
+Cubemap samples keep their authored size/default fields and editor settings.
+Manual `sides` bindings follow the fresh side IDs of the same reviewed direct
+world/detail geometry. Automatic samples keep an absent `sides` field absent.
+Terrain/runtime-model manual targets and cross-occurrence references remain
+unsupported. Cubemap helpers are editable entities consumed by compilation;
+they do not gain a runtime `hammerid`.
 
 Props, other child entities, hidden child content, groups/layers, saved
 atlas regions, nondefault child world settings and custom metadata require
 separate preservation rules and refuse the whole batch. Reference group/layer
 membership, attached notes and incoming bindings also refuse. The preview
-reports fresh object IDs, the complete expanded-to-authored light/target ID map,
-and bounded original leaf-face/entity provenance.
+reports fresh object IDs, separate complete expanded-to-authored emitted-entity
+and cubemap-helper ID maps, and bounded original leaf-face/entity provenance.
 The preview details include each face/entity's captured root-to-leaf helper
 route, with IDs authored in each containing file. Repeated occurrences of the
 same original face or entity remain distinct. Apply retains these routes in

@@ -93,7 +93,7 @@ See the [tool index and setup](docs/mcp.md).
 | [Compiler visibility](docs/visibility.md) | [Editable instances](docs/instances.md#collapse-references-into-editable-geometry) |
 | --- | --- |
 | ![A compiled portal ring in a three-room map](docs/images/visibility-portals.png) | ![Editable brush arches after instance collapse](docs/images/collapsed-assembly.png) |
-| Inspect compiled leaves, portal rings and visibility sets. | Turn supported references into editable brushes and lights. |
+| Inspect compiled leaves, portal rings and visibility sets. | Turn supported references into editable brushes, lights and cubemap samples. |
 
 | [Map comparison](docs/map-comparison.md) |
 | --- |

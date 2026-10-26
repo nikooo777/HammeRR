@@ -85,6 +85,12 @@ struct EntityOrigin {
     occurrence: Arc<instances::OccurrencePath>,
 }
 
+impl EntityOrigin {
+    fn emitted(&self) -> bool {
+        matches!(self.class.as_str(), "light" | "light_spot" | "info_target")
+    }
+}
+
 #[derive(Clone)]
 struct Plan {
     removed: Vec<ObjectId>,
@@ -225,7 +231,10 @@ fn prepare(
         if !matches!(
             entity.classname(),
             Some("light" | "light_spot" | "info_target")
-        ) {
+        ) && !entity
+            .classname()
+            .is_some_and(|class| class.eq_ignore_ascii_case("env_cubemap"))
+        {
             continue;
         }
         let Some((owner, file, original)) = prepared.entity_origin(entity.id) else {
@@ -287,7 +296,7 @@ fn prepare(
         .cloned()
         .collect::<Vec<_>>();
     if world.is_empty() && entities.is_empty() {
-        return Err("Visible references contain no editable geometry or lights".into());
+        return Err("Visible references contain no editable geometry, lights or cubemaps".into());
     }
     let mut plan = Plan {
         removed,
@@ -299,7 +308,9 @@ fn prepare(
     };
     drop(prepared);
     document
-        .edit("preview instance collapse", |tx| install(tx, &mut plan))
+        .edit("preview instance collapse", |tx| {
+            install(tx, &mut plan, control)
+        })
         .map_err(|error| error.to_string())?;
     Ok(Ready {
         document,
@@ -309,28 +320,63 @@ fn prepare(
     })
 }
 
+fn charge_side_work(work: &mut usize, control: &Control) -> Result<(), EditError> {
+    control.checkpoint().map_err(EditError::Invalid)?;
+    *work = work
+        .checked_add(1)
+        .filter(|work| *work <= instances::MAX_GEOMETRY_WORK)
+        .ok_or_else(|| {
+            EditError::Invalid("Collapse side mapping exceeds the shared work limit".into())
+        })?;
+    Ok(())
+}
+
 fn fresh_solid(
     tx: &mut Transaction,
     solid: &mut Solid,
-    sides: &mut BTreeMap<u32, u32>,
+    sides: &BTreeMap<u32, u32>,
+    work: &mut usize,
+    control: &Control,
 ) -> Result<(), EditError> {
     solid.id = tx.new_object_id()?;
     for side in &mut solid.sides {
-        let original = side.id;
-        side.id = tx.new_side_id()?;
-        sides.insert(original, side.id);
+        charge_side_work(work, control)?;
+        side.id = sides
+            .get(&side.id)
+            .copied()
+            .filter(|id| *id != 0)
+            .ok_or_else(|| EditError::Invalid("Collapsed side ID mapping is incomplete".into()))?;
     }
     Ok(())
 }
 
-fn install(tx: &mut Transaction, plan: &mut Plan) -> Result<(), EditError> {
+fn install(tx: &mut Transaction, plan: &mut Plan, control: &Control) -> Result<(), EditError> {
     for &id in &plan.removed {
         tx.remove(id)?;
     }
     let mut sides = BTreeMap::new();
+    let mut binding_work = 0;
+    for solid in plan
+        .world
+        .iter()
+        .chain(plan.entities.iter().flat_map(|entity| &entity.solids))
+    {
+        for side in &solid.sides {
+            charge_side_work(&mut binding_work, control)?;
+            if sides.insert(side.id, 0).is_some() {
+                return Err(EditError::Invalid(
+                    "Collapsed source side IDs are not unique".into(),
+                ));
+            }
+        }
+    }
+    for authored in sides.values_mut() {
+        charge_side_work(&mut binding_work, control)?;
+        *authored = tx.new_side_id()?;
+    }
     plan.added.clear();
     for solid in &mut plan.world {
-        fresh_solid(tx, solid, &mut sides)?;
+        fresh_solid(tx, solid, &sides, &mut binding_work, control)?;
         plan.added.push(tx.add_solid(solid.clone())?);
     }
     let mut entities = BTreeMap::new();
@@ -339,9 +385,20 @@ fn install(tx: &mut Transaction, plan: &mut Plan) -> Result<(), EditError> {
         entity.id = tx.new_object_id()?;
         entities.insert(original, entity.id);
         for solid in &mut entity.solids {
-            fresh_solid(tx, solid, &mut sides)?;
+            fresh_solid(tx, solid, &sides, &mut binding_work, control)?;
         }
         plan.added.push(tx.add_entity(entity.clone())?);
+    }
+    for entity in &mut plan.entities {
+        if let Some(rewritten) =
+            instances::remap_collapsed_cubemap_sides(entity, &sides, &mut binding_work, control)
+                .map_err(EditError::Invalid)?
+        {
+            tx.entity_mut(entity.id)?
+                .properties
+                .set("sides", rewritten.clone());
+            entity.properties.set("sides", rewritten);
+        }
     }
     for origin in &mut plan.entity_origins {
         origin.entity = *entities.get(&origin.entity).ok_or_else(|| {
@@ -669,7 +726,7 @@ impl Session {
         let applied = self.document.edit_with_finalizer(
             "collapse all visible instance references",
             |tx| {
-                install(tx, &mut plan)?;
+                install(tx, &mut plan, &completed.control)?;
                 if plan.added != ready.plan.added || tx.vmf() != ready.document.vmf() {
                     return Err(EditError::Invalid(
                         "Collapse differs from its reviewed preview".into(),
@@ -789,7 +846,7 @@ impl Session {
                 .is_none()
                 .then_some("Captured provenance routes exceed the bounded response-copy budget")
         });
-        json!({"snapshot":self.instance_collapse_stamp(),"token":form.token,"owner":form.owner.label(),"status":form.status,"error":blocked.as_ref().or(form.error.as_ref()),"ready":ready.is_some() && blocked.is_none() && form.status=="ready","worker_active":state.worker.busy(),"scope":"all_visible_references","recursive":true,"source":form.key.path,"stats":ready.map(|ready|&ready.stats),"removed":ready.map(|ready|ready.plan.removed.iter().copied().map(crate::identity::id_string).collect::<Vec<_>>()),"objects":ready.map(|ready|ready.plan.added.iter().copied().map(crate::identity::id_string).collect::<Vec<_>>()),"face_provenance":ready.filter(|_|provenance_error.is_none()).map(|ready|ready.plan.faces.iter().take(MAX_ROWS).map(|face|json!({"side":face.side,"owner":crate::identity::id_string(ObjectId::Entity(face.owner)),"file":face.file,"original_solid":face.original_solid,"original_side":face.original_side,"occurrence":face.occurrence.as_ref(),"occurrence_label":face.occurrence.label()})).collect::<Vec<_>>()),"face_provenance_total":ready.map(|ready|ready.plan.faces.len()),"entity_id_map":ready.map(|ready|ready.plan.entity_origins.iter().map(|origin|json!({"expanded":crate::identity::id_string(ObjectId::Entity(origin.expanded)),"authored":crate::identity::id_string(ObjectId::Entity(origin.entity))})).collect::<Vec<_>>()),"entity_provenance":ready.filter(|_|provenance_error.is_none()).map(|ready|ready.plan.entity_origins.iter().take(MAX_ROWS).map(|origin|json!({"entity":crate::identity::id_string(ObjectId::Entity(origin.entity)),"expanded":crate::identity::id_string(ObjectId::Entity(origin.expanded)),"owner":crate::identity::id_string(ObjectId::Entity(origin.owner)),"file":origin.file,"original_entity":origin.original,"classname":origin.class,"occurrence":origin.occurrence.as_ref(),"occurrence_label":origin.occurrence.label()})).collect::<Vec<_>>()),"entity_provenance_total":ready.map(|ready|ready.plan.entity_origins.len()),"provenance_error":provenance_error,"limits":{"plan_bytes":MAX_PLAN_BYTES,"provenance_source_bytes":MAX_PROVENANCE_SOURCE_BYTES,"occurrence_bytes":instances::MAX_OCCURRENCE_BYTES,"rows":MAX_ROWS,"helper_levels":instances::MAX_EXPANSION_DEPTH},"writes_child_files":false})
+        json!({"snapshot":self.instance_collapse_stamp(),"token":form.token,"owner":form.owner.label(),"status":form.status,"error":blocked.as_ref().or(form.error.as_ref()),"ready":ready.is_some() && blocked.is_none() && form.status=="ready","worker_active":state.worker.busy(),"scope":"all_visible_references","recursive":true,"source":form.key.path,"stats":ready.map(|ready|&ready.stats),"removed":ready.map(|ready|ready.plan.removed.iter().copied().map(crate::identity::id_string).collect::<Vec<_>>()),"objects":ready.map(|ready|ready.plan.added.iter().copied().map(crate::identity::id_string).collect::<Vec<_>>()),"face_provenance":ready.filter(|_|provenance_error.is_none()).map(|ready|ready.plan.faces.iter().take(MAX_ROWS).map(|face|json!({"side":face.side,"owner":crate::identity::id_string(ObjectId::Entity(face.owner)),"file":face.file,"original_solid":face.original_solid,"original_side":face.original_side,"occurrence":face.occurrence.as_ref(),"occurrence_label":face.occurrence.label()})).collect::<Vec<_>>()),"face_provenance_total":ready.map(|ready|ready.plan.faces.len()),"entity_id_map":ready.map(|ready|ready.plan.entity_origins.iter().filter(|origin|origin.emitted()).map(|origin|json!({"expanded":crate::identity::id_string(ObjectId::Entity(origin.expanded)),"authored":crate::identity::id_string(ObjectId::Entity(origin.entity))})).collect::<Vec<_>>()),"helper_id_map":ready.map(|ready|ready.plan.entity_origins.iter().filter(|origin|!origin.emitted()).map(|origin|json!({"expanded":crate::identity::id_string(ObjectId::Entity(origin.expanded)),"authored":crate::identity::id_string(ObjectId::Entity(origin.entity))})).collect::<Vec<_>>()),"entity_provenance":ready.filter(|_|provenance_error.is_none()).map(|ready|ready.plan.entity_origins.iter().take(MAX_ROWS).map(|origin|json!({"entity":crate::identity::id_string(ObjectId::Entity(origin.entity)),"expanded":crate::identity::id_string(ObjectId::Entity(origin.expanded)),"owner":crate::identity::id_string(ObjectId::Entity(origin.owner)),"file":origin.file,"original_entity":origin.original,"classname":origin.class,"emitted":origin.emitted(),"occurrence":origin.occurrence.as_ref(),"occurrence_label":origin.occurrence.label()})).collect::<Vec<_>>()),"entity_provenance_total":ready.map(|ready|ready.plan.entity_origins.len()),"provenance_error":provenance_error,"limits":{"plan_bytes":MAX_PLAN_BYTES,"provenance_source_bytes":MAX_PROVENANCE_SOURCE_BYTES,"occurrence_bytes":instances::MAX_OCCURRENCE_BYTES,"rows":MAX_ROWS,"helper_levels":instances::MAX_EXPANSION_DEPTH},"writes_child_files":false})
     }
 }
 
@@ -829,3 +886,6 @@ mod tests;
 
 #[cfg(test)]
 mod light_tests;
+
+#[cfg(test)]
+mod cubemap_tests;

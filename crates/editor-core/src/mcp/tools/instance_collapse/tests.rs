@@ -15,6 +15,12 @@ fn instance_collapse_mcp_shares_owned_all_root_preview_cancel_apply_and_undo() {
     light.properties.set("origin", "0 0 96");
     light.properties.set("_light", "255 160 64 240");
     content.entities.push(light);
+    let mut cube = source_formats::vmf::Entity::new(1001, "env_cubemap");
+    cube.properties.set("origin", "0 0 80");
+    cube.properties.set("cubemapsize", "1");
+    cube.properties
+        .set("sides", content.world.solids[0].sides[0].id.to_string());
+    content.entities.push(cube);
     std::fs::write(&child, content.write(&Default::default())).unwrap();
     let mut session = Session::new(Ok(game));
     session.open(Actor::User, &parent, true).unwrap();
@@ -34,6 +40,10 @@ fn instance_collapse_mcp_shares_owned_all_root_preview_cancel_apply_and_undo() {
     assert_eq!(ready["stats"]["point_lights"], 1);
     assert_eq!(ready["entity_id_map"].as_array().unwrap().len(), 1);
     assert_eq!(ready["entity_provenance"][0]["original_entity"], 1000);
+    assert_eq!(ready["helper_id_map"].as_array().unwrap().len(), 1);
+    assert_eq!(ready["stats"]["cubemaps"], 1);
+    assert_eq!(ready["entity_provenance"][1]["classname"], "env_cubemap");
+    assert_eq!(ready["entity_provenance"][1]["emitted"], false);
     let token = ready["token"].as_u64().unwrap();
     assert_eq!(lock(&shared).document().vmf(), &source);
     assert!(

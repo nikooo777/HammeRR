@@ -27,6 +27,7 @@ mod targets;
 mod terrain;
 mod visclusters;
 
+pub use cubemaps::remap_collapsed_cubemap_sides;
 pub use occurrences::{MAX_OCCURRENCE_BYTES, OccurrencePath, OccurrenceStep, serialize_occurrence};
 
 pub const MAX_INSTANCES: usize = 256;

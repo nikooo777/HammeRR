@@ -116,6 +116,19 @@ pub(super) fn remap_sides(
     )
 }
 
+pub fn remap_collapsed_cubemap_sides(
+    entity: &Entity,
+    sides: &BTreeMap<u32, u32>,
+    work: &mut usize,
+    control: &Control,
+) -> Result<Option<String>, String> {
+    control.checkpoint()?;
+    if !has_manual_bindings(entity) {
+        return Ok(None);
+    }
+    remap_sides(entity, sides, work, control).map(Some)
+}
+
 pub(super) fn remap_side_ids(
     mut sides: Vec<u32>,
     local_sides: &BTreeMap<u32, u32>,
@@ -246,6 +259,43 @@ mod tests {
             helper.properties.set("sides", text);
             assert!(admit(&helper).is_err(), "accepted {text}");
         }
+    }
+
+    #[test]
+    fn collapsed_manual_remap_keeps_automatic_absence_and_bounds_shared_work() {
+        let mut helper = sample();
+        let control = Control::default();
+        let sides = BTreeMap::from([(1, 101), (2, 102)]);
+        let mut work = 0;
+        assert_eq!(
+            remap_collapsed_cubemap_sides(&helper, &sides, &mut work, &control).unwrap(),
+            None
+        );
+        assert_eq!(helper.properties.get("sides"), None);
+        helper.properties.set("sides", "+1 02");
+        let before = helper.clone();
+        assert_eq!(
+            remap_collapsed_cubemap_sides(&helper, &sides, &mut work, &control)
+                .unwrap()
+                .as_deref(),
+            Some("101 102")
+        );
+        assert!(
+            remap_collapsed_cubemap_sides(&helper, &BTreeMap::new(), &mut work, &control).is_err()
+        );
+        work = MAX_GEOMETRY_WORK;
+        assert!(
+            remap_collapsed_cubemap_sides(&helper, &sides, &mut work, &control)
+                .unwrap_err()
+                .contains("work limit")
+        );
+        control.cancel().unwrap();
+        assert!(
+            remap_collapsed_cubemap_sides(&helper, &sides, &mut 0, &control)
+                .unwrap_err()
+                .contains("cancelled")
+        );
+        assert_eq!(helper, before);
     }
 
     #[test]

@@ -40,6 +40,10 @@ Sample records alone contain no captured textures.
 
 Empty **Brush faces** uses automatic assignment.
 Use [Cubemap faces…](cubemap-faces.md) for supported manual bindings.
+[Collapse references](instances.md#collapse-references-into-editable-geometry)
+can make checked child samples and their direct world/detail bindings editable.
+The same preparation preserves sample positions and sizes; manual bindings
+follow the fresh authored side IDs. This conversion does not capture reflections.
 Supported samples and ordinary world/detail bindings can also come from [referenced assemblies](instances.md).
 
 ## Limits

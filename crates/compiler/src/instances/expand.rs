@@ -403,6 +403,9 @@ impl<'a> Expansion<'a> {
                         .map_err(|error| {
                             EditError::Invalid(format!("Child cubemap {}: {error}", entity.id))
                         })?;
+                    if matches!(self.purpose, PreparationPurpose::Collapse) {
+                        tx.entity_mut(generated)?.editor = entity.editor.clone();
+                    }
                     if cubemaps::has_manual_bindings(entity) {
                         manual_cubemaps.push((entity, generated));
                     }

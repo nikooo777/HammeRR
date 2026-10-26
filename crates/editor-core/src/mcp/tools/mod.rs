@@ -10,6 +10,7 @@ mod cubemap_bindings;
 mod entities;
 mod entity_graph;
 mod entity_placement;
+mod external_comparison;
 mod files;
 mod geometry;
 mod grid_preferences;

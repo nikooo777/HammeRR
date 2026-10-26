@@ -40,6 +40,7 @@ use materials::*;
 mod navigation;
 use navigation::*;
 mod editor_visibility;
+mod external_comparison;
 mod instance_contents;
 mod instance_extraction;
 mod instance_reference;
@@ -68,6 +69,7 @@ struct Ui {
     last_log_refresh: Instant,
     entity_window: Option<EntityWindow>,
     entity_graph: Option<entity_graph_ui::Form>,
+    external_comparison: Option<Rc<external_comparison::Controller>>,
     connection_window: Option<ConnectionWindow>,
     seen_connections: (u64, u64, u64),
     properties_window: Option<PropertiesWindow>,
@@ -199,6 +201,7 @@ impl Ui {
             last_log_refresh: Instant::now(),
             entity_window: None,
             entity_graph: None,
+            external_comparison: None,
             connection_window: None,
             seen_connections: (0, 0, 0),
             properties_window: None,
@@ -1248,6 +1251,28 @@ fn create_document_window(
         window.set_message("".into());
         recovery_ui::refresh(&window, &lock(&session_of(&ui)));
         if let Err(error) = window.show() {
+            app.set_message(error.to_string().into());
+        }
+    });
+    root_callback!(app, ui, on_external_comparison, |app| {
+        let app = app.unwrap();
+        if ui.borrow().external_comparison.is_none() {
+            match external_comparison::Controller::new(&file_access(&ui)) {
+                Ok(controller) => ui.borrow_mut().external_comparison = Some(controller),
+                Err(error) => {
+                    app.set_message(error.to_string().into());
+                    return;
+                }
+            }
+        }
+        let aspect = (app.get_viewport_width() / app.get_viewport_height().max(1.0)).max(0.01);
+        if let Err(error) = ui
+            .borrow()
+            .external_comparison
+            .as_ref()
+            .unwrap()
+            .show(aspect)
+        {
             app.set_message(error.to_string().into());
         }
     });

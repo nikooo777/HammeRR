@@ -56,6 +56,7 @@ pub mod cubemap_bindings;
 pub mod definitions;
 pub mod entity_graph;
 pub mod entity_placement;
+pub mod external_comparison;
 mod favorites;
 pub mod fgd_helpers;
 #[cfg(test)]
@@ -266,6 +267,7 @@ pub struct Session {
     model_browser: model_browser::State,
     instance_reference: instance_reference::State,
     instance_extraction: instance_extraction::State,
+    external_comparison: external_comparison::State,
     sounds: sounds::State,
     particles: particles::State,
     placement: placement::State,
@@ -604,6 +606,7 @@ impl Session {
             model_browser: model_browser::State::default(),
             instance_reference: instance_reference::State::default(),
             instance_extraction: instance_extraction::State::default(),
+            external_comparison: external_comparison::State::default(),
             sounds: sounds::State::default(),
             particles: particles::State::default(),
             placement: placement::State::default(),
@@ -1529,6 +1532,7 @@ impl Session {
     }
 
     fn replace_document(&mut self, document: Document, path: Option<PathBuf>) {
+        self.clear_external_comparison();
         self.reset_instance_contents();
         self.reset_sky3d_preview();
         self.native_capture.invalidate();
@@ -2494,6 +2498,7 @@ impl Session {
         self.reset_instance_contents();
         self.shutdown_sky3d_preview();
         self.shutdown_instance_extraction();
+        self.clear_external_comparison();
         self.clear_instance_collapse();
         self.shutdown_sound_preview();
         self.cancel_compile_on_shutdown();
@@ -2515,6 +2520,7 @@ impl Session {
     pub(crate) fn instance_workers_busy(&self) -> bool {
         self.instance_contents.worker.busy()
             || self.instance_extraction.worker.busy()
+            || self.external_comparison.worker.busy()
             || self.geometry.instance_collapse.worker.busy()
             || self.sky3d_preview.worker.busy()
     }

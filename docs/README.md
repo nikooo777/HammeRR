@@ -13,6 +13,7 @@ See [Status](status.md) for supported features and limits.
 - [Open documents](open-documents.md)
 - [Recent maps](recent-maps.md)
 - [History](history.md)
+- [Compare external maps](map-comparison.md)
 - [Keyboard shortcuts](keyboard-shortcuts.md)
 - [Navigation defaults](navigation-defaults.md)
 - [Preview defaults](preview-defaults.md)

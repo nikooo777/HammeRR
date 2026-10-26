@@ -60,6 +60,25 @@ A render request starts graphics when needed.
 7. Call `render_view` to check the result.
 8. Call `save_map` when the source is ready.
 
+## Compare an external VMF
+
+Call `external_map_comparison` with `action: "compare"` and an explicit `.vmf`
+`file`. The returned owner token guards `page`, `select`, `frame` and `cancel`;
+`review` transfers an idle shared comparison to a new token. `background: true`
+starts the same owned worker without waiting. `get_external_map_comparison`
+returns cheap captured status and does not recheck external bytes.
+
+`page` accepts `status`, `search` (displayed labels or IDs), `offset` and `limit` (1–64). Status values are
+`all`, `identical`, `changed`, `current_only`, `external_only` and `ambiguous`.
+`select` accepts the same filters and `mode` (`replace`, `add`, `remove`,
+`toggle`); `frame` accepts the same filters and finite `aspect` (0.01–100).
+Actions cover every eligible current object across all filtered pages. Every
+explicit page or action checks the originally captured external identity off
+lock; changed sources, current-map revisions or ownership reject stale results.
+Framing preserves intervening camera movement and rejects any member without
+finite bounds. Selection likewise preserves a selection changed while its
+request was being checked. See [comparison scope and limits](map-comparison.md).
+
 Use `tools/list` for exact parameters, enums, limits and tool descriptions.
 Do not infer arguments from another tool's schema.
 A failed operation returns an explicit error. Inspect it before retrying.
@@ -315,6 +334,7 @@ These groups locate the available operations.
 | [Entity properties and connections](entities.md) | `begin_connection_edit`, `begin_entity_rename`, `begin_property_edit`, `cancel_connection_edit`, `cancel_entity_rename`, `cancel_property_edit`, `commit_connection_edit`, `commit_entity_rename`, `commit_property_edit`, `convert_color`, `create_entity`, `delete_entity_connection`, `get_connection_choices`, `get_entity_class`, `get_entity_connections`, `inspect_entity_graph`, `select_entity_graph`, `frame_entity_graph`, `get_entity_definitions`, `get_entity_inspector`, `get_entity_references`, `get_property_edit`, `get_property_inspector`, `load_entity_definitions`, `move_to_world`, `search_entity_classes`, `set_entity_color`, `set_entity_color_space`, `set_entity_properties`, `tie_to_entity`, `update_connection_draft`, `update_entity_rename`, `update_property_edit` |
 | [Entity placement](entities.md) | `apply_entity_placement`, `begin_entity_placement`, `cancel_entity_placement`, `get_entity_placement`, `pick_entity_placement`, `review_entity_placement` |
 | [Map files](getting-started.md) | `clear_recent_maps`, `close_document`, `find_objects`, `get_map_info`, `get_map_statistics`, `get_objects`, `get_recent_maps`, `new_map`, `open_map`, `open_recent_map`, `redo`, `reload_recent_maps`, `remove_recent_map`, `save_map`, `undo` |
+| [External map comparison](map-comparison.md) | `external_map_comparison`, `get_external_map_comparison` |
 | [Brush geometry and transforms](brushes.md) | `begin_clip_drag`, `cancel_block_preview`, `cancel_carve`, `cancel_clip_drag`, `cancel_clip_preview`, `cancel_hollow`, `cancel_merge`, `cancel_primitive_preview`, `clip_brushes`, `commit_carve`, `commit_clip_preview`, `commit_hollow`, `commit_merge`, `commit_primitive_preview`, `create_block`, `create_polygon_brush`, `create_primitive`, `draw_block`, `finish_clip_drag`, `frame_primitive_preview`, `get_carve_preview`, `get_clip_handles`, `get_clip_preview`, `get_hollow_preview`, `get_merge_preview`, `get_primitive_preview`, `look_inside_hollow`, `pick_clip_point`, `preview_carve`, `preview_carve_many`, `preview_hollow`, `preview_merge`, `set_clip_handle_options`, `set_clip_points`, `set_clip_tool`, `set_spatial_settings`, `update_clip_drag` |
 | [Grid defaults](basics.md) | `get_grid_defaults`, `set_grid_defaults` |
 | [Groups and layers](groups.md) | `add_object_group_selection`, `apply_layer_edit`, `apply_object_group_edit`, `begin_layer_edit`, `begin_object_group_edit`, `cancel_layer_edit`, `cancel_object_group_edit`, `get_layers`, `get_object_groups`, `select_layer_members`, `select_object_group`, `select_object_group_member`, `set_group_selection_bypass`, `set_layer_visibility`, `update_layer_edit`, `update_object_group_edit` |

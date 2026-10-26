@@ -1,0 +1,93 @@
+import { Button, ComboBox, LineEdit, ScrollView } from "std-widgets.slint";
+
+export struct ComparisonRow { title: string, detail: string }
+export component ExternalComparisonWindow inherits Window {
+    title: "Compare external map - HammeRR";
+    preferred-width: 940px;
+    preferred-height: 820px;
+    min-width: 760px;
+    min-height: 660px;
+    in property <string> file: "Choose an external VMF";
+    in property <string> summary;
+    in property <string> message;
+    in property <string> page-summary;
+    in property <[ComparisonRow]> rows;
+    in property <bool> busy;
+    in property <bool> owned;
+    in property <bool> active;
+    in property <bool> can-act;
+    in property <bool> previous;
+    in property <bool> next;
+    in-out property <string> status: "All statuses";
+    in-out property <string> search;
+    in-out property <string> mode: "Replace";
+    callback choose-file();
+    callback compare();
+    callback refresh();
+    callback filter-changed();
+    callback page(int);
+    callback select-current();
+    callback frame-current();
+    callback review();
+    callback cancel();
+    callback close-dialog();
+    forward-focus: keys;
+    keys := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape { root.close-dialog(); return accept; }
+            return reject;
+        }
+        VerticalLayout {
+            padding: 20px;
+            spacing: 10px;
+            Text { text: "Compare external map"; font-size: 24px; font-weight: 600; }
+            Text { text: "Compare authored world brushes and whole entities by their stored IDs. Hidden content participates. This does not merge maps or establish geometric equivalence."; wrap: word-wrap; color: #bac2ce; }
+            HorizontalLayout {
+                spacing: 8px;
+                Button { text: "Choose VMF…"; enabled: !root.busy; clicked => { root.choose-file(); } }
+                Button { text: "Compare"; enabled: !root.busy; clicked => { root.compare(); } }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            Text { text: root.file; wrap: word-wrap; color: #bac2ce; }
+            Text { text: root.summary; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: 8px;
+                ComboBox { model: ["All statuses", "Identical", "Changed", "Current only", "External only", "Ambiguous"]; current-value <=> root.status; enabled: !root.busy; selected => { root.filter-changed(); } }
+                LineEdit { text <=> root.search; placeholder-text: "Search displayed labels or IDs"; enabled: !root.busy; edited => { root.filter-changed(); } accessible-label: "Search comparison rows"; }
+                Button { text: "Refresh page"; enabled: root.active && root.owned && !root.busy; clicked => { root.refresh(); } }
+            }
+            Text { text: root.page-summary; wrap: word-wrap; }
+            ScrollView {
+                content-width: self.width;
+                vertical-stretch: 1;
+                min-height: 140px;
+                VerticalLayout {
+                    spacing: 8px;
+                    for row in root.rows: VerticalLayout {
+                        padding: 8px;
+                        Text { text: row.title; font-weight: 600; wrap: word-wrap; }
+                        Text { text: row.detail; wrap: word-wrap; color: #bac2ce; }
+                    }
+                }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                Button { text: "Previous page"; enabled: root.previous && !root.busy && root.owned; clicked => { root.page(-1); } }
+                Button { text: "Next page"; enabled: root.next && !root.busy && root.owned; clicked => { root.page(1); } }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            Text { text: "Actions use every unambiguous current object matching these filters, across all pages. External-only and ambiguous rows have no current action. Each request rechecks the original external file; captured rows are not continuously watched. Map settings and expanded instances are outside this comparison."; wrap: word-wrap; color: #bac2ce; }
+            Text { text: root.message; wrap: word-wrap; color: #ffcb80; }
+            HorizontalLayout {
+                spacing: 8px;
+                ComboBox { model: ["Replace", "Add", "Remove", "Toggle"]; current-value <=> root.mode; enabled: !root.busy; }
+                Button { text: "Select current matches"; enabled: root.can-act && !root.busy && root.owned; clicked => { root.select-current(); } }
+                Button { text: "Frame current matches"; enabled: root.can-act && !root.busy && root.owned; clicked => { root.frame-current(); } }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Review shared comparison"; enabled: root.active && !root.busy && !root.owned; clicked => { root.review(); } }
+                Button { text: "Cancel"; enabled: root.active && root.owned; clicked => { root.cancel(); } }
+                Button { text: "Close"; clicked => { root.close-dialog(); } }
+            }
+        }
+    }
+}

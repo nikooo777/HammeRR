@@ -14,6 +14,8 @@ Find objects, check map data and retain recovery copies.
 **Hide selected**, **Isolate selected**, **Show selected**, **Show all** and **Restore visibility** control saved map visibility.
 Use **Map statistics…** for object and geometry counts.
 
+Use **Compare external map…** to [compare authored objects with a chosen VMF](map-comparison.md), then select or frame the complete matching current set.
+
 ## Check the map
 
 1. Open **Check map…**.

@@ -34,6 +34,7 @@ struct Fixture {
 struct OpenWindows {
     app: AppWindow,
     graph: EntityGraphWindow,
+    comparison: ExternalComparisonWindow,
     properties: PropertiesWindow,
     color: ColorWindow,
     property_material: MaterialWindow,
@@ -53,10 +54,11 @@ struct OpenWindows {
 }
 
 impl OpenWindows {
-    fn windows(&self) -> [&slint::Window; 18] {
+    fn windows(&self) -> [&slint::Window; 19] {
         [
             self.app.window(),
             self.graph.window(),
+            self.comparison.window(),
             self.properties.window(),
             self.color.window(),
             self.property_material.window(),
@@ -162,6 +164,28 @@ fn open_windows(f: &Fixture) -> OpenWindows {
         .clone_strong();
     graph.invoke_inspect();
     assert!(graph.get_can_act());
+    app.invoke_external_comparison();
+    let comparison = ui
+        .borrow()
+        .external_comparison
+        .as_ref()
+        .unwrap()
+        .window()
+        .clone_strong();
+    comparison.set_file(
+        f.directory
+            .path()
+            .join("retirement.vmf")
+            .to_str()
+            .unwrap()
+            .into(),
+    );
+    comparison.invoke_compare();
+    let deadline = Instant::now() + HOST_ACK_TIMEOUT;
+    while lock(&f.shared).external_comparison_state()["busy"] == true {
+        assert!(Instant::now() < deadline, "comparison worker did not drain");
+        std::thread::sleep(Duration::from_millis(5));
+    }
     app.invoke_batch_properties();
     let properties = ui
         .borrow()
@@ -263,6 +287,7 @@ fn open_windows(f: &Fixture) -> OpenWindows {
     let opened = OpenWindows {
         app,
         graph,
+        comparison,
         properties,
         color,
         property_material,
@@ -900,6 +925,15 @@ fn owned_document_retirement_hides_nested_windows_stops_timers_and_preserves_pee
     assert_ne!(windows.reference.get_status(), "pending timer refresh");
     assert_ne!(windows.extraction.get_summary(), "pending timer refresh");
     let local_ui = target.owner.ui.as_ref().unwrap().clone();
+    assert!(
+        local_ui
+            .borrow()
+            .external_comparison
+            .as_ref()
+            .unwrap()
+            .timer_running()
+    );
+
     let weak_ui = Rc::downgrade(&local_ui);
     let contents = Rc::downgrade(target.owner.contents.as_ref().unwrap());
     let reference = Rc::downgrade(target.owner.reference.as_ref().unwrap());
@@ -958,6 +992,16 @@ fn owned_document_retirement_hides_nested_windows_stops_timers_and_preserves_pee
     windows.graph.invoke_frame_connected();
     assert!(windows.graph.get_message().contains("retired"));
     assert!(!windows.graph.get_can_act());
+    windows.comparison.invoke_compare();
+    windows.comparison.invoke_refresh();
+    windows.comparison.invoke_select_current();
+    windows.comparison.invoke_frame_current();
+    assert!(!windows.comparison.get_can_act());
+    assert_eq!(
+        lock(&target.shared).external_comparison_state()["status"],
+        "cancelled"
+    );
+
     assert_eq!(state(&target.shared), target_before);
     windows.app.show().unwrap();
     windows
@@ -995,9 +1039,11 @@ fn retirement_error_path_aggregates_hide_failures_and_never_acknowledges_a_repea
     let weak_ui = Rc::downgrade(target.owner.ui.as_ref().unwrap());
     let before = state(&target.shared);
     FAIL_HIDES.with(|labels| {
-        labels
-            .borrow_mut()
-            .extend(["checks_window".into(), "Editor".into()]);
+        labels.borrow_mut().extend([
+            "checks_window".into(),
+            "External map comparison".into(),
+            "Editor".into(),
+        ]);
     });
     let error = target
         .owner
@@ -1006,6 +1052,7 @@ fn retirement_error_path_aggregates_hide_failures_and_never_acknowledges_a_repea
         .to_string();
     assert!(error.starts_with("event loop failed; UI retirement failed: "));
     assert!(error.contains("checks_window: injected hide failure"));
+    assert!(error.contains("External map comparison: injected hide failure"));
     assert!(error.contains("Editor: injected hide failure"));
     assert!(weak_ui.upgrade().is_none());
     assert!(target.owner.frame_timer.is_none());
@@ -1013,18 +1060,22 @@ fn retirement_error_path_aggregates_hide_failures_and_never_acknowledges_a_repea
     assert!(target.owner.reference.is_none());
     assert!(target.owner.extraction.is_none());
     for window in windows.windows().into_iter().skip(1) {
-        if !std::ptr::eq(window, windows.checks.window()) {
+        if !std::ptr::eq(window, windows.checks.window())
+            && !std::ptr::eq(window, windows.comparison.window())
+        {
             assert!(!window.is_visible());
         }
     }
     assert!(windows.app.window().is_visible());
     assert!(windows.checks.window().is_visible());
+    assert!(windows.comparison.window().is_visible());
     let retired_error = target.owner.retire().unwrap_err();
     assert_eq!(target.owner.retire().unwrap_err(), retired_error);
     assert!(error.ends_with(&retired_error));
     assert_eq!(state(&target.shared), before);
     windows.app.hide().unwrap();
     windows.checks.hide().unwrap();
+    windows.comparison.hide().unwrap();
     target.document.shutdown().unwrap();
 }
 

@@ -259,6 +259,9 @@ impl Ui {
             navigation_defaults,
             shortcuts,
         );
+        if let Some(comparison) = &self.external_comparison {
+            comparison.retire(errors);
+        }
         if let Some(graph) = &self.entity_graph {
             graph.hide_windows(errors);
         }

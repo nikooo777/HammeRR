@@ -727,6 +727,7 @@ impl EditorServer {
             + Self::instance_contents_tools()
             + Self::instance_reference_tools()
             + Self::instance_extraction_tools()
+            + Self::external_comparison_tools()
             + Self::instance_collapse_tools()
             + Self::linked_path_tools()
             + Self::materials_tools()

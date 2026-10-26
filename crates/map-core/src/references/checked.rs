@@ -27,7 +27,7 @@ impl Admission<'_> {
             .bytes
             .checked_add(bytes)
             .filter(|bytes| *bytes <= self.limit)
-            .ok_or("Instance collapse exceeds its snapshot or plan storage limit")?;
+            .ok_or("Map snapshot exceeds its admitted storage limit")?;
         Ok(())
     }
 
@@ -36,7 +36,7 @@ impl Admission<'_> {
             .items
             .checked_add(len)
             .filter(|items| *items <= MAX_NODES)
-            .ok_or("Instance collapse exceeds 131072 structural items")?;
+            .ok_or("Map snapshot exceeds 131072 structural items")?;
         self.bytes(len.saturating_mul(size_of::<T>()))
     }
 
@@ -131,6 +131,14 @@ impl Admission<'_> {
 }
 
 pub fn admit_collapse_snapshot(
+    vmf: &Vmf,
+    limit: usize,
+    checkpoint: &mut dyn FnMut() -> Result<(), String>,
+) -> Result<usize, String> {
+    admit_snapshot_storage(vmf, limit, checkpoint)
+}
+
+pub fn admit_snapshot_storage(
     vmf: &Vmf,
     limit: usize,
     checkpoint: &mut dyn FnMut() -> Result<(), String>,

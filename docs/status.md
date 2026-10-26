@@ -13,6 +13,7 @@ The integrated compiler is experimental. File operations, BSP publication and ga
 | [Documents](open-documents.md) | Two map windows, reviewed Close, per-map Save results. | Tabs, bulk Quit and workspace restoration. |
 | [VMF and recovery](map-tools.md) | Preserved imported fields, checked Save, recovery snapshots and map checks. | Other-editor round trips; general automatic repairs. |
 | [History](history.md) | Shared Undo/Redo and change summaries. | Persistent history and full property diffs. |
+| [External map comparison](map-comparison.md) | Bounded authored world-brush/whole-entity comparison by stored IDs, categorized pages and complete filtered current selection/framing. | No merge, map-settings comparison, recursive-instance expansion or geometric-equivalence claim. |
 | [Selection](selection.md) | Type filters, startup defaults, named profiles, overlap cycling, area, volume and paint selection. | Separate solid/group modes. |
 | [Keyboard shortcuts](keyboard-shortcuts.md) | Configurable viewport commands, including temporary editor hide/show. | File, clipboard, physical-key and multi-key bindings. |
 | [Brushes](brushes.md) | Shapes, handles, exact transforms, selection or per-object grid snapping, pivots with grid snapping and saved defaults, mirror and shear. | Magnetic snapping and surface-attached pivots. |

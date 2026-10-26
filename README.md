@@ -95,4 +95,9 @@ See the [tool index and setup](docs/mcp.md).
 | ![A compiled portal ring in a three-room map](docs/images/visibility-portals.png) | ![Editable brush arches after instance collapse](docs/images/collapsed-assembly.png) |
 | Inspect compiled leaves, portal rings and visibility sets. | Turn supported references into editable brushes and lights. |
 
+| [Map comparison](docs/map-comparison.md) |
+| --- |
+| ![Changed objects selected after an external-map comparison](docs/images/external-map-comparison.png) |
+| Compare stored objects and select or frame current matches. |
+
 Counter-Strike: Source and its assets are not included.

@@ -4,7 +4,9 @@ use std::ops::Range;
 use source_formats::fgd::{Catalog, Class};
 
 mod checked;
-pub use checked::{CollapseCatalog, admit_collapse_snapshot, has_incoming_checked};
+pub use checked::{
+    CollapseCatalog, admit_collapse_snapshot, admit_snapshot_storage, has_incoming_checked,
+};
 
 use crate::{Document, EditError, Transaction, connections};
 

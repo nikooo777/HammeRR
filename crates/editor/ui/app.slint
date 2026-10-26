@@ -1,3 +1,4 @@
+export { ExternalComparisonWindow, ComparisonRow } from "external-comparison.slint";
 export { EntityGraphWindow, EntityGraphRow } from "entity-graph.slint";
 export { OpenDocumentsWindow, OpenDocumentRow } from "open-documents.slint";
 export { InstanceContentsWindow } from "instance-contents.slint";
@@ -2201,6 +2202,7 @@ export component AppWindow inherits Window {
     callback flag-toggled(key: string, flag: string, checked: bool);
     callback place-entity();
     callback entity-graph();
+    callback external-comparison();
     callback edit-connections();
     callback edit-references();
     callback world-settings();
@@ -3151,6 +3153,7 @@ export component AppWindow inherits Window {
                     Button { text: "Design context…"; clicked => { root.design-context(); } }
                     Button { text: "Edit selected entity properties…"; clicked => { root.batch-properties(); } }
                     Button { text: "Entity graph…"; clicked => { root.entity-graph(); } }
+                    Button { text: "Compare external map…"; clicked => { root.external-comparison(); } }
                     if root.entity-selected: Button {
                         text: "Connections…";
                         clicked => { root.edit-connections(); }

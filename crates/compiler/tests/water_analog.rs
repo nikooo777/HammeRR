@@ -427,7 +427,7 @@ fn third_retained_carrier_is_rejected_before_native_work() {
                 side.id += index * 1000;
             }
         }
-        edit::translate_entity(&mut entity, DVec3::X * f64::from(index * 80), true);
+        edit::translate_entity(&mut entity, DVec3::X * f64::from(index * 80), true).unwrap();
         vmf.entities.push(entity);
     }
     refuses(

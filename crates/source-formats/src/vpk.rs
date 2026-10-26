@@ -221,6 +221,12 @@ impl Vpk {
         &self.dir_path
     }
 
+    pub(crate) fn archive_path(&self, archive: u16) -> PathBuf {
+        let mut name = self.archive_stem.as_os_str().to_owned();
+        name.push(format!("_{archive:03}.vpk"));
+        PathBuf::from(name)
+    }
+
     pub fn len(&self) -> usize {
         self.entries.len()
     }
@@ -351,9 +357,7 @@ impl Vpk {
                 self.dir_data_start + u64::from(entry.offset),
             )
         } else {
-            let mut name = self.archive_stem.as_os_str().to_owned();
-            name.push(format!("_{:03}.vpk", entry.archive));
-            (PathBuf::from(name), u64::from(entry.offset))
+            (self.archive_path(entry.archive), u64::from(entry.offset))
         }
     }
 

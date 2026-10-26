@@ -41,7 +41,8 @@ Game installation paths must resolve to UTF-8 paths. Unsupported paths return an
 Changing settings does not change a running build. Failed or cancelled builds preserve the previous published BSP.
 Builds use a captured source and settings snapshot.
 The compiler tracks material inputs it reads, including ordinary builds with packing
-and texture shadows off. Changed inputs require another build before **Play built map**.
+and texture shadows off. It also tracks consumed detail dictionaries, models, materials
+and sprite atlases. Changed inputs require another build before **Play built map**.
 Unused runtime assets are outside this guard.
 
 ## Build settings

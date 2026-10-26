@@ -478,11 +478,11 @@ fn dictionary(vmf: &Vmf, builder: &Builder) -> Result<Vec<Node>, String> {
         return Err("World detailvbsp must name a game-relative .vbsp dictionary".into());
     }
     let bytes = builder
-        .fs
-        .read_limited(&path, MAX_DICTIONARY_BYTES)
+        .sources
+        .read_asset(builder.fs, &path, MAX_DICTIONARY_BYTES)
         .map_err(|error| format!("Detail dictionary {path}: {error}"))?
         .ok_or_else(|| format!("Detail dictionary {path} was not found"))?;
-    let text = std::str::from_utf8(&bytes).map_err(|error| format!("{path}: {error}"))?;
+    let text = std::str::from_utf8(bytes.bytes()).map_err(|error| format!("{path}: {error}"))?;
     let nodes =
         keyvalues::parse_bounded(text.trim_start_matches('\u{feff}'), 8, MAX_DICTIONARY_NODES)
             .map_err(|error| format!("Detail dictionary {path}: {error}"))?;

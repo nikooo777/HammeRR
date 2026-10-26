@@ -615,7 +615,7 @@ pub fn paste(
                     &excluded_sides,
                 )?;
                 remap_group(&mut solid.editor, &group_mapping, &layer_mapping)?;
-                edit::translate_solid(&mut solid, options.offset, options.texture_lock);
+                edit::translate_solid(&mut solid, options.offset, options.texture_lock)?;
                 tx.add_solid(solid)?
             }
             ObjectId::Entity(id) => {
@@ -661,7 +661,7 @@ pub fn paste(
                         &renamed[&reference.target.to_ascii_lowercase()],
                     );
                 }
-                edit::translate_entity(&mut entity, options.offset, options.texture_lock);
+                edit::translate_entity(&mut entity, options.offset, options.texture_lock)?;
                 tx.add_entity(entity)?
             }
         };

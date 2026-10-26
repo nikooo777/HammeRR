@@ -63,6 +63,21 @@ fn invalid(message: impl Into<String>) -> EditError {
     EditError::Invalid(message.into())
 }
 
+pub(crate) fn validated_geometry(solid: &Solid) -> Result<BrushGeometry, EditError> {
+    let geometry = BrushGeometry::from_solid(solid)
+        .map_err(|error| invalid(format!("Brush {}: {error}", solid.id)))?;
+    if !geometry.mins.is_finite()
+        || !geometry.maxs.is_finite()
+        || !geometry.mins.cmplt(geometry.maxs).all()
+    {
+        return Err(invalid(format!(
+            "Brush {} has invalid bounds after transform",
+            solid.id
+        )));
+    }
+    Ok(geometry)
+}
+
 impl Mapping {
     fn new(transform: Transform) -> Result<Self, EditError> {
         if !transform.translation.is_finite()
@@ -280,7 +295,7 @@ impl Mapping {
             ));
         }
         if self.translation_only {
-            crate::edit::translate_solid(solid, self.offset, self.translation_texture_lock);
+            return crate::edit::translate_solid(solid, self.offset, self.translation_texture_lock);
         }
         for side in &mut solid.sides {
             if side.plane.0.iter().any(|point| !point.is_finite())
@@ -290,16 +305,6 @@ impl Mapping {
                     .is_some_and(|disp| !disp.start_position.is_finite())
             {
                 return Err(invalid("Transform produces a nonfinite brush coordinate"));
-            }
-            if self.translation_only {
-                if self.translation_texture_lock
-                    && [&side.u_axis, &side.v_axis]
-                        .iter()
-                        .any(|axis| !axis.offset.is_finite())
-                {
-                    return Err(invalid("Translation produces a nonfinite texture offset"));
-                }
-                continue;
             }
             let normal = Plane::from_points(side.plane.0)
                 .ok_or_else(|| invalid(format!("Brush {} has a degenerate face", solid.id)))?
@@ -318,17 +323,7 @@ impl Mapping {
                 self.displacement(disp, normal)?;
             }
         }
-        let geometry = BrushGeometry::from_solid(solid)
-            .map_err(|error| invalid(format!("Brush {}: {error}", solid.id)))?;
-        if !geometry.mins.is_finite()
-            || !geometry.maxs.is_finite()
-            || !geometry.mins.cmplt(geometry.maxs).all()
-        {
-            return Err(invalid(format!(
-                "Brush {} has invalid bounds after transform",
-                solid.id
-            )));
-        }
+        let geometry = validated_geometry(solid)?;
         if self.brush_only
             && geometry.mins.abs().max(geometry.maxs.abs()).max_element()
                 > crate::primitive::MAX_COORDINATE

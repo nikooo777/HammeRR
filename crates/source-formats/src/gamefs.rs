@@ -73,6 +73,26 @@ impl Mount {
         }
     }
 
+    fn identity(&self) -> Result<(PathBuf, Option<PathBuf>), Error> {
+        let canonical = |path: &Path| {
+            fs::canonicalize(path).map_err(|source| Error::Io {
+                path: path.into(),
+                source,
+            })
+        };
+        let namespace = match self {
+            Self::Directory(_) => None,
+            Self::Pak(vpk) => {
+                let archive = vpk.archive_path(0);
+                Some(
+                    canonical(&archive.with_file_name("."))?
+                        .join(archive.file_name().expect("Archive path has a filename")),
+                )
+            }
+        };
+        Ok((canonical(self.location())?, namespace))
+    }
+
     pub fn location(&self) -> &Path {
         match self {
             Self::Directory(root) => root,
@@ -450,17 +470,11 @@ impl GameFs {
     }
 
     fn add(&mut self, ids: Vec<String>, mount: Mount) -> Result<(), Error> {
-        let canonical = |path: &Path| {
-            fs::canonicalize(path).map_err(|source| Error::Io {
-                path: path.into(),
-                source,
-            })
-        };
-        let key = canonical(mount.location())?;
+        let key = mount.identity()?;
         let locations = self
             .mounts
             .iter()
-            .map(|mounted| canonical(mounted.mount.location()))
+            .map(|mounted| mounted.mount.identity())
             .collect::<Result<Vec<_>, _>>()?;
         let existing = locations.iter().position(|location| *location == key);
         let mut deferred = Vec::new();
@@ -857,6 +871,47 @@ mod tests {
             .contains("alias")
         );
         assert_eq!(game.mounts.len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn vpk_aliases_keep_numbered_archive_namespaces_and_search_ids() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        let mut tree = b"txt\0 \0asset\0".to_vec();
+        tree.extend(0u32.to_le_bytes());
+        tree.extend(0u16.to_le_bytes());
+        tree.extend(0u16.to_le_bytes());
+        tree.extend(0u32.to_le_bytes());
+        tree.extend(6u32.to_le_bytes());
+        tree.extend(0xffffu16.to_le_bytes());
+        tree.extend(b"\0\0\0");
+        let mut index = 0x55aa1234u32.to_le_bytes().to_vec();
+        index.extend(1u32.to_le_bytes());
+        index.extend((tree.len() as u32).to_le_bytes());
+        index.extend(tree);
+        fs::write(root.path().join("first_dir.vpk"), index).unwrap();
+        symlink("first_dir.vpk", root.path().join("second_dir.vpk")).unwrap();
+        fs::write(root.path().join("first_000.vpk"), b"first!").unwrap();
+        fs::write(root.path().join("second_000.vpk"), b"second").unwrap();
+        symlink(".", root.path().join("alias")).unwrap();
+        let gameinfo = root.path().join("gameinfo.txt");
+        fs::write(&gameinfo, "GameInfo { FileSystem { SearchPaths { mod |gameinfo_path|first.vpk game |gameinfo_path|second.vpk game |gameinfo_path|alias/second.vpk } } }").unwrap();
+        let game = GameFs::from_gameinfo(&gameinfo).unwrap();
+        assert_eq!(game.mounts.len(), 2);
+        assert_eq!(game.read("asset.txt").unwrap().unwrap(), b"second");
+        assert_eq!(
+            game.read_from("asset.txt", Some("mod")).unwrap().unwrap(),
+            b"first!"
+        );
+        assert_eq!(
+            game.read_from("asset.txt", None).unwrap().unwrap(),
+            b"first!"
+        );
+        let paths = game.asset_source_paths("asset.txt").unwrap().unwrap();
+        assert!(paths.files.contains(&root.path().join("second_000.vpk")));
+        assert!(!paths.files.contains(&root.path().join("first_000.vpk")));
     }
 
     fn provenance_game(root: &Path, mounts: Vec<Mount>) -> GameFs {

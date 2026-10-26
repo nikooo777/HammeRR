@@ -1278,12 +1278,14 @@ impl Session {
                 "static-prop asset packing"
             } else if result.options.pack_water_assets {
                 "water asset packing"
+            } else if result.options.pack_sky_assets {
+                "sky asset packing"
             } else if result.output.instance_dependencies.is_some() {
                 "instance compilation"
             } else if result.static_prop_sources.is_some() {
                 "static-prop compilation"
             } else {
-                "sky asset packing"
+                "build publication"
             };
             if result.options.pack_sky_assets
                 && result.output.bsp.is_some()
@@ -1918,6 +1920,73 @@ mod tests {
             assert!(result.is_err());
             assert_eq!(session.compile_settings()["editable"], true);
         }
+    }
+
+    #[test]
+    fn ordinary_detail_builds_keep_material_freshness_and_publication_context() {
+        let (directory, game) = crate::test_assets::model_lighting::game();
+        for name in ["one", "two"] {
+            std::fs::write(
+                directory
+                    .path()
+                    .join(format!("materials/models/test/{name}.vmt")),
+                "UnlitGeneric { }",
+            )
+            .unwrap();
+        }
+        let mut vmf = crate::test_assets::room();
+        let mut prop =
+            source_formats::vmf::Entity::new(vmf.object_ids().max().unwrap() + 1, "prop_detail");
+        prop.properties.set("model", "models/test/receiver.mdl");
+        prop.properties.set("origin", "0 0 32");
+        vmf.entities.push(prop);
+        let source = directory.path().join("room.vmf");
+        let output = source.with_extension("bsp");
+        std::fs::write(&source, vmf.write(&Default::default())).unwrap();
+        std::fs::write(&output, b"previous BSP").unwrap();
+        std::fs::write(output.with_extension("lin"), b"previous LIN").unwrap();
+        let mut session = Session::new(Ok(game));
+        session.open(Actor::User, &source, false).unwrap();
+        session
+            .update_compile_settings(Actor::User, Some("fullbright"), Some("none"))
+            .unwrap();
+        let result = session.begin_compile(Actor::User, None).unwrap().run();
+        assert_eq!(result.as_ref().unwrap().output.stats.detail_props, 1);
+        session.content_epoch += 1;
+        session.finish_compile(Actor::User, &result);
+        assert!(!result.as_ref().unwrap().published());
+        assert!(
+            result
+                .as_ref()
+                .unwrap()
+                .publication_error()
+                .unwrap()
+                .contains("changed during build publication")
+        );
+        assert_eq!(std::fs::read(&output).unwrap(), b"previous BSP");
+        assert_eq!(
+            std::fs::read(output.with_extension("lin")).unwrap(),
+            b"previous LIN"
+        );
+        let result = session.begin_compile(Actor::Agent, None).unwrap().run();
+        session.finish_compile(Actor::Agent, &result);
+        assert!(
+            result.as_ref().unwrap().published(),
+            "{}",
+            session.compile_status()
+        );
+        assert_eq!(session.baked_lightmap_build_state()["current"], true);
+        let bytes = std::fs::read(&output).unwrap();
+        std::fs::write(
+            directory.path().join("materials/models/test/one.vmt"),
+            "VertexLitGeneric { }",
+        )
+        .unwrap();
+        assert_eq!(session.baked_lightmap_build_state()["current"], false);
+        let status = session.compile_status();
+        assert_eq!(status["job"]["stale"], true);
+        assert!(status["job"]["material_source_issue"].is_string());
+        assert_eq!(std::fs::read(&output).unwrap(), bytes);
     }
 
     #[test]

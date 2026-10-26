@@ -55,6 +55,8 @@ These buttons apply immediately. Use **Undo** to reverse the edit.
 
 Numeric transforms do not round to the grid.
 Scale factors must be positive. Whole-object scaling changes point-entity spacing, not model size.
+Moves and copies reject invalid geometry or nonfinite derived coordinates and locked texture offsets.
+A failed batch changes no objects.
 
 ### Pick a custom pivot on a surface
 

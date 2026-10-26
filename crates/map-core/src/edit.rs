@@ -238,7 +238,14 @@ pub fn delete(tx: &mut Transaction, ids: &[ObjectId]) -> Result<(), EditError> {
 
 /// Moves a brush. With `texture_lock`, texture offsets compensate so the
 /// textures stay fixed to the brush.
-pub fn translate_solid(solid: &mut Solid, delta: DVec3, texture_lock: bool) {
+pub fn translate_solid(
+    solid: &mut Solid,
+    delta: DVec3,
+    texture_lock: bool,
+) -> Result<(), EditError> {
+    if !delta.is_finite() {
+        return Err(EditError::Invalid("Translation must be finite".into()));
+    }
     for side in &mut solid.sides {
         for p in &mut side.plane.0 {
             *p += delta;
@@ -247,21 +254,47 @@ pub fn translate_solid(solid: &mut Solid, delta: DVec3, texture_lock: bool) {
             for axis in [&mut side.u_axis, &mut side.v_axis] {
                 let scale = if axis.scale == 0.0 { 1.0 } else { axis.scale };
                 axis.offset -= delta.dot(axis.axis) / scale;
+                if !axis.offset.is_finite() {
+                    return Err(EditError::Invalid(
+                        "Translation produces a nonfinite texture offset".into(),
+                    ));
+                }
             }
         }
         if let Some(disp) = &mut side.displacement {
             disp.start_position += delta;
+            if !disp.start_position.is_finite() {
+                return Err(EditError::Invalid(
+                    "Translation produces a nonfinite displacement coordinate".into(),
+                ));
+            }
         }
     }
+    crate::transform::validated_geometry(solid)?;
+    Ok(())
 }
 
-pub fn translate_entity(entity: &mut Entity, delta: DVec3, texture_lock: bool) {
+pub fn translate_entity(
+    entity: &mut Entity,
+    delta: DVec3,
+    texture_lock: bool,
+) -> Result<(), EditError> {
+    if !delta.is_finite() {
+        return Err(EditError::Invalid("Translation must be finite".into()));
+    }
     if let Some(origin) = entity.origin() {
-        entity.properties.set("origin", format_vec3(origin + delta));
+        let origin = origin + delta;
+        if !origin.is_finite() {
+            return Err(EditError::Invalid(
+                "Translation produces a nonfinite entity origin".into(),
+            ));
+        }
+        entity.properties.set("origin", format_vec3(origin));
     }
     for solid in &mut entity.solids {
-        translate_solid(solid, delta, texture_lock);
+        translate_solid(solid, delta, texture_lock)?;
     }
+    Ok(())
 }
 
 pub fn translate(
@@ -272,8 +305,8 @@ pub fn translate(
 ) -> Result<(), EditError> {
     for &id in ids {
         match id {
-            ObjectId::Solid(id) => translate_solid(tx.solid_mut(id)?, delta, texture_lock),
-            ObjectId::Entity(id) => translate_entity(tx.entity_mut(id)?, delta, texture_lock),
+            ObjectId::Solid(id) => translate_solid(tx.solid_mut(id)?, delta, texture_lock)?,
+            ObjectId::Entity(id) => translate_entity(tx.entity_mut(id)?, delta, texture_lock)?,
         }
     }
     Ok(())
@@ -311,7 +344,7 @@ pub fn duplicate(
                     .ok_or(EditError::NotFound(ObjectId::Solid(id)))?
                     .clone();
                 renumber_solid(tx, &mut solid, &mut mapping)?;
-                translate_solid(&mut solid, offset, true);
+                translate_solid(&mut solid, offset, true)?;
                 tx.add_solid(solid)?
             }
             ObjectId::Entity(id) => {
@@ -325,7 +358,7 @@ pub fn duplicate(
                 for solid in &mut entity.solids {
                     renumber_solid(tx, solid, &mut mapping)?;
                 }
-                translate_entity(&mut entity, offset, true);
+                translate_entity(&mut entity, offset, true)?;
                 tx.add_entity(entity)?
             }
         };
@@ -544,6 +577,62 @@ mod tests {
         doc.edit("move", |tx| translate(tx, &[id], delta, true))
             .unwrap();
         assert!((side_uv(&doc, point + delta) - before).length() < 1e-9);
+    }
+
+    #[test]
+    fn invalid_translation_and_duplicate_roll_back_the_entire_batch() {
+        let mut doc = Document::empty();
+        let (entity, solid) = doc
+            .edit("source", |tx| {
+                let entity = create_entity(tx, "logic_relay", Some(DVec3::ZERO), &[], Vec::new())?;
+                let solid = create_block(tx, DVec3::ZERO, DVec3::splat(64.0), "a")?;
+                Ok((entity, solid))
+            })
+            .unwrap();
+        let before = doc.vmf().clone();
+        let revision = doc.revision();
+        for texture_lock in [false, true] {
+            assert!(
+                doc.edit("invalid move", |tx| {
+                    translate(tx, &[entity, solid], DVec3::X * 1e308, texture_lock)
+                })
+                .is_err()
+            );
+            assert_eq!(doc.vmf(), &before);
+            assert_eq!(doc.revision(), revision);
+        }
+        assert!(
+            doc.edit("invalid duplicate", |tx| {
+                duplicate(tx, &[entity, solid], DVec3::X * 1e308)
+            })
+            .is_err()
+        );
+        assert_eq!(doc.vmf(), &before);
+        assert_eq!(doc.revision(), revision);
+        let expected_id = before.object_ids().max().unwrap() + 1;
+        let copy = doc
+            .edit("duplicate", |tx| duplicate(tx, &[solid], DVec3::X * 32.0))
+            .unwrap();
+        assert_eq!(copy, [ObjectId::Solid(expected_id)]);
+        assert_eq!(
+            doc.solid(expected_id).unwrap().sides[0].id,
+            before.side_ids().max().unwrap() + 1
+        );
+        let saved = doc.vmf().try_write(&Default::default()).unwrap();
+        let reopened = source_formats::vmf::Vmf::parse(&saved).unwrap();
+        for solid in &reopened.world.solids {
+            BrushGeometry::from_solid(solid).unwrap();
+            assert!(
+                solid
+                    .sides
+                    .iter()
+                    .all(|side| side.u_axis.offset.is_finite() && side.v_axis.offset.is_finite())
+            );
+        }
+        doc.undo().unwrap();
+        assert_eq!(doc.vmf(), &before);
+        assert_eq!(doc.undo().unwrap().label, "source");
+        assert!(doc.undo().is_none());
     }
 
     #[test]

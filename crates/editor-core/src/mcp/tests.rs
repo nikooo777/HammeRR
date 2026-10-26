@@ -368,3 +368,37 @@ fn clipping_plane_inputs_agree_and_reject_ambiguous_definitions() {
         assert!(spec.resolve(&session).is_err());
     }
 }
+
+#[test]
+fn move_and_duplicate_mcp_reject_invalid_results_without_history_or_selection_changes() {
+    let mut session = Session::new(Err("no assets needed".into()));
+    let solid = session
+        .edit(Actor::User, "block", |tx| {
+            edit::create_block(tx, DVec3::ZERO, DVec3::splat(64.0), "a")
+        })
+        .unwrap();
+    session.select(&[solid], SelectMode::Replace).unwrap();
+    let source = session.document().vmf().clone();
+    let history = session.history_snapshot();
+    let shared = Arc::new(Mutex::new(session));
+    let server = EditorServer::new(shared.clone(), None);
+    let moved = server
+        .move_objects(Parameters(MoveArgs {
+            ids: None,
+            offset: [1e308, 0.0, 0.0],
+            texture_lock: Some(true),
+        }))
+        .unwrap();
+    assert_eq!(moved.is_error, Some(true));
+    let copied = server
+        .duplicate_objects(Parameters(DuplicateArgs {
+            ids: None,
+            offset: [1e308, 0.0, 0.0],
+        }))
+        .unwrap();
+    assert_eq!(copied.is_error, Some(true));
+    let session = lock(&shared);
+    assert_eq!(session.document().vmf(), &source);
+    assert_eq!(session.history_snapshot(), history);
+    assert_eq!(session.selected_ids(), vec![solid]);
+}

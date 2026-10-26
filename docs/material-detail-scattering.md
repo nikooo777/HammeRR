@@ -38,6 +38,7 @@ Use **Remove override** to restore the absent setting.
 - This is compile-time generation; the editor does not preview the generated runtime cards or models.
 - Hidden geometry is excluded. Placement and output use bounded deterministic sampling.
 - Missing types, malformed dictionaries, unsupported assets or exceeded budgets fail explicitly.
+- Changes to consumed dictionaries, models, materials or sprite atlases require a new build.
 - A mounted HL2 material can name a detail type absent from the CS:S dictionary; inspect and correct that mismatch.
 - Dual-channel builds keep the HDR pass in one shared base color, with separate channel style extras.
 - Decoration has no collision and does not replace structural geometry.

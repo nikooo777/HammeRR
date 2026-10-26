@@ -6,7 +6,9 @@ use source_formats::gamefs::{GameFs, asset_relative};
 use source_formats::vmf::{Entity, Vmf};
 
 use crate::{
-    Control, Diagnostic, Report, emit,
+    Control, Diagnostic, Report,
+    asset_sources::BuildMaterialSources,
+    emit,
     map::{MAX_COMPILE_COORD, Map},
     static_props,
 };
@@ -132,6 +134,7 @@ struct Pending {
 
 struct Builder<'a> {
     fs: &'a GameFs,
+    sources: &'a BuildMaterialSources,
     nodes: Vec<Node>,
     planes: Vec<Plane>,
     leaves: Vec<Leaf>,
@@ -142,14 +145,20 @@ struct Builder<'a> {
     sprites: BTreeMap<[u32; 8], u16>,
     sprite_material: String,
     sprite_atlas_checked: bool,
-    validator: assets::ModelValidator,
+    validator: assets::ModelValidator<'a>,
     work: usize,
 }
 
 impl<'a> Builder<'a> {
-    fn new(fs: &'a GameFs, bsp: &Bsp, vmf: &Vmf) -> Result<Self, String> {
+    fn new(
+        fs: &'a GameFs,
+        sources: &'a BuildMaterialSources,
+        bsp: &Bsp,
+        vmf: &Vmf,
+    ) -> Result<Self, String> {
         Ok(Self {
             fs,
+            sources,
             nodes: bsp.records::<Node>().map_err(|error| error.to_string())?,
             planes: bsp.records::<Plane>().map_err(|error| error.to_string())?,
             leaves: bsp.records::<Leaf>().map_err(|error| error.to_string())?,
@@ -171,7 +180,7 @@ impl<'a> Builder<'a> {
                 .unwrap_or("detail/detailsprites")
                 .to_owned(),
             sprite_atlas_checked: false,
-            validator: assets::ModelValidator::default(),
+            validator: assets::ModelValidator::new(sources),
             work: 0,
         })
     }
@@ -318,9 +327,11 @@ impl<'a> Builder<'a> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn bake(
     vmf: &Vmf,
     fs: &GameFs,
+    sources: &BuildMaterialSources,
     map: &Map,
     models: &[emit::Model],
     bsp: &mut Bsp,
@@ -350,7 +361,7 @@ pub(crate) fn bake(
     if entities.len() > MAX_PROPS {
         return Err("Detail model props exceed the 16,384-object build budget".into());
     }
-    let mut builder = Builder::new(fs, bsp, vmf)?;
+    let mut builder = Builder::new(fs, sources, bsp, vmf)?;
     let lighting = crate::lighting_origins::Origins::new(
         vmf,
         entities

@@ -9,7 +9,7 @@ use source_formats::{
     vtf::Vtf,
 };
 
-use crate::{Control, map::MAX_COMPILE_COORD, static_props};
+use crate::{Control, asset_sources::BuildMaterialSources, map::MAX_COMPILE_COORD, static_props};
 
 const MAX_READ_BYTES: usize = 512 * 1024 * 1024;
 const MAX_MATERIAL_BYTES: usize = 1024 * 1024;
@@ -47,14 +47,23 @@ impl ModelBounds {
     }
 }
 
-#[derive(Default)]
-pub(super) struct ModelValidator {
+pub(super) struct ModelValidator<'a> {
+    sources: &'a BuildMaterialSources,
     bytes: usize,
     lookups: usize,
     materials: BTreeSet<String>,
 }
 
-impl ModelValidator {
+impl<'a> ModelValidator<'a> {
+    pub(super) fn new(sources: &'a BuildMaterialSources) -> Self {
+        Self {
+            sources,
+            bytes: 0,
+            lookups: 0,
+            materials: BTreeSet::new(),
+        }
+    }
+
     fn read(
         &mut self,
         fs: &GameFs,
@@ -64,11 +73,11 @@ impl ModelValidator {
     ) -> io::Result<Option<Vec<u8>>> {
         control.checkpoint().map_err(io::Error::other)?;
         let maximum = maximum.min(MAX_READ_BYTES.saturating_sub(self.bytes));
-        let data = fs.read_limited(path, maximum)?;
+        let data = self.sources.read_asset(fs, path, maximum)?;
         if let Some(data) = &data {
-            self.bytes += data.len();
+            self.bytes += data.bytes().len();
         }
-        Ok(data)
+        Ok(data.map(|data| data.bytes().to_vec()))
     }
 
     pub(super) fn bounds(

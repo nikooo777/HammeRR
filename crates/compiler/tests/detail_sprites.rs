@@ -180,6 +180,45 @@ fn sprites_preserve_logical_uvs_anchors_native_layout_and_unrelated_lumps() {
 }
 
 #[test]
+fn sprite_atlas_patch_and_texture_keep_original_source_guards() {
+    for path in [
+        "materials/test/atlas.vmt",
+        "materials/test/atlas_parent.vmt",
+        "materials/test/atlas.vtf",
+    ] {
+        let fixture = fixture();
+        std::fs::write(
+            fixture
+                .directory
+                .path()
+                .join("materials/test/atlas_parent.vmt"),
+            ATLAS,
+        )
+        .unwrap();
+        std::fs::write(
+            fixture.directory.path().join("materials/test/atlas.vmt"),
+            "Patch { include materials/test/atlas_parent.vmt }",
+        )
+        .unwrap();
+        let output = compiler::compile(&fixture.source, &fixture.game);
+        assert!(!output.report.has_errors(), "{:?}", output.report);
+        assert_eq!(output.stats.detail_props, 16);
+        let control = compiler::Control::default();
+        let guard = compiler::asset_sources::capture_output_asset_source_guard(
+            &output,
+            &fixture.game,
+            &control,
+        )
+        .unwrap();
+        let file = fixture.directory.path().join(path);
+        let mut bytes = std::fs::read(&file).unwrap();
+        *bytes.last_mut().unwrap() ^= 1;
+        std::fs::write(file, bytes).unwrap();
+        assert!(guard.verify_metadata().is_err(), "{path}");
+    }
+}
+
+#[test]
 fn fixed_and_full_billboards_preserve_sampling_dictionary_and_native_records() {
     let fixture = fixture();
     let vertical = details(&fixture);

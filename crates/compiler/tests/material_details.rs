@@ -76,6 +76,75 @@ fn compiled(source: &Vmf, game: &GameFs) -> compiler::Output {
 }
 
 #[test]
+fn consumed_detail_inputs_guard_prepare_and_commit_without_replacing_previous_output() {
+    for (path, retained) in [
+        ("detail.vbsp", false),
+        ("models/props/test.mdl", false),
+        ("models/props/test.vvd", false),
+        ("models/props/test.dx90.vtx", false),
+        ("materials/models/test/one.vmt", false),
+        ("materials/models/test/two.vmt", true),
+    ] {
+        let fixture = fixture();
+        let outputs = fixture.directory.path().join("outputs");
+        std::fs::create_dir(&outputs).unwrap();
+        let destination = outputs.join("previous.bsp");
+        std::fs::write(&destination, b"previous BSP").unwrap();
+        std::fs::write(destination.with_extension("lin"), b"previous LIN").unwrap();
+        let control = compiler::Control::default();
+        let lease = compiler::OutputLease::acquire(&destination, &control).unwrap();
+        let reservation = compiler::WriteReservation::new(&destination, &control).unwrap();
+        let stale_reservation = compiler::WriteReservation::new(&destination, &control).unwrap();
+        let output = compiler::compile_with_options(
+            &fixture.source,
+            &fixture.game,
+            compiler::Options {
+                pack_static_prop_assets: retained,
+                ..Default::default()
+            },
+        );
+        assert!(!output.report.has_errors(), "{:?}", output.report);
+        assert_eq!(output.stats.detail_props, 16);
+        let guard = compiler::asset_sources::capture_output_asset_source_guard(
+            &output,
+            &fixture.game,
+            &control,
+        )
+        .unwrap();
+        let prepared = output
+            .prepare_write_reserved(reservation, &control)
+            .unwrap()
+            .unwrap();
+        let file = fixture.directory.path().join(path);
+        let mut bytes = std::fs::read(&file).unwrap();
+        *bytes.last_mut().unwrap() ^= 1;
+        std::fs::write(file, bytes).unwrap();
+        assert!(guard.verify_metadata().is_err(), "{path}");
+        assert!(
+            compiler::asset_sources::capture_output_asset_source_guard(
+                &output,
+                &fixture.game,
+                &control
+            )
+            .is_err(),
+            "{path}"
+        );
+        assert!(
+            output
+                .prepare_write_reserved(stale_reservation, &control)
+                .is_err(),
+            "{path}"
+        );
+        assert!(prepared.commit_checked(&lease, &control).is_err(), "{path}");
+        assert_eq!(std::fs::read(&destination).unwrap(), b"previous BSP");
+        assert_eq!(
+            std::fs::read(destination.with_extension("lin")).unwrap(),
+            b"previous LIN"
+        );
+    }
+}
+
+#[test]
 fn material_details_use_real_records_stable_face_seeds_and_shared_explicit_models() {
     let mut fixture = fixture();
     let original = fixture.source.write(&Default::default());

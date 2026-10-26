@@ -1359,7 +1359,8 @@ fn region_omission_never_drops_missing_targets_and_late_buried_faces_keep_source
                 solid_mut(&mut child.vmf, child.solids[1]),
                 DVec3::X * 512.0,
                 true,
-            );
+            )
+            .unwrap();
         }
         write_source(directory.path(), "leaf.vmf", &child.vmf);
         let mut parent = room();
@@ -1535,6 +1536,10 @@ fn transitive_source_history_cancellation_and_late_publication_checks_preserve_c
     let source = saved_parent(directory.path(), document.vmf());
     let originals = ["parent.vmf", "middle.vmf", "leaf.vmf"]
         .map(|name| std::fs::read(directory.path().join(name)).unwrap());
+    let path = directory.path().join("previous.bsp");
+    std::fs::write(&path, b"previous BSP").unwrap();
+    std::fs::write(path.with_extension("lin"), b"previous LIN").unwrap();
+    let reservation = compiler::WriteReservation::new(&path, &Control::default()).unwrap();
     let output = compile_saved(document.vmf(), &game, &source, Options::default());
     successful(&output);
     assert_eq!(
@@ -1549,14 +1554,11 @@ fn transitive_source_history_cancellation_and_late_publication_checks_preserve_c
             .collect::<Vec<_>>(),
         ["leaf.vmf", "middle.vmf"]
     );
-    let path = directory.path().join("previous.bsp");
-    std::fs::write(&path, b"previous BSP").unwrap();
-    std::fs::write(path.with_extension("lin"), b"previous LIN").unwrap();
     let cancelled = Control::default();
     cancelled.cancel().unwrap();
     assert!(output.write_controlled(&path, &cancelled).is_err());
     let staged = output
-        .prepare_write_controlled(&path, &Control::default())
+        .prepare_write_reserved(reservation, &Control::default())
         .unwrap()
         .unwrap();
     let mut changed = originals[2].clone();

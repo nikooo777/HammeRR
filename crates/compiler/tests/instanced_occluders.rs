@@ -112,7 +112,7 @@ fn entity_mut(source: &mut Vmf, id: u32) -> &mut Entity {
 fn room() -> Vmf {
     let mut source = common::room();
     for solid in &mut source.world.solids {
-        edit::translate_solid(solid, DVec3::splat(1024.0), true);
+        edit::translate_solid(solid, DVec3::splat(1024.0), true).unwrap();
         for side in &mut solid.sides {
             side.lightmap_scale = 128;
         }
@@ -1198,6 +1198,7 @@ fn retained_child_material_geometry_and_area_failures_keep_original_provenance()
             }
             "uncertain-contact" => {
                 edit::translate_solid(&mut entity.solids[1], DVec3::new(-95.995, 0.0, 0.0), true)
+                    .unwrap()
             }
             _ => unreachable!(),
         }
@@ -1271,6 +1272,10 @@ fn transitive_source_history_cancellation_and_dependency_changes_guard_publicati
         .collect::<Vec<_>>();
     let context = saved_parent(directory.path(), document.vmf());
     let parent_bytes = std::fs::read(directory.path().join("parent.vmf")).unwrap();
+    let path = directory.path().join("previous.bsp");
+    std::fs::write(&path, b"previous BSP").unwrap();
+    std::fs::write(path.with_extension("lin"), b"previous LIN").unwrap();
+    let reservation = compiler::WriteReservation::new(&path, &Control::default()).unwrap();
     let output = compile_saved(document.vmf(), &game, Options::default(), &context);
     assert!(!output.report.has_errors(), "{:?}", output.report);
     let stats = output.stats.instances.as_ref().unwrap();
@@ -1291,14 +1296,11 @@ fn transitive_source_history_cancellation_and_dependency_changes_guard_publicati
             .collect::<Vec<_>>(),
         ["leaf.vmf", "middle.vmf"]
     );
-    let path = directory.path().join("previous.bsp");
-    std::fs::write(&path, b"previous BSP").unwrap();
-    std::fs::write(path.with_extension("lin"), b"previous LIN").unwrap();
     let cancelled = Control::default();
     cancelled.cancel().unwrap();
     assert!(output.write_controlled(&path, &cancelled).is_err());
     let staged = output
-        .prepare_write_controlled(&path, &Control::default())
+        .prepare_write_reserved(reservation, &Control::default())
         .unwrap()
         .unwrap();
     let mut changed = child_bytes.clone();

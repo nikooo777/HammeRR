@@ -1618,6 +1618,9 @@ fn build(
     let detail_stats = detail_props::bake(
         vmf,
         fs,
+        material_sources
+            .as_ref()
+            .ok_or("Detail generation source owner is missing")?,
         &map,
         &models,
         &mut bsp,

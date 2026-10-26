@@ -516,7 +516,7 @@ fn empty_and_invalid_retained_helpers_keep_ordinary_occluder_rejection() {
                 "without terrain or origin materials"
             }
             6 => {
-                edit::translate_solid(&mut entity.solids[1], DVec3::X * -111.995, true);
+                edit::translate_solid(&mut entity.solids[1], DVec3::X * -111.995, true).unwrap();
                 "within 0.01 units of a contact"
             }
             7 => {

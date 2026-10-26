@@ -412,9 +412,11 @@ fn instance_collapse_includes_all_visible_roots_and_preserves_terrain_and_hidden
         literal_bsp.bsp.unwrap().to_bytes()
     );
     let mut invalid = child.vmf().clone();
-    let mut light = Entity::new(invalid.object_ids().max().unwrap() + 1, "light");
+    let mut light = Entity::new(invalid.object_ids().max().unwrap() + 1, "light_environment");
     light.properties.set("origin", "0 0 64");
     light.properties.set("_light", "255 240 220 300");
+    light.properties.set("pitch", "-45");
+    light.properties.set("_ambient", "64 80 96 20");
     invalid.entities.push(light);
     std::fs::write(&child_path, invalid.write(&Default::default())).unwrap();
     let control = Control::default();

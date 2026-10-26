@@ -326,6 +326,9 @@ impl<'a> Expansion<'a> {
                 let generated = result.map_err(|error| {
                     EditError::Invalid(format!("Child {} {}: {error}", kind.label(), entity.id))
                 })?;
+                if matches!(self.purpose, PreparationPurpose::Collapse) {
+                    tx.entity_mut(generated)?.editor = entity.editor.clone();
+                }
                 names::charge(&mut self.work, 1, self.control).map_err(EditError::Invalid)?;
                 local_helpers.insert(entity.id, generated);
             }
@@ -458,7 +461,11 @@ impl<'a> Expansion<'a> {
                             )
                             .map_err(EditError::Invalid)?;
                         }
-                        self.entity(tx, &effective, spec, owner.id, &relative, transforms)?;
+                        let generated =
+                            self.entity(tx, &effective, spec, owner.id, &relative, transforms)?;
+                        if matches!(self.purpose, PreparationPurpose::Collapse) {
+                            tx.entity_mut(generated)?.editor = entity.editor.clone();
+                        }
                         Ok(())
                     })();
                     result.map_err(|error| {

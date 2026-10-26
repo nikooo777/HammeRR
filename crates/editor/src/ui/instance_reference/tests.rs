@@ -23,7 +23,14 @@ fn software_instance_collapse_callbacks_preview_cancel_apply_and_undo_the_shared
         },
     )))
     .unwrap();
-    let (_directory, game, parent, _child) = crate::test_assets::instance_map(false);
+    let (_directory, game, parent, child) = crate::test_assets::instance_map(false);
+    let mut content =
+        source_formats::vmf::Vmf::parse(&std::fs::read_to_string(&child).unwrap()).unwrap();
+    let mut light = source_formats::vmf::Entity::new(1000, "light");
+    light.properties.set("origin", "0 0 96");
+    light.properties.set("_light", "255 160 64 240");
+    content.entities.push(light);
+    std::fs::write(child, content.write(&Default::default())).unwrap();
     let mut session = Session::new(Ok(game));
     session.open(Actor::User, &parent, true).unwrap();
     let owner = session
@@ -44,6 +51,7 @@ fn software_instance_collapse_callbacks_preview_cancel_apply_and_undo_the_shared
     wait_for_collapse(&controller, &shared);
     assert!(controller.window.get_collapse_active());
     assert!(controller.window.get_ready());
+    assert!(controller.window.get_contents().contains("1 point lights"));
     assert_eq!(lock(&shared).document().vmf(), &source);
     controller
         .window
@@ -56,6 +64,14 @@ fn software_instance_collapse_callbacks_preview_cancel_apply_and_undo_the_shared
     controller.window.invoke_preview_collapse();
     wait_for_collapse(&controller, &shared);
     let shown = lock(&shared).render_document().vmf().clone();
+    assert_eq!(
+        shown
+            .entities
+            .iter()
+            .filter(|entity| entity.classname() == Some("light"))
+            .count(),
+        1
+    );
     controller.window.invoke_apply();
     wait_for_collapse(&controller, &shared);
     assert_eq!(lock(&shared).document().vmf(), &shown);

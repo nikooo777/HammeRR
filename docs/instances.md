@@ -35,7 +35,7 @@ Read [instance contents](instance-contents.md) for display limits.
 1. Select a visible reference and open **Edit instance reference…**.
 2. Apply or cancel any edited reference fields first.
 3. Click **Preview collapse all references…**.
-4. Inspect the materialized geometry and world/detail/terrain counts.
+4. Inspect the materialized content and brush, terrain, light and target counts.
 5. Click **Apply collapse**, or **Cancel collapse** to discard the preview.
 
 ![Two collapsed arches; one arch's individual brushes are selected](images/collapsed-assembly.png)
@@ -45,19 +45,28 @@ Selection does not limit the batch. Hidden root references and child files stay
 unchanged. **Review collapse** transfers an idle shared preview to you before
 Apply or Cancel. Source or dependency changes require a new preview.
 
-Collapse supports world and ordinary `func_detail` brushes and checked terrain
-through the same four-level preparation used by compilation. Child object color
-and logical layout remain attached to the new objects. Each detail brush becomes
+Collapse supports world and ordinary `func_detail` brushes, checked terrain,
+and static `light`/`light_spot` assemblies with checked local `info_target`
+helpers through the same four-level preparation used by compilation. Child
+object color and logical layout remain attached to the new objects. Each detail brush becomes
 an individual `func_detail` owner. Reference markers are
 removed, consuming their file, transform, name, marker color and marker layout.
 Child file version/view settings remain local to the unchanged child files;
 the parent's settings stay authoritative.
 
-Lights, props, other child entities, hidden child content, groups/layers, saved
+Light assemblies retain independent LDR/HDR values, appearances 0–11, composed
+poses, whole-value bindings and scoped local spotlight targets. Targeted spots
+require the compiler's named ancestor scopes. Named/switchable lights and
+runtime connections remain unsupported. New entities receive fresh editor IDs;
+their compiled `hammerid` follows those IDs. Other prepared entity fields,
+references and ordering stay intact.
+
+Props, other child entities, hidden child content, groups/layers, saved
 atlas regions, nondefault child world settings and custom metadata require
 separate preservation rules and refuse the whole batch. Reference group/layer
 membership, attached notes and incoming bindings also refuse. The preview
-reports fresh object IDs and bounded original leaf-face provenance.
+reports fresh object IDs, the complete expanded-to-authored light/target ID map,
+and bounded original leaf-face/entity provenance.
 
 Use a UTF-8 path for the saved parent. Snapshot and plan storage each cap at
 64 MiB. Input text and metadata cap at 8 MiB and 131,072 items; work limits can

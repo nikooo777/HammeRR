@@ -175,13 +175,22 @@ The fit follows actual displaced coordinates. Refit after moving the plane; rebi
 Call `get_instance_collapse`, then `set_instance_collapse` with
 `action:"prepare"` and its `snapshot`. This recursively converts every visible
 root reference in one batch; there is no selected-only mode.
-Inspect counts, fresh object IDs and original leaf-face provenance.
+Inspect counts and fresh object IDs. The complete `entity_id_map` pairs
+`expanded` compiler entity IDs with fresh `authored` light/target IDs;
+`entity_provenance` reports up to 64 original root/file/entity rows with
+`entity_provenance_total` for the full count. Face provenance remains bounded.
+These mappings are retained in Apply's `captured_preview`.
 Use `action:"apply"` with the owned `token`, or `action:"cancel"` to discard it.
 `action:"review"` transfers an idle draft to a fresh token.
 Prepare and Apply accept optional `background:true`; poll the getter for completion.
 Apply rechecks the original saved parent and dependency bytes before one Undo edit.
 Reference markers and their validated color/layout are consumed; child object
-editor fields stay attached. Unsupported child content refuses the whole batch.
+editor fields stay attached. Supported content includes world/detail brushes,
+terrain and checked static point/spot lights with local `info_target` helpers,
+including existing HDR values, literal bindings and scoped target names. Fresh
+entity IDs intentionally change their compiled `hammerid` values; other entity
+fields/order and native light payloads retain shared preparation. Other child
+entities and unsupported metadata refuse the whole batch.
 
 ## Selection defaults
 

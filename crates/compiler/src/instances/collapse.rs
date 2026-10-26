@@ -124,9 +124,14 @@ pub(super) fn child(child: &Vmf) -> Result<(), String> {
                 return Err("Collapse cannot preserve an empty child func_detail owner".into());
             }
             editor(entity.editor.as_ref())?;
+        } else if matches!(
+            entities::kind(entity),
+            Some(entities::Kind::Point | entities::Kind::Spot | entities::Kind::SpotlightTarget)
+        ) {
+            editor(entity.editor.as_ref())?;
         } else {
             return Err(format!(
-                "Collapse supports world and ordinary func_detail geometry only; child entity {} ({}) requires its own editable semantics",
+                "Collapse supports world/detail geometry and checked point/spot light assemblies; child entity {} ({}) requires its own editable semantics",
                 entity.id,
                 entity.classname().unwrap_or("missing class")
             ));

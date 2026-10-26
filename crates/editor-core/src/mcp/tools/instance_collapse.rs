@@ -23,7 +23,7 @@ pub enum InstanceCollapseArgs {
 #[tool_router(router = instance_collapse_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
-        description = "Inspect the owned Collapse all references preview, snapshot, token, source/dependency staleness, counts, fresh object IDs and bounded original leaf-face provenance. Scope is every visible root func_instance recursively; hidden root references and source child files stay intact. No geometry or history edit.",
+        description = "Inspect the owned Collapse all references preview, snapshot, token, source/dependency staleness, counts, fresh object IDs, the complete expanded-to-authored runtime entity ID map and bounded original leaf face/entity provenance. Scope is every visible root func_instance recursively; hidden root references and source child files stay intact. No geometry or history edit.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_instance_collapse(&self) -> ToolResult {
@@ -31,7 +31,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Preview or apply collapse of ALL visible instance references to editable world/ordinary func_detail brushes and checked terrain through the compiler's exact source resolver and composed transforms. prepare requires current snapshot; apply requires owned token and rechecks original parent/dependency bytes off lock before one atomic Undo edit. background defaults false; true starts the same owned worker. review transfers an idle shared preview to a fresh token; cancel discards only owned matching work. Unsupported entities, hidden child content, nondefault child world settings and metadata that cannot be preserved reject the whole batch. Standard child version/view settings remain child-local; parent settings stay authoritative. No selected-only mode, writes to child files, runtime-entity conversion, substitutes or automatic source refresh. UI: Instance reference… → Preview collapse all references… → Apply collapse / Cancel collapse."
+        description = "Preview or apply collapse of ALL visible instance references to editable world/ordinary func_detail brushes, checked terrain and static point/spot lights with checked local info_target helpers through the compiler's exact source resolver and composed transforms. prepare requires current snapshot; apply requires owned token and rechecks original parent/dependency bytes off lock before one atomic Undo edit. background defaults false; true starts the same owned worker. review transfers an idle shared preview to a fresh token; cancel discards only owned matching work. Other child entities, hidden child content, nondefault child world settings and metadata that cannot be preserved reject the whole batch. Standard child version/view settings remain child-local; parent settings stay authoritative. Fresh entity IDs intentionally change only the corresponding compiled hammerid values; light values, scoped targets and entity order retain shared preparation. No selected-only mode, writes to child files, general runtime-entity conversion, substitutes or automatic source refresh. UI: Instance reference… → Preview collapse all references… → Apply collapse / Cancel collapse."
     )]
     pub(in crate::mcp) fn set_instance_collapse(
         &self,

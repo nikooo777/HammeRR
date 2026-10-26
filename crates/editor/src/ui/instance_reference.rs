@@ -187,7 +187,7 @@ impl Controller {
                     .unwrap_or(collapse["status"].as_str().unwrap_or("Unavailable"))
                     .into(),
             );
-            self.window.set_contents(format!("All visible references · {} helper occurrences · {} world brushes · {} detail brushes · {} terrain patches\nCollapse does not write child files.", collapse["stats"]["instances"].as_u64().unwrap_or_default(), collapse["stats"]["world_brushes"].as_u64().unwrap_or_default(), collapse["stats"]["detail_brushes"].as_u64().unwrap_or_default(), collapse["stats"]["terrain_patches"].as_u64().unwrap_or_default()).into());
+            self.window.set_contents(format!("All visible references · {} helper occurrences · {} world brushes · {} detail brushes · {} terrain patches\n{} point lights · {} spot lights · {} local targets\nCollapse does not write child files.", collapse["stats"]["instances"].as_u64().unwrap_or_default(), collapse["stats"]["world_brushes"].as_u64().unwrap_or_default(), collapse["stats"]["detail_brushes"].as_u64().unwrap_or_default(), collapse["stats"]["terrain_patches"].as_u64().unwrap_or_default(), collapse["stats"]["point_lights"].as_u64().unwrap_or_default(), collapse["stats"]["spot_lights"].as_u64().unwrap_or_default(), collapse["stats"]["spotlight_targets"].as_u64().unwrap_or_default()).into());
             return;
         }
         if self.window.get_collapse_active() {

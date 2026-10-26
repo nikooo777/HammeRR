@@ -9,6 +9,13 @@ fn value(result: ToolResult) -> Value {
 #[test]
 fn instance_collapse_mcp_shares_owned_all_root_preview_cancel_apply_and_undo() {
     let (_directory, game, parent, child) = crate::test_assets::instance_map(false);
+    let mut content =
+        source_formats::vmf::Vmf::parse(&std::fs::read_to_string(&child).unwrap()).unwrap();
+    let mut light = source_formats::vmf::Entity::new(1000, "light");
+    light.properties.set("origin", "0 0 96");
+    light.properties.set("_light", "255 160 64 240");
+    content.entities.push(light);
+    std::fs::write(&child, content.write(&Default::default())).unwrap();
     let mut session = Session::new(Ok(game));
     session.open(Actor::User, &parent, true).unwrap();
     let source = session.document().vmf().clone();
@@ -24,6 +31,9 @@ fn instance_collapse_mcp_shares_owned_all_root_preview_cancel_apply_and_undo() {
     ));
     assert_eq!(ready["scope"], "all_visible_references");
     assert_eq!(ready["ready"], true);
+    assert_eq!(ready["stats"]["point_lights"], 1);
+    assert_eq!(ready["entity_id_map"].as_array().unwrap().len(), 1);
+    assert_eq!(ready["entity_provenance"][0]["original_entity"], 1000);
     let token = ready["token"].as_u64().unwrap();
     assert_eq!(lock(&shared).document().vmf(), &source);
     assert!(

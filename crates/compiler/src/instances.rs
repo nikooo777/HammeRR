@@ -816,7 +816,7 @@ impl PreparedInstances<'_> {
             .map(|(owner, _, _, _)| *owner)
     }
 
-    pub(crate) fn entity_origin(&self, generated: u32) -> Option<(u32, &str, u32)> {
+    pub fn entity_origin(&self, generated: u32) -> Option<(u32, &str, u32)> {
         let (owner, file, original, _) = self.provenance.get(&format!("entity:{generated}"))?;
         Some((*owner, file, *original))
     }

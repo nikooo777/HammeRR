@@ -73,10 +73,21 @@ struct FaceOrigin {
 }
 
 #[derive(Clone)]
+struct EntityOrigin {
+    entity: u32,
+    expanded: u32,
+    owner: u32,
+    file: String,
+    original: u32,
+    class: String,
+}
+
+#[derive(Clone)]
 struct Plan {
     removed: Vec<ObjectId>,
     world: Vec<Solid>,
-    details: Vec<Entity>,
+    entities: Vec<Entity>,
+    entity_origins: Vec<EntityOrigin>,
     faces: Vec<FaceOrigin>,
     added: Vec<ObjectId>,
 }
@@ -198,6 +209,34 @@ fn prepare(
                 .ok_or("Collapsed geometry and provenance exceed the 64 MiB plan limit")?;
         }
     }
+    let mut entity_origins = Vec::new();
+    for entity in &prepared.vmf().entities {
+        control.checkpoint()?;
+        if !matches!(
+            entity.classname(),
+            Some("light" | "light_spot" | "info_target")
+        ) {
+            continue;
+        }
+        let Some((owner, file, original)) = prepared.entity_origin(entity.id) else {
+            continue;
+        };
+        let class = entity.classname().unwrap();
+        plan_bytes = plan_bytes
+            .checked_add(std::mem::size_of::<EntityOrigin>())
+            .and_then(|bytes| bytes.checked_add(file.len()))
+            .and_then(|bytes| bytes.checked_add(class.len()))
+            .filter(|bytes| *bytes <= MAX_PLAN_BYTES)
+            .ok_or("Collapsed entity provenance exceeds the 64 MiB plan limit")?;
+        entity_origins.push(EntityOrigin {
+            entity: entity.id,
+            expanded: entity.id,
+            owner,
+            file: file.to_owned(),
+            original,
+            class: class.to_owned(),
+        });
+    }
     let mut world = Vec::new();
     let mut faces = Vec::new();
     for brush in prepared.generated_brushes() {
@@ -217,20 +256,21 @@ fn prepare(
             });
         }
     }
-    let details = prepared
+    let entities = prepared
         .vmf()
         .entities
         .iter()
         .filter(|entity| prepared.root_entity(entity.id).is_some())
         .cloned()
         .collect::<Vec<_>>();
-    if world.is_empty() && details.is_empty() {
-        return Err("Visible references contain no editable brush geometry".into());
+    if world.is_empty() && entities.is_empty() {
+        return Err("Visible references contain no editable geometry or lights".into());
     }
     let mut plan = Plan {
         removed,
         world,
-        details,
+        entities,
+        entity_origins,
         faces,
         added: Vec::new(),
     };
@@ -270,12 +310,20 @@ fn install(tx: &mut Transaction, plan: &mut Plan) -> Result<(), EditError> {
         fresh_solid(tx, solid, &mut sides)?;
         plan.added.push(tx.add_solid(solid.clone())?);
     }
-    for entity in &mut plan.details {
+    let mut entities = BTreeMap::new();
+    for entity in &mut plan.entities {
+        let original = entity.id;
         entity.id = tx.new_object_id()?;
+        entities.insert(original, entity.id);
         for solid in &mut entity.solids {
             fresh_solid(tx, solid, &mut sides)?;
         }
         plan.added.push(tx.add_entity(entity.clone())?);
+    }
+    for origin in &mut plan.entity_origins {
+        origin.entity = *entities.get(&origin.entity).ok_or_else(|| {
+            EditError::Invalid("Collapsed entity ID mapping is incomplete".into())
+        })?;
     }
     for face in &mut plan.faces {
         face.side = *sides
@@ -693,7 +741,7 @@ impl Session {
             })
         };
         let ready = form.ready.as_ref();
-        json!({"snapshot":self.instance_collapse_stamp(),"token":form.token,"owner":form.owner.label(),"status":form.status,"error":blocked.as_ref().or(form.error.as_ref()),"ready":ready.is_some() && blocked.is_none() && form.status=="ready","worker_active":state.worker.busy(),"scope":"all_visible_references","recursive":true,"source":form.key.path,"stats":ready.map(|ready|&ready.stats),"removed":ready.map(|ready|ready.plan.removed.iter().copied().map(crate::identity::id_string).collect::<Vec<_>>()),"objects":ready.map(|ready|ready.plan.added.iter().copied().map(crate::identity::id_string).collect::<Vec<_>>()),"face_provenance":ready.map(|ready|ready.plan.faces.iter().take(MAX_ROWS).map(|face|json!({"side":face.side,"owner":crate::identity::id_string(ObjectId::Entity(face.owner)),"file":face.file,"original_solid":face.original_solid,"original_side":face.original_side})).collect::<Vec<_>>()),"face_provenance_total":ready.map(|ready|ready.plan.faces.len()),"limits":{"plan_bytes":MAX_PLAN_BYTES,"rows":MAX_ROWS,"helper_levels":instances::MAX_EXPANSION_DEPTH},"writes_child_files":false})
+        json!({"snapshot":self.instance_collapse_stamp(),"token":form.token,"owner":form.owner.label(),"status":form.status,"error":blocked.as_ref().or(form.error.as_ref()),"ready":ready.is_some() && blocked.is_none() && form.status=="ready","worker_active":state.worker.busy(),"scope":"all_visible_references","recursive":true,"source":form.key.path,"stats":ready.map(|ready|&ready.stats),"removed":ready.map(|ready|ready.plan.removed.iter().copied().map(crate::identity::id_string).collect::<Vec<_>>()),"objects":ready.map(|ready|ready.plan.added.iter().copied().map(crate::identity::id_string).collect::<Vec<_>>()),"face_provenance":ready.map(|ready|ready.plan.faces.iter().take(MAX_ROWS).map(|face|json!({"side":face.side,"owner":crate::identity::id_string(ObjectId::Entity(face.owner)),"file":face.file,"original_solid":face.original_solid,"original_side":face.original_side})).collect::<Vec<_>>()),"face_provenance_total":ready.map(|ready|ready.plan.faces.len()),"entity_id_map":ready.map(|ready|ready.plan.entity_origins.iter().map(|origin|json!({"expanded":crate::identity::id_string(ObjectId::Entity(origin.expanded)),"authored":crate::identity::id_string(ObjectId::Entity(origin.entity))})).collect::<Vec<_>>()),"entity_provenance":ready.map(|ready|ready.plan.entity_origins.iter().take(MAX_ROWS).map(|origin|json!({"entity":crate::identity::id_string(ObjectId::Entity(origin.entity)),"expanded":crate::identity::id_string(ObjectId::Entity(origin.expanded)),"owner":crate::identity::id_string(ObjectId::Entity(origin.owner)),"file":origin.file,"original_entity":origin.original,"classname":origin.class})).collect::<Vec<_>>()),"entity_provenance_total":ready.map(|ready|ready.plan.entity_origins.len()),"limits":{"plan_bytes":MAX_PLAN_BYTES,"rows":MAX_ROWS,"helper_levels":instances::MAX_EXPANSION_DEPTH},"writes_child_files":false})
     }
 }
 
@@ -730,3 +778,6 @@ impl State {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod light_tests;
